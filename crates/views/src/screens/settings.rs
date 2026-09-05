@@ -186,6 +186,7 @@ impl SettingsView {
                 Row::Item(self.language_row(cx).into_any_element()),
                 self.title("settings-group-window", cx),
                 Row::Item(self.tray_row(cx).into_any_element()),
+                Row::Item(self.pip_fullscreen_row(cx).into_any_element()),
                 self.title("settings-group-accounts", cx),
                 Row::Item(self.accounts_row(cx).into_any_element()),
                 self.title("settings-group-library", cx),
@@ -1077,6 +1078,25 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_close_to_tray(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+    fn pip_fullscreen_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).pip_on_fullscreen();
+
+        self.row(
+            t!("settings-pip-on-fullscreen"),
+            t!("settings-pip-on-fullscreen-detail"),
+            muted,
+            small,
+            Switch::new("pip-on-fullscreen", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.set_pip_on_fullscreen(!on, cx));
                 }))
                 .into_any_element(),
         )

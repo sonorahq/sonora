@@ -10,6 +10,7 @@ pub(crate) mod menus;
 pub(crate) mod page;
 pub(crate) mod picks;
 pub(crate) mod pins;
+pub(crate) mod pip;
 pub(crate) mod playlist_editor;
 pub(crate) mod popups;
 pub(crate) mod shelves;

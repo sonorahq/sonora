@@ -76,6 +76,7 @@ pub struct Root {
     navigation_transition: Option<Task<()>>,
     screens: Screens,
     _adaptive: Entity<Adaptive>,
+    pinned: Option<bool>,
 }
 
 impl Root {
@@ -226,6 +227,7 @@ impl Root {
                 settings,
             },
             _adaptive: adaptive,
+            pinned: None,
         };
         root.show(start, cx);
         root
@@ -570,6 +572,13 @@ impl Render for Root {
         let theme = *cx.theme();
         window.set_rem_size(theme.font_size);
 
+        let settings = Sonora::global(cx).settings.read(cx);
+        let should_pin = settings.pip()
+            || (matches!(self.view, RootView::Fullscreen) && settings.pip_on_fullscreen());
+        if self.pinned != Some(should_pin) {
+            self.pinned = Some(should_pin);
+            crate::shared::pip::set_always_on_top(window, should_pin);
+        }
         let root = div()
             .relative()
             .flex()
@@ -599,6 +608,14 @@ impl Render for Root {
             .on_action(
                 cx.listener(|this, _: &ToggleLyrics, _, cx| this.show_side(SideTab::Lyrics, cx)),
             )
+            .on_action(cx.listener(|this, _: &input::TogglePip, window, cx| {
+                let settings = Sonora::global(cx).settings.clone();
+                let current = settings.read(cx).pip();
+                let next = !current;
+                settings.update(cx, |settings, cx| settings.set_pip(next, cx));
+                this.pinned = Some(next);
+                crate::shared::pip::set_always_on_top(window, next);
+            }))
             .child(self.title_bar.clone())
             .when_else(
                 show_sign_in,

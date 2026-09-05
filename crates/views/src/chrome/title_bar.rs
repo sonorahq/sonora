@@ -28,6 +28,7 @@ pub(crate) struct TitleBarOptions {
     pub offset: Pixels,
     pub border: bool,
     pub content: Option<AnyView>,
+    pub fullscreen: bool,
 }
 
 impl Default for TitleBarOptions {
@@ -39,6 +40,7 @@ impl Default for TitleBarOptions {
             offset: Pixels::ZERO,
             border: true,
             content: None,
+            fullscreen: false,
         }
     }
 }
@@ -152,6 +154,36 @@ impl TitleBar {
                     ),
             )
     }
+    fn pip_toggle(&self, active: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let tooltip = match active {
+            true => "nav-unpin",
+            false => "nav-pip",
+        };
+        let tint = match active {
+            true => theme.foreground,
+            false => theme.muted_foreground,
+        };
+
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .occlude()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                Button::new("pip-toggle")
+                    .ghost()
+                    .small()
+                    .icon("icons/pip.svg")
+                    .tooltip(tooltip)
+                    .tint(tint)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.settings
+                            .update(cx, |settings, cx| settings.toggle_pip(cx));
+                    })),
+            )
+    }
 
     fn toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let icon = match self.options.sidebar_open {
@@ -187,14 +219,16 @@ impl Render for TitleBar {
             false => Pixels::ZERO,
         };
         let content = self.options.content.clone();
-        let settings = self.settings.read(cx);
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let controls = matches!(window.window_decorations(), Decorations::Client { .. });
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-        let controls = settings.window_controls();
-        let decorated = cfg!(not(target_os = "macos")) && controls;
-        let leading = decorated && settings.controls_on_left();
-
+        let (decorated, leading, pip) = {
+            let settings = self.settings.read(cx);
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            let controls = matches!(window.window_decorations(), Decorations::Client { .. });
+            #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+            let controls = settings.window_controls();
+            let decorated = cfg!(not(target_os = "macos")) && controls;
+            let leading = decorated && settings.controls_on_left();
+            (decorated, leading, settings.pip())
+        };
         div()
             .flex()
             .items_center()
@@ -254,6 +288,9 @@ impl Render for TitleBar {
                     .children(content)
                     .pr_3(),
             )
+            .when(!self.options.fullscreen, |this| {
+                this.child(div().flex_none().pr_3().child(self.pip_toggle(pip, cx)))
+            })
             .when_some(
                 self.options
                     .sidebar_right

@@ -40,7 +40,10 @@ gpui_platform = { git = "https://github.com/nolight132/gpui", rev = "96ffcd35c2d
 ] }
 http = "1.3"
 winresource = "0.1"
-windows-sys = { version = "0.61", features = ["Win32_Graphics_Dwm"] }
+windows-sys = { version = "0.61", features = [
+  "Win32_Graphics_Dwm",
+  "Win32_UI_WindowsAndMessaging",
+] }
 interprocess = "2.4"
 image = { version = "0.25", default-features = false, features = [
   "jpeg",

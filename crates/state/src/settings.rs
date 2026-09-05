@@ -189,6 +189,7 @@ struct Values {
     adaptive_menu: bool,
     check_updates: bool,
     close_to_tray: bool,
+    pip_on_fullscreen: bool,
     language: String,
     #[serde(default = "system_font")]
     font: String,
@@ -239,6 +240,7 @@ impl Default for Values {
             adaptive_menu: false,
             check_updates: cfg!(target_os = "windows"),
             close_to_tray: true,
+            pip_on_fullscreen: false,
             language: i18n::AUTO.to_owned(),
             font: system_font(),
             startup: DEFAULT_STARTUP.to_owned(),
@@ -442,6 +444,7 @@ pub struct AppSettings {
     save: Option<Task<()>>,
     save_state: Option<Task<()>>,
     watch: Option<Subscription>,
+    pip: bool,
     writable: bool,
 }
 
@@ -505,6 +508,7 @@ impl AppSettings {
             save: None,
             save_state: None,
             watch: None,
+            pip: false,
             writable,
         };
         let cleanup = existed && old_version < SETTINGS_VERSION || legacy_local.is_some();
@@ -1087,6 +1091,30 @@ impl AppSettings {
 
     pub fn set_transparency(&mut self, transparency: f32, cx: &mut Context<Self>) {
         self.values.appearance.transparency = transparency.clamp(0., ui::MAX_TRANSPARENCY);
+        self.schedule_save(cx);
+    }
+    pub fn pip(&self) -> bool {
+        self.pip
+    }
+
+    pub fn set_pip(&mut self, pip: bool, cx: &mut Context<Self>) {
+        if self.pip == pip {
+            return;
+        }
+        self.pip = pip;
+        cx.notify();
+    }
+
+    pub fn toggle_pip(&mut self, cx: &mut Context<Self>) {
+        self.set_pip(!self.pip, cx);
+    }
+
+    pub fn pip_on_fullscreen(&self) -> bool {
+        self.values.pip_on_fullscreen
+    }
+
+    pub fn set_pip_on_fullscreen(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.pip_on_fullscreen = enabled;
         self.schedule_save(cx);
     }
 

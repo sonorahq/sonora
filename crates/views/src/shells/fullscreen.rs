@@ -873,6 +873,7 @@ impl Shell for FullscreenView {
             offset: Pixels::ZERO,
             border: false,
             content: None,
+            fullscreen: true,
         }
     }
 }

@@ -22,7 +22,8 @@ actions!(
         OpenSettings,
         ToggleFullscreen,
         ToggleQueue,
-        ToggleLyrics
+        ToggleLyrics,
+        TogglePip
     ]
 );
 
@@ -83,6 +84,9 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-left", SongPrevious, Some(&away_from_text)),
         KeyBinding::new("ctrl-right", SongNext, Some(&away_from_text)),
         KeyBinding::new("f", ToggleFullscreen, Some(&away_from_text)),
+        KeyBinding::new("ctrl-shift-p", TogglePip, None),
+        KeyBinding::new("cmd-shift-p", TogglePip, None),
+        KeyBinding::new("alt-p", TogglePip, None),
         KeyBinding::new("escape", Dismiss, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new("backspace", Backspace, editing),
         KeyBinding::new("ctrl-backspace", BackspaceWord, editing),

@@ -54,6 +54,12 @@ pub fn register(lingers: bool, cx: &mut App) {
         playback.update(cx, |playback, cx| playback.next(cx));
     });
 
+    cx.on_action(|_: &input::TogglePip, cx: &mut App| {
+        let settings = Sonora::global(cx).settings.clone();
+        let current = settings.read(cx).pip();
+        settings.update(cx, |settings, cx| settings.set_pip(!current, cx));
+    });
+
     cx.set_menus(vec![Menu {
         name: "Sonora".into(),
         disabled: false,
