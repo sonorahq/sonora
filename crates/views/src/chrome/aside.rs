@@ -1283,11 +1283,12 @@ impl Aside {
                                 false => group.into_any_element(),
                             }
                         });
+                    let is_urdu = is_arabic_script(&line.text);
                     let content = div()
                         .flex()
                         .flex_col()
                         .gap_1()
-                        .when(!line.voice.lead(), |this| this.items_end().text_right())
+                        .when(!line.voice.lead() || is_urdu, |this| this.items_end().text_right())
                         .child(primary)
                         .when_some(
                             selected_romanization(&line.romanized, romanization_scripts),
@@ -1340,7 +1341,13 @@ impl Aside {
                             }),
                         )
                         .text_size(verse)
-                        .line_height(active_verse_size(verse) * ui::LEADING)
+                        .when(is_urdu, |this| {
+                            this.font_family("Noto Nastaliq Urdu")
+                                .line_height(active_verse_size(verse) * 1.6)
+                        })
+                        .when(!is_urdu, |this| {
+                            this.line_height(active_verse_size(verse) * ui::LEADING)
+                        })
                         .text_color(tint)
                         .font_weight(FontWeight::SEMIBOLD)
                         .on_hover(cx.listener(move |this, over: &bool, _, cx| {
@@ -1370,24 +1377,37 @@ impl Aside {
                 rendered
             }
             (None, LyricsState::Ready) => match &shown {
-                Some(music::Lyrics::Plain { text, romanized }) => vec![
-                    div()
-                        .w_full()
-                        .max_w(reach)
-                        .px_2()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .text_size(lane_size)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(theme.muted_foreground)
-                        .child(SharedString::from(text.clone()))
-                        .when_some(
-                            selected_romanization(romanized, romanization_scripts),
-                            |this, text| this.child(romanized_lyrics_lane(text, lane_size, &theme)),
-                        )
-                        .into_any_element(),
-                ],
+                Some(music::Lyrics::Plain { text, romanized }) => {
+                    let is_urdu = is_arabic_script(text);
+                    vec![
+                        div()
+                            .w_full()
+                            .max_w(reach)
+                            .px_2()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .text_size(lane_size)
+                            .when(is_urdu, |this| {
+                                this.font_family("Noto Nastaliq Urdu")
+                                    .text_right()
+                                    .line_height(lane_size * 1.6)
+                            })
+                            .when(!is_urdu, |this| {
+                                this.line_height(lane_size * ui::LEADING)
+                            })
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.muted_foreground)
+                            .child(SharedString::from(text.clone()))
+                            .when_some(
+                                selected_romanization(romanized, romanization_scripts),
+                                |this, text| {
+                                    this.child(romanized_lyrics_lane(text, lane_size, &theme))
+                                },
+                            )
+                            .into_any_element(),
+                    ]
+                }
                 _ => vec![wordless("lyrics-missing", "icons/mic-off.svg")],
             },
             (None, LyricsState::Idle) => vec![empty("lyrics-idle", cx)],
@@ -1809,10 +1829,12 @@ fn fixed_lyrics_lane(rows: &[SharedString], voice: Voice, sung: Sung) -> Div {
         .flex()
         .flex_col()
         .children(rows.iter().map(move |row| {
+            let is_urdu = is_arabic_script(row);
             lifted(
                 div()
                     .w_full()
-                    .when(!voice.lead(), |this| this.text_right())
+                    .when(!voice.lead() || is_urdu, |this| this.text_right())
+                    .when(is_urdu, |this| this.font_family("Noto Nastaliq Urdu"))
                     .child(row.clone()),
                 sung,
             )
@@ -1893,17 +1915,20 @@ fn karaoke_lane(
             })
     };
 
+    let is_urdu = plan.text.iter().any(|t| is_arabic_script(t))
+        || plan.fragments.iter().any(|f| is_arabic_script(f));
     match plan.rows.is_empty() {
         false => div()
             .flex()
             .flex_col()
-            .text_left()
+            .when(!is_urdu, |this| this.text_left())
+            .when(is_urdu, |this| this.text_right().font_family("Noto Nastaliq Urdu"))
             .children((0..plan.rows.len()).map(|row| {
                 let reveal = revealed(plan, row, &windows, position, edge_fade);
                 lifted(
                     div()
                         .flex()
-                        .when(!voice.lead(), |this| this.justify_end())
+                        .when(!voice.lead() || is_urdu, |this| this.justify_end())
                         .child(lit(plan.text[row].clone(), reveal)),
                     sung,
                 )
@@ -1911,8 +1936,9 @@ fn karaoke_lane(
         true => div()
             .flex()
             .flex_wrap()
-            .text_left()
-            .when(!voice.lead(), |this| this.justify_end())
+            .when(!is_urdu, |this| this.text_left())
+            .when(is_urdu, |this| this.text_right().font_family("Noto Nastaliq Urdu"))
+            .when(!voice.lead() || is_urdu, |this| this.justify_end())
             .children((0..fragments.len()).map(|index| {
                 let share = sweep(spoken.get(index).copied().unwrap_or(index));
                 let reveal = Reveal {
@@ -2021,8 +2047,10 @@ fn secondary_lyrics_lane(
     let tint = shade(line_active);
     let size = sung.lane;
     let karaoke_capable = sung.karaoke && lane.worded();
+    let is_urdu = is_arabic_script(&lane.text);
     let lyrics = div()
         .text_size(size)
+        .when(is_urdu, |this| this.font_family("Noto Nastaliq Urdu"))
         .map(|this| match (karaoke_capable, lane.words.as_ref()) {
             (true, Some(words)) => this.child(karaoke_lane(
                 &loose_plan(&lane.text, words),
@@ -2047,7 +2075,7 @@ fn secondary_lyrics_lane(
     div()
         .flex()
         .flex_col()
-        .when(!voice.lead(), |this| this.items_end().text_right())
+        .when(!voice.lead() || is_urdu, |this| this.items_end().text_right())
         .child(lyrics)
         .when_some(
             selected_romanization(&lane.romanized, sung.scripts),
@@ -2243,6 +2271,12 @@ fn plain_lyrics_fragments(line: &str) -> Vec<String> {
     fragments
 }
 
+fn is_arabic_script(text: &str) -> bool {
+    text.chars().any(|c| matches!(c as u32,
+        0x0600..=0x06ff | 0x0750..=0x077f | 0x08a0..=0x08ff | 0xfb50..=0xfdff | 0xfe70..=0xfeff
+    ))
+}
+
 // everything a line needs to lay out and light up, measured once per width
 #[derive(Clone)]
 struct Wrapped {
@@ -2281,6 +2315,9 @@ fn lyrics_wrap_rows(
             .map(|(text, _)| text.as_str())
             .collect::<String>(),
     );
+    if is_arabic_script(&whole) {
+        style.font_family = SharedString::from("Noto Nastaliq Urdu");
+    }
     let run = style.to_run(whole.len());
     let shaped = window
         .text_system()
