@@ -178,6 +178,16 @@ login-problem-refused = Spotify ha rifiutato l'accesso. Attendi un momento e rip
 login-problem-premium = Sonora trasmette tramite Spotify Premium e questo account non lo possiede. Accedi con un account Premium per continuare.
 login-sign-in = Accedi con { $provider }
 login-connect-cookies = Incolla i cookie manualmente
+login-connect-arl = Incolla l'ARL
+login-arl-open = Apri l'accesso Deezer
+login-arl-submit = Continua
+login-arl-hint = Incolla qui l'ARL Deezer
+login-arl-step-1 = Apri deezer.com e assicurati di aver effettuato l'accesso.
+login-arl-step-2 = Apri il callback di accesso desktop Deezer nello stesso browser.
+login-arl-step-3 = Copia l'ARL dal pulsante, la parte dopo deezer://autolog/.
+login-arl-step-4 = Incollalo qui. Puoi anche incollare un cookie arl=.
+login-arl-step-note = Gli ARL scadono. Se l'accesso fallisce, copiane uno nuovo.
+login-arl-title = Incolla l'ARL Deezer per completare l'accesso
 login-use = Usa { $provider }
 login-guest-title = Modalità ospite
 login-guest-use = Usa modalità ospite

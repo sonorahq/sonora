@@ -260,6 +260,16 @@ login-problem-refused = Spotify odrzucił logowanie. Odczekaj chwilę i spróbuj
 login-problem-premium = Sonora odtwarza muzykę przez Spotify Premium, a to konto go nie ma. Zaloguj się na konto z Premium, aby kontynuować.
 login-sign-in = Zaloguj się przez { $provider }
 login-connect-cookies = Wklej pliki cookie ręcznie
+login-connect-arl = Wklej ARL
+login-arl-open = Otwórz logowanie Deezer
+login-arl-submit = Kontynuuj
+login-arl-hint = Wklej tutaj ARL Deezer
+login-arl-step-1 = Otwórz deezer.com i upewnij się, że jesteś zalogowany.
+login-arl-step-2 = Otwórz callback logowania aplikacji Deezer w tej samej przeglądarce.
+login-arl-step-3 = Skopiuj ARL z przycisku, część po deezer://autolog/.
+login-arl-step-4 = Wklej go tutaj. Możesz też wkleić ciasteczko arl=.
+login-arl-step-note = ARL wygasa. Jeśli logowanie się nie uda, skopiuj nowy.
+login-arl-title = Wklej ARL Deezer, aby dokończyć logowanie
 login-use = Otwórz { $provider }
 login-guest-title = Tryb gościa
 login-guest-use = Otwórz tryb gościa

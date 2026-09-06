@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Deezer is a sign-in option: browse as a guest or paste an ARL. Search, charts, albums and
+  artists work; an ARL plays the full track.
+
 ## [0.31.0] - 2026-09-05
 
 ### Added

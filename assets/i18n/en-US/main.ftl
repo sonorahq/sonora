@@ -246,6 +246,16 @@ login-problem-refused = Spotify turned down the sign-in. Wait a moment and try a
 login-problem-premium = Sonora streams through Spotify Premium, and this account does not have it. Sign in with a Premium account to continue.
 login-sign-in = Sign in with { $provider }
 login-connect-cookies = Paste cookies manually
+login-connect-arl = Paste ARL
+login-arl-open = Open Deezer login
+login-arl-submit = Continue
+login-arl-hint = Paste your Deezer ARL here
+login-arl-step-1 = Open deezer.com and make sure you are signed in.
+login-arl-step-2 = Open the Deezer desktop login callback in the same browser.
+login-arl-step-3 = Copy the ARL from the button, the part after deezer://autolog/.
+login-arl-step-4 = Paste it here. You can also paste an arl= cookie instead.
+login-arl-step-note = ARLs expire. If sign-in fails, copy a fresh one.
+login-arl-title = Paste your Deezer ARL to finish signing in
 login-use = Use { $provider }
 login-guest-title = Guest mode
 login-guest-use = Use Guest mode

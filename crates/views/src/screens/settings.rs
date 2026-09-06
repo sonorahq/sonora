@@ -1560,7 +1560,21 @@ impl SettingsView {
     }
 
     fn secret_prompt(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let slug = self
+            .session
+            .read(cx)
+            .providers()
+            .find(|info| info.pending)
+            .map(|info| info.slug)
+            .unwrap_or("youtube");
+        let hint = match slug {
+            "deezer" => "login-arl-hint",
+            _ => "login-cookie-hint",
+        };
+        self.secret
+            .update(cx, |input, cx| input.set_hint(hint, cx));
         CookiePrompt::new(self.secret.clone())
+            .provider(slug)
             .on_submit(cx.listener(|this, _, _, cx| this.submit(cx)))
             .on_cancel(cx.listener(|this, _, _, cx| this.abandon(cx)))
     }
@@ -1593,7 +1607,10 @@ impl SettingsView {
             SignIn::Anonymous => (format!("connect-{slug}-guest"), t!("login-guest-use")),
             SignIn::Secret => (
                 format!("connect-{slug}-cookies"),
-                t!("login-connect-cookies"),
+                match slug {
+                    "deezer" => t!("login-connect-arl"),
+                    _ => t!("login-connect-cookies"),
+                },
             ),
             SignIn::Path(_) => (
                 format!("connect-{slug}-path"),
