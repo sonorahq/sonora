@@ -617,6 +617,7 @@ mod fixture {
             album: String::new(),
             album_id: None,
             cover: None,
+            cover_large: None,
             duration: Duration::from_secs(seconds),
             added_at: None,
             added_by: None,

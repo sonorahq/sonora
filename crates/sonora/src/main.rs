@@ -2,6 +2,7 @@
 
 mod actions;
 mod assets;
+mod discord;
 mod dock;
 mod http;
 mod logging;
@@ -116,6 +117,7 @@ fn main() {
         if lingers {
             cx.set_quit_mode(QuitMode::Explicit);
         }
+        discord::install(cx);
         actions::register(lingers, cx);
         memory::watch(cx);
 

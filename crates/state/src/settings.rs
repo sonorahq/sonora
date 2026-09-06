@@ -151,6 +151,8 @@ struct Values {
     volume: f32,
     normalisation: bool,
     gapless: bool,
+    discord_rich_presence: bool,
+    discord_hide_details: bool,
     lyrics_for_local_files: bool,
     karaoke_lyrics: bool,
     romanized_lyrics: bool,
@@ -218,6 +220,8 @@ impl Default for Values {
             volume: DEFAULT_VOLUME,
             normalisation: false,
             gapless: true,
+            discord_rich_presence: false,
+            discord_hide_details: false,
             lyrics_for_local_files: true,
             karaoke_lyrics: true,
             romanized_lyrics: true,
@@ -344,6 +348,14 @@ impl AppSettings {
 
     pub fn gapless(&self) -> bool {
         self.values.gapless
+    }
+
+    pub fn discord_rich_presence(&self) -> bool {
+        self.values.discord_rich_presence
+    }
+
+    pub fn discord_hide_details(&self) -> bool {
+        self.values.discord_hide_details
     }
 
     pub fn lyrics_for_local_files(&self) -> bool {
@@ -530,6 +542,16 @@ impl AppSettings {
 
     pub fn set_gapless(&mut self, gapless: bool, cx: &mut Context<Self>) {
         self.values.gapless = gapless;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_discord_rich_presence(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.discord_rich_presence = enabled;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_discord_hide_details(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.discord_hide_details = enabled;
         self.schedule_save(cx);
     }
 

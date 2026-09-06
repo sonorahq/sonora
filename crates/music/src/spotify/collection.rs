@@ -118,6 +118,7 @@ fn track_from(uri: &str, track: &TrackMessage) -> Track {
             .to_owned(),
         album_id: track.album.as_ref().and_then(|album| base62(album.gid())),
         cover: track.album.as_ref().and_then(cover_url),
+        cover_large: track.album.as_ref().and_then(super::albums::cover_large),
         duration: Duration::from_millis(track.duration.unwrap_or_default().max(0) as u64),
         added_at: None,
         added_by: None,

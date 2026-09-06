@@ -267,6 +267,7 @@ mod tests {
             album: String::new(),
             album_id: None,
             cover: None,
+            cover_large: None,
             duration: Duration::from_secs(180),
             added_at: None,
             added_by: None,

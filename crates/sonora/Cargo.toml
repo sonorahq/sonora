@@ -12,6 +12,7 @@ bundled-sqlite = ["state/bundled-sqlite"]
 [dependencies]
 anyhow.workspace = true
 dirs.workspace = true
+discord-rich-presence.workspace = true
 env_logger.workspace = true
 log.workspace = true
 gpui.workspace = true

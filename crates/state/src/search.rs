@@ -709,6 +709,7 @@ mod tests {
             album: album.to_owned(),
             album_id: Some(album.to_owned()),
             cover: None,
+            cover_large: None,
             duration: Duration::ZERO,
             added_at: None,
             added_by: None,

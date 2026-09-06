@@ -157,6 +157,7 @@ impl Store {
                     album: row.get(6)?,
                     album_id: row.get(7)?,
                     cover: row.get(8)?,
+                    cover_large: row.get(8)?,
                     duration: std::time::Duration::from_millis(duration.max(0) as u64),
                     added_at: Some(played_at / 1_000),
                     added_by: None,

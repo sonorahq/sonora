@@ -60,6 +60,7 @@ pub struct Track {
     pub album: String,
     pub album_id: Option<String>,
     pub cover: Option<String>,
+    pub cover_large: Option<String>,
     pub duration: Duration,
     pub added_at: Option<i64>,
     pub added_by: Option<Arc<Contributor>>,

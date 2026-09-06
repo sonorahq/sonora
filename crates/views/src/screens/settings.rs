@@ -190,6 +190,8 @@ impl SettingsView {
                 Row::Item(self.language_row(cx).into_any_element()),
                 self.title("settings-group-window", cx),
                 Row::Item(self.tray_row(cx).into_any_element()),
+                Row::Item(self.discord_rpc_row(cx).into_any_element()),
+                Row::Item(self.discord_hide_details_row(cx).into_any_element()),
                 self.title("settings-group-accounts", cx),
                 Row::Item(self.accounts_row(cx).into_any_element()),
                 self.title("settings-group-library", cx),
@@ -1034,6 +1036,48 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_close_to_tray(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn discord_rpc_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).discord_rich_presence();
+
+        self.row(
+            t!("settings-discord-rpc"),
+            t!("settings-discord-rpc-detail"),
+            muted,
+            small,
+            Switch::new("discord-rpc", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_discord_rich_presence(!on, cx)
+                    });
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn discord_hide_details_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).discord_hide_details();
+
+        self.row(
+            t!("settings-discord-hide-details"),
+            t!("settings-discord-hide-details-detail"),
+            muted,
+            small,
+            Switch::new("discord-hide-details", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_discord_hide_details(!on, cx)
+                    });
                 }))
                 .into_any_element(),
         )

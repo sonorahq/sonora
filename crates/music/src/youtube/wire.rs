@@ -33,6 +33,7 @@ pub fn track(source: ytmusic::Track, index: u32) -> Track {
             .unwrap_or_default(),
         album_id: source.album.and_then(|album| album.id),
         cover: cover(&source.thumbnails),
+        cover_large: cover_large(&source.thumbnails),
         duration: source.duration.unwrap_or(Duration::ZERO),
         added_at: None,
         added_by: None,

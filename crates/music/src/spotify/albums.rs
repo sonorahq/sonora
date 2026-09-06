@@ -190,7 +190,7 @@ fn cover(album: &AlbumMessage) -> Option<String> {
     wire::image_url(smallest.file_id())
 }
 
-fn cover_large(album: &AlbumMessage) -> Option<String> {
+pub(crate) fn cover_large(album: &AlbumMessage) -> Option<String> {
     const HEADER: i32 = 300;
 
     let images = album.cover_group.as_ref()?.image.iter();

@@ -246,6 +246,7 @@ fn track_from(track: PathTrack, album: &Album) -> Result<Track> {
         album: album.name.clone(),
         album_id: Some(album.id.clone()),
         cover: album.cover.clone(),
+        cover_large: album.cover_large.clone(),
         duration: Duration::from_millis(track.duration.milliseconds),
         added_at: None,
         added_by: None,
