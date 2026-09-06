@@ -148,7 +148,9 @@ impl Lyrics {
         self.settled = false;
         self.revision = self.revision.wrapping_add(1);
 
-        if let Some(found) = self.remembered(&id, cx) {
+        if !music::is_local_id(&id)
+            && let Some(found) = self.remembered(&id, cx)
+        {
             self.task = None;
             self.settled = true;
             self.hits = found.hits;
@@ -157,6 +159,7 @@ impl Lyrics {
             self.prefetch(cx);
             return;
         }
+
         self.load(id, track, cx);
     }
 
@@ -212,12 +215,40 @@ impl Lyrics {
         })
     }
 
+    fn local_native(&self, id: &str, cx: &mut Context<Self>) -> Option<Native> {
+        if !music::is_local_id(id) {
+            return None;
+        }
+
+        let session = self.session.read(cx);
+        Some(Native {
+            api: session.local_client()?,
+            source: session.local_name(),
+            id: id.to_owned(),
+        })
+    }
+
+    fn finish(&mut self, id: &str) -> bool {
+        let current = self.following.as_deref() == Some(id);
+
+        if current {
+            self.task = None;
+        }
+
+        if self.ahead_of.as_deref() == Some(id) {
+            self.ahead_of = None;
+        }
+
+        current
+    }
+
     fn load(&mut self, id: String, track: Track, cx: &mut Context<Self>) {
-        if self.providers.is_empty() {
+        if self.providers.is_empty() && !music::is_local_id(&id) {
             self.state = LyricsState::Missing;
             cx.notify();
             return;
         }
+
         self.hits.clear();
         self.state = LyricsState::Loading;
         cx.notify();
@@ -227,36 +258,36 @@ impl Lyrics {
             self.ahead_of = None;
             return;
         }
+
         self.task = Some(self.fetch(id, track, cx));
     }
 
     fn prefetch(&mut self, cx: &mut Context<Self>) {
-        if self.providers.is_empty() || self.task.is_some() {
+        if self.task.is_some() {
             return;
         }
+
         let next = self.queue.read(cx).upcoming().next().cloned();
         let Some((track, id)) = next.and_then(|track| Some((track.clone(), track.id?))) else {
             return;
         };
+
+        let local = music::is_local_id(&id);
+
         if self.ahead_of.as_deref() == Some(id.as_str())
-            || self.cache.contains_key(&id)
-            || self.store.holds(&self.key(&id, cx))
+            || (!local && self.providers.is_empty())
+            || (!local && (self.cache.contains_key(&id) || self.store.holds(&self.key(&id, cx))))
         {
             return;
         }
+
         self.ahead_of = Some(id.clone());
         self.ahead = Some(self.fetch(id, track, cx));
     }
 
     fn fetch(&mut self, id: String, track: Track, cx: &mut Context<Self>) -> Task<()> {
-        if !self.settings.read(cx).lyrics_for_local_files() && music::is_local_id(&id) {
-            log::info!(
-                "lyrics: local files are disabled, skipping {:?}",
-                track.name
-            );
-            self.state = LyricsState::Missing;
-            return Task::ready(());
-        }
+        let local = music::is_local_id(&id);
+        let online_for_local = self.settings.read(cx).lyrics_for_local_files();
 
         let key = self
             .session
@@ -266,14 +297,94 @@ impl Lyrics {
                 provider,
                 id: id.clone(),
             });
+
         let query = query_for(&track, key);
         let providers = self.providers.clone();
+        let local_native = self.local_native(&id, cx);
         let native = self.native(&id, cx);
         let io = self.io.clone();
+
         cx.spawn(async move |this, cx| {
+            if local {
+                if let Some(local_native) = local_native {
+                    let local_query = query.clone();
+                    let worker = io.spawn(async move { own(local_native, local_query).await });
+
+                    match worker.await {
+                        Ok(hits) if !hits.is_empty() => {
+                            log::debug!("lyrics: using local LRC for {:?}", track.name);
+
+                            this.update(cx, |this, cx| {
+                                let current = this.finish(&id);
+
+                                if current {
+                                    this.settled = true;
+                                    this.pin(hits, None);
+                                    this.state = LyricsState::Ready;
+                                    cx.notify();
+                                    this.prefetch(cx);
+                                }
+                            })
+                            .ok();
+
+                            return;
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            log::warn!("lyrics: local lyrics task failed: {error}");
+                        }
+                    }
+                }
+
+                let remembered = this
+                    .update(cx, |this, cx| {
+                        let Some(found) = this.remembered(&id, cx) else {
+                            return false;
+                        };
+
+                        let current = this.finish(&id);
+
+                        if current {
+                            this.settled = true;
+                            this.hits = found.hits;
+                            this.state = state_for(&this.hits, found.instrumental);
+                            cx.notify();
+                            this.prefetch(cx);
+                        }
+
+                        true
+                    })
+                    .unwrap_or(false);
+
+                if remembered {
+                    return;
+                }
+
+                if !online_for_local {
+                    log::info!(
+                        "lyrics: online lyrics for local files are disabled, skipping {:?}",
+                        track.name
+                    );
+
+                    this.update(cx, |this, cx| {
+                        if this.finish(&id) {
+                            this.settled = true;
+                            this.hits.clear();
+                            this.state = LyricsState::Missing;
+                            cx.notify();
+                            this.prefetch(cx);
+                        }
+                    })
+                    .ok();
+
+                    return;
+                }
+            }
+
             let (sender, mut incoming) = tokio::sync::mpsc::unbounded_channel();
             let ranking = query.clone();
             let worker = io.spawn(async move { gather(providers, native, query, sender).await });
+
             let mut hits = Vec::new();
             let mut displayed: Option<LyricsHit> = None;
             let mut shown: Option<u8> = None;
@@ -281,19 +392,24 @@ impl Lyrics {
             while let Some(mut found) = incoming.recv().await {
                 hits.append(&mut found);
                 let ranked = ordered(&ranking, hits.clone());
+
                 let Some(best) = ranked.first().cloned() else {
                     continue;
                 };
+
                 let step = depth(&best.lyrics);
                 if shown.is_none_or(|shown| step >= shown) {
                     shown = Some(step);
                     displayed = Some(best);
                 }
+
                 let anchor = displayed.clone();
+
                 this.update(cx, |this, cx| {
                     if this.following.as_deref() != Some(id.as_str()) {
                         return;
                     }
+
                     this.paint(ranked, anchor.as_ref(), cx);
                 })
                 .ok();
@@ -302,21 +418,18 @@ impl Lyrics {
             let found = join(worker).await;
 
             this.update(cx, |this, cx| {
-                let current = this.following.as_deref() == Some(id.as_str());
-                if current {
-                    this.task = None;
-                }
-                if this.ahead_of.as_deref() == Some(id.as_str()) {
-                    this.ahead_of = None;
-                }
+                let current = this.finish(&id);
+
                 match found {
                     Ok(()) => {
                         let instrumental = music::lyrics::instrumental(&ranking, &hits);
                         let ranked = ordered(&ranking, hits);
+
                         this.remember(id, ranked, displayed.as_ref(), instrumental, current, cx);
                     }
                     Err(error) => {
                         log::warn!("lyrics: cannot look up {}: {error:#}", track.name);
+
                         if current {
                             this.state = LyricsState::Failed(format!("{error:#}"));
                             cx.notify();

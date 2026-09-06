@@ -7,13 +7,13 @@ use async_trait::async_trait;
 use storage::Database;
 
 use crate::{
-    Album, AlbumDetail, Artist, ArtistProfile, MediaKind, MusicApi, Playlist, PlaylistDetail,
-    SavedArtist, Track, TrackTags, UserProfile, distinct_covers,
+    Album, AlbumDetail, Artist, ArtistProfile, Lyrics, MediaKind, MusicApi, Playlist,
+    PlaylistDetail, SavedArtist, Track, TrackTags, UserProfile, distinct_covers,
 };
 
 use super::scan::Scanned;
 use super::store::Store;
-use super::{tags, wire};
+use super::{lyrics, tags, wire};
 
 const COVERS: usize = 4;
 const NOT_SUPPORTED: &str = "local playlists are not shared";
@@ -221,6 +221,10 @@ impl MusicApi for LocalClient {
 
     async fn track_playcount(&self, _track_id: &str) -> Result<Option<u64>> {
         Ok(None)
+    }
+
+    async fn track_lyrics(&self, track_id: &str) -> Result<Option<Lyrics>> {
+        lyrics::read(track_id).await
     }
 
     async fn playlists(&self, limit: u32) -> Result<Vec<Playlist>> {
