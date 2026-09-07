@@ -4203,6 +4203,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "md5"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
+
+[[package]]
 name = "media"
 version = "0.1.0"
 source = "git+https://github.com/nolight132/gpui?rev=96ffcd35c2d1eaccb2a27dddf3de588476b72000#96ffcd35c2d1eaccb2a27dddf3de588476b72000"
@@ -4357,6 +4363,7 @@ dependencies = [
  "librespot-protocol",
  "lofty",
  "log",
+ "md5",
  "percent-encoding",
  "protobuf",
  "reqwest",

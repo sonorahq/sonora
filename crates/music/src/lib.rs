@@ -1,7 +1,9 @@
 mod audio;
+pub mod audioscrobbler;
 pub mod binimum;
 pub mod credentials;
 pub mod kugou;
+pub mod listenbrainz;
 #[cfg(test)]
 mod live_tests;
 pub mod local;
@@ -203,6 +205,12 @@ pub trait PlaybackEvents: Send {
 
 pub trait PlaybackFactory: Send + Sync {
     fn start(&self, config: PlaybackConfig) -> (Box<dyn Player>, Box<dyn PlaybackEvents>);
+}
+
+#[async_trait]
+pub trait Scrobbler: Send + Sync {
+    async fn now_playing(&self, track: &Track) -> Result<()>;
+    async fn scrobble(&self, track: &Track, started_at: std::time::SystemTime) -> Result<()>;
 }
 
 pub struct ProviderSession {

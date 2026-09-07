@@ -13,7 +13,9 @@ use gpui::{ScrollHandle, prelude::*, svg};
 use i18n::{Language, t};
 use music::{AccountChoice, SignIn, SignInPrompt, WritingSystem};
 use router::{NavEntry, Screen, SettingsTab};
-use state::{AppSettings, Failure, Playback, SYSTEM_FONT, Session, SessionState, Sonora};
+use state::{
+    AppSettings, Failure, Playback, SYSTEM_FONT, Scrobbling, Session, SessionState, Sonora,
+};
 use ui::{ActiveTheme as _, Scrollbar, Scroller, eyebrow};
 use ui::{
     Avatar, Button, InfoCard, Initials, Input, Look, MAX_FONT, MAX_LYRICS_SCALE, MAX_TRANSPARENCY,
@@ -24,6 +26,8 @@ use ui::{
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const LICENSE_URL: &str = "https://www.gnu.org/licenses/gpl-3.0.html";
 const SOURCE_URL: &str = "https://github.com/nolight132/sonora";
+const LASTFM_CREATE_APP_URL: &str = "https://www.last.fm/api/account/create";
+const LIBREFM_CREATE_APP_URL: &str = "https://libre.fm/api-keys.php";
 
 const THEMES: &str = "themes";
 const PACKS: &str = "packs";
@@ -122,11 +126,17 @@ pub struct SettingsView {
     session: Entity<Session>,
     playback: Entity<Playback>,
     settings: Entity<AppSettings>,
+    scrobbling: Entity<Scrobbling>,
     tab: SettingsTab,
     scrollbar: Entity<Scrollbar>,
     opacity: ScrubberState,
     popovers: Popovers,
     secret: Entity<Input>,
+    lastfm_api_key_input: Entity<Input>,
+    lastfm_api_secret_input: Entity<Input>,
+    librefm_api_key_input: Entity<Input>,
+    librefm_api_secret_input: Entity<Input>,
+    listenbrainz_input: Entity<Input>,
     languages: SearchPopup,
     typefaces: SearchPopup,
     typeface_faced: RefCell<HashSet<SharedString>>,
@@ -140,8 +150,10 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> Self {
         let settings = Sonora::global(cx).settings.clone();
+        let scrobbling = Sonora::global(cx).scrobbling.clone();
         cx.observe(&session, |_, _, cx| cx.notify()).detach();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+        cx.observe(&scrobbling, |_, _, cx| cx.notify()).detach();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         let me = cx.entity_id();
         let languages = SearchPopup::new("settings-language-search", me, cx);
@@ -156,15 +168,41 @@ impl SettingsView {
             cx.notify();
         })
         .detach();
+        let lastfm_api_key_input = cx.new(|cx| {
+            let mut input = Input::new("settings-lastfm-api-key-hint", cx);
+            input.set_text(scrobbling.read(cx).lastfm_api_key(cx), cx);
+            input
+        });
+        let lastfm_api_secret_input = cx.new(|cx| {
+            let mut input = Input::new("settings-lastfm-api-secret-hint", cx);
+            input.set_text(scrobbling.read(cx).lastfm_api_secret(cx), cx);
+            input
+        });
+        let librefm_api_key_input = cx.new(|cx| {
+            let mut input = Input::new("settings-librefm-api-key-hint", cx);
+            input.set_text(scrobbling.read(cx).librefm_api_key(cx), cx);
+            input
+        });
+        let librefm_api_secret_input = cx.new(|cx| {
+            let mut input = Input::new("settings-librefm-api-secret-hint", cx);
+            input.set_text(scrobbling.read(cx).librefm_api_secret(cx), cx);
+            input
+        });
         Self {
             session,
             playback,
             settings,
+            scrobbling,
             tab: SettingsTab::General,
             scrollbar: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(me)),
             opacity: ScrubberState::new("opacity"),
             popovers: Popovers::default(),
             secret: cx.new(|cx| Input::new("login-cookie-hint", cx)),
+            lastfm_api_key_input,
+            lastfm_api_secret_input,
+            librefm_api_key_input,
+            librefm_api_secret_input,
+            listenbrainz_input: cx.new(|cx| Input::new("settings-listenbrainz-token-hint", cx)),
             languages,
             typefaces,
             typeface_faced: RefCell::new(HashSet::new()),
@@ -188,6 +226,8 @@ impl SettingsView {
                 Row::Item(self.tray_row(cx).into_any_element()),
                 self.title("settings-group-accounts", cx),
                 Row::Item(self.accounts_row(cx).into_any_element()),
+                self.title("settings-group-scrobbling", cx),
+                Row::Item(self.scrobbling_row(cx).into_any_element()),
                 self.title("settings-group-library", cx),
                 Row::Item(self.local_folder_row(cx).into_any_element()),
             ],
@@ -1366,6 +1406,312 @@ impl SettingsView {
             .library
             .clone()
             .update(cx, |library, cx| library.forget_local(cx));
+    }
+
+    fn scrobbling_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .py_3()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(t!("settings-scrobbling"))
+                    .child(
+                        div()
+                            .text_color(theme.muted_foreground)
+                            .text_size(theme.text(Text::Small))
+                            .child(t!("settings-scrobbling-detail")),
+                    ),
+            )
+            .child(self.lastfm_card(cx).into_any_element())
+            .child(self.librefm_card(cx).into_any_element())
+            .child(self.listenbrainz_card(cx).into_any_element())
+    }
+
+    fn lastfm_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let username = self.scrobbling.read(cx).lastfm_username(cx);
+        let awaiting = self.scrobbling.read(cx).lastfm_awaiting_confirmation();
+        let connected = username.is_some();
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p(theme.metrics.pad)
+            .rounded(theme.radius)
+            .border_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(div().font_weight(FontWeight::MEDIUM).child("Last.fm"))
+                            .child(
+                                div()
+                                    .text_color(theme.muted_foreground)
+                                    .text_size(theme.text(Text::Small))
+                                    .child(
+                                        username
+                                            .clone()
+                                            .unwrap_or_else(|| t!("settings-provider-none")),
+                                    ),
+                            ),
+                    )
+                    .when(connected, |this| {
+                        this.child(
+                            Button::new("disconnect-lastfm")
+                                .label(t!("settings-lastfm-disconnect"))
+                                .small()
+                                .ghost()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.scrobbling.update(cx, |scrobbling, cx| {
+                                        scrobbling.disconnect_lastfm(cx)
+                                    });
+                                })),
+                        )
+                    })
+                    .when(!connected && awaiting, |this| {
+                        this.child(
+                            Button::new("confirm-lastfm")
+                                .label(t!("settings-lastfm-confirm"))
+                                .small()
+                                .outline()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.scrobbling
+                                        .update(cx, |scrobbling, cx| scrobbling.confirm_lastfm(cx));
+                                })),
+                        )
+                    }),
+            )
+            .when(!connected && !awaiting, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(self.lastfm_api_key_input.clone())
+                        .child(self.lastfm_api_secret_input.clone())
+                        .child(
+                            Button::new("connect-lastfm")
+                                .label(t!("settings-lastfm-connect"))
+                                .small()
+                                .outline()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let api_key =
+                                        this.lastfm_api_key_input.read(cx).text().to_string();
+                                    let api_secret =
+                                        this.lastfm_api_secret_input.read(cx).text().to_string();
+                                    if api_key.trim().is_empty() || api_secret.trim().is_empty() {
+                                        return;
+                                    }
+                                    this.scrobbling.update(cx, |scrobbling, cx| {
+                                        scrobbling.connect_lastfm(api_key, api_secret, cx)
+                                    });
+                                })),
+                        )
+                        .child(
+                            Button::new("lastfm-create-app")
+                                .label(t!("settings-lastfm-api-create"))
+                                .small()
+                                .ghost()
+                                .on_click(|_, _, cx| cx.open_url(LASTFM_CREATE_APP_URL)),
+                        ),
+                )
+            })
+    }
+
+    fn librefm_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let username = self.scrobbling.read(cx).librefm_username(cx);
+        let awaiting = self.scrobbling.read(cx).librefm_awaiting_confirmation();
+        let connected = username.is_some();
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p(theme.metrics.pad)
+            .rounded(theme.radius)
+            .border_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(div().font_weight(FontWeight::MEDIUM).child("Libre.fm"))
+                            .child(
+                                div()
+                                    .text_color(theme.muted_foreground)
+                                    .text_size(theme.text(Text::Small))
+                                    .child(
+                                        username
+                                            .clone()
+                                            .unwrap_or_else(|| t!("settings-provider-none")),
+                                    ),
+                            ),
+                    )
+                    .when(connected, |this| {
+                        this.child(
+                            Button::new("disconnect-librefm")
+                                .label(t!("settings-librefm-disconnect"))
+                                .small()
+                                .ghost()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.scrobbling.update(cx, |scrobbling, cx| {
+                                        scrobbling.disconnect_librefm(cx)
+                                    });
+                                })),
+                        )
+                    })
+                    .when(!connected && awaiting, |this| {
+                        this.child(
+                            Button::new("confirm-librefm")
+                                .label(t!("settings-librefm-confirm"))
+                                .small()
+                                .outline()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.scrobbling.update(cx, |scrobbling, cx| {
+                                        scrobbling.confirm_librefm(cx)
+                                    });
+                                })),
+                        )
+                    }),
+            )
+            .when(!connected && !awaiting, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(self.librefm_api_key_input.clone())
+                        .child(self.librefm_api_secret_input.clone())
+                        .child(
+                            Button::new("connect-librefm")
+                                .label(t!("settings-librefm-connect"))
+                                .small()
+                                .outline()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let api_key =
+                                        this.librefm_api_key_input.read(cx).text().to_string();
+                                    let api_secret =
+                                        this.librefm_api_secret_input.read(cx).text().to_string();
+                                    if api_key.trim().is_empty() || api_secret.trim().is_empty() {
+                                        return;
+                                    }
+                                    this.scrobbling.update(cx, |scrobbling, cx| {
+                                        scrobbling.connect_librefm(api_key, api_secret, cx)
+                                    });
+                                })),
+                        )
+                        .child(
+                            Button::new("librefm-create-app")
+                                .label(t!("settings-librefm-api-create"))
+                                .small()
+                                .ghost()
+                                .on_click(|_, _, cx| cx.open_url(LIBREFM_CREATE_APP_URL)),
+                        ),
+                )
+            })
+    }
+
+    fn listenbrainz_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let connected = self.scrobbling.read(cx).listenbrainz_connected(cx);
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p(theme.metrics.pad)
+            .rounded(theme.radius)
+            .border_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(div().font_weight(FontWeight::MEDIUM).child("ListenBrainz"))
+                            .child(
+                                div()
+                                    .text_color(theme.muted_foreground)
+                                    .text_size(theme.text(Text::Small))
+                                    .child(match connected {
+                                        true => t!("settings-provider-connected"),
+                                        false => t!("settings-provider-none"),
+                                    }),
+                            ),
+                    )
+                    .when(connected, |this| {
+                        this.child(
+                            Button::new("disconnect-listenbrainz")
+                                .label(t!("settings-listenbrainz-disconnect"))
+                                .small()
+                                .ghost()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.scrobbling.update(cx, |scrobbling, cx| {
+                                        scrobbling.disconnect_listenbrainz(cx)
+                                    });
+                                })),
+                        )
+                    }),
+            )
+            .when(!connected, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(self.listenbrainz_input.clone())
+                        .child(
+                            Button::new("save-listenbrainz")
+                                .label(t!("settings-listenbrainz-save"))
+                                .small()
+                                .outline()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let token = this.listenbrainz_input.read(cx).text().to_string();
+                                    if token.trim().is_empty() {
+                                        return;
+                                    }
+                                    this.listenbrainz_input
+                                        .update(cx, |input, cx| input.set_text("", cx));
+                                    this.scrobbling.update(cx, |scrobbling, cx| {
+                                        scrobbling.set_listenbrainz_token(token, cx)
+                                    });
+                                })),
+                        ),
+                )
+            })
     }
 
     fn accounts_row(&self, cx: &mut Context<Self>) -> impl IntoElement {

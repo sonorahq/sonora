@@ -12,6 +12,7 @@ mod playback;
 mod profile;
 mod queue;
 mod remote;
+mod scrobble;
 mod search;
 mod session;
 mod settings;
@@ -34,6 +35,7 @@ pub use playback::{Origin, Playback, PlaybackState, Repeat, Whence};
 pub use profile::Profile;
 pub use queue::{Named, Queue, Resume, Stub};
 pub use remote::{Remote, attach as attach_remote};
+pub use scrobble::Scrobbling;
 pub use search::{AlbumHit, ArtistHit, Hit, Kind, PlaylistHit, Search};
 pub use session::{Failure, ProviderInfo, Session, SessionEvent, SessionState};
 pub use settings::{
@@ -90,6 +92,7 @@ pub struct Sonora {
     pub cover: Entity<Cover>,
     pub library: Entity<Library>,
     pub history: Entity<History>,
+    pub scrobbling: Entity<Scrobbling>,
     pub lyrics: Entity<Lyrics>,
     pub playback: Entity<Playback>,
     pub queue: Entity<Queue>,
@@ -133,6 +136,8 @@ pub fn init(
             cx,
         )
     });
+    let scrobbling =
+        cx.new(|cx| Scrobbling::new(settings.clone(), playback.clone(), io.clone(), cx));
     let lyrics = cx.new(|cx| {
         Lyrics::new(
             playback.clone(),
@@ -153,6 +158,7 @@ pub fn init(
         cover,
         library,
         history,
+        scrobbling,
         lyrics,
         playback,
         queue,

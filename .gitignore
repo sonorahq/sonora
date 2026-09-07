@@ -1,6 +1,8 @@
 /target
 /result
 /.claude
+/docs/superpowers
+/graphify-out
 /.direnv
 /vendor
 __pycache__/

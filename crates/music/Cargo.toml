@@ -24,6 +24,7 @@ librespot-protocol.workspace = true
 lofty.workspace = true
 kakasi.workspace = true
 log.workspace = true
+md5.workspace = true
 percent-encoding.workspace = true
 protobuf.workspace = true
 reqwest.workspace = true
