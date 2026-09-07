@@ -9,7 +9,7 @@ use ytmusic::YtMusic;
 use crate::youtube::{genres, subscriptions, wire};
 use crate::{
     Album, AlbumDetail, Artist, ArtistProfile, Genre, GenreDetail, HomeFeed, MediaKind, MusicApi,
-    Playlist, PlaylistDetail, SavedArtist, Track, UserProfile,
+    Playlist, PlaylistDetail, PlaylistEntry, SavedArtist, Track, UserProfile,
 };
 
 const PORTRAIT_LIMIT: usize = 24;
@@ -174,7 +174,7 @@ impl MusicApi for YouTubeClient {
         Ok(None)
     }
 
-    async fn playlists(&self, limit: u32) -> Result<Vec<Playlist>> {
+    async fn playlists(&self, limit: u32) -> Result<Vec<PlaylistEntry>> {
         let mut playlists: Vec<Playlist> = self
             .api
             .library_playlists()
@@ -190,7 +190,7 @@ impl MusicApi for YouTubeClient {
             })
             .collect();
         playlists.truncate(limit as usize);
-        Ok(playlists)
+        Ok(PlaylistEntry::flat(playlists))
     }
 
     async fn create_playlist(&self, name: &str) -> Result<String> {

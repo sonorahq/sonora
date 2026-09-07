@@ -25,6 +25,8 @@ const PAUSE: &str = "icons/pause.svg";
 const UNAVAILABLE: &str = "icons/play-off.svg";
 const HOVER_PRELOAD_DELAY: Duration = Duration::from_millis(200);
 const PERSON: &str = "icons/user.svg";
+const CLOSED: &str = "icons/chevron-right.svg";
+const OPENED: &str = "icons/chevron-down.svg";
 
 pub(crate) type Tap = Box<dyn Fn(&mut App)>;
 
@@ -294,6 +296,83 @@ fn line<F>(cell: &Cell<F>, color: Option<Hsla>) -> Div {
 pub(crate) fn dim<F>(cell: &Cell<F>, value: impl Into<SharedString>, muted: Hsla) -> AnyElement {
     line(cell, Some(muted))
         .child(value.into())
+        .into_any_element()
+}
+
+pub(crate) fn indent(theme: &Theme, depth: usize) -> Pixels {
+    theme.metrics.thumb * 0.5 * depth as f32
+}
+
+pub(crate) fn nested<F>(
+    cell: &Cell<F>,
+    depth: usize,
+    value: impl Into<SharedString>,
+    color: Hsla,
+    cx: &App,
+) -> AnyElement {
+    if depth == 0 {
+        return dim(cell, value, color);
+    }
+
+    line(cell, Some(color))
+        .flex()
+        .child(div().flex_none().w(indent(cx.theme(), depth)))
+        .child(div().min_w_0().truncate().child(value.into()))
+        .into_any_element()
+}
+
+pub(crate) fn disclosure<F>(cell: &Cell<F>, open: bool, press: Tap, cx: &App) -> AnyElement {
+    let theme = *cx.theme();
+    let icon = match open {
+        true => OPENED,
+        false => CLOSED,
+    };
+
+    cell.middle()
+        .justify_center()
+        .child(
+            div()
+                .id(("disclosure", cell.row))
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(theme.metrics.control_small)
+                .rounded(theme.radius)
+                .cursor_pointer()
+                .text_color(theme.muted_foreground)
+                .hover(move |style| style.text_color(theme.foreground).bg(theme.secondary_hover))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    cx.stop_propagation();
+                    press(cx);
+                })
+                .child(
+                    svg()
+                        .path(icons::path(icon))
+                        .size(glyph(&theme))
+                        .flex_none(),
+                ),
+        )
+        .into_any_element()
+}
+
+pub(crate) fn symbol<F>(cell: &Cell<F>, icon: &'static str, color: Hsla, cx: &App) -> AnyElement {
+    let thumb = cx.theme().metrics.thumb;
+
+    cell.middle()
+        .child(
+            div()
+                .size(thumb)
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    svg()
+                        .path(icons::path(icon))
+                        .size(thumb * 0.6)
+                        .text_color(color),
+                ),
+        )
         .into_any_element()
 }
 

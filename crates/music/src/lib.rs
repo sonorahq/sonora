@@ -25,8 +25,9 @@ use async_trait::async_trait;
 pub use models::{
     Album, AlbumDetail, Artist, ArtistProfile, ArtistRef, Contributor, Credit, Genre, GenreDetail,
     GenreItem, GenreSection, HomeFeed, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery,
-    LyricsWord, Playlist, PlaylistDetail, ReleaseType, RomanizedText, SavedArtist, Track, TrackKey,
-    TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
+    LyricsWord, Playlist, PlaylistDetail, PlaylistEntry, PlaylistFolder, ReleaseType,
+    RomanizedText, SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice,
+    WritingSystem,
 };
 pub use spectrum::Spectrum;
 
@@ -101,7 +102,7 @@ pub trait MusicApi: Send + Sync {
     async fn track_lyrics(&self, _track_id: &str) -> Result<Option<Lyrics>> {
         Ok(None)
     }
-    async fn playlists(&self, limit: u32) -> Result<Vec<Playlist>>;
+    async fn playlists(&self, limit: u32) -> Result<Vec<PlaylistEntry>>;
     async fn create_playlist(&self, name: &str) -> Result<String>;
     async fn rename_playlist(&self, playlist_id: &str, name: &str) -> Result<()>;
     async fn delete_playlist(&self, playlist_id: &str) -> Result<()>;
