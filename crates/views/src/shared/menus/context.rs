@@ -415,6 +415,16 @@ impl ItemMenu {
                 .on_click(move |_, window, cx| TagEditor::open(track.clone(), window, cx))
         });
 
+        let delete_files = imported.then(|| {
+            let ids = ids.clone();
+            MenuItem::new(
+                "delete-track-files",
+                counted("menu-delete-track-file", "menu-delete-track-files", count),
+            )
+            .icon("icons/trash-2.svg")
+            .on_click(move |_, _, cx| Confirm::delete_track_files(ids.clone(), cx))
+        });
+
         let add_to_playlist = (!barren).then(|| {
             MenuItem::new(
                 "add-to-playlist",

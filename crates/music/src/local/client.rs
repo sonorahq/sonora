@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use storage::Database;
 
@@ -447,5 +447,15 @@ impl MusicApi for LocalClient {
             })
             .cloned()
             .collect())
+    }
+
+    async fn delete_track_file(&self, track_id: &str) -> Result<()> {
+        let path = wire::path_from_track_id(track_id)
+            .ok_or_else(|| anyhow!("{track_id} is not a local track id"))?;
+
+        std::fs::remove_file(path).with_context(|| format!("cannot delete {}", path.display()))?;
+
+        self.store.set_starred(Starred::Tracks, track_id, false)?;
+        Ok(())
     }
 }
