@@ -27,6 +27,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const LICENSE_URL: &str = "https://www.gnu.org/licenses/gpl-3.0.html";
 const SOURCE_URL: &str = "https://github.com/nolight132/sonora";
 const LASTFM_CREATE_APP_URL: &str = "https://www.last.fm/api/account/create";
+const LIBREFM_CREATE_APP_URL: &str = "https://libre.fm/api-keys.php";
 
 const THEMES: &str = "themes";
 const PACKS: &str = "packs";
@@ -133,6 +134,8 @@ pub struct SettingsView {
     secret: Entity<Input>,
     lastfm_api_key_input: Entity<Input>,
     lastfm_api_secret_input: Entity<Input>,
+    librefm_api_key_input: Entity<Input>,
+    librefm_api_secret_input: Entity<Input>,
     listenbrainz_input: Entity<Input>,
     languages: SearchPopup,
     typefaces: SearchPopup,
@@ -175,6 +178,16 @@ impl SettingsView {
             input.set_text(scrobbling.read(cx).lastfm_api_secret(cx), cx);
             input
         });
+        let librefm_api_key_input = cx.new(|cx| {
+            let mut input = Input::new("settings-librefm-api-key-hint", cx);
+            input.set_text(scrobbling.read(cx).librefm_api_key(cx), cx);
+            input
+        });
+        let librefm_api_secret_input = cx.new(|cx| {
+            let mut input = Input::new("settings-librefm-api-secret-hint", cx);
+            input.set_text(scrobbling.read(cx).librefm_api_secret(cx), cx);
+            input
+        });
         Self {
             session,
             playback,
@@ -187,6 +200,8 @@ impl SettingsView {
             secret: cx.new(|cx| Input::new("login-cookie-hint", cx)),
             lastfm_api_key_input,
             lastfm_api_secret_input,
+            librefm_api_key_input,
+            librefm_api_secret_input,
             listenbrainz_input: cx.new(|cx| Input::new("settings-listenbrainz-token-hint", cx)),
             languages,
             typefaces,
@@ -1415,6 +1430,7 @@ impl SettingsView {
                     ),
             )
             .child(self.lastfm_card(cx).into_any_element())
+            .child(self.librefm_card(cx).into_any_element())
             .child(self.listenbrainz_card(cx).into_any_element())
     }
 
@@ -1514,6 +1530,108 @@ impl SettingsView {
                                 .small()
                                 .ghost()
                                 .on_click(|_, _, cx| cx.open_url(LASTFM_CREATE_APP_URL)),
+                        ),
+                )
+            })
+    }
+
+    fn librefm_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let username = self.scrobbling.read(cx).librefm_username(cx);
+        let awaiting = self.scrobbling.read(cx).librefm_awaiting_confirmation();
+        let connected = username.is_some();
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p(theme.metrics.pad)
+            .rounded(theme.radius)
+            .border_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(div().font_weight(FontWeight::MEDIUM).child("Libre.fm"))
+                            .child(
+                                div()
+                                    .text_color(theme.muted_foreground)
+                                    .text_size(theme.text(Text::Small))
+                                    .child(
+                                        username
+                                            .clone()
+                                            .unwrap_or_else(|| t!("settings-provider-none")),
+                                    ),
+                            ),
+                    )
+                    .when(connected, |this| {
+                        this.child(
+                            Button::new("disconnect-librefm")
+                                .label(t!("settings-librefm-disconnect"))
+                                .small()
+                                .ghost()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.scrobbling.update(cx, |scrobbling, cx| {
+                                        scrobbling.disconnect_librefm(cx)
+                                    });
+                                })),
+                        )
+                    })
+                    .when(!connected && awaiting, |this| {
+                        this.child(
+                            Button::new("confirm-librefm")
+                                .label(t!("settings-librefm-confirm"))
+                                .small()
+                                .outline()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.scrobbling.update(cx, |scrobbling, cx| {
+                                        scrobbling.confirm_librefm(cx)
+                                    });
+                                })),
+                        )
+                    }),
+            )
+            .when(!connected && !awaiting, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(self.librefm_api_key_input.clone())
+                        .child(self.librefm_api_secret_input.clone())
+                        .child(
+                            Button::new("connect-librefm")
+                                .label(t!("settings-librefm-connect"))
+                                .small()
+                                .outline()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let api_key =
+                                        this.librefm_api_key_input.read(cx).text().to_string();
+                                    let api_secret =
+                                        this.librefm_api_secret_input.read(cx).text().to_string();
+                                    if api_key.trim().is_empty() || api_secret.trim().is_empty() {
+                                        return;
+                                    }
+                                    this.scrobbling.update(cx, |scrobbling, cx| {
+                                        scrobbling.connect_librefm(api_key, api_secret, cx)
+                                    });
+                                })),
+                        )
+                        .child(
+                            Button::new("librefm-create-app")
+                                .label(t!("settings-librefm-api-create"))
+                                .small()
+                                .ghost()
+                                .on_click(|_, _, cx| cx.open_url(LIBREFM_CREATE_APP_URL)),
                         ),
                 )
             })

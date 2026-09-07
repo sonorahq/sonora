@@ -206,6 +206,14 @@ struct Values {
     #[serde(default)]
     lastfm_username: String,
     #[serde(default)]
+    librefm_api_key: String,
+    #[serde(default)]
+    librefm_api_secret: String,
+    #[serde(default)]
+    librefm_session_key: String,
+    #[serde(default)]
+    librefm_username: String,
+    #[serde(default)]
     listenbrainz_token: String,
     appearance: Appearance,
 }
@@ -258,6 +266,10 @@ impl Default for Values {
             lastfm_api_secret: String::new(),
             lastfm_session_key: String::new(),
             lastfm_username: String::new(),
+            librefm_api_key: String::new(),
+            librefm_api_secret: String::new(),
+            librefm_session_key: String::new(),
+            librefm_username: String::new(),
             listenbrainz_token: String::new(),
             appearance: Appearance::default(),
         }
@@ -743,6 +755,22 @@ impl AppSettings {
         &self.values.lastfm_username
     }
 
+    pub fn librefm_api_key(&self) -> &str {
+        &self.values.librefm_api_key
+    }
+
+    pub fn librefm_api_secret(&self) -> &str {
+        &self.values.librefm_api_secret
+    }
+
+    pub fn librefm_session_key(&self) -> &str {
+        &self.values.librefm_session_key
+    }
+
+    pub fn librefm_username(&self) -> &str {
+        &self.values.librefm_username
+    }
+
     pub fn listenbrainz_token(&self) -> &str {
         &self.values.listenbrainz_token
     }
@@ -1062,6 +1090,42 @@ impl AppSettings {
             return;
         }
         self.values.lastfm_username = username;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_librefm_api_key(&mut self, key: impl Into<String>, cx: &mut Context<Self>) {
+        let key = key.into();
+        if self.values.librefm_api_key == key {
+            return;
+        }
+        self.values.librefm_api_key = key;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_librefm_api_secret(&mut self, secret: impl Into<String>, cx: &mut Context<Self>) {
+        let secret = secret.into();
+        if self.values.librefm_api_secret == secret {
+            return;
+        }
+        self.values.librefm_api_secret = secret;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_librefm_session_key(&mut self, key: impl Into<String>, cx: &mut Context<Self>) {
+        let key = key.into();
+        if self.values.librefm_session_key == key {
+            return;
+        }
+        self.values.librefm_session_key = key;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_librefm_username(&mut self, username: impl Into<String>, cx: &mut Context<Self>) {
+        let username = username.into();
+        if self.values.librefm_username == username {
+            return;
+        }
+        self.values.librefm_username = username;
         self.schedule_save(cx);
     }
 

@@ -9,7 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Scrobble plays to Last.fm and ListenBrainz, connected independently in Settings.
+- Scrobble plays to Last.fm, Libre.fm and ListenBrainz, connected independently in Settings.
 
 ## [0.31.0] - 2026-09-05
 

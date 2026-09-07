@@ -7,19 +7,41 @@ use serde::Deserialize;
 
 use crate::{Scrobbler, Track};
 
-const ENDPOINT: &str = "https://ws.audioscrobbler.com/2.0/";
+/// One AudioScrobbler 2.0-protocol endpoint: Last.fm and Libre.fm both speak
+/// this API, differing only in host.
+pub struct Service {
+    pub api_endpoint: &'static str,
+    pub auth_url: &'static str,
+}
 
-pub struct LastfmClient {
+pub const LASTFM: Service = Service {
+    api_endpoint: "https://ws.audioscrobbler.com/2.0/",
+    auth_url: "https://www.last.fm/api/auth/",
+};
+
+pub const LIBREFM: Service = Service {
+    api_endpoint: "https://libre.fm/2.0/",
+    auth_url: "https://libre.fm/api/auth/",
+};
+
+pub struct AudioScrobblerClient {
     http: reqwest::Client,
+    endpoint: &'static str,
     api_key: String,
     api_secret: String,
     session_key: String,
 }
 
-impl LastfmClient {
-    pub fn new(api_key: String, api_secret: String, session_key: String) -> Self {
+impl AudioScrobblerClient {
+    pub fn new(
+        service: &Service,
+        api_key: String,
+        api_secret: String,
+        session_key: String,
+    ) -> Self {
         Self {
             http: reqwest::Client::new(),
+            endpoint: service.api_endpoint,
             api_key,
             api_secret,
             session_key,
@@ -46,6 +68,7 @@ fn sign(params: &BTreeMap<&'static str, String>, api_secret: &str) -> String {
 }
 
 async fn signed_get<T: for<'de> Deserialize<'de>>(
+    endpoint: &str,
     params: BTreeMap<&'static str, String>,
     api_secret: &str,
 ) -> Result<T> {
@@ -55,18 +78,19 @@ async fn signed_get<T: for<'de> Deserialize<'de>>(
     query.push(("format", "json".to_owned()));
 
     reqwest::Client::new()
-        .get(ENDPOINT)
+        .get(endpoint)
         .query(&query)
         .send()
         .await
-        .context("cannot reach last.fm")?
+        .context("cannot reach the scrobbling service")?
         .json()
         .await
-        .context("cannot read the last.fm response")
+        .context("cannot read the scrobbling service response")
 }
 
 async fn signed_post(
     http: &reqwest::Client,
+    endpoint: &str,
     params: BTreeMap<&'static str, String>,
     api_secret: &str,
 ) -> Result<()> {
@@ -76,18 +100,21 @@ async fn signed_post(
     form.push(("format", "json".to_owned()));
 
     let response = http
-        .post(ENDPOINT)
+        .post(endpoint)
         .form(&form)
         .send()
         .await
-        .context("cannot reach last.fm")?;
+        .context("cannot reach the scrobbling service")?;
     if !response.status().is_success() {
-        anyhow::bail!("last.fm answered with status {}", response.status());
+        anyhow::bail!(
+            "the scrobbling service answered with status {}",
+            response.status()
+        );
     }
     Ok(())
 }
 
-pub async fn request_token(api_key: &str, api_secret: &str) -> Result<String> {
+pub async fn request_token(service: &Service, api_key: &str, api_secret: &str) -> Result<String> {
     #[derive(Deserialize)]
     struct Response {
         token: String,
@@ -95,15 +122,16 @@ pub async fn request_token(api_key: &str, api_secret: &str) -> Result<String> {
     let mut params = BTreeMap::new();
     params.insert("method", "auth.getToken".to_owned());
     params.insert("api_key", api_key.to_owned());
-    let response: Response = signed_get(params, api_secret).await?;
+    let response: Response = signed_get(service.api_endpoint, params, api_secret).await?;
     Ok(response.token)
 }
 
-pub fn auth_url(api_key: &str, token: &str) -> String {
-    format!("https://www.last.fm/api/auth/?api_key={api_key}&token={token}")
+pub fn auth_url(service: &Service, api_key: &str, token: &str) -> String {
+    format!("{}?api_key={api_key}&token={token}", service.auth_url)
 }
 
 pub async fn exchange_session(
+    service: &Service,
     api_key: &str,
     api_secret: &str,
     token: &str,
@@ -121,12 +149,12 @@ pub async fn exchange_session(
     params.insert("method", "auth.getSession".to_owned());
     params.insert("api_key", api_key.to_owned());
     params.insert("token", token.to_owned());
-    let response: Response = signed_get(params, api_secret).await?;
+    let response: Response = signed_get(service.api_endpoint, params, api_secret).await?;
     Ok((response.session.key, response.session.name))
 }
 
 #[async_trait]
-impl Scrobbler for LastfmClient {
+impl Scrobbler for AudioScrobblerClient {
     async fn now_playing(&self, track: &Track) -> Result<()> {
         let mut params = BTreeMap::new();
         params.insert("method", "track.updateNowPlaying".to_owned());
@@ -135,7 +163,7 @@ impl Scrobbler for LastfmClient {
         params.insert("artist", artist_of(track));
         params.insert("track", track.name.clone());
         params.insert("album", track.album.clone());
-        signed_post(&self.http, params, &self.api_secret).await
+        signed_post(&self.http, self.endpoint, params, &self.api_secret).await
     }
 
     async fn scrobble(&self, track: &Track, started_at: SystemTime) -> Result<()> {
@@ -153,6 +181,6 @@ impl Scrobbler for LastfmClient {
         params.insert("track", track.name.clone());
         params.insert("album", track.album.clone());
         params.insert("timestamp", timestamp);
-        signed_post(&self.http, params, &self.api_secret).await
+        signed_post(&self.http, self.endpoint, params, &self.api_secret).await
     }
 }

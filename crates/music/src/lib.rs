@@ -1,8 +1,8 @@
 mod audio;
+pub mod audioscrobbler;
 pub mod binimum;
 pub mod credentials;
 pub mod kugou;
-pub mod lastfm;
 pub mod listenbrainz;
 #[cfg(test)]
 mod live_tests;
