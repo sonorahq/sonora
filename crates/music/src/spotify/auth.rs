@@ -98,7 +98,12 @@ fn socket_address(uri: &str) -> Option<String> {
     }
 }
 
-pub async fn restore(config: &AuthConfig) -> Result<Option<Session>> {
+pub struct Connected {
+    pub session: Session,
+    pub premium: bool,
+}
+
+pub async fn restore(config: &AuthConfig) -> Result<Option<Connected>> {
     let session = session(config)?;
     let Some(credentials) = session.cache().and_then(|cache| cache.credentials()) else {
         return Ok(None);
@@ -106,11 +111,11 @@ pub async fn restore(config: &AuthConfig) -> Result<Option<Session>> {
 
     session.connect(credentials, true).await.map_err(denied)?;
     credentials::secure(&config.file());
-    premium(&session).await?;
-    Ok(Some(session))
+    let premium = is_premium(&session).await;
+    Ok(Some(Connected { session, premium }))
 }
 
-pub async fn login(config: &AuthConfig, prompt: PromptSink) -> Result<Session> {
+pub async fn login(config: &AuthConfig, prompt: PromptSink) -> Result<Connected> {
     let client_id = config.client_id.clone();
     let redirect_uri = config.redirect_uri.clone();
 
@@ -123,8 +128,8 @@ pub async fn login(config: &AuthConfig, prompt: PromptSink) -> Result<Session> {
         .await
         .map_err(denied)?;
     credentials::secure(&config.file());
-    premium(&session).await?;
-    Ok(session)
+    let premium = is_premium(&session).await;
+    Ok(Connected { session, premium })
 }
 
 fn authorize(client_id: &str, redirect_uri: &str, prompt: PromptSink) -> Result<String> {
@@ -188,20 +193,15 @@ fn authorize(client_id: &str, redirect_uri: &str, prompt: PromptSink) -> Result<
     Ok(response.access_token().secret().to_owned())
 }
 
-async fn premium(session: &Session) -> Result<()> {
+async fn is_premium(session: &Session) -> bool {
     let deadline = tokio::time::Instant::now() + PRODUCT_WAIT;
     loop {
         if let Some(account) = session.user_data().attributes.get("type") {
-            match account.as_str() {
-                "premium" => return Ok(()),
-                _ => {
-                    session.shutdown();
-                    return Err(anyhow::Error::new(SignInFailure(SignInProblem::Premium)));
-                }
-            }
+            return account.as_str() == "premium";
         }
         if tokio::time::Instant::now() >= deadline {
-            return Ok(());
+            log::warn!("auth: account type did not arrive in time; assuming Premium");
+            return true;
         }
         tokio::time::sleep(PRODUCT_POLL).await;
     }

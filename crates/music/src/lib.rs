@@ -1,6 +1,7 @@
 mod audio;
 pub mod binimum;
 pub mod credentials;
+mod hybrid;
 pub mod kugou;
 #[cfg(test)]
 mod live_tests;
@@ -257,7 +258,6 @@ pub enum SignIn {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignInProblem {
-    Premium,
     Region,
     Credentials,
     Network,
@@ -271,7 +271,6 @@ pub struct SignInFailure(pub SignInProblem);
 impl std::fmt::Display for SignInFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let reason = match self.0 {
-            SignInProblem::Premium => "the account has no Spotify Premium",
             SignInProblem::Region => "the account is out of its home region",
             SignInProblem::Credentials => "the stored credentials are no longer valid",
             SignInProblem::Network => "Spotify could not be reached",

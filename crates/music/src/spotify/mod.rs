@@ -21,41 +21,44 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
+use crate::hybrid::HybridFactory;
 use crate::spotify::playback::Factory;
-use crate::{MusicApi as _, MusicProvider, ProviderSession, SignInFailure, SignInProblem};
+use crate::{MusicApi, MusicProvider, PlaybackFactory, ProviderSession};
 
 pub use auth::AuthConfig;
 pub use client::LibrespotClient;
 
 pub struct SpotifyProvider {
     config: AuthConfig,
+    youtube: Arc<ytmusic::YtMusic>,
 }
 
 impl SpotifyProvider {
-    pub fn new(config: AuthConfig) -> Self {
-        Self { config }
+    pub fn new(config: AuthConfig, youtube: Arc<ytmusic::YtMusic>) -> Self {
+        Self { config, youtube }
     }
 
-    pub fn from_env() -> Self {
-        Self::new(AuthConfig::from_env())
+    pub fn from_env(youtube: Arc<ytmusic::YtMusic>) -> Self {
+        Self::new(AuthConfig::from_env(), youtube)
     }
 
-    fn drop_free(&self, error: anyhow::Error) -> anyhow::Error {
-        if matches!(
-            error.downcast_ref::<SignInFailure>(),
-            Some(SignInFailure(SignInProblem::Premium))
-        ) {
-            auth::forget(&self.config);
-        }
-        error
-    }
-
-    async fn session(&self, client: LibrespotClient) -> Result<ProviderSession> {
+    async fn session(&self, client: LibrespotClient, premium: bool) -> Result<ProviderSession> {
         let profile = client.profile().await?;
-        let playback = Arc::new(Factory::new(client.session().clone()));
+        let session = client.session().clone();
+        let api: Arc<dyn MusicApi> = Arc::new(client);
+
+        let playback: Arc<dyn PlaybackFactory> = if premium {
+            Arc::new(Factory::new(session))
+        } else {
+            log::info!(
+                "spotify: this account has no Premium; playing its tracks through YouTube Music"
+            );
+            Arc::new(HybridFactory::new(api.clone(), self.youtube.clone()))
+        };
+
         Ok(ProviderSession {
             profile,
-            api: Arc::new(client),
+            api,
             playback,
             authenticated: true,
             playcounts: true,
@@ -86,13 +89,12 @@ impl MusicProvider for SpotifyProvider {
     }
 
     async fn restore(&self) -> Result<Option<ProviderSession>> {
-        let Some(session) = auth::restore(&self.config)
-            .await
-            .map_err(|error| self.drop_free(error))?
-        else {
+        let Some(auth::Connected { session, premium }) = auth::restore(&self.config).await? else {
             return Ok(None);
         };
-        self.session(LibrespotClient::new(session)).await.map(Some)
+        self.session(LibrespotClient::new(session), premium)
+            .await
+            .map(Some)
     }
 
     async fn sign_in(
@@ -101,10 +103,8 @@ impl MusicProvider for SpotifyProvider {
         prompt: crate::PromptSink,
         _input: crate::InputSource,
     ) -> Result<ProviderSession> {
-        let session = auth::login(&self.config, prompt)
-            .await
-            .map_err(|error| self.drop_free(error))?;
-        self.session(LibrespotClient::new(session)).await
+        let auth::Connected { session, premium } = auth::login(&self.config, prompt).await?;
+        self.session(LibrespotClient::new(session), premium).await
     }
 
     fn sign_out(&self) {

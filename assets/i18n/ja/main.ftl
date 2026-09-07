@@ -211,7 +211,6 @@ login-problem-credentials = 保存された Spotify のセッションは無効�
 login-problem-network = Spotify に接続できませんでした。インターネット接続を確認してもう一度お試しください。
 login-problem-cancelled = サインインを承認する前にブラウザのページが閉じられました。最初からやり直してください。
 login-problem-refused = Spotify がサインインを拒否しました。しばらく待ってからもう一度お試しください。
-login-problem-premium = Sonora は Spotify Premium でストリーミングしますが、このアカウントは Premium プランに加入していません。続けるには Premium アカウントでサインインしてください。
 login-sign-in = { $provider } でサインイン
 login-connect-cookies = Cookie を手動で貼り付け
 login-use = { $provider } を使う

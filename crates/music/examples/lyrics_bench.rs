@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(2000);
 
-    let session = auth::restore(&AuthConfig::from_env())
+    let auth::Connected { session, .. } = auth::restore(&AuthConfig::from_env())
         .await
         .context("cannot restore the cached session")?
         .context("no cached credentials; sign in with sonora first")?;

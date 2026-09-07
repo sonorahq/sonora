@@ -188,7 +188,6 @@ login-problem-credentials = Збережена сесія Spotify більше �
 login-problem-network = Sonora не змогла зв'язатися зі Spotify. Перевірте інтернет-з'єднання та спробуйте ще раз.
 login-problem-cancelled = Ви закрили сторінку браузера, не підтвердивши вхід. Почніть знову.
 login-problem-refused = Spotify відхилив вхід. Зачекайте трохи і спробуйте ще раз.
-login-problem-premium = Sonora відтворює музику через Spotify Premium, а цей акаунт його не має. Увійдіть в акаунт з Premium, щоб продовжити.
 login-sign-in = Увійти через { $provider }
 login-connect-cookies = Вставити cookie вручну
 login-use = Відкрити { $provider }

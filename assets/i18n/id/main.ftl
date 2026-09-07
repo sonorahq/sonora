@@ -256,7 +256,6 @@ login-problem-credentials = Sesi Spotify tersimpan Anda sudah tidak berlaku. Mas
 login-problem-network = Sonora tidak dapat menghubungi Spotify. Periksa koneksi internet Anda dan coba lagi.
 login-problem-cancelled = Anda menutup halaman browser sebelum menyetujui login. Mulai lagi untuk menyelesaikan.
 login-problem-refused = Spotify menolak permintaan login. Tunggu sebentar dan coba lagi.
-login-problem-premium = Sonora memerlukan Spotify Premium untuk streaming. Akun ini tidak memiliki Premium. Masuk dengan akun Premium untuk melanjutkan.
 login-sign-in = Masuk dengan { $provider }
 login-connect-cookies = Tempel cookie manual
 login-use = Gunakan { $provider }

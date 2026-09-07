@@ -611,7 +611,7 @@ fn announce(
     events.send(event).ok();
 }
 
-fn refusal(id: String, error: &anyhow::Error) -> PlaybackEvent {
+pub(crate) fn refusal(id: String, error: &anyhow::Error) -> PlaybackEvent {
     match error.downcast_ref::<ytmusic::SignInRequired>().is_some() {
         true => PlaybackEvent::Gated,
         false => PlaybackEvent::Unavailable { id: Some(id) },

@@ -13,7 +13,7 @@ const LIBRARY_LIMIT: u32 = 10_000;
 #[tokio::test]
 #[ignore = "creates, changes, and deletes a playlist on the connected Spotify account"]
 async fn spotify_can_make_a_playlist_public_and_private() -> Result<()> {
-    let provider = SpotifyProvider::from_env();
+    let provider = SpotifyProvider::from_env(ytmusic::YtMusic::anonymous().into());
     let session = connected(&provider).await?;
 
     exercise_playlist_privacy(session.api.as_ref()).await

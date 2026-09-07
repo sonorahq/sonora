@@ -14,7 +14,7 @@ const VERIFY_ATTEMPTS: usize = 30;
 #[tokio::test]
 #[ignore = "changes the followed artists of the connected Spotify account"]
 async fn spotify_can_follow_and_unfollow_an_artist_for_the_connected_account() -> Result<()> {
-    let provider = SpotifyProvider::from_env();
+    let provider = SpotifyProvider::from_env(ytmusic::YtMusic::anonymous().into());
     let session = connected(&provider).await?;
 
     exercise_artist_cycles(session.api.as_ref(), SPOTIFY_ARTISTS).await

@@ -9,6 +9,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A Spotify account without Premium signs in and plays its music anyway: the login is accepted and
+  each track is matched and streamed from YouTube Music instead of Spotify's own audio. The bridge
+  reuses a YouTube Music account already saved on this device, falling back to an anonymous guest
+  when none is stored.
 - On macOS, Sonora follows the platform's shortcuts: `⌘W` closes the window, `⌘M` minimises it,
   `⌃⌘F` toggles native full screen, `⌘H` and `⌥⌘H` hide Sonora or everything else, and `⌘[` / `⌘]`
   step through history. Text fields take the Cocoa conventions too: `⌥` arrows and `⌥⌫` work by

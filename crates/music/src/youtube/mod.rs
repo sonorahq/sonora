@@ -2,7 +2,7 @@ mod accounts;
 mod auth;
 mod client;
 mod genres;
-mod playback;
+pub(crate) mod playback;
 mod subscriptions;
 mod trim;
 mod wire;
@@ -81,6 +81,16 @@ impl YouTubeProvider {
 
     fn guest_client(&self) -> Arc<YtMusic> {
         Arc::new(YtMusic::anonymous().cache_player(self.player.clone()))
+    }
+
+    pub fn playback_client(&self) -> Arc<YtMusic> {
+        match self.saved() {
+            Some(Saved::Cookies { cookies, authuser }) => {
+                log::info!("youtube: reusing the signed-in account for hybrid playback");
+                self.cookie_client(&cookies, authuser)
+            }
+            _ => self.guest_client(),
+        }
     }
 
     fn authenticated_session(&self, api: Arc<YtMusic>, profile: UserProfile) -> ProviderSession {

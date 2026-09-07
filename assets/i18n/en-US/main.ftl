@@ -256,7 +256,6 @@ login-problem-credentials = Your saved Spotify session is no longer valid. Sign 
 login-problem-network = Sonora could not reach Spotify. Check your internet connection and try again.
 login-problem-cancelled = You closed the browser page before approving the sign-in. Start again to finish.
 login-problem-refused = Spotify turned down the sign-in. Wait a moment and try again.
-login-problem-premium = Sonora streams through Spotify Premium, and this account does not have it. Sign in with a Premium account to continue.
 login-sign-in = Sign in with { $provider }
 login-connect-cookies = Paste cookies manually
 login-use = Use { $provider }
