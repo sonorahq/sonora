@@ -64,7 +64,9 @@ The first build compiles GPUI from source, so expect several minutes.
 
 Debug builds claim `sonora-dev.sock`, so `cargo run` starts beside an installed Sonora instead of
 handing over to it. Logs go to `$XDG_STATE_HOME/sonora/sonora.log`; widen them with
-`SONORA_LOG=sonora=debug,music=debug`. Settings live in `$XDG_CONFIG_HOME/sonora/settings.json`.
+`SONORA_LOG=sonora=debug,music=debug`. Durable settings live in
+`$XDG_CONFIG_HOME/sonora/settings.json`; runtime state lives in
+`$XDG_DATA_HOME/sonora/state.sqlite`.
 
 ## Checks
 

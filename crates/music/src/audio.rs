@@ -11,6 +11,7 @@ use rodio::{DeviceSinkBuilder, MixerDeviceSink, Source};
 use crate::spectrum::{Spectrum, Tap};
 
 pub const RAMP: Duration = Duration::from_millis(25);
+const BUFFER: Duration = Duration::from_millis(50);
 
 #[derive(Clone)]
 pub struct Volume(Arc<AtomicU32>);
@@ -58,15 +59,20 @@ impl Output {
         );
 
         let format = default.sample_format();
+        let frames = (BUFFER.as_secs_f64() * default.sample_rate() as f64).round() as u32;
         let failed = Arc::new(AtomicBool::new(false));
         let stream_failed = failed.clone();
         let builder = DeviceSinkBuilder::default()
             .with_device(device)
             .with_config(&default.config())
+            .with_buffer_size(cpal::BufferSize::Fixed(frames))
             .with_sample_format(format)
-            .with_error_callback(move |error| {
-                log::warn!("sink: audio output failed: {error}");
-                stream_failed.store(true, Ordering::Release);
+            .with_error_callback(move |error| match error {
+                cpal::StreamError::BufferUnderrun => log::debug!("sink: buffer underrun"),
+                error => {
+                    log::warn!("sink: audio output failed: {error}");
+                    stream_failed.store(true, Ordering::Release);
+                }
             });
         let mut stream = builder
             .open_stream()

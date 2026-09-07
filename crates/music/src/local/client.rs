@@ -4,6 +4,7 @@ use std::sync::RwLock;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use storage::Database;
 
 use crate::{
     Album, AlbumDetail, Artist, ArtistProfile, MediaKind, MusicApi, Playlist, PlaylistDetail,
@@ -23,10 +24,10 @@ pub struct LocalClient {
 }
 
 impl LocalClient {
-    pub fn new(scanned: Scanned, state_dir: &Path) -> Self {
+    pub fn new(scanned: Scanned, database: Database) -> Self {
         Self {
             scanned: RwLock::new(scanned),
-            store: Store::new(state_dir),
+            store: Store::new(database),
         }
     }
 

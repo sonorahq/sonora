@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, Result, anyhow};
 
-use crate::{SignInFailure, SignInProblem};
+use crate::{SignInFailure, SignInProblem, credentials};
 use librespot_core::authentication::Credentials;
 use librespot_core::cache::Cache;
 use librespot_core::{Session, SessionConfig};
@@ -39,7 +39,7 @@ impl Default for AuthConfig {
         Self {
             client_id: DEFAULT_CLIENT_ID.to_owned(),
             redirect_uri: DEFAULT_REDIRECT_URI.to_owned(),
-            cache_dir: default_cache_dir(),
+            cache_dir: credentials::dir("spotify"),
         }
     }
 }
@@ -52,12 +52,18 @@ impl AuthConfig {
         }
         config
     }
+
+    /// The stored credential librespot writes after a successful connect.
+    pub fn file(&self) -> PathBuf {
+        self.cache_dir.join(credentials::FILE)
+    }
 }
 
-pub(crate) fn default_cache_dir() -> PathBuf {
-    dirs::cache_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("sonora")
+/// Moves the credential file releases before 0.31 kept at the cache root into the
+/// Spotify folder. Part of the startup migration pass.
+pub(crate) fn migrate() {
+    let legacy = credentials::root().join(credentials::FILE);
+    credentials::adopt(&legacy, &AuthConfig::default().file());
 }
 
 pub fn release(config: &AuthConfig) {
@@ -94,6 +100,7 @@ pub async fn restore(config: &AuthConfig) -> Result<Option<Session>> {
     };
 
     session.connect(credentials, true).await.map_err(denied)?;
+    credentials::secure(&config.file());
     premium(&session).await?;
     Ok(Some(session))
 }
@@ -116,6 +123,7 @@ pub async fn login(config: &AuthConfig) -> Result<Session> {
         .connect(Credentials::with_access_token(token.access_token), true)
         .await
         .map_err(denied)?;
+    credentials::secure(&config.file());
     premium(&session).await?;
     Ok(session)
 }
@@ -179,7 +187,7 @@ fn callback_error(message: &str) -> Option<&str> {
 }
 
 pub fn forget(config: &AuthConfig) {
-    let _ = std::fs::remove_file(config.cache_dir.join("credentials.json"));
+    credentials::remove(&config.file());
 }
 
 fn session(config: &AuthConfig) -> Result<Session> {

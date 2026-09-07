@@ -2,10 +2,11 @@ mod columns;
 mod sieve;
 mod sort;
 
+use i18n::t;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
-use ui::ActiveTheme as _;
+use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis, RangeAxis, Unit};
 
 use crate::shared::menus::{ItemMenu, TrackColumns};
 use gpui::prelude::FluentBuilder as _;
@@ -192,14 +193,6 @@ impl TrackSource {
         let changed = !std::ptr::eq(self.columns.as_ptr(), columns.as_ptr());
         self.columns = columns;
         changed
-    }
-
-    pub(crate) fn sieve(&self) -> TrackSieve {
-        self.sieve
-    }
-
-    pub(crate) fn set_sieve(&mut self, sieve: TrackSieve) {
-        self.sieve = sieve;
     }
 
     pub(crate) fn extent(&self, query: &str, cx: &App) -> Option<(f32, f32)> {
@@ -445,6 +438,59 @@ impl TableSource for TrackSource {
             }
             hits(&track, query)
         })
+    }
+
+    fn filter_axes(&self, query: &str, cx: &App) -> Vec<Filter> {
+        let Some(bounds) = self.extent(query, cx) else {
+            return Vec::new();
+        };
+        let value = self.sieve.duration.unwrap_or(bounds);
+
+        vec![
+            Filter::Range(
+                RangeAxis {
+                    key: "filter-duration",
+                    label: t!("filter-duration"),
+                    bounds,
+                    value,
+                    unit: Unit::Clock,
+                    values: None,
+                }
+                .clamped(),
+            ),
+            Filter::Flag(FlagAxis {
+                key: "filter-explicit",
+                label: t!("filter-explicit"),
+                on: self.sieve.explicit,
+            }),
+            Filter::Flag(FlagAxis {
+                key: "filter-playable",
+                label: t!("filter-playable"),
+                on: self.sieve.playable,
+            }),
+        ]
+    }
+
+    fn filter(&mut self, change: FilterChange, _cx: &App) -> bool {
+        match change {
+            FilterChange::Range("filter-duration", value) => {
+                self.sieve.duration = Some(value);
+                true
+            }
+            FilterChange::Flag("filter-explicit", value) => {
+                self.sieve.explicit = value;
+                true
+            }
+            FilterChange::Flag("filter-playable", value) => {
+                self.sieve.playable = value;
+                true
+            }
+            FilterChange::Reset => {
+                self.sieve = Default::default();
+                true
+            }
+            _ => false,
+        }
     }
 
     fn filtered(&self, _cx: &App) -> bool {

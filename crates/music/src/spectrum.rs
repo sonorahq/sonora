@@ -106,7 +106,7 @@ fn analyze(mut consumer: rtrb::Consumer<f32>, spectrum: Spectrum, rate: u32, cha
     let fft = planner.plan_fft_forward(FFT_SIZE);
     let window = hann_window();
     let edges = band_edges(rate as f32);
-    let mut smoothed = vec![0f32; N_BANDS];
+    let mut smoothed = [0f32; N_BANDS];
     let mut mono = [0f32; FFT_SIZE];
     let mut filled = 0usize;
     let mut lane = vec![0f32; channels];

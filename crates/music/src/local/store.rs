@@ -1,7 +1,6 @@
-use std::path::{Path, PathBuf};
-
 use anyhow::{Context as _, Result};
 use rusqlite::{Connection, params};
+use storage::Database;
 
 use crate::LOCAL_PLAYLIST_PREFIX;
 
@@ -12,43 +11,16 @@ pub struct Stored {
 }
 
 pub struct Store {
-    path: PathBuf,
+    database: Database,
 }
 
 impl Store {
-    pub fn new(state_dir: &Path) -> Self {
-        Self {
-            path: state_dir.join("local-playlists.sqlite3"),
-        }
+    pub fn new(database: Database) -> Self {
+        Self { database }
     }
 
-    fn open(&self) -> Result<Connection> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).context("cannot create the local music directory")?;
-        }
-        let connection = Connection::open(&self.path).context("cannot open local playlists")?;
-        connection
-            .execute_batch(
-                "CREATE TABLE IF NOT EXISTS playlists (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    modified_at INTEGER NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS playlist_tracks (
-                    playlist_id TEXT NOT NULL,
-                    track_id TEXT NOT NULL,
-                    position INTEGER NOT NULL,
-                    PRIMARY KEY (playlist_id, track_id)
-                );
-                CREATE INDEX IF NOT EXISTS playlist_tracks_order
-                    ON playlist_tracks (playlist_id, position);
-                CREATE TABLE IF NOT EXISTS favorites (
-                    track_id TEXT PRIMARY KEY,
-                    added_at INTEGER NOT NULL
-                );",
-            )
-            .context("cannot prepare local playlists")?;
-        Ok(connection)
+    fn open(&self) -> Result<rusqlite::Connection> {
+        self.database.open().context("cannot open local playlists")
     }
 
     pub fn favorites(&self) -> Result<Vec<(String, i64)>> {

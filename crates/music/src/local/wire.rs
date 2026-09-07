@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use lofty::file::{AudioFile, TaggedFileExt};
-use lofty::picture::{MimeType, Picture};
+use lofty::picture::{MimeType, Picture, PictureType};
 use lofty::prelude::Accessor;
 use lofty::probe::Probe;
 use lofty::tag::Tag;
@@ -199,23 +199,24 @@ fn extract_cover(
     album_dir: Option<&Path>,
     cache_dir: &Path,
 ) -> Option<String> {
-    if let Some(cover) = path
-        .parent()
-        .and_then(folder_cover)
-        .or_else(|| album_dir.and_then(folder_cover))
-    {
-        return Some(cover);
-    }
-
-    if let Some(picture) = tag.and_then(|tag| tag.pictures().first())
-        && let Some(cached) = cache_picture(picture, path, cache_dir)
+    let picture = tag.and_then(|tag| {
+        tag.pictures()
+            .iter()
+            .find(|picture| picture.pic_type() == PictureType::CoverFront)
+            .or_else(|| tag.pictures().first())
+    });
+    if let Some(picture) = picture
+        && let Some(cached) = cache_picture(picture, cache_dir)
     {
         return Some(cached);
     }
-    None
+
+    path.parent()
+        .and_then(folder_cover)
+        .or_else(|| album_dir.and_then(folder_cover))
 }
 
-fn cache_picture(picture: &Picture, source: &Path, cache_dir: &Path) -> Option<String> {
+fn cache_picture(picture: &Picture, cache_dir: &Path) -> Option<String> {
     let extension = match picture.mime_type() {
         Some(MimeType::Png) => "png",
         Some(MimeType::Gif) => "gif",
@@ -225,7 +226,7 @@ fn cache_picture(picture: &Picture, source: &Path, cache_dir: &Path) -> Option<S
     };
 
     let mut hasher = DefaultHasher::new();
-    source.parent()?.hash(&mut hasher);
+    picture.data().hash(&mut hasher);
     let hash = hasher.finish();
 
     let dir = cache_dir.join("local-covers");

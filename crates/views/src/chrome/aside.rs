@@ -1046,7 +1046,7 @@ impl Aside {
                     self.departing_line = None;
                 }
                 let instrumental_line = active_instrumental(lines, position);
-                let hazing = effects() && self.pinned;
+                let hazing = effects() && self.settings.read(cx).blur_lyrics() && self.pinned;
                 let blur = verse * BLUR;
                 let sharpen = self.sharpen_progress(window);
                 // with motion turned down a press is simply on or off

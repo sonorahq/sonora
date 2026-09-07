@@ -12,40 +12,56 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use ytmusic::YtMusic;
-use ytmusic::browser::{self, Browser, Family};
 
 use crate::youtube::playback::Factory;
 
 use crate::{
     InputSource, MusicProvider, PromptSink, ProviderSession, SignIn, SignInPrompt, UserProfile,
+    credentials,
 };
 pub use client::YouTubeClient;
 
 const GUEST_ID: &str = "youtube-guest";
 
+/// What the credential file remembers between launches: a browser sign-in with the
+/// Google account index it belongs to, or the choice to listen as a guest.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum Saved {
+    Cookies { cookies: String, authuser: usize },
+    Guest,
+}
+
 pub struct YouTubeProvider {
-    cookies: PathBuf,
-    authuser: PathBuf,
-    source: PathBuf,
-    guest: PathBuf,
+    credentials: PathBuf,
     resolved: PathBuf,
     player: PathBuf,
 }
 
 impl YouTubeProvider {
     pub fn new() -> Self {
-        let cache = dirs::cache_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("sonora")
-            .join("youtube");
+        let cache = credentials::dir("youtube");
         Self {
-            cookies: cache.join("cookies.txt"),
-            authuser: cache.join("authuser.txt"),
-            source: cache.join("browser.txt"),
-            guest: cache.join("guest"),
+            credentials: cache.join(credentials::FILE),
             resolved: cache.join("resolved.json"),
             player: cache.join("player.json"),
+        }
+    }
+
+    fn save(&self, saved: &Saved) -> Result<()> {
+        save(&self.credentials, saved)
+    }
+
+    fn saved(&self) -> Option<Saved> {
+        let body = std::fs::read(&self.credentials).ok()?;
+        match serde_json::from_slice(&body) {
+            Ok(saved) => Some(saved),
+            Err(error) => {
+                log::warn!("youtube: cannot read the stored credentials: {error}");
+                None
+            }
         }
     }
 
@@ -89,7 +105,6 @@ impl YouTubeProvider {
     async fn connect(
         &self,
         cookies: &str,
-        source: Option<&str>,
         prompt: &PromptSink,
         input: &mut InputSource,
     ) -> Result<ProviderSession> {
@@ -104,7 +119,7 @@ impl YouTubeProvider {
 
         let profile = wire::profile(account.profile.clone());
         let api = self.cookie_client(&cookies, account.index);
-        self.store_cookies(&cookies, account.index, source)?;
+        self.store_cookies(&cookies, account.index)?;
         log::debug!(
             "youtube: cookie sign-in succeeded for authuser {}",
             account.index
@@ -112,99 +127,70 @@ impl YouTubeProvider {
         Ok(self.authenticated_session(api, profile))
     }
 
-    fn store_cookies(&self, cookies: &str, authuser: usize, source: Option<&str>) -> Result<()> {
-        if let Some(parent) = self.cookies.parent() {
-            std::fs::create_dir_all(parent).context("cannot create youtube cache dir")?;
-        }
-        std::fs::write(&self.cookies, cookies).context("cannot store youtube cookies")?;
-        std::fs::write(&self.authuser, authuser.to_string())
-            .context("cannot store the youtube account")?;
-        match source {
-            Some(name) => std::fs::write(&self.source, name).context("cannot store the browser")?,
-            None => {
-                let _ = std::fs::remove_file(&self.source);
+    fn store_cookies(&self, cookies: &str, authuser: usize) -> Result<()> {
+        self.save(&Saved::Cookies {
+            cookies: cookies.to_owned(),
+            authuser,
+        })
+        .context("cannot store youtube cookies")
+    }
+
+    async fn restore_cookies(&self, cookies: &str, authuser: usize) -> Option<ProviderSession> {
+        let api = self.cookie_client(cookies, authuser);
+        match api.profile().await {
+            Ok(profile) => {
+                log::debug!("youtube: restored the session for authuser {authuser}");
+                Some(self.authenticated_session(api, wire::profile(profile)))
             }
-        }
-        let _ = std::fs::remove_file(&self.guest);
-        Ok(())
-    }
-
-    async fn restore_cookies(&self) -> Option<ProviderSession> {
-        let remembered = self.remembered_browser();
-        let live = remembered
-            .as_deref()
-            .and_then(|name| self.live_cookies(name));
-        let cached = std::fs::read_to_string(&self.cookies)
-            .ok()
-            .map(|cookies| cookies.trim().to_string());
-        let authuser = self.stored_authuser();
-        for (fresh, cookies) in [(true, live), (false, cached)] {
-            let Some(cookies) = cookies.filter(|cookies| !cookies.is_empty()) else {
-                continue;
-            };
-            let api = self.cookie_client(&cookies, authuser);
-            match api.profile().await {
-                Ok(profile) => {
-                    if fresh {
-                        let _ = self.store_cookies(&cookies, authuser, remembered.as_deref());
-                    }
-                    log::debug!("youtube: restored the session for authuser {authuser}");
-                    return Some(self.authenticated_session(api, wire::profile(profile)));
-                }
-                Err(error) => log::warn!(
-                    "youtube: {} cookies are no longer usable: {error:#}",
-                    match fresh {
-                        true => "the browser",
-                        false => "the cached",
-                    }
-                ),
-            }
-        }
-        None
-    }
-
-    fn remembered_browser(&self) -> Option<String> {
-        let name = std::fs::read_to_string(&self.source).ok()?;
-        let name = name.trim().to_string();
-        (!name.is_empty()).then_some(name)
-    }
-
-    fn live_cookies(&self, name: &str) -> Option<String> {
-        let browser = self
-            .browsers()
-            .into_iter()
-            .find(|browser| browser.name == name)?;
-        match auth::cookies(&browser).and_then(|cookies| auth::header(&cookies)) {
-            Ok(cookies) => Some(cookies),
             Err(error) => {
-                log::warn!("youtube: cannot read cookies from {name}: {error:#}");
+                log::warn!("youtube: the cached cookies are no longer usable: {error:#}");
                 None
             }
         }
     }
 
-    fn stored_authuser(&self) -> usize {
-        std::fs::read_to_string(&self.authuser)
-            .ok()
-            .and_then(|stored| stored.trim().parse().ok())
-            .unwrap_or(0)
-    }
-
     fn store_guest(&self) {
-        if let Some(parent) = self.guest.parent() {
-            let _ = std::fs::create_dir_all(parent);
+        if let Err(error) = self.save(&Saved::Guest) {
+            log::warn!("youtube: cannot remember the guest session: {error:#}");
         }
-        let _ = std::fs::write(&self.guest, b"");
     }
+}
 
-    fn browsers(&self) -> Vec<Browser> {
-        let mut browsers = browser::detect();
-        browsers.retain(|browser| browser.family == Family::Firefox);
-        #[cfg(target_os = "windows")]
-        detect_windows_browsers(&mut browsers);
-        browsers.sort_by_key(|browser| browser.name);
-        browsers
+/// Folds the `cookies.txt`, `authuser.txt` and `guest` files releases before 0.31 kept
+/// into the single credential file, then removes them. Part of the startup migration pass.
+pub(crate) fn migrate() {
+    let cache = credentials::dir("youtube");
+    let file = cache.join(credentials::FILE);
+    let cookies = cache.join("cookies.txt");
+    let authuser = cache.join("authuser.txt");
+    let guest = cache.join("guest");
+    if !file.exists() {
+        let legacy = match std::fs::read_to_string(&cookies) {
+            Ok(text) if !text.trim().is_empty() => Some(Saved::Cookies {
+                cookies: text.trim().to_owned(),
+                authuser: std::fs::read_to_string(&authuser)
+                    .ok()
+                    .and_then(|stored| stored.trim().parse().ok())
+                    .unwrap_or(0),
+            }),
+            _ if guest.exists() => Some(Saved::Guest),
+            _ => None,
+        };
+        if let Some(saved) = legacy
+            && let Err(error) = save(&file, &saved)
+        {
+            log::warn!("youtube: cannot adopt the old credential files: {error:#}");
+            return;
+        }
     }
+    for path in [&cookies, &authuser, &guest] {
+        credentials::remove(path);
+    }
+}
+
+fn save(file: &std::path::Path, saved: &Saved) -> Result<()> {
+    let body = serde_json::to_vec_pretty(saved).context("cannot encode youtube credentials")?;
+    credentials::write(file, &body)
 }
 
 async fn pick<'a>(
@@ -220,50 +206,6 @@ async fn pick<'a>(
         .iter()
         .find(|account| account.index.to_string() == picked.trim())
         .context("that account is no longer signed in")
-}
-
-#[cfg(target_os = "windows")]
-fn detect_windows_browsers(found: &mut Vec<Browser>) {
-    const FIREFOX: &[(&str, &str)] = &[
-        ("Firefox", "Mozilla/Firefox/Profiles"),
-        ("Zen", "zen/Profiles"),
-        ("LibreWolf", "librewolf/Profiles"),
-        ("Floorp", "Floorp/Profiles"),
-        ("Waterfox", "Waterfox/Profiles"),
-        ("Mullvad Browser", "Mullvad/MullvadBrowser/Profiles"),
-        ("Pale Moon", "Moonchild Productions/Pale Moon/Profiles"),
-        ("SeaMonkey", "Mozilla/SeaMonkey/Profiles"),
-    ];
-    let home = dirs::home_dir();
-    let roaming = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| home.as_ref().map(|home| home.join("AppData/Roaming")));
-
-    if let Some(root) = roaming {
-        for &(name, relative) in FIREFOX {
-            let root = root.join(relative);
-            if has_firefox_cookies(&root) {
-                push_browser(found, name, Family::Firefox, root);
-            }
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn push_browser(found: &mut Vec<Browser>, name: &'static str, family: Family, root: PathBuf) {
-    if !found.iter().any(|browser| browser.name == name) {
-        found.push(Browser { name, family, root });
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn has_firefox_cookies(root: &std::path::Path) -> bool {
-    std::fs::read_dir(root).is_ok_and(|profiles| {
-        profiles
-            .flatten()
-            .any(|profile| profile.path().join("cookies.sqlite").exists())
-    })
 }
 
 impl Default for YouTubeProvider {
@@ -283,26 +225,24 @@ impl MusicProvider for YouTubeProvider {
     }
 
     fn sign_in_options(&self) -> Vec<SignIn> {
-        let mut options = vec![SignIn::Anonymous, SignIn::Secret];
-        for browser in self.browsers() {
-            options.push(SignIn::Browser(browser.name.to_string()));
-        }
-        options
+        vec![SignIn::Anonymous, SignIn::Secret]
     }
 
     fn stored(&self) -> bool {
-        self.cookies.exists() || self.guest.exists()
+        self.credentials.exists()
     }
 
     async fn restore(&self) -> Result<Option<ProviderSession>> {
-        if let Some(session) = self.restore_cookies().await {
-            return Ok(Some(session));
+        match self.saved() {
+            Some(Saved::Cookies { cookies, authuser }) => {
+                Ok(self.restore_cookies(&cookies, authuser).await)
+            }
+            Some(Saved::Guest) => {
+                log::debug!("youtube: restoring guest session");
+                Ok(Some(self.guest_session(self.guest_client())))
+            }
+            None => Ok(None),
         }
-        if self.guest.exists() {
-            log::debug!("youtube: restoring guest session");
-            return Ok(Some(self.guest_session(self.guest_client())));
-        }
-        Ok(None)
     }
 
     async fn sign_in(
@@ -316,20 +256,10 @@ impl MusicProvider for YouTubeProvider {
                 self.store_guest();
                 Ok(self.guest_session(self.guest_client()))
             }
-            SignIn::Browser(name) => {
-                let browser = self
-                    .browsers()
-                    .into_iter()
-                    .find(|browser| browser.name == name)
-                    .with_context(|| format!("{name} is no longer available"))?;
-                let cookies = auth::cookies(&browser)?;
-                self.connect(&cookies, Some(browser.name), &prompt, &mut input)
-                    .await
-            }
             SignIn::Secret => {
                 prompt(SignInPrompt::Secret);
                 let cookies = input.recv().await.context("sign-in was cancelled")?;
-                self.connect(&cookies, None, &prompt, &mut input).await
+                self.connect(&cookies, &prompt, &mut input).await
             }
             SignIn::Path(_) => Err(anyhow::anyhow!(
                 "youtube does not sign in with a folder path"
@@ -338,12 +268,6 @@ impl MusicProvider for YouTubeProvider {
     }
 
     fn sign_out(&self) {
-        for path in [&self.cookies, &self.authuser, &self.source, &self.guest] {
-            if let Err(error) = std::fs::remove_file(path)
-                && error.kind() != std::io::ErrorKind::NotFound
-            {
-                log::warn!("youtube: cannot remove credential cache: {error}");
-            }
-        }
+        credentials::remove(&self.credentials);
     }
 }

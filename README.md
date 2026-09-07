@@ -96,13 +96,26 @@ Every release also attaches a standalone `.flatpak` bundle for x86_64 and aarch6
 
 ### Nix
 
-Just use the flake in the project root:
+The flake packages the latest tagged release and exposes `programs.sonora` for Home Manager.
 
-```sh
-inputs.sonora.packages.${system}.default
+```nix
+inputs.sonora.url = "github:nolight132/sonora";
 ```
 
-The flake installs the latest tagged release binary.
+Home Manager:
+
+```nix
+{
+  imports = [ inputs.sonora.homeManagerModules.default ];
+  programs.sonora = {
+    enable = true;
+    settings = {
+      provider = "youtube";
+      appearance.theme = "dark";
+    };
+  };
+}
+```
 
 ### Windows
 
@@ -115,6 +128,7 @@ Download and run the [installer](https://github.com/nolight132/sonora/releases/l
 Download the latest `windows-msvc.exe` for your architecture from [Releases](https://github.com/nolight132/sonora/releases/latest).
 
 ## Community
+
 Feel free to join our [Discord](https://discord.gg/a8N8Tx23rV) server and [Matrix](https://matrix.to/#/#sonora:nolight.dev) space.
 Discord is the primary one, but we do have a Matrix bridge.
 
@@ -129,9 +143,11 @@ us quickly locate the relevant parts of the code.
 **However**, using AI cannot act as an excuse for failing to
 understand, review, and test the changes proposed. Furthermore, we expect communication
 with a real person, not a computer. This includes but is not limited to PR/issue text
-generation, comments in discussions, etc. A summary of changes can be generated
-and does not need to be disclosed explicitly, but the reasoning and motivation
+generation, comments in discussions, etc. A short summary of minor changes can be
+generated and does not need to be disclosed explicitly, but the reasoning and motivation
 behind a change must come from the contributor and reflect their own understanding.
+
+Note that PRs that fail to adhere to these requirements may be rejected without further notice.
 
 AI-assisted proofreading and translation of human-written text are permitted.
 
@@ -141,27 +157,28 @@ AI-assisted proofreading and translation of human-written text are permitted.
 
 | Language | Translated | Coverage |
 | --- | --- | --- |
-| English (`en-US`) | 501/501 | 100% |
-| Deutsch (`de`) | 475/501 | 95% |
-| Español (`es`) | 496/501 | 99% |
-| Français (`fr`) | 475/501 | 95% |
-| Italiano (`it`) | 475/501 | 95% |
-| 日本語 (`ja`) | 496/501 | 99% |
-| Русский (`ru`) | 480/501 | 96% |
-| Українська (`uk`) | 480/501 | 96% |
-| Polski (`pl`) | 480/501 | 96% |
-| Português (Brasil) (`pt-BR`) | 496/501 | 99% |
+| English (`en-US`) | 518/518 | 100% |
+| Deutsch (`de`) | 483/518 | 93% |
+| Español (`es`) | 495/518 | 96% |
+| Français (`fr`) | 477/518 | 92% |
+| Italiano (`it`) | 474/518 | 92% |
+| Bahasa Indonesia (`id`) | 512/518 | 99% |
+| 日本語 (`ja`) | 495/518 | 96% |
+| Русский (`ru`) | 485/518 | 94% |
+| Українська (`uk`) | 485/518 | 94% |
+| Polski (`pl`) | 516/518 | 100% |
+| Português (Brasil) (`pt-BR`) | 495/518 | 96% |
 
 <!-- i18n:end -->
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=nolight132%2Fsonora&type=date&legend=top-left">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=nolight132/sonora&type=date&theme=dark&legend=top-left&sealed_token=sKtwC7g5T3J-eTji4XSzjR4r9w8t_BgIlXM2-fD5yXkV_KsNB-ESSvKSr4ofwrKLLXfNR77vlM4cATffoz3kTnAEPcjrQ-BprKQSiv0oriZSvSa-yBUsKfNo2AXAuXytEo5jBqlhhJJaotggp9S0CN-lNuWAw-45pP2YrsNKALFn7P1AX-eCi5da2baK" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=nolight132/sonora&type=date&legend=top-left&sealed_token=sKtwC7g5T3J-eTji4XSzjR4r9w8t_BgIlXM2-fD5yXkV_KsNB-ESSvKSr4ofwrKLLXfNR77vlM4cATffoz3kTnAEPcjrQ-BprKQSiv0oriZSvSa-yBUsKfNo2AXAuXytEo5jBqlhhJJaotggp9S0CN-lNuWAw-45pP2YrsNKALFn7P1AX-eCi5da2baK" />
-    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=nolight132/sonora&type=date&legend=top-left&sealed_token=sKtwC7g5T3J-eTji4XSzjR4r9w8t_BgIlXM2-fD5yXkV_KsNB-ESSvKSr4ofwrKLLXfNR77vlM4cATffoz3kTnAEPcjrQ-BprKQSiv0oriZSvSa-yBUsKfNo2AXAuXytEo5jBqlhhJJaotggp9S0CN-lNuWAw-45pP2YrsNKALFn7P1AX-eCi5da2baK" />
-  </picture>
+<a href="https://www.star-history.com/?repos=nolight132%2Fsonora&type=date&logscale=&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=nolight132/sonora&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=nolight132/sonora&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=nolight132/sonora&type=date&legend=top-left" />
+ </picture>
 </a>
 
 ## Credits
@@ -170,7 +187,10 @@ Sonora is built with the help of some incredible open-source projects, including
 
 - [Zed](https://github.com/zed-industries/zed) — a wonderful editor (~~ab~~)used by all core team members. Conveniently provides `gpui` — their native Rust rendering stack.
 - [librespot](https://github.com/librespot-org/librespot) — Spotify playback and library integration.
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — certain YouTube ideas implemented in [ytmusic-rs](https://github.com/nolight132/ytmusic-rs). :)
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — certain YouTube ideas implemented in [ytmusic-rs](https://github.com/nolight132/ytmusic-rs) :)
+
+## Code signing
+Sonora has applied for code signing through SignPath Foundation. Current releases are not yet signed through SignPath Foundation. If approved, signed releases will use free code signing provided by SignPath.io, with a certificate by SignPath Foundation.
 
 ## License
 

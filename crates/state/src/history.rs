@@ -1,11 +1,11 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
 use gpui::{Context, Entity, Task};
 use music::{ArtistRef, Track};
 use rusqlite::{Connection, params};
+use storage::Database;
 
 use crate::playback::PlaybackEvent;
 use crate::{Io, Playback, Session, SessionEvent, SessionState, join};
@@ -21,46 +21,18 @@ pub enum HistoryState {
 
 #[derive(Clone)]
 struct Store {
-    path: PathBuf,
+    database: Database,
 }
 
 impl Store {
-    fn new() -> Self {
-        let path = dirs::data_local_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("sonora")
-            .join("history.sqlite3");
-        Self { path }
+    fn new(database: Database) -> Self {
+        Self { database }
     }
 
     fn open(&self) -> Result<Connection> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).context("cannot create the history directory")?;
-        }
-        let connection = Connection::open(&self.path).context("cannot open listening history")?;
-        connection
-            .execute_batch(
-                "CREATE TABLE IF NOT EXISTS plays (
-                    scope TEXT NOT NULL,
-                    provider TEXT NOT NULL,
-                    track_id TEXT NOT NULL,
-                    played_at INTEGER NOT NULL,
-                    name TEXT NOT NULL,
-                    playable INTEGER NOT NULL,
-                    artists TEXT NOT NULL,
-                    artist_refs TEXT NOT NULL,
-                    album TEXT NOT NULL,
-                    album_id TEXT,
-                    cover TEXT,
-                    duration_ms INTEGER NOT NULL,
-                    explicit INTEGER NOT NULL,
-                    PRIMARY KEY (scope, provider, track_id, played_at)
-                );
-                CREATE INDEX IF NOT EXISTS plays_scope_time
-                    ON plays (scope, played_at DESC);",
-            )
-            .context("cannot prepare listening history")?;
-        Ok(connection)
+        self.database
+            .open()
+            .context("cannot open listening history")
     }
 
     fn save(&self, scope: &str, provider: &str, track: &Track, played_at: i64) -> Result<()> {
@@ -192,6 +164,7 @@ impl History {
     pub fn new(
         session: Entity<Session>,
         playback: Entity<Playback>,
+        database: Database,
         io: Io,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -210,7 +183,7 @@ impl History {
         let mut history = Self {
             session,
             playback,
-            store: Store::new(),
+            store: Store::new(database),
             io,
             state: HistoryState::Ready,
             tracks: Vec::new(),

@@ -157,6 +157,7 @@ pub enum SettingsTab {
     General,
     Appearance,
     Playback,
+    Privacy,
     About,
 }
 

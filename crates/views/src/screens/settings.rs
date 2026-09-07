@@ -4,9 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::shared::local;
-use crate::shared::popups::{
-    AccountPicker, BrowserPicker, CookiePrompt, SearchPopup, matches_query,
-};
+use crate::shared::popups::{AccountPicker, CookiePrompt, SearchPopup, matches_query};
 use gpui::{
     AnyElement, App, Context, Entity, FontWeight, Pixels, Render, SharedString, TextRun, Window,
     div, font, px,
@@ -71,7 +69,7 @@ struct Account {
 fn offered(method: &SignIn, stored: bool, guest: bool) -> bool {
     match method {
         SignIn::Default | SignIn::Anonymous => !stored,
-        SignIn::Browser(_) | SignIn::Secret => !stored || guest,
+        SignIn::Secret => !stored || guest,
         SignIn::Path(_) => false,
     }
 }
@@ -128,7 +126,6 @@ pub struct SettingsView {
     scrollbar: Entity<Scrollbar>,
     opacity: ScrubberState,
     popovers: Popovers,
-    browsers: Option<(&'static str, Vec<SharedString>)>,
     secret: Entity<Input>,
     languages: SearchPopup,
     typefaces: SearchPopup,
@@ -167,7 +164,6 @@ impl SettingsView {
             scrollbar: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(me)),
             opacity: ScrubberState::new("opacity"),
             popovers: Popovers::default(),
-            browsers: None,
             secret: cx.new(|cx| Input::new("login-cookie-hint", cx)),
             languages,
             typefaces,
@@ -202,6 +198,10 @@ impl SettingsView {
                 Row::Item(self.icons_row(cx).into_any_element()),
                 Row::Item(self.opacity_row(cx).into_any_element()),
                 Row::Item(self.corners_row(cx).into_any_element()),
+                self.title("settings-group-lyrics", cx),
+                Row::Item(self.panel_lyrics_size_row(cx).into_any_element()),
+                Row::Item(self.fullscreen_lyrics_size_row(cx).into_any_element()),
+                Row::Item(self.blur_lyrics_row(cx).into_any_element()),
                 self.title("settings-group-text", cx),
                 Row::Item(self.font_row(cx).into_any_element()),
                 Row::Item(self.typeface_row(cx).into_any_element()),
@@ -211,9 +211,7 @@ impl SettingsView {
                 Row::Item(self.saver_row(cx).into_any_element()),
             ]
             .into_iter()
-            .chain(decorated().then(|| self.title("settings-group-title-bar", cx)))
-            .chain(decorated().then(|| Row::Item(self.decorations_row(cx).into_any_element())))
-            .chain(decorated().then(|| Row::Item(self.side_row(cx).into_any_element())))
+            .chain(self.decoration_rows(cx))
             .chain([
                 self.title("settings-advanced", cx),
                 Row::Item(self.adaptive_menu_row(cx).into_any_element()),
@@ -223,11 +221,12 @@ impl SettingsView {
                 Row::Item(self.playback_row(cx).into_any_element()),
                 Row::Item(self.gapless_row(cx).into_any_element()),
                 self.title("settings-group-lyrics", cx),
-                Row::Item(self.panel_lyrics_size_row(cx).into_any_element()),
-                Row::Item(self.fullscreen_lyrics_size_row(cx).into_any_element()),
                 Row::Item(self.karaoke_lyrics_row(cx).into_any_element()),
                 Row::Item(self.romanized_lyrics_row(cx).into_any_element()),
             ],
+            SettingsTab::Privacy => vec![Row::Item(
+                self.lyrics_for_local_files_row(cx).into_any_element(),
+            )],
             SettingsTab::About => vec![
                 Row::Item(self.version_row(cx).into_any_element()),
                 Row::Item(self.updates_row(cx).into_any_element()),
@@ -248,6 +247,24 @@ impl SettingsView {
             panel = panel.child(row.into_element());
         }
         panel
+    }
+
+    fn decoration_rows(&self, cx: &mut Context<Self>) -> Vec<Row> {
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        let rows = vec![
+            self.title("settings-group-window-style", cx),
+            Row::Item(self.server_side_decorations_row(cx).into_any_element()),
+            Row::Item(self.side_row(cx).into_any_element()),
+        ];
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
+        let rows = vec![
+            self.title("settings-group-title-bar", cx),
+            Row::Item(self.decorations_row(cx).into_any_element()),
+            Row::Item(self.side_row(cx).into_any_element()),
+        ];
+        #[cfg(target_os = "macos")]
+        let rows = Vec::<Row>::new();
+        rows
     }
 
     fn title(&self, key: &'static str, cx: &App) -> Row {
@@ -604,6 +621,31 @@ impl SettingsView {
         )
     }
 
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn server_side_decorations_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let enabled = self.settings.read(cx).server_side_decorations();
+
+        self.row(
+            t!("settings-server-side-decorations"),
+            t!("settings-server-side-decorations-detail"),
+            muted,
+            small,
+            Switch::new("server-side-decorations", enabled)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    let decorations = this.settings.update(cx, |settings, cx| {
+                        settings.set_server_side_decorations(!enabled, cx);
+                        settings.window_decorations()
+                    });
+                    window.request_decorations(decorations);
+                }))
+                .into_any_element(),
+        )
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
     fn decorations_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
@@ -624,12 +666,16 @@ impl SettingsView {
         )
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn side_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
         let small = theme.text(Text::Small);
         let settings = self.settings.read(cx);
         let left = settings.controls_on_left();
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        let shown = !settings.server_side_decorations();
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let shown = settings.window_controls();
 
         self.row(
@@ -1150,6 +1196,27 @@ impl SettingsView {
         )
     }
 
+    fn lyrics_for_local_files_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).lyrics_for_local_files();
+
+        self.row(
+            t!("settings-lyrics-for-local-files"),
+            t!("settings-lyrics-for-local-files-detail"),
+            muted,
+            small,
+            Switch::new("lyrics-for-local-files", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_lyrics_for_local_files(!on, cx)
+                    });
+                }))
+                .into_any_element(),
+        )
+    }
+
     fn karaoke_lyrics_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
@@ -1165,6 +1232,26 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_karaoke_lyrics(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn blur_lyrics_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).blur_lyrics();
+
+        self.row(
+            t!("settings-blur-lyrics"),
+            t!("settings-blur-lyrics-detail"),
+            muted,
+            small,
+            Switch::new("blur-lyrics", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.set_blur_lyrics(!on, cx));
                 }))
                 .into_any_element(),
         )
@@ -1356,14 +1443,9 @@ impl SettingsView {
             (false, _, true) => t!("settings-provider-connected"),
             (false, _, false) => t!("settings-provider-none"),
         };
-        let mut seen_browser = false;
         let methods: Vec<SignIn> = options
             .into_iter()
             .filter(|option| offered(option, stored, guest))
-            .filter(|option| match option {
-                SignIn::Browser(_) => !std::mem::replace(&mut seen_browser, true),
-                _ => true,
-            })
             .collect();
 
         div()
@@ -1509,10 +1591,6 @@ impl SettingsView {
                 t!("login-sign-in", provider = provider),
             ),
             SignIn::Anonymous => (format!("connect-{slug}-guest"), t!("login-guest-use")),
-            SignIn::Browser(_) => (
-                format!("connect-{slug}-browser"),
-                t!("login-import-browser-plain"),
-            ),
             SignIn::Secret => (
                 format!("connect-{slug}-cookies"),
                 t!("login-connect-cookies"),
@@ -1528,55 +1606,10 @@ impl SettingsView {
             .small()
             .outline()
             .disabled(pending)
-            .on_click(cx.listener(move |this, _, _, cx| match &method {
-                SignIn::Browser(_) => this.open_browsers(slug, cx),
-                method => {
-                    let method = method.clone();
-                    this.session
-                        .update(cx, |session, cx| session.sign_in(slug, method, cx));
-                }
-            }))
-    }
-
-    fn open_browsers(&mut self, slug: &'static str, cx: &mut Context<Self>) {
-        let names: Vec<SharedString> = self
-            .session
-            .read(cx)
-            .providers()
-            .find(|info| info.slug == slug)
-            .map(|info| {
-                info.options
-                    .iter()
-                    .filter_map(|option| match option {
-                        SignIn::Browser(name) => Some(SharedString::from(name.clone())),
-                        _ => None,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        if names.is_empty() {
-            return;
-        }
-        self.browsers = Some((slug, names));
-        cx.notify();
-    }
-
-    fn browser_modal(
-        &self,
-        slug: &'static str,
-        names: Vec<SharedString>,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        BrowserPicker::new(names)
-            .on_pick(cx.listener(move |this, name: &SharedString, _, cx| {
-                this.browsers = None;
-                let method = SignIn::Browser(name.to_string());
+            .on_click(cx.listener(move |this, _, _, cx| {
+                let method = method.clone();
                 this.session
                     .update(cx, |session, cx| session.sign_in(slug, method, cx));
-            }))
-            .on_cancel(cx.listener(|this, _, _, cx| {
-                this.browsers = None;
-                cx.notify();
             }))
     }
 
@@ -1768,10 +1801,6 @@ fn samples(pack: &'static icons::Pack, tint: gpui::Hsla) -> impl IntoElement {
         }))
 }
 
-fn decorated() -> bool {
-    cfg!(not(target_os = "macos"))
-}
-
 fn open_settings_file(path: &Path) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     Command::new("cmd")
@@ -1819,7 +1848,6 @@ impl Render for SettingsView {
             cx,
         );
 
-        let browsers = self.browsers.clone();
         let accounts = match self.session.read(cx).state() {
             SessionState::Authorizing(Some(SignInPrompt::Accounts(accounts))) => {
                 Some(accounts.clone())
@@ -1857,9 +1885,6 @@ impl Render for SettingsView {
                             }),
                     ),
             )
-            .when_some(browsers, |this, (slug, names)| {
-                this.child(self.browser_modal(slug, names, cx).into_any_element())
-            })
             .when_some(accounts, |this, accounts| {
                 this.child(self.account_modal(accounts, cx).into_any_element())
             })

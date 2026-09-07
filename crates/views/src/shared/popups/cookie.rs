@@ -55,6 +55,13 @@ impl RenderOnce for CookiePrompt {
 
         Modal::new("cookie-prompt", t!("login-cookie-title"))
             .w(px(560.))
+            .child(
+                Button::new("open-youtube-music")
+                    .label(t!("login-cookie-open"))
+                    .icon("icons/external-link.svg")
+                    .outline()
+                    .on_click(|_, _, cx| cx.open_url("https://music.youtube.com")),
+            )
             .child(steps([
                 t!("login-cookie-step-1"),
                 t!("login-cookie-step-2"),

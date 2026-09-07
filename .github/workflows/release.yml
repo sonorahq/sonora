@@ -345,7 +345,9 @@ jobs:
           FINGERPRINT: ${{ steps.key.outputs.fingerprint }}
         run: |
           set -euo pipefail
-          mkdir -p site/repo/tmp
+          # Git cannot preserve OSTree's empty remote refs directory on the
+          # flatpak-repo branch, but static-delta generation expects it.
+          mkdir -p site/repo/tmp site/repo/refs/remotes
           test -f site/repo/config || ostree init --repo=site/repo --mode=archive
           for bundle in bundles/*.flatpak; do
             flatpak build-import-bundle \

@@ -12,19 +12,18 @@ use ui::{
     ActiveTheme as _, Button, InlineLink, InlineLinks, Menu, Picker, Popovers, Popup, SortAxis,
 };
 use ui::{
-    ColumnSpec, FlagAxis, Listing as _, MIN_CONTENT, Pin, PinKind, RangeAxis, Scrollbar, Scroller,
-    TableDelegate, TableEvent, TableState, Toggle, Unit, clock, table,
+    ColumnSpec, Listing as _, MIN_CONTENT, Pin, PinKind, Scrollbar, Scroller, TableDelegate,
+    TableEvent, TableState, Toggle, clock, table,
 };
 
 use crate::shared::menus::{album_menu, playlist_menu};
 
-use crate::chrome::tools::{self, Sift, Sliders};
+use crate::chrome::tools::{self, Sliders};
 use crate::chrome::{Chrome, Searchable, Toolbar, Tooled};
 use crate::shared::confirm::Confirm;
 use crate::shared::hero::{HeroMetaStrip, HeroPlayButton, PageHero, release_date_label};
 use crate::shared::tracks::{
-    PlaybackStatus, TrackField, TrackSieve, TrackSource, Tracks, drop_picked, playback_status,
-    playlist_columns,
+    PlaybackStatus, TrackField, TrackSource, Tracks, drop_picked, playback_status, playlist_columns,
 };
 use crate::shared::{cells, page};
 
@@ -483,7 +482,7 @@ impl Render for DetailView {
 impl Searchable for DetailView {
     fn search(&mut self, query: &str, cx: &mut Context<Self>) {
         self.table.update(cx, |table, cx| {
-            table.delegate_mut().set_filter(query, cx);
+            table.delegate_mut().set_query(query, cx);
             table.refresh(cx);
         });
         cx.notify();
@@ -546,10 +545,11 @@ impl Tooled for DetailView {
             tools::filters(
                 &self.popovers,
                 &self.sliders,
-                self.ranges(cx),
-                self.flags(cx),
+                self.table.filters(cx),
                 move |change, cx| {
-                    sifted.update(cx, |view, cx| view.narrow(change, cx)).ok();
+                    sifted
+                        .update(cx, |view, cx| view.table.filter(change, cx))
+                        .ok();
                 },
                 cx,
             ),
@@ -562,71 +562,5 @@ impl Tooled for DetailView {
                 cx,
             ),
         ]
-    }
-}
-
-impl DetailView {
-    fn sieve(&self, cx: &App) -> TrackSieve {
-        self.table.read(cx).delegate().source().sieve()
-    }
-
-    fn sift(&mut self, sieve: TrackSieve, cx: &mut Context<Self>) {
-        self.table.update(cx, |table, cx| {
-            table.delegate_mut().source_mut().set_sieve(sieve);
-            table.delegate_mut().resift(cx);
-            table.refresh(cx);
-        });
-        cx.notify();
-    }
-
-    fn ranges(&self, cx: &App) -> Vec<RangeAxis> {
-        let table = self.table.read(cx);
-        let Some(bounds) = table
-            .delegate()
-            .source()
-            .extent(table.delegate().query(), cx)
-        else {
-            return Vec::new();
-        };
-        let value = self.sieve(cx).duration.unwrap_or(bounds);
-        vec![
-            RangeAxis {
-                key: "filter-duration",
-                label: t!("filter-duration"),
-                bounds,
-                value,
-                unit: Unit::Clock,
-                values: None,
-            }
-            .clamped(),
-        ]
-    }
-
-    fn flags(&self, cx: &App) -> Vec<FlagAxis> {
-        let sieve = self.sieve(cx);
-        vec![
-            FlagAxis {
-                key: "filter-explicit",
-                label: t!("filter-explicit"),
-                on: sieve.explicit,
-            },
-            FlagAxis {
-                key: "filter-playable",
-                label: t!("filter-playable"),
-                on: sieve.playable,
-            },
-        ]
-    }
-
-    fn narrow(&mut self, change: Sift, cx: &mut Context<Self>) {
-        let mut sieve = self.sieve(cx);
-        match change {
-            Sift::Range(_, value) => sieve.duration = Some(value),
-            Sift::Flag("filter-explicit", on) => sieve.explicit = on,
-            Sift::Flag("filter-playable", on) => sieve.playable = on,
-            Sift::Flag(..) => return,
-            Sift::Reset => sieve = TrackSieve::default(),
-        }
-        self.sift(sieve, cx);
     }
 }

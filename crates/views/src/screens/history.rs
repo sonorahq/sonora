@@ -203,7 +203,7 @@ impl Render for HistoryView {
 
 impl Searchable for HistoryView {
     fn search(&mut self, query: &str, cx: &mut Context<Self>) {
-        self.table.set_filter(query, cx);
+        self.table.set_query(query, cx);
         cx.notify();
     }
 

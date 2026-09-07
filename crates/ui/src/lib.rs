@@ -48,10 +48,14 @@ pub use card::CARD_GROUP;
 pub use card::Card;
 pub use checkbox::Checkbox;
 pub use controls::WindowControls;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub use controls::WindowFrame;
 pub use deck::Deck;
 pub use drag::{Edge, drop_gap, drop_marker};
 pub use explicit::ExplicitBadge;
-pub use filters::{FlagAxis, RangeAxis, RangeScrubber, RangeState, SortAxis, Unit};
+pub use filters::{
+    Filter, FilterChange, FlagAxis, RangeAxis, RangeScrubber, RangeState, SortAxis, Unit,
+};
 pub use form::{FORM_CONTEXT, Submit};
 pub use glide::Glide;
 pub use info_card::{Fact, InfoCard};

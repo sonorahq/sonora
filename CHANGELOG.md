@@ -7,6 +7,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-09-05
+
+### Added
+
+- Nix users can manage Sonora through Home Manager. The flake exposes `homeManagerModules.default`
+  with a `programs.sonora` option whose `settings` are merged into `settings.json` on each launch.
+- Sonora speaks Indonesian. Pick Bahasa Indonesia under Settings > General > Language, or leave the
+  language on System and it follows an Indonesian desktop on its own.
+- On Linux and FreeBSD, Sonora can switch between server-side and client-side window decorations
+  from Appearance and shows its own window controls automatically with client-side decorations.
+
+### Changed
+
+- Window position, sidebar sizes, playback mode, table layouts, pins, listening history and local
+  playlists now live in one `state.sqlite` file in the data directory, and `settings.json` keeps
+  only preferences. Existing files are migrated on the first start.
+- YouTube Music sign-in now opens your default browser from the cookie instructions dialog.
+  Browser cookie extraction and automatic refresh from browser profiles have been removed.
+- Each provider keeps its sign-in in its own `credentials.json` under the cache folder, readable
+  only by you. Existing Spotify and YouTube Music sign-ins move over on the first launch.
+
+### Fixed
+
+- Playback no longer falls silent on PipeWire systems with a large graph quantum, such as a
+  default Arch Linux install. The audio stream now keeps 50 ms of buffer regardless of the
+  quantum, and a recovered underrun no longer restarts the player.
+- Pressing play on an album, playlist or artist with shuffle on now opens with a random track
+  instead of always the first one.
+
+## [0.30.0] - 2026-09-04
+
 ### Added
 
 - Playing artwork can pulse a theme-tinted glow with the music. Turn it off under Settings >
@@ -21,11 +52,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Lyrics have their own size, set separately for each surface. Settings > Playback > Lyrics size
   (panel) and Lyrics size (fullscreen) scale the lyrics text from 60% to 200% on top of the base
   font size.
+- Fullscreen artwork now has a real-time spectrum visualizer, which can be switched off under
+  Settings > Appearance > Visualizer.
+- The playlist library can be filtered to show only playlists you own.
+- Opus audio playback.
+- Lyrics fetching for local files can be switched off under Settings > Playback.
 
 ### Changed
 
 - The fullscreen title and artist names stay on screen while the player is idle. Only the heart
   beside the title fades, the way it already did in the narrow lyrics view.
+- YouTube Music cookie onboarding now walks through the browser steps in a clearer checklist.
 
 ### Fixed
 
@@ -34,7 +71,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   keeps it current, and it can replace an install made from the repository.
 - Emoji in playlist, track, and artist names now render instead of falling back to missing-glyph
   boxes when the UI font has no emoji glyphs.
-- Cookie onboarding for YTMusic is now easier to read
+- Changing the audio output restarts playback on the selected device.
+- Artwork uses less memory while images load and remain cached.
 
 ## [0.29.0] - 2026-09-03
 
@@ -1279,7 +1317,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/nolight132/sonora/compare/v0.29.0...HEAD
+[unreleased]: https://github.com/nolight132/sonora/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/nolight132/sonora/compare/v0.30.0...v0.31.0
+[0.30.0]: https://github.com/nolight132/sonora/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/nolight132/sonora/compare/v0.28.1...v0.29.0
 [0.28.1]: https://github.com/nolight132/sonora/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/nolight132/sonora/compare/v0.27.0...v0.28.0

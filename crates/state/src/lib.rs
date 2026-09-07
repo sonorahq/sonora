@@ -109,24 +109,36 @@ impl Sonora {
 pub fn init(
     cx: &mut App,
     io: Io,
+    database: storage::Database,
     providers: Vec<Arc<dyn MusicProvider>>,
     local_provider: Arc<dyn MusicProvider>,
     lyrics_providers: Vec<Arc<dyn LyricsProvider>>,
 ) {
     cx.set_global(io.clone());
+    database.migrate();
+    music::credentials::migrate();
 
-    let settings = cx.new(|_| AppSettings::load());
+    let settings = cx.new(|_| AppSettings::load(database.clone()));
     let session =
         cx.new(|cx| Session::new(providers, local_provider, settings.clone(), io.clone(), cx));
     let library = cx.new(|cx| Library::new(session.clone(), io.clone(), cx));
     let queue = cx.new(|cx| Queue::new(session.clone(), settings.clone(), cx));
     let playback = cx.new(|cx| Playback::new(session.clone(), queue.clone(), settings.clone(), cx));
-    let history = cx.new(|cx| History::new(session.clone(), playback.clone(), io.clone(), cx));
+    let history = cx.new(|cx| {
+        History::new(
+            session.clone(),
+            playback.clone(),
+            database.clone(),
+            io.clone(),
+            cx,
+        )
+    });
     let lyrics = cx.new(|cx| {
         Lyrics::new(
             playback.clone(),
             queue.clone(),
             session.clone(),
+            settings.clone(),
             lyrics_providers,
             io.clone(),
             cx,
@@ -134,7 +146,7 @@ pub fn init(
     });
     let cover = cx.new(|cx| Cover::new(session.clone(), playback.clone(), io.clone(), cx));
     let updates = cx.new(|cx| Updates::new(settings.clone(), io.clone(), cx));
-    let usage = cx.new(|cx| Usage::new(session.clone(), io, cx));
+    let usage = cx.new(|cx| Usage::new(session.clone(), database, io, cx));
 
     cx.set_global(Sonora {
         session,

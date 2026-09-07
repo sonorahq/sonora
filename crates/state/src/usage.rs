@@ -1,9 +1,9 @@
-use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use gpui::{Context, Entity, Task};
 use rusqlite::params;
+use storage::Database;
 
 use crate::{Io, Session, SessionEvent, join};
 
@@ -20,32 +20,16 @@ const PATIENCE: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 struct Store {
-    path: PathBuf,
+    database: Database,
 }
 
 impl Store {
-    fn new() -> Self {
-        let path = dirs::data_local_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("sonora")
-            .join("flags.sqlite3");
-        Self { path }
+    fn new(database: Database) -> Self {
+        Self { database }
     }
 
     fn open(&self) -> Result<rusqlite::Connection> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).context("cannot create the flag directory")?;
-        }
-        let connection = rusqlite::Connection::open(&self.path).context("cannot open flags")?;
-        connection
-            .execute_batch(
-                "CREATE TABLE IF NOT EXISTS flags (
-                    key TEXT PRIMARY KEY,
-                    value INTEGER NOT NULL
-                );",
-            )
-            .context("cannot prepare flags")?;
-        Ok(connection)
+        self.database.open().context("cannot open flags")
     }
 
     fn read(&self) -> Result<(bool, bool)> {
@@ -98,7 +82,12 @@ pub struct Usage {
 }
 
 impl Usage {
-    pub fn new(session: Entity<Session>, io: Io, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        session: Entity<Session>,
+        database: Database,
+        io: Io,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.subscribe(&session, |this, _, event, cx| match event {
             SessionEvent::SignedIn => this.connected(cx),
             SessionEvent::Reconnected | SessionEvent::SignedOut | SessionEvent::LocalChanged => {}
@@ -110,7 +99,7 @@ impl Usage {
             settled: false,
             logged_in: false,
             consented: true,
-            store: Store::new(),
+            store: Store::new(database),
             http: reqwest::Client::new(),
             io,
             load: None,

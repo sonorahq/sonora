@@ -1,5 +1,6 @@
 mod audio;
 pub mod binimum;
+pub mod credentials;
 pub mod kugou;
 #[cfg(test)]
 mod live_tests;
@@ -216,7 +217,6 @@ pub struct ProviderSession {
 pub enum SignIn {
     Default,
     Anonymous,
-    Browser(String),
     Secret,
     Path(PathBuf),
 }

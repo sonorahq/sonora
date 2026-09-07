@@ -12,12 +12,13 @@ use gpui::{
     Window, actions, div, point, px, svg,
 };
 
-use crate::SortAxis;
+use crate::filters::FilterChange;
 use crate::menu::Menu;
 use crate::metrics::{snapped, text_width};
 use crate::pin::{Pin, Pinnable};
 use crate::popup::Popup;
 use crate::theme::ActiveTheme as _;
+use crate::{Filter, SortAxis};
 
 pub use layout::{ColumnSpec, Layout, Sort, Sorting, Width, rank};
 use layout::{PADDING, Resolved, SORT_ROOM, TRAIL, reordered, resolve, shifted, stretch};
@@ -102,6 +103,15 @@ pub trait TableSource: 'static {
         true
     }
 
+    fn filter_axes(&self, _query: &str, _cx: &App) -> Vec<Filter> {
+        vec![]
+    }
+
+    /// Returns `true` if the change was applied or `false` if it's not handled by this source
+    fn filter(&mut self, _change: FilterChange, _cx: &App) -> bool {
+        false
+    }
+
     fn filtered(&self, _cx: &App) -> bool {
         false
     }
@@ -135,7 +145,7 @@ pub struct TableDelegate<S: TableSource> {
     anchor: Option<usize>,
     marked: HashSet<usize>,
     sort: Option<(S::Field, Sort)>,
-    filter: String,
+    query: String,
     order: Vec<usize>,
 }
 
@@ -162,7 +172,7 @@ impl<S: TableSource> TableDelegate<S> {
             anchor: None,
             marked: HashSet::new(),
             sort: None,
-            filter: String::new(),
+            query: String::new(),
             order: Vec::new(),
         };
         delegate.reorder(cx);
@@ -419,24 +429,20 @@ impl<S: TableSource> TableDelegate<S> {
             .collect()
     }
 
-    pub fn set_filter(&mut self, query: &str, cx: &App) {
-        self.filter = query.trim().to_lowercase();
+    pub fn set_query(&mut self, query: &str, cx: &App) {
+        self.query = query.trim().to_lowercase();
         self.reorder(cx);
     }
 
     pub fn query(&self) -> &str {
-        &self.filter
-    }
-
-    pub fn resift(&mut self, cx: &App) {
-        self.reorder(cx);
+        &self.query
     }
 
     fn reorder(&mut self, cx: &App) {
         let mut order: Vec<usize> = (0..self.source.rows(cx))
             .filter(|row| {
-                (self.filter.is_empty() && !self.source.filtered(cx))
-                    || self.source.matches(*row, &self.filter, cx)
+                (self.query.is_empty() && !self.source.filtered(cx))
+                    || self.source.matches(*row, &self.query, cx)
             })
             .collect();
 
@@ -1218,10 +1224,12 @@ pub trait Listing {
     fn sortables(&self, cx: &App) -> Vec<SortAxis>;
     fn cycle_sort(&self, column: &str, cx: &mut App);
     fn row_count(&self, cx: &App) -> usize;
+    fn filters(&self, cx: &App) -> Vec<Filter>;
+    fn filter(&self, change: FilterChange, cx: &mut App);
     fn filtering(&self, cx: &App) -> bool;
     fn toggles(&self, cx: &App) -> Vec<Toggle>;
     fn set_width(&self, width: Pixels, cx: &mut App);
-    fn set_filter(&self, query: &str, cx: &mut App);
+    fn set_query(&self, query: &str, cx: &mut App);
     fn set_viewport(&self, viewport: Viewport, cx: &mut App);
     fn rebuild(&self, cx: &mut App);
     fn refresh(&self, cx: &mut App);
@@ -1281,6 +1289,20 @@ impl<S: TableSource> Listing for Entity<TableState<S>> {
         self.read(cx).delegate().row_count()
     }
 
+    fn filters(&self, cx: &App) -> Vec<Filter> {
+        let delegate = self.read(cx).delegate();
+        delegate.source().filter_axes(delegate.query(), cx)
+    }
+
+    fn filter(&self, change: FilterChange, cx: &mut App) {
+        self.update(cx, |table, cx| {
+            if table.delegate_mut().source_mut().filter(change, cx) {
+                table.delegate_mut().reorder(cx);
+                table.refresh(cx);
+            }
+        });
+    }
+
     fn filtering(&self, cx: &App) -> bool {
         let delegate = self.read(cx).delegate();
         !delegate.query().is_empty() || delegate.source().filtered(cx)
@@ -1293,9 +1315,9 @@ impl<S: TableSource> Listing for Entity<TableState<S>> {
         });
     }
 
-    fn set_filter(&self, query: &str, cx: &mut App) {
+    fn set_query(&self, query: &str, cx: &mut App) {
         self.update(cx, |table, cx| {
-            table.delegate_mut().set_filter(query, cx);
+            table.delegate_mut().set_query(query, cx);
             table.refresh(cx);
         });
     }

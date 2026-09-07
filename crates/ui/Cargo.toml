@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+futures.workspace = true
 gpui.workspace = true
 i18n.workspace = true
 icons.workspace = true

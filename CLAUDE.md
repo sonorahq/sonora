@@ -27,6 +27,7 @@ crates/
   views/      screens plus app chrome: title bar, sidebar, player bar, filter/search field
   state/      GPUI entities holding app state; owns all async orchestration
   music/      provider traits + models; spotify/ = librespot data access and playback (no GPUI)
+  storage/    canonical state.sqlite path, schema, and one-release legacy migration
   ui/         design system: theme, metrics, and reusable elements (gpui only)
   router/     Destination enum, navigation history, Link trait
   input/      text input element + global actions and keybindings
@@ -39,6 +40,7 @@ Dependency direction is strict; do not create a back edge:
 
 ```
 sonora → views → state → music
+         state, music → storage
          all ui-side crates → ui, router, input → ui → gpui
          every ui-side crate → i18n, icons → gpui
 ```
@@ -50,6 +52,8 @@ sonora → views → state → music
 - `ui` depends only on `gpui`, `serde` and `i18n`. It must never know about `music`, `state`, or
   playback.
 - `music` must never depend on `gpui`. It is plain async Rust.
+- `storage` is a leaf shared by `state` and `music`; it owns the only state database path, schema,
+  connection setup and legacy database migration.
 - `state` depends on `ui` only for `ThemeOverrides`, `MIN_FONT`, `MAX_FONT` (settings persistence).
 - Widgets that need app state (player bar, sidebar) live in `views/src/chrome/`, not `ui`.
 - `i18n` is a leaf: it depends on `fluent-bundle`, `unic-langid`, `sys-locale` and `gpui` (for
@@ -198,13 +202,24 @@ construction, layout and scene assembly, never GPU fill.
 
 |                   |                                                                                                                                   |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Settings          | `$XDG_CONFIG_HOME/sonora/settings.json`                                                                                           |
-| Credentials cache | `$XDG_CACHE_HOME/sonora/credentials.json`                                                                                         |
+| Settings          | `$XDG_CONFIG_HOME/sonora/settings.json` (durable preferences and local music folder)                                              |
+| App state         | `$XDG_DATA_HOME/sonora/state.sqlite` (window/layout/playback state, pins, history, local playlists, usage flags)                  |
+| Credentials cache | `$XDG_CACHE_HOME/sonora/<provider>/credentials.json`, one per provider slug (`spotify`, `youtube`), owner-only mode                |
 | OAuth redirect    | `http://127.0.0.1:8989/login`, override with `SONORA_REDIRECT_URI`                                                                |
 | Instance socket   | `sonora.sock`, `sonora-dev.sock` in debug builds, so `cargo run` starts beside an installed Sonora rather than handing over to it |
 | Log file          | `$XDG_STATE_HOME/sonora/sonora.log`, rotated to `.1` past 8 MiB                                                                   |
 | Console logging   | `RUST_LOG`; default filter `warn,symphonia=error,lofty=error`                                                                     |
 | File logging      | `SONORA_LOG`; default adds `sonora=debug,ui=debug`                                                                                |
+
+Startup runs one migration pass before constructing app state. It moves volatile values out of a
+pre-v2 `settings.json`, imports `history.sqlite3`, `flags.sqlite3` and
+`local-playlists.sqlite3` into `state.sqlite`, and moves `local-music.json`'s folder into
+`settings.json`. `music::credentials::migrate` runs in the same pass: it rewrites the Spotify
+`credentials.json` from the cache root into `spotify/` and folds the YouTube `cookies.txt`,
+`authuser.txt` and `guest` files into `youtube/credentials.json`, each owner-only, so the providers
+only ever read the new paths. A legacy file is removed only after its replacement has been written
+successfully.
+This compatibility code is intentionally temporary and can be removed after the next release.
 
 ## Before you build a component
 
@@ -214,24 +229,24 @@ renderers), `crates/views/src/chrome/` (chrome). Extend what's there — add a b
 
 ### `ui` — reusable elements
 
-| Item                                                                    | Use for                                                                                                                                |
-| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `Button`                                                                | every button. Variants `.ghost() .outline() .primary() .danger()`, plus `.small() .icon() .trailing() .label() .tint() .selected() .disabled()`    |
-| `Card`                                                                  | artwork + title + eyebrow + meta row/tile. `.art()` for tile mode, `.circle()`, `.loading()`, `.trailing()`, `.explicit()`, `.press()` |
-| `Artwork`                                                               | cover images with skeleton loading and a music-note fallback                                                                           |
-| `Skeleton`, `Initials`                                                  | pulsing loading placeholder; avatar initials                                                                                           |
-| `Table`, `TableSource`, `TableDelegate`, `TableState`, `ColumnSpec`, `Cell` | every table. Virtualized, sortable, filterable, hideable columns, columns dropped by `rank` when the room runs out                    |
-| `Scroller` + `Scrollbar`                                                | any scrolling region. Do not use bare `overflow_y_scroll`                                                                              |
-| `Scrubber` + `ScrubberState`                                            | any draggable 0..1 track (seek bar, volume)                                                                                            |
-| `Panel` + `Side`                                                        | a resizable side panel shell: clamped width, drag grip, pixel snapping. `.limits()`, `.fill()`, `.on_resize()`                         |
-| `Menu`, `MenuItem`                                                      | dropdowns (deferred + occluded, with `on_dismiss`)                                                                                     |
-| `InlineLinks`, `InlineLink`                                             | comma-joined clickable artist lists                                                                                                    |
-| `eyebrow()`, `heading()`                                                | the two standard text styles                                                                                                           |
-| `ExplicitBadge`                                                         | the "E" badge                                                                                                                          |
-| `WindowControls`                                                        | minimize/maximize/close, honoring platform decorations                                                                                 |
-| `Rising` / `veiled()`                                                   | the one entrance: fade, 1% zoom and a 1.5px blur. `.rising(id)` for anything that appears; `veiled` for a hand-driven progress         |
-| `clock()`                                                               | `Duration` → `m:ss`                                                                                                                    |
-| `snapped()`                                                             | round a `Pixels` to the device pixel grid                                                                                              |
+| Item                                                                        | Use for                                                                                                                                         |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Button`                                                                    | every button. Variants `.ghost() .outline() .primary() .danger()`, plus `.small() .icon() .trailing() .label() .tint() .selected() .disabled()` |
+| `Card`                                                                      | artwork + title + eyebrow + meta row/tile. `.art()` for tile mode, `.circle()`, `.loading()`, `.trailing()`, `.explicit()`, `.press()`          |
+| `Artwork`                                                                   | cover images with skeleton loading and a music-note fallback                                                                                    |
+| `Skeleton`, `Initials`                                                      | pulsing loading placeholder; avatar initials                                                                                                    |
+| `Table`, `TableSource`, `TableDelegate`, `TableState`, `ColumnSpec`, `Cell` | every table. Virtualized, sortable, filterable, hideable columns, columns dropped by `rank` when the room runs out                              |
+| `Scroller` + `Scrollbar`                                                    | any scrolling region. Do not use bare `overflow_y_scroll`                                                                                       |
+| `Scrubber` + `ScrubberState`                                                | any draggable 0..1 track (seek bar, volume)                                                                                                     |
+| `Panel` + `Side`                                                            | a resizable side panel shell: clamped width, drag grip, pixel snapping. `.limits()`, `.fill()`, `.on_resize()`                                  |
+| `Menu`, `MenuItem`                                                          | dropdowns (deferred + occluded, with `on_dismiss`)                                                                                              |
+| `InlineLinks`, `InlineLink`                                                 | comma-joined clickable artist lists                                                                                                             |
+| `eyebrow()`, `heading()`                                                    | the two standard text styles                                                                                                                    |
+| `ExplicitBadge`                                                             | the "E" badge                                                                                                                                   |
+| `WindowControls`                                                            | minimize/maximize/close, honoring platform decorations                                                                                          |
+| `Rising` / `veiled()`                                                       | the one entrance: fade, 1% zoom and a 1.5px blur. `.rising(id)` for anything that appears; `veiled` for a hand-driven progress                  |
+| `clock()`                                                                   | `Duration` → `m:ss`                                                                                                                             |
+| `snapped()`                                                                 | round a `Pixels` to the device pixel grid                                                                                                       |
 
 Also available: `Input` (`input` crate — full text editing, IME, selection, clipboard) and
 `Link` (`router` — makes a `Stateful<Div>` navigate on click).
@@ -457,7 +472,7 @@ Rules:
 
 Both side panels are built on `ui::Panel` (`Side::Left` / `Side::Right`), which owns the width
 clamping, the drag grip and the snap to the device pixel grid; each reports its new width through
-`on_resize` and persists it in `settings.json` (`sidebar_width`, `sidebar_right_width`).
+`on_resize` and persists it in `state.sqlite` (`sidebar_width`, `sidebar_right_width`).
 
 ## Async: two runtimes
 
@@ -538,7 +553,7 @@ Working notes:
 - **The collection has more than one set.** `collection2::saved_items`/`set_saved` take the set name:
   `COLLECTION` holds saved tracks and albums, `ARTISTS` ("artist") holds followed artists. Reading the
   artist set is confirmed against the live API; if it ever comes back empty, `artists::followed`
-  falls back to scanning `COLLECTION` for `spotify:artist:` uris. The follow *write* path shares the
+  falls back to scanning `COLLECTION` for `spotify:artist:` uris. The follow _write_ path shares the
   same set name but has not been exercised against a live account — a failure surfaces as
   `library: cannot update the followed artist`.
 - Errors use `anyhow` with `.context("cannot …")` in lowercase.
@@ -559,14 +574,14 @@ an `Unavailable` track.
 `state::init` installs a `Sonora` global holding `session`, `library`, `playback`, `queue`,
 `settings`. Reach them with `Sonora::global(cx)`.
 
-| Entity                                     | Responsibility                                                                                                                                          |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Session`                                  | auth lifecycle; emits `SessionEvent::{SignedIn, SignedOut}`; hands out `Arc<dyn MusicApi>` and `Arc<dyn PlaybackFactory>`                               |
+| Entity                                     | Responsibility                                                                                                                                                             |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Session`                                  | auth lifecycle; emits `SessionEvent::{SignedIn, SignedOut}`; hands out `Arc<dyn MusicApi>` and `Arc<dyn PlaybackFactory>`                                                  |
 | `Library`                                  | saved tracks / playlists / albums / followed artists; `LibraryState` is `Empty \| Loading \| Ready{..,problems} \| Failed` — partial failure is normal, surface `problems` |
-| `Playback`                                 | engine ownership, transport, shuffle/repeat, volume, `Origin` tracking, `toggle_origin`                                                                                  |
-| `Queue`                                    | past / current / upcoming; `start`, `next`, `next_random`, `previous`, `rewind`                                                                         |
-| `Home`, `Detail`, `ArtistDetail`, `Search` | per-screen loaders, each owning its `Task`                                                                                                              |
-| `AppSettings`                              | debounced JSON persistence                                                                                                                              |
+| `Playback`                                 | engine ownership, transport, shuffle/repeat, volume, `Origin` tracking, `toggle_origin`                                                                                    |
+| `Queue`                                    | past / current / upcoming; `start`, `next`, `next_random`, `previous`, `rewind`                                                                                            |
+| `Home`, `Detail`, `ArtistDetail`, `Search` | per-screen loaders, each owning its `Task`                                                                                                                                 |
+| `AppSettings`                              | debounced durable settings in JSON and runtime state in SQLite                                                                                                             |
 
 Everything reacts to `SessionEvent`: signing out must clear derived state. If you add an entity that
 caches Spotify data, subscribe to `Session` and clear on `SignedOut`.
@@ -612,7 +627,8 @@ answers. `state::Tags` owns the read and the write and rescans the folder afterw
 
 **Saved tracks are called Favorites.** `LibraryTab::Songs`, `Section::Favorites`, the `songs`
 settings key and `library-liked-songs` all keep their old names; only the wording changed. Local
-favorites live in the local SQLite store and reach the same `MusicApi::set_track_saved` path, so
+favorites live in the local tables of `state.sqlite` and reach the same
+`MusicApi::set_track_saved` path, so
 `Library::saved`/`toggle` route by `music::is_local_id`. `MusicApi::all_tracks` is the odd one out:
 it defaults to `saved_tracks` and only the local provider gives it a different answer.
 
@@ -709,12 +725,12 @@ distributing unlicensed code.
 
 ## Code style
 
-- **Comments: essentially none.** The codebase has almost zero. Name things so they don't need one.
-  If a comment is unavoidable it is at most three lowercase words, no trailing period.
-- Source files carry no license header. The licence is stated once, in `COPYING`, the `license`
-  field of the root `Cargo.toml` and `README.md`; do not add `SPDX-License-Identifier` lines back.
-- Names are short and domain-flavored: `Look`, `Metrics`, `Grab`, `Scored`, `wire`, `pb`, `clock`,
-  `snapped`. Prefer a noun that reads at the call site over a descriptive compound.
+- **Document with doc comments.** Every type and every function whose behaviour is not obvious
+  from its name carries a `///` comment saying what it is for and what a caller has to know:
+  invariants, ordering, what happens on failure. One or two plain sentences, no restating the
+  signature.
+  Skip it when the name already says everything. Older files have few comments. Add them as
+  you touch the code.
 - `use gpui::prelude::*;` then explicit imports; traits imported anonymously (`use ui::ActiveTheme as _;`).
 - Module shape: `use` block → `const`s in SCREAMING_SNAKE → types → impls → private free helpers at
   the bottom.

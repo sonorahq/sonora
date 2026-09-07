@@ -82,7 +82,7 @@ impl MusicProvider for SpotifyProvider {
     }
 
     fn stored(&self) -> bool {
-        self.config.cache_dir.join("credentials.json").exists()
+        self.config.file().exists()
     }
 
     async fn restore(&self) -> Result<Option<ProviderSession>> {

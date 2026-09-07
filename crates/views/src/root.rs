@@ -10,6 +10,8 @@ use state::{
     ArtistDetail, Detail, GenreDetails, Genres, Home, Io, Library, Playback, Profile, Queue,
     SYSTEM_FONT, Search, Session, SessionState, SideTab, SongDetail, Sonora,
 };
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use ui::WindowFrame;
 use ui::{ActiveTheme as _, Dismiss, Look, Theme, ThemeKind, clear_listing};
 
 use crate::chrome::{TitleBar, TitleBarEvent, TitleBarOptions, Toolbar, Tooled};
@@ -568,7 +570,7 @@ impl Render for Root {
         let theme = *cx.theme();
         window.set_rem_size(theme.font_size);
 
-        div()
+        let root = div()
             .relative()
             .flex()
             .font(ui_font(cx))
@@ -607,6 +609,9 @@ impl Render for Root {
                         RootView::Fullscreen => self.shells.fullscreen.clone().into_any_element(),
                     })
                 },
-            )
+            );
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        let root = root.child(WindowFrame::new());
+        root
     }
 }

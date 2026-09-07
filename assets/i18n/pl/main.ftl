@@ -58,6 +58,11 @@ app-refresh-library = Odśwież bibliotekę
 app-sign-out = Wyloguj się
 app-quit = Zakończ
 
+# tray menu
+tray-show = Pokaż Sonorę
+tray-play = Odtwarzaj
+tray-pause = Wstrzymaj
+
 # table columns
 column-played-at = Odtworzono
 column-index = #
@@ -76,20 +81,61 @@ column-tracks = Utwory
 
 # track menu
 menu-add-to-playlist = Dodaj do playlisty
+menu-add-tracks-to-playlist = { $count ->
+    [one] Dodaj { $count } utwór do playlisty
+    [few] Dodaj { $count } utwory do playlisty
+   *[other] Dodaj { $count } utworów do playlisty
+}
 menu-new-playlist = Nowa playlista
 menu-edit-tags = Edytuj tagi
 menu-no-playlists = Brak playlist
 menu-add-to-library = Dodaj do ulubionych
+menu-add-tracks-to-library = { $count ->
+    [one] Dodaj { $count } utwór do ulubionych
+    [few] Dodaj { $count } utwory do ulubionych
+   *[other] Dodaj { $count } utworów do ulubionych
+}
 menu-remove-from-library = Usuń z ulubionych
+menu-remove-tracks-from-library = { $count ->
+    [one] Usuń { $count } utwór z ulubionych
+    [few] Usuń { $count } utwory z ulubionych
+   *[other] Usuń { $count } utworów z ulubionych
+}
+
 menu-remove-from-playlist = Usuń z playlisty
+menu-remove-tracks-from-playlist = { $count ->
+    [one] Usuń { $count } utwór z playlisty
+    [few] Usuń { $count } utwory z playlisty
+   *[other] Usuń { $count } utworów z playlisty
+}
+
 menu-remove-from-history = Usuń z historii
+menu-remove-tracks-from-history = { $count ->
+    [one] Usuń { $count } utwór z historii
+    [few] Usuń { $count } utwory z historii
+   *[other] Usuń { $count } utworów z historii
+}
 menu-play-next = Odtwórz jako następny
+menu-play-tracks-next = { $count ->
+    [one] Odtwórz { $count } utwór jako następny
+    [few] Odtwórz { $count } utwory jako następne
+   *[other] Odtwórz { $count } utworów jako następne
+}
 menu-add-to-queue = Dodaj do kolejki
+menu-add-tracks-to-queue = { $count ->
+    [one] Dodaj { $count } utwór do kolejki
+    [few] Dodaj { $count } utwory do kolejki
+   *[other] Dodaj { $count } utworów do kolejki
+}
 menu-song-radio = Radio utworu
 menu-go-to-album = Przejdź do albumu
 menu-go-to-artist = Przejdź do wykonawcy
 menu-view-details = Szczegóły
 menu-copy-link = Kopiuj link
+menu-cut = Wytnij
+menu-copy = Kopiuj
+menu-paste = Wklej
+menu-select-all = Zaznacz wszystko
 menu-remove-from-queue = Usuń z kolejki
 menu-open-playlist = Otwórz playlistę
 menu-play-playlist = Odtwórz playlistę
@@ -112,6 +158,41 @@ playlist-delete-confirm = Usunąć „{ $name }”? Tej operacji nie można cofn
 playlist-again-title = Dodać ponownie?
 playlist-again-confirm = Ten utwór jest już w „{ $name }”. Dodać kopię?
 playlist-again-add = Dodaj ponownie
+
+# confirm
+confirm-remove-library-title = Usuń z biblioteki
+confirm-remove-playlist-title = Usuń z playlisty
+confirm-remove-history-title = Usuń z historii
+confirm-unfollow-title = Przestań obserwować
+confirm-remove-songs = { $count ->
+    [one] Usunąć ten utwór z biblioteki?
+    [few] Usunąć { $count } utwory z biblioteki?
+   *[other] Usunąć { $count } utworów z biblioteki?
+}
+confirm-remove-playlist-songs = { $count ->
+    [one] Usunąć ten utwór z playlisty?
+    [few] Usunąć { $count } utwory z playlisty?
+   *[other] Usunąć { $count } utworów z playlisty?
+}
+confirm-remove-history-songs = { $count ->
+    [one] Usunąć ten utwór z historii odtwarzania?
+    [few] Usunąć { $count } utwory z historii odtwarzania?
+   *[other] Usunąć { $count } utworów z historii odtwarzania?
+}
+confirm-remove-albums = { $count ->
+    [one] Usunąć ten album z biblioteki?
+    [few] Usunąć { $count } albumy z biblioteki?
+   *[other] Usunąć { $count } albumów z biblioteki?
+}
+confirm-unfollow-artists = { $count ->
+    [one] Przestać obserwować tego artystę?
+   *[other] Przestać obserwować { $count } artystów?
+}
+confirm-remove-playlists = { $count ->
+    [one] Usunąć tę playlistę z biblioteki?
+    [few] Usunąć { $count } playlisty z biblioteki?
+   *[other] Usunąć { $count } playlist z biblioteki?
+}
 
 # queue panel
 queue-title = Kolejka
@@ -154,6 +235,7 @@ filter-duration = Czas trwania
 filter-year = Rok
 filter-explicit = Tylko z wulgaryzmami
 filter-playable = Tylko dostępne
+filter-owned = Moje
 
 # view
 view-list = Lista
@@ -178,17 +260,13 @@ login-problem-refused = Spotify odrzucił logowanie. Odczekaj chwilę i spróbuj
 login-problem-premium = Sonora odtwarza muzykę przez Spotify Premium, a to konto go nie ma. Zaloguj się na konto z Premium, aby kontynuować.
 login-sign-in = Zaloguj się przez { $provider }
 login-connect-cookies = Wklej pliki cookie ręcznie
-login-import-browser = Importuj z przeglądarki*
-login-import-browser-plain = Importuj z przeglądarki
-login-browser-firefox = *Tylko przeglądarki oparte na Firefoksie
-login-browser-title = Wybierz przeglądarkę
-login-browser-detail = Sonora odczyta sesję YouTube Music z wybranej przeglądarki. Sesja pozostanie na tym urządzeniu.
 login-use = Otwórz { $provider }
 login-guest-title = Tryb gościa
 login-guest-use = Otwórz tryb gościa
 login-guest-detail = Słuchaj bez konta. Biblioteka, polubienia i playlisty pozostaną niedostępne.
 login-usage-consent = Pomóż nam oszacować, ile osób korzysta z Sonory.
 login-device-code = Wpisz ten kod na stronie { $url }
+login-cookie-open = Otwórz YouTube Music
 login-cookie-submit = Kontynuuj
 login-cookie-hint = Wklej tutaj nagłówek żądania Cookie
 login-cookie-step-1 = Otwórz music.youtube.com i upewnij się, że jesteś zalogowany.
@@ -375,6 +453,7 @@ month-12 = gru
 settings-tab-general = Ogólne
 settings-tab-appearance = Wygląd
 settings-tab-playback = Odtwarzanie
+settings-tab-privacy = Prywatność
 settings-theme = Motyw
 settings-theme-detail = Paleta kolorów aplikacji
 settings-opacity = Krycie
@@ -413,10 +492,14 @@ settings-typeface-detail = Krój pisma używany przez Sonorę w interfejsie
 settings-typeface-system = Domyślna
 settings-typeface-search = Szukaj czcionki
 settings-typeface-none = Nie znaleziono czcionek
+settings-server-side-decorations = Dekoracje po stronie serwera
+settings-server-side-decorations-detail = Pozwól kompozytorowi rysować pasek tytułu, obramowanie i cień
 settings-window-controls = Przyciski okna
 settings-window-controls-detail = Rysuj minimalizację, maksymalizację i zamknięcie na pasku tytułu
 settings-controls-side = Strona przycisków
 settings-controls-side-detail = Po której stronie paska tytułu znajdują się przyciski
+settings-close-to-tray = Kontynuuj odtwarzanie po zamknięciu
+settings-close-to-tray-detail = Pozostaw Sonorę w zasobniku systemowym i kontynuuj odtwarzanie po zamknięciu okna
 settings-normalisation = Normalizacja głośności
 settings-normalisation-detail = Utrzymuje stałą głośność utworów
 settings-gapless = Odtwarzanie bez przerw
@@ -426,6 +509,8 @@ settings-panel-lyrics-size-detail = Rozmiar wierszy tekstu utworu w panelu boczn
 settings-fullscreen-lyrics-size = Rozmiar tekstu utworu (pełny ekran)
 settings-fullscreen-lyrics-size-detail = Rozmiar wierszy tekstu utworu w odtwarzaczu pełnoekranowym ponad bazowy rozmiar czcionki
 settings-lyrics-size-value = { $size }%
+settings-lyrics-for-local-files = Tekst dla lokalnych plików
+settings-lyrics-for-local-files-detail = Użyj metadanych lokalnych plików do pobierania tekstu z internetu
 settings-karaoke-lyrics = Tekst karaoke
 settings-karaoke-lyrics-detail = Podświetlaj tekst słowo po słowie, gdy dostępne jest dopasowanie w czasie
 settings-romanized-lyrics = Latynizacja tekstu
@@ -439,11 +524,13 @@ settings-romanization-greek = Pismo greckie
 settings-romanization-arabic = Pismo arabskie
 settings-romanization-other = Inne systemy pisma
 settings-advanced = Zaawansowane
+settings-group-window = Okno
 settings-group-accounts = Konta
 settings-group-library = Biblioteka
 settings-group-text = Tekst
 settings-group-motion = Animacje
 settings-group-title-bar = Pasek tytułu
+settings-group-window-style = Styl okna
 settings-group-lyrics = Tekst utworu
 settings-group-project = Projekt
 settings-adaptive-menu = Adaptacyjne menu kontekstowe

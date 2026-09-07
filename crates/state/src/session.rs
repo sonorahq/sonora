@@ -92,6 +92,7 @@ pub struct Session {
     prompt_task: Option<Task<()>>,
     input: Option<UnboundedSender<String>>,
     local_provider: Arc<dyn MusicProvider>,
+    local_folder: Option<PathBuf>,
     local_client: Option<Arc<dyn MusicApi>>,
     local_catalog: Option<Arc<CatalogSource>>,
     local_playback: Option<Arc<dyn PlaybackFactory>>,
@@ -113,6 +114,7 @@ impl Session {
         cx: &mut Context<Self>,
     ) -> Self {
         let remembered = settings.read(cx).provider().to_string();
+        let local_folder = settings.read(cx).local_folder().map(PathBuf::from);
         let active = providers
             .iter()
             .position(|provider| provider.slug() == remembered);
@@ -134,6 +136,7 @@ impl Session {
             prompt_task: None,
             input: None,
             local_provider,
+            local_folder,
             local_client: None,
             local_catalog: None,
             local_playback: None,
@@ -175,7 +178,9 @@ impl Session {
     }
 
     pub fn local_path(&self) -> Option<String> {
-        self.local_provider.location()
+        self.local_folder
+            .as_ref()
+            .map(|path| path.display().to_string())
     }
 
     pub fn providers(&self) -> impl Iterator<Item = ProviderInfo> + '_ {
@@ -573,12 +578,20 @@ impl Session {
     }
 
     fn restore_local(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.local_folder.clone() else {
+            return;
+        };
         let provider = self.local_provider.clone();
         let io = self.io.clone();
         self.local_task = Some(cx.spawn(async move |this, cx| {
-            let restored = join(io.spawn(async move { provider.restore().await })).await;
+            let prompt: PromptSink = Arc::new(|_| {});
+            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            let restored = join(
+                io.spawn(async move { provider.sign_in(SignIn::Path(path), prompt, rx).await }),
+            )
+            .await;
             this.update(cx, |this, cx| {
-                if let Ok(Some(session)) = restored {
+                if let Ok(session) = restored {
                     this.local_signed_in(session, cx);
                 }
             })
@@ -588,6 +601,7 @@ impl Session {
 
     pub fn choose_local_folder(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let provider = self.local_provider.clone();
+        let chosen = path.clone();
         let io = self.io.clone();
         self.local_task = Some(cx.spawn(async move |this, cx| {
             let prompt: PromptSink = Arc::new(|_| {});
@@ -598,7 +612,13 @@ impl Session {
             .await;
 
             this.update(cx, |this, cx| match signed_in {
-                Ok(session) => this.local_signed_in(session, cx),
+                Ok(session) => {
+                    this.local_folder = Some(chosen.clone());
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_local_folder(Some(chosen), cx)
+                    });
+                    this.local_signed_in(session, cx);
+                }
                 Err(error) => {
                     log::warn!("session: cannot set local music folder: {error:#}");
                 }
@@ -609,6 +629,9 @@ impl Session {
 
     pub fn clear_local_folder(&mut self, cx: &mut Context<Self>) {
         self.local_provider.sign_out();
+        self.local_folder = None;
+        self.settings
+            .update(cx, |settings, cx| settings.set_local_folder(None, cx));
         self.local_client = None;
         self.local_catalog = None;
         self.local_playback = None;

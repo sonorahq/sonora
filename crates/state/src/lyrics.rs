@@ -7,7 +7,7 @@ use music::{Lyrics as Sheet, LyricsHit, LyricsProvider, LyricsQuery, MusicApi, T
 use tokio::task::JoinSet;
 
 use crate::sheets::Sheets;
-use crate::{Io, Playback, Queue, Session, join};
+use crate::{AppSettings, Io, Playback, Queue, Session, join};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LyricsState {
@@ -42,6 +42,7 @@ pub struct Lyrics {
     playback: Entity<Playback>,
     queue: Entity<Queue>,
     session: Entity<Session>,
+    settings: Entity<AppSettings>,
     io: Io,
     task: Option<Task<()>>,
     ahead: Option<Task<()>>,
@@ -54,6 +55,7 @@ impl Lyrics {
         playback: Entity<Playback>,
         queue: Entity<Queue>,
         session: Entity<Session>,
+        settings: Entity<AppSettings>,
         providers: Vec<Arc<dyn LyricsProvider>>,
         io: Io,
         cx: &mut Context<Self>,
@@ -83,6 +85,7 @@ impl Lyrics {
             playback,
             queue,
             session,
+            settings,
             io,
             task: None,
             ahead: None,
@@ -246,6 +249,15 @@ impl Lyrics {
     }
 
     fn fetch(&mut self, id: String, track: Track, cx: &mut Context<Self>) -> Task<()> {
+        if !self.settings.read(cx).lyrics_for_local_files() && music::is_local_id(&id) {
+            log::info!(
+                "lyrics: local files are disabled, skipping {:?}",
+                track.name
+            );
+            self.state = LyricsState::Missing;
+            return Task::ready(());
+        }
+
         let key = self
             .session
             .read(cx)

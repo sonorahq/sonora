@@ -11,6 +11,7 @@
 
   outputs =
     {
+      self,
       nixpkgs,
       rust-overlay,
       ...
@@ -35,15 +36,15 @@
         );
 
       release = {
-        version = "0.29.0";
+        version = "0.31.0";
         assets = {
           x86_64-linux = {
             target = "x86_64-unknown-linux-gnu";
-            hash = "sha256-FUKrUrfBKKOMMzaqAJHxKMjHK/nBcjLa3qqe8IZPWA4=";
+            hash = "sha256-L4ehTKfTjDJTOGU3ahgVgPgz5V7/nhh4h+Og3lQbaNs=";
           };
           aarch64-linux = {
             target = "aarch64-unknown-linux-gnu";
-            hash = "sha256-XRfVINLgVp4pcGpYqHilBN9F2+z5b3afU5iJXh7dAtw=";
+            hash = "sha256-QpYMzemVKel9BfG+wzpkMq8MOeODPtXRZZHFbXDBvBI=";
           };
         };
       };
@@ -69,6 +70,14 @@
 
           asset = release.assets.${pkgs.stdenv.hostPlatform.system};
 
+          alsaPluginDirectory = pkgs.symlinkJoin {
+            name = "sonora-alsa-plugins";
+            paths = [
+              "${pkgs.pipewire}/lib/alsa-lib"
+              "${pkgs.alsa-plugins}/lib/alsa-lib"
+            ];
+          };
+
           sonora-bin = pkgs.stdenv.mkDerivation {
             pname = "sonora-bin";
             inherit (release) version;
@@ -80,6 +89,8 @@
 
             dontUnpack = true;
             dontStrip = true;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
 
             installPhase = ''
               runHook preInstall
@@ -112,6 +123,8 @@
                 --set-interpreter "${pkgs.stdenv.cc.bintools.dynamicLinker}" \
                 --add-rpath "${pkgs.lib.makeLibraryPath (runtimeLibraries ++ [ pkgs.stdenv.cc.cc.lib ])}" \
                 "$out/bin/sonora"
+              wrapProgram "$out/bin/sonora" \
+                --set ALSA_PLUGIN_DIR ${alsaPluginDirectory}
             '';
 
             meta = {
@@ -183,5 +196,16 @@
           };
         }
       );
+
+      overlays.default = final: _prev: {
+        sonora = self.packages.${final.stdenv.hostPlatform.system}.default;
+      };
+
+      homeManagerModules = {
+        default = import ./nix/modules/hm-module.nix self;
+        sonora = import ./nix/modules/hm-module.nix self;
+      };
+
+      homeModules = self.homeManagerModules;
     };
 }

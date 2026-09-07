@@ -470,6 +470,29 @@ impl Playback {
         self.begin(tracks, index, origin, cx);
     }
 
+    pub fn start_any(
+        &mut self,
+        tracks: Vec<Track>,
+        origin: Option<Origin>,
+        cx: &mut Context<Self>,
+    ) {
+        let index = self.opener(&tracks, cx).unwrap_or_default();
+        self.start(tracks, index, origin, cx);
+    }
+
+    fn opener(&self, tracks: &[Track], cx: &Context<Self>) -> Option<usize> {
+        let playable = tracks
+            .iter()
+            .enumerate()
+            .filter(|(_, track)| track.playable)
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        match self.queue.read(cx).shuffle() {
+            true => fastrand::choice(&playable).copied(),
+            false => playable.first().copied(),
+        }
+    }
+
     pub fn play_radio(&mut self, seed: &Track, cx: &mut Context<Self>) {
         let Some(id) = seed.id.clone() else {
             return self.failed(format!("{} has no track id", seed.name), cx);
@@ -778,7 +801,10 @@ impl Playback {
             let loaded = join(io.spawn(async move { tracks(client).await })).await;
 
             this.update(cx, |this, cx| match loaded {
-                Ok(tracks) => this.begin(tracks, 0, Some(origin), cx),
+                Ok(tracks) => {
+                    let index = this.opener(&tracks, cx).unwrap_or_default();
+                    this.begin(tracks, index, Some(origin), cx)
+                }
                 Err(error) if this.has_active_playback() => {
                     log::error!("playback: cannot load context: {error:#}");
                 }

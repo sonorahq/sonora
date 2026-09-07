@@ -173,7 +173,6 @@ impl HeroPlayButton {
 
 impl RenderOnce for HeroPlayButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let first_playable = self.listing.first(cx);
         let state = {
             let playback = self.playback.read(cx);
             let current = playback.track().and_then(|track| track.id.as_deref());
@@ -187,8 +186,7 @@ impl RenderOnce for HeroPlayButton {
             Some(PlaybackState::Loading) => (t!("play-loading"), "icons/play.svg", true),
             _ => (self.label, "icons/play.svg", false),
         };
-        let disabled = first_playable.is_none() || blocked;
-        let first_playable = first_playable.unwrap_or_default();
+        let disabled = self.listing.first(cx).is_none() || blocked;
         let listing = self.listing;
         let from = self.from;
         let playback = self.playback;
@@ -207,7 +205,7 @@ impl RenderOnce for HeroPlayButton {
                         _ => {
                             let queued = listing.queue(cx);
                             let from = from.clone().or_else(|| listing.whence(cx));
-                            playback.start(queued, first_playable, from, cx)
+                            playback.start_any(queued, from, cx)
                         }
                     });
                 }),

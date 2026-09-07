@@ -1,13 +1,19 @@
 use crate::metrics::snapped;
 use crate::skeleton::Skeleton;
 use crate::theme::ActiveTheme as _;
+use futures::AsyncReadExt as _;
 use gpui::prelude::*;
 use gpui::{
-    App, Context, Div, Entity, Global, Hsla, ImageCache, ImageCacheError, ImageSource,
-    ImgResourceLoader, Interactivity, ObjectFit, Pixels, RenderImage, Resource, SharedString,
-    SharedUri, StyleRefinement, Styled, Task, Window, div, img, px, svg,
+    App, Asset, AssetLogger, Context, Div, Entity, Global, Hsla, ImageCache, ImageCacheError,
+    ImageSource, Interactivity, ObjectFit, Pixels, RenderImage, Resource, SharedString, SharedUri,
+    StyleRefinement, Styled, Task, Window, div, img, px, svg,
 };
-use image::{Frame, RgbaImage, imageops};
+use image::{
+    AnimationDecoder, DynamicImage, Frame, ImageDecoder, ImageFormat, RgbaImage,
+    codecs::{gif::GifDecoder, webp::WebPDecoder},
+    imageops,
+};
+use std::io::Cursor;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use std::{collections::HashMap, sync::Arc};
@@ -19,8 +25,6 @@ pub(crate) const ROUNDED: Pixels = px(4.);
 const CACHE_BYTES: usize = 32 * 1024 * 1024;
 const CACHE_ITEMS: usize = 256;
 const HARD_BYTES: usize = 192 * 1024 * 1024;
-const SAMPLED_BYTES: usize = 64 * 1024 * 1024;
-const SAMPLED_ITEMS: usize = 256;
 const MAX_SAMPLE_EDGE: u32 = 1024;
 const GRACE: Duration = Duration::from_secs(5);
 const KEEP_ITEMS: usize = 96;
@@ -31,6 +35,183 @@ const SOFT_ITEMS: usize = 8;
 const SOFT_SIGMA: f32 = 1.6;
 const SMALL_BYTES: usize = 64 * 1024;
 const BIG_BYTES: usize = 256 * 1024;
+const MAX_PENDING: usize = 8;
+
+type ArtworkKey = (Resource, u32);
+
+#[derive(Clone, Hash)]
+struct ArtworkSource {
+    resource: Resource,
+    edge: u32,
+}
+
+#[derive(Clone)]
+enum ArtworkAssetLoader {}
+
+type ArtworkResourceLoader = AssetLogger<ArtworkAssetLoader>;
+
+#[derive(Clone)]
+enum ArtworkBytesLoader {}
+
+impl Asset for ArtworkBytesLoader {
+    type Source = Resource;
+    type Output = Result<Arc<Vec<u8>>, ImageCacheError>;
+
+    fn load(
+        resource: Self::Source,
+        cx: &mut App,
+    ) -> impl std::future::Future<Output = Self::Output> + Send + 'static {
+        let client = cx.http_client();
+        let asset_source = cx.asset_source().clone();
+
+        async move {
+            let bytes = match resource {
+                Resource::Path(path) => std::fs::read(path.as_ref())?,
+                Resource::Uri(uri) => {
+                    let mut response = client.get(uri.as_ref(), ().into(), true).await?;
+                    let mut body = Vec::new();
+                    response.body_mut().read_to_end(&mut body).await?;
+                    if !response.status().is_success() {
+                        let mut body = String::from_utf8_lossy(&body).into_owned();
+                        let first_line = body.lines().next().unwrap_or("").trim_end();
+                        body.truncate(first_line.len());
+                        return Err(ImageCacheError::BadStatus {
+                            uri,
+                            status: response.status(),
+                            body,
+                        });
+                    }
+                    body
+                }
+                Resource::Embedded(path) => {
+                    let Some(data) = asset_source.load(&path)? else {
+                        return Err(ImageCacheError::Asset(
+                            format!("Embedded resource not found: {path}").into(),
+                        ));
+                    };
+                    data.into_owned()
+                }
+            };
+
+            Ok(Arc::new(bytes))
+        }
+    }
+}
+
+impl Asset for ArtworkAssetLoader {
+    type Source = ArtworkSource;
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
+
+    fn load(
+        source: Self::Source,
+        cx: &mut App,
+    ) -> impl std::future::Future<Output = Self::Output> + Send + 'static {
+        let svg_renderer = cx.svg_renderer();
+        let (bytes, _) = cx.fetch_asset::<ArtworkBytesLoader>(&source.resource);
+
+        async move {
+            let bytes = bytes.await?;
+
+            let Ok(format) = image::guess_format(&bytes) else {
+                return svg_renderer
+                    .render_single_frame(&bytes, 1.0)
+                    .map_err(Into::into);
+            };
+
+            Ok(Arc::new(RenderImage::new(raster_frames(
+                &bytes,
+                format,
+                source.edge,
+            )?)))
+        }
+    }
+}
+
+fn raster_frames(
+    bytes: &[u8],
+    format: ImageFormat,
+    edge: u32,
+) -> Result<Vec<Frame>, ImageCacheError> {
+    match format {
+        ImageFormat::Gif => animated_frames(GifDecoder::new(Cursor::new(bytes))?, edge),
+        ImageFormat::WebP => {
+            let mut decoder = WebPDecoder::new(Cursor::new(bytes))?;
+            if decoder.has_animation() {
+                let _ = decoder.set_background_color(image::Rgba([0, 0, 0, 0]));
+                animated_frames(decoder, edge)
+            } else {
+                static_frame(decoder, edge)
+            }
+        }
+        _ => {
+            let decoder =
+                image::ImageReader::with_format(Cursor::new(bytes), format).into_decoder()?;
+            static_frame(decoder, edge)
+        }
+    }
+}
+
+fn static_frame(mut decoder: impl ImageDecoder, edge: u32) -> Result<Vec<Frame>, ImageCacheError> {
+    let orientation = decoder.orientation()?;
+    let mut image = DynamicImage::from_decoder(decoder)?;
+    image.apply_orientation(orientation);
+    Ok(vec![Frame::new(artwork_frame(image.into_rgba8(), edge))])
+}
+
+fn animated_frames<'a>(
+    decoder: impl AnimationDecoder<'a>,
+    edge: u32,
+) -> Result<Vec<Frame>, ImageCacheError> {
+    let mut frames = Vec::new();
+    for frame in decoder.into_frames() {
+        match frame {
+            Ok(frame) => {
+                let delay = frame.delay();
+                frames.push(Frame::from_parts(
+                    artwork_frame(frame.into_buffer(), edge),
+                    0,
+                    0,
+                    delay,
+                ));
+            }
+            Err(error) => log::debug!("Skipping artwork animation frame: {error}"),
+        }
+    }
+    if frames.is_empty() {
+        return Err(ImageCacheError::Asset(
+            "Animated artwork contained no decodable frames".into(),
+        ));
+    }
+    Ok(frames)
+}
+
+fn artwork_frame(mut image: RgbaImage, edge: u32) -> RgbaImage {
+    if edge == 0 {
+        bgra(&mut image);
+        return image;
+    }
+
+    let (width, height) = image.dimensions();
+    let side = width.min(height);
+    if side <= edge {
+        bgra(&mut image);
+        return image;
+    }
+
+    let square = imageops::crop_imm(&image, (width - side) / 2, (height - side) / 2, side, side);
+    let mut image = match side > edge.saturating_mul(2) {
+        true => imageops::thumbnail(&*square, edge, edge),
+        false => imageops::resize(&*square, edge, edge, imageops::FilterType::Triangle),
+    };
+    bgra(&mut image);
+    image
+}
+
+fn bgra(image: &mut RgbaImage) {
+    for pixel in image.chunks_exact_mut(4) {
+        pixel.swap(0, 2);
+    }
+}
 
 struct Cached {
     value: Result<Arc<RenderImage>, ImageCacheError>,
@@ -38,19 +219,11 @@ struct Cached {
     used: Instant,
 }
 
-struct Sampled {
-    image: Arc<RenderImage>,
-    bytes: usize,
-    used: Instant,
-}
-
 struct ArtworkCache {
-    items: HashMap<Resource, Cached>,
-    pending: HashMap<Resource, Instant>,
-    sampled: HashMap<(Resource, u32), Sampled>,
+    items: HashMap<ArtworkKey, Cached>,
+    pending: HashMap<ArtworkKey, Instant>,
     soft: HashMap<(Resource, u32), Arc<RenderImage>>,
     bytes: usize,
-    sampled_bytes: usize,
     _sweep: Task<()>,
 }
 
@@ -64,10 +237,8 @@ impl ArtworkCache {
             let cache = cx.new(|cx| Self {
                 items: HashMap::new(),
                 pending: HashMap::new(),
-                sampled: HashMap::new(),
                 soft: HashMap::new(),
                 bytes: 0,
-                sampled_bytes: 0,
                 _sweep: sweeper(cx),
             });
             cx.set_global(Installed(cache));
@@ -77,7 +248,7 @@ impl ArtworkCache {
 
     fn insert(
         &mut self,
-        resource: Resource,
+        resource: ArtworkKey,
         value: Result<Arc<RenderImage>, ImageCacheError>,
         window: &mut Window,
         cx: &mut App,
@@ -108,32 +279,41 @@ impl ArtworkCache {
         }
     }
 
-    fn oldest(&self) -> Option<(Resource, Instant)> {
+    fn oldest(&self) -> Option<(ArtworkKey, Instant)> {
         self.items
             .iter()
             .min_by_key(|(_, cached)| cached.used)
             .map(|(resource, cached)| (resource.clone(), cached.used))
     }
 
-    fn evict(&mut self, resource: &Resource, window: Option<&mut Window>, cx: &mut App) {
+    fn evict(&mut self, resource: &ArtworkKey, window: Option<&mut Window>, cx: &mut App) {
         let Some(cached) = self.items.remove(resource) else {
             return;
         };
         self.bytes = self.bytes.saturating_sub(cached.bytes);
-        cx.remove_asset::<ImgResourceLoader>(resource);
+        cx.remove_asset::<ArtworkResourceLoader>(&ArtworkSource {
+            resource: resource.0.clone(),
+            edge: resource.1,
+        });
         if let Ok(image) = cached.value {
             cx.drop_image(image, window);
         }
+        self.release_bytes_if_unused(&resource.0, cx);
     }
 
-    fn prepared(&mut self, resource: &Resource, edge: u32, soft: bool) -> Option<Arc<RenderImage>> {
-        let key = (resource.clone(), edge);
-        if soft {
-            return self.soft.get(&key).cloned();
+    fn release_bytes_if_unused(&self, resource: &Resource, cx: &mut App) {
+        let is_used = self.items.keys().any(|key| &key.0 == resource)
+            || self.pending.keys().any(|key| &key.0 == resource);
+        if !is_used {
+            cx.remove_asset::<ArtworkBytesLoader>(resource);
         }
-        let sampled = self.sampled.get_mut(&key)?;
-        sampled.used = Instant::now();
-        Some(sampled.image.clone())
+    }
+
+    fn prepared(&self, resource: &Resource, edge: u32, soft: bool) -> Option<Arc<RenderImage>> {
+        match soft {
+            true => self.soft.get(&(resource.clone(), edge)).cloned(),
+            false => None,
+        }
     }
 
     fn prepare(
@@ -145,10 +325,6 @@ impl ArtworkCache {
         window: &mut Window,
         cx: &mut App,
     ) -> Arc<RenderImage> {
-        let image = match edge {
-            0 => image,
-            edge => self.sample(resource, edge, image, window, cx),
-        };
         if !soft {
             return image;
         }
@@ -169,57 +345,9 @@ impl ArtworkCache {
         softened
     }
 
-    fn sample(
-        &mut self,
-        resource: &Resource,
-        edge: u32,
-        image: Arc<RenderImage>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Arc<RenderImage> {
-        let key = (resource.clone(), edge);
-        if let Some(found) = self.sampled.get_mut(&key) {
-            found.used = Instant::now();
-            return found.image.clone();
-        }
-        let Some(image) = downsampled(&image, edge) else {
-            return image;
-        };
-        let bytes = image_bytes(&image);
-        self.sampled_bytes = self.sampled_bytes.saturating_add(bytes);
-        self.sampled.insert(
-            key.clone(),
-            Sampled {
-                image: image.clone(),
-                bytes,
-                used: Instant::now(),
-            },
-        );
-
-        while self.sampled.len() > 1
-            && (self.sampled.len() > SAMPLED_ITEMS || self.sampled_bytes > SAMPLED_BYTES)
-        {
-            let Some(oldest) = self
-                .sampled
-                .iter()
-                .min_by_key(|(_, sampled)| sampled.used)
-                .map(|(key, _)| key.clone())
-            else {
-                break;
-            };
-            let Some(sampled) = self.sampled.remove(&oldest) else {
-                break;
-            };
-            self.sampled_bytes = self.sampled_bytes.saturating_sub(sampled.bytes);
-            cx.drop_image(sampled.image, Some(&mut *window));
-        }
-
-        image
-    }
-
     fn sweep(&mut self, cx: &mut App) {
         let held = self.items.len();
-        let abandoned: Vec<Resource> = self
+        let abandoned: Vec<ArtworkKey> = self
             .pending
             .iter()
             .filter(|(_, started)| started.elapsed() > ORPHAN)
@@ -228,10 +356,14 @@ impl ArtworkCache {
 
         for resource in &abandoned {
             self.pending.remove(resource);
-            cx.remove_asset::<ImgResourceLoader>(resource);
+            cx.remove_asset::<ArtworkResourceLoader>(&ArtworkSource {
+                resource: resource.0.clone(),
+                edge: resource.1,
+            });
+            self.release_bytes_if_unused(&resource.0, cx);
         }
 
-        let mut ages: Vec<(Resource, Instant, usize)> = self
+        let mut ages: Vec<(ArtworkKey, Instant, usize)> = self
             .items
             .iter()
             .map(|(resource, cached)| (resource.clone(), cached.used, cached.bytes))
@@ -266,11 +398,9 @@ impl ArtworkCache {
         let big = self.count(BIG_BYTES..);
 
         log::debug!(
-            "artwork: {} originals / {} KiB, {} sampled / {} KiB, dropped {}, idle {idle}, abandoned {}, waiting {}, sizes {tiny}/{small}/{big}",
+            "artwork: {} held / {} KiB, dropped {}, idle {idle}, abandoned {}, waiting {}, sizes {tiny}/{small}/{big}",
             self.items.len(),
             self.bytes / 1024,
-            self.sampled.len(),
-            self.sampled_bytes / 1024,
             held - self.items.len(),
             abandoned.len(),
             self.pending.len()
@@ -303,18 +433,57 @@ impl ImageCache for ArtworkCache {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
-        if let Some(cached) = self.items.get_mut(resource) {
+        self.load_at(resource, 0, window, cx)
+    }
+}
+
+impl ArtworkCache {
+    fn reap_pending(&mut self, window: &mut Window, cx: &mut App) {
+        let pending: Vec<ArtworkKey> = self.pending.keys().cloned().collect();
+        for key in pending {
+            let source = ArtworkSource {
+                resource: key.0.clone(),
+                edge: key.1,
+            };
+            let Some(value) = window.use_asset::<ArtworkResourceLoader>(&source, cx) else {
+                continue;
+            };
+            self.pending.remove(&key);
+            self.insert(key, value, window, cx);
+        }
+    }
+
+    fn load_at(
+        &mut self,
+        resource: &Resource,
+        edge: u32,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
+        let key = (resource.clone(), edge);
+        if let Some(cached) = self.items.get_mut(&key) {
             cached.used = Instant::now();
             return Some(cached.value.clone());
         }
 
-        let Some(value) = window.use_asset::<ImgResourceLoader>(resource, cx) else {
-            self.pending.insert(resource.clone(), Instant::now());
+        if !self.pending.contains_key(&key) && self.pending.len() >= MAX_PENDING {
+            self.reap_pending(window, cx);
+            if self.pending.len() >= MAX_PENDING {
+                return None;
+            }
+        }
+
+        let source = ArtworkSource {
+            resource: resource.clone(),
+            edge,
+        };
+        let Some(value) = window.use_asset::<ArtworkResourceLoader>(&source, cx) else {
+            self.pending.insert(key, Instant::now());
             return None;
         };
 
-        self.pending.remove(resource);
-        self.insert(resource.clone(), value.clone(), window, cx);
+        self.pending.remove(&key);
+        self.insert(key, value.clone(), window, cx);
         Some(value)
     }
 }
@@ -352,37 +521,6 @@ fn sample_edge(size: Pixels, window: &Window) -> u32 {
         .unwrap_or(0)
 }
 
-fn downsampled(image: &RenderImage, edge: u32) -> Option<Arc<RenderImage>> {
-    if edge == 0 || image.frame_count() == 0 {
-        return None;
-    }
-    let frames: Vec<Frame> = (0..image.frame_count())
-        .filter_map(|index| {
-            let size = image.size(index);
-            let width = size.width.0.max(0) as u32;
-            let height = size.height.0.max(0) as u32;
-            let side = width.min(height);
-            if side <= edge {
-                return None;
-            }
-            let bytes = image.as_bytes(index)?.to_vec();
-            let whole = RgbaImage::from_raw(width, height, bytes)?;
-            let square =
-                imageops::crop_imm(&whole, (width - side) / 2, (height - side) / 2, side, side);
-            let sampled = match side > edge.saturating_mul(2) {
-                true => imageops::thumbnail(&*square, edge, edge),
-                false => imageops::resize(&*square, edge, edge, imageops::FilterType::Triangle),
-            };
-
-            Some(Frame::from_parts(sampled, 0, 0, image.delay(index)))
-        })
-        .collect();
-    if frames.len() != image.frame_count() {
-        return None;
-    }
-    Some(Arc::new(RenderImage::new(frames)))
-}
-
 pub(crate) fn resource(url: impl Into<SharedString>) -> Resource {
     let url = url.into();
     match url.strip_prefix(FILE_PREFIX) {
@@ -396,8 +534,8 @@ pub fn artwork_usage(cx: &App) -> Option<(usize, usize)> {
     let cache = installed.0.read(cx);
     let soft_bytes: usize = cache.soft.values().map(|image| image_bytes(image)).sum();
     Some((
-        cache.items.len() + cache.sampled.len() + cache.soft.len(),
-        cache.bytes + cache.sampled_bytes + soft_bytes,
+        cache.items.len() + cache.soft.len(),
+        cache.bytes + soft_bytes,
     ))
 }
 
@@ -551,7 +689,7 @@ impl RenderOnce for Artwork {
                             return Some(Ok(prepared));
                         }
                         let loaded = cache
-                            .update(cx, |cache, cx| cache.load(&resource, window, cx))?
+                            .update(cx, |cache, cx| cache.load_at(&resource, edge, window, cx))?
                             .map(|image| {
                                 cache.update(cx, |cache, cx| {
                                     cache.prepare(&resource, edge, soft, image, window, cx)
@@ -610,28 +748,42 @@ fn blank(size: Pixels, rounded: Pixels, muted: Hsla, glyph: Hsla, fallback: Shar
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::{Delay, Rgba};
+    use image::{Delay, Rgba, codecs::gif::GifEncoder};
 
-    fn rendered(width: u32, height: u32) -> RenderImage {
-        RenderImage::new(vec![Frame::from_parts(
-            RgbaImage::from_pixel(width, height, Rgba([20, 40, 60, 255])),
-            0,
-            0,
-            Delay::from_numer_denom_ms(80, 1),
-        )])
+    #[test]
+    fn artwork_loader_targets_the_requested_edge() {
+        let image = RgbaImage::from_pixel(240, 120, Rgba([20, 40, 60, 255]));
+        let frame = artwork_frame(image, 64);
+
+        assert_eq!(frame.width(), 64);
+        assert_eq!(frame.height(), 64);
     }
 
     #[test]
-    fn downsampling_crops_to_the_square_artwork_surface() {
-        let sampled = downsampled(&rendered(240, 120), 64).unwrap();
+    fn artwork_loader_preserves_animated_frames() {
+        let mut bytes = Vec::new();
+        GifEncoder::new(&mut bytes)
+            .encode_frames([
+                Frame::from_parts(
+                    RgbaImage::from_pixel(120, 120, Rgba([20, 40, 60, 255])),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(80, 1),
+                ),
+                Frame::from_parts(
+                    RgbaImage::from_pixel(120, 120, Rgba([80, 100, 120, 255])),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(120, 1),
+                ),
+            ])
+            .unwrap();
 
-        assert_eq!(sampled.size(0).width.0, 64);
-        assert_eq!(sampled.size(0).height.0, 64);
-        assert_eq!(sampled.delay(0), Delay::from_numer_denom_ms(80, 1));
-    }
+        let frames = raster_frames(&bytes, ImageFormat::Gif, 64).unwrap();
 
-    #[test]
-    fn downsampling_never_upscales_a_source() {
-        assert!(downsampled(&rendered(60, 100), 64).is_none());
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].buffer().dimensions(), (64, 64));
+        assert_eq!(frames[0].delay(), Delay::from_numer_denom_ms(80, 1));
+        assert_eq!(frames[1].delay(), Delay::from_numer_denom_ms(120, 1));
     }
 }
