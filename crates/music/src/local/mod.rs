@@ -1,4 +1,5 @@
 mod client;
+mod lyrics;
 mod playback;
 mod scan;
 mod store;

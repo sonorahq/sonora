@@ -249,6 +249,10 @@ impl Session {
         Some(provider.slug())
     }
 
+    pub fn local_name(&self) -> &'static str {
+        self.local_provider.name()
+    }
+
     pub fn local_slug(&self) -> &'static str {
         self.local_provider.slug()
     }

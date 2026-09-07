@@ -18,6 +18,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   word, `⌘⌫` and `⌘⌦` clear to either end of the field, `⌘↑`/`⌘↓` jump to the ends, and the Emacs
   control keys (`⌃A`, `⌃E`, `⌃B`, `⌃F`, `⌃D`, `⌃H`, `⌃K`) do what they do everywhere else on a
   Mac. The menu bar gains Edit and Window menus and the usual Settings, Hide and Show All items.
+- Local tracks can load same-name `.lrc` lyrics files beside the audio file.
 
 ### Fixed
 
