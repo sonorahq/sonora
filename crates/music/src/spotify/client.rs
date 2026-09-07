@@ -13,7 +13,7 @@ use crate::spotify::{
 };
 use crate::{
     Album, AlbumDetail, Artist, ArtistProfile, Genre, GenreDetail, HomeFeed, Lyrics, Playlist,
-    PlaylistDetail, SavedArtist, Track, UserDetail, UserProfile,
+    PlaylistDetail, PlaylistEntry, SavedArtist, Track, UserDetail, UserProfile,
 };
 
 const MADE_FOR_YOU: &str = "0JQ5DAt0tbjZptfcdMSKl3";
@@ -227,46 +227,72 @@ impl MusicApi for LibrespotClient {
         pathfinder::library(&self.session, order).await.map(Some)
     }
 
-    async fn playlists(&self, limit: u32) -> Result<Vec<Playlist>> {
-        let mut playlists = Vec::new();
+    /// Pages the rootlist and folds every page into one list before reading it, so a folder
+    /// whose group markers straddle a page boundary still comes back whole. A playlist uri
+    /// already taken is skipped, and its meta item with it, keeping the two lists aligned.
+    async fn playlists(&self, limit: u32) -> Result<Vec<PlaylistEntry>> {
+        let mut rootlist = RootList::new();
         let mut offset = 0;
         let mut seen = HashSet::new();
-        while playlists.len() < limit as usize {
+        while seen.len() < limit as usize {
             let body = self
                 .session
                 .spclient()
                 .get_rootlist(offset, Some(300))
                 .await?;
-            let rootlist =
+            let page =
                 RootList::parse_from_bytes(&body).context("cannot decode the rootlist protobuf")?;
-            let count = rootlist.contents.items.len();
-            playlists.extend(
-                wire::playlists_from(&rootlist)
-                    .into_iter()
-                    .filter(|playlist| seen.insert(playlist.id.clone())),
-            );
+            let count = page.contents.items.len();
+
+            let contents = rootlist.contents.mut_or_insert_default();
+            for (index, item) in page.contents.items.iter().enumerate() {
+                let taken = item.uri().starts_with(wire::PLAYLIST_PREFIX)
+                    && !seen.insert(item.uri().to_owned());
+                if taken {
+                    continue;
+                }
+                contents.items.push(item.clone());
+                contents.meta_items.push(
+                    page.contents
+                        .meta_items
+                        .get(index)
+                        .cloned()
+                        .unwrap_or_default(),
+                );
+            }
+
             offset += count;
-            if count == 0 || !rootlist.contents.truncated() {
+            if count == 0 || !page.contents.truncated() {
                 break;
             }
         }
-        playlists.truncate(limit as usize);
+        log::debug!(
+            "playlists: the rootlist holds {} items and {} meta items",
+            rootlist.contents.items.len(),
+            rootlist.contents.meta_items.len()
+        );
+        let mut entries = wire::playlists_from(&rootlist);
 
-        let owners = playlists
-            .iter()
-            .map(|playlist| playlist.owner_id.clone())
-            .filter(|owner| !owner.is_empty())
-            .collect();
-        let ids = playlists
-            .iter()
-            .map(|playlist| playlist.id.clone())
-            .collect();
+        let (owners, ids): (HashSet<String>, Vec<String>) = {
+            let playlists = PlaylistEntry::playlists(&entries);
+            (
+                playlists
+                    .iter()
+                    .map(|playlist| playlist.owner_id.clone())
+                    .filter(|owner| !owner.is_empty())
+                    .collect(),
+                playlists
+                    .iter()
+                    .map(|playlist| playlist.id.clone())
+                    .collect(),
+            )
+        };
         let (names, stamps) = tokio::join!(
             profiles::display_names(&self.session, owners),
             playlists::modified(&self.session, ids)
         );
 
-        for playlist in &mut playlists {
+        for playlist in PlaylistEntry::playlists_mut(&mut entries) {
             playlist.owned = playlist.owner_id == self.session.username();
             if let Some(name) = names.get(&playlist.owner_id) {
                 playlist.owner = name.clone();
@@ -274,6 +300,6 @@ impl MusicApi for LibrespotClient {
             playlist.modified_at = stamps.get(&playlist.id).copied();
         }
 
-        Ok(playlists)
+        Ok(entries)
     }
 }

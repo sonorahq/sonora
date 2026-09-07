@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Spotify playlist folders appear in Your Library. The Playlists list and grid show each folder as
+  a group that opens and closes, nested folders included, and typing in the filter field opens
+  every folder holding a match.
+
 ### Fixed
 
 - On Nix, the YouTube Music sign-in no longer goes black after the email step. The package now

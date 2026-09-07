@@ -5,8 +5,9 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{App, Context, Entity, SharedString, Task};
-use music::{Album, MusicApi, Playlist, SavedArtist, Shape, Track};
+use music::{Album, MusicApi, Playlist, PlaylistEntry, SavedArtist, Shape, Track};
 
+use crate::outline::{self, PlaylistRow};
 use crate::{Io, Outcome, Session, SessionEvent, Target, Toasts, join, mosaic};
 
 const PAGE_LIMIT: u32 = 10000;
@@ -153,7 +154,7 @@ struct FavoritesMut<'a> {
 
 enum Landed {
     Tracks(anyhow::Result<Vec<Track>>),
-    Playlists(anyhow::Result<Vec<Playlist>>),
+    Playlists(anyhow::Result<Vec<PlaylistEntry>>),
     Albums(anyhow::Result<Vec<Album>>),
     Artists(anyhow::Result<Vec<SavedArtist>>),
 }
@@ -196,6 +197,7 @@ fn place(
         let Ready {
             tracks,
             playlists,
+            outline,
             albums,
             artists,
             problems,
@@ -203,7 +205,9 @@ fn place(
         let part = landed.part();
         match landed {
             Landed::Tracks(result) => *tracks = take(part, result, problems),
-            Landed::Playlists(result) => *playlists = take(part, result, problems),
+            Landed::Playlists(result) => {
+                (*playlists, *outline) = outline::split(take(part, result, problems));
+            }
             Landed::Albums(result) => *albums = take(part, result, problems),
             Landed::Artists(result) => *artists = take(part, result, problems),
         }
@@ -487,6 +491,8 @@ pub struct Problem {
 pub struct Ready {
     pub tracks: Vec<Track>,
     pub playlists: Vec<Playlist>,
+    /// The shape of `playlists`: their folders, and the order the two are read in.
+    pub outline: Vec<PlaylistRow>,
     pub albums: Vec<Album>,
     pub artists: Vec<SavedArtist>,
     pub problems: Vec<Problem>,
@@ -513,6 +519,10 @@ impl LibraryState {
 
     pub fn playlists(&self) -> &[Playlist] {
         self.ready().map_or(&[], |ready| ready.playlists.as_slice())
+    }
+
+    pub fn outline(&self) -> &[PlaylistRow] {
+        self.ready().map_or(&[], |ready| ready.outline.as_slice())
     }
 
     pub fn albums(&self) -> &[Album] {
@@ -1371,8 +1381,10 @@ impl Library {
         let Some(playlists) = self.playlists_mut(&playlist.id) else {
             return;
         };
-        playlists.retain(|known| known.id != playlist.id);
+        let id = playlist.id.clone();
+        playlists.retain(|known| known.id != id);
         playlists.push(playlist);
+        self.relist(&id);
         cx.notify();
     }
 
@@ -1386,7 +1398,16 @@ impl Library {
             return;
         };
         playlists.retain(|playlist| playlist.id != id);
+        self.relist(id);
         cx.notify();
+    }
+
+    /// Keeps the outline in step after a playlist is added to or dropped from its shelf.
+    fn relist(&mut self, id: &str) {
+        let Some(ready) = self.held_mut(Shelf::of(id)).ready_mut() else {
+            return;
+        };
+        outline::relist(&ready.playlists, &mut ready.outline);
     }
 
     fn amend_playlist(

@@ -8,7 +8,7 @@ use storage::Database;
 
 use crate::{
     Album, AlbumDetail, Artist, ArtistProfile, MediaKind, MusicApi, Playlist, PlaylistDetail,
-    SavedArtist, Track, TrackTags, UserProfile, distinct_covers,
+    PlaylistEntry, SavedArtist, Track, TrackTags, UserProfile, distinct_covers,
 };
 
 use super::scan::Scanned;
@@ -292,8 +292,8 @@ impl MusicApi for LocalClient {
         Ok(None)
     }
 
-    async fn playlists(&self, limit: u32) -> Result<Vec<Playlist>> {
-        Ok(self
+    async fn playlists(&self, limit: u32) -> Result<Vec<PlaylistEntry>> {
+        let playlists = self
             .store
             .list()?
             .into_iter()
@@ -306,7 +306,8 @@ impl MusicApi for LocalClient {
                     .unwrap_or_default();
                 playlist_from(stored.id, stored.name, stored.modified_at, &tracks)
             })
-            .collect())
+            .collect();
+        Ok(PlaylistEntry::flat(playlists))
     }
 
     async fn create_playlist(&self, name: &str) -> Result<String> {

@@ -28,8 +28,8 @@ pub use models::{
     Album, AlbumDetail, Artist, ArtistProfile, ArtistRef, Contributor, Credit, Genre, GenreDetail,
     GenreItem, GenreSection, HomeFeed, LibraryItem, LibraryItemKind, LibraryOrder,
     LibraryPinResult, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsWord, Playlist,
-    PlaylistDetail, ReleaseType, RomanizedText, SavedArtist, Track, TrackKey, TrackTags,
-    UserDetail, UserProfile, Voice, WritingSystem,
+    PlaylistDetail, PlaylistEntry, PlaylistFolder, ReleaseType, RomanizedText, SavedArtist, Track,
+    TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
 };
 pub use spectrum::Spectrum;
 
@@ -115,7 +115,7 @@ pub trait MusicApi: Send + Sync {
     async fn track_lyrics(&self, _track_id: &str) -> Result<Option<Lyrics>> {
         Ok(None)
     }
-    async fn playlists(&self, limit: u32) -> Result<Vec<Playlist>>;
+    async fn playlists(&self, limit: u32) -> Result<Vec<PlaylistEntry>>;
     /// Change a provider's own library pin, rather than a local sidebar shortcut.
     async fn set_library_item_pinned(&self, _uri: &str, _pinned: bool) -> Result<LibraryPinResult> {
         anyhow::bail!("library pinning is not supported")

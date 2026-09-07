@@ -66,6 +66,12 @@ impl<F> Cell<F> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Branch {
+    pub label: SharedString,
+    pub open: bool,
+}
+
 pub trait TableSource: 'static {
     type Field: Copy + PartialEq + 'static;
 
@@ -92,6 +98,14 @@ pub trait TableSource: 'static {
     }
 
     fn group(&self, _field: Self::Field, _row: usize, _cx: &App) -> Option<SharedString> {
+        None
+    }
+
+    fn parent(&self, _row: usize, _cx: &App) -> Option<usize> {
+        None
+    }
+
+    fn branch(&self, _row: usize, _cx: &App) -> Option<Branch> {
         None
     }
 
@@ -439,22 +453,90 @@ impl<S: TableSource> TableDelegate<S> {
     }
 
     fn reorder(&mut self, cx: &App) {
-        let mut order: Vec<usize> = (0..self.source.rows(cx))
-            .filter(|row| {
-                (self.query.is_empty() && !self.source.filtered(cx))
-                    || self.source.matches(*row, &self.query, cx)
-            })
-            .collect();
+        let count = self.source.rows(cx);
+        let mut children: Vec<Vec<usize>> = vec![Vec::new(); count + 1];
+        let mut nested = false;
+        for row in 0..count {
+            match self.source.parent(row, cx) {
+                Some(parent) if parent < count && parent != row => {
+                    nested = true;
+                    children[parent].push(row);
+                }
+                _ => children[count].push(row),
+            }
+        }
 
-        if let Some((field, direction)) = self.sort {
-            match direction {
-                Sort::Ascending => order.sort_by(|&a, &b| self.source.compare(field, a, b, cx)),
-                Sort::Descending => order.sort_by(|&a, &b| self.source.compare(field, b, a, cx)),
+        let mut order = Vec::with_capacity(count);
+        match nested {
+            false => {
+                let filtering = self.filtering(cx);
+                order.extend(
+                    children[count]
+                        .iter()
+                        .copied()
+                        .filter(|row| !filtering || self.source.matches(*row, &self.query, cx)),
+                );
+                self.sort_rows(&mut order, cx);
+            }
+            true => {
+                self.descend(&children, count, false, &mut order, cx);
             }
         }
 
         self.order = order;
         self.prune_selection();
+    }
+
+    fn filtering(&self, cx: &App) -> bool {
+        !self.query.is_empty() || self.source.filtered(cx)
+    }
+
+    fn sort_rows(&self, rows: &mut [usize], cx: &App) {
+        let Some((field, direction)) = self.sort else {
+            return;
+        };
+        match direction {
+            Sort::Ascending => rows.sort_by(|&a, &b| self.source.compare(field, a, b, cx)),
+            Sort::Descending => rows.sort_by(|&a, &b| self.source.compare(field, b, a, cx)),
+        }
+    }
+
+    fn descend(
+        &self,
+        children: &[Vec<usize>],
+        parent: usize,
+        inherited: bool,
+        order: &mut Vec<usize>,
+        cx: &App,
+    ) -> bool {
+        let filtering = self.filtering(cx);
+        let mut siblings = children[parent].clone();
+        self.sort_rows(&mut siblings, cx);
+        siblings.sort_by_cached_key(|row| self.source.branch(*row, cx).is_none());
+
+        let mut listed = false;
+        for row in siblings {
+            let hit = inherited || !filtering || self.source.matches(row, &self.query, cx);
+            let mark = order.len();
+            order.push(row);
+            let branch = self.source.branch(row, cx);
+            let shown = match &branch {
+                Some(_) => self.descend(children, row, hit, order, cx),
+                None => false,
+            };
+            if !hit && !shown {
+                order.truncate(mark);
+                continue;
+            }
+            listed = true;
+            if let Some(branch) = branch
+                && !branch.open
+                && self.query.is_empty()
+            {
+                order.truncate(mark + 1);
+            }
+        }
+        listed
     }
 
     fn prune_selection(&mut self) {

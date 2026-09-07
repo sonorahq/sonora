@@ -422,6 +422,11 @@ count-tracks =
         [one] { $count } track
        *[other] { $count } tracks
     }
+count-playlists =
+    { $count ->
+        [one] { $count } playlist
+       *[other] { $count } playlists
+    }
 
 # dates
 date-just-now = Just now

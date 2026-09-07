@@ -88,6 +88,47 @@ pub struct Playlist {
     pub modified_at: Option<i64>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlaylistFolder {
+    pub id: String,
+    pub name: String,
+    pub entries: Vec<PlaylistEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PlaylistEntry {
+    Playlist(Playlist),
+    Folder(PlaylistFolder),
+}
+
+impl PlaylistEntry {
+    pub fn flat(playlists: Vec<Playlist>) -> Vec<Self> {
+        playlists.into_iter().map(Self::Playlist).collect()
+    }
+
+    pub fn playlists(entries: &[Self]) -> Vec<&Playlist> {
+        let mut found = Vec::new();
+        for entry in entries {
+            match entry {
+                Self::Playlist(playlist) => found.push(playlist),
+                Self::Folder(folder) => found.extend(Self::playlists(&folder.entries)),
+            }
+        }
+        found
+    }
+
+    pub fn playlists_mut(entries: &mut [Self]) -> Vec<&mut Playlist> {
+        let mut found = Vec::new();
+        for entry in entries {
+            match entry {
+                Self::Playlist(playlist) => found.push(playlist),
+                Self::Folder(folder) => found.extend(Self::playlists_mut(&mut folder.entries)),
+            }
+        }
+        found
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ReleaseType {
     Album,
