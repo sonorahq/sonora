@@ -12,6 +12,7 @@ mod logging;
 mod lyrics;
 mod mosaic;
 mod network;
+mod outline;
 mod pins;
 mod playback;
 mod potoken;
@@ -46,6 +47,7 @@ pub use library::{
 pub use logging::log_file;
 pub use lyrics::{Lyrics, LyricsState};
 pub use network::{Network, Reconnected};
+pub use outline::PlaylistRow;
 pub use pins::{PinSort, Pins};
 pub use playback::{Origin, Playback, PlaybackState, Repeat, Sleep, Whence};
 pub use profile::Profile;

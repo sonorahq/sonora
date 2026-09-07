@@ -5,8 +5,11 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{App, Context, Entity, SharedString, Task};
-use music::{Album, MediaKind, MusicApi, Page, Pages, Playlist, SavedArtist, Shape, Track};
+use music::{
+    Album, MediaKind, MusicApi, Page, Pages, Playlist, PlaylistEntry, SavedArtist, Shape, Track,
+};
 
+use crate::outline::{self, PlaylistRow};
 use crate::snapshot::{Kind, Remembered, Snapshots};
 use crate::{Io, Network, Outcome, Session, SessionEvent, Target, Toasts, join, mosaic};
 
@@ -200,7 +203,7 @@ impl Kept {
 
 enum Landed {
     Tracks(anyhow::Result<Vec<Track>>),
-    Playlists(anyhow::Result<Vec<Playlist>>),
+    Playlists(anyhow::Result<Vec<PlaylistEntry>>),
     Albums(anyhow::Result<Vec<Album>>),
     Artists(anyhow::Result<Vec<SavedArtist>>),
 }
@@ -301,6 +304,7 @@ fn extend(state: &mut LibraryState, landed: Landed) {
     let Ready {
         tracks,
         playlists,
+        outline,
         albums,
         artists,
         problems,
@@ -312,7 +316,14 @@ fn extend(state: &mut LibraryState, landed: Landed) {
                 .into_iter()
                 .filter(|track| track.playable),
         ),
-        Landed::Playlists(result) => playlists.extend(take(part, result, problems)),
+        Landed::Playlists(result) => {
+            let (listed, shape) = outline::split(take(part, result, problems));
+            if playlists.is_empty() {
+                *outline = shape;
+            }
+            playlists.extend(listed);
+            outline::relist(playlists, outline);
+        }
         Landed::Albums(result) => albums.extend(take(part, result, problems)),
         Landed::Artists(result) => artists.extend(take(part, result, problems)),
     }
@@ -687,6 +698,8 @@ pub struct Problem {
 pub struct Ready {
     pub tracks: Vec<Track>,
     pub playlists: Vec<Playlist>,
+    /// The shape of `playlists`: their folders, and the order the two are read in.
+    pub outline: Vec<PlaylistRow>,
     pub albums: Vec<Album>,
     pub artists: Vec<SavedArtist>,
     pub problems: Vec<Problem>,
@@ -713,6 +726,10 @@ impl LibraryState {
 
     pub fn playlists(&self) -> &[Playlist] {
         self.ready().map_or(&[], |ready| ready.playlists.as_slice())
+    }
+
+    pub fn outline(&self) -> &[PlaylistRow] {
+        self.ready().map_or(&[], |ready| ready.outline.as_slice())
     }
 
     pub fn albums(&self) -> &[Album] {
@@ -888,13 +905,15 @@ impl Library {
                     albums: starred_albums,
                     artists: starred_artists,
                 };
-                held.state = LibraryState::Ready(Ready {
+                let mut ready = Ready {
                     tracks,
                     playlists,
                     albums,
                     artists,
-                    problems: Vec::new(),
-                });
+                    ..Ready::default()
+                };
+                outline::relist(&ready.playlists, &mut ready.outline);
+                held.state = LibraryState::Ready(ready);
                 cx.notify();
             })
             .ok();
@@ -1890,8 +1909,10 @@ impl Library {
         let Some(playlists) = self.playlists_mut(&playlist.id) else {
             return;
         };
-        playlists.retain(|known| known.id != playlist.id);
+        let id = playlist.id.clone();
+        playlists.retain(|known| known.id != id);
         playlists.push(playlist);
+        self.relist(&id);
         cx.notify();
     }
 
@@ -1905,7 +1926,16 @@ impl Library {
             return;
         };
         playlists.retain(|playlist| playlist.id != id);
+        self.relist(id);
         cx.notify();
+    }
+
+    /// Keeps the outline in step after a playlist is added to or dropped from its shelf.
+    fn relist(&mut self, id: &str) {
+        let Some(ready) = self.held_mut(Shelf::of(id)).ready_mut() else {
+            return;
+        };
+        outline::relist(&ready.playlists, &mut ready.outline);
     }
 
     fn amend_playlist(

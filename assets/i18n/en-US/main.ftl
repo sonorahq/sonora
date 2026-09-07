@@ -461,6 +461,11 @@ count-tracks =
         [one] { $count } track
        *[other] { $count } tracks
     }
+count-playlists =
+    { $count ->
+        [one] { $count } playlist
+       *[other] { $count } playlists
+    }
 
 # running times
 runtime-seconds = { $seconds }s

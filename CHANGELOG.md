@@ -9,6 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Spotify playlist folders appear in Your Library. The Playlists list and grid show each folder as
+  a group that opens and closes, nested folders included, and typing in the filter field opens
+  every folder holding a match.
 - The visualizer can ignore Sonora's volume. Turn on Ignore volume under Fullscreen in
   Appearance settings and the bars stay full height when you turn the music down.
 - Album pages now carry recommendations wherever the provider offers them: related

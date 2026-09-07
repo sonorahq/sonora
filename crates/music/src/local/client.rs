@@ -8,8 +8,8 @@ use storage::Database;
 
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, GenreItem, GenreSection, HomeFeed,
-    MediaKind, MusicApi, Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist, Track, TrackTags,
-    UserProfile, distinct_covers,
+    MediaKind, MusicApi, Playlist, PlaylistDetail, PlaylistEntry, SUGGESTIONS, SavedArtist, Track,
+    TrackTags, UserProfile, distinct_covers,
 };
 
 use super::index::Index;
@@ -295,8 +295,8 @@ impl MusicApi for LocalClient {
         Ok(None)
     }
 
-    async fn playlists(&self) -> Result<Vec<Playlist>> {
-        Ok(self
+    async fn playlists(&self) -> Result<Vec<PlaylistEntry>> {
+        let playlists = self
             .store
             .list()?
             .into_iter()
@@ -308,7 +308,8 @@ impl MusicApi for LocalClient {
                     .unwrap_or_default();
                 playlist_from(stored.id, stored.name, stored.modified_at, &tracks)
             })
-            .collect())
+            .collect();
+        Ok(PlaylistEntry::flat(playlists))
     }
 
     async fn create_playlist(&self, name: &str) -> Result<String> {
