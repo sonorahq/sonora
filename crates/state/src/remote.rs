@@ -12,7 +12,6 @@ use crate::{Playback, PlaybackState, Sonora};
 
 const BUS_NAME: &str = "sonora";
 const DISPLAY_NAME: &str = "Sonora";
-const SEEK_STEP: Duration = Duration::from_secs(5);
 
 struct Attached {
     _remote: Entity<Remote>,
@@ -94,8 +93,14 @@ impl Remote {
                 MediaControlEvent::Next => playback.next(cx),
                 MediaControlEvent::Previous => playback.previous(cx),
                 MediaControlEvent::SetPosition(MediaPosition(at)) => playback.seek(at, cx),
-                MediaControlEvent::Seek(direction) => shift(playback, direction, SEEK_STEP, cx),
-                MediaControlEvent::SeekBy(direction, step) => shift(playback, direction, step, cx),
+                MediaControlEvent::Seek(SeekDirection::Forward) => playback.seek_forward(cx),
+                MediaControlEvent::Seek(SeekDirection::Backward) => playback.seek_back(cx),
+                MediaControlEvent::SeekBy(SeekDirection::Forward, step) => {
+                    playback.seek_by(step, true, cx)
+                }
+                MediaControlEvent::SeekBy(SeekDirection::Backward, step) => {
+                    playback.seek_by(step, false, cx)
+                }
                 MediaControlEvent::SetVolume(level) => playback.set_volume(level as f32, cx),
                 MediaControlEvent::OpenUri(_)
                 | MediaControlEvent::Raise
@@ -143,22 +148,4 @@ impl Remote {
             log::warn!("remote: cannot publish playback state: {error:?}");
         }
     }
-}
-
-fn shift(
-    playback: &mut Playback,
-    direction: SeekDirection,
-    step: Duration,
-    cx: &mut Context<Playback>,
-) {
-    let at = playback.position();
-    let target = match direction {
-        SeekDirection::Forward => at.saturating_add(step),
-        SeekDirection::Backward => at.saturating_sub(step),
-    };
-    let end = playback
-        .track()
-        .map(|track| track.duration)
-        .unwrap_or(target);
-    playback.seek(target.min(end), cx);
 }

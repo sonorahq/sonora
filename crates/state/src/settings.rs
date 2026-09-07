@@ -27,7 +27,7 @@ use ui::{
 };
 
 use crate::queue::{Resume, gap_target};
-use crate::{Repeat, Sonora};
+use crate::{Repeat, SeekStep, Sonora};
 
 /// Which panel the right sidebar shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,6 +179,7 @@ struct Values {
     version: u32,
     normalisation: bool,
     gapless: bool,
+    seek_step: u16,
     lyrics_for_local_files: bool,
     karaoke_lyrics: bool,
     blur_lyrics: bool,
@@ -229,6 +230,7 @@ impl Default for Values {
             version: SETTINGS_VERSION,
             normalisation: false,
             gapless: true,
+            seek_step: SeekStep::default().secs(),
             lyrics_for_local_files: true,
             karaoke_lyrics: true,
             blur_lyrics: true,
@@ -526,6 +528,10 @@ impl AppSettings {
         self.values.gapless
     }
 
+    pub fn seek_step(&self) -> SeekStep {
+        SeekStep::from_secs(self.values.seek_step)
+    }
+
     pub fn lyrics_for_local_files(&self) -> bool {
         self.values.lyrics_for_local_files
     }
@@ -740,6 +746,14 @@ impl AppSettings {
 
     pub fn set_gapless(&mut self, gapless: bool, cx: &mut Context<Self>) {
         self.values.gapless = gapless;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_seek_step(&mut self, step: SeekStep, cx: &mut Context<Self>) {
+        if self.seek_step() == step {
+            return;
+        }
+        self.values.seek_step = step.secs();
         self.schedule_save(cx);
     }
 

@@ -2,8 +2,8 @@ use gpui::{AnyView, Context, Entity, MouseButton, NavigationDirection, Render, T
 use gpui::{App, Font, FontFallbacks, SharedString, font, prelude::*};
 use gpui::{Window, div};
 use input::{
-    NavigateBack, NavigateForward, OpenFilter, OpenSearch, OpenSettings, ToggleFullscreen,
-    ToggleLyrics, ToggleQueue,
+    NavigateBack, NavigateForward, OpenFilter, OpenSearch, OpenSettings, SeekBack, SeekForward,
+    ToggleFullscreen, ToggleLyrics, ToggleQueue,
 };
 use router::{Destination, NavigationEvent, SettingsTab, back, forward, navigate};
 use state::{
@@ -588,6 +588,14 @@ impl Render for Root {
             )
             .on_action(cx.listener(|_, _: &NavigateBack, _, cx| back(cx)))
             .on_action(cx.listener(|_, _: &NavigateForward, _, cx| forward(cx)))
+            .on_action(cx.listener(|this, _: &SeekBack, _, cx| {
+                this.playback
+                    .update(cx, |playback, cx| playback.seek_back(cx));
+            }))
+            .on_action(cx.listener(|this, _: &SeekForward, _, cx| {
+                this.playback
+                    .update(cx, |playback, cx| playback.seek_forward(cx));
+            }))
             .on_action(cx.listener(|this, _: &OpenFilter, window, cx| this.open_filter(window, cx)))
             .on_action(cx.listener(|this, _: &OpenSearch, _, cx| this.open_search(cx)))
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.open_settings(cx)))

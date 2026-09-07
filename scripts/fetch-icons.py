@@ -76,6 +76,7 @@ MAP = {
     "shuffle": ("shuffle", "shuffle-linear", "shuffle-line"),
     "skip-back": ("skip-prev", "skip-previous-linear", "skip-back-line"),
     "skip-forward": ("skip-next", "skip-next-linear", "skip-forward-line"),
+    "rotate-cw": ("restart", "restart-linear", "restart-line"),
     "sliders-horizontal": ("control-slider", "slider-horizontal-linear", "equalizer-line"),
     "text-select": (None, "text-selection-linear", None),
     "trash-2": ("trash", "trash-bin-minimalistic-linear", "delete-bin-line"),
@@ -93,6 +94,7 @@ MAP = {
 MIRROR = {
     "panel-right-close": "panel-left-close",
     "panel-right-open": "panel-left-open",
+    "rotate-ccw": "rotate-cw",
 }
 
 SLASH = {

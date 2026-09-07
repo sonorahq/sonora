@@ -30,7 +30,7 @@ pub use history::{History, HistoryState};
 pub use home::Home;
 pub use library::{Library, LibraryEvent, LibraryPart, LibraryState, Problem};
 pub use lyrics::{Lyrics, LyricsState};
-pub use playback::{Origin, Playback, PlaybackState, Repeat, Whence};
+pub use playback::{Origin, Playback, PlaybackState, Repeat, SeekStep, Whence};
 pub use profile::Profile;
 pub use queue::{Named, Queue, Resume, Stub};
 pub use remote::{Remote, attach as attach_remote};

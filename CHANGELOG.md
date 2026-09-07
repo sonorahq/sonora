@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Seek a few seconds back or forward with the left and right arrow keys, or the buttons beside
+  play/pause. The jump is 5, 10 or 30 seconds, set under Settings > Playback.
+
 ## [0.31.0] - 2026-09-05
 
 ### Added

@@ -13,7 +13,9 @@ use gpui::{ScrollHandle, prelude::*, svg};
 use i18n::{Language, t};
 use music::{AccountChoice, SignIn, SignInPrompt, WritingSystem};
 use router::{NavEntry, Screen, SettingsTab};
-use state::{AppSettings, Failure, Playback, SYSTEM_FONT, Session, SessionState, Sonora};
+use state::{
+    AppSettings, Failure, Playback, SYSTEM_FONT, SeekStep, Session, SessionState, Sonora,
+};
 use ui::{ActiveTheme as _, Scrollbar, Scroller, eyebrow};
 use ui::{
     Avatar, Button, InfoCard, Initials, Input, Look, MAX_FONT, MAX_LYRICS_SCALE, MAX_TRANSPARENCY,
@@ -41,6 +43,7 @@ const ENTRIES: &str = "entries";
 const MOTION: &str = "motion";
 const PACE: &str = "pace";
 const SAVER: &str = "saver";
+const SEEK_STEP: &str = "seek-step";
 
 enum Row {
     Item(AnyElement),
@@ -71,6 +74,14 @@ fn offered(method: &SignIn, stored: bool, guest: bool) -> bool {
         SignIn::Default | SignIn::Anonymous => !stored,
         SignIn::Secret => !stored || guest,
         SignIn::Path(_) => false,
+    }
+}
+
+fn seek_step_label(step: SeekStep) -> SharedString {
+    match step {
+        SeekStep::Five => t!("seek-step-5"),
+        SeekStep::Ten => t!("seek-step-10"),
+        SeekStep::Thirty => t!("seek-step-30"),
     }
 }
 
@@ -220,6 +231,7 @@ impl SettingsView {
             SettingsTab::Playback => vec![
                 Row::Item(self.playback_row(cx).into_any_element()),
                 Row::Item(self.gapless_row(cx).into_any_element()),
+                Row::Item(self.seek_step_row(cx).into_any_element()),
                 self.title("settings-group-lyrics", cx),
                 Row::Item(self.karaoke_lyrics_row(cx).into_any_element()),
                 Row::Item(self.romanized_lyrics_row(cx).into_any_element()),
@@ -1079,6 +1091,33 @@ impl SettingsView {
                         .update(cx, |settings, cx| settings.set_close_to_tray(!on, cx));
                 }))
                 .into_any_element(),
+        )
+    }
+
+    fn seek_step_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let current = self.settings.read(cx).seek_step();
+
+        let picker = Picker::new(SEEK_STEP, &self.popovers, seek_step_label(current))
+            .width(Picker::NARROW)
+            .items(SeekStep::ALL.into_iter().map(|step| {
+                MenuItem::new(step.id(), seek_step_label(step))
+                    .selected(current == step)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.settings
+                            .update(cx, |settings, cx| settings.set_seek_step(step, cx));
+                        cx.notify();
+                    }))
+            }));
+
+        self.row(
+            t!("settings-seek-step"),
+            t!("settings-seek-step-detail"),
+            muted,
+            small,
+            picker.into_any_element(),
         )
     }
 

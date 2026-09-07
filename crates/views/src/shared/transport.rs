@@ -62,7 +62,9 @@ pub(crate) fn transport(
         .gap_2()
         .child(shuffle(queue, cx))
         .child(previous(playback, cx))
+        .child(seek_back(playback, cx))
         .child(toggle(playback, big, cx))
+        .child(seek_forward(playback, cx))
         .child(next(playback, queue, cx))
         .child(repeat(playback, cx))
 }
@@ -131,6 +133,36 @@ fn repeat(playback: &Entity<Playback>, cx: &App) -> Button {
         })
         .on_click(move |_, _, cx| {
             playback.update(cx, |playback, cx| playback.cycle_repeat(cx));
+        })
+}
+
+fn seek_back(playback: &Entity<Playback>, cx: &App) -> Button {
+    let idle = playback.read(cx).track().is_none();
+    let playback = playback.clone();
+
+    Button::new("seek-back")
+        .ghost()
+        .small()
+        .icon("icons/rotate-ccw.svg")
+        .tooltip_above("player-seek-back")
+        .disabled(idle)
+        .on_click(move |_, _, cx| {
+            playback.update(cx, |playback, cx| playback.seek_back(cx));
+        })
+}
+
+fn seek_forward(playback: &Entity<Playback>, cx: &App) -> Button {
+    let idle = playback.read(cx).track().is_none();
+    let playback = playback.clone();
+
+    Button::new("seek-forward")
+        .ghost()
+        .small()
+        .icon("icons/rotate-cw.svg")
+        .tooltip_above("player-seek-forward")
+        .disabled(idle)
+        .on_click(move |_, _, cx| {
+            playback.update(cx, |playback, cx| playback.seek_forward(cx));
         })
 }
 
