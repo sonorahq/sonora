@@ -9,6 +9,69 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A Shuffle button sits beside Play on every album, playlist, artist and library page. It turns
+  shuffle on and starts the collection from a random track.
+
+- On macOS, Sonora follows the platform's shortcuts: `⌘W` closes the window, `⌘M` minimises it,
+  `⌃⌘F` toggles native full screen, `⌘H` and `⌥⌘H` hide Sonora or everything else, and `⌘[` / `⌘]`
+  step through history. Text fields take the Cocoa conventions too: `⌥` arrows and `⌥⌫` work by
+  word, `⌘⌫` and `⌘⌦` clear to either end of the field, `⌘↑`/`⌘↓` jump to the ends, and the Emacs
+  control keys (`⌃A`, `⌃E`, `⌃B`, `⌃F`, `⌃D`, `⌃H`, `⌃K`) do what they do everywhere else on a
+  Mac. The menu bar gains Edit and Window menus and the usual Settings, Hide and Show All items.
+
+### Fixed
+
+- A track that fails to load no longer stops playback. Sonora shows a toast, waits out the short
+  back-off and moves on to the next track in the queue, skipping the broken one even in repeat-one.
+- Local track lists keep each row's own embedded cover art when the table is sorted or recycled.
+- The Flatpak remote and the standalone bundles follow the repository to
+  `sonorahq.github.io/sonora`. A remote added before the move needs
+  `flatpak remote-modify --user --url=https://sonorahq.github.io/sonora/repo sonora` once.
+- The Flatpak shows its tray icon on KDE Plasma and other StatusNotifier desktops, so Close to
+  tray keeps Sonora playing after the window closes. The sandbox forbids the well-known bus name
+  the tray used to claim, and Sonora now registers under its unique connection name instead.
+- On macOS, a socket file left behind by a crash no longer disables single-instance handling: the
+  next launch notices nothing is listening, takes the socket over, and later launches and
+  `spotify:` links reach that window again instead of opening a second Sonora.
+- Local music now carries a date added, taken from when each file was last changed, so the Date
+  added column fills in and sorting songs, albums and artists by it works.
+- A YouTube Music sign-in now keeps the cookies Google refreshes during a session, and writes them
+  to `cookies.json` beside the credential file. The pasted cookies no longer stop working when
+  Google rotates them.
+
+## [0.31.0] - 2026-09-05
+
+### Added
+
+- Nix users can manage Sonora through Home Manager. The flake exposes `homeManagerModules.default`
+  with a `programs.sonora` option whose `settings` are merged into `settings.json` on each launch.
+- Sonora speaks Indonesian. Pick Bahasa Indonesia under Settings > General > Language, or leave the
+  language on System and it follows an Indonesian desktop on its own.
+- On Linux and FreeBSD, Sonora can switch between server-side and client-side window decorations
+  from Appearance and shows its own window controls automatically with client-side decorations.
+
+### Changed
+
+- Window position, sidebar sizes, playback mode, table layouts, pins, listening history and local
+  playlists now live in one `state.sqlite` file in the data directory, and `settings.json` keeps
+  only preferences. Existing files are migrated on the first start.
+- YouTube Music sign-in now opens your default browser from the cookie instructions dialog.
+  Browser cookie extraction and automatic refresh from browser profiles have been removed.
+- Each provider keeps its sign-in in its own `credentials.json` under the cache folder, readable
+  only by you. Existing Spotify and YouTube Music sign-ins move over on the first launch.
+
+### Fixed
+
+- Playback no longer falls silent on PipeWire systems with a large graph quantum, such as a
+  default Arch Linux install. The audio stream now keeps 50 ms of buffer regardless of the
+  quantum, and a recovered underrun no longer restarts the player.
+- Pressing play on an album, playlist or artist with shuffle on now opens with a random track
+  instead of always the first one.
+
+## [0.30.0] - 2026-09-04
+
+### Added
+
 - Closing the window no longer stops the music: Sonora stays in the system tray with play/pause,
   previous, next, show and quit at hand, and the Dock icon steps aside on macOS until the window
   is back. Turn it off under Settings → General → Window if you would rather it quit.
@@ -19,23 +82,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Lyrics have their own size, set separately for each surface. Settings > Playback > Lyrics size
   (panel) and Lyrics size (fullscreen) scale the lyrics text from 60% to 200% on top of the base
   font size.
+- Fullscreen artwork now has a real-time spectrum visualizer, which can be switched off under
+  Settings > Appearance > Visualizer.
+- The playlist library can be filtered to show only playlists you own.
+- Opus audio playback.
+- Lyrics fetching for local files can be switched off under Settings > Playback.
 
 ### Changed
 
 - The fullscreen title and artist names stay on screen while the player is idle. Only the heart
   beside the title fades, the way it already did in the narrow lyrics view.
+- YouTube Music cookie onboarding now walks through the browser steps in a clearer checklist.
 
 ### Fixed
 
+- Playback now skips deleted or unavailable playlist songs when moving forward or backward.
 - Installing the standalone `.flatpak` bundle now registers the Sonora repository, so `flatpak update`
   keeps it current, and it can replace an install made from the repository.
+- Emoji in playlist, track, and artist names now render instead of falling back to missing-glyph
+  boxes when the UI font has no emoji glyphs.
+- Changing the audio output restarts playback on the selected device.
+- Artwork uses less memory while images load and remain cached.
+
+### Fixed
+
+- Local music cover thumbnails are cached under `$XDG_CACHE_HOME` instead of `$XDG_CONFIG_HOME`.
 
 ## [0.29.0] - 2026-09-03
 
 ### Added
 
 - Sonora ships as a Flatpak. Every release attaches a bundle for x86_64 and aarch64, and adding
-  the Sonora repository once (`flatpak install --user https://nolight132.github.io/sonora/sonora.flatpakref`)
+  the Sonora repository once (`flatpak install --user https://sonorahq.github.io/sonora/sonora.flatpakref`)
   keeps it current through `flatpak update`.
 - Italian and Brazilian Portuguese translations.
 
@@ -1273,43 +1351,45 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/nolight132/sonora/compare/v0.29.0...HEAD
-[0.29.0]: https://github.com/nolight132/sonora/compare/v0.28.1...v0.29.0
-[0.28.1]: https://github.com/nolight132/sonora/compare/v0.28.0...v0.28.1
-[0.28.0]: https://github.com/nolight132/sonora/compare/v0.27.0...v0.28.0
-[0.27.0]: https://github.com/nolight132/sonora/compare/v0.26.0...v0.27.0
-[0.26.0]: https://github.com/nolight132/sonora/compare/v0.25.0...v0.26.0
-[0.25.0]: https://github.com/nolight132/sonora/compare/v0.24.1...v0.25.0
-[0.24.1]: https://github.com/nolight132/sonora/compare/v0.24.0...v0.24.1
-[0.24.0]: https://github.com/nolight132/sonora/compare/v0.23.0...v0.24.0
-[0.23.0]: https://github.com/nolight132/sonora/compare/v0.22.0...v0.23.0
-[0.22.0]: https://github.com/nolight132/sonora/compare/v0.21.0...v0.22.0
-[0.21.0]: https://github.com/nolight132/sonora/compare/v0.20.0...v0.21.0
-[0.20.0]: https://github.com/nolight132/sonora/compare/v0.19.1...v0.20.0
-[0.19.1]: https://github.com/nolight132/sonora/compare/v0.19.0...v0.19.1
-[0.19.0]: https://github.com/nolight132/sonora/compare/v0.18.0...v0.19.0
-[0.18.0]: https://github.com/nolight132/sonora/compare/v0.17.1...v0.18.0
-[0.17.1]: https://github.com/nolight132/sonora/compare/v0.17.0...v0.17.1
-[0.17.0]: https://github.com/nolight132/sonora/compare/v0.16.3...v0.17.0
-[0.16.3]: https://github.com/nolight132/sonora/compare/v0.16.2...v0.16.3
-[0.16.2]: https://github.com/nolight132/sonora/compare/v0.16.1...v0.16.2
-[0.16.1]: https://github.com/nolight132/sonora/compare/v0.16.0...v0.16.1
-[0.16.0]: https://github.com/nolight132/sonora/compare/v0.15.0...v0.16.0
-[0.15.0]: https://github.com/nolight132/sonora/compare/v0.14.0...v0.15.0
-[0.14.0]: https://github.com/nolight132/sonora/compare/v0.13.0...v0.14.0
-[0.13.0]: https://github.com/nolight132/sonora/compare/v0.12.1...v0.13.0
-[0.12.1]: https://github.com/nolight132/sonora/compare/v0.12.0...v0.12.1
-[0.12.0]: https://github.com/nolight132/sonora/compare/v0.11.0...v0.12.0
-[0.11.0]: https://github.com/nolight132/sonora/compare/v0.10.0...v0.11.0
-[0.10.0]: https://github.com/nolight132/sonora/compare/v0.9.0...v0.10.0
-[0.9.0]: https://github.com/nolight132/sonora/compare/v0.8.0...v0.9.0
-[0.8.0]: https://github.com/nolight132/sonora/compare/v0.7.0...v0.8.0
-[0.7.0]: https://github.com/nolight132/sonora/compare/v0.6.0...v0.7.0
-[0.6.0]: https://github.com/nolight132/sonora/compare/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/nolight132/sonora/compare/v0.4.1...v0.5.0
-[0.4.1]: https://github.com/nolight132/sonora/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/nolight132/sonora/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/nolight132/sonora/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/nolight132/sonora/compare/v0.1.1...v0.2.0
-[0.1.1]: https://github.com/nolight132/sonora/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/nolight132/sonora/releases/tag/v0.1.0
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/sonorahq/sonora/compare/v0.30.0...v0.31.0
+[0.30.0]: https://github.com/sonorahq/sonora/compare/v0.29.0...v0.30.0
+[0.29.0]: https://github.com/sonorahq/sonora/compare/v0.28.1...v0.29.0
+[0.28.1]: https://github.com/sonorahq/sonora/compare/v0.28.0...v0.28.1
+[0.28.0]: https://github.com/sonorahq/sonora/compare/v0.27.0...v0.28.0
+[0.27.0]: https://github.com/sonorahq/sonora/compare/v0.26.0...v0.27.0
+[0.26.0]: https://github.com/sonorahq/sonora/compare/v0.25.0...v0.26.0
+[0.25.0]: https://github.com/sonorahq/sonora/compare/v0.24.1...v0.25.0
+[0.24.1]: https://github.com/sonorahq/sonora/compare/v0.24.0...v0.24.1
+[0.24.0]: https://github.com/sonorahq/sonora/compare/v0.23.0...v0.24.0
+[0.23.0]: https://github.com/sonorahq/sonora/compare/v0.22.0...v0.23.0
+[0.22.0]: https://github.com/sonorahq/sonora/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/sonorahq/sonora/compare/v0.20.0...v0.21.0
+[0.20.0]: https://github.com/sonorahq/sonora/compare/v0.19.1...v0.20.0
+[0.19.1]: https://github.com/sonorahq/sonora/compare/v0.19.0...v0.19.1
+[0.19.0]: https://github.com/sonorahq/sonora/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/sonorahq/sonora/compare/v0.17.1...v0.18.0
+[0.17.1]: https://github.com/sonorahq/sonora/compare/v0.17.0...v0.17.1
+[0.17.0]: https://github.com/sonorahq/sonora/compare/v0.16.3...v0.17.0
+[0.16.3]: https://github.com/sonorahq/sonora/compare/v0.16.2...v0.16.3
+[0.16.2]: https://github.com/sonorahq/sonora/compare/v0.16.1...v0.16.2
+[0.16.1]: https://github.com/sonorahq/sonora/compare/v0.16.0...v0.16.1
+[0.16.0]: https://github.com/sonorahq/sonora/compare/v0.15.0...v0.16.0
+[0.15.0]: https://github.com/sonorahq/sonora/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/sonorahq/sonora/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/sonorahq/sonora/compare/v0.12.1...v0.13.0
+[0.12.1]: https://github.com/sonorahq/sonora/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/sonorahq/sonora/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/sonorahq/sonora/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/sonorahq/sonora/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/sonorahq/sonora/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/sonorahq/sonora/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/sonorahq/sonora/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/sonorahq/sonora/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/sonorahq/sonora/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/sonorahq/sonora/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/sonorahq/sonora/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/sonorahq/sonora/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/sonorahq/sonora/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/sonorahq/sonora/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/sonorahq/sonora/releases/tag/v0.1.0

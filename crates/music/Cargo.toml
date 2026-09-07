@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-bundled-sqlite = ["rusqlite/bundled", "ytmusic/bundled-sqlite"]
+bundled-sqlite = ["rusqlite/bundled", "storage/bundled-sqlite"]
 
 [dependencies]
 anyhow.workspace = true
@@ -18,22 +18,25 @@ deunicode.workspace = true
 dirs.workspace = true
 http.workspace = true
 librespot-core.workspace = true
-librespot-oauth.workspace = true
 librespot-playback.workspace = true
 librespot-protocol.workspace = true
 lofty.workspace = true
 kakasi.workspace = true
 log.workspace = true
+oauth2.workspace = true
+open.workspace = true
 percent-encoding.workspace = true
 protobuf.workspace = true
 reqwest.workspace = true
 roxmltree.workspace = true
-rodio = { workspace = true, features = ["symphonia-aac", "symphonia-alac", "symphonia-isomp4", "flac", "mp3", "vorbis", "wav"] }
+rodio = { workspace = true, features = ["symphonia-aac", "symphonia-alac", "symphonia-isomp4", "symphonia-libopus", "symphonia-mkv", "flac", "mp3", "vorbis", "wav"] }
 rtrb.workspace = true
 rusqlite.workspace = true
 rustfft.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_norway.workspace = true
+storage.workspace = true
+symphonia.workspace = true
 tokio.workspace = true
 ytmusic.workspace = true

@@ -56,6 +56,7 @@ impl RenderOnce for Glyph {
 
 #[derive(IntoElement)]
 struct Thumb {
+    row: usize,
     url: Option<String>,
 }
 
@@ -63,7 +64,9 @@ impl RenderOnce for Thumb {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
 
-        Artwork::new(self.url).size(theme.metrics.thumb)
+        Artwork::new(self.url)
+            .id(("artwork", self.row))
+            .size(theme.metrics.thumb)
     }
 }
 
@@ -377,7 +380,9 @@ pub(crate) fn title<F>(
 }
 
 pub(crate) fn artwork<F>(cell: &Cell<F>, url: Option<String>) -> AnyElement {
-    cell.middle().child(Thumb { url }).into_any_element()
+    cell.middle()
+        .child(Thumb { row: cell.row, url })
+        .into_any_element()
 }
 
 pub(crate) fn avatar<F>(cell: &Cell<F>, url: Option<String>) -> AnyElement {

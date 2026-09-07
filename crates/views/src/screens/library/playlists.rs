@@ -1,7 +1,8 @@
 use std::cmp::Ordering;
-use ui::ActiveTheme as _;
+use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis};
 
 use gpui::{AnyElement, App, Entity, TextAlign};
+use i18n::t;
 use music::Playlist;
 use router::Destination;
 use state::{Library, LibraryPart, LibraryState, Origin, Playback};
@@ -73,6 +74,7 @@ pub(super) struct PlaylistSource {
     library: Entity<Library>,
     playback: Entity<Playback>,
     local: bool,
+    owned: bool,
 }
 
 impl PlaylistSource {
@@ -85,6 +87,7 @@ impl PlaylistSource {
             library,
             playback,
             local,
+            owned: false,
         }
     }
 
@@ -128,9 +131,36 @@ impl TableSource for PlaylistSource {
     }
 
     fn matches(&self, row: usize, query: &str, cx: &App) -> bool {
-        self.playlists(cx)
-            .get(row)
-            .is_some_and(|playlist| holds(&playlist.name, query) || holds(&playlist.owner, query))
+        self.playlists(cx).get(row).is_some_and(|playlist| {
+            (!self.owned || playlist.owned)
+                && (holds(&playlist.name, query) || holds(&playlist.owner, query))
+        })
+    }
+
+    fn filter_axes(&self, _query: &str, _cx: &App) -> Vec<Filter> {
+        vec![Filter::Flag(FlagAxis {
+            key: "filter-owned",
+            label: t!("filter-owned"),
+            on: self.owned,
+        })]
+    }
+
+    fn filter(&mut self, change: FilterChange, _cx: &App) -> bool {
+        match change {
+            FilterChange::Flag("filter-owned", value) => {
+                self.owned = value;
+                true
+            }
+            FilterChange::Reset => {
+                self.owned = false;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn filtered(&self, _cx: &App) -> bool {
+        self.owned
     }
 
     fn playing(&self, row: usize, cx: &App) -> bool {

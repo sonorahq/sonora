@@ -57,6 +57,19 @@ library-local-unconfigured = Richte deine lokale Bibliothek ein
 app-refresh-library = Bibliothek aktualisieren
 app-sign-out = Abmelden
 app-quit = Beenden
+app-settings = Einstellungen …
+app-hide = Sonora ausblenden
+app-hide-others = Andere ausblenden
+app-show-all = Alle einblenden
+app-edit = Bearbeiten
+app-cut = Ausschneiden
+app-copy = Kopieren
+app-paste = Einsetzen
+app-select-all = Alles auswählen
+app-window = Fenster
+app-close-window = Fenster schließen
+app-minimize = Im Dock ablegen
+app-zoom = Zoomen
 
 # tray menu
 tray-show = Sonora anzeigen
@@ -81,20 +94,52 @@ column-tracks = Titel
 
 # track menu
 menu-add-to-playlist = Zur Playlist hinzufügen
+menu-add-tracks-to-playlist = { $count ->
+    [one] { $count } Track zur Playlist hinzufügen
+   *[other] { $count } Tracks zur Playlist hinzufügen
+}
 menu-new-playlist = Neue Playlist
 menu-edit-tags = Tags bearbeiten
 menu-no-playlists = Keine Playlists
 menu-add-to-library = Zu Favoriten hinzufügen
+menu-add-tracks-to-library = { $count ->
+    [one] { $count } Track zu Favoriten hinzufügen
+   *[other] { $count } Tracks zu Favoriten hinzufügen
+}
 menu-remove-from-library = Aus Favoriten entfernen
+menu-remove-tracks-from-library = { $count ->
+    [one] { $count } Track aus Favoriten entfernen
+   *[other] { $count } Tracks aus Favoriten entfernen
+}
 menu-remove-from-playlist = Aus der Playlist entfernen
+menu-remove-tracks-from-playlist = { $count ->
+    [one] { $count } Track aus Playlist entfernen
+   *[other] { $count } Tracks aus Playlist entfernen
+}
 menu-remove-from-history = Aus dem Verlauf entfernen
+menu-remove-tracks-from-history = { $count ->
+    [one] { $count } Track aus Verlauf entfernen
+   *[other] { $count } Tracks aus Verlauf entfernen
+}
 menu-play-next = Als Nächstes spielen
+menu-play-tracks-next = { $count ->
+    [one] { $count } Track als Nächstes spielen
+   *[other] { $count } Tracks als Nächstes spielen
+}
 menu-add-to-queue = Zur Warteschlange hinzufügen
+menu-add-tracks-to-queue = { $count ->
+    [one] { $count } Track zur Warteschlange hinzufügen
+   *[other] { $count } Tracks zur Warteschlange hinzufügen
+}
 menu-song-radio = Song-Radio öffnen
 menu-go-to-album = Zum Album
 menu-go-to-artist = Zum Künstler
 menu-view-details = Details anzeigen
 menu-copy-link = Link kopieren
+menu-cut = Ausschneiden
+menu-copy = Kopieren
+menu-paste = Einfügen
+menu-select-all = Alle auswählen
 menu-remove-from-queue = Aus der Warteschlange entfernen
 menu-open-playlist = Playlist öffnen
 menu-play-playlist = Playlist abspielen
@@ -117,6 +162,36 @@ playlist-delete-confirm = „{ $name }“ löschen? Das lässt sich nicht rückg
 playlist-again-title = Noch einmal hinzufügen?
 playlist-again-confirm = Dieser Titel ist schon in „{ $name }“. Noch ein Mal hinzufügen?
 playlist-again-add = Erneut hinzufügen
+
+# confirm
+confirm-remove-library-title = Von Bibliothek entfernen
+confirm-remove-playlist-title = Von Playlist entfernen
+confirm-remove-history-title = Von Verlauf entfernen
+confirm-unfollow-title = Entfolgen
+confirm-remove-songs = { $count ->
+    [one] Den Song von der Bibliothek entfernen?
+   *[other] { $count } Songs von der Bibliothek entfernen?
+}
+confirm-remove-playlist-songs = { $count ->
+    [one] Den Song von der Playlist entfernen?
+   *[other] { $count } Songs von der Playlist entfernen?
+}
+confirm-remove-history-songs = { $count ->
+    [one] Den Song von dem Verlauf entfernen?
+   *[other] { $count } Songs von dem Verlauf entfernen?
+}
+confirm-remove-albums = { $count ->
+    [one] Den Album von der Bibliothek entfernen?
+   *[other] { $count } Alben von der Bibliothek entfernen?
+}
+confirm-unfollow-artists = { $count ->
+    [one] Den Künstler entfolgen?
+   *[other] { $count } Künstler entfolgen?
+}
+confirm-remove-playlists = { $count ->
+    [one] Den Playlist von der Bibliothek entfernen?
+   *[other] { $count } Playlists von der Bibliothek entfernen?
+}
 
 # queue panel
 queue-title = Warteschlange
@@ -159,6 +234,7 @@ filter-duration = Dauer
 filter-year = Jahr
 filter-explicit = Nur explizite
 filter-playable = Nur abspielbare
+filter-owned = Von dir
 
 # view
 view-list = Liste
@@ -183,20 +259,20 @@ login-problem-refused = Spotify hat die Anmeldung abgelehnt. Warte einen Moment 
 login-problem-premium = Sonora streamt über Spotify Premium, und dieses Konto hat es nicht. Melde dich mit einem Premium-Konto an, um fortzufahren.
 login-sign-in = Mit { $provider } anmelden
 login-connect-cookies = Cookies manuell einfügen
-login-import-browser = Aus dem Browser importieren*
-login-import-browser-plain = Aus Browser importieren
-login-browser-firefox = *Nur Firefox-basierte Browser
-login-browser-title = Browser auswählen
-login-browser-detail = Sonora liest deine YouTube-Music-Sitzung aus dem gewählten Browser. Die Sitzung bleibt auf diesem Gerät.
 login-use = { $provider } verwenden
 login-guest-title = Gastmodus
 login-guest-use = Gastmodus verwenden
 login-guest-detail = Stöbern und abspielen ohne Konto. Bibliothek, Favoriten und Playlists bleiben außen vor.
 login-usage-consent = Hilf uns zu schätzen, wie viele Menschen Sonora nutzen.
 login-device-code = Gib diesen Code auf { $url } ein
+login-cookie-open = YouTube Music öffnen
 login-cookie-submit = Weiter
 login-cookie-hint = Füge hier den Cookie-Request-Header ein
-login-cookie-detail = 1. Öffne music.youtube.com und stelle sicher, dass du angemeldet bist. 2. Drücke F12, öffne den Tab „Netzwerkanalyse“ und lade die Seite neu. 3. Wähle eine Anfrage namens „browse“ oder „next“. 4. Suche unter „Kopfzeilen“ bei den Anfrage-Headern den Eintrag „Cookie“, klicke ihn mit der rechten Maustaste an und kopiere seinen Wert. Füge den vollständigen Wert unten ein: die Cookie-Ansicht der Anfrage reicht nicht, weil der Wert SAPISID und __Secure-3PAPISID enthalten muss.
+login-cookie-step-1 = Öffne music.youtube.com und stelle sicher, dass du angemeldet bist.
+login-cookie-step-2 = Drücke F12, öffne den Tab „Netzwerkanalyse“ und lade die Seite neu.
+login-cookie-step-3 = Wähle eine Anfrage namens „browse“ oder „next“.
+login-cookie-step-4 = Suche unter „Kopfzeilen“ bei den Anfrage-Headern den Eintrag „Cookie“, klicke ihn mit der rechten Maustaste an und kopiere seinen Wert.
+login-cookie-step-note = Füge den vollständigen Wert unten ein: die Cookie-Ansicht der Anfrage reicht nicht, weil der Wert SAPISID und __Secure-3PAPISID enthalten muss.
 login-cookie-title = Füge deine YouTube-Music-Cookies ein, um die Anmeldung abzuschließen
 login-account-title = Konto auswählen
 login-account-detail = Diese Sitzung ist bei mehreren Google-Konten angemeldet. Wähle das Konto, das Sonora verwenden soll.
@@ -211,6 +287,7 @@ detail-play-playlist = Playlist abspielen
 play-pause = Pause
 play-resume = Fortsetzen
 play-loading = Wird geladen…
+play-shuffle = Zufallswiedergabe
 
 # artist page
 artist-eyebrow = Künstler
@@ -364,6 +441,7 @@ month-12 = Dez.
 settings-tab-general = Allgemein
 settings-tab-appearance = Erscheinungsbild
 settings-tab-playback = Wiedergabe
+settings-tab-privacy = Privatsphäre
 settings-theme = Design
 settings-theme-detail = Wähle die Farbpalette der Anwendung
 settings-opacity = Deckkraft
@@ -372,6 +450,8 @@ settings-opacity-value = { $percent } %
 settings-theme-config = Konfiguration öffnen
 settings-adaptive = Adaptives Design
 settings-adaptive-detail = Färbt die Palette nach dem Cover des laufenden Albums
+settings-visualizer = Visualizer
+settings-visualizer-detail = Spektrum hinter Vollbildcover anzeigen
 settings-icons = Symbolsatz
 settings-icons-detail = Wähle den Symbolsatz für die Oberfläche
 settings-motion = Bewegung reduzieren
@@ -400,6 +480,9 @@ settings-typeface-detail = Die Schrift, die Sonora in der Oberfläche verwendet
 settings-typeface-system = Standard
 settings-typeface-search = Schriftart suchen
 settings-typeface-none = Keine Schriftart gefunden
+settings-server-side-decorations = Serverseitige Fensterdekorationen
+settings-server-side-decorations-detail = Titelleiste, Rahmen und Schatten vom Compositor zeichnen lassen
+settings-typeface-loading = Wird geladen…
 settings-window-controls = Fenstersteuerung
 settings-window-controls-detail = Minimieren, Maximieren und Schließen in der Titelleiste zeichnen
 settings-controls-side = Seite der Steuerung
@@ -410,8 +493,17 @@ settings-normalisation = Lautstärke angleichen
 settings-normalisation-detail = Hält Titel auf einer gleichmäßigen Lautstärke
 settings-gapless = Lückenlose Wiedergabe
 settings-gapless-detail = Lässt einen Titel ohne Pause in den nächsten laufen, so wie das Album gedacht war
+settings-panel-lyrics-size = Lyricsgröße (panel)
+settings-panel-lyrics-size-detail = Größe des Lyrics-Textes in der Seitenleiste, auf der Basis der Basis-Schriftgröße
+settings-fullscreen-lyrics-size = Lyricsgröße (fullscreen)
+settings-fullscreen-lyrics-size-detail = Größe des Lyrics-Textes auf dem Vollbildplayer, auf der Basis der Basis-Schriftgröße
+settings-lyrics-size-value = { $size }%
+settings-lyrics-for-local-files = Lyrics für lokale Dateien
+settings-lyrics-for-local-files-detail = Metadaten aus lokalen Dateien verwenden, um Lyrics vom Internet zu laden
 settings-karaoke-lyrics = Karaoke-Songtext
 settings-karaoke-lyrics-detail = Den Songtext Wort für Wort hervorheben, wenn Timings vorliegen
+settings-blur-lyrics = Interaktive Lyrics verwischen
+settings-blur-lyrics-detail = Nächste und vorherige Lyrics verwischen
 settings-romanized-lyrics = Romanisierter Songtext
 settings-romanized-lyrics-detail = Lokal erzeugte Aussprache für ausgewählte Schriftsysteme anzeigen
 settings-romanization-writing-systems = Schriftsysteme
@@ -429,6 +521,7 @@ settings-group-library = Bibliothek
 settings-group-text = Text
 settings-group-motion = Bewegung
 settings-group-title-bar = Titelleiste
+settings-group-window-style = Fensterstil
 settings-group-lyrics = Songtext
 settings-group-project = Projekt
 settings-adaptive-menu = Adaptives Kontextmenü
@@ -538,6 +631,8 @@ update-working = Update wird geladen…
 update-failed = Das Update konnte nicht installiert werden. Versuch es über die Releases-Seite.
 settings-check-updates = Nach Updates suchen
 settings-check-updates-detail = Beim Start einmal bei GitHub nachfragen, ob eine neuere Version da ist. Sonora installiert das Update nur unter Windows selbst, sonst zeigt es dir, was sich geändert hat
+
+# tags
 tags-edit-title = Tags bearbeiten
 tags-sheet-song = Titel
 tags-sheet-album = Album

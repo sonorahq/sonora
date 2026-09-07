@@ -16,7 +16,7 @@
 
   <metadata_license>MIT</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
-  <url type="homepage">https://github.com/nolight132/sonora</url>
+  <url type="homepage">https://github.com/sonorahq/sonora</url>
 
   <supports>
     <control>pointing</control>

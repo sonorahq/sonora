@@ -4,8 +4,8 @@ use std::rc::Rc;
 use gpui::prelude::*;
 use gpui::{AnyElement, App, div};
 use ui::{
-    ActiveTheme as _, Button, FlagAxis, MenuItem, Mode, Picker, Popovers, RangeAxis, RangeScrubber,
-    RangeState, Sort, SortAxis, Text, Toggle, eyebrow,
+    ActiveTheme as _, Button, Filter, FilterChange, MenuItem, Mode, Picker, Popovers,
+    RangeScrubber, RangeState, Sort, SortAxis, Text, Toggle, eyebrow,
 };
 
 const COLUMNS: &str = "columns";
@@ -26,12 +26,6 @@ impl Sliders {
         cache.push((key, state.clone()));
         state
     }
-}
-
-pub(crate) enum Sift {
-    Range(&'static str, (f32, f32)),
-    Flag(&'static str, bool),
-    Reset,
 }
 
 pub(crate) fn columns(
@@ -91,22 +85,20 @@ pub(crate) fn sorts(
 pub(crate) fn filters(
     group: &Popovers,
     sliders: &Sliders,
-    ranges: Vec<RangeAxis>,
-    flags: Vec<FlagAxis>,
-    sift: impl Fn(Sift, &mut App) + 'static,
+    axes: Vec<Filter>,
+    filter_fn: impl Fn(FilterChange, &mut App) + 'static,
     cx: &App,
 ) -> AnyElement {
     let theme = *cx.theme();
-    let narrowed = ranges.iter().any(|axis| !axis.whole()) || flags.iter().any(|flag| flag.on);
-    let sift = Rc::new(sift);
+    let narrowed = axes.iter().any(|axis| axis.narrowed());
+    let filter_fn = Rc::new(filter_fn);
 
-    let scrubbers: Vec<MenuItem> = ranges
-        .iter()
-        .map(|axis| {
+    let items = axes.iter().map(|axis| match axis {
+        Filter::Range(axis) => {
             let key = axis.key;
             let unit = axis.unit;
             let copy = axis.clone();
-            let sift = sift.clone();
+            let filter_fn = filter_fn.clone();
             let state = sliders.state(key);
 
             MenuItem::new(key, axis.label.clone()).content(
@@ -138,27 +130,23 @@ pub(crate) fn filters(
                             .stops(axis.stops())
                             .colors(theme.progress_bar, theme.muted, theme.foreground)
                             .on_change(move |share: &(f32, f32), _, cx| {
-                                sift(Sift::Range(key, copy.at(*share)), cx);
+                                filter_fn(FilterChange::Range(key, copy.at(*share)), cx);
                             }),
                     ),
             )
-        })
-        .collect();
+        }
+        Filter::Flag(axis) => {
+            let key = axis.key;
+            let on = axis.on;
+            let filter_fn = filter_fn.clone();
 
-    let switches: Vec<MenuItem> = flags
-        .iter()
-        .map(|flag| {
-            let key = flag.key;
-            let on = flag.on;
-            let sift = sift.clone();
-
-            MenuItem::new(key, flag.label.clone())
+            MenuItem::new(key, axis.label.clone())
                 .selected(on)
-                .on_click(move |_, _, cx| sift(Sift::Flag(key, !on), cx))
-        })
-        .collect();
+                .on_click(move |_, _, cx| filter_fn(FilterChange::Flag(key, !on), cx))
+        }
+    });
 
-    let reset = sift.clone();
+    let reset = filter_fn.clone();
 
     Picker::icon(FILTERS, group, "icons/funnel.svg")
         .tooltip("tool-filters")
@@ -168,12 +156,11 @@ pub(crate) fn filters(
             true => theme.primary,
             false => theme.muted_foreground,
         })
-        .items(scrubbers)
-        .items(switches)
+        .items(items)
         .item(MenuItem::separator("filters-end"))
         .item(
             MenuItem::new("filters-reset", i18n::t!("filter-reset"))
-                .on_click(move |_, _, cx| reset(Sift::Reset, cx)),
+                .on_click(move |_, _, cx| reset(FilterChange::Reset, cx)),
         )
         .into_any_element()
 }

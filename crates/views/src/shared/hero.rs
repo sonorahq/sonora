@@ -131,6 +131,7 @@ pub(crate) struct HeroPlayButton {
     label: SharedString,
     listing: Listing,
     from: Option<Origin>,
+    shuffled: bool,
     playback: Entity<Playback>,
 }
 
@@ -146,6 +147,7 @@ impl HeroPlayButton {
             label: label.into(),
             listing: Listing::Owned(tracks),
             from: None,
+            shuffled: false,
             playback,
         }
     }
@@ -153,6 +155,31 @@ impl HeroPlayButton {
     pub(crate) fn from(mut self, origin: Option<Origin>) -> Self {
         self.from = origin;
         self
+    }
+
+    /// The Shuffle button beside Play: an icon-only outline button that turns shuffle on and
+    /// starts the tracks from a random one, never mirroring the transport state.
+    pub(crate) fn shuffle(
+        id: impl Into<ElementId>,
+        tracks: Vec<Track>,
+        playback: Entity<Playback>,
+    ) -> Self {
+        Self {
+            shuffled: true,
+            ..Self::new(id, SharedString::default(), tracks, playback)
+        }
+    }
+
+    /// `shuffle` over a table's rows, in their displayed order.
+    pub(crate) fn shuffle_listed(
+        id: impl Into<ElementId>,
+        table: &Entity<TableState<TrackSource>>,
+        playback: Entity<Playback>,
+    ) -> Self {
+        Self {
+            shuffled: true,
+            ..Self::listed(id, SharedString::default(), table, playback)
+        }
     }
 
     pub(crate) fn listed(
@@ -166,14 +193,35 @@ impl HeroPlayButton {
             label: label.into(),
             listing: Listing::Listed(table.clone()),
             from: None,
+            shuffled: false,
             playback,
         }
+    }
+
+    fn shuffle_button(self, cx: &App) -> Button {
+        let disabled = self.listing.first(cx).is_none();
+        let listing = self.listing;
+        let from = self.from;
+        let playback = self.playback;
+
+        Button::new(self.id)
+            .icon("icons/shuffle.svg")
+            .tooltip("play-shuffle")
+            .outline()
+            .disabled(disabled)
+            .on_click(move |_, _, cx| {
+                let queued = listing.queue(cx);
+                let from = from.clone().or_else(|| listing.whence(cx));
+                playback.update(cx, |playback, cx| playback.shuffle_any(queued, from, cx));
+            })
     }
 }
 
 impl RenderOnce for HeroPlayButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let first_playable = self.listing.first(cx);
+        if self.shuffled {
+            return div().flex().child(self.shuffle_button(cx));
+        }
         let state = {
             let playback = self.playback.read(cx);
             let current = playback.track().and_then(|track| track.id.as_deref());
@@ -187,8 +235,7 @@ impl RenderOnce for HeroPlayButton {
             Some(PlaybackState::Loading) => (t!("play-loading"), "icons/play.svg", true),
             _ => (self.label, "icons/play.svg", false),
         };
-        let disabled = first_playable.is_none() || blocked;
-        let first_playable = first_playable.unwrap_or_default();
+        let disabled = self.listing.first(cx).is_none() || blocked;
         let listing = self.listing;
         let from = self.from;
         let playback = self.playback;
@@ -207,7 +254,7 @@ impl RenderOnce for HeroPlayButton {
                         _ => {
                             let queued = listing.queue(cx);
                             let from = from.clone().or_else(|| listing.whence(cx));
-                            playback.start(queued, first_playable, from, cx)
+                            playback.start_any(queued, from, cx)
                         }
                     });
                 }),

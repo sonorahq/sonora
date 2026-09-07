@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::time::Duration;
 
 use gpui::{Context, Entity};
@@ -147,35 +147,57 @@ fn sift<T>(
     before != tally(past, current, upcoming, source)
 }
 
-fn scramble(upcoming: &mut VecDeque<Track>) {
-    let mut tracks: Vec<Track> = upcoming.drain(..).collect();
+fn scramble(upcoming: &mut VecDeque<Track>, source: &[Track], current: Option<&Track>) {
+    let known: HashSet<&str> = source
+        .iter()
+        .filter_map(|track| track.id.as_deref())
+        .collect();
+    let mut tracks: Vec<Track> = upcoming
+        .drain(..)
+        .filter(|track| !track.id.as_deref().is_some_and(|id| known.contains(id)))
+        .collect();
+
+    let mut playing = current.and_then(|current| current.id.clone());
+    tracks.extend(
+        source
+            .iter()
+            .filter(|track| match playing.as_deref() == track.id.as_deref() {
+                true => {
+                    playing = None;
+                    false
+                }
+                false => true,
+            })
+            .cloned(),
+    );
+
     fastrand::shuffle(&mut tracks);
     *upcoming = tracks.into();
 }
 
-fn restore(upcoming: &mut VecDeque<Track>, source: &[Track]) {
-    let mut slots: HashMap<&str, VecDeque<usize>> = HashMap::new();
-    for (index, track) in source.iter().enumerate() {
-        if let Some(id) = track.id.as_deref() {
-            slots.entry(id).or_default().push_back(index);
-        }
-    }
-
-    let mut ranked: Vec<(usize, Track)> = upcoming
+fn restore(upcoming: &mut VecDeque<Track>, source: &[Track], current: Option<&Track>) {
+    let known: HashSet<&str> = source
+        .iter()
+        .filter_map(|track| track.id.as_deref())
+        .collect();
+    let extra: Vec<Track> = upcoming
         .drain(..)
-        .map(|track| {
-            let rank = track
-                .id
-                .as_deref()
-                .and_then(|id| slots.get_mut(id))
-                .and_then(|found| found.pop_front())
-                .unwrap_or(usize::MAX);
-            (rank, track)
-        })
+        .filter(|track| !track.id.as_deref().is_some_and(|id| known.contains(id)))
         .collect();
 
-    ranked.sort_by_key(|(rank, _)| *rank);
-    *upcoming = ranked.into_iter().map(|(_, track)| track).collect();
+    let at = current
+        .and_then(|current| current.id.as_deref())
+        .and_then(|id| {
+            source
+                .iter()
+                .position(|track| track.id.as_deref() == Some(id))
+        });
+    let tail = match at {
+        Some(at) => &source[at + 1..],
+        None => source,
+    };
+
+    *upcoming = tail.iter().cloned().chain(extra).collect();
 }
 
 fn move_item<T>(items: &mut VecDeque<T>, from: usize, to: usize) -> bool {
@@ -292,8 +314,8 @@ impl Queue {
             .update(cx, |settings, cx| settings.set_shuffle(on, cx));
         let mut suggested = self.upcoming.split_off(self.queued());
         match on {
-            true => scramble(&mut self.upcoming),
-            false => restore(&mut self.upcoming, &self.source),
+            true => scramble(&mut self.upcoming, &self.source, self.current.as_ref()),
+            false => restore(&mut self.upcoming, &self.source, self.current.as_ref()),
         }
         self.upcoming.append(&mut suggested);
         self.changed(cx);
@@ -484,10 +506,11 @@ impl Queue {
         let mut past = tracks;
         self.upcoming = past.split_off(index + 1).into();
         self.similar = 0;
-        if self.shuffle {
-            scramble(&mut self.upcoming);
-        }
         self.current = past.pop();
+        if self.shuffle {
+            scramble(&mut self.upcoming, &self.source, self.current.as_ref());
+            past.clear();
+        }
         self.past = past;
         self.changed(cx);
         self.current.clone()
@@ -581,9 +604,9 @@ impl Queue {
     }
 
     pub fn previous(&mut self, cx: &mut Context<Self>) -> Option<Track> {
-        let previous = self.past.pop()?;
-        if let Some(playing) = self.current.replace(previous) {
-            self.upcoming.push_front(playing);
+        let index = self.past.iter().rposition(|track| track.playable)?;
+        if !select_past(&mut self.past, &mut self.current, &mut self.upcoming, index) {
+            return None;
         }
         self.changed(cx);
         self.current.clone()
@@ -676,9 +699,9 @@ mod tests {
     #[test]
     fn scrambling_keeps_every_track() {
         let source = listing(20);
-        let mut upcoming: VecDeque<Track> = source.iter().cloned().collect();
+        let mut upcoming = VecDeque::new();
 
-        scramble(&mut upcoming);
+        scramble(&mut upcoming, &source, None);
 
         let mut seen = ids(&upcoming);
         let mut expected = ids(&source.iter().cloned().collect());
@@ -692,8 +715,8 @@ mod tests {
         let source = listing(20);
         let mut upcoming: VecDeque<Track> = source.iter().cloned().collect();
 
-        scramble(&mut upcoming);
-        restore(&mut upcoming, &source);
+        scramble(&mut upcoming, &source, None);
+        restore(&mut upcoming, &source, None);
 
         assert_eq!(ids(&upcoming), ids(&source.iter().cloned().collect()));
     }
@@ -708,9 +731,9 @@ mod tests {
             track("a"),
         ]);
 
-        restore(&mut upcoming, &source);
+        restore(&mut upcoming, &source, None);
 
-        assert_eq!(ids(&upcoming), ["a", "c", "queued-one", "queued-two"]);
+        assert_eq!(ids(&upcoming), ["a", "b", "c", "queued-one", "queued-two"]);
     }
 
     #[test]
@@ -718,9 +741,20 @@ mod tests {
         let source = vec![track("a"), track("b"), track("a")];
         let mut upcoming = VecDeque::from(vec![track("a"), track("a"), track("b")]);
 
-        restore(&mut upcoming, &source);
+        restore(&mut upcoming, &source, None);
 
         assert_eq!(ids(&upcoming), ["a", "b", "a"]);
+    }
+
+    #[test]
+    fn restoring_continues_after_the_current_track() {
+        let source = listing(12);
+        let mut upcoming: VecDeque<Track> = source.iter().cloned().collect();
+
+        scramble(&mut upcoming, &source, Some(&source[8]));
+        restore(&mut upcoming, &source, Some(&source[8]));
+
+        assert_eq!(ids(&upcoming), ids(&source[9..].iter().cloned().collect()));
     }
 
     #[test]

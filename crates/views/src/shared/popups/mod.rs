@@ -1,5 +1,5 @@
 mod accounts;
-mod browsers;
+mod cookie;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -9,7 +9,7 @@ use gpui::{App, Context, Div, ElementId, Entity, EntityId, Pixels, ScrollHandle,
 use ui::{Input, Menu, Picker, Scrollbar, SelectNext, SelectPrevious, Submit};
 
 pub(crate) use accounts::AccountPicker;
-pub(crate) use browsers::BrowserPicker;
+pub(crate) use cookie::CookiePrompt;
 
 const SEARCH_HEIGHT: Pixels = px(320.);
 const SELECTED_LEAD: usize = 2;
@@ -64,16 +64,22 @@ impl SearchPopup {
         }
         match open {
             true => {
-                let selected = selected.unwrap_or_default();
-                self.cursor.set(selected);
-                self.scrollbar
-                    .read(cx)
-                    .scroll()
-                    .scroll_to_item(selected.saturating_sub(SELECTED_LEAD));
+                self.place(selected, cx);
                 self.input.update(cx, |input, cx| input.focus(window, cx));
             }
             false => self.input.update(cx, |input, cx| input.set_text("", cx)),
         }
+    }
+
+    /// Moves the cursor to `selected` and scrolls it into view, for when the
+    /// list changes under an open popup; `None` goes back to the top.
+    pub(crate) fn place(&self, selected: Option<usize>, cx: &App) {
+        let selected = selected.unwrap_or_default();
+        self.cursor.set(selected);
+        self.scrollbar
+            .read(cx)
+            .scroll()
+            .scroll_to_item(selected.saturating_sub(SELECTED_LEAD));
     }
 
     pub(crate) fn cursor(&self, count: usize) -> usize {

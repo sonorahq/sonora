@@ -1,5 +1,6 @@
 mod audio;
 pub mod binimum;
+pub mod credentials;
 pub mod kugou;
 #[cfg(test)]
 mod live_tests;
@@ -160,17 +161,52 @@ pub struct PlaybackConfig {
     pub gain: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PlaybackEvent {
-    Loading(Duration),
-    Playing(Duration),
-    Paused(Duration),
-    Position(Duration),
-    Length(Duration),
-    Ended,
-    Unavailable,
+    Loading {
+        id: Option<String>,
+        at: Duration,
+    },
+    Playing {
+        id: Option<String>,
+        at: Duration,
+    },
+    Paused {
+        id: Option<String>,
+        at: Duration,
+    },
+    Position {
+        id: Option<String>,
+        at: Duration,
+    },
+    Length {
+        id: Option<String>,
+        duration: Duration,
+    },
+    Ended {
+        id: Option<String>,
+    },
+    Unavailable {
+        id: Option<String>,
+    },
     Refused,
     Gated,
+    OutputChanged,
+}
+
+impl PlaybackEvent {
+    pub fn id(&self) -> Option<&str> {
+        match self {
+            Self::Loading { id, .. }
+            | Self::Playing { id, .. }
+            | Self::Paused { id, .. }
+            | Self::Position { id, .. }
+            | Self::Length { id, .. }
+            | Self::Ended { id, .. }
+            | Self::Unavailable { id, .. } => id.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 pub trait Player: Send + Sync {
@@ -183,7 +219,7 @@ pub trait Player: Send + Sync {
         Ok(())
     }
 
-    fn preload(&self, track_id: &str) -> Result<()>;
+    fn preload(&self, track_id: &str, segue: bool) -> Result<()>;
     fn play(&self);
     fn pause(&self);
     fn seek(&self, position: Duration);
@@ -215,7 +251,6 @@ pub struct ProviderSession {
 pub enum SignIn {
     Default,
     Anonymous,
-    Browser(String),
     Secret,
     Path(PathBuf),
 }
@@ -260,6 +295,7 @@ pub struct AccountChoice {
 pub enum SignInPrompt {
     Accounts(Vec<AccountChoice>),
     Code { code: String, url: String },
+    Url(String),
     Secret,
 }
 

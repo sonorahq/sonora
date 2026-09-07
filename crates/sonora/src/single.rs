@@ -1,5 +1,6 @@
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::thread;
+use std::time::Duration;
 
 use interprocess::local_socket::traits::{ListenerExt as _, Stream as _};
 use interprocess::local_socket::{GenericNamespaced, ListenerOptions, Stream, ToNsName};
@@ -13,6 +14,7 @@ const SOCKET: &str = match cfg!(debug_assertions) {
 pub enum Instance {
     First,
     Running,
+    Failed,
 }
 
 pub fn claim(link: Option<&str>, sender: UnboundedSender<String>) -> Instance {
@@ -20,16 +22,40 @@ pub fn claim(link: Option<&str>, sender: UnboundedSender<String>) -> Instance {
         Ok(name) => name,
         Err(error) => {
             log::warn!("single: cannot name the instance socket: {error:#}");
-            return Instance::First;
+            return Instance::Failed;
         }
     };
 
     let listener = match ListenerOptions::new().name(name.clone()).create_sync() {
         Ok(listener) => listener,
-        Err(_) if hand_over(name, link) => return Instance::Running,
+
         Err(error) => {
-            log::warn!("single: cannot own the instance socket: {error:#}");
-            return Instance::First;
+            // Windows reports an occupied pipe with an error other than
+            // AddrInUse, so any failure may mean another Sonora owns the socket.
+            if hand_over(name.clone(), link) {
+                return Instance::Running;
+            }
+
+            // Only a filesystem socket can leave a stale AddrInUse behind.
+            if error.kind() != ErrorKind::AddrInUse {
+                log::error!("single: cannot own the instance socket: {error:#}");
+                return Instance::Failed;
+            }
+
+            log::warn!("single: socket is occupied but unreachable; attempting recovery");
+
+            match ListenerOptions::new()
+                .name(name.clone())
+                .try_overwrite(true)
+                .max_spin_time(Duration::ZERO)
+                .create_sync()
+            {
+                Ok(listener) => listener,
+                Err(error) => {
+                    log::error!("single: cannot recover instance socket: {error:#}");
+                    return Instance::Failed;
+                }
+            }
         }
     };
 

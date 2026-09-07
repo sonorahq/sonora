@@ -308,6 +308,8 @@ impl Render for Input {
             .on_action(cx.listener(Self::backspace_word))
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::delete_word))
+            .on_action(cx.listener(Self::backspace_to_start))
+            .on_action(cx.listener(Self::delete_to_end))
             .on_action(cx.listener(Self::left))
             .on_action(cx.listener(Self::right))
             .on_action(cx.listener(Self::word_left))

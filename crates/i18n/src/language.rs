@@ -10,6 +10,7 @@ pub enum Language {
     Spanish,
     French,
     Italian,
+    Indonesian,
     Japanese,
     Russian,
     Ukrainian,
@@ -18,12 +19,13 @@ pub enum Language {
 }
 
 impl Language {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::English,
         Self::German,
         Self::Spanish,
         Self::French,
         Self::Italian,
+        Self::Indonesian,
         Self::Japanese,
         Self::Russian,
         Self::Ukrainian,
@@ -38,6 +40,7 @@ impl Language {
             Self::Spanish => "es",
             Self::French => "fr",
             Self::Italian => "it",
+            Self::Indonesian => "id",
             Self::Japanese => "ja",
             Self::Russian => "ru",
             Self::Ukrainian => "uk",
@@ -53,6 +56,7 @@ impl Language {
             Self::Spanish => "Español",
             Self::French => "Français",
             Self::Italian => "Italiano",
+            Self::Indonesian => "Bahasa Indonesia",
             Self::Japanese => "日本語",
             Self::Russian => "Русский",
             Self::Ukrainian => "Українська",
@@ -84,6 +88,7 @@ impl Language {
             Self::Spanish => langid!("es"),
             Self::French => langid!("fr"),
             Self::Italian => langid!("it"),
+            Self::Indonesian => langid!("id"),
             Self::Japanese => langid!("ja"),
             Self::Russian => langid!("ru"),
             Self::Ukrainian => langid!("uk"),
@@ -99,6 +104,7 @@ impl Language {
             Self::Spanish => include_str!("../../../assets/i18n/es/main.ftl"),
             Self::French => include_str!("../../../assets/i18n/fr/main.ftl"),
             Self::Italian => include_str!("../../../assets/i18n/it/main.ftl"),
+            Self::Indonesian => include_str!("../../../assets/i18n/id/main.ftl"),
             Self::Japanese => include_str!("../../../assets/i18n/ja/main.ftl"),
             Self::Russian => include_str!("../../../assets/i18n/ru/main.ftl"),
             Self::Ukrainian => include_str!("../../../assets/i18n/uk/main.ftl"),

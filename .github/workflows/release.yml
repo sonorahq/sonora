@@ -52,7 +52,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config mold \
+            build-essential pkg-config cmake mold \
             libasound2-dev libfontconfig1-dev libfreetype-dev libsqlite3-dev \
             libx11-dev libxcb1-dev libxcursor-dev libxi-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
@@ -345,7 +345,9 @@ jobs:
           FINGERPRINT: ${{ steps.key.outputs.fingerprint }}
         run: |
           set -euo pipefail
-          mkdir -p site/repo/tmp
+          # Git cannot preserve OSTree's empty remote refs directory on the
+          # flatpak-repo branch, but static-delta generation expects it.
+          mkdir -p site/repo/tmp site/repo/refs/remotes
           test -f site/repo/config || ostree init --repo=site/repo --mode=archive
           for bundle in bundles/*.flatpak; do
             flatpak build-import-bundle \
@@ -425,10 +427,20 @@ jobs:
       - name: checksums
         run: cd dist && shasum -a 256 * > SHA256SUMS
 
+      - name: release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$TAG" --jq .body > notes.md
+          printf '\n[Code signing policy](https://github.com/%s#code-signing)\n' "$GITHUB_REPOSITORY" >> notes.md
+
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          generate_release_notes: true
+          body_path: notes.md
           prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: true
 

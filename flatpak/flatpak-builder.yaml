@@ -36,7 +36,7 @@ modules:
     sources:
       # Use source from GitHub:
       #- type: git
-      #  url: https://github.com/nolight132/sonora.git
+      #  url: https://github.com/sonorahq/sonora.git
       #  tag: v0.28.0
 
       # Use source from this machine:

@@ -8,6 +8,8 @@ use super::{Event, Shown};
 const ID: &str = "sonora";
 const ICON_NAME: &str = "sonora";
 const PNG: &[u8] = include_bytes!("../../../../assets/tray/sonora.png");
+/// Flatpak writes this file into every sandbox it starts.
+const FLATPAK_INFO: &str = "/.flatpak-info";
 
 pub struct Icon {
     handle: Handle<Item>,
@@ -39,7 +41,11 @@ impl Icon {
             pixmap,
             shown: None,
         };
-        match item.spawn() {
+        // A sandbox cannot own `org.kde.StatusNotifierItem-<pid>-<n>`, and a manifest cannot
+        // grant it: flatpak's own-name wildcard only matches a `.*` suffix. The watcher
+        // accepts the unique bus name instead.
+        let sandboxed = std::path::Path::new(FLATPAK_INFO).exists();
+        match item.disable_dbus_name(sandboxed).spawn() {
             Ok(handle) => Some(Self { handle }),
             Err(error) => {
                 log::warn!("tray: cannot reach the status notifier host: {error}");

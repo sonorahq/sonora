@@ -2,8 +2,8 @@
 
 # Sonora
 
-[![Build](https://img.shields.io/github/actions/workflow/status/nolight132/sonora/release.yml)](https://github.com/nolight132/sonora/actions/workflows/release.yml)
-[![License](https://img.shields.io/github/license/nolight132/sonora)](./COPYING)
+[![Build](https://img.shields.io/github/actions/workflow/status/sonorahq/sonora/release.yml)](https://github.com/sonorahq/sonora/actions/workflows/release.yml)
+[![License](https://img.shields.io/github/license/sonorahq/sonora)](./COPYING)
 ![Installs](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fsonora-stats.nolight.dev%2Fcount&query=%24.count&label=Installs&color=blue)
 \
 [![Discord](https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/a8N8Tx23rV)
@@ -88,33 +88,54 @@ Either `pipewire-alsa` or `pulseaudio-alsa` is required, matching your sound ser
 Add the Sonora repository once; it pulls the runtime from Flathub and updates with `flatpak update`:
 
 ```sh
-flatpak install --user https://nolight132.github.io/sonora/sonora.flatpakref
+flatpak install --user https://sonorahq.github.io/sonora/sonora.flatpakref
+```
+
+A remote added before the move to the `sonorahq` organisation still points at the old address and
+fails to update. Point it at the new one once:
+
+```sh
+flatpak remote-modify --user --url=https://sonorahq.github.io/sonora/repo sonora
 ```
 
 Every release also attaches a standalone `.flatpak` bundle for x86_64 and aarch64 on
-[Releases](https://github.com/nolight132/sonora/releases/latest), for installing without a remote.
+[Releases](https://github.com/sonorahq/sonora/releases/latest), for installing without a remote.
 
 ### Nix
 
-Just use the flake in the project root:
+The flake packages the latest tagged release and exposes `programs.sonora` for Home Manager.
 
-```sh
-inputs.sonora.packages.${system}.default
+```nix
+inputs.sonora.url = "github:sonorahq/sonora";
 ```
 
-The flake installs the latest tagged release binary.
+Home Manager:
+
+```nix
+{
+  imports = [ inputs.sonora.homeManagerModules.default ];
+  programs.sonora = {
+    enable = true;
+    settings = {
+      provider = "youtube";
+      appearance.theme = "dark";
+    };
+  };
+}
+```
 
 ### Windows
 
 #### Installer
 
-Download and run the [installer](https://github.com/nolight132/sonora/releases/latest/download/Sonora-Setup.exe).
+Download and run the [installer](https://github.com/sonorahq/sonora/releases/latest/download/Sonora-Setup.exe).
 
 #### Portable
 
-Download the latest `windows-msvc.exe` for your architecture from [Releases](https://github.com/nolight132/sonora/releases/latest).
+Download the latest `windows-msvc.exe` for your architecture from [Releases](https://github.com/sonorahq/sonora/releases/latest).
 
 ## Community
+
 Feel free to join our [Discord](https://discord.gg/a8N8Tx23rV) server and [Matrix](https://matrix.to/#/#sonora:nolight.dev) space.
 Discord is the primary one, but we do have a Matrix bridge.
 
@@ -129,9 +150,11 @@ us quickly locate the relevant parts of the code.
 **However**, using AI cannot act as an excuse for failing to
 understand, review, and test the changes proposed. Furthermore, we expect communication
 with a real person, not a computer. This includes but is not limited to PR/issue text
-generation, comments in discussions, etc. A summary of changes can be generated
-and does not need to be disclosed explicitly, but the reasoning and motivation
+generation, comments in discussions, etc. A short summary of minor changes can be
+generated and does not need to be disclosed explicitly, but the reasoning and motivation
 behind a change must come from the contributor and reflect their own understanding.
+
+Note that PRs that fail to adhere to these requirements may be rejected without further notice.
 
 AI-assisted proofreading and translation of human-written text are permitted.
 
@@ -141,27 +164,28 @@ AI-assisted proofreading and translation of human-written text are permitted.
 
 | Language | Translated | Coverage |
 | --- | --- | --- |
-| English (`en-US`) | 501/501 | 100% |
-| Deutsch (`de`) | 475/501 | 95% |
-| Español (`es`) | 496/501 | 99% |
-| Français (`fr`) | 475/501 | 95% |
-| Italiano (`it`) | 475/501 | 95% |
-| 日本語 (`ja`) | 496/501 | 99% |
-| Русский (`ru`) | 480/501 | 96% |
-| Українська (`uk`) | 480/501 | 96% |
-| Polski (`pl`) | 480/501 | 96% |
-| Português (Brasil) (`pt-BR`) | 496/501 | 99% |
+| English (`en-US`) | 533/533 | 100% |
+| Deutsch (`de`) | 533/533 | 100% |
+| Español (`es`) | 510/533 | 96% |
+| Français (`fr`) | 492/533 | 92% |
+| Italiano (`it`) | 489/533 | 92% |
+| Bahasa Indonesia (`id`) | 527/533 | 99% |
+| 日本語 (`ja`) | 510/533 | 96% |
+| Русский (`ru`) | 500/533 | 94% |
+| Українська (`uk`) | 500/533 | 94% |
+| Polski (`pl`) | 531/533 | 100% |
+| Português (Brasil) (`pt-BR`) | 510/533 | 96% |
 
 <!-- i18n:end -->
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=nolight132%2Fsonora&type=date&legend=top-left">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=nolight132/sonora&type=date&theme=dark&legend=top-left&sealed_token=sKtwC7g5T3J-eTji4XSzjR4r9w8t_BgIlXM2-fD5yXkV_KsNB-ESSvKSr4ofwrKLLXfNR77vlM4cATffoz3kTnAEPcjrQ-BprKQSiv0oriZSvSa-yBUsKfNo2AXAuXytEo5jBqlhhJJaotggp9S0CN-lNuWAw-45pP2YrsNKALFn7P1AX-eCi5da2baK" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=nolight132/sonora&type=date&legend=top-left&sealed_token=sKtwC7g5T3J-eTji4XSzjR4r9w8t_BgIlXM2-fD5yXkV_KsNB-ESSvKSr4ofwrKLLXfNR77vlM4cATffoz3kTnAEPcjrQ-BprKQSiv0oriZSvSa-yBUsKfNo2AXAuXytEo5jBqlhhJJaotggp9S0CN-lNuWAw-45pP2YrsNKALFn7P1AX-eCi5da2baK" />
-    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=nolight132/sonora&type=date&legend=top-left&sealed_token=sKtwC7g5T3J-eTji4XSzjR4r9w8t_BgIlXM2-fD5yXkV_KsNB-ESSvKSr4ofwrKLLXfNR77vlM4cATffoz3kTnAEPcjrQ-BprKQSiv0oriZSvSa-yBUsKfNo2AXAuXytEo5jBqlhhJJaotggp9S0CN-lNuWAw-45pP2YrsNKALFn7P1AX-eCi5da2baK" />
-  </picture>
+<a href="https://www.star-history.com/?repos=sonorahq%2Fsonora&type=date&logscale=&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=sonorahq/sonora&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=sonorahq/sonora&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=sonorahq/sonora&type=date&legend=top-left" />
+ </picture>
 </a>
 
 ## Credits
@@ -170,7 +194,7 @@ Sonora is built with the help of some incredible open-source projects, including
 
 - [Zed](https://github.com/zed-industries/zed) — a wonderful editor (~~ab~~)used by all core team members. Conveniently provides `gpui` — their native Rust rendering stack.
 - [librespot](https://github.com/librespot-org/librespot) — Spotify playback and library integration.
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — certain YouTube ideas implemented in [ytmusic-rs](https://github.com/nolight132/ytmusic-rs). :)
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — certain YouTube ideas implemented in [ytmusic-rs](https://github.com/sonorahq/ytmusic-rs) :)
 
 ## License
 

@@ -1,13 +1,20 @@
-use gpui::{App, Menu, MenuItem};
+use gpui::{App, Menu, MenuItem, OsAction};
 use i18n::t;
-use input::{Quit, RefreshLibrary, SignOut, SongNext, SongPrevious, TogglePlayback};
+use input::{
+    CloseWindow, Hide, HideOthers, MinimizeWindow, OpenSettings, Quit, RefreshLibrary, ShowAll,
+    SignOut, SongNext, SongPrevious, TogglePlayback, ZoomWindow,
+};
 use router::Destination;
 use state::Sonora;
+use ui::{Copy, Cut, Paste, SelectAll};
 
 pub fn register(lingers: bool, cx: &mut App) {
     cx.bind_keys(input::bindings());
 
     cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
+    cx.on_action(|_: &Hide, cx: &mut App| cx.hide());
+    cx.on_action(|_: &HideOthers, cx: &mut App| cx.hide_other_apps());
+    cx.on_action(|_: &ShowAll, cx: &mut App| cx.unhide_other_apps());
 
     cx.on_window_closed(move |cx, _| {
         if !cx.windows().is_empty() {
@@ -54,14 +61,57 @@ pub fn register(lingers: bool, cx: &mut App) {
         playback.update(cx, |playback, cx| playback.next(cx));
     });
 
-    cx.set_menus(vec![Menu {
-        name: "Sonora".into(),
-        disabled: false,
-        items: vec![
+    cx.set_menus(menus());
+}
+
+/// The menu bar. Only macOS draws one, so only macOS gets the Edit and Window menus and the
+/// application-menu items Cocoa users expect; the other platforms keep the one Sonora menu.
+fn menus() -> Vec<Menu> {
+    let app = match cfg!(target_os = "macos") {
+        true => vec![
+            MenuItem::action(t!("app-settings"), OpenSettings),
+            MenuItem::separator(),
+            MenuItem::action(t!("app-refresh-library"), RefreshLibrary),
+            MenuItem::action(t!("app-sign-out"), SignOut),
+            MenuItem::separator(),
+            MenuItem::action(t!("app-hide"), Hide),
+            MenuItem::action(t!("app-hide-others"), HideOthers),
+            MenuItem::action(t!("app-show-all"), ShowAll),
+            MenuItem::separator(),
+            MenuItem::action(t!("app-quit"), Quit),
+        ],
+        false => vec![
             MenuItem::action(t!("app-refresh-library"), RefreshLibrary),
             MenuItem::action(t!("app-sign-out"), SignOut),
             MenuItem::separator(),
             MenuItem::action(t!("app-quit"), Quit),
         ],
-    }]);
+    };
+    let mut menus = vec![Menu {
+        name: "Sonora".into(),
+        disabled: false,
+        items: app,
+    }];
+    if cfg!(target_os = "macos") {
+        menus.push(Menu {
+            name: t!("app-edit"),
+            disabled: false,
+            items: vec![
+                MenuItem::os_action(t!("app-cut"), Cut, OsAction::Cut),
+                MenuItem::os_action(t!("app-copy"), Copy, OsAction::Copy),
+                MenuItem::os_action(t!("app-paste"), Paste, OsAction::Paste),
+                MenuItem::os_action(t!("app-select-all"), SelectAll, OsAction::SelectAll),
+            ],
+        });
+        menus.push(Menu {
+            name: t!("app-window"),
+            disabled: false,
+            items: vec![
+                MenuItem::action(t!("app-close-window"), CloseWindow),
+                MenuItem::action(t!("app-minimize"), MinimizeWindow),
+                MenuItem::action(t!("app-zoom"), ZoomWindow),
+            ],
+        });
+    }
+    menus
 }

@@ -19,7 +19,7 @@ use ui::{
     clock, snapped,
 };
 
-use crate::chrome::{Aside, TitleBarOptions};
+use crate::chrome::{Aside, PlayerBar, TitleBarOptions};
 use crate::shared::menus::ItemMenu;
 use crate::shared::transport::{NOTCH, like, moved, percent, transport, volume_icon};
 use crate::shared::visualizer::VisualizerDrive;
@@ -854,8 +854,9 @@ impl FullscreenView {
     fn leave(&self) -> Button {
         Button::new("leave-fullscreen")
             .ghost()
+            .small()
             .icon("icons/chevron-down.svg")
-            .tooltip("player-fullscreen-leave")
+            .tooltip_above("player-fullscreen-leave")
             .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleFullscreen), cx))
     }
 }
@@ -1023,8 +1024,18 @@ impl Render for FullscreenView {
                 this.child(
                     div()
                         .absolute()
-                        .top(px(SINK) * -hide)
-                        .right_3()
+                        .bottom(px(SINK) * -hide)
+                        .right_5()
+                        .h(PlayerBar::height(window, cx))
+                        .flex()
+                        .flex_col()
+                        .justify_center()
+                        .when(!room.fits(Room::Roomy), |this| {
+                            // Match the second row of the compact player bar.
+                            this.py_2()
+                                .gap_2()
+                                .child(div().h(snapped(theme.metrics.row, window)).flex_none())
+                        })
                         .opacity(1. - hide)
                         .child(self.leave()),
                 )

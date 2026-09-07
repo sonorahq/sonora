@@ -1,14 +1,6 @@
-use anyhow::{Context as _, Result, bail};
-use ytmusic::browser::{self, Browser, Family};
+use anyhow::{Result, bail};
 
 const PROOF: &[&str] = &["SAPISID", "__Secure-3PAPISID"];
-
-pub fn cookies(browser: &Browser) -> Result<String> {
-    if browser.family != Family::Firefox {
-        bail!("{} is not a firefox-based browser", browser.name);
-    }
-    browser::cookies(browser).with_context(|| format!("cannot read cookies from {}", browser.name))
-}
 
 pub fn header(input: &str) -> Result<String> {
     if input.trim().is_empty() {

@@ -60,10 +60,11 @@ const LOCAL_TABS: [(&str, LocalTab); 5] = [
     ("nav-playlists", LocalTab::Playlists),
 ];
 
-const SETTINGS_TABS: [(&str, SettingsTab); 4] = [
+const SETTINGS_TABS: [(&str, SettingsTab); 5] = [
     ("settings-tab-general", SettingsTab::General),
     ("settings-tab-appearance", SettingsTab::Appearance),
     ("settings-tab-playback", SettingsTab::Playback),
+    ("settings-tab-privacy", SettingsTab::Privacy),
     ("settings-tab-about", SettingsTab::About),
 ];
 

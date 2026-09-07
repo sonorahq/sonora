@@ -15,8 +15,10 @@ actions!(
     [
         Backspace,
         BackspaceWord,
+        BackspaceToStart,
         Delete,
         DeleteWord,
+        DeleteToEnd,
         Left,
         Right,
         WordLeft,
@@ -373,6 +375,21 @@ impl Input {
 
     fn delete_word(&mut self, _: &DeleteWord, window: &mut Window, cx: &mut Context<Self>) {
         self.erase(next_word, window, cx);
+    }
+
+    /// Erases from the caret back to the start of the field (`cmd-backspace` on macOS).
+    fn backspace_to_start(
+        &mut self,
+        _: &BackspaceToStart,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.erase(|_, _| 0, window, cx);
+    }
+
+    /// Erases from the caret to the end of the field (`cmd-delete` and `ctrl-k` on macOS).
+    fn delete_to_end(&mut self, _: &DeleteToEnd, window: &mut Window, cx: &mut Context<Self>) {
+        self.erase(|text, _| text.len(), window, cx);
     }
 
     fn write_selection(&self, cx: &mut Context<Self>) -> bool {

@@ -2,9 +2,9 @@
 Name=io.github.nolight132.sonora
 Branch=stable
 Title=Sonora
-Url=https://nolight132.github.io/sonora/repo
+Url=https://sonorahq.github.io/sonora/repo
 SuggestRemoteName=sonora
-Homepage=https://github.com/nolight132/sonora
+Homepage=https://github.com/sonorahq/sonora
 RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
 IsRuntime=false
 GPGKey=mDMEapgfEhYJKwYBBAHaRw8BAQdAyKwttfS2Bu8tiN1MyYadauYQEIsLAdgl7yBGevNBvxm0UVNvbm9yYSBGbGF0cGFrIFJlcG9zaXRvcnkgKHNpZ25zIHRoZSBmbGF0cGFrIHJlcG8gYXQgbm9saWdodDEzMi5naXRodWIuaW8vc29ub3JhKYiQBBMWCgA4FiEEX4TBCUZvw66UiCG+W6ezYGGCw5YFAmqYHxICGwMFCwkIBwIGFQoJCAsCBBYCAwECHgECF4AACgkQW6ezYGGCw5aF/QD+LUe8pFyvouE6K8gEpwKtLWsRkLSSOaihbPUNHG7YzS8A/RTNvsrvsFBjaB4VXPKLz4gG1ISJv4CSY6zt/D9y4bsK

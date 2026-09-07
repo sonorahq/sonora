@@ -4,6 +4,7 @@ use std::sync::RwLock;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use storage::Database;
 
 use crate::{
     Album, AlbumDetail, Artist, ArtistProfile, MediaKind, MusicApi, Playlist, PlaylistDetail,
@@ -23,10 +24,10 @@ pub struct LocalClient {
 }
 
 impl LocalClient {
-    pub fn new(scanned: Scanned, state_dir: &Path) -> Self {
+    pub fn new(scanned: Scanned, database: Database) -> Self {
         Self {
             scanned: RwLock::new(scanned),
-            store: Store::new(state_dir),
+            store: Store::new(database),
         }
     }
 
@@ -289,7 +290,8 @@ impl MusicApi for LocalClient {
         let scanned = self.scanned.read().unwrap();
         let mut artists: Vec<SavedArtist> = Vec::new();
         for track in &scanned.tracks {
-            if artists.iter().any(|known| known.name == track.artists) {
+            if let Some(known) = artists.iter_mut().find(|known| known.name == track.artists) {
+                known.added_at = known.added_at.max(track.added_at);
                 continue;
             }
             artists.push(SavedArtist {
@@ -307,7 +309,7 @@ impl MusicApi for LocalClient {
                             .and_then(|album| album.cover.clone())
                     })
                     .or_else(|| track.cover.clone()),
-                added_at: None,
+                added_at: track.added_at,
             });
         }
         artists.sort_by_key(|artist| artist.name.to_lowercase());

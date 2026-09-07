@@ -310,6 +310,14 @@ impl ArtistView {
                 )
                 .from(self.playing_from(cx)),
             )
+            .child(
+                HeroPlayButton::shuffle(
+                    "shuffle-artist",
+                    self.popular.as_ref().clone(),
+                    self.playback.clone(),
+                )
+                .from(self.playing_from(cx)),
+            )
             .children(self.follow_button(cx))
             .children(overflow);
 

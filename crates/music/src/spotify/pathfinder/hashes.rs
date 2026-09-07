@@ -176,7 +176,7 @@ fn write(registry: &Registry) {
 }
 
 fn path() -> PathBuf {
-    crate::spotify::auth::default_cache_dir().join(FILE)
+    crate::credentials::root().join(FILE)
 }
 
 #[cfg(test)]

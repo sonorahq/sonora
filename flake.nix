@@ -3,28 +3,53 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
-    { nixpkgs, ... }:
+    {
+      self,
+      nixpkgs,
+      rust-overlay,
+      ...
+    }:
     let
       systems = [
         "x86_64-linux"
         "aarch64-linux"
+        "aarch64-darwin"
       ];
 
-      forEachSystem = fn: nixpkgs.lib.genAttrs systems (system: fn nixpkgs.legacyPackages.${system});
+      forEachSystem =
+        fn:
+        nixpkgs.lib.genAttrs systems (
+          system:
+          let
+            pkgs = import nixpkgs {
+              inherit system;
+              overlays = [ (import rust-overlay) ];
+            };
+          in
+          fn pkgs
+        );
 
       release = {
-        version = "0.29.0";
+        version = "0.31.0";
         assets = {
           x86_64-linux = {
             target = "x86_64-unknown-linux-gnu";
-            hash = "sha256-FUKrUrfBKKOMMzaqAJHxKMjHK/nBcjLa3qqe8IZPWA4=";
+            hash = "sha256-L4ehTKfTjDJTOGU3ahgVgPgz5V7/nhh4h+Og3lQbaNs=";
           };
           aarch64-linux = {
             target = "aarch64-unknown-linux-gnu";
-            hash = "sha256-XRfVINLgVp4pcGpYqHilBN9F2+z5b3afU5iJXh7dAtw=";
+            hash = "sha256-QpYMzemVKel9BfG+wzpkMq8MOeODPtXRZZHFbXDBvBI=";
+          };
+          aarch64-darwin = {
+            target = "macos";
+            hash = "sha256-5ttjsYZuZ5VtJ88MoAcXNLw9sY79sKjvNDESsz8xN6w=";
           };
         };
       };
@@ -33,66 +58,105 @@
       packages = forEachSystem (
         pkgs:
         let
-          runtimeLibraries = with pkgs; [
-            vulkan-loader
-            wayland
-            libxkbcommon
-            libxcb
-            libx11
-            libxcursor
-            libxi
-            fontconfig
-            freetype
-            alsa-lib
-            dbus
-            sqlite
-          ];
+          runtimeLibraries =
+            with pkgs;
+            if pkgs.stdenv.hostPlatform.isLinux then
+              [
+                vulkan-loader
+                wayland
+                libxkbcommon
+                libxcb
+                libx11
+                libxcursor
+                libxi
+                fontconfig
+                freetype
+                alsa-lib
+                dbus
+                sqlite
+              ]
+            else
+              [ ];
 
           asset = release.assets.${pkgs.stdenv.hostPlatform.system};
+
+          alsaPluginDirectory = pkgs.symlinkJoin {
+            name = "sonora-alsa-plugins";
+            paths = [
+              "${pkgs.pipewire}/lib/alsa-lib"
+              "${pkgs.alsa-plugins}/lib/alsa-lib"
+            ];
+          };
 
           sonora-bin = pkgs.stdenv.mkDerivation {
             pname = "sonora-bin";
             inherit (release) version;
 
             src = pkgs.fetchurl {
-              url = "https://github.com/nolight132/sonora/releases/download/v${release.version}/sonora-v${release.version}-${asset.target}";
+              url = "https://github.com/sonorahq/sonora/releases/download/v${release.version}/sonora-v${release.version}-${asset.target}${
+                if pkgs.stdenv.hostPlatform.isDarwin then ".dmg" else ""
+              }";
               inherit (asset) hash;
             };
 
             dontUnpack = true;
             dontStrip = true;
 
-            installPhase = ''
-              runHook preInstall
-              install -Dm755 "$src" "$out/bin/sonora"
-              install -Dm444 ${./assets/linux/sonora.desktop} \
-                "$out/share/applications/sonora.desktop"
-              install -Dm444 ${./assets/linux/sonora.svg} \
-                "$out/share/icons/hicolor/scalable/apps/sonora.svg"
-              for icon in ${./assets/linux/icons}/hicolor/*/apps/sonora.png; do
-                size="$(basename "$(dirname "$(dirname "$icon")")")"
-                install -Dm444 "$icon" \
-                  "$out/share/icons/hicolor/$size/apps/sonora.png"
-              done
-              install -Dm444 ${./COPYING} "$out/share/licenses/sonora/LICENSE"
-              install -Dm444 ${./THIRD-PARTY.md} "$out/share/licenses/sonora/THIRD-PARTY.md"
-              install -Dm444 ${./assets/fonts/LICENSE.txt} \
-                "$out/share/licenses/sonora/LICENSE.Inter"
-              for licence in ${./assets/icons}/*/LICENSE; do
-                pack="$(basename "$(dirname "$licence")")"
-                install -Dm444 "$licence" \
-                  "$out/share/licenses/sonora/icons/LICENSE.$pack"
-              done
-              install -Dm444 ${./assets/icons/LICENSE} \
-                "$out/share/licenses/sonora/icons/LICENSE"
-              runHook postInstall
-            '';
+            nativeBuildInputs =
+              pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.makeWrapper ]
+              ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
+                pkgs.makeBinaryWrapper
+                pkgs.undmg
+              ];
 
-            postFixup = ''
+            installPhase =
+              if pkgs.stdenv.hostPlatform.isLinux then
+                ''
+                  runHook preInstall
+                  install -Dm755 "$src" "$out/bin/sonora"
+                  install -Dm444 ${./assets/linux/sonora.desktop} \
+                    "$out/share/applications/sonora.desktop"
+                  install -Dm444 ${./assets/linux/sonora.svg} \
+                    "$out/share/icons/hicolor/scalable/apps/sonora.svg"
+                  for icon in ${./assets/linux/icons}/hicolor/*/apps/sonora.png; do
+                    size="$(basename "$(dirname "$(dirname "$icon")")")"
+                    install -Dm444 "$icon" \
+                      "$out/share/icons/hicolor/$size/apps/sonora.png"
+                  done
+                  install -Dm444 ${./COPYING} "$out/share/licenses/sonora/LICENSE"
+                  install -Dm444 ${./THIRD-PARTY.md} "$out/share/licenses/sonora/THIRD-PARTY.md"
+                  install -Dm444 ${./assets/fonts/LICENSE.txt} \
+                    "$out/share/licenses/sonora/LICENSE.Inter"
+                  for licence in ${./assets/icons}/*/LICENSE; do
+                    pack="$(basename "$(dirname "$licence")")"
+                    install -Dm444 "$licence" \
+                      "$out/share/licenses/sonora/icons/LICENSE.$pack"
+                  done
+                  install -Dm444 ${./assets/icons/LICENSE} \
+                    "$out/share/licenses/sonora/icons/LICENSE"
+                  runHook postInstall
+                ''
+              else
+                ''
+                  runHook preInstall
+                  mnt="$(mktemp -d)"
+                  /usr/bin/hdiutil attach -readonly -nobrowse -mountpoint "$mnt" "$src"
+                  mkdir -p "$out/Applications" "$out/bin"
+                  cp -R "$mnt/Sonora.app" "$out/Applications/Sonora.app"
+                  /usr/bin/hdiutil detach "$mnt"
+                  makeBinaryWrapper \
+                    "$out/Applications/Sonora.app/Contents/MacOS/sonora" \
+                    "$out/bin/sonora"
+                  runHook postInstall
+                '';
+
+            postFixup = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
               patchelf \
                 --set-interpreter "${pkgs.stdenv.cc.bintools.dynamicLinker}" \
                 --add-rpath "${pkgs.lib.makeLibraryPath (runtimeLibraries ++ [ pkgs.stdenv.cc.cc.lib ])}" \
                 "$out/bin/sonora"
+              wrapProgram "$out/bin/sonora" \
+                --set ALSA_PLUGIN_DIR ${alsaPluginDirectory}
             '';
 
             meta = {
@@ -103,7 +167,8 @@
                 ofl
                 isc
               ];
-              platforms = pkgs.lib.platforms.linux;
+              platforms =
+                if pkgs.stdenv.hostPlatform.isLinux then pkgs.lib.platforms.linux else pkgs.lib.platforms.darwin;
             };
           };
         in
@@ -117,52 +182,91 @@
       devShells = forEachSystem (
         pkgs:
         let
-          runtimeLibraries = with pkgs; [
-            vulkan-loader
-            wayland
-            libxkbcommon
-            libxcb
-            libx11
-            libxcursor
-            libxi
-            fontconfig
-            freetype
-            alsa-lib
-            dbus
-            sqlite
-          ];
+          rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+          runtimeLibraries =
+            with pkgs;
+            if pkgs.stdenv.hostPlatform.isLinux then
+              [
+                vulkan-loader
+                wayland
+                libxkbcommon
+                libxcb
+                libx11
+                libxcursor
+                libxi
+                fontconfig
+                freetype
+                alsa-lib
+                dbus
+                sqlite
+              ]
+            else
+              [ ];
+          # Apple's own xcrun, so `xcrun metal` can reach the Metal toolchain that
+          # Xcode 26 mounts outside DEVELOPER_DIR. The xcbuild shim the Apple SDK
+          # drags onto PATH cannot, and neither can any xcrun pointed at the Nix SDK.
+          xcodeXcrun = pkgs.runCommandLocal "xcode-xcrun" { } ''
+            mkdir -p $out/bin
+            ln -s /usr/bin/xcrun $out/bin/xcrun
+          '';
         in
         {
           default = pkgs.mkShell {
-            nativeBuildInputs = with pkgs; [
-              mold
-              pkg-config
-              rustc
-              rust-analyzer
-              rustfmt
-              sccache
-            ];
+            nativeBuildInputs =
+              (with pkgs; [
+                pkg-config
+                cmake
+                rustToolchain
+                sccache
+              ])
+              ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.mold ];
 
             buildInputs = runtimeLibraries;
 
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibraries;
 
-            ALSA_PLUGIN_DIR = "${pkgs.symlinkJoin {
-              name = "alsa-plugins-combined";
-              paths = [
-                "${pkgs.alsa-plugins}/lib/alsa-lib"
-                "${pkgs.pipewire}/lib/alsa-lib"
-              ];
-            }}";
+            ALSA_PLUGIN_DIR =
+              if pkgs.stdenv.hostPlatform.isLinux then
+                "${pkgs.symlinkJoin {
+                  name = "alsa-plugins-combined";
+                  paths = [
+                    "${pkgs.alsa-plugins}/lib/alsa-lib"
+                    "${pkgs.pipewire}/lib/alsa-lib"
+                  ];
+                }}"
+              else
+                "";
 
-            shellHook = ''
-              if [ ! -d /run/opengl-driver ]; then
-                export VK_DRIVER_FILES="${pkgs.mesa}/share/vulkan/icd.d"
-                export VK_IMPLICIT_LAYER_PATH="${pkgs.mesa}/share/vulkan/implicit_layer.d"
-              fi
-            '';
+            shellHook =
+              pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+                if [ ! -d /run/opengl-driver ]; then
+                  export VK_DRIVER_FILES="${pkgs.mesa}/share/vulkan/icd.d"
+                  export VK_IMPLICIT_LAYER_PATH="${pkgs.mesa}/share/vulkan/implicit_layer.d"
+                fi
+              ''
+              # gpui_apple compiles its shaders with `xcrun -sdk macosx metal` at build
+              # time. The Nix Apple SDK has no Metal toolchain, so hand xcrun back to the
+              # installed Xcode; the Nix clang keeps building against SDKROOT regardless.
+              + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
+                # xcode-select echoes DEVELOPER_DIR back when it is set, so ask with it unset.
+                if xcode="$(env -u DEVELOPER_DIR /usr/bin/xcode-select -p 2>/dev/null)"; then
+                  export DEVELOPER_DIR="$xcode"
+                  export PATH="${xcodeXcrun}/bin:$PATH"
+                fi
+              '';
           };
         }
       );
+
+      overlays.default = final: _prev: {
+        sonora = self.packages.${final.stdenv.hostPlatform.system}.default;
+      };
+
+      homeManagerModules = {
+        default = import ./nix/modules/hm-module.nix self;
+        sonora = import ./nix/modules/hm-module.nix self;
+      };
+
+      homeModules = self.homeManagerModules;
     };
 }

@@ -186,8 +186,6 @@ impl RenderOnce for Modal {
                                 .w_full()
                                 .min_h_0()
                                 .overflow_hidden()
-                                .border_t_1()
-                                .border_color(theme.border)
                                 .child(
                                     div()
                                         .id(body_id.clone())
@@ -223,10 +221,8 @@ impl RenderOnce for Modal {
                                 .flex_none()
                                 .justify_end()
                                 .gap_2()
-                                .px(room)
-                                .py(pad)
-                                .border_t_1()
-                                .border_color(theme.border)
+                                .p(room)
+                                .pt(pad)
                                 .children(actions),
                         )
                     });

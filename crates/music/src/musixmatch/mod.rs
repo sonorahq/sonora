@@ -271,12 +271,27 @@ fn subtitles(calls: &Calls) -> Option<Vec<LyricsLine>> {
         .answered()?
         .subtitle_list
         .first()?;
-    let cues: Vec<Cue> = serde_json::from_str(&body.subtitle.subtitle_body)
-        .inspect_err(|error| log::warn!("lyrics: cannot read a musixmatch subtitle: {error}"))
-        .ok()?;
+    let text = body.subtitle.subtitle_body.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    let lines = match serde_json::from_str::<Vec<Cue>>(text) {
+        Ok(cues) => cued(&cues),
+        Err(error) => match lrc::parse(text) {
+            lines if lines.is_empty() => {
+                log::warn!("lyrics: cannot read a musixmatch subtitle: {error}");
+                Vec::new()
+            }
+            lines => lines,
+        },
+    };
+    (!lines.is_empty()).then_some(lines)
+}
+
+fn cued(cues: &[Cue]) -> Vec<LyricsLine> {
     let starts: Vec<Duration> = cues.iter().map(|cue| seconds(cue.time.total)).collect();
-    let lines: Vec<LyricsLine> = cues
-        .iter()
+    cues.iter()
         .enumerate()
         .map(|(index, cue)| LyricsLine {
             start: starts[index],
@@ -287,8 +302,7 @@ fn subtitles(calls: &Calls) -> Option<Vec<LyricsLine>> {
             secondary: Vec::new(),
             voice: Voice::Lead,
         })
-        .collect();
-    (!lines.is_empty()).then_some(lines)
+        .collect()
 }
 
 fn writers(calls: &Calls) -> Vec<String> {

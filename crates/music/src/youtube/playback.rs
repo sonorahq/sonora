@@ -16,8 +16,15 @@ const NORMAL_CAP: f32 = 1.0;
 const POLL: Duration = Duration::from_millis(20);
 
 enum Command {
-    Load { id: String, at: Option<Duration> },
-    Preload { id: String },
+    Load {
+        id: String,
+        at: Option<Duration>,
+        seamless: bool,
+    },
+    Preload {
+        id: String,
+        segue: bool,
+    },
     Play,
     Pause,
     Seek(Duration),
@@ -60,11 +67,12 @@ struct Engine {
 }
 
 impl Player for Engine {
-    fn load(&self, track_id: &str, _seamless: bool) -> Result<()> {
+    fn load(&self, track_id: &str, seamless: bool) -> Result<()> {
         self.commands
             .send(Command::Load {
                 id: track_id.to_string(),
                 at: None,
+                seamless,
             })
             .context("cannot reach playback engine")
     }
@@ -74,14 +82,16 @@ impl Player for Engine {
             .send(Command::Load {
                 id: track_id.to_string(),
                 at: Some(at),
+                seamless: false,
             })
             .context("cannot reach playback engine")
     }
 
-    fn preload(&self, track_id: &str) -> Result<()> {
+    fn preload(&self, track_id: &str, segue: bool) -> Result<()> {
         self.commands
             .send(Command::Preload {
                 id: track_id.to_string(),
+                segue,
             })
             .context("cannot reach playback engine")
     }
@@ -142,7 +152,7 @@ impl Slot {
 
 enum Kind {
     Play,
-    Ahead,
+    Ahead { segue: bool },
 }
 
 struct Fetched {
@@ -194,6 +204,7 @@ async fn engine_loop(
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let report_every = (config.position_interval.as_millis() / POLL.as_millis()).max(1) as u32;
     let mut ticks = 0u32;
+    let mut output_ticks = 0u32;
 
     let mut playing = false;
     let mut autostart = true;
@@ -201,6 +212,7 @@ async fn engine_loop(
     let mut epoch = 0u64;
     let mut pending: Option<u64> = None;
     let mut inflight: Option<tokio::task::AbortHandle> = None;
+    let mut preloading: Option<(String, tokio::task::AbortHandle)> = None;
     let mut current: Option<Slot> = None;
     let mut queued: Option<Slot> = None;
     let mut ahead: Option<(String, Loaded)> = None;
@@ -211,18 +223,24 @@ async fn engine_loop(
             command = commands.recv() => {
                 let Some(command) = command else { break };
                 match command {
-                    Command::Load { id, at } => {
-                        if at.is_none() && current.as_ref().is_some_and(|slot| slot.id == id) {
+                    Command::Load { id, at, seamless } => {
+                        if seamless && at.is_none() && current.as_ref().is_some_and(|slot| slot.id == id) {
                             playing = true;
                             autostart = true;
                             if let Some(slot) = &current {
                                 slot.unmute();
                                 if let Some(length) = slot.length {
-                                    events.send(PlaybackEvent::Length(length)).ok();
+                                    events.send(PlaybackEvent::Length {
+                                        id: Some(id.clone()),
+                                        duration: length,
+                                    }).ok();
                                 }
                             }
                             sink.play();
-                            events.send(PlaybackEvent::Playing(sink.get_pos())).ok();
+                            events.send(PlaybackEvent::Playing {
+                                id: Some(id),
+                                at: sink.get_pos(),
+                            }).ok();
                             continue;
                         }
                         epoch += 1;
@@ -235,11 +253,25 @@ async fn engine_loop(
                         pending = None;
                         if cached.is_none() {
                             ahead = None;
-                            pending = Some(epoch);
-                            inflight =
-                                Some(spawn(&api, id.clone(), epoch, Kind::Play, &fetched));
+                            if preloading.as_ref().is_some_and(|(p_id, _)| p_id == &id) {
+                                pending = Some(epoch);
+                            } else {
+                                if let Some((_, handle)) = preloading.take() {
+                                    handle.abort();
+                                }
+                                pending = Some(epoch);
+                                inflight =
+                                    Some(spawn(&api, id.clone(), epoch, Kind::Play, &fetched));
+                            }
                         }
-                        events.send(PlaybackEvent::Loading(at.unwrap_or_default())).ok();
+                        events.send(PlaybackEvent::Loading {
+                            id: Some(id.clone()),
+                            at: at.unwrap_or_default(),
+                        }).ok();
+                        if output.failed() || output.changed() {
+                            events.send(PlaybackEvent::OutputChanged).ok();
+                            return;
+                        }
                         silence(&sink, current.as_ref()).await;
                         current = None;
                         queued = None;
@@ -257,26 +289,58 @@ async fn engine_loop(
                             }
                             Err(error) => {
                                 log::warn!("playback: cannot decode {id}: {error:#}");
-                                events.send(PlaybackEvent::Unavailable).ok();
+                                events.send(PlaybackEvent::Unavailable { id: Some(id) }).ok();
                             }
                         }
                     }
-                    Command::Preload { id } => {
+                    Command::Preload { id, segue } => {
                         let known = current.as_ref().is_some_and(|slot| slot.id == id)
-                            || queued.as_ref().is_some_and(|slot| slot.id == id)
+                            || (segue && queued.as_ref().is_some_and(|slot| slot.id == id))
                             || ahead.as_ref().is_some_and(|(cached, _)| *cached == id);
-                        if known || current.is_none() {
+                        if known {
                             continue;
                         }
-                        spawn(&api, id, epoch, Kind::Ahead, &fetched);
+                        if segue && current.is_none() {
+                            continue;
+                        }
+                        if let Some((_, loaded)) = ahead.as_ref().filter(|(cached, _)| *cached == id) {
+                            if segue && current.is_some() && queued.is_none() {
+                                match append(&sink, &id, loaded, &config, false) {
+                                    Ok(slot) => {
+                                        log::debug!("playback: {id} is queued for a gapless segue");
+                                        queued = Some(slot);
+                                        prev_len = sink.len();
+                                    }
+                                    Err(error) => {
+                                        log::warn!("playback: cannot decode preload {id}: {error:#}");
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                        if preloading.as_ref().is_some_and(|(p_id, _)| p_id == &id) {
+                            continue;
+                        }
+                        if let Some((_, handle)) = preloading.take() {
+                            handle.abort();
+                        }
+                        let handle = spawn(&api, id.clone(), epoch, Kind::Ahead { segue }, &fetched);
+                        preloading = Some((id, handle));
                     }
                     Command::Play => {
                         autostart = true;
+                        if output.failed() || output.changed() {
+                            events.send(PlaybackEvent::OutputChanged).ok();
+                            return;
+                        }
                         if let Some(slot) = &current {
                             sink.play();
                             slot.unmute();
                             playing = true;
-                            events.send(PlaybackEvent::Playing(sink.get_pos())).ok();
+                            events.send(PlaybackEvent::Playing {
+                                id: Some(slot.id.clone()),
+                                at: sink.get_pos(),
+                            }).ok();
                         }
                     }
                     Command::Pause => {
@@ -287,8 +351,11 @@ async fn engine_loop(
                             slot.mute();
                             await_drain(&sink).await;
                             sink.pause();
+                            events.send(PlaybackEvent::Paused {
+                                id: Some(slot.id.clone()),
+                                at: position,
+                            }).ok();
                         }
-                        events.send(PlaybackEvent::Paused(position)).ok();
                     }
                     Command::Seek(position) => match &current {
                         None if hold.is_some() => hold = Some(position),
@@ -302,7 +369,10 @@ async fn engine_loop(
                             if playing {
                                 slot.unmute();
                             }
-                            events.send(PlaybackEvent::Position(sink.get_pos())).ok();
+                            events.send(PlaybackEvent::Position {
+                                id: Some(slot.id.clone()),
+                                at: sink.get_pos(),
+                            }).ok();
                         }
                     },
                     Command::Gain(level) => output.set_volume(level),
@@ -310,73 +380,103 @@ async fn engine_loop(
             }
             arrival = arrivals.recv() => {
                 let Some(Fetched { epoch: at, id, kind, result }) = arrival else { break };
-                if at != epoch {
+                let promoted = matches!(&kind, Kind::Ahead { .. })
+                    && pending == Some(epoch)
+                    && current.is_none()
+                    && preloading
+                        .as_ref()
+                        .is_some_and(|(preloaded_id, _)| preloaded_id == &id);
+                if preloading
+                    .as_ref()
+                    .is_some_and(|(preloaded_id, _)| preloaded_id == &id)
+                {
+                    preloading = None;
+                }
+                let target = match &kind {
+                    Kind::Play => at == epoch && pending == Some(epoch),
+                    Kind::Ahead { .. } => promoted,
+                };
+                if target {
+                    pending = None;
+                    inflight = None;
+                    let at = hold.take();
+                    match result.and_then(|loaded| {
+                        begin(&sink, &id, &loaded, &config, autostart, at)
+                    }) {
+                        Ok(slot) => {
+                            announce(&events, &slot, autostart, at.unwrap_or_default());
+                            prev_len = sink.len();
+                            current = Some(slot);
+                            playing = autostart;
+                        }
+                        Err(error) => {
+                            log::warn!("playback: cannot load {id}: {error:#}");
+                            events.send(refusal(id, &error)).ok();
+                        }
+                    }
                     continue;
                 }
-                match kind {
-                    Kind::Play => {
-                        if pending != Some(at) {
-                            continue;
-                        }
-                        pending = None;
-                        inflight = None;
-                        let at = hold.take();
-                        match result
-                            .and_then(|loaded| begin(&sink, &id, &loaded, &config, autostart, at))
-                        {
+                if let Kind::Ahead { segue } = kind {
+                    let Ok(loaded) = result else {
+                        continue;
+                    };
+                    if segue && current.is_some() && queued.is_none() {
+                        match append(&sink, &id, &loaded, &config, false) {
                             Ok(slot) => {
-                                announce(&events, &slot, autostart, at.unwrap_or_default());
+                                log::debug!("playback: {id} is queued for a gapless segue");
+                                queued = Some(slot);
                                 prev_len = sink.len();
-                                current = Some(slot);
-                                playing = autostart;
                             }
                             Err(error) => {
-                                log::warn!("playback: cannot load {id}: {error:#}");
-                                events.send(refusal(&error)).ok();
+                                log::warn!("playback: cannot decode preload {id}: {error:#}")
                             }
                         }
                     }
-                    Kind::Ahead => {
-                        let Ok(loaded) = result else {
-                            continue;
-                        };
-                        if current.is_some() && queued.is_none() {
-                            match append(&sink, &id, &loaded, &config, false) {
-                                Ok(slot) => {
-                                    log::debug!("playback: {id} is queued for a gapless segue");
-                                    queued = Some(slot);
-                                    prev_len = sink.len();
-                                }
-                                Err(error) => {
-                                    log::warn!("playback: cannot decode preload {id}: {error:#}")
-                                }
-                            }
-                        }
-                        ahead = Some((id, loaded));
-                    }
+                    ahead = Some((id, loaded));
                 }
             }
             _ = ticker.tick() => {
+                output_ticks += 1;
+                if playing && (output.failed() || output_ticks >= report_every && output.changed()) {
+                    events.send(PlaybackEvent::OutputChanged).ok();
+                    return;
+                }
+                if output_ticks >= report_every {
+                    output_ticks = 0;
+                }
                 let len = sink.len();
                 ticks += 1;
                 if current.is_some() && playing && len < prev_len {
                     ticks = 0;
-                    events.send(PlaybackEvent::Ended).ok();
+                    if let Some(slot) = &current {
+                        events.send(PlaybackEvent::Ended { id: Some(slot.id.clone()) }).ok();
+                    }
                     current = queued.take();
                     ahead = None;
                     playing = current.is_some();
                     match &current {
                         Some(slot) => {
                             if let Some(length) = slot.length {
-                                events.send(PlaybackEvent::Length(length)).ok();
+                                events.send(PlaybackEvent::Length {
+                                    id: Some(slot.id.clone()),
+                                    duration: length,
+                                }).ok();
                             }
-                            events.send(PlaybackEvent::Position(sink.get_pos())).ok();
+                            events.send(PlaybackEvent::Position {
+                                id: Some(slot.id.clone()),
+                                at: sink.get_pos(),
+                            }).ok();
                         }
                         None => log::debug!("playback: track ended with nothing queued ahead"),
                     }
                 } else if playing && ticks >= report_every {
                     ticks = 0;
-                    events.send(PlaybackEvent::Position(sink.get_pos())).ok();
+                    if let Some(slot) = &current {
+                        events.send(PlaybackEvent::Position {
+                            id: Some(slot.id.clone()),
+                            at: sink.get_pos(),
+                        }).ok();
+                    }
                 }
                 prev_len = len;
             }
@@ -407,17 +507,16 @@ fn spawn(
     .abort_handle()
 }
 
-async fn silence(sink: &rodio::Sink, slot: Option<&Slot>) {
+async fn silence(sink: &rodio::Player, slot: Option<&Slot>) {
     let Some(slot) = slot else {
-        sink.clear();
         return;
     };
     slot.mute();
     await_drain(sink).await;
-    sink.clear();
+    sink.pause();
 }
 
-async fn await_drain(sink: &rodio::Sink) {
+async fn await_drain(sink: &rodio::Player) {
     if sink.is_paused() {
         return;
     }
@@ -425,14 +524,16 @@ async fn await_drain(sink: &rodio::Sink) {
 }
 
 fn begin(
-    sink: &rodio::Sink,
+    sink: &rodio::Player,
     id: &str,
     loaded: &Loaded,
     config: &PlaybackConfig,
     start: bool,
     at: Option<Duration>,
 ) -> Result<Slot> {
-    sink.clear();
+    if sink.len() > 0 {
+        sink.clear();
+    }
     let slot = append(sink, id, loaded, config, true)?;
     if let Some(at) = at
         && let Err(error) = sink.try_seek(at)
@@ -447,7 +548,7 @@ fn begin(
 }
 
 fn append(
-    sink: &rodio::Sink,
+    sink: &rodio::Player,
     id: &str,
     loaded: &Loaded,
     config: &PlaybackConfig,
@@ -490,19 +591,30 @@ fn announce(
     position: Duration,
 ) {
     if let Some(length) = slot.length {
-        events.send(PlaybackEvent::Length(length)).ok();
+        events
+            .send(PlaybackEvent::Length {
+                id: Some(slot.id.clone()),
+                duration: length,
+            })
+            .ok();
     }
     let event = match playing {
-        true => PlaybackEvent::Playing(position),
-        false => PlaybackEvent::Paused(position),
+        true => PlaybackEvent::Playing {
+            id: Some(slot.id.clone()),
+            at: position,
+        },
+        false => PlaybackEvent::Paused {
+            id: Some(slot.id.clone()),
+            at: position,
+        },
     };
     events.send(event).ok();
 }
 
-fn refusal(error: &anyhow::Error) -> PlaybackEvent {
+fn refusal(id: String, error: &anyhow::Error) -> PlaybackEvent {
     match error.downcast_ref::<ytmusic::SignInRequired>().is_some() {
         true => PlaybackEvent::Gated,
-        false => PlaybackEvent::Unavailable,
+        false => PlaybackEvent::Unavailable { id: Some(id) },
     }
 }
 

@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use ui::ActiveTheme as _;
+use ui::{ActiveTheme as _, Filter, FilterChange, RangeAxis, Unit};
 
 use gpui::{AnyElement, App, Entity, SharedString, TextAlign};
 use i18n::t;
@@ -92,7 +92,7 @@ pub(super) struct AlbumSource {
     library: Entity<Library>,
     playback: Entity<Playback>,
     local: bool,
-    span: Option<(f32, f32)>,
+    year_span: Option<(f32, f32)>,
     spread: RefCell<Option<Spread>>,
 }
 
@@ -111,7 +111,7 @@ impl AlbumSource {
             library,
             playback,
             local,
-            span: None,
+            year_span: None,
             spread: RefCell::new(None),
         }
     }
@@ -155,14 +155,6 @@ impl AlbumSource {
         years
     }
 
-    pub(super) fn span(&self) -> Option<(f32, f32)> {
-        self.span
-    }
-
-    pub(super) fn set_span(&mut self, span: Option<(f32, f32)>) {
-        self.span = span;
-    }
-
     fn albums<'a>(&self, cx: &'a App) -> &'a [Album] {
         let library = self.library.read(cx);
         let state = match self.local {
@@ -189,7 +181,7 @@ impl TableSource for AlbumSource {
 
     fn matches(&self, row: usize, query: &str, cx: &App) -> bool {
         self.at(row, cx).is_some_and(|album| {
-            if let Some((low, high)) = self.span {
+            if let Some((low, high)) = self.year_span {
                 let year = album.year as f32;
                 if album.year == 0 || year < low - 0.5 || year > high + 0.5 {
                     return false;
@@ -199,8 +191,43 @@ impl TableSource for AlbumSource {
         })
     }
 
+    fn filter_axes(&self, query: &str, cx: &App) -> Vec<Filter> {
+        let years = self.years(query, cx);
+        let (Some(first), Some(last)) = (years.first(), years.last()) else {
+            return Vec::new();
+        };
+        let bounds = (*first, *last);
+        let value = self.year_span.unwrap_or(bounds);
+
+        vec![Filter::Range(
+            RangeAxis {
+                key: "filter-year",
+                label: t!("filter-year"),
+                bounds,
+                value,
+                unit: Unit::Plain,
+                values: Some(years),
+            }
+            .clamped(),
+        )]
+    }
+
+    fn filter(&mut self, change: FilterChange, _cx: &App) -> bool {
+        match change {
+            FilterChange::Range("filter-year", value) => {
+                self.year_span = Some(value);
+                true
+            }
+            FilterChange::Reset => {
+                self.year_span = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn filtered(&self, _cx: &App) -> bool {
-        self.span.is_some()
+        self.year_span.is_some()
     }
 
     fn playing(&self, row: usize, cx: &App) -> bool {

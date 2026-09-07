@@ -8,7 +8,7 @@ use super::wire;
 const SEPARATORS: [char; 8] = ['-', '–', '—', '.', '_', '·', ':', ' '];
 
 const AUDIO_EXTENSIONS: &[&str] = &[
-    "mp3", "flac", "m4a", "mp4", "aac", "ogg", "oga", "opus", "wav", "wv", "ape",
+    "mp3", "flac", "m4a", "mp4", "aac", "ogg", "oga", "opus", "wav", "wv", "ape", "webm", "mka",
 ];
 
 #[derive(Default)]

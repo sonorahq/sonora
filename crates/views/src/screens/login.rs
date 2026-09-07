@@ -1,14 +1,14 @@
-use crate::shared::popups::{AccountPicker, BrowserPicker};
+use crate::shared::popups::{AccountPicker, CookiePrompt};
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, ClipboardItem, Context, Entity, FontWeight, IntoElement, Pixels, Render,
-    SharedString, Window, div, px, svg,
+    ClipboardItem, Context, Entity, FontWeight, IntoElement, Pixels, Render, SharedString, Window,
+    div, px, svg,
 };
 use i18n::t;
 use music::{AccountChoice, SignIn, SignInPrompt};
 use state::{Session, SessionState, Sonora, Usage};
 use ui::ActiveTheme as _;
-use ui::{Button, Checkbox, Input, Modal, TabBar, Text};
+use ui::{Button, Checkbox, Input, TabBar, Text};
 
 const COLUMN: Pixels = px(280.);
 const LOGO: Pixels = px(48.);
@@ -25,7 +25,6 @@ pub struct LoginView {
     session: Entity<Session>,
     usage: Entity<Usage>,
     secret: Entity<Input>,
-    browsers: Option<(&'static str, Vec<SharedString>)>,
     tab: usize,
 }
 
@@ -38,7 +37,6 @@ impl LoginView {
             session,
             usage,
             secret: cx.new(|cx| Input::new("login-cookie-hint", cx)),
-            browsers: None,
             tab: 0,
         }
     }
@@ -100,10 +98,6 @@ impl LoginView {
                 format!("sign-in-{slug}-guest"),
                 t!("login-use", provider = provider),
             ),
-            SignIn::Browser(_) => (
-                format!("sign-in-{slug}-browser"),
-                t!("login-import-browser"),
-            ),
             SignIn::Secret => (
                 format!("sign-in-{slug}-cookies"),
                 t!("login-connect-cookies"),
@@ -119,61 +113,13 @@ impl LoginView {
             .label(label)
             .w_full()
             .disabled(disabled)
-            .on_click(cx.listener(move |this, _, _, cx| match &method {
-                SignIn::Browser(_) => this.open_browsers(slug, cx),
-                method => this.start(slug, method.clone(), cx),
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.start(slug, method.clone(), cx);
             }));
         match primary {
             true => button.primary(),
             false => button.outline(),
         }
-    }
-
-    fn option(
-        &self,
-        slug: &'static str,
-        provider: &str,
-        method: &SignIn,
-        disabled: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let button = self.option_button(slug, provider, method, disabled, cx);
-        match method {
-            SignIn::Browser(_) => div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap_1()
-                .w_full()
-                .child(button)
-                .child(crate::shared::firefox_note(cx))
-                .into_any_element(),
-            _ => button.into_any_element(),
-        }
-    }
-
-    fn open_browsers(&mut self, slug: &'static str, cx: &mut Context<Self>) {
-        self.acted(cx);
-        let names = self
-            .session
-            .read(cx)
-            .providers()
-            .find(|info| info.slug == slug)
-            .map(|info| {
-                info.options
-                    .iter()
-                    .filter_map(|option| match option {
-                        SignIn::Browser(name) => Some(SharedString::from(name.clone())),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        if names.is_empty() {
-            return;
-        }
-        self.browsers = Some((slug, names));
-        cx.notify();
     }
 
     fn column(&self, column: Column, cx: &mut Context<Self>) -> impl IntoElement {
@@ -185,14 +131,9 @@ impl LoginView {
             disabled,
             cancel,
         } = column;
-        let mut seen_browser = false;
         let options: Vec<&SignIn> = options
             .iter()
-            .filter(|option| match option {
-                SignIn::Anonymous => false,
-                SignIn::Browser(_) => !std::mem::replace(&mut seen_browser, true),
-                _ => true,
-            })
+            .filter(|option| !matches!(option, SignIn::Anonymous))
             .collect();
 
         div()
@@ -223,7 +164,7 @@ impl LoginView {
                     .children(
                         options
                             .into_iter()
-                            .map(|method| self.option(slug, name, method, disabled, cx)),
+                            .map(|method| self.option_button(slug, name, method, disabled, cx)),
                     )
                     .when(cancel, |this| {
                         this.child(
@@ -284,24 +225,21 @@ impl LoginView {
             )
     }
 
+    fn url_prompt(&self, url: String) -> impl IntoElement {
+        Button::new("copy-login-url")
+            .icon("icons/copy.svg")
+            .label(t!("menu-copy-link"))
+            .outline()
+            .small()
+            .on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
+            })
+    }
+
     fn secret_prompt(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        Modal::new("cookie-prompt", t!("login-cookie-title"))
-            .w(px(560.))
-            .detail(t!("login-cookie-detail"))
-            .child(self.secret.clone())
-            .action(
-                Button::new("cancel-cookies")
-                    .ghost()
-                    .label(t!("common-cancel"))
-                    .on_click(cx.listener(|this, _, _, cx| this.abandon(cx))),
-            )
-            .action(
-                Button::new("submit-cookies")
-                    .label(t!("login-cookie-submit"))
-                    .primary()
-                    .on_click(cx.listener(|this, _, _, cx| this.submit(cx))),
-            )
-            .on_dismiss(cx.listener(|this, _, _, cx| this.abandon(cx)))
+        CookiePrompt::new(self.secret.clone())
+            .on_submit(cx.listener(|this, _, _, cx| this.submit(cx)))
+            .on_cancel(cx.listener(|this, _, _, cx| this.abandon(cx)))
     }
 
     fn account_modal(
@@ -317,23 +255,6 @@ impl LoginView {
                     .update(cx, |session, cx| session.submit_input(id, cx));
             }))
             .on_cancel(cx.listener(|this, _, _, cx| this.abandon(cx)))
-    }
-
-    fn browser_modal(
-        &self,
-        slug: &'static str,
-        names: Vec<SharedString>,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        BrowserPicker::new(names)
-            .on_pick(cx.listener(move |this, name: &SharedString, _, cx| {
-                this.browsers = None;
-                this.start(slug, SignIn::Browser(name.to_string()), cx);
-            }))
-            .on_cancel(cx.listener(|this, _, _, cx| {
-                this.browsers = None;
-                cx.notify();
-            }))
     }
 }
 
@@ -412,9 +333,12 @@ impl Render for LoginView {
             Some(SignInPrompt::Code { code, url }) => Some((code, url)),
             _ => None,
         };
+        let url = match &state {
+            SessionState::Authorizing(Some(SignInPrompt::Url(url))) => Some(url.clone()),
+            _ => None,
+        };
 
         let theme = *cx.theme();
-        let browsers = self.browsers.clone();
         let asking = self.usage.read(cx).asking();
         let orphan = asking && guest.is_none();
 
@@ -453,6 +377,7 @@ impl Render for LoginView {
             .when_some(code, |this, (code, url)| {
                 this.child(self.code_prompt(code, url, cx).into_any_element())
             })
+            .when_some(url, |this, url| this.child(self.url_prompt(url)))
             .child(TabBar::new().w(COLUMN).items(tabs))
             .when_some(column, |this, column| this.child(self.column(column, cx)))
             .when_some(guest, |this, slug| {
@@ -477,9 +402,6 @@ impl Render for LoginView {
             .when(orphan, |this| this.child(self.consent(cx)))
             .when(secret, |this| {
                 this.child(self.secret_prompt(cx).into_any_element())
-            })
-            .when_some(browsers, |this, (slug, names)| {
-                this.child(self.browser_modal(slug, names, cx).into_any_element())
             })
             .when_some(accounts, |this, accounts| {
                 this.child(self.account_modal(accounts, cx).into_any_element())

@@ -7,7 +7,7 @@ use librespot_core::{Session, SpotifyUri};
 use librespot_playback::config::{Bitrate, PlayerConfig};
 use librespot_playback::mixer::NoOpVolume;
 use librespot_playback::player::{Player, PlayerEvent};
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use crate::audio::Volume;
 use crate::spectrum::Spectrum;
@@ -18,14 +18,25 @@ use crate::{
 
 const TRACK_PREFIX: &str = "spotify:track:";
 
-pub struct Events(UnboundedReceiver<PlayerEvent>);
+pub struct Events {
+    player: UnboundedReceiver<PlayerEvent>,
+    output: UnboundedReceiver<()>,
+}
 
 #[async_trait]
 impl PlaybackEvents for Events {
     async fn next(&mut self) -> Option<PlaybackEvent> {
         loop {
-            if let Some(event) = translate(self.0.recv().await?) {
-                return Some(event);
+            tokio::select! {
+                event = self.player.recv() => {
+                    if let Some(event) = translate(event?) {
+                        return Some(event);
+                    }
+                }
+                changed = self.output.recv() => {
+                    changed?;
+                    return Some(PlaybackEvent::OutputChanged);
+                }
             }
         }
     }
@@ -71,11 +82,15 @@ impl Engine {
         let sink_volume = volume.clone();
         let sink_flush = flush.clone();
         let sink_spectrum = spectrum.clone();
+        let (output_tx, output_rx) = unbounded_channel();
         let player = Player::new(player_config, session, Box::new(NoOpVolume), move || {
-            BlazingSink::boxed(sink_flush, sink_volume, sink_spectrum)
+            BlazingSink::boxed(sink_flush, sink_volume, sink_spectrum, output_tx.clone())
         });
 
-        let events = Events(player.get_player_event_channel());
+        let events = Events {
+            player: player.get_player_event_channel(),
+            output: output_rx,
+        };
         let engine = Self {
             player,
             volume,
@@ -140,7 +155,7 @@ impl MusicPlayer for Engine {
         self.load_paused_at(track_id, at)
     }
 
-    fn preload(&self, track_id: &str) -> Result<()> {
+    fn preload(&self, track_id: &str, _segue: bool) -> Result<()> {
         self.preload(track_id)
     }
 
@@ -172,22 +187,54 @@ fn track_uri(track_id: &str) -> Result<SpotifyUri> {
 
 fn translate(event: PlayerEvent) -> Option<PlaybackEvent> {
     let millis = |position_ms: u32| Duration::from_millis(position_ms as u64);
+    let track_id = |uri: SpotifyUri| uri.to_id().ok();
 
     match event {
-        PlayerEvent::Loading { position_ms, .. } => {
-            Some(PlaybackEvent::Loading(millis(position_ms)))
+        PlayerEvent::Loading {
+            track_id: uri,
+            position_ms,
+            ..
+        } => Some(PlaybackEvent::Loading {
+            id: track_id(uri),
+            at: millis(position_ms),
+        }),
+        PlayerEvent::Playing {
+            track_id: uri,
+            position_ms,
+            ..
+        } => Some(PlaybackEvent::Playing {
+            id: track_id(uri),
+            at: millis(position_ms),
+        }),
+        PlayerEvent::Paused {
+            track_id: uri,
+            position_ms,
+            ..
+        } => Some(PlaybackEvent::Paused {
+            id: track_id(uri),
+            at: millis(position_ms),
+        }),
+        PlayerEvent::PositionChanged {
+            track_id: uri,
+            position_ms,
+            ..
         }
-        PlayerEvent::Playing { position_ms, .. } => {
-            Some(PlaybackEvent::Playing(millis(position_ms)))
+        | PlayerEvent::PositionCorrection {
+            track_id: uri,
+            position_ms,
+            ..
+        } => Some(PlaybackEvent::Position {
+            id: track_id(uri),
+            at: millis(position_ms),
+        }),
+        PlayerEvent::Stopped { track_id: uri, .. }
+        | PlayerEvent::EndOfTrack { track_id: uri, .. } => {
+            Some(PlaybackEvent::Ended { id: track_id(uri) })
         }
-        PlayerEvent::Paused { position_ms, .. } => Some(PlaybackEvent::Paused(millis(position_ms))),
-        PlayerEvent::PositionChanged { position_ms, .. }
-        | PlayerEvent::PositionCorrection { position_ms, .. } => {
-            Some(PlaybackEvent::Position(millis(position_ms)))
-        }
-        PlayerEvent::Stopped { .. } | PlayerEvent::EndOfTrack { .. } => Some(PlaybackEvent::Ended),
         PlayerEvent::Unavailable { denied: true, .. } => Some(PlaybackEvent::Refused),
-        PlayerEvent::Unavailable { .. } => Some(PlaybackEvent::Unavailable),
+        PlayerEvent::Unavailable { track_id: uri, .. } => {
+            Some(PlaybackEvent::Unavailable { id: track_id(uri) })
+        }
         _ => None,
     }
 }

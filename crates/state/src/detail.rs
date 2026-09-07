@@ -3,6 +3,7 @@ use std::sync::Arc;
 use gpui::{Context, Entity, Task};
 use i18n::t;
 use music::{Album, AlbumDetail, ArtistRef, Contributor, Playlist, PlaylistDetail, Track};
+use tokio::task::AbortHandle;
 
 use crate::{Io, Library, LibraryEvent, Session, SessionEvent, join, mosaic};
 
@@ -42,6 +43,7 @@ pub struct Detail {
     library: Entity<Library>,
     io: Io,
     task: Option<Task<()>>,
+    request: Option<AbortHandle>,
     mosaic: Option<Task<()>>,
 }
 
@@ -137,6 +139,7 @@ impl Detail {
             library,
             io,
             task: None,
+            request: None,
             mosaic: None,
         }
     }
@@ -259,18 +262,23 @@ impl Detail {
         self.error = None;
         cx.notify();
 
-        let io = self.io.clone();
-        self.task = Some(cx.spawn(async move |this, cx| {
-            let loaded = join(io.spawn(async move {
+        let request = self.io.spawn({
+            let id = id.clone();
+            async move {
                 match kind {
                     Collection::Album => catalog.album(&id).await.map(Loaded::Album),
                     Collection::Playlist => catalog.playlist(&id).await.map(Loaded::Playlist),
                 }
-            }))
-            .await;
+            }
+        });
+        self.request = Some(request.abort_handle());
+
+        self.task = Some(cx.spawn(async move |this, cx| {
+            let loaded = join(request).await;
 
             this.update(cx, |this, cx| {
                 this.loading = false;
+                this.request = None;
                 match loaded {
                     Ok(detail) => this.adopt(detail, cx),
                     Err(error) => this.error = Some(format!("{error:#}")),
@@ -349,6 +357,9 @@ impl Detail {
 
     fn clear(&mut self) {
         self.task = None;
+        if let Some(request) = self.request.take() {
+            request.abort();
+        }
         self.mosaic = None;
         self.id = None;
         self.header = None;

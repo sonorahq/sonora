@@ -33,6 +33,7 @@ MAP = {
     "copy": ("copy", "copy-linear", "file-copy-line"),
     "disc-3": ("compact-disc", "vinyl-record-linear", "disc-line"),
     "ellipsis": ("more-horiz", "menu-dots-linear", "more-line"),
+    "external-link": ("open-new-window", "square-top-down-linear", "external-link-line"),
     "file-music": (None, "music-library-2-linear", "file-music-line"),
     "folder-plus": ("folder-plus", "add-folder-linear", "folder-add-line"),
     "funnel": ("filter", "filter-linear", "filter-3-line"),

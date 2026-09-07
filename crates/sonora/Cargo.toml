@@ -20,6 +20,7 @@ i18n.workspace = true
 icons.workspace = true
 music.workspace = true
 state.workspace = true
+storage.workspace = true
 input.workspace = true
 router.workspace = true
 ui.workspace = true

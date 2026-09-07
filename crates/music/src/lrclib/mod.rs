@@ -12,7 +12,7 @@ const ENDPOINT: &str = "https://lrclib.net/api/search";
 const AGENT: &str = concat!(
     "sonora/",
     env!("CARGO_PKG_VERSION"),
-    " (https://github.com/nolight132/sonora)"
+    " (https://github.com/sonorahq/sonora)"
 );
 
 pub struct LrcLib {

@@ -8,7 +8,7 @@ use sha2::{Digest as _, Sha256};
 
 use crate::{AppSettings, Io, join};
 
-const LATEST: &str = "https://api.github.com/repos/nolight132/sonora/releases/latest";
+const LATEST: &str = "https://api.github.com/repos/sonorahq/sonora/releases/latest";
 const INSTALLER: &str = "Sonora-Setup.exe";
 const SUMS: &str = "SHA256SUMS";
 const UNINSTALLER: &str = "unins000.exe";
@@ -17,7 +17,7 @@ const INSTALLABLE: bool = cfg!(target_os = "windows");
 const AGENT: &str = concat!(
     "sonora/",
     env!("CARGO_PKG_VERSION"),
-    " (https://github.com/nolight132/sonora)"
+    " (https://github.com/sonorahq/sonora)"
 );
 
 #[derive(Clone, Debug, PartialEq, Eq)]
