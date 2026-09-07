@@ -19,7 +19,7 @@ use ui::{
 use crate::chrome::SidebarRight;
 use crate::shared::menus::ItemMenu;
 use crate::shared::transport::{NOTCH, like, moved, percent, transport, volume_icon};
-use crate::shared::visualizations::FrameGlow;
+use crate::shared::visualizations::{FrameGlow, Glow, GlowBlur, GlowColor};
 
 const SEEK_MAX: f32 = 560.;
 const VOLUME_WIDTH: f32 = 110.;
@@ -68,7 +68,17 @@ impl PlayerBar {
             over_volume: None,
             volume_held: false,
             muted: None,
-            artwork_visualization: FrameGlow::new(0.9),
+            artwork_visualization: FrameGlow::new(Glow {
+                level: 1.,
+                opacity: 0.7,
+                blur: GlowBlur {
+                    signal: 0.95,
+                    rms: 0.24,
+                    max: 0.48,
+                },
+                scale_signal: 0.35,
+                color: GlowColor::Wash,
+            }),
         }
     }
 

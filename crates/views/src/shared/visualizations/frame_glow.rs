@@ -7,15 +7,6 @@ use state::{Playback, PlaybackState, Sonora};
 use ui::ActiveTheme as _;
 use ui::motion::animates;
 
-/// Master intensity applied to blended strength. `1.0` is the designed response.
-const LEVEL: f32 = 1.;
-
-/// Upper bound on glow blur radius, as a fraction of the artwork side.
-const GLOW_BLUR_MAX: f32 = 0.08;
-
-/// Maximum opacity the glow wash reaches at full strength.
-const GLOW_OPACITY: f32 = 0.5;
-
 /// Exponential rise rate for chased pulse values, per second.
 const ATTACK: f32 = 24.;
 
@@ -42,12 +33,6 @@ const GLOW_ALPHA_BASE: f32 = 0.08;
 /// Strength multiplier added to [`GLOW_ALPHA_BASE`] for glow wash opacity.
 const GLOW_ALPHA_SIGNAL: f32 = 2.5;
 
-/// RMS weight in glow blur radius, as a fraction of the artwork side at full signal.
-const GLOW_BLUR_RMS: f32 = 0.03;
-
-/// Strength weight in glow layer scale above 1.0.
-const GLOW_SCALE_SIGNAL: f32 = 0.12;
-
 /// Input gain in the `1 - e^(-x·k)` curve applied to each pulse band.
 const CURVE_GAIN: f32 = 0.5;
 
@@ -69,6 +54,77 @@ const RIM_SCALE_FLOOR: f32 = 0.012;
 /// Soft knee applied to raw FFT band means, same curve the old pulse used.
 const SQUASH: f32 = 0.08;
 
+/// Pale wash used by the compact player-bar artwork.
+const WASH: Hsla = Hsla {
+    h: 0.,
+    s: 0.18,
+    l: 0.78,
+    a: 1.,
+};
+
+/// Look of one [`FrameGlow`] instance.
+///
+/// Blur, opacity, scale and colour differ between the player bar and fullscreen; pass the
+/// surface's values here rather than sharing a single set of constants.
+///
+/// [`Default`] is the fullscreen look.
+#[derive(Clone, Copy)]
+pub(crate) struct Glow {
+    /// Master intensity applied to blended strength and opacity. `1.0` is the designed response.
+    pub level: f32,
+    /// Maximum opacity the glow wash reaches at full strength, before [`Self::level`].
+    pub opacity: f32,
+    /// How blur radius is derived from strength and RMS.
+    pub blur: GlowBlur,
+    /// Strength weight in glow layer scale above 1.0.
+    pub scale_signal: f32,
+    /// Colour of the glow wash.
+    pub color: GlowColor,
+}
+
+impl Default for Glow {
+    fn default() -> Self {
+        Self {
+            level: 0.9,
+            opacity: 0.5,
+            blur: GlowBlur::default(),
+            scale_signal: 0.12,
+            color: GlowColor::Primary,
+        }
+    }
+}
+
+/// Glow blur radius as a fraction of the artwork side.
+#[derive(Clone, Copy)]
+pub(crate) struct GlowBlur {
+    /// Strength weight in glow blur radius, as a fraction of the artwork side at full signal.
+    pub signal: f32,
+    /// RMS weight in glow blur radius, as a fraction of the artwork side at full signal.
+    pub rms: f32,
+    /// Upper bound on glow blur radius, as a fraction of the artwork side.
+    pub max: f32,
+}
+
+impl Default for GlowBlur {
+    fn default() -> Self {
+        Self {
+            signal: 1.,
+            rms: 0.03,
+            max: 0.08,
+        }
+    }
+}
+
+/// Where the glow wash takes its colour from.
+#[derive(Clone, Copy, Default)]
+pub(crate) enum GlowColor {
+    /// Pale grey wash used on the player bar.
+    Wash,
+    /// Follows the active theme's primary colour.
+    #[default]
+    Primary,
+}
+
 #[derive(Clone, Copy, Default)]
 struct Pulse {
     peak: f32,
@@ -84,17 +140,17 @@ pub(crate) struct FrameGlow {
     chased: Pulse,
     /// Time when the pulse was last advanced.
     last: Option<Instant>,
-    /// Master intensity applied to the glow. `1.0` is the designed response.
-    level: f32,
+    /// Per-surface look passed in at construction.
+    params: Glow,
 }
 
 impl FrameGlow {
     /// Creates an idle frame glow with no accumulated pulse.
-    pub(crate) fn new(level: f32) -> Self {
+    pub(crate) fn new(params: Glow) -> Self {
         Self {
             chased: Pulse::default(),
             last: None,
-            level,
+            params,
         }
     }
 
@@ -130,22 +186,20 @@ impl FrameGlow {
 
         self.smooth(target);
         let shaped = shaped(self.chased);
-        let strength = strength(&shaped) * self.level;
+        let strength = strength(&shaped) * self.params.level;
         if allowed && (playing || strength > STRENGTH_MIN) {
             window.request_animation_frame();
         }
 
         let rim = rim(size, corner);
         let side = size.as_f32().max(1.);
-        let opacity = GLOW_OPACITY * self.level;
+        let opacity = self.params.opacity * self.params.level;
         let glow = Hsla {
             a: ((GLOW_ALPHA_BASE + strength * GLOW_ALPHA_SIGNAL) * opacity).clamp(0., opacity),
-            ..cx.theme().primary
+            ..self.params.color.resolve(cx)
         };
-        let glow_blur = px(((strength * LEVEL + shaped.rms * GLOW_BLUR_RMS) * side)
-            .min(GLOW_BLUR_MAX * side)
-            .max(rim.min_blur.as_f32()));
-        let glow_scale = rim.min_scale.max(1. + strength * GLOW_SCALE_SIGNAL) * scale;
+        let glow_blur = blur(self.params.blur, strength, shaped.rms, side, rim.min_blur);
+        let glow_scale = rim.min_scale.max(1. + strength * self.params.scale_signal) * scale;
         div().absolute().top_0().left_0().size_full().when(
             allowed && strength > STRENGTH_MIN,
             |this| {
@@ -183,6 +237,22 @@ impl FrameGlow {
             highs: follow(self.chased.highs, target.highs, attack, release),
         };
     }
+}
+
+impl GlowColor {
+    fn resolve(self, cx: &App) -> Hsla {
+        match self {
+            Self::Wash => WASH,
+            Self::Primary => cx.theme().primary,
+        }
+    }
+}
+
+/// Resolves the glow blur radius from a surface's fractional blur parameters.
+fn blur(params: GlowBlur, strength: f32, rms: f32, side: f32, min: Pixels) -> Pixels {
+    px(((strength * params.signal + rms * params.rms) * side)
+        .min(params.max * side)
+        .max(min.as_f32()))
 }
 
 /// Moves one pulse value toward its target.

@@ -22,7 +22,7 @@ use ui::{
 use crate::chrome::{Aside, TitleBarOptions};
 use crate::shared::menus::ItemMenu;
 use crate::shared::transport::{NOTCH, like, moved, percent, transport, volume_icon};
-use crate::shared::visualizations::FrameGlow;
+use crate::shared::visualizations::{FrameGlow, Glow};
 use crate::shared::visualizer::VisualizerDrive;
 use crate::shells::Shell;
 
@@ -132,7 +132,7 @@ impl FullscreenView {
             rest: None,
             focus: cx.focus_handle(),
             visualizer: VisualizerDrive::default(),
-            glow: FrameGlow::new(0.9),
+            glow: FrameGlow::new(Glow::default()),
             root_bounds: Rc::new(Cell::new(Bounds::default())),
             artwork_bounds: Rc::new(Cell::new(Bounds::default())),
         };
