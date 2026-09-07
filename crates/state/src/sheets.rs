@@ -34,6 +34,8 @@ struct Held {
     lyrics: Sheet,
     #[serde(default)]
     instrumental: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    fallback: bool,
     #[serde(default)]
     title: String,
     #[serde(default)]
@@ -191,6 +193,7 @@ impl Held {
             trust: hit.trust,
             lyrics: hit.lyrics.clone(),
             instrumental: hit.instrumental,
+            fallback: hit.fallback,
             title: hit.title.clone(),
             artist: hit.artist.clone(),
             album: hit.album.clone(),
@@ -206,6 +209,7 @@ impl Held {
             trust: self.trust,
             lyrics: self.lyrics.clone(),
             instrumental: self.instrumental,
+            fallback: self.fallback,
             title: self.title.clone(),
             artist: self.artist.clone(),
             album: self.album.clone(),

@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- YouTube tracks with no lyrics anywhere now fall back to the video's own subtitles, timed line by
+  line, in the language Sonora is set to whenever the video offers one. They stand in only when no
+  lyrics source answered, and being subtitles they carry whatever is said, dialogue included.
+
 ## [0.31.0] - 2026-09-05
 
 ### Added

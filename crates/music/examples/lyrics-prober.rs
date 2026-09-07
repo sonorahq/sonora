@@ -5,8 +5,8 @@ use anyhow::{Context as _, Result, bail};
 use music::spotify::{AuthConfig, LibrespotClient, auth};
 use music::youtube::YouTubeClient;
 use music::{
-    Lyrics, LyricsHit, LyricsProvider, LyricsQuery, MusicApi, Track, TrackKey, binimum, kugou,
-    lrclib, musixmatch, netease,
+    Lyrics, LyricsHit, LyricsProvider, LyricsQuery, MusicApi, Track, TrackKey, binimum, captions,
+    kugou, lrclib, musixmatch, netease,
 };
 use ytmusic::YtMusic;
 
@@ -28,13 +28,14 @@ fn providers() -> Vec<Arc<dyn LyricsProvider>> {
         Arc::new(lrclib::LrcLib::new()),
         Arc::new(kugou::Kugou::new()),
         Arc::new(netease::NetEase::new()),
+        Arc::new(captions::Captions::new()),
     ]
 }
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let Some(link) = std::env::args().nth(1) else {
-        bail!("usage: lyrics-prober <spotify or youtube link, or a search query>");
+        bail!("usage: lyrics-prober <spotify or youtube link, or a search query> [language]");
     };
 
     let (track, provider, native) = resolve(&link).await?;
@@ -44,6 +45,7 @@ async fn main() -> Result<()> {
         album: (!track.album.is_empty()).then(|| track.album.clone()),
         duration: track.duration,
         track: track.id.clone().map(|id| TrackKey { provider, id }),
+        language: std::env::args().nth(2),
     };
 
     println!(
@@ -64,7 +66,7 @@ async fn main() -> Result<()> {
     probes.sort_by_key(|probe| probe.elapsed);
 
     println!(
-        "{:<12} {:>6} {:>5}  {:>6} {:>4} {:<8} matched title / artist",
+        "{:<16} {:>6} {:>5}  {:>6} {:>5} {:<8} matched title / artist",
         "provider", "ms", "hits", "score", "keep", "kind"
     );
     for found in &probes {
@@ -89,7 +91,7 @@ async fn main() -> Result<()> {
             println!("ranked:");
             for (place, hit) in ranked.iter().enumerate() {
                 println!(
-                    "  {:>2}. {:<12} {:>6} {:<8} {}",
+                    "  {:>2}. {:<16} {:>6} {:<8} {}",
                     place + 1,
                     hit.source,
                     music::lyrics::score(&query, hit),
@@ -201,11 +203,11 @@ async fn probe(query: &LyricsQuery, native: Option<Arc<LibrespotClient>>) -> Vec
 fn report(query: &LyricsQuery, found: &Probe) {
     let millis = found.elapsed.as_millis();
     if let Some(error) = &found.error {
-        println!("{:<12} {millis:>6} {:>5}  {error}", found.source, "—");
+        println!("{:<16} {millis:>6} {:>5}  {error}", found.source, "—");
         return;
     }
     if found.hits.is_empty() {
-        println!("{:<12} {millis:>6} {:>5}", found.source, 0);
+        println!("{:<16} {millis:>6} {:>5}", found.source, 0);
         return;
     }
 
@@ -218,14 +220,15 @@ fn report(query: &LyricsQuery, found: &Probe) {
 
     for (place, (score, hit)) in scored.iter().take(LISTED).enumerate() {
         let head = match place {
-            0 => format!("{:<12} {millis:>6} {:>5}", found.source, found.hits.len()),
-            _ => format!("{:<12} {:>6} {:>5}", "", "", ""),
+            0 => format!("{:<16} {millis:>6} {:>5}", found.source, found.hits.len()),
+            _ => format!("{:<16} {:>6} {:>5}", "", "", ""),
         };
         println!(
-            "{head}  {score:>6} {:>4} {:<8} {} — {}{}",
-            match music::lyrics::eligible(query, hit) {
-                true => "yes",
-                false => "no",
+            "{head}  {score:>6} {:>5} {:<8} {} — {}{}",
+            match (music::lyrics::eligible(query, hit), hit.fallback) {
+                (false, _) => "no",
+                (true, true) => "spare",
+                (true, false) => "yes",
             },
             kind(&hit.lyrics),
             hit.title,
@@ -236,7 +239,7 @@ fn report(query: &LyricsQuery, found: &Probe) {
         );
     }
     if let Some(rest) = scored.len().checked_sub(LISTED).filter(|rest| *rest > 0) {
-        println!("{:<12} {:>6} {:>5}  {rest:>6} more", "", "", "");
+        println!("{:<16} {:>6} {:>5}  {rest:>6} more", "", "", "");
     }
 }
 
@@ -246,6 +249,7 @@ fn own(lyrics: Lyrics, query: &LyricsQuery) -> LyricsHit {
         trust: OWN_TRUST,
         lyrics,
         instrumental: false,
+        fallback: false,
         title: query.title.clone(),
         artist: query.artist.clone(),
         album: query.album.clone(),

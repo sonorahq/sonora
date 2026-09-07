@@ -137,6 +137,7 @@ fn hit(found: Found) -> Option<LyricsHit> {
         trust: 0,
         lyrics,
         instrumental: found.instrumental,
+        fallback: false,
         title: found.track_name.unwrap_or_default(),
         artist: found.artist_name.unwrap_or_default(),
         album: found.album_name.filter(|name| !name.is_empty()),

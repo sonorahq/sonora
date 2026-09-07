@@ -135,6 +135,7 @@ async fn measure(
             provider: "spotify",
             id: id.clone(),
         }),
+        language: None,
     };
 
     let mut tasks = tokio::task::JoinSet::new();
@@ -216,6 +217,7 @@ fn own(lyrics: Lyrics, query: &LyricsQuery) -> LyricsHit {
         trust: OWN_TRUST,
         lyrics,
         instrumental: false,
+        fallback: false,
         title: query.title.clone(),
         artist: query.artist.clone(),
         album: query.album.clone(),

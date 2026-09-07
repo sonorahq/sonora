@@ -518,6 +518,7 @@ fn query_for(track: &Track, key: Option<TrackKey>) -> LyricsQuery {
         album: (!track.album.is_empty()).then(|| track.album.clone()),
         duration: track.duration,
         track: key,
+        language: Some(i18n::language().id().to_owned()),
     }
 }
 
@@ -565,6 +566,7 @@ async fn own(native: Native, query: LyricsQuery) -> Vec<LyricsHit> {
         trust: OWN_TRUST,
         lyrics,
         instrumental: false,
+        fallback: false,
         title: query.title,
         artist: query.artist,
         album: query.album,
@@ -587,6 +589,7 @@ mod tests {
             trust: 0,
             lyrics,
             instrumental: false,
+            fallback: false,
             title: "title".to_owned(),
             artist: "artist".to_owned(),
             album: None,

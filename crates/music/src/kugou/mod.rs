@@ -281,6 +281,7 @@ fn hit(song: &Song, krc: &str, title: &str) -> Option<LyricsHit> {
             },
         },
         instrumental: quiet,
+        fallback: false,
         title: song.name.clone(),
         artist: song.singer.clone(),
         album: (!song.album.is_empty()).then(|| song.album.clone()),

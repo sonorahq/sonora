@@ -212,6 +212,7 @@ fn hit(calls: &Calls) -> Option<LyricsHit> {
             },
         },
         instrumental: quiet,
+        fallback: false,
         title: track.track_name.clone(),
         artist: track.artist_name.clone(),
         album: (!track.album_name.is_empty()).then(|| track.album_name.clone()),

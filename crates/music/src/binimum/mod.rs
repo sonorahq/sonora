@@ -144,6 +144,7 @@ impl LyricsProvider for Binimum {
             trust: TRUST,
             lyrics: sheet.lyrics,
             instrumental: false,
+            fallback: false,
             title: best.track_name.clone(),
             artist: best.artist_name.clone(),
             album: (!best.album_name.is_empty()).then(|| best.album_name.clone()),

@@ -76,6 +76,7 @@ fn main() {
             Arc::new(music::lrclib::LrcLib::new()),
             Arc::new(music::kugou::Kugou::new()),
             Arc::new(music::netease::NetEase::new()),
+            Arc::new(music::captions::Captions::new()),
         ];
         state::init(cx, io, database, providers, local_provider, lyrics);
         let start = opened_start.unwrap_or_else(|| {

@@ -43,6 +43,7 @@ async fn main() {
             album: (!album.is_empty()).then(|| album.to_owned()),
             duration: Duration::from_secs(seconds),
             track: None,
+            language: None,
         };
         println!("\n== {title} — {artist}");
         let mut gathered = Vec::new();

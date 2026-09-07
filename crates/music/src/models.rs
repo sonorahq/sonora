@@ -390,6 +390,7 @@ pub struct LyricsQuery {
     pub album: Option<String>,
     pub duration: Duration,
     pub track: Option<TrackKey>,
+    pub language: Option<String>,
 }
 
 impl LyricsQuery {
@@ -407,6 +408,7 @@ pub struct LyricsHit {
     pub trust: u32,
     pub lyrics: Lyrics,
     pub instrumental: bool,
+    pub fallback: bool,
     pub title: String,
     pub artist: String,
     pub album: Option<String>,

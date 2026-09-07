@@ -22,9 +22,13 @@ const TRUNCATED: u32 = 500;
 const TRUSTED: u32 = 25;
 
 pub fn rank(query: &LyricsQuery, hits: Vec<LyricsHit>) -> Vec<LyricsHit> {
-    let mut scored: Vec<(i64, LyricsHit)> = hits
+    let declared = instrumental(query, &hits);
+    let kept = hits
         .into_iter()
         .filter(|hit| eligible(query, hit))
+        .collect();
+    let mut scored: Vec<(i64, LyricsHit)> = preferred(kept, declared)
+        .into_iter()
         .map(|hit| (score(query, &hit), hit))
         .collect();
     scored.sort_by(|(left_score, left), (right_score, right)| {
@@ -40,6 +44,13 @@ pub fn rank(query: &LyricsQuery, hits: Vec<LyricsHit>) -> Vec<LyricsHit> {
         .map(|(_, hit)| hit)
         .filter(|hit| seen.insert(fingerprint(&hit.lyrics)))
         .collect()
+}
+
+fn preferred(hits: Vec<LyricsHit>, instrumental: bool) -> Vec<LyricsHit> {
+    match instrumental || hits.iter().any(|hit| !hit.fallback) {
+        true => hits.into_iter().filter(|hit| !hit.fallback).collect(),
+        false => hits,
+    }
 }
 
 pub fn reshape(hits: &mut [LyricsHit]) {
@@ -75,7 +86,8 @@ pub fn eligible(query: &LyricsQuery, hit: &LyricsHit) -> bool {
 
 pub fn instrumental(query: &LyricsQuery, hits: &[LyricsHit]) -> bool {
     let matching = || hits.iter().filter(|hit| matched(query, hit));
-    matching().any(|hit| hit.instrumental) && !matching().any(|hit| !hit.lyrics.is_empty())
+    matching().any(|hit| hit.instrumental)
+        && !matching().any(|hit| !hit.fallback && !hit.lyrics.is_empty())
 }
 
 fn matched(query: &LyricsQuery, hit: &LyricsHit) -> bool {
@@ -267,6 +279,7 @@ mod tests {
                 false => Lyrics::plain(format!("la {title}")),
             },
             instrumental: false,
+            fallback: false,
             title: title.to_owned(),
             artist: artist.to_owned(),
             album: None,
@@ -294,6 +307,7 @@ mod tests {
             album: None,
             duration: Duration::from_secs(263),
             track: None,
+            language: None,
         }
     }
 
@@ -375,6 +389,7 @@ mod tests {
             album: Some("In Waves".to_owned()),
             duration: Duration::from_secs(302),
             track: None,
+            language: None,
         };
         let ranked = rank(&query, vec![noisy, hit("In Waves", "Trivium", 302, true)]);
 
@@ -402,6 +417,7 @@ mod tests {
             album: Some("Nautical Antiques".to_owned()),
             duration: Duration::from_secs(213),
             track: None,
+            language: None,
         };
 
         let ranked = rank(

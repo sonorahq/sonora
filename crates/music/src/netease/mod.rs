@@ -210,6 +210,7 @@ fn hit(song: &Song, sheet: &Sheet) -> Option<LyricsHit> {
         trust: 0,
         lyrics,
         instrumental: quiet,
+        fallback: false,
         title: song.name.clone(),
         artist: song
             .artists
