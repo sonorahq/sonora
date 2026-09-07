@@ -354,6 +354,12 @@ count-tracks =
         [few] { $count } трека
        *[other] { $count } треков
     }
+count-playlists =
+    { $count ->
+        [one] { $count } плейлист
+        [few] { $count } плейлиста
+       *[other] { $count } плейлистов
+    }
 
 # dates
 date-just-now = Только что

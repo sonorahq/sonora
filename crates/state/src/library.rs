@@ -5,8 +5,9 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::{Context, Entity, SharedString, Task};
-use music::{Album, MusicApi, Playlist, SavedArtist, Track};
+use music::{Album, MusicApi, Playlist, PlaylistEntry, SavedArtist, Track};
 
+use crate::outline::{self, PlaylistRow};
 use crate::{Io, Outcome, Session, SessionEvent, Target, Toasts, join, mosaic};
 
 const PAGE_LIMIT: u32 = 10000;
@@ -19,7 +20,7 @@ const FATAL_LOCAL: [LibraryPart; 2] = [LibraryPart::Tracks, LibraryPart::Albums]
 
 enum Landed {
     Tracks(anyhow::Result<Vec<Track>>),
-    Playlists(anyhow::Result<Vec<Playlist>>),
+    Playlists(anyhow::Result<Vec<PlaylistEntry>>),
     Albums(anyhow::Result<Vec<Album>>),
     Artists(anyhow::Result<Vec<SavedArtist>>),
 }
@@ -55,6 +56,7 @@ fn place(
         *state = LibraryState::Ready {
             tracks: Vec::new(),
             playlists: Vec::new(),
+            outline: Vec::new(),
             albums: Vec::new(),
             artists: Vec::new(),
             problems: Vec::new(),
@@ -65,6 +67,7 @@ fn place(
         let LibraryState::Ready {
             tracks,
             playlists,
+            outline,
             albums,
             artists,
             problems,
@@ -75,7 +78,9 @@ fn place(
         let part = landed.part();
         match landed {
             Landed::Tracks(result) => *tracks = take(part, result, problems),
-            Landed::Playlists(result) => *playlists = take(part, result, problems),
+            Landed::Playlists(result) => {
+                (*playlists, *outline) = outline::split(take(part, result, problems));
+            }
             Landed::Albums(result) => *albums = take(part, result, problems),
             Landed::Artists(result) => *artists = take(part, result, problems),
         }
@@ -336,6 +341,7 @@ pub enum LibraryState {
     Ready {
         tracks: Vec<Track>,
         playlists: Vec<Playlist>,
+        outline: Vec<PlaylistRow>,
         albums: Vec<Album>,
         artists: Vec<SavedArtist>,
         problems: Vec<Problem>,
@@ -1137,8 +1143,10 @@ impl Library {
         let Some(playlists) = self.shelf_mut(&playlist.id) else {
             return;
         };
-        playlists.retain(|known| known.id != playlist.id);
+        let id = playlist.id.clone();
+        playlists.retain(|known| known.id != id);
         playlists.push(playlist);
+        self.relist(&id);
         cx.notify();
     }
 
@@ -1152,7 +1160,21 @@ impl Library {
             return;
         };
         playlists.retain(|playlist| playlist.id != id);
+        self.relist(id);
         cx.notify();
+    }
+
+    fn relist(&mut self, id: &str) {
+        let state = match music::is_local_id(id) {
+            true => &mut self.local,
+            false => &mut self.state,
+        };
+        if let LibraryState::Ready {
+            playlists, outline, ..
+        } = state
+        {
+            outline::relist(playlists, outline);
+        }
     }
 
     fn amend_playlist(

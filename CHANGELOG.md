@@ -9,6 +9,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Spotify playlist folders appear in Your Library. The Playlists list and grid show each folder as
+  a group that opens and closes, nested folders included, and typing in the filter field opens
+  every folder holding a match.
+
 - A Shuffle button sits beside Play on every album, playlist, artist and library page. It turns
   shuffle on and starts the collection from a random track.
 

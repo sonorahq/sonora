@@ -4,7 +4,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 
 use crate::spotify::SpotifyProvider;
 use crate::youtube::YouTubeProvider;
-use crate::{MusicApi, MusicProvider, ProviderSession};
+use crate::{MusicApi, MusicProvider, PlaylistEntry, ProviderSession};
 
 const NAME: &str = "Sonora live privacy test — safe to delete";
 const VERIFY_ATTEMPTS: usize = 30;
@@ -87,16 +87,12 @@ async fn reported(api: &dyn MusicApi, playlist_id: &str) -> Option<bool> {
         .await
         .ok()
         .map(|detail| detail.playlist.public);
-    let listed = api
-        .playlists(LIBRARY_LIMIT)
-        .await
-        .ok()
-        .and_then(|playlists| {
-            playlists
-                .into_iter()
-                .find(|playlist| playlist.id == playlist_id)
-        })
-        .map(|playlist| playlist.public);
+    let listed = api.playlists(LIBRARY_LIMIT).await.ok().and_then(|entries| {
+        PlaylistEntry::playlists(&entries)
+            .into_iter()
+            .find(|playlist| playlist.id == playlist_id)
+            .map(|playlist| playlist.public)
+    });
 
     match (detail, listed) {
         (Some(true), _) | (_, Some(true)) => Some(true),

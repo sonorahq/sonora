@@ -13,7 +13,7 @@ use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Entity, FontWeight, MouseButton, Pixels, Point, Render, ScrollHandle,
-    SharedString, WeakEntity, Window, div, point, px, relative,
+    SharedString, WeakEntity, Window, div, point, px, relative, svg,
 };
 use i18n::t;
 use music::Track;
@@ -330,8 +330,14 @@ impl LibraryView {
             }
             TableState::new(delegate, cx).follow(scroll.clone())
         });
+        let folding = cx.weak_entity();
         let playlists = cx.new(|cx| {
-            let source = PlaylistSource::shelved(library.clone(), playback.clone(), shelf.local());
+            let source = PlaylistSource::shelved(library.clone(), playback.clone(), shelf.local())
+                .folded(move |id, cx| {
+                    folding
+                        .update(cx, |view, cx| view.toggle_folder(id, cx))
+                        .ok();
+                });
             let mut delegate = TableDelegate::new(source, width, cx).with_sort(
                 PlaylistField::Modified,
                 RECENT,
@@ -671,15 +677,76 @@ impl LibraryView {
     }
 
     fn open_playlist(&mut self, display: usize, cx: &mut Context<Self>) {
-        let playlist = {
+        let (playlist, folder) = {
             let state = self.playlists.read(cx);
             let row = state.delegate().row(display);
-            state.delegate().source().at(row, cx)
+            let source = state.delegate().source();
+            (source.at(row, cx), source.folder_at(row, cx))
         };
+        if let Some(folder) = folder {
+            self.toggle_folder(&folder.id, cx);
+            return;
+        }
         let Some(playlist) = playlist else {
             return;
         };
         navigate(Destination::Playlist(playlist.id.into()), cx);
+    }
+
+    fn toggle_folder(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.playlists.update(cx, |table, cx| {
+            table.delegate_mut().source_mut().toggle(id);
+            table.rebuild(cx);
+        });
+        self.cards_dirty = true;
+        cx.notify();
+    }
+
+    fn folder_head(&self, display: usize, cx: &App) -> Option<AnyElement> {
+        let theme = *cx.theme();
+        let folder = {
+            let state = self.playlists.read(cx);
+            let delegate = state.delegate();
+            delegate.source().folder_at(delegate.row(display), cx)?
+        };
+        let view = self.me.clone();
+        let id = folder.id.clone();
+        let icon = match folder.open {
+            true => "icons/chevron-down.svg",
+            false => "icons/chevron-right.svg",
+        };
+
+        Some(
+            div()
+                .id(("library-folder", display))
+                .flex()
+                .items_center()
+                .gap_2()
+                .w_full()
+                .pt_2()
+                .pl(cells::indent(&theme, folder.depth))
+                .line_height(relative(LEADING))
+                .cursor_pointer()
+                .on_click(move |_, _, cx| {
+                    view.update(cx, |this, cx| this.toggle_folder(&id, cx)).ok();
+                })
+                .child(
+                    svg()
+                        .path(icons::path(icon))
+                        .size(theme.text(Text::Title))
+                        .flex_none()
+                        .text_color(theme.muted_foreground),
+                )
+                .child(heading(folder.name, cx).min_w_0().truncate())
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(theme.text(Text::Small))
+                        .text_color(theme.muted_foreground)
+                        .child(t!("count-playlists", count = folder.count)),
+                )
+                .into_any_element(),
+        )
     }
 
     fn open_artist(&mut self, display: usize, cx: &mut Context<Self>) {
@@ -887,6 +954,11 @@ impl LibraryView {
 
                         match row {
                             DeckRow::Heading(display) => {
+                                if section == Section::Playlists
+                                    && let Some(folder) = view.folder_head(*display, cx)
+                                {
+                                    return div().px(inset).child(folder).into_any_element();
+                                }
                                 let label = match section {
                                     Section::Favorites => {
                                         view.favorites.read(cx).delegate().group(*display, cx)
@@ -1301,6 +1373,15 @@ fn deck<S: TableSource>(state: &Entity<TableState<S>>, columns: usize, cx: &App)
     let mut group: Option<SharedString> = None;
 
     for display in 0..delegate.row_count() {
+        let row = delegate.row(display);
+        if delegate.source().branch(row, cx).is_some() {
+            if !cards.is_empty() {
+                rows.push(DeckRow::Cards(std::mem::take(&mut cards)));
+            }
+            rows.push(DeckRow::Heading(display));
+            group = None;
+            continue;
+        }
         let label = delegate.group(display, cx);
         match &label {
             Some(text) if group.as_ref() != Some(text) => {
@@ -1312,7 +1393,7 @@ fn deck<S: TableSource>(state: &Entity<TableState<S>>, columns: usize, cx: &App)
             _ => {}
         }
         group = label;
-        cards.push((display, delegate.row(display)));
+        cards.push((display, row));
         if cards.len() == columns {
             rows.push(DeckRow::Cards(std::mem::take(&mut cards)));
             cards.reserve(columns);
