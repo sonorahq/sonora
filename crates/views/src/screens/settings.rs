@@ -1185,7 +1185,7 @@ impl SettingsView {
         let settings = self.settings.read(cx);
         let minutes = settings.sleep_min_minutes();
         let maximum = settings.sleep_max_minutes();
-        let fraction = sleep_limit_fraction(minutes);
+        let fraction = sleep_limit_fraction(minutes, SLEEP_MIN_LIMIT, maximum);
 
         let control = div()
             .flex()
@@ -1196,7 +1196,8 @@ impl SettingsView {
                     Scrubber::new(&self.sleep_min, fraction)
                         .colors(theme.progress_bar, theme.muted, theme.foreground)
                         .on_move(cx.listener(|this, fraction: &f32, _, cx| {
-                            let minutes = sleep_limit_minutes(*fraction);
+                            let maximum = this.settings.read(cx).sleep_max_minutes();
+                            let minutes = sleep_limit_minutes(*fraction, SLEEP_MIN_LIMIT, maximum);
                             this.settings.update(cx, |settings, cx| {
                                 settings.set_sleep_min_minutes(minutes, cx)
                             });
@@ -1228,7 +1229,7 @@ impl SettingsView {
         let settings = self.settings.read(cx);
         let minutes = settings.sleep_max_minutes();
         let minimum = settings.sleep_min_minutes();
-        let fraction = sleep_limit_fraction(minutes);
+        let fraction = sleep_limit_fraction(minutes, minimum, SLEEP_MAX_LIMIT);
 
         let control = div()
             .flex()
@@ -1239,7 +1240,8 @@ impl SettingsView {
                     Scrubber::new(&self.sleep_max, fraction)
                         .colors(theme.progress_bar, theme.muted, theme.foreground)
                         .on_move(cx.listener(|this, fraction: &f32, _, cx| {
-                            let minutes = sleep_limit_minutes(*fraction);
+                            let minimum = this.settings.read(cx).sleep_min_minutes();
+                            let minutes = sleep_limit_minutes(*fraction, minimum, SLEEP_MAX_LIMIT);
                             this.settings.update(cx, |settings, cx| {
                                 settings.set_sleep_max_minutes(minutes, cx)
                             });
@@ -2125,17 +2127,15 @@ impl Render for SettingsView {
     }
 }
 
-fn sleep_limit_fraction(minutes: u64) -> f32 {
-    if SLEEP_MIN_LIMIT >= SLEEP_MAX_LIMIT {
+fn sleep_limit_fraction(minutes: u64, minimum: u64, maximum: u64) -> f32 {
+    if minimum >= maximum {
         return 0.;
     }
-    ((minutes.saturating_sub(SLEEP_MIN_LIMIT)) as f32 / (SLEEP_MAX_LIMIT - SLEEP_MIN_LIMIT) as f32)
-        .clamp(0., 1.)
+    ((minutes.saturating_sub(minimum)) as f32 / (maximum - minimum) as f32).clamp(0., 1.)
 }
 
-fn sleep_limit_minutes(fraction: f32) -> u64 {
-    (SLEEP_MIN_LIMIT as f32 + fraction.clamp(0., 1.) * (SLEEP_MAX_LIMIT - SLEEP_MIN_LIMIT) as f32)
-        .round() as u64
+fn sleep_limit_minutes(fraction: f32, minimum: u64, maximum: u64) -> u64 {
+    (minimum as f32 + fraction.clamp(0., 1.) * (maximum - minimum) as f32).round() as u64
 }
 
 fn usable_fonts(text_system: std::sync::Arc<gpui::TextSystem>) -> Vec<SharedString> {
