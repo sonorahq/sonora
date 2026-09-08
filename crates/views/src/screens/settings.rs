@@ -13,7 +13,10 @@ use gpui::{ScrollHandle, prelude::*, svg};
 use i18n::{Language, t};
 use music::{AccountChoice, SignIn, SignInPrompt, WritingSystem};
 use router::{NavEntry, Screen, SettingsTab};
-use state::{AppSettings, Failure, Io, Playback, SYSTEM_FONT, Session, SessionState, Sonora};
+use state::{
+    AppSettings, Failure, Io, Playback, SLEEP_MAX_LIMIT, SLEEP_MIN_LIMIT, SYSTEM_FONT, Session,
+    SessionState, Sonora,
+};
 use ui::{ActiveTheme as _, Scrollbar, Scroller, eyebrow};
 use ui::{
     Avatar, Button, InfoCard, Initials, Input, Look, MAX_FONT, MAX_LYRICS_SCALE, MAX_TRANSPARENCY,
@@ -125,6 +128,8 @@ pub struct SettingsView {
     tab: SettingsTab,
     scrollbar: Entity<Scrollbar>,
     opacity: ScrubberState,
+    sleep_min: ScrubberState,
+    sleep_max: ScrubberState,
     popovers: Popovers,
     secret: Entity<Input>,
     languages: SearchPopup,
@@ -166,6 +171,8 @@ impl SettingsView {
             tab: SettingsTab::General,
             scrollbar: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(me)),
             opacity: ScrubberState::new("opacity"),
+            sleep_min: ScrubberState::new("sleep-minimum"),
+            sleep_max: ScrubberState::new("sleep-maximum"),
             popovers: Popovers::default(),
             secret: cx.new(|cx| Input::new("login-cookie-hint", cx)),
             languages,
@@ -226,6 +233,8 @@ impl SettingsView {
                 Row::Item(self.playback_row(cx).into_any_element()),
                 Row::Item(self.gapless_row(cx).into_any_element()),
                 Row::Item(self.sleep_row(cx).into_any_element()),
+                Row::Item(self.sleep_min_row(cx).into_any_element()),
+                Row::Item(self.sleep_max_row(cx).into_any_element()),
                 self.title("settings-group-lyrics", cx),
                 Row::Item(self.karaoke_lyrics_row(cx).into_any_element()),
                 Row::Item(self.romanized_lyrics_row(cx).into_any_element()),
@@ -1169,6 +1178,92 @@ impl SettingsView {
         )
     }
 
+    fn sleep_min_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let settings = self.settings.read(cx);
+        let minutes = settings.sleep_min_minutes();
+        let maximum = settings.sleep_max_minutes();
+        let fraction = sleep_limit_fraction(minutes);
+
+        let control = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div().w(theme.metrics.cover).child(
+                    Scrubber::new(&self.sleep_min, fraction)
+                        .colors(theme.progress_bar, theme.muted, theme.foreground)
+                        .on_move(cx.listener(|this, fraction: &f32, _, cx| {
+                            let minutes = sleep_limit_minutes(*fraction);
+                            this.settings.update(cx, |settings, cx| {
+                                settings.set_sleep_min_minutes(minutes, cx)
+                            });
+                        })),
+                ),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .w(theme.metrics.control * 1.5)
+                    .whitespace_nowrap()
+                    .text_right()
+                    .child(t!("settings-sleep-minutes", count = minutes.min(maximum))),
+            );
+
+        self.row(
+            t!("settings-sleep-minimum"),
+            t!("settings-sleep-minimum-detail"),
+            muted,
+            small,
+            control.into_any_element(),
+        )
+    }
+
+    fn sleep_max_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let settings = self.settings.read(cx);
+        let minutes = settings.sleep_max_minutes();
+        let minimum = settings.sleep_min_minutes();
+        let fraction = sleep_limit_fraction(minutes);
+
+        let control = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div().w(theme.metrics.cover).child(
+                    Scrubber::new(&self.sleep_max, fraction)
+                        .colors(theme.progress_bar, theme.muted, theme.foreground)
+                        .on_move(cx.listener(|this, fraction: &f32, _, cx| {
+                            let minutes = sleep_limit_minutes(*fraction);
+                            this.settings.update(cx, |settings, cx| {
+                                settings.set_sleep_max_minutes(minutes, cx)
+                            });
+                        })),
+                ),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .w(theme.metrics.control * 1.5)
+                    .whitespace_nowrap()
+                    .text_right()
+                    .child(t!("settings-sleep-minutes", count = minutes.max(minimum))),
+            );
+
+        self.row(
+            t!("settings-sleep-maximum"),
+            t!("settings-sleep-maximum-detail"),
+            muted,
+            small,
+            control.into_any_element(),
+        )
+    }
+
     fn updates_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
@@ -2028,6 +2123,19 @@ impl Render for SettingsView {
                 this.child(self.secret_prompt(cx).into_any_element())
             })
     }
+}
+
+fn sleep_limit_fraction(minutes: u64) -> f32 {
+    if SLEEP_MIN_LIMIT >= SLEEP_MAX_LIMIT {
+        return 0.;
+    }
+    ((minutes.saturating_sub(SLEEP_MIN_LIMIT)) as f32 / (SLEEP_MAX_LIMIT - SLEEP_MIN_LIMIT) as f32)
+        .clamp(0., 1.)
+}
+
+fn sleep_limit_minutes(fraction: f32) -> u64 {
+    (SLEEP_MIN_LIMIT as f32 + fraction.clamp(0., 1.) * (SLEEP_MAX_LIMIT - SLEEP_MIN_LIMIT) as f32)
+        .round() as u64
 }
 
 fn usable_fonts(text_system: std::sync::Arc<gpui::TextSystem>) -> Vec<SharedString> {

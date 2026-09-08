@@ -26,11 +26,14 @@ const VOLUME_TIGHT: f32 = 72.;
 const CLOCK_SHORT: f32 = 3.4;
 const CLOCK_LONG: f32 = 5.4;
 const SLEEP: &str = "sleep";
-const SLEEP_MAX_MINUTES: u64 = 120;
-const SLEEP_MAGNETS: [u64; 4] = [15, 30, 45, 60];
-const SLEEP_MAGNET_WEIGHT: usize = 4;
-const SLEEP_LAST: usize =
-    SLEEP_MAX_MINUTES as usize + SLEEP_MAGNETS.len() * (SLEEP_MAGNET_WEIGHT - 1) + 1;
+const SLEEP_STEP_MINUTES: u64 = 5;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SleepMode {
+    Off,
+    Custom,
+    EndOfTrack,
+}
 
 pub(crate) struct PlayerBar {
     playback: Entity<Playback>,
@@ -39,6 +42,7 @@ pub(crate) struct PlayerBar {
     track_menu: ItemMenu,
     context_menu: Option<(music::Track, Point<Pixels>)>,
     sleep_group: Popovers,
+    sleep_mode: ScrubberState,
     sleep: ScrubberState,
     pending_sleep: Option<Option<Sleep>>,
     seek: ScrubberState,
@@ -69,6 +73,7 @@ impl PlayerBar {
             track_menu: ItemMenu::new(playlist_scrollbar),
             context_menu: None,
             sleep_group: Popovers::default(),
+            sleep_mode: ScrubberState::new("sleep-mode"),
             sleep: ScrubberState::new("sleep"),
             pending_sleep: None,
             seek: ScrubberState::new("seek"),
@@ -266,9 +271,34 @@ impl PlayerBar {
 
     fn sleep_items(&mut self, cx: &mut Context<Self>) -> Vec<MenuItem> {
         let theme = *cx.theme();
-        let current = self
-            .pending_sleep
-            .unwrap_or_else(|| self.playback.read(cx).sleep());
+        let (min_minutes, max_minutes) = {
+            let settings = self.settings.read(cx);
+            (settings.sleep_min_minutes(), settings.sleep_max_minutes())
+        };
+        let (active_sleep, remaining) = {
+            let playback = self.playback.read(cx);
+            (playback.sleep(), playback.sleep_remaining())
+        };
+        let current = self.pending_sleep.unwrap_or(active_sleep);
+        let mode = sleep_mode(current);
+        let custom_duration = match current {
+            Some(Sleep::After(duration)) => duration,
+            _ => Duration::from_secs(min_minutes * 60),
+        };
+        let displayed_duration = match self.pending_sleep.is_some() {
+            true => custom_duration,
+            false => remaining.unwrap_or(custom_duration),
+        };
+        let mode_fraction = sleep_mode_fraction(mode);
+        let mode_label = sleep_mode_label(mode);
+        let custom_minutes = rounded_sleep_minutes(displayed_duration, min_minutes, max_minutes);
+        let custom_fraction = sleep_fraction(custom_minutes, min_minutes, max_minutes);
+        let custom_label = match self.pending_sleep.is_some() {
+            true => t!("player-sleep-minutes", count = custom_minutes),
+            false => remaining
+                .map(sleep_remaining_label)
+                .unwrap_or_else(|| t!("player-sleep-minutes", count = custom_minutes)),
+        };
 
         let dial = div()
             .flex()
@@ -288,29 +318,92 @@ impl PlayerBar {
                             .text_color(theme.muted_foreground)
                             .child(t!("player-sleep")),
                     )
-                    .child(sleep_label(current)),
+                    .child(mode_label.clone()),
             )
             .child(
-                Scrubber::new(&self.sleep, sleep_slot(current) as f32 / SLEEP_LAST as f32)
-                    .colors(
-                        theme.progress_bar,
-                        theme.muted_foreground.opacity(0.3),
-                        theme.foreground,
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex()
+                            .justify_between()
+                            .text_size(theme.text(ui::Text::Tiny))
+                            .text_color(theme.muted_foreground),
                     )
-                    .on_move(cx.listener(|this, fraction: &f32, _, cx| {
-                        this.pending_sleep = Some(sleep_at_fraction(*fraction));
-                        cx.notify();
-                    }))
-                    .on_release(cx.listener(|this, _: &MouseUpEvent, _, cx| {
-                        let Some(sleep) = this.pending_sleep.take() else {
-                            return;
-                        };
-                        this.playback
-                            .update(cx, |playback, cx| playback.set_sleep(sleep, cx));
-                    })),
-            );
+                    .child(
+                        Scrubber::new(&self.sleep_mode, mode_fraction)
+                            .colors(
+                                theme.progress_bar,
+                                theme.muted_foreground.opacity(0.3),
+                                theme.foreground,
+                            )
+                            .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
+                                let mode = sleep_mode_at_fraction(*fraction);
+                                let sleep = match mode {
+                                    SleepMode::Off => None,
+                                    SleepMode::Custom => Some(Sleep::After(Duration::from_secs(
+                                        custom_minutes.clamp(min_minutes, max_minutes) * 60,
+                                    ))),
+                                    SleepMode::EndOfTrack => Some(Sleep::EndOfTrack),
+                                };
+                                this.pending_sleep = Some(sleep);
+                                cx.notify();
+                            }))
+                            .on_release(cx.listener(|this, _: &MouseUpEvent, _, cx| {
+                                this.commit_sleep(cx);
+                            })),
+                    ),
+            )
+            .when(mode == SleepMode::Custom, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .text_size(theme.text(ui::Text::Small))
+                                .child(t!("player-sleep-custom"))
+                                .child(custom_label.clone()),
+                        )
+                        .child(
+                            Scrubber::new(&self.sleep, custom_fraction)
+                                .colors(
+                                    theme.progress_bar,
+                                    theme.muted_foreground.opacity(0.3),
+                                    theme.foreground,
+                                )
+                                .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
+                                    let minutes = sleep_minutes_at_fraction(
+                                        *fraction,
+                                        min_minutes,
+                                        max_minutes,
+                                    );
+                                    this.pending_sleep =
+                                        Some(Some(Sleep::After(Duration::from_secs(minutes * 60))));
+                                    cx.notify();
+                                }))
+                                .on_release(cx.listener(|this, _: &MouseUpEvent, _, cx| {
+                                    this.commit_sleep(cx);
+                                })),
+                        ),
+                )
+            });
 
         vec![MenuItem::new("sleep-dial", "").content(dial)]
+    }
+
+    fn commit_sleep(&mut self, cx: &mut Context<Self>) {
+        let Some(sleep) = self.pending_sleep.take() else {
+            return;
+        };
+        self.playback
+            .update(cx, |playback, cx| playback.set_sleep(sleep, cx));
     }
 
     fn fullscreen_button(&self) -> Button {
@@ -588,55 +681,65 @@ impl Render for PlayerBar {
     }
 }
 
-fn sleep_slot(sleep: Option<Sleep>) -> usize {
+fn sleep_mode(sleep: Option<Sleep>) -> SleepMode {
     match sleep {
-        None => 0,
-        Some(Sleep::EndOfTrack) => SLEEP_LAST,
-        Some(Sleep::After(after)) => minute_slot(after.as_secs() / 60),
+        None => SleepMode::Off,
+        Some(Sleep::After(_)) => SleepMode::Custom,
+        Some(Sleep::EndOfTrack) => SleepMode::EndOfTrack,
     }
 }
 
-fn sleep_at_fraction(fraction: f32) -> Option<Sleep> {
-    let slot = (fraction.clamp(0., 1.) * SLEEP_LAST as f32).round() as usize;
-    match slot {
-        0 => None,
-        SLEEP_LAST => Some(Sleep::EndOfTrack),
-        slot => Some(Sleep::After(Duration::from_secs(slot_minute(slot) * 60))),
+fn sleep_mode_at_fraction(fraction: f32) -> SleepMode {
+    match fraction.clamp(0., 1.) {
+        fraction if fraction < 0.25 => SleepMode::Off,
+        fraction if fraction < 0.75 => SleepMode::Custom,
+        _ => SleepMode::EndOfTrack,
     }
 }
 
-fn minute_slot(minutes: u64) -> usize {
-    let minutes = minutes.clamp(1, SLEEP_MAX_MINUTES);
-    let earlier_magnets = SLEEP_MAGNETS
-        .iter()
-        .filter(|magnet| **magnet < minutes)
-        .count();
-    let width = match SLEEP_MAGNETS.contains(&minutes) {
-        true => SLEEP_MAGNET_WEIGHT,
-        false => 1,
-    };
-    minutes as usize + earlier_magnets * (SLEEP_MAGNET_WEIGHT - 1) + (width - 1) / 2
-}
-
-fn slot_minute(slot: usize) -> u64 {
-    let mut first = 1;
-    for minute in 1..=SLEEP_MAX_MINUTES {
-        let width = match SLEEP_MAGNETS.contains(&minute) {
-            true => SLEEP_MAGNET_WEIGHT,
-            false => 1,
-        };
-        if slot < first + width {
-            return minute;
-        }
-        first += width;
+fn sleep_mode_fraction(mode: SleepMode) -> f32 {
+    match mode {
+        SleepMode::Off => 0.,
+        SleepMode::Custom => 0.5,
+        SleepMode::EndOfTrack => 1.,
     }
-    SLEEP_MAX_MINUTES
 }
 
-fn sleep_label(sleep: Option<Sleep>) -> SharedString {
-    match sleep {
-        Some(Sleep::EndOfTrack) => t!("player-sleep-end-of-track"),
-        Some(Sleep::After(after)) => t!("player-sleep-minutes", count = after.as_secs() / 60),
-        None => t!("player-sleep-off"),
+fn sleep_mode_label(mode: SleepMode) -> SharedString {
+    match mode {
+        SleepMode::Off => t!("player-sleep-off"),
+        SleepMode::Custom => t!("player-sleep-custom"),
+        SleepMode::EndOfTrack => t!("player-sleep-end-of-track"),
+    }
+}
+
+fn rounded_sleep_minutes(duration: Duration, min_minutes: u64, max_minutes: u64) -> u64 {
+    let minutes = duration.as_secs().div_ceil(60);
+    sleep_minutes(minutes, min_minutes, max_minutes)
+}
+
+fn sleep_fraction(minutes: u64, min_minutes: u64, max_minutes: u64) -> f32 {
+    if min_minutes >= max_minutes {
+        return 0.;
+    }
+    ((minutes.saturating_sub(min_minutes)) as f32 / (max_minutes - min_minutes) as f32)
+        .clamp(0., 1.)
+}
+
+fn sleep_minutes_at_fraction(fraction: f32, min_minutes: u64, max_minutes: u64) -> u64 {
+    let raw = min_minutes as f32 + fraction.clamp(0., 1.) * (max_minutes - min_minutes) as f32;
+    let snapped = (raw / SLEEP_STEP_MINUTES as f32).round() as u64 * SLEEP_STEP_MINUTES;
+    sleep_minutes(snapped, min_minutes, max_minutes)
+}
+
+fn sleep_minutes(minutes: u64, min_minutes: u64, max_minutes: u64) -> u64 {
+    minutes.clamp(min_minutes, max_minutes)
+}
+
+fn sleep_remaining_label(remaining: Duration) -> SharedString {
+    let seconds = remaining.as_secs().max(1);
+    match seconds >= 60 {
+        true => t!("player-sleep-minutes-left", count = seconds / 60),
+        false => t!("player-sleep-seconds-left", count = seconds),
     }
 }

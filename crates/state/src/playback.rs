@@ -362,6 +362,8 @@ pub struct Playback {
     /// The position last written to settings for resuming.
     stored: Duration,
     sleep: Option<Sleep>,
+    sleep_left: Option<Duration>,
+    sleep_until: Option<Instant>,
     sleep_task: Option<Task<()>>,
 }
 
@@ -444,6 +446,8 @@ impl Playback {
             awaiting_reconnect: false,
             stored: Duration::ZERO,
             sleep: None,
+            sleep_left: None,
+            sleep_until: None,
             sleep_task: None,
         }
     }
@@ -1355,18 +1359,85 @@ impl Playback {
         self.sleep
     }
 
+    /// Returns the wall-clock time left on a custom sleep timer, if one is running.
+    pub fn sleep_remaining(&self) -> Option<Duration> {
+        match self.sleep {
+            Some(Sleep::After(_)) => self
+                .sleep_until
+                .map(|until| until.saturating_duration_since(Instant::now()))
+                .or(self.sleep_left),
+            _ => None,
+        }
+    }
+
+    /// Freezes a custom timer at its current remaining duration while playback is stopped.
+    fn pause_sleep_timer(&mut self) {
+        let Some(until) = self.sleep_until.take() else {
+            return;
+        };
+        self.sleep_left = Some(until.saturating_duration_since(Instant::now()));
+    }
+
+    /// Resumes a frozen custom timer when the engine starts producing audio again.
+    fn resume_sleep_timer(&mut self) {
+        if self.sleep_until.is_some() {
+            return;
+        }
+        let Some(left) = self.sleep_left else {
+            return;
+        };
+        self.sleep_until = Some(Instant::now() + left);
+    }
+
     /// Replaces the active sleep request, dropping its timer task when cancelled or superseded.
     pub fn set_sleep(&mut self, sleep: Option<Sleep>, cx: &mut Context<Self>) {
         self.sleep = sleep;
+        self.sleep_left = match sleep {
+            Some(Sleep::After(after)) => Some(after),
+            _ => None,
+        };
+        self.sleep_until = match sleep {
+            Some(Sleep::After(after)) if self.state == PlaybackState::Playing => {
+                Some(Instant::now() + after)
+            }
+            _ => None,
+        };
         self.sleep_task = match sleep {
-            Some(Sleep::After(after)) => Some(cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(after).await;
-                this.update(cx, |this, cx| {
-                    this.sleep = None;
-                    this.pause(cx);
-                    cx.notify();
-                })
-                .ok();
+            Some(Sleep::After(_)) => Some(cx.spawn(async move |this, cx| {
+                loop {
+                    let Some(wait) = this
+                        .update(cx, |this, _| this.sleep_remaining())
+                        .ok()
+                        .flatten()
+                    else {
+                        break;
+                    };
+
+                    cx.background_executor()
+                        .timer(wait.min(Duration::from_secs(1)))
+                        .await;
+
+                    let expired = this
+                        .update(cx, |this, cx| {
+                            let expired = this.sleep_remaining().is_none();
+                            match expired {
+                                true => {
+                                    this.sleep = None;
+                                    this.sleep_left = None;
+                                    this.sleep_until = None;
+                                    this.pause(cx);
+                                    cx.notify();
+                                }
+                                false if this.sleep_until.is_some() => cx.notify(),
+                                false => {}
+                            }
+                            expired
+                        })
+                        .unwrap_or(true);
+                    if expired {
+                        break;
+                    }
+                }
             })),
             _ => None,
         };
@@ -1375,6 +1446,8 @@ impl Playback {
 
     fn doze(&mut self, cx: &mut Context<Self>) {
         self.sleep = None;
+        self.sleep_left = None;
+        self.sleep_until = None;
         self.sleep_task = None;
         self.fetch = None;
         let Some(track) = self.playable_next(cx) else {
@@ -1766,6 +1839,7 @@ impl Playback {
                 log::warn!("playback: cannot hold the restored track, waiting for play");
             }
             BackendEvent::Loading { at, .. } => {
+                self.pause_sleep_timer();
                 self.state = PlaybackState::Loading;
                 self.position = at;
                 self.clock.reset(at, false);
@@ -1775,6 +1849,7 @@ impl Playback {
                 let started = self.state != PlaybackState::Playing;
                 self.intent = Intent::Play;
                 self.state = PlaybackState::Playing;
+                self.resume_sleep_timer();
                 self.position = at;
                 self.clock.reset(at, true);
                 if started {
@@ -1783,6 +1858,7 @@ impl Playback {
                 self.follow_up_seek(cx);
             }
             BackendEvent::Paused { at, .. } => {
+                self.pause_sleep_timer();
                 self.intent = Intent::Pause;
                 self.state = PlaybackState::Paused;
                 self.position = at;
@@ -1829,6 +1905,7 @@ impl Playback {
                 }
             }
             BackendEvent::Ended { .. } => {
+                self.pause_sleep_timer();
                 let ended = self.track.take();
                 self.state = PlaybackState::Idle;
                 self.position = Duration::ZERO;
@@ -1840,10 +1917,12 @@ impl Playback {
                 }
             }
             BackendEvent::Unavailable { .. } if self.ask_for_reconnect(cx) => {
+                self.pause_sleep_timer();
                 self.state = PlaybackState::Loading;
                 log::warn!("playback: the provider went stale, waiting for a reconnect");
             }
             BackendEvent::Unavailable { .. } => {
+                self.pause_sleep_timer();
                 let failed = self.track.take();
                 let target = failed.as_ref().and_then(song_target);
                 let name = failed
@@ -1865,10 +1944,12 @@ impl Playback {
                 }
             }
             BackendEvent::Refused => {
+                self.pause_sleep_timer();
                 self.refuse(cx);
                 cx.emit(PlaybackEvent::EndedPlayback);
             }
             BackendEvent::Gated => {
+                self.pause_sleep_timer();
                 self.gate(cx);
                 cx.emit(PlaybackEvent::EndedPlayback);
             }
@@ -1905,6 +1986,8 @@ impl Playback {
             self.awaiting_reconnect = false;
             self.stored = Duration::ZERO;
             self.sleep = None;
+            self.sleep_left = None;
+            self.sleep_until = None;
             self.sleep_task = None;
         }
         cx.notify();

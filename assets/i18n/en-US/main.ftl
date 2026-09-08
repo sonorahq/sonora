@@ -220,8 +220,11 @@ player-fullscreen = Fullscreen
 player-fullscreen-leave = Leave fullscreen
 player-sleep = Sleep timer
 player-sleep-off = Off
+player-sleep-custom = Custom
 player-sleep-end-of-track = End of track
 player-sleep-minutes = { $count } mins
+player-sleep-minutes-left = { $count }m left
+player-sleep-seconds-left = { $count }s left
 fullscreen-artwork = Artwork
 
 # filters
@@ -499,6 +502,11 @@ settings-gapless = Gapless playback
 settings-gapless-detail = Runs one track into the next without a pause, the way an album was sequenced
 settings-sleep = Sleep timer
 settings-sleep-detail = Lets the music stop on its own after a set time, so it can play you to sleep
+settings-sleep-minimum = Minimum sleep timer
+settings-sleep-minimum-detail = Set the shortest duration available for a custom sleep timer
+settings-sleep-maximum = Maximum sleep timer
+settings-sleep-maximum-detail = Set the longest duration available for a custom sleep timer
+settings-sleep-minutes = { $count } min
 settings-panel-lyrics-size = Lyrics size (panel)
 settings-panel-lyrics-size-detail = Size of the lyrics text in the side panel, on top of the base font size
 settings-fullscreen-lyrics-size = Lyrics size (fullscreen)

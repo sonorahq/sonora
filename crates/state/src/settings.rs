@@ -154,6 +154,10 @@ const DEFAULT_SIDEBAR_RIGHT_WIDTH: f32 = 254.;
 const DEFAULT_FONT_SIZE: f32 = 14.;
 const DEFAULT_LYRICS_SCALE: f32 = 1.;
 const DEFAULT_STARTUP: &str = "home";
+pub const SLEEP_MIN_LIMIT: u64 = 1;
+pub const SLEEP_MAX_LIMIT: u64 = 120;
+pub const DEFAULT_SLEEP_MINUTES: u64 = 5;
+pub const DEFAULT_SLEEP_MAX_MINUTES: u64 = 60;
 /// The shape of `settings.json`. For example, v2 moved runtime state out into `state.sqlite`.
 const SETTINGS_VERSION: u32 = 2;
 
@@ -181,6 +185,8 @@ struct Values {
     normalisation: bool,
     gapless: bool,
     sleep_timer: bool,
+    sleep_min_minutes: u64,
+    sleep_max_minutes: u64,
     lyrics_for_local_files: bool,
     karaoke_lyrics: bool,
     blur_lyrics: bool,
@@ -234,6 +240,8 @@ impl Default for Values {
             normalisation: false,
             gapless: true,
             sleep_timer: false,
+            sleep_min_minutes: DEFAULT_SLEEP_MINUTES,
+            sleep_max_minutes: DEFAULT_SLEEP_MAX_MINUTES,
             lyrics_for_local_files: true,
             karaoke_lyrics: true,
             blur_lyrics: true,
@@ -543,6 +551,21 @@ impl AppSettings {
         self.values.sleep_timer
     }
 
+    pub fn sleep_min_minutes(&self) -> u64 {
+        self.values
+            .sleep_min_minutes
+            .clamp(SLEEP_MIN_LIMIT, self.sleep_max_minutes())
+    }
+
+    pub fn sleep_max_minutes(&self) -> u64 {
+        self.values.sleep_max_minutes.clamp(
+            self.values
+                .sleep_min_minutes
+                .clamp(SLEEP_MIN_LIMIT, SLEEP_MAX_LIMIT),
+            SLEEP_MAX_LIMIT,
+        )
+    }
+
     pub fn lyrics_for_local_files(&self) -> bool {
         self.values.lyrics_for_local_files
     }
@@ -762,6 +785,18 @@ impl AppSettings {
 
     pub fn set_sleep_timer(&mut self, sleep_timer: bool, cx: &mut Context<Self>) {
         self.values.sleep_timer = sleep_timer;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_sleep_min_minutes(&mut self, minutes: u64, cx: &mut Context<Self>) {
+        let minutes = minutes.clamp(SLEEP_MIN_LIMIT, SLEEP_MAX_LIMIT);
+        self.values.sleep_min_minutes = minutes.min(self.sleep_max_minutes());
+        self.schedule_save(cx);
+    }
+
+    pub fn set_sleep_max_minutes(&mut self, minutes: u64, cx: &mut Context<Self>) {
+        let minutes = minutes.clamp(SLEEP_MIN_LIMIT, SLEEP_MAX_LIMIT);
+        self.values.sleep_max_minutes = minutes.max(self.sleep_min_minutes());
         self.schedule_save(cx);
     }
 
