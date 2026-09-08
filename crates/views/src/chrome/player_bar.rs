@@ -43,6 +43,7 @@ pub(crate) struct PlayerBar {
     context_menu: Option<(music::Track, Point<Pixels>)>,
     sleep_group: Popovers,
     sleep_mode: ScrubberState,
+    sleep_mode_preview: Option<SleepMode>,
     sleep: ScrubberState,
     pending_sleep: Option<Option<Sleep>>,
     seek: ScrubberState,
@@ -74,6 +75,7 @@ impl PlayerBar {
             context_menu: None,
             sleep_group: Popovers::default(),
             sleep_mode: ScrubberState::new("sleep-mode"),
+            sleep_mode_preview: None,
             sleep: ScrubberState::new("sleep"),
             pending_sleep: None,
             seek: ScrubberState::new("seek"),
@@ -280,7 +282,14 @@ impl PlayerBar {
             (playback.sleep(), playback.sleep_remaining())
         };
         let current = self.pending_sleep.unwrap_or(active_sleep);
-        let mode = sleep_mode(current);
+        let active_mode = sleep_mode(active_sleep);
+        let mode = self
+            .sleep_mode_preview
+            .unwrap_or_else(|| sleep_mode(current));
+        let layout_mode = match self.sleep_mode_preview {
+            Some(_) => active_mode,
+            None => mode,
+        };
         let custom_duration = match current {
             Some(Sleep::After(duration)) => duration,
             _ => Duration::from_secs(min_minutes * 60),
@@ -341,6 +350,7 @@ impl PlayerBar {
                             )
                             .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
                                 let mode = sleep_mode_at_fraction(*fraction);
+                                this.sleep_mode_preview = Some(mode);
                                 let sleep = match mode {
                                     SleepMode::Off => None,
                                     SleepMode::Custom => Some(Sleep::After(Duration::from_secs(
@@ -356,7 +366,7 @@ impl PlayerBar {
                             })),
                     ),
             )
-            .when(mode == SleepMode::Custom, |this| {
+            .when(layout_mode == SleepMode::Custom, |this| {
                 this.child(
                     div()
                         .flex()
@@ -402,6 +412,7 @@ impl PlayerBar {
         let Some(sleep) = self.pending_sleep.take() else {
             return;
         };
+        self.sleep_mode_preview = None;
         self.playback
             .update(cx, |playback, cx| playback.set_sleep(sleep, cx));
     }
