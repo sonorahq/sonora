@@ -223,8 +223,9 @@ player-sleep-off = Off
 player-sleep-custom = Custom
 player-sleep-end-of-track = End of track
 player-sleep-minutes = { $count } mins
-player-sleep-minutes-left = { $count }m left
-player-sleep-seconds-left = { $count }s left
+player-sleep-hours-short = { $count }h
+player-sleep-minutes-short = { $count }m
+player-sleep-seconds-short = { $count }s
 fullscreen-artwork = Artwork
 
 # filters

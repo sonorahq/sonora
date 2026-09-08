@@ -27,6 +27,9 @@ const CLOCK_SHORT: f32 = 3.4;
 const CLOCK_LONG: f32 = 5.4;
 const SLEEP: &str = "sleep";
 const SLEEP_STEP_MINUTES: u64 = 5;
+const SLEEP_BADGE_COMPACT_CHARS: usize = 2;
+const SLEEP_BADGE_COMPACT_SCALE: f32 = 0.8;
+const SLEEP_BADGE_DOWN: Pixels = px(1.);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SleepMode {
@@ -255,9 +258,13 @@ impl PlayerBar {
 
     fn sleep_button(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
-        let armed = self.playback.read(cx).sleep().is_some();
+        let (sleep, remaining) = {
+            let playback = self.playback.read(cx);
+            (playback.sleep(), playback.sleep_remaining())
+        };
+        let armed = sleep.is_some();
 
-        Picker::icon(SLEEP, &self.sleep_group, "icons/moon.svg")
+        let picker = Picker::icon(SLEEP, &self.sleep_group, "icons/moon.svg")
             .tooltip_above("player-sleep")
             .selected(armed)
             .tint(match armed {
@@ -267,7 +274,35 @@ impl PlayerBar {
             .items(match self.sleep_group.shows(SLEEP) {
                 true => self.sleep_items(cx),
                 false => Vec::new(),
-            })
+            });
+        let label = sleep_button_label(sleep, remaining).unwrap_or_default();
+        let label_size = match label.len() > SLEEP_BADGE_COMPACT_CHARS {
+            true => theme.text(ui::Text::Tiny) * SLEEP_BADGE_COMPACT_SCALE,
+            false => theme.text(ui::Text::Tiny),
+        };
+
+        div()
+            .relative()
+            .child(picker)
+            .child(
+                div()
+                    .absolute()
+                    .top(Pixels::ZERO - theme.metrics.pad / 2. + SLEEP_BADGE_DOWN)
+                    .left_0()
+                    .right_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .px_0()
+                    .text_color(theme.foreground)
+                    .text_size(label_size)
+                    .whitespace_nowrap()
+                    .opacity(match label.is_empty() {
+                        true => 0.,
+                        false => 1.,
+                    })
+                    .child(label),
+            )
             .into_any_element()
     }
 
@@ -749,8 +784,17 @@ fn sleep_minutes(minutes: u64, min_minutes: u64, max_minutes: u64) -> u64 {
 
 fn sleep_remaining_label(remaining: Duration) -> SharedString {
     let seconds = remaining.as_secs().max(1);
-    match seconds >= 60 {
-        true => t!("player-sleep-minutes-left", count = seconds / 60),
-        false => t!("player-sleep-seconds-left", count = seconds),
+    match seconds {
+        seconds if seconds >= 3600 => t!("player-sleep-hours-short", count = seconds / 3600),
+        seconds if seconds >= 60 => t!("player-sleep-minutes-short", count = seconds / 60),
+        seconds => t!("player-sleep-seconds-short", count = seconds),
+    }
+}
+
+fn sleep_button_label(sleep: Option<Sleep>, remaining: Option<Duration>) -> Option<SharedString> {
+    match sleep {
+        Some(Sleep::EndOfTrack) => Some(SharedString::from("1")),
+        Some(Sleep::After(_)) => remaining.map(sleep_remaining_label),
+        None => None,
     }
 }

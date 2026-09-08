@@ -1362,10 +1362,10 @@ impl Playback {
     /// Returns the wall-clock time left on a custom sleep timer, if one is running.
     pub fn sleep_remaining(&self) -> Option<Duration> {
         match self.sleep {
-            Some(Sleep::After(_)) => self
-                .sleep_until
-                .map(|until| until.saturating_duration_since(Instant::now()))
-                .or(self.sleep_left),
+            Some(Sleep::After(_)) => match self.sleep_until {
+                Some(until) => until.checked_duration_since(Instant::now()),
+                None => self.sleep_left,
+            },
             _ => None,
         }
     }
