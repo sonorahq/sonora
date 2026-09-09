@@ -13,6 +13,7 @@ use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use storage::Database;
 
+use self::store::Store;
 use crate::{
     InputSource, MusicApi, MusicProvider, PlaybackFactory, PromptSink, ProviderSession, Shape,
     SignIn, UserProfile,
@@ -33,7 +34,8 @@ impl LocalProvider {
 
     async fn scan_paths(&self, paths: Vec<PathBuf>) -> Result<ProviderSession> {
         let cache_dir = self.cache_dir.clone();
-        let scanned = tokio::task::spawn_blocking(move || scan::scan(&paths, &cache_dir))
+        let cache = Store::new(self.database.clone());
+        let scanned = tokio::task::spawn_blocking(move || scan::scan(&paths, &cache_dir, &cache))
             .await
             .context("local scan task panicked")?;
 

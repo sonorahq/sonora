@@ -1,6 +1,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
+use std::time::Duration;
 
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::picture::{MimeType, Picture, PictureType};
@@ -14,6 +15,7 @@ use symphonia::core::meta::{MetadataOptions, StandardTagKey};
 use symphonia::core::probe::Hint;
 
 use super::id3;
+use super::store::CachedTrack;
 use crate::{
     Album, ArtistRef, LOCAL_ALBUM_PREFIX, LOCAL_ARTIST_PREFIX, LOCAL_TRACK_PREFIX, ReleaseType,
     Track,
@@ -437,6 +439,53 @@ pub fn track_from_file(
         },
         album_artist,
     ))
+}
+
+/// The row to cache for a freshly parsed track, so a later scan of the same, unmodified file can
+/// skip [`track_from_file`] entirely.
+pub fn cache_row(modified_at: i64, track: &Track, album_artist: &str) -> CachedTrack {
+    CachedTrack {
+        modified_at,
+        name: track.name.clone(),
+        artist: track.artists.clone(),
+        album: track.album.clone(),
+        album_artist: album_artist.to_owned(),
+        cover: track.cover.clone(),
+        duration_ms: track.duration.as_millis().min(i64::MAX as u128) as i64,
+        track_number: track.track_number,
+        disc_number: track.disc_number,
+    }
+}
+
+/// Rebuilds a track straight from its cached fields, without reopening or re-decoding the file.
+pub fn track_from_cache(path: &Path, cached: &CachedTrack) -> (Track, String) {
+    let album_id =
+        (!cached.album.is_empty()).then(|| album_id(&cached.album_artist, &cached.album));
+
+    (
+        Track {
+            id: Some(track_id(path)),
+            name: cached.name.clone(),
+            playable: is_playable(path),
+            artists: cached.artist.clone(),
+            artist_refs: vec![artist_ref(&cached.artist)],
+            album: cached.album.clone(),
+            album_id,
+            cover: cached.cover.clone(),
+            duration: Duration::from_millis(cached.duration_ms.max(0) as u64),
+            added_at: modified_at(path),
+            added_by: None,
+            playcount: None,
+            popularity: 0,
+            explicit: false,
+            track_number: cached.track_number,
+            disc_number: cached.disc_number,
+            tags: Vec::new(),
+            languages: Vec::new(),
+            credits: Vec::new(),
+        },
+        cached.album_artist.clone(),
+    )
 }
 
 pub fn tag_year(path: &Path) -> Option<i32> {

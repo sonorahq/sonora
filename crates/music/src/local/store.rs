@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::{Context as _, Result};
 use rusqlite::{Connection, params};
 use storage::Database;
@@ -8,6 +10,21 @@ pub struct Stored {
     pub id: String,
     pub name: String,
     pub modified_at: i64,
+}
+
+/// A local track's tag-derived fields, cached so a rescan can skip reopening and re-decoding a
+/// file whose `modified_at` still matches.
+#[derive(Clone)]
+pub struct CachedTrack {
+    pub modified_at: i64,
+    pub name: String,
+    pub artist: String,
+    pub album: String,
+    pub album_artist: String,
+    pub cover: Option<String>,
+    pub duration_ms: i64,
+    pub track_number: u32,
+    pub disc_number: u32,
 }
 
 /// Which local favorites table a star lands in.
@@ -198,6 +215,77 @@ impl Store {
 
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .context("cannot read a local playlist")
+    }
+
+    /// Every cached local track, keyed by its absolute path, for a scan to check its files
+    /// against before reopening and re-decoding any of them.
+    pub fn cached_tracks(&self) -> Result<HashMap<String, CachedTrack>> {
+        let connection = self.open()?;
+        let mut query = connection
+            .prepare(
+                "SELECT path, modified_at, name, artist, album, album_artist, cover,
+                        duration_ms, track_number, disc_number
+                 FROM local_tracks",
+            )
+            .context("cannot read the local track cache")?;
+        let rows = query
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    CachedTrack {
+                        modified_at: row.get(1)?,
+                        name: row.get(2)?,
+                        artist: row.get(3)?,
+                        album: row.get(4)?,
+                        album_artist: row.get(5)?,
+                        cover: row.get(6)?,
+                        duration_ms: row.get(7)?,
+                        track_number: row.get(8)?,
+                        disc_number: row.get(9)?,
+                    },
+                ))
+            })
+            .context("cannot read the local track cache")?;
+
+        rows.collect::<rusqlite::Result<_>>()
+            .context("cannot read the local track cache")
+    }
+
+    /// Replaces the whole local track cache with `rows`: a file missing from `rows` falls out
+    /// of the cache, which is how a track removed from disk stops being remembered.
+    pub fn set_cached_tracks(&self, rows: &[(String, CachedTrack)]) -> Result<()> {
+        let mut connection = self.open()?;
+        let transaction = connection
+            .transaction()
+            .context("cannot start a local track cache update")?;
+        transaction
+            .execute("DELETE FROM local_tracks", [])
+            .context("cannot clear the local track cache")?;
+        for (path, cached) in rows {
+            transaction
+                .execute(
+                    "INSERT INTO local_tracks
+                         (path, modified_at, name, artist, album, album_artist, cover,
+                          duration_ms, track_number, disc_number)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![
+                        path,
+                        cached.modified_at,
+                        cached.name,
+                        cached.artist,
+                        cached.album,
+                        cached.album_artist,
+                        cached.cover,
+                        cached.duration_ms,
+                        cached.track_number,
+                        cached.disc_number,
+                    ],
+                )
+                .context("cannot write the local track cache")?;
+        }
+        transaction
+            .commit()
+            .context("cannot save the local track cache")
     }
 }
 
