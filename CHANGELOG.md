@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Seeking no longer occasionally restarts playback from 0:00. A decoder hiccup right after a seek
+  could be mistaken for the track ending, which under "loop current song" reloaded it from the
+  start instead of landing on the clicked position.
+
 ## [0.33.0] - 2026-09-09
 
 ### Added
