@@ -45,7 +45,9 @@ objc2-app-kit.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle.workspace = true
+resvg.workspace = true
 state = { workspace = true, features = ["bundled-sqlite"] }
+windows.workspace = true
 windows-sys.workspace = true
 
 [build-dependencies]

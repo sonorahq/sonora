@@ -7253,6 +7253,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "raw-window-handle",
  "reqwest 0.13.4",
+ "resvg",
  "router",
  "rustls 0.23.43",
  "sha2",
@@ -7262,6 +7263,7 @@ dependencies = [
  "tray-icon",
  "ui",
  "views",
+ "windows 0.62.2",
  "windows-sys 0.61.2",
  "winresource",
 ]

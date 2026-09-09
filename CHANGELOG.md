@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- On Windows, hovering Sonora's taskbar button puts previous, play/pause and next under the
+  thumbnail preview, so a track can be paused or skipped without raising the window. The glyphs
+  follow the icon pack chosen under Settings > Appearance.
+
 ## [0.33.0] - 2026-09-09
 
 ### Added

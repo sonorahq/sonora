@@ -7,6 +7,8 @@ mod http;
 mod logging;
 mod memory;
 mod single;
+#[cfg(windows)]
+mod thumbbar;
 mod tray;
 
 use std::process::exit;
@@ -225,7 +227,12 @@ fn open_window(cx: &mut App) {
         },
         |window, cx| {
             window.set_rem_size(cx.theme().font_size);
-            state::attach_remote(platform_handle(window), cx);
+            let handle = platform_handle(window);
+            state::attach_remote(handle, cx);
+            #[cfg(windows)]
+            if let Some(handle) = handle {
+                thumbbar::install(handle, cx);
+            }
             state::remember_window(window, cx);
             cx.new(|cx| Root::new(session, library, playback, queue, window, cx))
         },
