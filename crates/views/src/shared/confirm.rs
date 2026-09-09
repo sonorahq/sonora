@@ -219,10 +219,10 @@ impl Confirm {
                             });
                         }
                         Ok(Err(error)) => {
-                            log::error!("local: cannot delete track files: {error:#}");
+                            log::warn!("local: cannot delete track files: {error:#}");
                         }
                         Err(error) => {
-                            log::error!("local: deletion task failed: {error}");
+                            log::warn!("local: deletion task failed: {error}");
                         }
                     }
                 })
