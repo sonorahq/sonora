@@ -554,7 +554,7 @@ impl RenderOnce for Menu {
                         false => this,
                         true => this.child({
                             let flip_left = submenu.state.flipped(viewport_width);
-                            div()
+                            let popup = div()
                                 .absolute()
                                 .top(SUBMENU_TOP)
                                 .w(px(0.))
@@ -592,7 +592,14 @@ impl RenderOnce for Menu {
                                                 })
                                                 .child(submenu.menu.inline().relative()),
                                         ),
-                                )
+                                );
+                            // A plain nested child still paints in document order, so a later
+                            // sibling row would be drawn over this popup. Deferring it, one
+                            // priority above the parent, keeps it above every row regardless of
+                            // which one it hangs off.
+                            deferred(popup)
+                                .with_priority(priority + 1)
+                                .into_any_element()
                         }),
                     }
                 })

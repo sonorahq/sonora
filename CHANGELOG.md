@@ -12,6 +12,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Sonora speaks Turkish. Pick Türkçe under Settings > General > Language, or leave the language
   on System and it follows a Turkish desktop on its own.
 
+### Fixed
+
+- A submenu (Add to playlist, Go to artist) no longer gets drawn over by the menu rows below it.
+
 ## [0.33.0] - 2026-09-09
 
 ### Added
