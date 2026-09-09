@@ -29,8 +29,11 @@ use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
 };
 use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
+use windows::Win32::UI::Controls::{
+    HIMAGELIST, ILC_COLOR32, ImageList_Create, ImageList_Destroy, ImageList_ReplaceIcon,
+};
 use windows::Win32::UI::Shell::{
-    DefSubclassProc, ITaskbarList3, RemoveWindowSubclass, SetWindowSubclass, THB_FLAGS, THB_ICON,
+    DefSubclassProc, ITaskbarList3, RemoveWindowSubclass, SetWindowSubclass, THB_BITMAP, THB_FLAGS,
     THB_TOOLTIP, THBF_DISABLED, THBF_ENABLED, THUMBBUTTON, TaskbarList,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -209,7 +212,7 @@ impl Bar {
             taskbar,
             hwnd,
             buttons: buttons(),
-            icons: Vec::new(),
+            images: None,
             look: None,
             created,
             added: false,
@@ -226,6 +229,7 @@ impl Bar {
             return None;
         }
 
+        log::debug!("thumbbar: watching {hwnd:?} for taskbar message {created}");
         Some(Self { shared, hwnd })
     }
 
@@ -252,7 +256,7 @@ struct Shared {
     taskbar: ITaskbarList3,
     hwnd: HWND,
     buttons: [THUMBBUTTON; 3],
-    icons: Vec<HICON>,
+    images: Option<HIMAGELIST>,
     look: Option<Look>,
     created: u32,
     added: bool,
@@ -280,9 +284,7 @@ impl Shared {
 
         for (at, button) in self.buttons.iter_mut().enumerate() {
             button.dwFlags = flags;
-            // A missing glyph leaves a null icon, which draws an empty button
-            // rather than losing the command.
-            button.hIcon = self.icons.get(glyphs[at]).copied().unwrap_or_default();
+            button.iBitmap = glyphs[at] as u32;
             tip(button, tips[at]);
         }
     }
@@ -296,33 +298,59 @@ impl Shared {
             true => unsafe { self.taskbar.ThumbBarUpdateButtons(self.hwnd, &self.buttons) },
         };
         match outcome {
-            Ok(()) => self.added = true,
+            Ok(()) if self.added => {}
+            Ok(()) => {
+                log::debug!("thumbbar: buttons are on the taskbar");
+                self.added = true;
+            }
             Err(error) if self.added => {
                 log::warn!("thumbbar: cannot update the taskbar buttons: {error:#}");
             }
-            Err(_) => {}
+            Err(error) => {
+                log::debug!("thumbbar: the taskbar button is not ready yet: {error:#}");
+            }
         }
     }
 
-    /// Redraws the glyphs at `look` and destroys the ones they replace.
+    /// Redraws the glyphs at `look` into a fresh image list and hands it to the
+    /// shell.
+    ///
+    /// The buttons name their glyph by index rather than carrying an `HICON`,
+    /// because a realised thumbnail toolbar keeps the icon handle it was first
+    /// given: swapping `hIcon` under it leaves the primary taskbar drawing the
+    /// old glyph while a second monitor, whose flyout is built fresh, shows the
+    /// new one. An index into the image list is the part Windows does re-read.
     fn redraw(&mut self, look: Look) {
         let drawn: Vec<HICON> = GLYPHS.iter().filter_map(|name| glyph(name, look)).collect();
-        if drawn.len() != GLYPHS.len() {
+        let full = drawn.len() == GLYPHS.len();
+        let images = match full {
+            true => list(&drawn, look.size),
+            false => None,
+        };
+        for icon in drawn {
+            let _ = unsafe { DestroyIcon(icon) };
+        }
+
+        let Some(images) = images else {
             log::warn!("thumbbar: cannot draw the taskbar button glyphs");
-            drawn.iter().for_each(|icon| unsafe {
-                let _ = DestroyIcon(*icon);
-            });
+            return;
+        };
+        if let Err(error) = unsafe { self.taskbar.ThumbBarSetImageList(self.hwnd, images) } {
+            log::warn!("thumbbar: cannot hand over the button glyphs: {error:#}");
+            let _ = unsafe { ImageList_Destroy(Some(images)) };
             return;
         }
 
+        log::debug!("thumbbar: drew {} glyphs at {}px", GLYPHS.len(), look.size);
+        // Only now that the shell holds the new list is the old one free.
         self.clear();
-        self.icons = drawn;
+        self.images = Some(images);
         self.look = Some(look);
     }
 
     fn clear(&mut self) {
-        for icon in self.icons.drain(..) {
-            let _ = unsafe { DestroyIcon(icon) };
+        if let Some(images) = self.images.take() {
+            let _ = unsafe { ImageList_Destroy(Some(images)) };
         }
         self.look = None;
     }
@@ -343,6 +371,7 @@ unsafe extern "system" fn subclass(
     if let Ok(mut shared) = shared.try_borrow_mut() {
         if message == shared.created {
             // The taskbar button has just appeared, so the add can land now.
+            log::debug!("thumbbar: the shell created the taskbar button");
             shared.added = false;
             shared.push();
         } else if message == WM_COMMAND && (wparam.0 as u32 >> 16) == THBN_CLICKED {
@@ -365,7 +394,7 @@ unsafe extern "system" fn subclass(
 /// The three buttons, with the parts that never change already filled in.
 fn buttons() -> [THUMBBUTTON; 3] {
     [PREVIOUS, TOGGLE, NEXT].map(|id| THUMBBUTTON {
-        dwMask: THB_ICON | THB_TOOLTIP | THB_FLAGS,
+        dwMask: THB_BITMAP | THB_TOOLTIP | THB_FLAGS,
         iId: id,
         dwFlags: THBF_ENABLED,
         ..Default::default()
@@ -410,6 +439,22 @@ fn glyph(name: &str, look: Look) -> Option<HICON> {
     );
 
     icon(pixmap.data(), size)
+}
+
+/// Gathers the glyphs into an image list, which is the handle the toolbar reads
+/// its button images from. The icons stay the caller's to destroy.
+fn list(icons: &[HICON], size: i32) -> Option<HIMAGELIST> {
+    let images = unsafe { ImageList_Create(size, size, ILC_COLOR32, icons.len() as i32, 0) };
+    if images.0 == 0 {
+        return None;
+    }
+    for icon in icons {
+        if unsafe { ImageList_ReplaceIcon(images, -1, *icon) } < 0 {
+            let _ = unsafe { ImageList_Destroy(Some(images)) };
+            return None;
+        }
+    }
+    Some(images)
 }
 
 /// Turns premultiplied RGBA into an `HICON`. Windows wants the channels the
