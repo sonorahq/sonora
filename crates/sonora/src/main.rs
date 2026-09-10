@@ -23,6 +23,13 @@ use ui::ActiveTheme as _;
 use ui::ThemeKind;
 use views::Root;
 
+#[cfg(not(target_env = "msvc"))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: Jemalloc = Jemalloc;
+
 const LEAST_SIZE: Size<Pixels> = size(px(480.), px(400.));
 const FIRST_SIZE: Size<Pixels> = size(px(920.), px(640.));
 

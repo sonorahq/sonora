@@ -58,6 +58,8 @@ ksni = { version = "0.3", default-features = false, features = ["async-io", "blo
 libc = "0.2"
 lofty = "0.25"
 log = "0.4"
+tikv-jemallocator = { version = "0.7.0", features = ["background_threads"] }
+tikv-jemalloc-sys = { version = "0.7.0", features = ["background_threads"] }
 moka = { version = "0.12.15", features = ["future", "sync"] }
 oauth2 = "5.0"
 open = "5.4"

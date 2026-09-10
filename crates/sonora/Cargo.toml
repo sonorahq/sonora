@@ -36,6 +36,10 @@ image.workspace = true
 libc.workspace = true
 ksni.workspace = true
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator.workspace = true
+tikv-jemalloc-sys.workspace = true
+
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
 tray-icon.workspace = true
 

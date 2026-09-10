@@ -164,12 +164,20 @@ fn mib(bytes: usize) -> String {
     format!("{:.1} MiB", bytes as f64 / (1024. * 1024.))
 }
 
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[cfg(not(target_env = "msvc"))]
 fn release() {
-    unsafe { libc::malloc_trim(0) };
+    unsafe {
+        tikv_jemalloc_sys::mallctl(
+            c"arena.4096.purge".as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+        );
+    }
 }
 
-#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+#[cfg(target_env = "msvc")]
 fn release() {}
 
 #[cfg(target_os = "linux")]
