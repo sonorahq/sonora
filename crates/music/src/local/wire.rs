@@ -49,6 +49,8 @@ const PLAYABLE_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "m4a", "mp4", "aac", "ogg", "oga", "wav", "opus", "webm", "mka", "wv", "ape",
 ];
 
+const ARTIST_SEPARATORS: &[&str] = &[",", ";", " ft. ", " feat ", " feat. ", " featuring "];
+
 fn is_playable(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
@@ -116,11 +118,41 @@ pub fn artist_name_from_id(id: &str) -> Option<&str> {
     id.strip_prefix(LOCAL_ARTIST_PREFIX)
 }
 
-fn artist_ref(name: &str) -> ArtistRef {
-    ArtistRef {
-        name: name.to_owned(),
-        id: Some(artist_id(name)),
+fn artist_refs(artist: &str) -> Vec<ArtistRef> {
+    split_artists(artist)
+        .iter()
+        .map(|name| ArtistRef {
+            name: name.to_owned(),
+            id: Some(artist_id(name)),
+        })
+        .collect()
+}
+
+fn split_artists(value: &str) -> Vec<String> {
+    let lower = value.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        match ARTIST_SEPARATORS
+            .iter()
+            .find(|sep| bytes[i..].starts_with(sep.as_bytes()))
+        {
+            Some(sep) => {
+                parts.push(value[start..i].trim().to_owned());
+                i += sep.len();
+                start = i;
+            }
+            None => i += 1,
+        }
     }
+    parts.push(value[start..].trim().to_owned());
+
+    parts.retain(|p| !p.is_empty());
+    parts
 }
 
 fn clean(value: Option<std::borrow::Cow<'_, str>>) -> Option<String> {
@@ -419,7 +451,7 @@ pub fn track_from_file(
             name,
             playable: is_playable(path),
             artists: artist.clone(),
-            artist_refs: vec![artist_ref(&artist)],
+            artist_refs: artist_refs(&artist),
             album: album_name,
             album_id,
             cover,
@@ -461,7 +493,7 @@ pub fn album_from_tracks(name: &str, artist: &str, tracks: &[Track], year: i32) 
         id: album_id(artist, name),
         name: name.to_owned(),
         artists: artist.to_owned(),
-        artist_refs: vec![artist_ref(artist)],
+        artist_refs: artist_refs(artist),
         cover: cover.clone(),
         cover_large: cover,
         release_type: ReleaseType::Album,

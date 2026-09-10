@@ -95,32 +95,45 @@ impl LocalClient {
         tracks
     }
 
-    /// Every artist in the scan, one per distinct artist string, sorted by name.
+    /// Every artist in the scan, one or more per track, sorted by name.
     fn artists(&self) -> Vec<SavedArtist> {
         let scanned = self.scanned.read().unwrap();
         let mut artists: Vec<SavedArtist> = Vec::new();
         for track in &scanned.tracks {
-            if let Some(known) = artists.iter_mut().find(|known| known.name == track.artists) {
-                known.added_at = known.added_at.max(track.added_at);
-                continue;
+            for artist_ref in &track.artist_refs {
+                if let Some(known) = artists
+                    .iter_mut()
+                    .find(|known| known.name == artist_ref.name)
+                {
+                    known.added_at = known.added_at.max(track.added_at);
+                    continue;
+                }
+                artists.push(SavedArtist {
+                    id: artist_ref
+                        .id
+                        .clone()
+                        .unwrap_or_else(|| wire::artist_id(&artist_ref.name)),
+                    name: artist_ref.name.clone(),
+                    cover: scanned
+                        .portraits
+                        .get(&artist_ref.name)
+                        .cloned()
+                        .or_else(|| {
+                            scanned
+                                .albums
+                                .iter()
+                                .find(|album| {
+                                    album
+                                        .artist_refs
+                                        .iter()
+                                        .any(|album_ref| album_ref.name == artist_ref.name)
+                                })
+                                .and_then(|album| album.cover.clone())
+                        })
+                        .or_else(|| track.cover.clone()),
+                    added_at: track.added_at,
+                });
             }
-            artists.push(SavedArtist {
-                id: wire::artist_id(&track.artists),
-                name: track.artists.clone(),
-                cover: scanned
-                    .portraits
-                    .get(&track.artists)
-                    .cloned()
-                    .or_else(|| {
-                        scanned
-                            .albums
-                            .iter()
-                            .find(|album| album.artists == track.artists)
-                            .and_then(|album| album.cover.clone())
-                    })
-                    .or_else(|| track.cover.clone()),
-                added_at: track.added_at,
-            });
         }
         artists.sort_by_key(|artist| artist.name.to_lowercase());
         artists
@@ -184,13 +197,23 @@ impl MusicApi for LocalClient {
             top_tracks: scanned
                 .tracks
                 .iter()
-                .filter(|track| track.artists == name)
+                .filter(|track| {
+                    track
+                        .artist_refs
+                        .iter()
+                        .any(|artist_ref| artist_ref.name == name)
+                })
                 .cloned()
                 .collect(),
             albums: scanned
                 .albums
                 .iter()
-                .filter(|album| album.artists == name)
+                .filter(|album| {
+                    album
+                        .artist_refs
+                        .iter()
+                        .any(|artist_ref| artist_ref.name == name)
+                })
                 .cloned()
                 .collect(),
         })

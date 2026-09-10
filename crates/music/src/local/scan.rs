@@ -112,9 +112,11 @@ fn album_year(indices: &[usize], parsed: &[(Track, String)]) -> i32 {
 fn collect_portraits(roots: &[PathBuf], parsed: &[(Track, String)]) -> HashMap<String, String> {
     let mut by_normalized: HashMap<String, String> = HashMap::new();
     for (track, _) in parsed {
-        by_normalized
-            .entry(wire::normalize(&track.artists))
-            .or_insert_with(|| track.artists.clone());
+        for artist_ref in &track.artist_refs {
+            by_normalized
+                .entry(wire::normalize(&artist_ref.name))
+                .or_insert_with(|| artist_ref.name.clone());
+        }
     }
 
     let mut dirs = Vec::new();
