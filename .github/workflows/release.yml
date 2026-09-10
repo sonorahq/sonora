@@ -26,16 +26,38 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
+            rustflags: >-
+              -C link-arg=-fuse-ld=mold
+              -C target-cpu=x86-64-v2
+              -C llvm-args=--enable-no-infs-fp-math
+              -C llvm-args=--enable-no-nans-fp-math
+              -C llvm-args=--enable-no-signed-zeros-fp-math
+              -C llvm-args=--enable-no-trapping-fp-math
+              -C llvm-args=-fp-contract=fast
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-22.04-arm
           - target: aarch64-apple-darwin
             os: macos-15
           - target: x86_64-apple-darwin
             os: macos-15-intel
+            rustflags: >-
+              -C target-cpu=x86-64-v2
+              -C llvm-args=--enable-no-infs-fp-math
+              -C llvm-args=--enable-no-nans-fp-math
+              -C llvm-args=--enable-no-signed-zeros-fp-math
+              -C llvm-args=--enable-no-trapping-fp-math
+              -C llvm-args=-fp-contract=fast
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             arch: x64compatible
             setup: Sonora-Setup
+            rustflags: >-
+              -C target-cpu=x86-64-v2
+              -C llvm-args=--enable-no-infs-fp-math
+              -C llvm-args=--enable-no-nans-fp-math
+              -C llvm-args=--enable-no-signed-zeros-fp-math
+              -C llvm-args=--enable-no-trapping-fp-math
+              -C llvm-args=-fp-contract=fast
           - target: aarch64-pc-windows-msvc
             os: windows-11-arm
             arch: arm64
@@ -75,6 +97,8 @@ jobs:
           cache-targets: false
           cache-on-failure: true
       - name: build
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
         run: cargo build --release --locked --package sonora --target ${{ matrix.target }}
 
       - name: sccache stats
@@ -298,6 +322,12 @@ jobs:
         run: |
           chmod +x ./flatpak/generate-sources.sh
           ./flatpak/generate-sources.sh
+
+      - name: use generic x86-64 release flags
+        if: matrix.variant.arch == 'x86_64'
+#        run: sed -i 's/target-cpu=native/target-cpu=x86-64-v2/' .cargo/config.toml
+        run: |
+          perl -0pi -e 's/\n\s*"-C",\n\s*"target-cpu=native",//' .cargo/config.toml
 
       - name: Build Flatpak Bundle
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
