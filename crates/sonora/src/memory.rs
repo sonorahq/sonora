@@ -9,14 +9,19 @@ pub fn watch(cx: &mut App) {
     cx.spawn(async move |cx| {
         loop {
             cx.background_executor().timer(INTERVAL).await;
-            if log::log_enabled!(log::Level::Debug) {
-                let probed = cx
-                    .background_executor()
-                    .spawn(async { (footprint().unwrap_or_default(), resident()) })
-                    .await;
+            let probed = cx
+                .background_executor()
+                .spawn(async move {
+                    let probed = log::log_enabled!(log::Level::Debug)
+                        .then(|| (footprint().unwrap_or_default(), resident()));
+                    release();
+                    probed
+                })
+                .await;
+
+            if let Some(probed) = probed {
                 cx.update(|cx| report(probed, cx));
             }
-            cx.background_executor().spawn(async { release() }).detach();
         }
     })
     .detach();
