@@ -1,5 +1,20 @@
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+rustflags = [
+  "-C",
+  "link-arg=-fuse-ld=mold",
+  "-C",
+  "target-cpu=native",
+  "-C",
+  "llvm-args=--enable-no-infs-fp-math",
+  "-C",
+  "llvm-args=--enable-no-nans-fp-math",
+  "-C",
+  "llvm-args=--enable-no-signed-zeros-fp-math",
+  "-C",
+  "llvm-args=--enable-no-trapping-fp-math",
+  "-C",
+  "llvm-args=-fp-contract=fast",
+]
 
 [alias]
 prof = "run --release --package sonora --features profiler"
