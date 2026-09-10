@@ -134,3 +134,6 @@ opt-level = 2
 [profile.dev.package."*"]
 debug = false
 opt-level = 2
+
+[profile.release]
+lto = true
