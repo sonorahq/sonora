@@ -261,14 +261,19 @@ impl Store {
         transaction
             .execute("DELETE FROM local_tracks", [])
             .context("cannot clear the local track cache")?;
-        for (path, cached) in rows {
-            transaction
-                .execute(
+        {
+            // One statement reused for every row, rather than reparsed per insert.
+            let mut insert = transaction
+                .prepare(
                     "INSERT INTO local_tracks
                          (path, modified_at, name, artist, album, album_artist, cover,
                           duration_ms, track_number, disc_number)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    params![
+                )
+                .context("cannot prepare the local track cache write")?;
+            for (path, cached) in rows {
+                insert
+                    .execute(params![
                         path,
                         cached.modified_at,
                         cached.name,
@@ -279,9 +284,9 @@ impl Store {
                         cached.duration_ms,
                         cached.track_number,
                         cached.disc_number,
-                    ],
-                )
-                .context("cannot write the local track cache")?;
+                    ])
+                    .context("cannot write the local track cache")?;
+            }
         }
         transaction
             .commit()
