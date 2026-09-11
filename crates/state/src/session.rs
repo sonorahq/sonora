@@ -618,6 +618,7 @@ impl Session {
                 join(io.spawn(async move { Ok(provider.restore_cached(&folders)) })).await
             };
             if let Ok(Some(session)) = quick {
+                log::debug!("session: showing the local library from cache while it's verified");
                 this.update(cx, |this, cx| this.local_signed_in(session, cx))
                     .ok();
             }
@@ -629,7 +630,10 @@ impl Session {
             )
             .await;
             this.update(cx, |this, cx| match signed_in {
-                Ok(session) => this.local_signed_in(session, cx),
+                Ok(session) => {
+                    log::debug!("session: local library verified against disk");
+                    this.local_signed_in(session, cx);
+                }
                 Err(error) => log::warn!("session: cannot load local music: {error:#}"),
             })
             .ok();
