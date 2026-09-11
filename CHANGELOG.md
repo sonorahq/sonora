@@ -57,6 +57,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The song count on an album or playlist page follows a language change. It used to keep the
   language the page was first opened in.
 
+### Changed
+
+- Local Music remembers what it read from each file's tags, so reopening the app rescans only
+  what changed on disk instead of reopening and re-decoding every track again from scratch.
+- Local Music shows what was there last time immediately on startup, and updates it once the
+  folders are checked against disk in the background, instead of waiting on that check first.
+
 ## [0.33.0] - 2026-09-09
 
 ### Added

@@ -13,6 +13,7 @@ use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use storage::Database;
 
+use self::store::Store;
 use crate::{
     InputSource, MusicApi, MusicProvider, PlaybackFactory, PromptSink, ProviderSession, Shape,
     SignIn, UserProfile,
@@ -33,15 +34,28 @@ impl LocalProvider {
 
     async fn scan_paths(&self, paths: Vec<PathBuf>) -> Result<ProviderSession> {
         let cache_dir = self.cache_dir.clone();
-        let scanned = tokio::task::spawn_blocking(move || scan::scan(&paths, &cache_dir))
+        let cache = Store::new(self.database.clone());
+        let scanned = tokio::task::spawn_blocking(move || scan::scan(&paths, &cache_dir, &cache))
             .await
             .context("local scan task panicked")?;
+        Ok(self.session_from(scanned))
+    }
 
+    /// A session built purely from what was cached for `paths` last time, with no filesystem
+    /// access at all — near-instant, though possibly stale until [`Self::scan_paths`]
+    /// reconciles it. `None` if nothing has been cached for these paths yet.
+    fn restore_paths(&self, paths: &[PathBuf]) -> Option<ProviderSession> {
+        let cache = Store::new(self.database.clone());
+        let scanned = scan::scan_cached(paths, &cache)?;
+        Some(self.session_from(scanned))
+    }
+
+    fn session_from(&self, scanned: scan::Scanned) -> ProviderSession {
         let api: Arc<dyn MusicApi> =
             Arc::new(client::LocalClient::new(scanned, self.database.clone()));
         let playback: Arc<dyn PlaybackFactory> = Arc::new(playback::Factory);
 
-        Ok(ProviderSession {
+        ProviderSession {
             profile: UserProfile {
                 id: "local".to_owned(),
                 display_name: "Local Files".to_owned(),
@@ -51,7 +65,7 @@ impl LocalProvider {
             shape: Shape::Catalog,
             authenticated: false,
             playcounts: false,
-        })
+        }
     }
 }
 
@@ -79,6 +93,10 @@ impl MusicProvider for LocalProvider {
 
     async fn restore(&self) -> Result<Option<ProviderSession>> {
         Ok(None)
+    }
+
+    fn restore_cached(&self, paths: &[PathBuf]) -> Option<ProviderSession> {
+        self.restore_paths(paths)
     }
 
     async fn sign_in(

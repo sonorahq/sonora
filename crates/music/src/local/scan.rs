@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{Album, Track};
 
+use super::store::{CachedTrack, Store};
 use super::wire;
 
 const SEPARATORS: [char; 8] = ['-', '–', '—', '.', '_', '·', ':', ' '];
@@ -21,7 +22,10 @@ pub struct Scanned {
 /// Scans every root and merges the results into one library: tracks are collected from all
 /// roots before albums/artists are grouped, so the same artist or album spread across more
 /// than one folder still merges into a single entry, seamlessly.
-pub fn scan(roots: &[PathBuf], cache_dir: &Path) -> Scanned {
+///
+/// A file whose `modified_at` still matches `cache` is rebuilt from its cached fields instead of
+/// being reopened and re-decoded, which is what keeps a rescan of an unchanged library fast.
+pub fn scan(roots: &[PathBuf], cache_dir: &Path, cache: &Store) -> Scanned {
     let mut scanned = Scanned::default();
 
     let mut files = Vec::new();
@@ -31,9 +35,23 @@ pub fn scan(roots: &[PathBuf], cache_dir: &Path) -> Scanned {
         }
     }
 
+    let cached = cache.cached_tracks().unwrap_or_default();
+    let mut current: Vec<(String, CachedTrack)> = Vec::new();
+
     let parsed: Vec<(Track, String)> = files
         .into_iter()
         .filter_map(|path| {
+            let key = path.to_string_lossy().into_owned();
+            let modified_at = wire::modified_at(&path);
+
+            if let Some(modified_at) = modified_at
+                && let Some(hit) = cached.get(&key)
+                && hit.modified_at == modified_at
+            {
+                current.push((key, hit.clone()));
+                return Some(wire::track_from_cache(&path, hit));
+            }
+
             let artist_hint = path
                 .parent()
                 .and_then(Path::parent)
@@ -44,19 +62,50 @@ pub fn scan(roots: &[PathBuf], cache_dir: &Path) -> Scanned {
                 .unwrap_or_default();
             let album_hint = (!album_hint.is_empty()).then_some(album_hint);
 
-            wire::track_from_file(
+            let parsed = wire::track_from_file(
                 &path,
                 artist_hint.as_deref(),
                 album_hint.as_deref(),
                 cache_dir,
-            )
+            )?;
+            if let Some(modified_at) = modified_at {
+                current.push((key, wire::cache_row(modified_at, &parsed.0, &parsed.1)));
+            }
+            Some(parsed)
         })
         .collect();
+
+    if let Err(error) = cache.set_cached_tracks(&current) {
+        log::warn!("local: cannot save the track cache: {error:#}");
+    }
 
     scanned.portraits = collect_portraits(roots, &parsed);
     scanned.albums = group_albums(&parsed);
     scanned.tracks = parsed.into_iter().map(|(track, _)| track).collect();
     scanned
+}
+
+/// Rebuilds the library purely from what [`scan`] cached last time, under any of `roots` — no
+/// filesystem access at all, so it's near-instant but may be stale until a real scan reconciles
+/// it. `None` if nothing has been cached for these roots yet. Artist portraits are left empty:
+/// finding them means walking every folder, which defeats the point of a fast path.
+pub fn scan_cached(roots: &[PathBuf], cache: &Store) -> Option<Scanned> {
+    let cached = cache.cached_tracks().ok()?;
+    let parsed: Vec<(Track, String)> = cached
+        .iter()
+        .filter(|(path, _)| roots.iter().any(|root| Path::new(path).starts_with(root)))
+        .map(|(path, cached)| wire::track_from_cache(Path::new(path), cached))
+        .collect();
+    if parsed.is_empty() {
+        return None;
+    }
+
+    let mut scanned = Scanned {
+        albums: group_albums(&parsed),
+        ..Scanned::default()
+    };
+    scanned.tracks = parsed.into_iter().map(|(track, _)| track).collect();
+    Some(scanned)
 }
 
 fn group_albums(parsed: &[(Track, String)]) -> Vec<Album> {
@@ -232,9 +281,15 @@ mod tests {
     use super::*;
     use std::fs;
 
+    use storage::Database;
+
     fn touch(path: &Path) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, []).unwrap();
+    }
+
+    fn cache(dir: &Path) -> Store {
+        Store::new(Database::at(dir.join("cache.sqlite")))
     }
 
     #[test]
@@ -242,7 +297,7 @@ mod tests {
         let dir = std::env::temp_dir().join("sonora-scan-test-ignore");
         let _ = fs::remove_dir_all(&dir);
         touch(&dir.join("notes.txt"));
-        let scanned = scan(&[dir.clone()], &dir);
+        let scanned = scan(&[dir.clone()], &dir, &cache(&dir));
         assert!(scanned.tracks.is_empty());
         fs::remove_dir_all(&dir).ok();
     }
@@ -251,7 +306,7 @@ mod tests {
     fn empty_root_yields_nothing() {
         let dir = std::env::temp_dir().join("sonora-scan-test-missing");
         let _ = fs::remove_dir_all(&dir);
-        let scanned = scan(&[dir.clone()], &dir);
+        let scanned = scan(&[dir.clone()], &dir, &cache(&dir));
         assert!(scanned.tracks.is_empty());
         assert!(scanned.albums.is_empty());
     }

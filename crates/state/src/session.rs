@@ -606,11 +606,43 @@ impl Session {
         cx.emit(SessionEvent::SignedOut);
     }
 
+    /// Shows the local library from what was cached last time, if anything, then verifies it
+    /// against disk in the background — a rescan of an unchanged library is cheap, but still
+    /// has to walk the filesystem, so the cached session covers the gap until it lands.
     fn restore_local(&mut self, cx: &mut Context<Self>) {
         if self.local_folders.is_empty() {
             return;
         }
-        self.rescan_local(cx);
+        let provider = self.local_provider.clone();
+        let folders = self.local_folders.clone();
+        let io = self.io.clone();
+        self.local_task = Some(cx.spawn(async move |this, cx| {
+            let quick = {
+                let provider = provider.clone();
+                let folders = folders.clone();
+                join(io.spawn(async move { Ok(provider.restore_cached(&folders)) })).await
+            };
+            if let Ok(Some(session)) = quick {
+                log::debug!("session: showing the local library from cache while it's verified");
+                this.update(cx, |this, cx| this.local_signed_in(session, cx))
+                    .ok();
+            }
+
+            let prompt: PromptSink = Arc::new(|_| {});
+            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            let signed_in = join(
+                io.spawn(async move { provider.sign_in(SignIn::Path(folders), prompt, rx).await }),
+            )
+            .await;
+            this.update(cx, |this, cx| match signed_in {
+                Ok(session) => {
+                    log::debug!("session: local library verified against disk");
+                    this.local_signed_in(session, cx);
+                }
+                Err(error) => log::warn!("session: cannot load local music: {error:#}"),
+            })
+            .ok();
+        }));
     }
 
     /// Adds a folder to the local library, then rescans every configured folder together so

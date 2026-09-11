@@ -56,6 +56,18 @@ const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS favorite_artists (
         artist_id TEXT PRIMARY KEY,
         added_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS local_tracks (
+        path TEXT PRIMARY KEY,
+        modified_at INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        artist TEXT NOT NULL,
+        album TEXT NOT NULL,
+        album_artist TEXT NOT NULL,
+        cover TEXT,
+        duration_ms INTEGER NOT NULL,
+        track_number INTEGER NOT NULL,
+        disc_number INTEGER NOT NULL
     );";
 
 #[derive(Clone)]
