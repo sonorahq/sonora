@@ -1892,9 +1892,14 @@ impl Playback {
                 }
             }
             BackendEvent::Ended { .. } => {
+                // A zero duration means the engine never reported a length, not that the track
+                // is zero seconds long — treat it as "not confirmed near the end" rather than
+                // letting the subtraction saturate to zero and silently skip the guard for
+                // exactly the files most likely to need it.
                 if let Some(target) = interrupted_seek
                     && let Some(track) = self.track.clone()
-                    && track.duration.saturating_sub(target) >= END_GRACE
+                    && (track.duration.is_zero()
+                        || track.duration.saturating_sub(target) >= END_GRACE)
                 {
                     log::warn!(
                         "playback: a seek to {target:?} surfaced as an end-of-track well before \
