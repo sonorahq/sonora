@@ -448,7 +448,7 @@ impl ItemMenu {
                     .collect(),
                 [next, queue].into_iter().chain(radio).collect(),
                 album.into_iter().chain(artist).collect(),
-                details.into_iter().chain(edit).chain(copy).collect(),
+                details.into_iter().chain(edit).chain(copy).chain(delete_files).collect(),
                 pinnable
                     .map(|pin| pin_action(&pin, cx))
                     .into_iter()
