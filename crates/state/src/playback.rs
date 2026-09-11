@@ -88,6 +88,9 @@ const STALE_POSITIONS: u8 = 2;
 /// settles on the packet holding the target, a few tens of milliseconds early at most; showing
 /// the target keeps a lyric clicked at its first word on that line, not the one before.
 const SEEK_SNAP: Duration = Duration::from_millis(100);
+/// How close a seek target may sit to a track's end for a following `Ended` to still count as
+/// that track genuinely finishing, rather than the seek itself surfacing as a false end.
+const END_GRACE: Duration = Duration::from_secs(2);
 const PRELOAD_BEFORE_END: Duration = Duration::from_secs(10);
 const SKIP_DEBOUNCE: Duration = Duration::from_millis(250);
 const RESTART_WINDOW: Duration = Duration::from_secs(3);
@@ -1797,6 +1800,10 @@ impl Playback {
         {
             return;
         }
+        // A seek can surface as a spurious `Ended` on some engines: a decode hiccup right after
+        // landing is indistinguishable, by the time it reaches us, from the track truly
+        // finishing. Remember the pending target so the `Ended` arm below can tell the two apart.
+        let interrupted_seek = self.seek_in_flight;
         match event {
             // A Loading with the current id is the engine restarting the load at a seek
             // target, so a seek queued behind it must survive.
@@ -1885,6 +1892,22 @@ impl Playback {
                 }
             }
             BackendEvent::Ended { .. } => {
+                // A zero duration means the engine never reported a length, not that the track
+                // is zero seconds long — treat it as "not confirmed near the end" rather than
+                // letting the subtraction saturate to zero and silently skip the guard for
+                // exactly the files most likely to need it.
+                if let Some(target) = interrupted_seek
+                    && let Some(track) = self.track.clone()
+                    && (track.duration.is_zero()
+                        || track.duration.saturating_sub(target) >= END_GRACE)
+                {
+                    log::warn!(
+                        "playback: a seek to {target:?} surfaced as an end-of-track well before \
+                         the track ended, reloading instead of restarting"
+                    );
+                    self.load_from(&track, target, Start::Segue, cx);
+                    return;
+                }
                 let ended = self.track.take();
                 self.state = PlaybackState::Idle;
                 self.position = Duration::ZERO;

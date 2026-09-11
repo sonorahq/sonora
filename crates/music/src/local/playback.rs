@@ -283,6 +283,10 @@ async fn engine_loop(
                             if let Err(error) = sink.try_seek(position) {
                                 log::warn!("playback: cannot seek: {error}");
                             }
+                            // A seek can shift the sink's own queue bookkeeping the same way a
+                            // load does, so the next tick must compare against a length taken
+                            // after it lands, not the stale one from before the seek.
+                            prev_len = sink.len();
                             events.send(PlaybackEvent::Seeked {
                                 id: Some(slot.id.clone()),
                                 at: sink.get_pos(),
