@@ -369,6 +369,16 @@ pub trait MusicProvider: Send + Sync {
         None
     }
     async fn restore(&self) -> Result<Option<ProviderSession>>;
+
+    /// A near-instant session built purely from what was cached last time for a provider whose
+    /// library lives at `paths`, with no network or filesystem access — so it may be stale
+    /// until a real [`Self::restore`]/[`Self::sign_in`] reconciles it. Local Files is the only
+    /// provider that overrides this; every other provider restores from stored credentials
+    /// instead, which [`Self::restore`] already covers.
+    fn restore_cached(&self, _paths: &[PathBuf]) -> Option<ProviderSession> {
+        None
+    }
+
     async fn sign_in(
         &self,
         method: SignIn,

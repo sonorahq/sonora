@@ -85,6 +85,29 @@ pub fn scan(roots: &[PathBuf], cache_dir: &Path, cache: &Store) -> Scanned {
     scanned
 }
 
+/// Rebuilds the library purely from what [`scan`] cached last time, under any of `roots` — no
+/// filesystem access at all, so it's near-instant but may be stale until a real scan reconciles
+/// it. `None` if nothing has been cached for these roots yet. Artist portraits are left empty:
+/// finding them means walking every folder, which defeats the point of a fast path.
+pub fn scan_cached(roots: &[PathBuf], cache: &Store) -> Option<Scanned> {
+    let cached = cache.cached_tracks().ok()?;
+    let parsed: Vec<(Track, String)> = cached
+        .iter()
+        .filter(|(path, _)| roots.iter().any(|root| Path::new(path).starts_with(root)))
+        .map(|(path, cached)| wire::track_from_cache(Path::new(path), cached))
+        .collect();
+    if parsed.is_empty() {
+        return None;
+    }
+
+    let mut scanned = Scanned {
+        albums: group_albums(&parsed),
+        ..Scanned::default()
+    };
+    scanned.tracks = parsed.into_iter().map(|(track, _)| track).collect();
+    Some(scanned)
+}
+
 fn group_albums(parsed: &[(Track, String)]) -> Vec<Album> {
     let mut order: Vec<String> = Vec::new();
     let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
