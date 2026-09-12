@@ -1226,11 +1226,20 @@ impl Library {
                     .filter_map(|&at| ready.playlists.get(at)?.cover.clone())
                     .take(mosaic::TILES)
                     .collect();
-                (covers.len() == mosaic::TILES).then(|| (id.clone(), inside.len() as u32, covers))
+                (!covers.is_empty()).then(|| (id.clone(), inside.len() as u32, covers))
             })
             .collect();
 
-        for (id, stamp, covers) in wanted {
+        for (id, stamp, mut covers) in wanted {
+            // Too few to tile: the folder wears the first cover inside it, under the same glyph.
+            if covers.len() < mosaic::TILES {
+                let Some(cover) = covers.drain(..).next() else {
+                    continue;
+                };
+                self.folder_covers.insert(id, cover);
+                continue;
+            }
+
             let key = folder_mosaic(&id);
             if let Some(cover) = mosaic::cached(&key, stamp) {
                 self.folder_covers.insert(id, cover);
@@ -1306,6 +1315,8 @@ impl Library {
                 match built {
                     Ok(cover) => {
                         this.set_playlist_cover(&id, cover);
+                        // A folder around it may now have the covers it was short of.
+                        this.paint_folders(Shelf::Streaming, cx);
                         cx.notify();
                     }
                     Err(error) => log::warn!("library: cannot build a mosaic: {error:#}"),
