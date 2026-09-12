@@ -792,8 +792,6 @@ impl LibraryView {
             scroll.set_offset(point(Pixels::ZERO, -(top + into + inset)));
         }
 
-        let visible = scroll.bounds().size.height;
-        let viewport = Viewport::measured(scrolled(&scroll) - inset, visible, window);
         let rows = self.card_rows.clone();
         let section = self.section;
         let view = self.me.clone();
@@ -802,7 +800,6 @@ impl LibraryView {
             .py(inset)
             .child(
                 Deck::new("library-deck")
-                    .viewport(viewport)
                     .rows(heights)
                     .gap(gap)
                     .draw(move |index, _, cx| {

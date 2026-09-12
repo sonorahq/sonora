@@ -1,6 +1,9 @@
+use std::rc::Rc;
+
 use ui::{
-    ActiveTheme as _, Button, Card, DraggedPin, Edge, MenuItem, Panel, Picker, Pin, Pinnable as _,
-    Popup, SNUG, Scroller, Shield, Side, Spot, Tabs, Text, Vacancy, drop_gap, drop_marker,
+    ActiveTheme as _, Button, Card, Deck, DraggedPin, Edge, MenuItem, Panel, Picker, Pin,
+    Pinnable as _, Popup, SNUG, Scroller, Shield, Side, Spot, Tabs, Text, Vacancy, drop_gap,
+    drop_marker,
 };
 
 use gpui::prelude::*;
@@ -70,6 +73,27 @@ const HINT_HEIGHT: Pixels = px(42.);
 const VACANCY_HEIGHT: Pixels = px(88.);
 /// How far the pin mark on a library row falls back from the accent.
 const PIN_MARK: f32 = 0.7;
+/// The space between two pinned entries, the same as the `gap_1` between the rows above them.
+const ROW_GAP: Pixels = px(4.);
+
+/// The three navigation entries that expand into tabs rather than navigate.
+#[derive(Clone, Copy, PartialEq)]
+enum Group {
+    Library,
+    Local,
+    Settings,
+}
+
+impl Group {
+    fn of(destination: &Destination) -> Option<Self> {
+        match destination {
+            Destination::Library(_) => Some(Self::Library),
+            Destination::Local(_) => Some(Self::Local),
+            Destination::Settings(_) => Some(Self::Settings),
+            _ => None,
+        }
+    }
+}
 
 pub(crate) struct SidebarLeft {
     settings: Entity<AppSettings>,
@@ -241,8 +265,29 @@ impl SidebarLeft {
         }
     }
 
-    /// The pinned section: its header, and its entries once it is expanded.
-    fn pins(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// The navigation entries, each followed by its tabs while its group is open.
+    fn navigation(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let authenticated = self.session.read(cx).authenticated();
+        let mut rows = Vec::new();
+        for (index, (entry, _, destination)) in NAV.iter().enumerate() {
+            if entry.is_some_and(|entry| !self.settings.read(cx).nav_shown(entry.id())) {
+                continue;
+            }
+            let group = Group::of(destination);
+            if group == Some(Group::Library) && !authenticated {
+                continue;
+            }
+            rows.push(self.nav(index, cx));
+            if let Some(group) = group.filter(|group| self.opened(*group)) {
+                rows.push(self.tabs(group, cx));
+            }
+        }
+        rows
+    }
+
+    /// The pinned section: its header, and its entries once it is expanded. The entries are a
+    /// `Deck`, so only the ones on screen are ever built.
+    fn pins(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
         if !self.settings.read(cx).nav_shown(NavEntry::Pins.id()) {
             return Vec::new();
         }
@@ -252,11 +297,11 @@ impl SidebarLeft {
             return rows;
         }
 
-        let pinned = self.pins.read(cx).entries(cx);
-        let count = pinned.len();
+        let pins = self.pins.read(cx);
+        let pinned = pins.entries(cx);
         let rest = match self.settings.read(cx).sidebar_full_library() {
-            true => self.pins.read(cx).library(cx),
-            false => Vec::new(),
+            true => pins.library(cx),
+            false => Rc::new(Vec::new()),
         };
         if pinned.is_empty() && rest.is_empty() {
             rows.push(match self.dropping {
@@ -266,14 +311,43 @@ impl SidebarLeft {
             return rows;
         }
 
-        rows.extend(
-            pinned
-                .into_iter()
-                .chain(rest)
-                .enumerate()
-                .map(|(index, pin)| self.pin_row(index, pin, count, cx)),
+        let held = pinned.len();
+        let count = held + rest.len();
+        let row = ui::snapped(cx.theme().metrics.list_row, window);
+        rows.push(
+            Deck::new("sidebar-pins-deck")
+                .rows((0..count).map(|_| row))
+                .gap(ROW_GAP)
+                .draw(cx.processor(move |this, index: usize, _, cx| {
+                    let pin = match index < held {
+                        true => pinned.get(index),
+                        false => rest.get(index - held),
+                    };
+                    match pin {
+                        Some(pin) => this.pin_row(index, pin.clone(), held, cx),
+                        None => div().into_any_element(),
+                    }
+                }))
+                .into_any_element(),
         );
         rows
+    }
+
+    fn opened(&self, group: Group) -> bool {
+        match group {
+            Group::Library => self.library_open,
+            Group::Local => self.local_open,
+            Group::Settings => self.settings_open,
+        }
+    }
+
+    fn flip(&mut self, group: Group) {
+        let open = match group {
+            Group::Library => &mut self.library_open,
+            Group::Local => &mut self.local_open,
+            Group::Settings => &mut self.settings_open,
+        };
+        *open = !*open;
     }
 
     fn pins_header(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -388,7 +462,7 @@ impl SidebarLeft {
         .into_any_element()
     }
 
-    /// One entry. The first `count` of them are the pins, which carry the drop slots; the rest
+    /// One entry. The first `count` of them are the pins, which carry the drop slots. The rest
     /// is the library underneath, which can be dragged up into the pins but holds no slot.
     fn pin_row(&self, index: usize, pin: Pin, count: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
@@ -467,145 +541,75 @@ impl SidebarLeft {
             .into_any_element()
     }
 
-    fn navigation(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// One navigation entry. An expandable one flips its group open and shut, any other one
+    /// navigates and is lit while its section is current.
+    fn nav(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
-        let sidebar_accent = theme.sidebar_accent;
-        let foreground = theme.foreground;
-        let muted = theme.muted_foreground;
+        let accent = theme.sidebar_accent;
+        let (entry, icon, destination) = NAV[index].clone();
+        let key = entry.map_or("nav-settings", NavEntry::key);
         let current = self.trail.read(cx).current();
-        let authenticated = self.session.read(cx).authenticated();
-        let shown = |entry: NavEntry, cx: &App| self.settings.read(cx).nav_shown(entry.id());
+        let group = Group::of(&destination);
+        let active = match group {
+            Some(group) => Group::of(&current) == Some(group),
+            None => destination.same_section(&current),
+        };
+        let tint = match active {
+            true => theme.foreground,
+            false => theme.muted_foreground,
+        };
+        let row = nav_row(index, key, tint, accent).icon(icon);
 
-        let mut rows: Vec<AnyElement> = Vec::new();
-        for (index, (entry, icon, destination)) in NAV.into_iter().enumerate() {
-            let key = entry.map_or("nav-settings", NavEntry::key);
-            if entry.is_some_and(|entry| !shown(entry, cx)) {
-                continue;
-            }
-
-            if matches!(destination, Destination::Library(_)) {
-                if !authenticated {
-                    continue;
-                }
-                let inside = matches!(current, Destination::Library(_));
-                let text = if inside { foreground } else { muted };
-
-                rows.push(
-                    nav_row(index, key, text, sidebar_accent)
-                        .icon(icon)
-                        .trailing(chevron(self.library_open))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.library_open = !this.library_open;
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                );
-
-                if self.library_open {
-                    rows.push(
-                        Tabs::new()
-                            .items(LIBRARY_TABS.into_iter().map(|(name, tab)| {
-                                let chosen = current == Destination::Library(tab);
-                                let tint = if chosen { foreground } else { muted };
-
-                                nav_row(name, name, tint, sidebar_accent)
-                                    .flex_1()
-                                    .when(chosen, |button| button.bg(sidebar_accent))
-                                    .on_click(move |_, _, cx| {
-                                        navigate(Destination::Library(tab), cx)
-                                    })
-                            }))
-                            .into_any_element(),
-                    );
-                }
-                continue;
-            }
-
-            if matches!(destination, Destination::Local(_)) {
-                let inside = matches!(current, Destination::Local(_));
-                let text = if inside { foreground } else { muted };
-
-                rows.push(
-                    nav_row(index, key, text, sidebar_accent)
-                        .icon(icon)
-                        .trailing(chevron(self.local_open))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.local_open = !this.local_open;
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                );
-
-                if self.local_open {
-                    rows.push(
-                        Tabs::new()
-                            .items(LIBRARY_TABS.into_iter().enumerate().map(
-                                |(slot, (name, tab))| {
-                                    let chosen = current == Destination::Local(tab);
-                                    let tint = if chosen { foreground } else { muted };
-
-                                    nav_row(("local-tab", slot as u32), name, tint, sidebar_accent)
-                                        .flex_1()
-                                        .when(chosen, |button| button.bg(sidebar_accent))
-                                        .on_click(move |_, _, cx| {
-                                            navigate(Destination::Local(tab), cx)
-                                        })
-                                },
-                            ))
-                            .into_any_element(),
-                    );
-                }
-                continue;
-            }
-
-            if matches!(destination, Destination::Settings(_)) {
-                let inside = matches!(current, Destination::Settings(_));
-                let text = if inside { foreground } else { muted };
-
-                rows.push(
-                    nav_row(index, key, text, sidebar_accent)
-                        .icon(icon)
-                        .trailing(chevron(self.settings_open))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.settings_open = !this.settings_open;
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                );
-
-                if self.settings_open {
-                    rows.push(
-                        Tabs::new()
-                            .items(SETTINGS_TABS.into_iter().map(|(name, tab)| {
-                                let chosen = current == Destination::Settings(tab);
-                                let tint = if chosen { foreground } else { muted };
-
-                                nav_row(name, name, tint, sidebar_accent)
-                                    .flex_1()
-                                    .when(chosen, |button| button.bg(sidebar_accent))
-                                    .on_click(move |_, _, cx| {
-                                        navigate(Destination::Settings(tab), cx)
-                                    })
-                            }))
-                            .into_any_element(),
-                    );
-                }
-                continue;
-            }
-
-            let active = destination.same_section(&current);
-            let text = if active { foreground } else { muted };
-
-            rows.push(
-                nav_row(index, key, text, sidebar_accent)
-                    .icon(icon)
-                    .when(active, |button| button.bg(sidebar_accent))
-                    .on_click(move |_, _, cx| navigate(destination.clone(), cx))
-                    .into_any_element(),
-            );
+        match group {
+            Some(group) => row
+                .trailing(chevron(self.opened(group)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.flip(group);
+                    cx.notify();
+                })),
+            None => row
+                .when(active, |button| button.bg(accent))
+                .on_click(move |_, _, cx| navigate(destination.clone(), cx)),
         }
+        .into_any_element()
+    }
 
-        rows
+    /// The tabs under an expanded group.
+    fn tabs(&self, group: Group, cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
+        let accent = theme.sidebar_accent;
+        let current = self.trail.read(cx).current();
+        let tab = |id: ElementId, key: &'static str, destination: Destination| {
+            let chosen = destination == current;
+            let tint = match chosen {
+                true => theme.foreground,
+                false => theme.muted_foreground,
+            };
+
+            nav_row(id, key, tint, accent)
+                .flex_1()
+                .when(chosen, |button| button.bg(accent))
+                .on_click(move |_, _, cx| navigate(destination.clone(), cx))
+        };
+
+        match group {
+            Group::Library => Tabs::new().items(
+                LIBRARY_TABS
+                    .into_iter()
+                    .map(|(name, tab_id)| tab(name.into(), name, Destination::Library(tab_id))),
+            ),
+            Group::Local => Tabs::new().items(LIBRARY_TABS.into_iter().enumerate().map(
+                |(slot, (name, tab_id))| {
+                    tab(("local-tab", slot).into(), name, Destination::Local(tab_id))
+                },
+            )),
+            Group::Settings => Tabs::new().items(
+                SETTINGS_TABS
+                    .into_iter()
+                    .map(|(name, tab_id)| tab(name.into(), name, Destination::Settings(tab_id))),
+            ),
+        }
+        .into_any_element()
     }
 
     fn persist(&self, cx: &mut Context<Self>) {
@@ -632,7 +636,7 @@ impl Render for SidebarLeft {
         }
 
         let mut rows = self.navigation(cx);
-        rows.extend(self.pins(cx));
+        rows.extend(self.pins(window, cx));
 
         let overlaid = self.overlays();
         let panel = Panel::new("sidebar-left", Side::Left, self.width)

@@ -13,8 +13,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The left sidebar stays smooth with a long Pinned section or Show full library on. It used to
+  build every entry on every frame, even the ones scrolled out of view. Now it draws only the rows
+  on screen and rebuilds the list only when something in it changes.
 - On Nix, the YouTube Music sign-in no longer goes black after the email step. The package now
   gives WebKit the GStreamer plugins it needs to play a page's media.
+- On Windows, the sign-in window opens when Sonora is installed under Program Files. It used to
+  fail with `0x80070005` because the browser it embeds tried to keep its data next to the program,
+  where a normal user cannot write. That data now lives under your local app data.
 
 ## [0.34.3] - 2026-09-12
 
