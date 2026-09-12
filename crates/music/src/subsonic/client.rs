@@ -322,6 +322,22 @@ impl MusicApi for SubsonicClient {
             .map(|count| count as u64))
     }
 
+    async fn now_playing(&self, track_id: &str) -> Result<()> {
+        self.client
+            .scrobble(track_id, None, Some(false))
+            .await
+            .context("cannot report now playing")?;
+        Ok(())
+    }
+
+    async fn scrobble(&self, track_id: &str) -> Result<()> {
+        self.client
+            .scrobble(track_id, None, Some(true))
+            .await
+            .context("cannot scrobble the track")?;
+        Ok(())
+    }
+
     async fn playlists(&self, limit: u32) -> Result<Vec<Playlist>> {
         let mut playlists: Vec<Playlist> = self
             .client

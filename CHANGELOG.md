@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Plays are reported to Subsonic servers: a now-playing notice when a track starts and a play
+  counted once most of it has been heard. A switch in Playback settings turns reporting off.
+
 ### Fixed
 
 - On Nix, the YouTube Music sign-in no longer goes black after the email step. The package now
