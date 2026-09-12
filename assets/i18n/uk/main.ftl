@@ -414,6 +414,7 @@ kind-song = Трек
 kind-artist = Виконавець
 kind-album = Альбом
 kind-playlist = Плейлист
+kind-folder = Папка
 
 # song page
 song-eyebrow = Трек
@@ -478,6 +479,12 @@ count-playlists =
         [one] { $count } плейлист
         [few] { $count } плейлисти
        *[other] { $count } плейлистів
+    }
+count-folders =
+    { $count ->
+        [one] { $count } папка
+        [few] { $count } папки
+       *[other] { $count } папок
     }
 
 # dates
@@ -882,3 +889,7 @@ trouble-offline-detail = Перевірте підключення до інте
 trouble-not-loaded = Не вдалося завантажити
 trouble-retry = Повторити
 toast-offline = Немає з'єднання. Нічого не відтворюватиметься, доки воно не повернеться.
+
+# playlist folders
+folder-empty = Ця папка порожня
+folder-missing = Цієї папки більше немає у вашій медіатеці

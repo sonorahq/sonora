@@ -3,7 +3,7 @@ use gpui::{App, ClickEvent, ClipboardItem, Context, Entity, SharedString, Window
 use i18n::t;
 use music::{Album, GenreItem, MediaKind, Playlist, SavedArtist, Track};
 use router::{Destination, navigate};
-use state::{Addition, Detail, History, Library, Origin, Playback, Shelf, Sonora};
+use state::{Addition, Detail, FolderRow, History, Library, Origin, Playback, Shelf, Sonora};
 use ui::{Menu, MenuItem, MenuSearch, Pin, PinKind, Scrollbar, SubmenuState};
 
 use crate::shared::confirm::Confirm;
@@ -16,6 +16,7 @@ use crate::shared::tag_editor::TagEditor;
 pub(crate) enum Item {
     Album(Album),
     Playlist(Playlist),
+    Folder(FolderRow),
     Artist(SavedArtist),
     Track(Track),
 }
@@ -44,6 +45,7 @@ impl Item {
         match self {
             Self::Album(album) => album_menu(album.clone(), playback, menus, cx),
             Self::Playlist(playlist) => playlist_menu(playlist.clone(), playback, cx),
+            Self::Folder(folder) => folder_menu(&folder.id, &folder.name, cx),
             Self::Artist(artist) => artist_menu(artist.clone(), playback, opened_here, cx),
             Self::Track(track) => menus.for_track(track, cx),
         }
@@ -1025,9 +1027,17 @@ pub(crate) fn item_menu(
             cx,
         )),
         PinKind::Song => saved_track(&pin.id, cx).map(|track| tracks.for_track(&track, cx)),
+        // Nothing but the sparse menu fits a folder: it opens, and it pins.
+        PinKind::Folder => None,
     };
 
     built.unwrap_or_else(|| sparse_menu(pin, playback, cx))
+}
+
+/// The menu of a folder of playlists, wherever one is listed.
+pub(crate) fn folder_menu(id: &str, name: &str, cx: &App) -> Menu {
+    let pin = Pin::new(PinKind::Folder, id, name);
+    sparse_menu(&pin, Sonora::global(cx).playback.clone(), cx)
 }
 
 pub(crate) fn pinned_artist(pin: &Pin) -> SavedArtist {
@@ -1049,16 +1059,21 @@ fn sparse_menu(pin: &Pin, playback: Entity<Playback>, cx: &App) -> Menu {
             .on_click(move |_, _, cx| navigate(destination.clone(), cx))
     });
 
+    let link = kind
+        .map(|kind| {
+            MenuItem::new("copy-pin-link", t!("menu-copy-link"))
+                .icon("icons/link.svg")
+                .on_click(move |_, _, cx| copy_link(kind, &copied, cx))
+        })
+        .into_iter()
+        .collect();
+
     sections(
         Menu::new("pin-context-menu"),
         vec![
             open.into_iter().collect(),
             transport_items(pin, playback),
-            vec![
-                MenuItem::new("copy-pin-link", t!("menu-copy-link"))
-                    .icon("icons/link.svg")
-                    .on_click(move |_, _, cx| copy_link(kind, &copied, cx)),
-            ],
+            link,
             vec![pin_action(pin, cx)],
         ],
     )
@@ -1068,14 +1083,17 @@ fn sparse_menu(pin: &Pin, playback: Entity<Playback>, cx: &App) -> Menu {
 /// way their full menus do.
 fn open_key(kind: PinKind) -> Option<&'static str> {
     match kind {
-        PinKind::Album | PinKind::Playlist => None,
+        PinKind::Album | PinKind::Playlist | PinKind::Folder => None,
         PinKind::Artist => Some("menu-go-to-artist"),
         PinKind::Song => Some("menu-view-details"),
     }
 }
 
 fn transport_items(pin: &Pin, playback: Entity<Playback>) -> Vec<MenuItem> {
-    let played = Origin::from(pin);
+    // A folder holds playlists rather than tracks, so it has no transport at all.
+    let Some(played) = Origin::from_pin(pin) else {
+        return Vec::new();
+    };
     let next = pin.id.clone();
     let queued = pin.id.clone();
     let last = pin.id.clone();
@@ -1147,6 +1165,7 @@ fn transport_items(pin: &Pin, playback: Entity<Playback>) -> Vec<MenuItem> {
                     playback.update(cx, |playback, cx| playback.play_origin(played.clone(), cx));
                 }),
         ],
+        PinKind::Folder => Vec::new(),
     }
 }
 
@@ -1172,12 +1191,15 @@ pub(crate) fn pin_action(pin: &Pin, cx: &App) -> MenuItem {
     }
 }
 
-fn media_kind(kind: PinKind) -> MediaKind {
+/// What a pin shares as a link, or `None` for one with no page of its own on the provider: a
+/// folder only exists inside the library that lists it.
+fn media_kind(kind: PinKind) -> Option<MediaKind> {
     match kind {
-        PinKind::Album => MediaKind::Album,
-        PinKind::Artist => MediaKind::Artist,
-        PinKind::Playlist => MediaKind::Playlist,
-        PinKind::Song => MediaKind::Track,
+        PinKind::Album => Some(MediaKind::Album),
+        PinKind::Artist => Some(MediaKind::Artist),
+        PinKind::Playlist => Some(MediaKind::Playlist),
+        PinKind::Song => Some(MediaKind::Track),
+        PinKind::Folder => None,
     }
 }
 
