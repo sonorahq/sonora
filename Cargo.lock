@@ -4444,6 +4444,7 @@ dependencies = [
 name = "music"
 version = "0.34.1"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "async-trait",
  "base64",

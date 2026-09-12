@@ -1,7 +1,9 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
+use std::sync::LazyLock;
 
+use aho_corasick::AhoCorasick;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::picture::{MimeType, Picture, PictureType};
 use lofty::prelude::Accessor;
@@ -49,7 +51,12 @@ const PLAYABLE_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "m4a", "mp4", "aac", "ogg", "oga", "wav", "opus", "webm", "mka", "wv", "ape",
 ];
 
-const ARTIST_SEPARATORS: &[&str] = &[",", ";", " ft. ", " feat ", " feat. ", " featuring "];
+static ARTIST_SEPARATORS: LazyLock<AhoCorasick> = LazyLock::new(|| {
+    AhoCorasick::builder()
+        .ascii_case_insensitive(true)
+        .build(&[",", ";", " ft. ", " feat ", " feat. ", " featuring "])
+        .expect("artist separators are valid patterns")
+});
 
 fn is_playable(path: &Path) -> bool {
     path.extension()
@@ -127,25 +134,12 @@ fn artist_refs(artist: &str) -> Vec<ArtistRef> {
 }
 
 fn split_artists(value: &str) -> Vec<String> {
-    let lower = value.to_ascii_lowercase();
-    let bytes = lower.as_bytes();
-
     let mut parts = Vec::new();
     let mut start = 0;
-    let mut i = 0;
 
-    while i < bytes.len() {
-        match ARTIST_SEPARATORS
-            .iter()
-            .find(|sep| bytes[i..].starts_with(sep.as_bytes()))
-        {
-            Some(sep) => {
-                parts.push(value[start..i].trim().to_owned());
-                i += sep.len();
-                start = i;
-            }
-            None => i += 1,
-        }
+    for found in ARTIST_SEPARATORS.find_iter(value) {
+        parts.push(value[start..found.start()].trim().to_owned());
+        start = found.end();
     }
     parts.push(value[start..].trim().to_owned());
 

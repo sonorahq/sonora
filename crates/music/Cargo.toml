@@ -8,6 +8,7 @@ license.workspace = true
 bundled-sqlite = ["rusqlite/bundled", "storage/bundled-sqlite"]
 
 [dependencies]
+aho-corasick.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
