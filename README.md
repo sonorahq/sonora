@@ -156,7 +156,7 @@ AI-assisted proofreading and translation of human-written text are permitted.
 | --- | --- | --- |
 | English (`en-US`) | 584/584 | 100% |
 | Deutsch (`de`) | 536/584 | 92% |
-| Español (`es`) | 574/584 | 98% |
+| Español (`es`) | 579/584 | 99% |
 | Français (`fr`) | 498/584 | 85% |
 | Italiano (`it`) | 495/584 | 85% |
 | Bahasa Indonesia (`id`) | 525/584 | 90% |
