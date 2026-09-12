@@ -345,6 +345,10 @@ home-listen-again = Listen again
 home-quick-picks-eyebrow = Start from a song
 home-quick-picks-empty = Like a few songs and they will show up here
 
+# powerbar (quick search)
+powerbar-title = Quick search
+powerbar-placeholder = What do you want to listen to?
+
 # search page
 search-placeholder = What do you want to listen to?
 search-browse = Browse all
