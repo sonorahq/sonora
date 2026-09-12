@@ -7,11 +7,11 @@ use router::Destination;
 use state::{FolderRow, Library, LibraryPart, Origin, Outline, Playback, Shelf};
 use ui::rank::{ESSENTIAL, HANDY, NICE, SPARE};
 use ui::{
-    ActiveTheme as _, Cell, ColumnSpec, Filter, FilterChange, FlagAxis, Menu, Pin, PinKind,
-    TableSource, Width,
+    ActiveTheme as _, Cell, ColumnSpec, Filter, FilterChange, FlagAxis, Menu, Pin, TableSource,
+    Width,
 };
 
-use crate::shared::cards::holding;
+use crate::shared::cards::{folder_pin, holding};
 use crate::shared::cells::{self, DATE, NUMBER, TRAILING};
 use crate::shared::menus::{folder_menu, playlist_menu};
 use crate::shared::pins::Pinned as _;
@@ -236,7 +236,10 @@ impl TableSource for PlaylistSource {
 
     fn pin(&self, row: usize, cx: &App) -> Option<Pin> {
         match self.folder_at(row, cx) {
-            Some(folder) => Some(Pin::new(PinKind::Folder, folder.id, folder.name)),
+            Some(folder) => {
+                let cover = self.library.read(cx).folder_cover(&folder.id);
+                Some(folder_pin(&folder, cover))
+            }
             None => self.playlist(row, cx)?.pin(),
         }
     }
