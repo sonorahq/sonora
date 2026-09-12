@@ -14,3 +14,4 @@ input.workspace = true
 router.workspace = true
 ui.workspace = true
 state.workspace = true
+log.workspace = true

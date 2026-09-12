@@ -1,8 +1,9 @@
 use gpui::prelude::*;
 use gpui::{App, Context, Entity, FocusHandle, Global, Render, Window, div};
 use i18n::t;
+use log;
 use music::{Album, SavedArtist, Track};
-use state::{Detail, History, Sonora};
+use state::{Detail, History, Io, Sonora};
 use ui::{Button, Dismiss, FORM_CONTEXT, Modal, Submit};
 
 #[derive(Clone, Copy)]
@@ -13,6 +14,7 @@ pub(crate) enum Kind {
     Albums(usize),
     Artists(usize),
     Playlists(usize),
+    DeleteTrackFiles(usize),
 }
 
 impl Kind {
@@ -20,6 +22,7 @@ impl Kind {
         match self {
             Self::PlaylistSongs(_) => t!("confirm-remove-playlist-title"),
             Self::History(_) => t!("confirm-remove-history-title"),
+            Self::DeleteTrackFiles(_) => t!("confirm-delete-track-files-title"),
             _ => t!("confirm-remove-library-title"),
         }
     }
@@ -32,6 +35,7 @@ impl Kind {
             Self::Albums(count) => t!("confirm-remove-albums", count = count),
             Self::Artists(count) => t!("confirm-remove-artists", count = count),
             Self::Playlists(count) => t!("confirm-remove-playlists", count = count),
+            Self::DeleteTrackFiles(count) => t!("confirm-delete-track-files", count = count),
         }
     }
 
@@ -177,6 +181,52 @@ impl Confirm {
                         library.remove_playlist_from_library(id, cx);
                     }
                 });
+            },
+            cx,
+        );
+    }
+
+    pub fn delete_track_files(ids: Vec<String>, cx: &mut App) {
+        if ids.is_empty() {
+            return;
+        }
+        Self::ask(
+            Kind::DeleteTrackFiles(ids.len()),
+            move |cx| {
+                let sonora = Sonora::global(cx);
+                let Some(provider) = sonora.session.read(cx).local_client() else {
+                    return;
+                };
+                let library = sonora.library.clone();
+                let io = Io::global(cx);
+                cx.spawn(async move |cx| {
+                    let deleted = io
+                        .spawn(async move {
+                            for id in ids {
+                                provider
+                                    .delete_track_file(&id)
+                                    .await
+                                    .map_err(|error| error.to_string())?;
+                            }
+                            Result::<(), String>::Ok(())
+                        })
+                        .await;
+
+                    match deleted {
+                        Ok(Ok(())) => {
+                            library.update(cx, |library, cx| {
+                                library.rescan_local(cx);
+                            });
+                        }
+                        Ok(Err(error)) => {
+                            log::warn!("local: cannot delete track files: {error:#}");
+                        }
+                        Err(error) => {
+                            log::warn!("local: deletion task failed: {error}");
+                        }
+                    }
+                })
+                .detach();
             },
             cx,
         );
