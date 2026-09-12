@@ -1906,7 +1906,7 @@ checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
 
 [[package]]
 name = "embed"
-version = "0.34.1"
+version = "0.34.2"
 
 [[package]]
 name = "embed-resource"
@@ -3309,7 +3309,7 @@ dependencies = [
 
 [[package]]
 name = "i18n"
-version = "0.34.1"
+version = "0.34.2"
 dependencies = [
  "fluent-bundle",
  "gpui",
@@ -3344,7 +3344,7 @@ dependencies = [
 
 [[package]]
 name = "icons"
-version = "0.34.1"
+version = "0.34.2"
 dependencies = [
  "anyhow",
  "embed",
@@ -3530,7 +3530,7 @@ dependencies = [
 
 [[package]]
 name = "input"
-version = "0.34.1"
+version = "0.34.2"
 dependencies = [
  "gpui",
  "ui",
@@ -4442,7 +4442,7 @@ dependencies = [
 
 [[package]]
 name = "music"
-version = "0.34.1"
+version = "0.34.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6450,7 +6450,7 @@ dependencies = [
 
 [[package]]
 name = "router"
-version = "0.34.1"
+version = "0.34.2"
 dependencies = [
  "gpui",
  "ui",
@@ -7261,7 +7261,7 @@ dependencies = [
 
 [[package]]
 name = "sonora"
-version = "0.34.1"
+version = "0.34.2"
 dependencies = [
  "anyhow",
  "dirs",
@@ -7402,7 +7402,7 @@ dependencies = [
 
 [[package]]
 name = "state"
-version = "0.34.1"
+version = "0.34.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7437,7 +7437,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "storage"
-version = "0.34.1"
+version = "0.34.2"
 dependencies = [
  "anyhow",
  "dirs",
@@ -8508,7 +8508,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.34.1"
+version = "0.34.2"
 dependencies = [
  "ashpd",
  "futures",
@@ -8849,7 +8849,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "views"
-version = "0.34.1"
+version = "0.34.2"
 dependencies = [
  "gpui",
  "i18n",
@@ -9138,7 +9138,7 @@ dependencies = [
 
 [[package]]
 name = "webview"
-version = "0.34.1"
+version = "0.34.2"
 dependencies = [
  "anyhow",
  "block2 0.6.2",

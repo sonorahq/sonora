@@ -84,7 +84,7 @@ pub use pin::{DraggedPin, Pin, PinKind, Pinnable, Spot};
 pub use popover::{Popover, Popovers};
 pub use popup::Popup;
 pub use scrollbar::{Scrollbar, quantize, scrolled};
-pub use scroller::{Scroller, perch_room, perched, return_top};
+pub use scroller::{Scroller, perch_room, perched, return_to, return_top};
 pub use scrubber::{Scrubber, ScrubberState};
 pub use separator::Separator;
 pub use shield::Shield;

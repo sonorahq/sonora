@@ -139,9 +139,22 @@ pub fn perch_room(cx: &App) -> Pixels {
 /// region has been scrolled far enough for the trip to be worth one. The parent has to be
 /// `relative`.
 pub fn return_top(id: impl Into<ElementId>, bar: &Entity<Scrollbar>, cx: &App) -> Option<Div> {
+    return_to(id, bar, Pixels::ZERO, "nav-return-top", cx)
+}
+
+/// A perched button that glides a scrolling region back to a resting offset, in either
+/// direction. It stays away until the region has drifted far enough from that spot for the trip
+/// to be worth one. `tooltip` is an i18n key. The parent has to be `relative`.
+pub fn return_to(
+    id: impl Into<ElementId>,
+    bar: &Entity<Scrollbar>,
+    goal: Pixels,
+    tooltip: &'static str,
+    cx: &App,
+) -> Option<Div> {
     let viewport = bar.read(cx).viewport();
     let reach = (cx.theme().metrics.list_row * REACH).min(viewport / 2.);
-    if viewport <= Pixels::ZERO || bar.read(cx).offset() < reach {
+    if viewport <= Pixels::ZERO || (bar.read(cx).offset() - goal).abs() < reach {
         return None;
     }
     let bar = bar.clone();
@@ -149,9 +162,9 @@ pub fn return_top(id: impl Into<ElementId>, bar: &Entity<Scrollbar>, cx: &App) -
     Some(perched(
         Button::new(id)
             .icon("icons/undo-2.svg")
-            .tooltip("nav-return-top")
+            .tooltip(tooltip)
             .on_click(move |_, window, cx| {
-                bar.update(cx, |bar, _| bar.aim(Pixels::ZERO, window));
+                bar.update(cx, |bar, _| bar.aim(goal, window));
             }),
         cx,
     ))

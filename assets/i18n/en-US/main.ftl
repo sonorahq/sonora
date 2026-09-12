@@ -204,6 +204,7 @@ queue-clear = Clear
 queue-empty = Your queue is empty
 queue-similar = Similar tracks
 queue-radio = Autoplay similar tracks
+queue-return-playing = Back to now playing
 
 # player bar
 player-nothing-playing = Nothing playing

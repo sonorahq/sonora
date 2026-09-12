@@ -217,6 +217,7 @@ queue-clear = Очистити
 queue-empty = Черга порожня
 queue-similar = Схожі треки
 queue-radio = Автовідтворення схожих треків
+queue-return-playing = До поточного треку
 
 # player bar
 player-nothing-playing = Нічого не грає

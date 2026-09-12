@@ -219,6 +219,7 @@ queue-clear = Wyczyść
 queue-empty = Twoja kolejka jest pusta
 queue-similar = Podobne utwory
 queue-radio = Automatycznie odtwarzaj podobne utwory
+queue-return-playing = Do bieżącego utworu
 
 # player bar
 player-nothing-playing = Nic nie jest odtwarzane

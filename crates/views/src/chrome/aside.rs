@@ -895,13 +895,20 @@ impl Aside {
         )
     }
 
-    /// The trip back to the top of the queue, once it has scrolled far enough to want one.
-    fn recall(&self, cx: &mut Context<Self>) -> Option<Div> {
+    /// The trip back to the now-playing row, or to the top while nothing is playing, once the
+    /// queue has drifted far enough from it to want one.
+    fn recall(&self, sections: Sections, window: &Window, cx: &mut Context<Self>) -> Option<Div> {
         if self.tab != SideTab::Queue {
             return None;
         }
+        let goal = self.resting_offset(sections, window, cx)?;
+        let tooltip = match sections.current {
+            true => "queue-return-playing",
+            false => "nav-return-top",
+        };
+        let perch = ui::return_to("queue-return-top", &self.scrollbar, goal, tooltip, cx)?;
 
-        Some(self.raised(ui::return_top("queue-return-top", &self.scrollbar, cx)?))
+        Some(self.raised(perch))
     }
 
     /// Lifts a floating control clear of the transport a stripped aside leaves underneath it.
@@ -1583,11 +1590,34 @@ impl Aside {
             return;
         }
 
-        let row = snapped(cx.theme().metrics.list_row, window);
-        let above = (viewport * PINNED_SHARE / row).round() as usize;
+        let above = Self::rows_above(viewport, window, cx);
         self.scroll
             .scroll_to_item_strict_with_offset(index, ScrollStrategy::Top, above);
         self.anchor = false;
+    }
+
+    /// How many rows `pin` keeps above the now-playing one, so it sits a quarter of the way down.
+    fn rows_above(viewport: Pixels, window: &Window, cx: &App) -> usize {
+        let row = snapped(cx.theme().metrics.list_row, window);
+        (viewport * PINNED_SHARE / row).round() as usize
+    }
+
+    /// Where the queue rests once `pin` has placed the now-playing row, in scrolled pixels,
+    /// clamped the way gpui clamps the deferred scroll. Zero while nothing is playing, so a
+    /// recall falls back to the top, and None before the list has been laid out.
+    fn resting_offset(&self, sections: Sections, window: &Window, cx: &App) -> Option<Pixels> {
+        let handle = self.scroll.0.borrow().base_handle.clone();
+        let viewport = handle.bounds().size.height;
+        if viewport <= px(0.) {
+            return None;
+        }
+        let Some(index) = sections.current_index() else {
+            return Some(Pixels::ZERO);
+        };
+        let row = snapped(cx.theme().metrics.list_row, window);
+        let above = Self::rows_above(viewport, window, cx);
+        let goal = row * index.saturating_sub(above) as f32;
+        Some(goal.clamp(Pixels::ZERO, handle.max_offset().y))
     }
 
     // unnamed origins stay unlabelled
@@ -1781,7 +1811,7 @@ impl Render for Aside {
                         )
                     })
                     .children(self.follow(cx))
-                    .children(self.recall(cx)),
+                    .children(self.recall(sections, window, cx)),
             )
             .children(self.menu(cx))
     }
