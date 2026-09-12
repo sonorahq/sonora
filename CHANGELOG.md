@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Local artist tags separated by commas, "feat.", etc. are now recognized as multiple artists.
+  Artist names that only differ in capitalization no longer create duplicate entries.
+
 ### Fixed
 
 - On Nix, the YouTube Music sign-in no longer goes black after the email step. The package now

@@ -21,6 +21,7 @@ ui = { path = "crates/ui" }
 views = { path = "crates/views" }
 webview = { path = "crates/webview" }
 
+aho-corasick = "1.1"
 anyhow = "1.0"
 async-trait = "0.1"
 base64 = "0.22"

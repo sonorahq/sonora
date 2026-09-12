@@ -1,7 +1,9 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
+use std::sync::LazyLock;
 
+use aho_corasick::AhoCorasick;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::picture::{MimeType, Picture, PictureType};
 use lofty::prelude::Accessor;
@@ -48,6 +50,13 @@ const ARTIST_NAMES: &[&str] = &[
 const PLAYABLE_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "m4a", "mp4", "aac", "ogg", "oga", "wav", "opus", "webm", "mka", "wv", "ape",
 ];
+
+static ARTIST_SEPARATORS: LazyLock<AhoCorasick> = LazyLock::new(|| {
+    AhoCorasick::builder()
+        .ascii_case_insensitive(true)
+        .build(&[",", ";", " ft. ", " feat ", " feat. ", " featuring "])
+        .expect("artist separators are valid patterns")
+});
 
 fn is_playable(path: &Path) -> bool {
     path.extension()
@@ -97,6 +106,10 @@ pub fn id3v2_end(path: &Path) -> u64 {
     skip
 }
 
+pub fn normalize(value: &str) -> String {
+    value.trim().to_lowercase()
+}
+
 pub fn album_id(artist: &str, name: &str) -> String {
     let mut hasher = DefaultHasher::new();
     normalize(artist).hash(&mut hasher);
@@ -104,23 +117,34 @@ pub fn album_id(artist: &str, name: &str) -> String {
     format!("{LOCAL_ALBUM_PREFIX}{:016x}", hasher.finish())
 }
 
-pub fn normalize(value: &str) -> String {
-    value.trim().to_lowercase()
-}
-
 pub fn artist_id(name: &str) -> String {
-    format!("{LOCAL_ARTIST_PREFIX}{name}")
+    let mut hasher = DefaultHasher::new();
+    normalize(name).hash(&mut hasher);
+    format!("{LOCAL_ARTIST_PREFIX}{:016x}", hasher.finish())
 }
 
-pub fn artist_name_from_id(id: &str) -> Option<&str> {
-    id.strip_prefix(LOCAL_ARTIST_PREFIX)
+fn artist_refs(artist: &str) -> Vec<ArtistRef> {
+    split_artists(artist)
+        .into_iter()
+        .map(|name| {
+            let id = artist_id(&name);
+            ArtistRef { name, id: Some(id) }
+        })
+        .collect()
 }
 
-fn artist_ref(name: &str) -> ArtistRef {
-    ArtistRef {
-        name: name.to_owned(),
-        id: Some(artist_id(name)),
+fn split_artists(value: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+
+    for found in ARTIST_SEPARATORS.find_iter(value) {
+        parts.push(value[start..found.start()].trim().to_owned());
+        start = found.end();
     }
+    parts.push(value[start..].trim().to_owned());
+
+    parts.retain(|p| !p.is_empty());
+    parts
 }
 
 fn clean(value: Option<std::borrow::Cow<'_, str>>) -> Option<String> {
@@ -419,7 +443,7 @@ pub fn track_from_file(
             name,
             playable: is_playable(path),
             artists: artist.clone(),
-            artist_refs: vec![artist_ref(&artist)],
+            artist_refs: artist_refs(&artist),
             album: album_name,
             album_id,
             cover,
@@ -461,7 +485,7 @@ pub fn album_from_tracks(name: &str, artist: &str, tracks: &[Track], year: i32) 
         id: album_id(artist, name),
         name: name.to_owned(),
         artists: artist.to_owned(),
-        artist_refs: vec![artist_ref(artist)],
+        artist_refs: artist_refs(artist),
         cover: cover.clone(),
         cover_large: cover,
         release_type: ReleaseType::Album,
