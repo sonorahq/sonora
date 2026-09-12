@@ -19,7 +19,7 @@ use ui::ActiveTheme as _;
 use ui::{
     Activate, Card, Deck, Deselect, Pinnable, Popup, Room, Scrollbar, Scroller, SelectLeft,
     SelectNext, SelectPrevious, SelectRight, Separator, Text, Theme, VAST, clock, eyebrow,
-    scrolled, snapped, vacant,
+    scrolled, snapped, tabular, vacant,
 };
 
 use crate::shared::cards;
@@ -413,6 +413,7 @@ impl SearchView {
                             .whitespace_nowrap()
                             .text_size(theme.text(Text::Small))
                             .text_color(theme.muted_foreground)
+                            .font_features(tabular())
                             .child(clock(track.duration)),
                     )
                     .press(pressed(Press::Song(Box::new(track.clone())), me))

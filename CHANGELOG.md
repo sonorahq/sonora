@@ -10,6 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Updated and completed the Indonesian translation.
+- Song lengths in tables and track lists use equal-width digits, so the column lines up.
 
 ### Fixed
 

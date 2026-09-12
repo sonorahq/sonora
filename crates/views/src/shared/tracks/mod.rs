@@ -17,9 +17,7 @@ use gpui::{
 use music::{Shape, Track};
 use router::Destination;
 use state::{Detail, History, Library, Origin, Playback, PlaybackState, Shelf, Sonora};
-use ui::{
-    Button, Cell, ColumnSpec, Menu, Pin, ROW_GROUP, Scrollbar, TableSource, TableState, clock,
-};
+use ui::{Button, Cell, ColumnSpec, Menu, Pin, ROW_GROUP, Scrollbar, TableSource, TableState};
 
 use crate::shared::cells;
 use crate::shared::confirm::{Confirm, Kind};
@@ -590,7 +588,7 @@ impl TableSource for TrackSource {
                 track.playcount.map(cells::count).unwrap_or_default(),
                 detail,
             ),
-            TrackField::Duration => cells::dim(&cell, clock(track.duration), detail),
+            TrackField::Duration => cells::length(&cell, track.duration, detail),
             TrackField::Index => cells::blank(&cell),
         }
     }

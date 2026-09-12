@@ -4,7 +4,7 @@ use gpui::prelude::*;
 use gpui::{App, Entity, MouseDownEvent, SharedString, Window, div};
 use music::Track;
 use state::{Playback, PlaybackState};
-use ui::{ActiveTheme as _, Card, Pinnable, Text, clock};
+use ui::{ActiveTheme as _, Card, Pinnable, Text, clock, tabular};
 
 use crate::shared::cells;
 use crate::shared::pins::Pinned as _;
@@ -90,6 +90,7 @@ impl TrackCard {
             div()
                 .text_size(theme.text(Text::Small))
                 .text_color(theme.muted_foreground)
+                .font_features(tabular())
                 .child(clock(track.duration))
         });
 

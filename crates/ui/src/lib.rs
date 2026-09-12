@@ -100,7 +100,7 @@ pub use theme::{
     ActiveTheme, BACKDROP_TRANSPARENCY, Look, MAX_FONT, MAX_LYRICS_SCALE, MAX_TRANSPARENCY,
     MIN_FONT, MIN_LYRICS_SCALE, Theme, ThemeKind, ThemeOverrides, backdrop,
 };
-pub use time::clock;
+pub use time::{clock, tabular};
 pub use toast::Toast;
 pub use tooltip::{Perch, Tooltip};
 pub use traffic_light_controls::TrafficLightControls;

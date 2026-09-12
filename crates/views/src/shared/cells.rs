@@ -13,7 +13,7 @@ use router::{Destination, Link as _, navigate};
 use state::{Playback, PlaybackState};
 use ui::{
     ActiveTheme as _, Artwork, Avatar, Cell, ExplicitBadge, InlineLink, InlineLinks, ROW_GROUP,
-    Theme,
+    Theme, clock, tabular,
 };
 
 use crate::chrome::Chrome;
@@ -294,6 +294,14 @@ fn line<F>(cell: &Cell<F>, color: Option<Hsla>) -> Div {
 pub(crate) fn dim<F>(cell: &Cell<F>, value: impl Into<SharedString>, muted: Hsla) -> AnyElement {
     line(cell, Some(muted))
         .child(value.into())
+        .into_any_element()
+}
+
+/// A track length in tabular digits, so the column reads as a monospace strip.
+pub(crate) fn length<F>(cell: &Cell<F>, value: Duration, muted: Hsla) -> AnyElement {
+    line(cell, Some(muted))
+        .font_features(tabular())
+        .child(clock(value))
         .into_any_element()
 }
 
