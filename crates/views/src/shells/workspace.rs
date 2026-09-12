@@ -7,7 +7,7 @@ use input::WORKSPACE_CONTEXT;
 use state::{Playback, Queue, SideTab};
 use ui::{
     Activate, ActiveTheme as _, Deselect, Remove, SelectNext, SelectPrevious, ease_out_expo,
-    entrance_span, shown_listing, veiled,
+    entering, entrance_span, shown_listing, veiled,
 };
 
 use crate::chrome::{
@@ -187,7 +187,36 @@ impl Render for Workspace {
                 .into_any_element(),
         };
         let hidden = self.hidden(window, cx);
+        // The scrim is what fades the outgoing page: it is the page's own colour at
+        // full strength, so covering the content with it costs no layout and the
+        // content view keeps its cache. A see-through window has no such colour. The
+        // scrim would be one more translucent layer over the one the root already
+        // paints, and the content area would sit visibly darker than the chrome
+        // around it for the length of the transition — a quad can only add coverage,
+        // never replace it. There the content carries the fade itself, which is the
+        // same curve at the price of leaving the cached layout path while it runs.
+        let dissolving = cx.theme().transparent;
+        let scrim = match dissolving {
+            true => 0.,
+            false => hidden,
+        };
         let backdrop = cx.theme().background;
+        // That price has to be paid for real, not merely accepted: opacity is baked
+        // into a primitive as it is painted, and a cached view replays its primitives
+        // until something notifies it, so a fading page that stayed cached would be
+        // recorded on the first frame, nearly clear, and replayed that way long after
+        // the transition had ended. While it carries its own fade the content is
+        // rendered uncached. Every screen sizes its root `size_full`, so the layout
+        // is the one the cache would have used, and only the frames of the
+        // transition pay for the render.
+        let content = match dissolving && hidden > 0. {
+            true => self.content.clone().into_any_element(),
+            false => self
+                .content
+                .clone()
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element(),
+        };
 
         div()
             .relative()
@@ -256,14 +285,13 @@ impl Render for Workspace {
                                     .bottom_0()
                                     .flex()
                                     .flex_col()
-                                    .map(|this| veiled(this, hidden))
-                                    .child(
-                                        self.content
-                                            .clone()
-                                            .cached(StyleRefinement::default().size_full()),
-                                    ),
+                                    .map(|this| match dissolving {
+                                        true => entering(this, hidden),
+                                        false => veiled(this, hidden),
+                                    })
+                                    .child(content),
                             )
-                            .when(hidden > 0., |this| {
+                            .when(scrim > 0., |this| {
                                 this.child(
                                     div()
                                         .absolute()
@@ -272,7 +300,7 @@ impl Render for Workspace {
                                         .top_0()
                                         .bottom_0()
                                         .bg(backdrop)
-                                        .opacity(hidden),
+                                        .opacity(scrim),
                                 )
                             }),
                     )

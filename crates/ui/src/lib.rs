@@ -74,7 +74,7 @@ pub use metrics::{LEADING, Metrics, Rounding, Text, snapped, tucked};
 pub use modal::Modal;
 pub use motion::{
     Motion, Motioned, Pace, Rising, Saver, Springs, Stillness, ease_in_out_cubic, ease_in_out_expo,
-    ease_out_cubic, ease_out_expo, ease_out_quad, entrance_span, mix, veiled,
+    ease_out_cubic, ease_out_expo, ease_out_quad, entering, entrance_span, mix, veiled,
 };
 pub use notice::Notice;
 pub use palette::tint;

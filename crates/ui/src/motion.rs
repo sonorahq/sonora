@@ -171,7 +171,13 @@ pub fn veiled<E: Styled>(element: E, hidden: f32) -> E {
         .blur(ENTRANCE_BLUR * hidden)
 }
 
-fn entering<E: Styled>(element: E, hidden: f32) -> E {
+/// The whole entrance: the veil plus the fade that goes with it. Use this where
+/// the element has to carry its own opacity; where a scrim can stand in for the
+/// fade, prefer [`veiled`], which stays out of the way of a cached layout. Never
+/// put this over a cached view: opacity is baked into primitives as they are
+/// painted, and a cached view replays them, so the fade freezes at whatever
+/// frame the cache was filled on.
+pub fn entering<E: Styled>(element: E, hidden: f32) -> E {
     veiled(element, hidden).opacity(1. - hidden.clamp(0., 1.))
 }
 
