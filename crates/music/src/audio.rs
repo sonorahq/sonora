@@ -196,10 +196,11 @@ impl<I: Source> Iterator for SmoothGain<I> {
             }
         }
 
-        let output = sample * self.current;
         if let Some(tap) = self.tap.as_mut() {
-            tap.push(output);
+            tap.push(sample);
         }
+
+        let output = sample * self.current;
 
         self.channel += 1;
         if self.channel >= self.channels {

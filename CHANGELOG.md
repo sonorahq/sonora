@@ -230,6 +230,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Playing artwork can pulse a theme-tinted glow with the music. Turn it off under Settings >
+  Appearance > Visualizer, the same switch as the fullscreen spectrum bars.
 - Closing the window no longer stops the music: Sonora stays in the system tray with play/pause,
   previous, next, show and quit at hand, and the Dock icon steps aside on macOS until the window
   is back. Turn it off under Settings → General → Window if you would rather it quit.
