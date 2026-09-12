@@ -1220,15 +1220,13 @@ impl Library {
                 let PlaylistRow::Folder { id, .. } = row else {
                     return None;
                 };
-                let covers: Vec<String> = tiled(
-                    ready
-                        .outline
-                        .playlists_in(id)
-                        .iter()
-                        .filter_map(|&at| ready.playlists.get(at)?.cover.clone())
-                        .take(mosaic::TILES)
-                        .collect(),
-                );
+                let covers: Vec<String> = ready
+                    .outline
+                    .playlists_in(id)
+                    .iter()
+                    .filter_map(|&at| ready.playlists.get(at)?.cover.clone())
+                    .take(mosaic::TILES)
+                    .collect();
                 (!covers.is_empty()).then(|| (id.clone(), stamp_of(&covers), covers))
             })
             .collect();
@@ -1658,16 +1656,6 @@ impl Library {
 /// A folder's mosaic is cached under a name of its own, so it cannot collide with a playlist's.
 fn folder_mosaic(id: &str) -> String {
     format!("folder-{id}")
-}
-
-/// Fills the four tiles from however many covers there are, repeating them in order. A folder
-/// always reads as a grid, even when one playlist inside it is all there is to draw with.
-fn tiled(covers: Vec<String>) -> Vec<String> {
-    if covers.is_empty() || covers.len() >= mosaic::TILES {
-        return covers;
-    }
-
-    covers.iter().cycle().take(mosaic::TILES).cloned().collect()
 }
 
 /// What the covers were when the mosaic was drawn. A playlist gaining art, or leaving the folder,

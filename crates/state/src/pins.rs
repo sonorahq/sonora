@@ -75,7 +75,13 @@ impl Pins {
     /// Every pin of the live providers, laid out the way the user asked for.
     pub fn entries(&self, cx: &App) -> Vec<Pin> {
         let slugs = self.session.read(cx).active_slugs();
-        let mut pinned = self.settings.read(cx).pinned(&slugs);
+        let mut pinned: Vec<Pin> = self
+            .settings
+            .read(cx)
+            .pinned(&slugs)
+            .into_iter()
+            .map(|pin| self.dressed(pin, cx))
+            .collect();
         self.lay_out(&mut pinned, cx);
         pinned
     }
@@ -173,10 +179,11 @@ impl Pins {
             .any(|shelf| library.state(shelf).outline().folder(&pin.id).is_some())
     }
 
-    /// Gives a folder pin the cover the library worked out for it. Everything else already
-    /// arrives with its own.
+    /// Gives a folder pin the cover the library worked out for it. A folder's mosaic is assembled
+    /// after the pin was stored, and it changes as playlists come and go, so it is filled in on
+    /// the way out rather than kept in the stored pin. Everything else arrives with its own.
     fn dressed(&self, pin: Pin, cx: &App) -> Pin {
-        if pin.kind != PinKind::Folder || pin.cover.is_some() {
+        if pin.kind != PinKind::Folder {
             return pin;
         }
         let cover = self.library.read(cx).folder_cover(&pin.id);
