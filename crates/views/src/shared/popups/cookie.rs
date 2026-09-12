@@ -51,7 +51,7 @@ impl RenderOnce for CookiePrompt {
         let dismissed = cancel.clone();
         let theme = *cx.theme();
 
-        Modal::new("cookie-prompt", t!("login-cookie-title"))
+        Modal::new("cookie-prompt", t!("login-manual-title"))
             .w(px(560.))
             .child(
                 Button::new("open-youtube-music")

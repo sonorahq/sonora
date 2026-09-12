@@ -315,10 +315,61 @@ impl MusicProvider for YouTubeProvider {
 
     fn web_sign_in(&self) -> Option<WebSignIn> {
         Some(WebSignIn {
+            label: Some("login-sign-in-google"),
             url: SIGN_IN_URL,
             landing: LANDING,
             domain: COOKIE_DOMAIN,
             proof: auth::PROOF,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Saved, YouTubeProvider};
+    use crate::{MusicProvider, SignIn, WebSignIn};
+
+    #[test]
+    fn cookie_credentials_keep_the_selected_identity() {
+        let saved = Saved::Cookies {
+            cookies: "SAPISID=secret".to_owned(),
+            authuser: 3,
+            page_id: Some("brand-page".to_owned()),
+        };
+        let encoded = serde_json::to_vec(&saved).unwrap();
+        let restored: Saved = serde_json::from_slice(&encoded).unwrap();
+        match restored {
+            Saved::Cookies {
+                cookies,
+                authuser,
+                page_id,
+            } => {
+                assert_eq!(cookies, "SAPISID=secret");
+                assert_eq!(authuser, 3);
+                assert_eq!(page_id.as_deref(), Some("brand-page"));
+            }
+            Saved::Guest => panic!("cookie credentials became a guest session"),
+        }
+    }
+
+    #[test]
+    fn guest_credentials_round_trip() {
+        let encoded = serde_json::to_vec(&Saved::Guest).unwrap();
+        assert!(matches!(
+            serde_json::from_slice::<Saved>(&encoded).unwrap(),
+            Saved::Guest
+        ));
+    }
+
+    #[test]
+    fn browser_sign_in_is_google_labeled_without_changing_sign_in_methods() {
+        let provider = YouTubeProvider::new();
+        let browser = provider.web_sign_in().unwrap();
+        assert_eq!(browser.label, Some("login-sign-in-google"));
+        assert_eq!(
+            provider.sign_in_options(),
+            vec![SignIn::Anonymous, SignIn::Secret]
+        );
+        let _: WebSignIn = browser;
     }
 }

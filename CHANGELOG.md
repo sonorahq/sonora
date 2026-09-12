@@ -75,6 +75,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- YouTube Music's browser sign-in is presented as Sign in with Google. Guest mode and the manual
+  sign-in fallback remain available when the native sign-in window cannot be used.
+
 - The tray menu draws the cover of the playing track beside its name, and clicking that row
   opens the song page.
 - Hovering the tray icon names the playing track, the way it already did on Linux.

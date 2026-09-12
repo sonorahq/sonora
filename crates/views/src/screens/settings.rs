@@ -5,13 +5,13 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::shared::local;
-use crate::shared::popups::{AccountPicker, SearchPopup, matches_query};
+use crate::shared::popups::{AccountPicker, CookiePrompt, SearchPopup, matches_query};
 use gpui::{
     AnyElement, App, Context, Entity, FontWeight, MouseUpEvent, Pixels, Render, SharedString, Task,
     Window, div, px,
 };
 use gpui::{ScrollHandle, prelude::*, svg};
-use i18n::{Language, t};
+use i18n::{Language, lookup, t};
 use music::{AccountChoice, SignIn, SignInPrompt, WritingSystem};
 use router::{NavEntry, Screen, SettingsTab};
 use state::{
@@ -72,6 +72,8 @@ struct Account {
     slug: &'static str,
     name: &'static str,
     options: Vec<SignIn>,
+    web_sign_in: bool,
+    web_sign_in_label: Option<&'static str>,
     stored: bool,
     active: bool,
     guest: bool,
@@ -86,6 +88,12 @@ fn offered(method: &SignIn, stored: bool, guest: bool) -> bool {
         SignIn::Credentials { .. } => !stored,
         SignIn::Path(_) => false,
     }
+}
+
+#[derive(Clone, Copy)]
+struct BrowserSignIn {
+    enabled: bool,
+    label: Option<&'static str>,
 }
 
 #[derive(Clone, Copy)]
@@ -146,6 +154,8 @@ pub struct SettingsView {
     username: Entity<Input>,
     password: Entity<Input>,
     credentials_for: Option<&'static str>,
+    secret: Entity<Input>,
+    secret_for: Option<&'static str>,
     languages: SearchPopup,
     typefaces: SearchPopup,
     typeface_faced: RefCell<HashSet<SharedString>>,
@@ -192,6 +202,8 @@ impl SettingsView {
             username: cx.new(|cx| Input::new("login-username-hint", cx)),
             password: cx.new(|cx| Input::new("login-password-hint", cx).masked()),
             credentials_for: None,
+            secret: cx.new(|cx| Input::new("login-manual-hint", cx)),
+            secret_for: None,
             languages,
             typefaces,
             typeface_faced: RefCell::new(HashSet::new()),
@@ -1801,6 +1813,8 @@ impl SettingsView {
                 slug: info.slug,
                 name: info.name,
                 options: info.options,
+                web_sign_in: info.web_sign_in,
+                web_sign_in_label: info.web_sign_in_label,
                 stored: info.stored,
                 active: info.active && !signed_out,
                 guest: info.active && !signed_out && guest,
@@ -1845,6 +1859,8 @@ impl SettingsView {
             slug,
             name,
             options,
+            web_sign_in,
+            web_sign_in_label,
             stored,
             active,
             guest,
@@ -1936,13 +1952,21 @@ impl SettingsView {
                 this.child(crate::shared::trouble::trouble(error, false))
             })
             .when(!methods.is_empty(), |this| {
-                this.child(
-                    div().flex().flex_wrap().items_start().gap_2().children(
-                        methods
-                            .into_iter()
-                            .map(|method| self.method(slug, name, method, pending, cx)),
-                    ),
-                )
+                this.child(div().flex().flex_wrap().items_start().gap_2().children(
+                    methods.into_iter().map(|method| {
+                        self.method(
+                            slug,
+                            name,
+                            method,
+                            BrowserSignIn {
+                                enabled: web_sign_in,
+                                label: web_sign_in_label,
+                            },
+                            pending,
+                            cx,
+                        )
+                    }),
+                ))
             })
             .when(cancel, |this| {
                 this.child(
@@ -1959,6 +1983,7 @@ impl SettingsView {
 
     fn abandon(&mut self, cx: &mut Context<Self>) {
         self.clear_credentials(cx);
+        self.clear_secret(cx);
         self.session
             .update(cx, |session, cx| session.cancel_sign_in(cx));
     }
@@ -1978,6 +2003,35 @@ impl SettingsView {
     fn abandon_credentials(&mut self, cx: &mut Context<Self>) {
         self.clear_credentials(cx);
         cx.notify();
+    }
+
+    fn open_manual(&mut self, slug: &'static str, cx: &mut Context<Self>) {
+        self.secret_for = Some(slug);
+        self.secret.update(cx, |input, cx| input.set_text("", cx));
+        cx.notify();
+    }
+
+    fn clear_secret(&mut self, cx: &mut Context<Self>) {
+        self.secret_for = None;
+        self.secret.update(cx, |input, cx| input.set_text("", cx));
+    }
+
+    fn abandon_secret(&mut self, cx: &mut Context<Self>) {
+        self.clear_secret(cx);
+        cx.notify();
+    }
+
+    fn submit_secret(&mut self, cx: &mut Context<Self>) {
+        let Some(slug) = self.secret_for else {
+            return;
+        };
+        let text = self.secret.read(cx).text().to_string();
+        if text.trim().is_empty() {
+            return;
+        }
+        self.clear_secret(cx);
+        self.session
+            .update(cx, |session, cx| session.sign_in_with_cookies(slug, cx));
     }
 
     fn submit_credentials(&mut self, cx: &mut Context<Self>) {
@@ -2026,15 +2080,22 @@ impl SettingsView {
             .on_dismiss(cx.listener(|this, _, _, cx| this.abandon_credentials(cx)))
     }
 
+    fn secret_prompt(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        CookiePrompt::new(self.secret.clone())
+            .on_submit(cx.listener(|this, _, _, cx| this.submit_secret(cx)))
+            .on_cancel(cx.listener(|this, _, _, cx| this.abandon_secret(cx)))
+    }
+
     fn method(
         &self,
         slug: &'static str,
         provider: &'static str,
         method: SignIn,
+        browser: BrowserSignIn,
         pending: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        self.method_button(slug, provider, method, pending, cx)
+        self.method_button(slug, provider, method, browser, pending, cx)
             .into_any_element()
     }
 
@@ -2043,6 +2104,7 @@ impl SettingsView {
         slug: &'static str,
         provider: &'static str,
         method: SignIn,
+        browser: BrowserSignIn,
         pending: bool,
         cx: &mut Context<Self>,
     ) -> Button {
@@ -2052,9 +2114,16 @@ impl SettingsView {
                 t!("login-sign-in", provider = provider),
             ),
             SignIn::Anonymous => (format!("connect-{slug}-guest"), t!("login-guest-use")),
-            SignIn::Secret => (
+            SignIn::Secret if browser.enabled => (
                 format!("connect-{slug}-cookies"),
-                t!("login-sign-in", provider = provider),
+                browser.label.map_or_else(
+                    || t!("login-sign-in", provider = provider),
+                    |label| lookup(label, None),
+                ),
+            ),
+            SignIn::Secret => (
+                format!("connect-{slug}-cookies-manual"),
+                t!("login-manual-sign-in"),
             ),
             SignIn::Path(_) => (
                 format!("connect-{slug}-path"),
@@ -2072,6 +2141,7 @@ impl SettingsView {
             .outline()
             .disabled(pending)
             .on_click(cx.listener(move |this, _, _, cx| match &method {
+                SignIn::Secret if !browser.enabled => this.open_manual(slug, cx),
                 SignIn::Credentials { .. } => this.open_credentials(slug, cx),
                 method => {
                     let method = method.clone();
@@ -2380,6 +2450,9 @@ impl Render for SettingsView {
             })
             .when(self.credentials_for.is_some(), |this| {
                 this.child(self.credentials_prompt(cx).into_any_element())
+            })
+            .when(self.secret_for.is_some(), |this| {
+                this.child(self.secret_prompt(cx).into_any_element())
             })
     }
 }

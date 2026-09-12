@@ -4,7 +4,7 @@ use gpui::{
     ClipboardItem, Context, Entity, FontWeight, IntoElement, Pixels, Render, SharedString, Window,
     div, px, svg,
 };
-use i18n::t;
+use i18n::{lookup, t};
 use music::{AccountChoice, SignIn, SignInPrompt};
 use state::{Session, SessionState, Sonora, Usage};
 use ui::ActiveTheme as _;
@@ -18,8 +18,15 @@ struct Column {
     name: &'static str,
     options: Vec<SignIn>,
     web_sign_in: bool,
+    web_sign_in_label: Option<&'static str>,
     disabled: bool,
     cancel: bool,
+}
+
+#[derive(Clone, Copy)]
+struct BrowserSignIn {
+    enabled: bool,
+    label: Option<&'static str>,
 }
 
 enum LoginAction {
@@ -55,7 +62,7 @@ impl LoginView {
         Self {
             session,
             usage,
-            secret: cx.new(|cx| Input::new("login-cookie-hint", cx)),
+            secret: cx.new(|cx| Input::new("login-manual-hint", cx)),
             server: cx.new(|cx| Input::new("login-server-hint", cx)),
             username: cx.new(|cx| Input::new("login-username-hint", cx)),
             password: cx.new(|cx| Input::new("login-password-hint", cx).masked()),
@@ -165,24 +172,27 @@ impl LoginView {
         slug: &'static str,
         provider: &str,
         method: &SignIn,
-        web_sign_in: bool,
+        browser: BrowserSignIn,
         disabled: bool,
         cx: &mut Context<Self>,
     ) -> Vec<Button> {
         let options = match method {
             SignIn::Secret => {
                 let mut options = Vec::new();
-                if web_sign_in {
+                if browser.enabled {
                     options.push(LoginOption {
                         id: format!("sign-in-{slug}-cookies").into(),
-                        label: t!("login-sign-in", provider = provider),
+                        label: browser.label.map_or_else(
+                            || t!("login-sign-in", provider = provider),
+                            |label| lookup(label, None),
+                        ),
                         action: LoginAction::SignIn(SignIn::Secret),
                         primary: true,
                     });
                 }
                 options.push(LoginOption {
                     id: format!("sign-in-{slug}-cookies-manual").into(),
-                    label: t!("login-connect-cookies"),
+                    label: t!("login-manual-sign-in"),
                     action: LoginAction::Cookies,
                     primary: false,
                 });
@@ -260,6 +270,7 @@ impl LoginView {
             name,
             options,
             web_sign_in,
+            web_sign_in_label,
             disabled,
             cancel,
         } = column;
@@ -294,7 +305,17 @@ impl LoginView {
                     .gap_2()
                     .w_full()
                     .children(options.into_iter().flat_map(|method| {
-                        self.option_buttons(slug, name, method, web_sign_in, disabled, cx)
+                        self.option_buttons(
+                            slug,
+                            name,
+                            method,
+                            BrowserSignIn {
+                                enabled: web_sign_in,
+                                label: web_sign_in_label,
+                            },
+                            disabled,
+                            cx,
+                        )
                     }))
                     .when(cancel, |this| {
                         this.child(
@@ -310,7 +331,7 @@ impl LoginView {
 
     fn guest_mode(&self, slug: &'static str, pending: bool, cx: &mut Context<Self>) -> Button {
         Button::new("guest-mode")
-            .label(t!("login-guest-title"))
+            .label(t!("login-guest-continue"))
             .outline()
             .w_full()
             .disabled(pending)
@@ -457,6 +478,7 @@ impl Render for LoginView {
             name: info.name,
             options: info.options,
             web_sign_in: info.web_sign_in,
+            web_sign_in_label: info.web_sign_in_label,
             disabled: pending,
             cancel: waiting && info.pending,
         });

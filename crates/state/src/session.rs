@@ -79,6 +79,7 @@ pub struct ProviderInfo {
     pub name: &'static str,
     pub options: Vec<SignIn>,
     pub web_sign_in: bool,
+    pub web_sign_in_label: Option<&'static str>,
     pub stored: bool,
     pub active: bool,
     pub pending: bool,
@@ -219,16 +220,19 @@ impl Session {
     }
 
     pub fn providers(&self) -> impl Iterator<Item = ProviderInfo> + '_ {
-        self.providers
-            .iter()
-            .enumerate()
-            .map(|(index, provider)| ProviderInfo {
+        self.providers.iter().enumerate().map(|(index, provider)| {
+            let browser = provider.web_sign_in();
+            // Asked in this order because answering `supported` costs a library load on
+            // Linux, and only a provider that signs in with cookies is worth it.
+            let web_sign_in = browser.is_some() && webview::supported();
+            ProviderInfo {
                 slug: provider.slug(),
                 name: provider.name(),
                 options: provider.sign_in_options(),
-                // Asked in this order because answering `supported` costs a library load on
-                // Linux, and only a provider that signs in with cookies is worth it.
-                web_sign_in: provider.web_sign_in().is_some() && webview::supported(),
+                web_sign_in,
+                web_sign_in_label: web_sign_in
+                    .then(|| browser.and_then(|sign_in| sign_in.label))
+                    .flatten(),
                 stored: provider.stored(),
                 active: self.active == Some(index),
                 pending: self.awaiting == Some(index),
@@ -236,7 +240,8 @@ impl Session {
                     Some((failed, failure)) if *failed == index => Some(failure.clone()),
                     _ => None,
                 },
-            })
+            }
+        })
     }
 
     pub fn connected(&self) -> impl Iterator<Item = ProviderInfo> + '_ {

@@ -382,6 +382,9 @@ pub type InputSource = tokio::sync::mpsc::UnboundedReceiver<String>;
 /// `proof` names. The header those cookies make is what `SignInPrompt::Secret` then receives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WebSignIn {
+    /// Fluent key for the browser sign-in button, when the provider wants a label other than
+    /// "Sign in with {provider}".
+    pub label: Option<&'static str>,
     pub url: &'static str,
     pub landing: &'static str,
     pub domain: &'static str,
