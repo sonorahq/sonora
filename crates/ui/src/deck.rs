@@ -1,18 +1,25 @@
 use std::ops::Range;
+use std::panic::Location;
 
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Div, ElementId, Pixels, StyleRefinement, Window, div};
+use gpui::{
+    AnyElement, App, AvailableSpace, Bounds, ElementId, GlobalElementId, InspectorElementId,
+    LayoutId, Pixels, Style, StyleRefinement, Window, div, point, relative, size,
+};
 
 use crate::table::Viewport;
 
 type Draw = Box<dyn Fn(usize, &mut Window, &mut App) -> AnyElement>;
 type Measure = Box<dyn Fn(Pixels, &mut Window, &mut App)>;
 
-#[derive(IntoElement)]
+/// A run of rows of known heights inside a scrolling region, of which only the ones in view are
+/// built. The element takes the extent of the whole run, so the region scrolls and its
+/// scrollbar measures as if every row were there, and it finds the rows on screen from its own
+/// bounds and the region's clip while it is laid out, so it is never a frame behind the scroll
+/// and needs nothing measured by its caller. `across` turns the run sideways for a rail.
 pub struct Deck {
-    base: Div,
     id: ElementId,
-    viewport: Viewport,
+    style: StyleRefinement,
     rows: Vec<Pixels>,
     gap: Pixels,
     across: bool,
@@ -24,9 +31,8 @@ impl Deck {
     #[track_caller]
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
-            base: div(),
             id: id.into(),
-            viewport: Viewport::default(),
+            style: StyleRefinement::default(),
             rows: Vec::new(),
             gap: Pixels::ZERO,
             across: false,
@@ -40,11 +46,6 @@ impl Deck {
         self
     }
 
-    pub fn viewport(mut self, viewport: Viewport) -> Self {
-        self.viewport = viewport;
-        self
-    }
-
     pub fn rows(mut self, rows: impl IntoIterator<Item = Pixels>) -> Self {
         self.rows = rows.into_iter().collect();
         self
@@ -55,6 +56,7 @@ impl Deck {
         self
     }
 
+    /// Builds the row at an index. Asked only for the rows in view, every frame they are.
     pub fn draw(
         mut self,
         draw: impl Fn(usize, &mut Window, &mut App) -> AnyElement + 'static,
@@ -63,6 +65,9 @@ impl Deck {
         self
     }
 
+    /// Reports where the run's leading edge landed, in window coordinates, once it is laid
+    /// out. A caller that aims a scroll at one of the rows needs that to know how far down the
+    /// region the run begins.
     pub fn on_measure(mut self, measure: impl Fn(Pixels, &mut Window, &mut App) + 'static) -> Self {
         self.measure = Some(Box::new(measure));
         self
@@ -85,62 +90,134 @@ impl Deck {
 
 impl Styled for Deck {
     fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
+        &mut self.style
     }
 }
 
-impl RenderOnce for Deck {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let Self {
-            mut base,
-            id,
-            viewport,
-            rows,
-            gap,
-            across,
-            draw,
-            measure,
-        } = self;
+impl IntoElement for Deck {
+    type Element = Self;
 
-        let tops = tops(&rows, gap);
-        let shown = span(&tops, &rows, viewport);
-        let overrides = std::mem::take(base.style());
-        let first = tops.get(shown.start).copied().unwrap_or(Pixels::ZERO);
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
 
-        let base = base.when_some(measure, |this, measure| {
-            this.on_children_prepainted(move |bounds, window, cx| {
-                let Some(head) = bounds.first() else {
-                    return;
+impl Element for Deck {
+    type RequestLayoutState = ();
+    type PrepaintState = Vec<AnyElement>;
+
+    fn id(&self) -> Option<ElementId> {
+        Some(self.id.clone())
+    }
+
+    fn source_location(&self) -> Option<&'static Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        let reach = extent(&self.rows, self.gap);
+        let mut style = Style::default();
+        match self.across {
+            true => {
+                style.size.width = reach.into();
+                style.size.height = relative(1.).into();
+            }
+            false => {
+                style.size.width = relative(1.).into();
+                style.size.height = reach.into();
+            }
+        }
+        style.flex_shrink = 0.;
+        style.refine(&self.style);
+
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        let across = self.across;
+        let lead = match across {
+            true => bounds.origin.x,
+            false => bounds.origin.y,
+        };
+        if let Some(measure) = &self.measure {
+            measure(lead, window, cx);
+        }
+        let Some(draw) = &self.draw else {
+            return Vec::new();
+        };
+
+        // The region clips to its own bounds, so the mask is the part of the run on screen.
+        let view = window.content_mask().bounds;
+        let viewport = match across {
+            true => Viewport {
+                top: view.origin.x - lead,
+                height: view.size.width,
+            },
+            false => Viewport {
+                top: view.origin.y - lead,
+                height: view.size.height,
+            },
+        };
+        let tops = tops(&self.rows, self.gap);
+        let shown = span(&tops, &self.rows, viewport);
+
+        let mut built = Vec::with_capacity(shown.len());
+        for index in shown {
+            let (width, height) = match across {
+                true => (self.rows[index], bounds.size.height),
+                false => (bounds.size.width, self.rows[index]),
+            };
+            let mut element = div()
+                .overflow_hidden()
+                .w(width)
+                .h(height)
+                .child(draw(index, window, cx))
+                .into_any_element();
+            element.layout_as_root(
+                size(
+                    AvailableSpace::Definite(width),
+                    AvailableSpace::Definite(height),
+                ),
+                window,
+                cx,
+            );
+            let origin = bounds.origin
+                + match across {
+                    true => point(tops[index], Pixels::ZERO),
+                    false => point(Pixels::ZERO, tops[index]),
                 };
-                let start = match across {
-                    true => head.origin.x,
-                    false => head.origin.y,
-                };
-                measure(start - first, window, cx);
-            })
-        });
-        let reach = extent(&rows, gap);
+            element.prepaint_at(origin, window, cx);
+            built.push(element);
+        }
+        built
+    }
 
-        let mut deck = base.id(id).relative().when_else(
-            across,
-            |this| this.h_full().w(reach),
-            |this| this.w_full().h(reach),
-        );
-        deck.style().refine(&overrides);
-
-        match draw {
-            None => deck,
-            Some(draw) => deck.children(shown.map(|index| {
-                div()
-                    .absolute()
-                    .when_else(
-                        across,
-                        |this| this.left(tops[index]).top_0().h_full().w(rows[index]),
-                        |this| this.top(tops[index]).left_0().w_full().h(rows[index]),
-                    )
-                    .overflow_hidden()
-                    .child(draw(index, window, cx))
-            })),
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        built: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        for element in built {
+            element.paint(window, cx);
         }
     }
 }
@@ -167,6 +244,7 @@ fn extent(rows: &[Pixels], gap: Pixels) -> Pixels {
     }
 }
 
+/// The rows that overlap the viewport, `top` being how far into the run the viewport starts.
 fn span(tops: &[Pixels], rows: &[Pixels], viewport: Viewport) -> Range<usize> {
     if tops.is_empty() {
         return 0..0;

@@ -1,4 +1,7 @@
+use std::cell::OnceCell;
 use std::collections::HashSet;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::rc::Rc;
 
 use gpui::{App, Context, Entity};
 use music::{LibraryItem, LibraryItemKind};
@@ -50,6 +53,14 @@ pub struct Pins {
     session: Entity<Session>,
     /// The uris the provider last reported as pinned, so only a change since then is followed.
     mirrored: HashSet<String>,
+    /// `entries` as last laid out. Cleared whenever the settings, the session or the library
+    /// move, so a frame reads the list without rebuilding it.
+    laid: OnceCell<Rc<Vec<Pin>>>,
+    /// `library` as last laid out, cleared alongside `laid`.
+    rest: OnceCell<Rc<Vec<Pin>>>,
+    /// The digest of what the shelves last listed, so a library notify that changed nothing
+    /// the sidebar shows does not rebuild it.
+    seen: u64,
 }
 
 impl Pins {
@@ -59,30 +70,89 @@ impl Pins {
         session: Entity<Session>,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.observe(&library, |this, _, cx| this.absorb(cx)).detach();
-        cx.observe(&settings, |_, _, cx| cx.notify()).detach();
-        cx.observe(&session, |_, _, cx| cx.notify()).detach();
+        cx.observe(&library, |this, _, cx| {
+            this.absorb(cx);
+            let seen = this.fingerprint(cx);
+            if this.seen != seen {
+                this.seen = seen;
+                this.changed(cx);
+            }
+        })
+        .detach();
+        cx.observe(&settings, |this, _, cx| this.changed(cx))
+            .detach();
+        cx.observe(&session, |this, _, cx| this.changed(cx))
+            .detach();
 
         Self {
             settings,
             library,
             session,
             mirrored: HashSet::new(),
+            laid: OnceCell::new(),
+            rest: OnceCell::new(),
+            seen: 0,
         }
     }
 
-    /// Every pin of the live providers, laid out the way the user asked for.
-    pub fn entries(&self, cx: &App) -> Vec<Pin> {
-        let slugs = self.session.read(cx).active_slugs();
-        let mut pinned = self.settings.read(cx).pinned(&slugs);
-        self.lay_out(&mut pinned, cx);
-        pinned
+    /// Every pin of the live providers, laid out the way the user asked for. The list is built
+    /// once per change and shared afterwards.
+    pub fn entries(&self, cx: &App) -> Rc<Vec<Pin>> {
+        self.laid
+            .get_or_init(|| {
+                let slugs = self.session.read(cx).active_slugs();
+                let mut pinned = self.settings.read(cx).pinned(&slugs);
+                self.lay_out(&mut pinned, cx);
+                Rc::new(pinned)
+            })
+            .clone()
     }
 
     /// Everything the live shelves hold that is not pinned: albums, artists and playlists, laid
     /// out the same way the pins above them are. Nothing else a provider lists belongs here,
-    /// since the sidebar can only open these three.
-    pub fn library(&self, cx: &App) -> Vec<Pin> {
+    /// since the sidebar can only open these three. Built once per change, like `entries`.
+    pub fn library(&self, cx: &App) -> Rc<Vec<Pin>> {
+        self.rest
+            .get_or_init(|| Rc::new(self.gather_library(cx)))
+            .clone()
+    }
+
+    /// A digest of the albums, artists and playlists the live shelves list, with the names
+    /// and covers the sidebar shows for them.
+    fn fingerprint(&self, cx: &App) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        let library = self.library.read(cx);
+        for shelf in [Shelf::Streaming, Shelf::Local] {
+            if self.session.read(cx).client_of(shelf).is_none() {
+                continue;
+            }
+            let held = library.state(shelf);
+            for playlist in held.playlists() {
+                (&playlist.id, &playlist.name, &playlist.cover).hash(&mut hasher);
+            }
+            for album in held.albums() {
+                (&album.id, &album.name, &album.cover_large, &album.cover).hash(&mut hasher);
+            }
+            for artist in held.artists() {
+                (&artist.id, &artist.name, &artist.cover).hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
+    /// Drops both laid-out lists so the next read rebuilds them.
+    fn forget(&mut self) {
+        self.laid.take();
+        self.rest.take();
+    }
+
+    /// Forgets the laid-out lists and tells the observers.
+    fn changed(&mut self, cx: &mut Context<Self>) {
+        self.forget();
+        cx.notify();
+    }
+
+    fn gather_library(&self, cx: &App) -> Vec<Pin> {
         let pinned = self.dragged(cx);
         let library = self.library.read(cx);
         let mut rest = Vec::new();
@@ -157,7 +227,7 @@ impl Pins {
         self.settings.update(cx, |settings, cx| {
             settings.set_sidebar_pin_sort(sort, reversed, cx)
         });
-        cx.notify();
+        self.changed(cx);
     }
 
     pub fn holds(&self, pin: &Pin, cx: &App) -> bool {
@@ -190,7 +260,7 @@ impl Pins {
         if !known {
             self.tell(&pin, true, cx);
         }
-        cx.notify();
+        self.changed(cx);
     }
 
     pub fn unpin(&mut self, pin: Pin, cx: &mut Context<Self>) {
@@ -200,7 +270,7 @@ impl Pins {
         self.settings
             .update(cx, |settings, cx| settings.unpin(slug, &pin, cx));
         self.tell(&pin, false, cx);
-        cx.notify();
+        self.changed(cx);
     }
 
     /// Mirrors a change into the provider's own pins. Nothing happens for a provider that keeps
@@ -238,6 +308,7 @@ impl Pins {
             settings.rearrange(&shown, &slugs, cx);
             settings.set_sidebar_pin_sort(None, false, cx);
         });
+        self.forget();
     }
 
     /// Puts the local list back after the provider refused the change.
@@ -250,7 +321,7 @@ impl Pins {
             true => settings.unpin(slug, &pin, cx),
             false => settings.pin(slug, pin, None, &slugs, cx),
         });
-        cx.notify();
+        self.changed(cx);
     }
 
     /// The provider's own uri for a pin, when the provider lists it and keeps pins itself.
@@ -317,7 +388,7 @@ impl Pins {
                 settings.pin(slug, pin, None, &slugs, cx);
             }
         });
-        cx.notify();
+        self.changed(cx);
     }
 }
 

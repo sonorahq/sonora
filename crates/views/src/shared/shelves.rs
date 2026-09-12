@@ -3,15 +3,13 @@ use gpui::{
     AnyElement, App, Context, Div, ElementId, Entity, EntityId, FontWeight, MouseDownEvent, Pixels,
     Point, ScrollHandle, ScrollWheelEvent, SharedString, WeakEntity, Window, div, point, px,
 };
-use std::cell::Cell;
 use std::rc::Rc;
 
 use music::{Album, GenreItem, GenreSection, Playlist};
 use router::{Destination, navigate};
 use state::Playback;
 use ui::{
-    ActiveTheme as _, Button, Card, Deck, Glide, Mode, Popup, Skeleton, Text, Viewport, heading,
-    snapped,
+    ActiveTheme as _, Button, Card, Deck, Glide, Mode, Popup, Skeleton, Text, heading, snapped,
 };
 
 use crate::shared::album_grid::CardGrid;
@@ -37,7 +35,6 @@ pub(crate) struct Shelves {
     host: EntityId,
     playback: Entity<Playback>,
     rails: Vec<Rail>,
-    above: Rc<Cell<Option<Pixels>>>,
     context_menu: Option<(Item, Point<Pixels>)>,
 }
 
@@ -48,7 +45,6 @@ impl Shelves {
             host,
             playback,
             rails: Vec::new(),
-            above: Rc::new(Cell::new(None)),
             context_menu: None,
         }
     }
@@ -107,7 +103,6 @@ impl Shelves {
         sections: Rc<Vec<GenreSection>>,
         mode: Mode,
         width: Pixels,
-        viewport: Viewport,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -125,13 +120,10 @@ impl Shelves {
             .map(|section| self.height(section, mode, width, window, cx))
             .collect();
         let me = cx.entity().downgrade();
-        let above = self.above.clone();
 
         let stack = Deck::new(self.tag("stack", 0))
-            .viewport(viewport)
             .rows(heights)
             .gap(STACK_GAP)
-            .on_measure(move |top, _, _| above.set(Some(top)))
             .draw(move |place, window, cx| {
                 let Some(view) = me.upgrade() else {
                     return div().into_any_element();
@@ -154,17 +146,6 @@ impl Shelves {
             .child(stack)
             .children(self.popup(cx))
             .into_any_element()
-    }
-
-    pub(crate) fn viewport(&self, scroll: &ScrollHandle, window: &Window) -> Viewport {
-        let seen = scroll.bounds().size.height;
-
-        let top = match self.above.get() {
-            Some(above) => scroll.bounds().origin.y - above,
-            None => Pixels::ZERO,
-        };
-
-        Viewport::measured(top, seen, window)
     }
 
     fn height(
@@ -238,14 +219,6 @@ impl Shelves {
         let layout = CardGrid::layout(width);
         let (handle, glide) = self.rails[place].clone();
         let crowded = section.items.len() > layout.columns;
-        let seen = match handle.bounds().size.width {
-            reach if reach > Pixels::ZERO => reach,
-            _ => width,
-        };
-        let viewport = Viewport {
-            top: -handle.offset().x.min(Pixels::ZERO),
-            height: seen,
-        };
         let feed = sections.clone();
         let drawn = me.clone();
         let card = layout.card;
@@ -288,7 +261,6 @@ impl Shelves {
                     .child(
                         Deck::new(self.tag("rail", place))
                             .across()
-                            .viewport(viewport)
                             .rows(section.items.iter().map(|_| card))
                             .gap(RAIL_GAP)
                             .draw(move |index, _, cx| {
@@ -451,7 +423,6 @@ pub(crate) fn grid(
     id: &'static str,
     genres: Rc<Vec<music::Genre>>,
     width: Pixels,
-    viewport: Viewport,
     window: &Window,
     cx: &App,
 ) -> AnyElement {
@@ -460,7 +431,6 @@ pub(crate) fn grid(
     let rows = genres.len().div_ceil(lanes);
 
     Deck::new(id)
-        .viewport(viewport)
         .rows((0..rows).map(|_| row))
         .gap(LANE_GAP)
         .draw(move |place, _, cx| {

@@ -203,13 +203,11 @@ impl Render for HomeView {
         let sections = self.home.read(cx).sections();
         let feeding = self.home.read(cx).is_feeding();
         let width = self.width;
-        let scroll = self.scrollbar.read(cx).scroll().clone();
-        let viewport = self.shelves.read(cx).viewport(&scroll, window);
         let shelves = self
             .shelves
             .update(cx, |shelves, cx| match sections.is_empty() && feeding {
                 true => shelves.pending(width, cx),
-                false => vec![shelves.render(sections, Mode::Grid, width, viewport, window, cx)],
+                false => vec![shelves.render(sections, Mode::Grid, width, window, cx)],
             });
 
         Scroller::new("home-page", &self.scrollbar)
