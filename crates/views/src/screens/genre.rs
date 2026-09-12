@@ -102,10 +102,8 @@ impl Render for GenreView {
         let sections = detail.sections();
         let empty = !loading && sections.is_empty();
         let (mode, width) = (self.mode, self.width);
-        let scroll = self.scrollbar.read(cx).scroll().clone();
-        let viewport = self.shelves.read(cx).viewport(&scroll, window);
         let shelves = self.shelves.update(cx, |shelves, cx| {
-            shelves.render(sections, mode, width, viewport, window, cx)
+            shelves.render(sections, mode, width, window, cx)
         });
 
         div().flex().flex_col().size_full().child(
