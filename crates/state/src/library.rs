@@ -9,7 +9,7 @@ use music::{
     Album, MediaKind, MusicApi, Page, Pages, Playlist, PlaylistEntry, SavedArtist, Shape, Track,
 };
 
-use crate::outline::{self, PlaylistRow};
+use crate::outline::{self, Outline, PlaylistRow};
 use crate::snapshot::{Kind, Remembered, Snapshots};
 use crate::{Io, Network, Outcome, Session, SessionEvent, Target, Toasts, join, mosaic};
 
@@ -296,7 +296,7 @@ fn place(
 /// provider cannot play is left out, so the songs list and its count hold only what plays.
 fn extend(state: &mut LibraryState, landed: Landed) {
     if !matches!(state, LibraryState::Ready(_)) {
-        *state = LibraryState::Ready(Ready::default());
+        *state = LibraryState::Ready(Box::default());
     }
     let LibraryState::Ready(ready) = state else {
         return;
@@ -308,7 +308,7 @@ fn extend(state: &mut LibraryState, landed: Landed) {
         albums,
         artists,
         problems,
-    } = ready;
+    } = ready.as_mut();
     let part = landed.part();
     match landed {
         Landed::Tracks(result) => tracks.extend(
@@ -344,7 +344,10 @@ fn empty(state: &mut LibraryState, part: LibraryPart) {
     };
     match part {
         LibraryPart::Tracks => ready.tracks.clear(),
-        LibraryPart::Playlists => ready.playlists.clear(),
+        LibraryPart::Playlists => {
+            ready.playlists.clear();
+            ready.outline = Outline::default();
+        }
         LibraryPart::Albums => ready.albums.clear(),
         LibraryPart::Artists => ready.artists.clear(),
     }
@@ -699,7 +702,7 @@ pub struct Ready {
     pub tracks: Vec<Track>,
     pub playlists: Vec<Playlist>,
     /// The shape of `playlists`: their folders, and the order the two are read in.
-    pub outline: Vec<PlaylistRow>,
+    pub outline: Outline,
     pub albums: Vec<Album>,
     pub artists: Vec<SavedArtist>,
     pub problems: Vec<Problem>,
@@ -708,7 +711,8 @@ pub struct Ready {
 pub enum LibraryState {
     Empty,
     Loading,
-    Ready(Ready),
+    /// Boxed: a ready shelf is far larger than the states beside it.
+    Ready(Box<Ready>),
     Failed(String),
 }
 
@@ -728,8 +732,10 @@ impl LibraryState {
         self.ready().map_or(&[], |ready| ready.playlists.as_slice())
     }
 
-    pub fn outline(&self) -> &[PlaylistRow] {
-        self.ready().map_or(&[], |ready| ready.outline.as_slice())
+    /// How the shelf's playlists are grouped into folders. Empty until the shelf is ready.
+    pub fn outline(&self) -> &Outline {
+        static BARE: std::sync::LazyLock<Outline> = std::sync::LazyLock::new(Outline::default);
+        self.ready().map_or(&BARE, |ready| &ready.outline)
     }
 
     pub fn albums(&self) -> &[Album] {
@@ -762,6 +768,8 @@ pub struct Library {
     mosaics: HashMap<String, Task<()>>,
     snapshots: Snapshots,
     priming: [Option<Task<()>>; 2],
+    /// A mosaic for each folder, built from the covers of the playlists inside it.
+    folder_covers: HashMap<String, String>,
 }
 
 impl Library {
@@ -794,6 +802,7 @@ impl Library {
                 this.contents.clear();
                 this.reading.clear();
                 this.mosaics.clear();
+                this.folder_covers.clear();
                 this.playlist_task = None;
                 this.pending.clear();
                 this.pending_albums.clear();
@@ -838,6 +847,7 @@ impl Library {
             mosaics: HashMap::new(),
             snapshots: Snapshots::new(cache),
             priming: [None, None],
+            folder_covers: HashMap::new(),
         };
         library.held_mut(Shelf::Streaming).state = LibraryState::Loading;
         library.prime(Shelf::Streaming, cx);
@@ -913,7 +923,7 @@ impl Library {
                     ..Ready::default()
                 };
                 outline::relist(&ready.playlists, &mut ready.outline);
-                held.state = LibraryState::Ready(ready);
+                held.state = LibraryState::Ready(Box::new(ready));
                 cx.notify();
             })
             .ok();
@@ -1721,6 +1731,74 @@ impl Library {
         }
     }
 
+    /// The cover of a folder: a mosaic of what is inside it, or `None` while it has fewer than
+    /// four covers to draw with.
+    pub fn folder_cover(&self, id: &str) -> Option<String> {
+        self.folder_covers.get(id).cloned()
+    }
+
+    /// Gives every folder a cover made from the playlists it holds, the way a playlist without
+    /// art gets one. Nothing is fetched here: those playlists are already loaded.
+    fn paint_folders(&mut self, shelf: Shelf, cx: &mut Context<Self>) {
+        let Some(ready) = self.held(shelf).state.ready() else {
+            return;
+        };
+        let wanted: Vec<(String, u32, Vec<String>)> = ready
+            .outline
+            .rows()
+            .iter()
+            .filter_map(|row| {
+                let PlaylistRow::Folder { id, .. } = row else {
+                    return None;
+                };
+                let inside = ready.outline.playlists_in(id);
+                let covers: Vec<String> = inside
+                    .iter()
+                    .filter_map(|&at| ready.playlists.get(at)?.cover.clone())
+                    .take(mosaic::TILES)
+                    .collect();
+                (covers.len() == mosaic::TILES).then(|| (id.clone(), inside.len() as u32, covers))
+            })
+            .collect();
+
+        for (id, stamp, covers) in wanted {
+            let key = folder_mosaic(&id);
+            if let Some(cover) = mosaic::cached(&key, stamp) {
+                self.folder_covers.insert(id, cover);
+                continue;
+            }
+            if self.mosaics.contains_key(&key) {
+                continue;
+            }
+
+            let io = self.io.clone();
+            let http = cx.http_client();
+            let built_for = key.clone();
+            let held = key.clone();
+            let task = cx.spawn(async move |this, cx| {
+                let built = join(
+                    io.spawn(async move { mosaic::build(http, &built_for, stamp, covers).await }),
+                )
+                .await;
+
+                this.update(cx, |this, cx| {
+                    this.mosaics.remove(&held);
+                    match built {
+                        Ok(cover) => {
+                            this.folder_covers.insert(id, cover);
+                            cx.notify();
+                        }
+                        Err(error) => {
+                            log::warn!("library: cannot build a folder mosaic: {error:#}")
+                        }
+                    }
+                })
+                .ok();
+            });
+            self.mosaics.insert(key, task);
+        }
+    }
+
     fn mosaic_stamp(&self, id: &str) -> Option<u32> {
         let playlist = self.playlist(id)?;
 
@@ -2194,6 +2272,7 @@ impl Library {
         }
         if part == LibraryPart::Playlists {
             self.read_playlists(shelf, cx);
+            self.paint_folders(shelf, cx);
             if shelf == Shelf::Streaming {
                 self.build_mosaics(cx);
             }
@@ -2208,4 +2287,9 @@ impl Library {
         }
         cx.notify();
     }
+}
+
+/// A folder's mosaic is cached under a name of its own, so it cannot collide with a playlist's.
+fn folder_mosaic(id: &str) -> String {
+    format!("folder-{id}")
 }
