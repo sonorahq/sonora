@@ -15,7 +15,7 @@ common-more = 更多
 common-previous = 上一个
 common-next = 下一个
 common-dismiss = 忽略
-common-clear = 清除
+common-clear = 清空
 number-group = { "," }
 
 # navigation
@@ -29,10 +29,10 @@ nav-albums = 专辑
 nav-playlists = 播放列表
 nav-artists = 歌手
 nav-local = 本地音乐
-nav-back = 回退
+nav-back = 返回
 nav-forward = 前进
 nav-sidebar = 切换侧边栏
-nav-sidebar-right = 显示或隐藏歌词和队列
+nav-sidebar-right = 显示或隐藏歌词和播放队列
 nav-pinned = 已固定
 nav-unpin = 取消固定
 nav-pin-hint = 拖放到此处以固定
@@ -91,46 +91,46 @@ column-plays = 播放次数
 column-name = 名称
 column-owner = 所有者
 column-year = 年份
-column-tracks = 曲目数
+column-tracks = 歌曲总数
 
 # track menu
 menu-add-to-playlist = 添加到播放列表
 menu-add-tracks-to-playlist = { $count ->
-    [one] 将 { $count } 首曲目添加到播放列表
-   *[other] 将 { $count } 首曲目添加到播放列表
+    [one] 将 { $count } 首歌曲添加到播放列表
+   *[other] 将 { $count } 首歌曲添加到播放列表
 }
 menu-new-playlist = 新建播放列表
 menu-edit-tags = 编辑标签
 menu-no-playlists = 没有播放列表
 menu-add-to-library = 添加到收藏
 menu-add-tracks-to-library = { $count ->
-    [one] 将 { $count } 首曲目添加到收藏
-   *[other] 将 { $count } 首曲目添加到收藏
+    [one] 将 { $count } 首歌曲添加到收藏
+   *[other] 将 { $count } 首歌曲添加到收藏
 }
 menu-remove-from-library = 从收藏中移除
 menu-remove-tracks-from-library = { $count ->
-    [one] 从收藏中移除 { $count } 首曲目
-   *[other] 从收藏中移除 { $count } 首曲目
+    [one] 从收藏中移除 { $count } 首歌曲
+   *[other] 从收藏中移除 { $count } 首歌曲
 }
 menu-remove-from-playlist = 从播放列表中移除
 menu-remove-tracks-from-playlist = { $count ->
-    [one] 从播放列表中移除 { $count } 首曲目
-   *[other] 从播放列表中移除 { $count } 首曲目
+    [one] 从播放列表中移除 { $count } 首歌曲
+   *[other] 从播放列表中移除 { $count } 首歌曲
 }
 menu-remove-from-history = 从历史记录中移除
 menu-remove-tracks-from-history = { $count ->
-    [one] 从历史记录中移除 { $count } 首曲目
-   *[other] 从历史记录中移除 { $count } 首曲目
+    [one] 从历史记录中移除 { $count } 首歌曲
+   *[other] 从历史记录中移除 { $count } 首歌曲
 }
 menu-play-next = 下一首播放
 menu-play-tracks-next = { $count ->
-    [one] 下一首播放 { $count } 首曲目
-   *[other] 下一首播放 { $count } 首曲目
+    [one] 下一首播放 { $count } 首歌曲
+   *[other] 下一首播放 { $count } 首歌曲
 }
-menu-add-to-queue = 添加到队列
+menu-add-to-queue = 添加到播放队列
 menu-add-tracks-to-queue = { $count ->
-    [one] 将 { $count } 首曲目添加到队列
-   *[other] 将 { $count } 首曲目添加到队列
+    [one] 将 { $count } 首歌曲添加到播放队列
+   *[other] 将 { $count } 首歌曲添加到播放队列
 }
 menu-song-radio = 前往歌曲电台
 menu-go-to-album = 前往专辑
@@ -141,9 +141,9 @@ menu-cut = 剪切
 menu-copy = 复制
 menu-paste = 粘贴
 menu-select-all = 全选
-menu-remove-from-queue = 从队列中移除
+menu-remove-from-queue = 从播放队列中移除
 menu-open-playlist = 打开播放列表
-menu-play-playlist = 播放播放列表
+menu-play-playlist = 播放该列表
 menu-rename-playlist = 重命名播放列表
 menu-delete-playlist = 删除播放列表
 menu-add-playlist-to-library = 添加到音乐库
@@ -161,7 +161,7 @@ playlist-rename-title = 重命名播放列表
 playlist-delete-title = 删除播放列表
 playlist-delete-confirm = 删除“{ $name }”？此操作无法撤销。
 playlist-again-title = 再次添加？
-playlist-again-confirm = 这首曲目已在“{ $name }”中。要再添加一份吗？
+playlist-again-confirm = 这首歌曲已在“{ $name }”中。要再添加一份吗？
 playlist-again-add = 再次添加
 
 # confirm
@@ -194,19 +194,20 @@ confirm-remove-playlists = { $count ->
 }
 
 # queue panel
-queue-title = 队列
+queue-title = 播放队列
 queue-history = 历史记录
 queue-now-playing = 正在播放
 queue-from = 来自
 queue-up-next = 接下来播放
 queue-reset = 重置
 queue-clear = 清空
-queue-empty = 队列为空
-queue-similar = 相似曲目
-queue-radio = 自动播放相似曲目
+queue-empty = 播放队列为空
+queue-similar = 相似歌曲
+queue-radio = 自动播放相似歌曲
+queue-return-playing = 返回正在播放
 
 # player bar
-player-nothing-playing = 未在播放
+player-nothing-playing = 未播放
 player-percent = { $value }%
 player-shuffle = 随机播放
 player-repeat = 循环
@@ -222,18 +223,18 @@ fullscreen-artwork = 封面
 
 # filters
 filter-history = 筛选收听历史
-history-empty = 你播放的曲目会显示在这里。
+history-empty = 你播放的歌曲会显示在这里。
 history-not-loaded = 收听历史加载失败。
-history-clear = 清除历史记录
-history-clear-title = 清除收听历史
+history-clear = 清空历史记录
+history-clear-title = 清空收听历史
 history-clear-confirm = 此设备上的所有播放记录将被移除。此操作无法撤销。
 filter-library = 筛选音乐库
-filter-album = 筛选专辑曲目
+filter-album = 筛选专辑歌曲
 filter-reset = 重置筛选
 filter-duration = 时长
 filter-year = 年份
 filter-explicit = 仅露骨内容
-filter-playable = 仅可播放
+filter-playable = 仅播放
 filter-favorites = 仅收藏
 filter-owned = 由你拥有
 
@@ -260,21 +261,22 @@ login-problem-refused = Spotify 拒绝了登录请求。请稍等片刻后重试
 login-problem-premium = Sonora 通过 Spotify Premium 串流，而此账户没有 Premium。请使用 Premium 账户登录以继续。
 login-sign-in = 使用 { $provider } 登录
 login-connect-cookies = 手动粘贴 Cookies
+login-cookie-open = 打开 YouTube Music
+login-cookie-submit = 继续
+login-cookie-hint = 在此粘贴 Cookie 请求头
+login-cookie-step-1 = 打开 music.youtube.com 并确保你已登录。使用无痕窗口效果最好。
+login-cookie-step-2 = 按 F12，打开网络（Network）标签页并刷新页面。
+login-cookie-step-3 = 选择任意名为“browse”或“next”的请求。
+login-cookie-step-4 = 在标头（Headers）中，找到请求标头（Request Headers）下的 Cookie，右键点击并复制其值。
+login-cookie-step-note = 请确保粘贴完整值，包括 SAPISID 和 __Secure-3PAPISID。
+login-cookie-title = 粘贴你的 YouTube Music cookies 以完成登录
+login-window-title = 使用 { $provider } 登录
 login-use = 使用 { $provider }
 login-guest-title = 访客模式
 login-guest-use = 使用访客模式
 login-guest-detail = 无需账户即可浏览和播放。你的音乐库、收藏和播放列表将无法访问。
 login-usage-consent = 帮助我们估算有多少人使用 Sonora。
 login-device-code = 在 { $url } 输入此代码
-login-cookie-open = 打开 YouTube Music
-login-cookie-submit = 继续
-login-cookie-hint = 在此粘贴 Cookie 请求头
-login-cookie-step-1 = 打开 music.youtube.com 并确保你已登录。
-login-cookie-step-2 = 按 F12，打开网络（Network）标签页并刷新页面。
-login-cookie-step-3 = 选择任意名为“browse”或“next”的请求。
-login-cookie-step-4 = 在标头（Headers）中，找到请求标头（Request Headers）下的 Cookie，右键点击并复制其值。
-login-cookie-step-note = 请确保粘贴完整值，包括 SAPISID 和 __Secure-3PAPISID。
-login-cookie-title = 粘贴你的 YouTube Music cookies 以完成登录
 login-server-title = 连接到你的 Subsonic 服务器
 login-server-detail = 输入任意 Subsonic 或 OpenSubsonic 服务器（Navidrome、Airsonic、Gonic……）的地址，然后使用服务器用户名和密码登录。会话会保留在此设备上。
 login-server-hint = https://music.example.com
@@ -288,7 +290,7 @@ login-account-detail = 此会话登录了多个 Google 账户。请选择 Sonora
 detail-album = 专辑
 detail-playlist = 播放列表
 detail-play-album = 播放专辑
-detail-play-playlist = 播放播放列表
+detail-play-playlist = 播放该列表
 
 # play button
 play-pause = 暂停
@@ -417,8 +419,8 @@ count-songs =
     }
 count-tracks =
     { $count ->
-        [one] { $count } 首曲目
-       *[other] { $count } 首曲目
+        [one] { $count } 首歌曲
+       *[other] { $count } 首歌曲
     }
 
 # dates
@@ -473,11 +475,11 @@ settings-blur-detail = 在模糊的桌面上绘制窗口。需要不透明度低
 settings-font = 字体大小
 settings-font-detail = 基础文字大小，其他所有内容随之缩放
 settings-font-value = { $size } px
-settings-startup = 启动时显示
+settings-startup = 欢迎页
 settings-startup-detail = Sonora 启动时打开的页面
-settings-entries = 侧边栏条目
-settings-entries-detail = 侧边栏中列出的部分
-settings-entries-pick = 选择条目
+settings-entries = 侧边栏项
+settings-entries-detail = 侧边栏中显示的项
+settings-entries-pick = 选择项
 settings-language = 语言
 settings-language-detail = Sonora 在整个界面中使用的语言
 settings-language-system = 系统
@@ -499,30 +501,35 @@ settings-window-rounding = 窗口圆角
 settings-window-rounding-detail = 窗口自身角落的圆角程度
 settings-controls-side = 控件位置
 settings-controls-side-detail = 控件位于标题栏的哪一端
-settings-close-to-tray = 关闭时继续播放
+settings-close-to-tray = 关闭主窗口
 settings-close-to-tray-detail = 窗口关闭后将 Sonora 保留在系统托盘中并继续播放
 settings-discord = 在 Discord 上显示
-settings-discord-detail = 将你正在播放的曲目显示在 Discord 个人资料上
+settings-discord-detail = 将你正在播放的歌曲显示在 Discord 个人资料上
 settings-discord-name = 状态名称
 settings-discord-name-detail = 状态在“正在收听”后显示的名称，你的好友会看到
 settings-discord-name-sonora = Sonora
 settings-discord-name-provider = 服务提供商
 settings-discord-name-music = 音乐
+settings-discord-name-title = 标题
+settings-discord-name-artist = 歌手
+settings-discord-name-artist-title = 歌手 - 标题
+settings-discord-show-paused = 暂停时显示
+settings-discord-show-paused-detail = 歌曲暂停时仍在 Discord 个人资料上保留状态
 settings-discord-badge = 显示服务提供商徽章
-settings-discord-badge-detail = 用曲目来源服务的小图标标记状态
+settings-discord-badge-detail = 用歌曲来源服务的小图标标记状态
 settings-discord-anonymous = 隐藏详细信息
 settings-discord-anonymous-detail = 仅显示正在播放音乐，不显示标题、歌手或封面
 # the Discord status when the track is left out of it
 discord-listening = 正在收听音乐
-settings-normalisation = 响度标准化
-settings-normalisation-detail = 保持曲目音量一致
+settings-normalisation = 系统音量
+settings-normalisation-detail = 保持歌曲音量一致
 settings-gapless = 无缝播放
-settings-gapless-detail = 曲目之间无间隙地连续播放，如同专辑原本的编排
+settings-gapless-detail = 歌曲之间无间隙地连续播放，如同专辑原本的编排
 settings-sleep = 睡眠定时器
 settings-sleep-detail = 让音乐在设定时间后自动停止，伴你入眠
 settings-sleep-configure = 配置…
 settings-sleep-off = 关闭
-settings-sleep-end-of-track = 曲目结束后
+settings-sleep-end-of-track = 歌曲结束后
 settings-sleep-minutes = { $count } 分钟
 settings-panel-lyrics-size = 歌词大小（面板）
 settings-panel-lyrics-size-detail = 侧边面板中歌词文字的大小，基于基础字体大小
@@ -557,7 +564,7 @@ settings-group-lyrics = 歌词
 settings-group-discord = Discord
 settings-group-project = 项目
 settings-adaptive-menu = 自适应上下文菜单
-settings-adaptive-menu-detail = 省略行中已显示的条目，例如专辑或歌手
+settings-adaptive-menu-detail = 省略行中已显示的项，例如专辑或歌手
 settings-accounts = 管理账户
 settings-accounts-detail = 此设备可以播放的服务
 settings-provider-none = 未连接
@@ -628,15 +635,15 @@ toast-track-removed = 已从 { $name } 中移除
 toast-playlist-failed = 该更改无法保存
 toast-playlist-busy = 另一个更改仍在进行中
 toast-playlist-signed-out = 登录以更改播放列表
-toast-queued-track = { $name } 已添加到队列
+toast-queued-track = { $name } 已添加到播放队列
 toast-next-track = 接下来播放 { $name }
-toast-queued-album = 专辑已添加到队列
+toast-queued-album = 专辑已添加到播放队列
 toast-next-album = 接下来播放专辑
-toast-queued-playlist = 播放列表已添加到队列
-toast-next-playlist = 接下来播放播放列表
-toast-queued-artist = 歌手已添加到队列
+toast-queued-playlist = 播放列表已添加到播放队列
+toast-next-playlist = 接下来播放该列表
+toast-queued-artist = 歌手已添加到播放队列
 toast-next-artist = 接下来播放歌手
-toast-queue-failed = 无法添加到队列
+toast-queue-failed = 无法添加到播放队列
 toast-keys-refused = Spotify 未授予此账户播放密钥
 toast-sign-in-to-play = { $name } 仅向已登录用户播放
 toast-track-unplayable = { $name } 无法播放
@@ -672,8 +679,8 @@ tags-sheet-album = 专辑
 tags-sheet-details = 详情
 tags-title = 标题
 tags-artist = 歌手
-tags-track = 曲目编号
-tags-track-total = 发行曲目总数
+tags-track = 歌曲编号
+tags-track-total = 发行歌曲总数
 tags-disc = 碟片编号
 tags-disc-total = 发行碟片总数
 tags-album = 专辑

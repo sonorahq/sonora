@@ -32,7 +32,10 @@ pub const TABLE_CONTEXT: &str = "Table";
 
 const MIN_CELL: Pixels = px(24.);
 const GRIP: Pixels = px(9.);
+/// Rows kept ready past the visible ones: two below, and one above so a row emerging
+/// from behind the head is already drawn rather than popping in as the head lifts.
 const OVERSCAN: usize = 2;
+const OVERSCAN_ABOVE: usize = 1;
 
 pub const ROW_GROUP: &str = "table-row";
 
@@ -526,11 +529,15 @@ impl Viewport {
     }
 
     fn rows(&self, row: Pixels) -> usize {
-        (self.height / row).ceil().max(0.) as usize + OVERSCAN
+        (self.height / row).ceil().max(0.) as usize + OVERSCAN + OVERSCAN_ABOVE
     }
 
+    /// The first row to draw: the one under the top edge of the viewport — the head's
+    /// band counts as in view, since the head is see-through on a glass window — and
+    /// `OVERSCAN_ABOVE` more before it.
     fn first(&self, head: Pixels, row: Pixels) -> usize {
-        ((self.top - head) / row).floor().max(0.) as usize
+        let under_edge = ((self.top - head) / row).floor().max(0.) as usize;
+        under_edge.saturating_sub(OVERSCAN_ABOVE)
     }
 }
 
@@ -1106,12 +1113,16 @@ impl<S: TableSource> Render for TableState<S> {
         self.delegate.measure(window, cx);
 
         let metrics = cx.theme().metrics;
-        let backdrop = cx.theme().background;
         let row = snapped(metrics.row, window);
         let head = snapped(metrics.header, window);
         let height = self.height(head, row);
         let pinned = snapped(self.viewport.top.clamp(Pixels::ZERO, height - head), window);
         let top = unpinned(self.corners, pinned);
+        // Nothing passes behind the head, so it needs nothing behind it either: on a
+        // see-through window it is the page plus its own tint, the same glass as the
+        // rest. An opaque window keeps the page painted under it, which is what the
+        // head's own alpha has always been mixed against.
+        let backdrop = (!cx.theme().transparent).then(|| cx.theme().background);
         let context_menu = self.context_menu.clone().and_then(|(rows, position)| {
             let visible = self.delegate.visible();
             self.delegate
@@ -1146,7 +1157,31 @@ impl<S: TableSource> Render for TableState<S> {
             .relative()
             .w_full()
             .h(height)
-            .children(self.rows(head, row, cx))
+            // Rows sit below the head rather than behind it: the band the head occupies
+            // is masked out of them, so a see-through head hides what it covers as
+            // completely as an opaque one ever did — no ghost of artwork, no glyph the
+            // text system culled while the quad beside it survived — and a row under
+            // there cannot be clicked either, because a content mask clips hitboxes
+            // too. The inner block is offset back up by the same amount, so every row
+            // keeps the position the virtualiser gave it.
+            .child(
+                div()
+                    .absolute()
+                    .top(pinned + head)
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .absolute()
+                            .top(-(pinned + head))
+                            .left_0()
+                            .right_0()
+                            .h(height)
+                            .children(self.rows(head, row, cx)),
+                    ),
+            )
             .child(
                 div()
                     .block_mouse_except_scroll()
@@ -1154,7 +1189,7 @@ impl<S: TableSource> Render for TableState<S> {
                     .top(pinned)
                     .left_0()
                     .w_full()
-                    .bg(backdrop)
+                    .when_some(backdrop, |this, backdrop| this.bg(backdrop))
                     .rounded_tl(top.top_left)
                     .rounded_tr(top.top_right)
                     .child(self.header(head, top, cx)),

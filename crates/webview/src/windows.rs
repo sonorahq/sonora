@@ -8,8 +8,8 @@ use std::rc::{Rc, Weak};
 
 use anyhow::{Context as _, Result};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
-    CreateCoreWebView2Environment, ICoreWebView2, ICoreWebView2_2, ICoreWebView2Controller,
-    ICoreWebView2Environment10,
+    CreateCoreWebView2EnvironmentWithOptions, ICoreWebView2, ICoreWebView2_2,
+    ICoreWebView2Controller, ICoreWebView2Environment10,
 };
 use webview2_com::{
     CoTaskMemPWSTR, CreateCoreWebView2ControllerCompletedHandler,
@@ -173,8 +173,28 @@ fn begin_environment(hwnd: HWND, url: &str, browser: Weak<RefCell<Option<Browser
             Ok(())
         },
     ));
-    unsafe { CreateCoreWebView2Environment(&handler) }
-        .context("cannot start the WebView2 environment")
+    let folder = user_data_folder()?;
+    unsafe {
+        CreateCoreWebView2EnvironmentWithOptions(
+            PCWSTR::null(),
+            PCWSTR(folder.as_ptr()),
+            None,
+            &handler,
+        )
+    }
+    .context("cannot start the WebView2 environment")
+}
+
+/// Sonora's own cache folder for WebView2's browser state, as a wide string. WebView2 otherwise
+/// writes beside the executable, which an installed copy under Program Files cannot do.
+fn user_data_folder() -> Result<Vec<u16>> {
+    let folder = dirs::cache_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("sonora")
+        .join("webview2");
+    std::fs::create_dir_all(&folder)
+        .with_context(|| format!("cannot create {}", folder.display()))?;
+    Ok(wide(&folder.to_string_lossy()))
 }
 
 /// Configures an InPrivate profile and starts its controller asynchronously.

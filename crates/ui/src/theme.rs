@@ -28,6 +28,26 @@ const MIN_ACCENT_SATURATION: f32 = 0.6;
 const MAX_ACCENT_SATURATION: f32 = 0.85;
 const SYSTEM_FILLS: bool = cfg!(target_os = "windows");
 
+/// What a fill keeps of itself once the window is fully see-through. The page
+/// background has no floor — a clear window is the point — but everything drawn
+/// on top of it does, or a hover and a field vanish at the end of the slider. A
+/// surface sits over the background and so reads denser than its own alpha; the
+/// table head replaces the background rather than stacking on it, which is why
+/// it holds the least and still lands in the same place.
+const SURFACE_FLOOR: f32 = 0.2;
+const HEADER_FLOOR: f32 = 0.15;
+
+/// How much of a fill's alpha survives on a see-through window before the
+/// slider takes its share. A surface reads denser than its own alpha because the
+/// page is still painted underneath it, which leaves the floor almost inert in
+/// the middle of the slider; a flat cut is the one lever that thins a fill
+/// across the whole of it. The same backing is what makes the cut safe at the top
+/// of the slider — a barely transparent page hides the step on its own. The head
+/// is cut harder: it replaces the page rather than sitting on it, and takes the
+/// page back only while it is pinned, so at rest it can be nearly glass.
+const SURFACE_WEIGHT: f32 = 0.68;
+const HEADER_WEIGHT: f32 = 0.5;
+
 /// The window background a look asks the platform for. Blur needs something to
 /// show through, so an opaque window always gets the plain background.
 pub fn backdrop(blur: bool, transparent: bool) -> WindowBackgroundAppearance {
@@ -685,6 +705,43 @@ impl Theme {
         self
     }
 
+    /// Thins every fill the window draws, so a see-through window stays one
+    /// surface instead of a sheet of glass with opaque slabs floating on it.
+    ///
+    /// `opacity` is what the window itself keeps. The page background follows it
+    /// all the way down; anything painted *over* that background — a field, a
+    /// card, a hover — keeps a floor, because those read as layers above the
+    /// glass and have to stay legible once the glass is gone entirely. The
+    /// table head is flattened first: it is a tint meant to sit on an opaque
+    /// page, and veiling the two layers separately is what makes it read solid.
+    ///
+    /// `popover` is deliberately left out. A menu, a modal or a toast covers
+    /// content rather than wallpaper, so thinning it only lets the page bleed
+    /// through the thing that was raised to be read.
+    fn see_through(&mut self, opacity: f32) {
+        self.table_head = veil(
+            self.background.blend(self.table_head),
+            opacity,
+            HEADER_FLOOR,
+        )
+        .opacity(HEADER_WEIGHT);
+
+        self.background = veil(self.background, opacity, 0.);
+        self.sidebar = veil(self.sidebar, opacity, 0.);
+
+        for surface in [
+            &mut self.sidebar_accent,
+            &mut self.secondary,
+            &mut self.secondary_hover,
+            &mut self.secondary_active,
+            &mut self.muted,
+            &mut self.table_hover,
+            &mut self.table_active,
+        ] {
+            *surface = veil(*surface, opacity, SURFACE_FLOOR).opacity(SURFACE_WEIGHT);
+        }
+    }
+
     pub fn for_look(look: Look, overrides: &ThemeOverrides) -> Self {
         let base = px(overrides
             .font_size
@@ -698,10 +755,7 @@ impl Theme {
         theme.radius = look.rounding.radius();
         theme = theme.with_overrides(overrides);
         if look.transparent {
-            let opacity = 1. - look.transparency.clamp(0., MAX_TRANSPARENCY);
-            theme.background.a = opacity;
-            theme.sidebar.a = opacity;
-            theme.sidebar_accent.a = opacity;
+            theme.see_through(1. - look.transparency.clamp(0., MAX_TRANSPARENCY));
         }
         theme.font_size = base;
         theme.metrics = Metrics::new(base);
@@ -761,6 +815,16 @@ fn resolve(look: Look, cx: &App) -> Look {
     Look {
         kind: look.kind.resolved(cx),
         ..look
+    }
+}
+
+/// Thins one fill for a window that keeps `opacity` of itself, leaving `floor`
+/// of the fill behind when the window keeps nothing. The fill's own alpha is a
+/// factor, not a target, so a tint stays a tint.
+fn veil(color: Hsla, opacity: f32, floor: f32) -> Hsla {
+    Hsla {
+        a: color.a * (opacity + (1. - opacity) * floor),
+        ..color
     }
 }
 

@@ -26,6 +26,7 @@ objc2-foundation = { workspace = true, features = [
 objc2-web-kit.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
+dirs.workspace = true
 webview2-com.workspace = true
 windows.workspace = true
 

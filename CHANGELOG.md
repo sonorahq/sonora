@@ -7,10 +7,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.34.4] - 2026-09-12
+
+### Changed
+
+- Updated and completed the Indonesian translation.
+- Song lengths in tables and track lists use equal-width digits, so the column lines up.
+- Settings offers Paste cookies manually for YouTube Music beside the browser sign-in, so an
+  account can be connected that way without first removing every other provider.
+
 ### Fixed
 
+- The left sidebar stays smooth with a long Pinned section or Show full library on. It used to
+  build every entry on every frame, even the ones scrolled out of view. Now it draws only the rows
+  on screen and rebuilds the list only when something in it changes.
 - On Nix, the YouTube Music sign-in no longer goes black after the email step. The package now
   gives WebKit the GStreamer plugins it needs to play a page's media.
+- On Windows, the sign-in window opens when Sonora is installed under Program Files. It used to
+  fail with `0x80070005` because the browser it embeds tried to keep its data next to the program,
+  where a normal user cannot write. That data now lives under your local app data.
+- In the fullscreen view, the volume slider is no longer cut off when you hover the speaker button
+  while the controls are still sliding in.
 
 ## [0.34.3] - 2026-09-12
 
@@ -1517,7 +1534,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.34.3...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.34.4...HEAD
+[0.34.4]: https://github.com/sonorahq/sonora/compare/v0.34.3...v0.34.4
 [0.34.3]: https://github.com/sonorahq/sonora/compare/v0.34.2...v0.34.3
 [0.34.2]: https://github.com/sonorahq/sonora/compare/v0.34.1...v0.34.2
 [0.34.1]: https://github.com/sonorahq/sonora/compare/v0.34.0...v0.34.1

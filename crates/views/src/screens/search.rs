@@ -18,8 +18,8 @@ use state::{AlbumHit, ArtistHit, Genres, Hit, Kind, Playback, PlaylistHit, Searc
 use ui::ActiveTheme as _;
 use ui::{
     Activate, Card, Deck, Deselect, Pinnable, Popup, Room, Scrollbar, Scroller, SelectLeft,
-    SelectNext, SelectPrevious, SelectRight, Separator, Text, Theme, VAST, Viewport, clock,
-    eyebrow, scrolled, snapped, vacant,
+    SelectNext, SelectPrevious, SelectRight, Separator, Text, Theme, VAST, clock, eyebrow,
+    scrolled, snapped, tabular, vacant,
 };
 
 use crate::shared::cards;
@@ -413,6 +413,7 @@ impl SearchView {
                             .whitespace_nowrap()
                             .text_size(theme.text(Text::Small))
                             .text_color(theme.muted_foreground)
+                            .font_features(tabular())
                             .child(clock(track.duration)),
                     )
                     .press(pressed(Press::Song(Box::new(track.clone())), me))
@@ -611,10 +612,7 @@ impl SearchView {
         let theme = *cx.theme();
         let pad = theme.metrics.inset;
         let width = cells::content_width(window, pad * 2., cx);
-        let scroll = self.browsing.read(cx).scroll().clone();
-        let seen = scroll.bounds().size.height;
-        let viewport = Viewport::measured(scrolled(&scroll), seen, window);
-        let plates = shelves::grid("genre", found, width, viewport, window, cx);
+        let plates = shelves::grid("genre", found, width, window, cx);
 
         div()
             .flex()
@@ -703,17 +701,10 @@ impl SearchView {
         let theme = *cx.theme();
         let row = snapped(theme.metrics.list_row, window);
         let scroll = bar.read(cx).scroll().clone();
-        let seen = scroll.bounds().size.height;
-        let above = match lead.is_some() {
-            true => self.lead.get(),
-            false => Pixels::ZERO,
-        };
-        let viewport = Viewport::measured(scrolled(&scroll) - above, seen, window);
         let me = cx.entity().downgrade();
         let measured = self.lead.clone();
         let tracked = scroll.clone();
         let deck = Deck::new(format!("{id}-deck"))
-            .viewport(viewport)
             .rows((0..seats.len()).map(|_| row))
             .gap(theme.font_size * ROW_GAP)
             .when(lead.is_some(), |deck| {
