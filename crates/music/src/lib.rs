@@ -112,6 +112,16 @@ pub trait MusicApi: Send + Sync {
     }
 
     async fn track_playcount(&self, track_id: &str) -> Result<Option<u64>>;
+    /// Tells the provider a track started, for its now-playing list. Only a provider that
+    /// counts plays answers; the rest keep the default.
+    async fn now_playing(&self, _track_id: &str) -> Result<()> {
+        Ok(())
+    }
+    /// Submits a fully played track. Only a provider that counts plays answers; the rest
+    /// keep the default.
+    async fn scrobble(&self, _track_id: &str) -> Result<()> {
+        Ok(())
+    }
     async fn track_lyrics(&self, _track_id: &str) -> Result<Option<Lyrics>> {
         Ok(None)
     }

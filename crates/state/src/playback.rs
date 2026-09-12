@@ -95,6 +95,9 @@ const KEY_COOLDOWN: Duration = Duration::from_secs(6);
 const RESUME_STEP: Duration = Duration::from_secs(5);
 const TAPER_DB: f32 = 50.;
 const SIMILAR_LIMIT: usize = 20;
+/// The share of a track that must have played before its play is reported as a submission.
+/// Matches the Last.fm rule the servers apply themselves when they can see the position.
+const SCROBBLE_FRACTION: f32 = 0.75;
 
 /// The position shown between the engine's reports. It runs on wall time from `reset` and is
 /// nudged toward each report by `correct`, spread over a moment so the progress bar and the
@@ -316,6 +319,12 @@ pub struct Playback {
     settings: Entity<AppSettings>,
     level: f32,
     normalisation: bool,
+    /// Whether plays are reported to the provider: a now-playing notice when a track starts
+    /// and a submission once enough of it has been heard.
+    scrobble: bool,
+    /// Whether the current track already had its play submitted, so the threshold and the
+    /// track's end each report it at most once. Reset when a track loads.
+    counted: bool,
     gapless: bool,
     repeat: Repeat,
     radio: bool,
@@ -407,6 +416,7 @@ impl Playback {
 
         let level = settings.read(cx).volume();
         let normalisation = settings.read(cx).normalisation();
+        let scrobble = settings.read(cx).scrobble();
         let gapless = settings.read(cx).gapless();
         let repeat = settings.read(cx).repeat();
         let radio = settings.read(cx).radio();
@@ -424,6 +434,8 @@ impl Playback {
             settings,
             level,
             normalisation,
+            scrobble,
+            counted: false,
             gapless,
             repeat,
             radio,
@@ -552,6 +564,7 @@ impl Playback {
         self.seek_target = None;
         self.intent = Intent::Play;
         self.resume_ready = false;
+        self.counted = false;
         cx.notify();
 
         let wait = self
@@ -1438,6 +1451,7 @@ impl Playback {
         };
         self.track = Some(track);
         self.resume_at = Some(Duration::ZERO);
+        self.counted = false;
         self.remember(true, cx);
         self.prepare_resume(cx);
     }
@@ -1511,6 +1525,38 @@ impl Playback {
         if let Some(engine) = self.active_engine() {
             engine.seek(position);
         }
+    }
+
+    /// Reports a play to the provider on the tokio runtime: a now-playing notification when
+    /// a track starts, a submission when it ends. A failure only logs; the server answers ok
+    /// even for a report it ignores.
+    fn report_play(&self, id: &str, submission: bool, cx: &Context<Self>) {
+        if !self.scrobble {
+            return;
+        }
+        let Some(client) = self.client_for(id, cx) else {
+            return;
+        };
+        let io = Io::global(cx);
+        let id = id.to_owned();
+        io.spawn(async move {
+            let reported = match submission {
+                true => client.scrobble(&id).await,
+                false => client.now_playing(&id).await,
+            };
+            if let Err(error) = reported {
+                log::debug!("playback: cannot report the play: {error:#}");
+            }
+        });
+    }
+
+    /// Whether enough of the current track has been heard to count a play for it.
+    fn heard_enough(&self) -> bool {
+        let Some(track) = self.track.as_ref() else {
+            return false;
+        };
+        track.duration > Duration::ZERO
+            && self.position >= track.duration.mul_f32(SCROBBLE_FRACTION)
     }
 
     /// The position to show for where the engine reports it landed: the seek target itself
@@ -1613,6 +1659,21 @@ impl Playback {
 
     pub fn normalisation(&self) -> bool {
         self.normalisation
+    }
+
+    /// Whether plays are reported to the provider.
+    pub fn scrobble(&self) -> bool {
+        self.scrobble
+    }
+
+    pub fn set_scrobble(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.scrobble == on {
+            return;
+        }
+        self.scrobble = on;
+        self.settings
+            .update(cx, |settings, cx| settings.set_scrobble(on, cx));
+        cx.notify();
     }
 
     pub fn gapless(&self) -> bool {
@@ -1827,14 +1888,21 @@ impl Playback {
                 self.clock.reset(at, false);
             }
             BackendEvent::Playing { at, .. } => {
-                let at = self.landed(at);
                 let started = self.state != PlaybackState::Playing;
+                let started_id = match started {
+                    true => current_id.map(str::to_owned),
+                    false => None,
+                };
+                let at = self.landed(at);
                 self.intent = Intent::Play;
                 self.state = PlaybackState::Playing;
                 self.position = at;
                 self.clock.reset(at, true);
                 if started {
                     cx.emit(PlaybackEvent::StartedPlayback);
+                    if let Some(id) = started_id.as_deref() {
+                        self.report_play(id, false, cx);
+                    }
                 }
                 self.follow_up_seek(cx);
             }
@@ -1872,6 +1940,12 @@ impl Playback {
                 }
                 self.remember(false, cx);
                 self.preload_next(at, cx);
+                if self.state == PlaybackState::Playing && !self.counted && self.heard_enough() {
+                    self.counted = true;
+                    if let Some(id) = self.track.as_ref().and_then(|track| track.id.as_deref()) {
+                        self.report_play(id, true, cx);
+                    }
+                }
                 if failed {
                     self.follow_up_seek(cx);
                 }
@@ -1886,6 +1960,12 @@ impl Playback {
             }
             BackendEvent::Ended { .. } => {
                 let ended = self.track.take();
+                if let Some(id) = ended.as_ref().and_then(|track| track.id.as_deref())
+                    && !self.counted
+                {
+                    self.report_play(id, true, cx);
+                }
+                self.counted = false;
                 self.state = PlaybackState::Idle;
                 self.position = Duration::ZERO;
                 self.clock.reset(Duration::ZERO, false);

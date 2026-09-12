@@ -210,6 +210,7 @@ struct Held {
 struct Values {
     version: u32,
     normalisation: bool,
+    scrobble: bool,
     gapless: bool,
     sleep_timer: bool,
     discord_presence: bool,
@@ -275,6 +276,7 @@ impl Default for Values {
         Self {
             version: SETTINGS_VERSION,
             normalisation: false,
+            scrobble: true,
             gapless: true,
             sleep_timer: false,
             discord_presence: false,
@@ -503,6 +505,10 @@ impl AppSettings {
 
     pub fn normalisation(&self) -> bool {
         self.values.normalisation
+    }
+
+    pub fn scrobble(&self) -> bool {
+        self.values.scrobble
     }
 
     pub fn gapless(&self) -> bool {
@@ -757,6 +763,11 @@ impl AppSettings {
 
     pub fn set_normalisation(&mut self, normalisation: bool, cx: &mut Context<Self>) {
         self.values.normalisation = normalisation;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_scrobble(&mut self, scrobble: bool, cx: &mut Context<Self>) {
+        self.values.scrobble = scrobble;
         self.schedule_save(cx);
     }
 
