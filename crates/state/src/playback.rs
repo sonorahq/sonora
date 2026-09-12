@@ -286,15 +286,18 @@ impl Origin {
     }
 }
 
-impl From<&Pin> for Origin {
-    fn from(pin: &Pin) -> Self {
+impl Origin {
+    /// Where playing a pin starts, or `None` for a pin nothing plays on its own: a folder holds
+    /// playlists, not tracks.
+    pub fn from_pin(pin: &Pin) -> Option<Self> {
         let origin = match pin.kind {
             PinKind::Album => Origin::album(pin.id.clone()),
             PinKind::Playlist => Origin::playlist(pin.id.clone()),
             PinKind::Artist => Origin::artist(pin.id.clone()),
             PinKind::Song => Origin::radio(pin.id.clone()),
+            PinKind::Folder => return None,
         };
-        origin.named(pin.title.clone())
+        Some(origin.named(pin.title.clone()))
     }
 }
 
@@ -790,6 +793,8 @@ impl Playback {
         let id = pin.id.clone();
 
         match pin.kind {
+            // A folder holds playlists, not tracks; nothing queues it.
+            PinKind::Folder => {}
             PinKind::Song => {
                 let track = id.clone();
                 self.enqueue_from("track", &id, placement, cx, move |client| {

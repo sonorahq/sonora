@@ -1,10 +1,11 @@
 use std::collections::HashSet;
 
 use gpui::{App, Context, Entity};
-use music::{LibraryItem, LibraryItemKind};
+use music::{LibraryItem, LibraryItemKind, Playlist};
 use ui::{Pin, PinKind};
 
 use crate::library::{Library, Shelf};
+use crate::outline::{Outline, PlaylistRow};
 use crate::session::Session;
 use crate::settings::AppSettings;
 
@@ -79,9 +80,12 @@ impl Pins {
         pinned
     }
 
-    /// Everything the live shelves hold that is not pinned: albums, artists and playlists, laid
-    /// out the same way the pins above them are. Nothing else a provider lists belongs here,
-    /// since the sidebar can only open these three.
+    /// Everything the live shelves hold that is not pinned: albums, artists, folders and the
+    /// playlists that are not inside one, laid out the same way the pins above them are. Nothing
+    /// else a provider lists belongs here, since the sidebar can only open these.
+    ///
+    /// A playlist inside a folder is left out on purpose: it is listed on that folder's page, and
+    /// showing it here as well would leave the sidebar exactly as long as it was without folders.
     pub fn library(&self, cx: &App) -> Vec<Pin> {
         let pinned = self.dragged(cx);
         let library = self.library.read(cx);
@@ -91,10 +95,7 @@ impl Pins {
                 continue;
             }
             let held = library.state(shelf);
-            rest.extend(held.playlists().iter().map(|playlist| {
-                Pin::new(PinKind::Playlist, &playlist.id, &playlist.name)
-                    .cover(playlist.cover.clone())
-            }));
+            rest.extend(top_level(held.outline(), held.playlists()));
             rest.extend(held.albums().iter().map(|album| {
                 Pin::new(PinKind::Album, &album.id, &album.name)
                     .cover(album.cover_large.clone().or_else(|| album.cover.clone()))
@@ -158,6 +159,18 @@ impl Pins {
             settings.set_sidebar_pin_sort(sort, reversed, cx)
         });
         cx.notify();
+    }
+
+    /// Whether a shelf knows the pin. Only folders are checked: the provider's own library names
+    /// them apart from the playlist list Sonora reads, so one it offers may have no page here.
+    fn listed(&self, pin: &Pin, cx: &App) -> bool {
+        if pin.kind != PinKind::Folder {
+            return true;
+        }
+        let library = self.library.read(cx);
+        [Shelf::Streaming, Shelf::Local]
+            .into_iter()
+            .any(|shelf| library.state(shelf).outline().folder(&pin.id).is_some())
     }
 
     pub fn holds(&self, pin: &Pin, cx: &App) -> bool {
@@ -292,7 +305,7 @@ impl Pins {
         let mut arrived = Vec::new();
         let mut left = Vec::new();
         for item in &items {
-            let Some(pin) = pin_of(item) else {
+            let Some(pin) = pin_of(item).filter(|pin| self.listed(pin, cx)) else {
                 continue;
             };
             let Some(slug) = self.session.read(cx).slug_for(&item.uri) else {
@@ -321,22 +334,44 @@ impl Pins {
     }
 }
 
+/// The folders and loose playlists of one shelf, in the order the provider listed them. A shelf
+/// whose outline has not arrived yet lists every playlist, so nothing disappears while it loads.
+fn top_level(outline: &Outline, playlists: &[Playlist]) -> Vec<Pin> {
+    let playlist_pin = |playlist: &Playlist| {
+        Pin::new(PinKind::Playlist, &playlist.id, &playlist.name).cover(playlist.cover.clone())
+    };
+    if outline.rows().is_empty() {
+        return playlists.iter().map(playlist_pin).collect();
+    }
+
+    outline
+        .level(None)
+        .iter()
+        .filter_map(|&at| match outline.row(at)? {
+            PlaylistRow::Folder { id, name, .. } => Some(Pin::new(PinKind::Folder, id, name)),
+            PlaylistRow::Playlist { index, .. } => playlists.get(*index).map(playlist_pin),
+        })
+        .collect()
+}
+
 fn rank(kind: PinKind) -> u8 {
     match kind {
-        PinKind::Playlist => 0,
-        PinKind::Album => 1,
-        PinKind::Artist => 2,
-        PinKind::Song => 3,
+        PinKind::Folder => 0,
+        PinKind::Playlist => 1,
+        PinKind::Album => 2,
+        PinKind::Artist => 3,
+        PinKind::Song => 4,
     }
 }
 
 /// The pin a provider's library row stands for, or `None` for a row Sonora cannot open on its own,
-/// such as a folder or a podcast.
+/// such as a podcast.
 fn pin_of(item: &LibraryItem) -> Option<Pin> {
     let kind = match item.kind {
         LibraryItemKind::Playlist => PinKind::Playlist,
         LibraryItemKind::Album => PinKind::Album,
         LibraryItemKind::Artist => PinKind::Artist,
+        LibraryItemKind::Folder => PinKind::Folder,
         _ => return None,
     };
     let (_, id) = item.uri.rsplit_once(':')?;
