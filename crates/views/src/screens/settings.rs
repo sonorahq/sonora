@@ -5,7 +5,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::shared::local;
-use crate::shared::popups::{AccountPicker, SearchPopup, matches_query};
+use crate::shared::popups::{AccountPicker, CookiePrompt, SearchPopup, matches_query};
 use gpui::{
     AnyElement, App, Context, Entity, FontWeight, MouseUpEvent, Pixels, Render, SharedString, Task,
     Window, div, px,
@@ -72,6 +72,7 @@ struct Account {
     slug: &'static str,
     name: &'static str,
     options: Vec<SignIn>,
+    web_sign_in: bool,
     stored: bool,
     active: bool,
     guest: bool,
@@ -146,6 +147,8 @@ pub struct SettingsView {
     username: Entity<Input>,
     password: Entity<Input>,
     credentials_for: Option<&'static str>,
+    secret: Entity<Input>,
+    manual_secret: bool,
     languages: SearchPopup,
     typefaces: SearchPopup,
     typeface_faced: RefCell<HashSet<SharedString>>,
@@ -192,6 +195,8 @@ impl SettingsView {
             username: cx.new(|cx| Input::new("login-username-hint", cx)),
             password: cx.new(|cx| Input::new("login-password-hint", cx).masked()),
             credentials_for: None,
+            secret: cx.new(|cx| Input::new("login-cookie-hint", cx)),
+            manual_secret: false,
             languages,
             typefaces,
             typeface_faced: RefCell::new(HashSet::new()),
@@ -1803,6 +1808,7 @@ impl SettingsView {
                 slug: info.slug,
                 name: info.name,
                 options: info.options,
+                web_sign_in: info.web_sign_in,
                 stored: info.stored,
                 active: info.active && !signed_out,
                 guest: info.active && !signed_out && guest,
@@ -1847,6 +1853,7 @@ impl SettingsView {
             slug,
             name,
             options,
+            web_sign_in,
             stored,
             active,
             guest,
@@ -1938,13 +1945,11 @@ impl SettingsView {
                 this.child(crate::shared::trouble::trouble(error, false))
             })
             .when(!methods.is_empty(), |this| {
-                this.child(
-                    div().flex().flex_wrap().items_start().gap_2().children(
-                        methods
-                            .into_iter()
-                            .map(|method| self.method(slug, name, method, pending, cx)),
-                    ),
-                )
+                this.child(div().flex().flex_wrap().items_start().gap_2().children(
+                    methods.into_iter().flat_map(|method| {
+                        self.method_buttons(slug, name, method, web_sign_in, pending, cx)
+                    }),
+                ))
             })
             .when(cancel, |this| {
                 this.child(
@@ -1960,6 +1965,7 @@ impl SettingsView {
     }
 
     fn abandon(&mut self, cx: &mut Context<Self>) {
+        self.clear_secret(cx);
         self.clear_credentials(cx);
         self.session
             .update(cx, |session, cx| session.cancel_sign_in(cx));
@@ -2028,16 +2034,64 @@ impl SettingsView {
             .on_dismiss(cx.listener(|this, _, _, cx| this.abandon_credentials(cx)))
     }
 
-    fn method(
+    fn start_manual(&mut self, slug: &'static str, cx: &mut Context<Self>) {
+        self.manual_secret = true;
+        self.session
+            .update(cx, |session, cx| session.sign_in_with_cookies(slug, cx));
+    }
+
+    fn clear_secret(&mut self, cx: &mut Context<Self>) {
+        self.manual_secret = false;
+        self.secret.update(cx, |input, cx| input.set_text("", cx));
+    }
+
+    fn submit_secret(&mut self, cx: &mut Context<Self>) {
+        let text = self.secret.read(cx).text().to_string();
+        if text.trim().is_empty() {
+            return;
+        }
+        self.clear_secret(cx);
+        self.session
+            .update(cx, |session, cx| session.submit_input(text, cx));
+    }
+
+    fn secret_prompt(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        CookiePrompt::new(self.secret.clone())
+            .on_submit(cx.listener(|this, _, _, cx| this.submit_secret(cx)))
+            .on_cancel(cx.listener(|this, _, _, cx| this.abandon(cx)))
+    }
+
+    /// The buttons that start one sign-in method. A cookie sign-in yields the browser window
+    /// only where a backend can draw one, and always the manual paste beside it.
+    fn method_buttons(
         &self,
         slug: &'static str,
         provider: &'static str,
         method: SignIn,
+        web_sign_in: bool,
         pending: bool,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
-        self.method_button(slug, provider, method, pending, cx)
-            .into_any_element()
+    ) -> Vec<AnyElement> {
+        let mut buttons = Vec::new();
+        let manual = matches!(method, SignIn::Secret);
+        if !manual || web_sign_in {
+            buttons.push(
+                self.method_button(slug, provider, method, pending, cx)
+                    .into_any_element(),
+            );
+        }
+        if manual {
+            buttons.push(
+                Button::new(SharedString::from(format!("connect-{slug}-cookies-manual")))
+                    .label(t!("login-connect-cookies"))
+                    .small()
+                    .outline()
+                    .disabled(pending)
+                    .on_click(cx.listener(move |this, _, _, cx| this.start_manual(slug, cx)))
+                    .into_any_element(),
+            );
+        }
+        buttons
     }
 
     fn method_button(
@@ -2350,6 +2404,11 @@ impl Render for SettingsView {
             }
             _ => None,
         };
+        let manual_secret = self.manual_secret
+            && matches!(
+                self.session.read(cx).state(),
+                SessionState::Authorizing(Some(SignInPrompt::Secret))
+            );
 
         div()
             .relative()
@@ -2379,6 +2438,9 @@ impl Render for SettingsView {
             )
             .when_some(accounts, |this, accounts| {
                 this.child(self.account_modal(accounts, cx).into_any_element())
+            })
+            .when(manual_secret, |this| {
+                this.child(self.secret_prompt(cx).into_any_element())
             })
             .when(self.credentials_for.is_some(), |this| {
                 this.child(self.credentials_prompt(cx).into_any_element())
