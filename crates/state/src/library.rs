@@ -545,7 +545,7 @@ pub struct Library {
 impl Library {
     pub fn new(session: Entity<Session>, io: Io, cx: &mut Context<Self>) -> Self {
         cx.subscribe(&session, |this, session, event, cx| match event {
-            SessionEvent::SignedIn => {
+            SessionEvent::SignedIn | SessionEvent::Reconnected => {
                 this.sidebar_pin_task = None;
                 if !session.read(cx).authenticated() {
                     this.sidebar_task = None;
@@ -571,11 +571,6 @@ impl Library {
                 this.pending_artists.clear();
                 this.held_mut(Shelf::Streaming).clear();
                 cx.notify();
-            }
-            SessionEvent::Reconnected => {
-                if matches!(this.held(Shelf::Streaming).state, LibraryState::Failed(_)) {
-                    this.load(Shelf::Streaming, cx);
-                }
             }
             SessionEvent::LocalChanged => match session.read(cx).client_of(Shelf::Local) {
                 Some(_) => this.load(Shelf::Local, cx),

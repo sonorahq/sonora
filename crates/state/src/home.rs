@@ -33,7 +33,7 @@ impl Home {
         let quick_picks = picks(&library, quick_picks_seed, cx);
 
         cx.subscribe(&session, |this, _, event, cx| match event {
-            SessionEvent::SignedIn => this.feed(cx),
+            SessionEvent::SignedIn | SessionEvent::Reconnected => this.refresh(cx),
             SessionEvent::SignedOut => {
                 this.task = None;
                 this.naming = None;
@@ -43,7 +43,7 @@ impl Home {
                 this.feeding = false;
                 cx.notify();
             }
-            SessionEvent::Reconnected | SessionEvent::LocalChanged => {}
+            SessionEvent::LocalChanged => {}
         })
         .detach();
 
@@ -83,6 +83,17 @@ impl Home {
 
     pub fn is_feeding(&self) -> bool {
         self.feeding
+    }
+
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.task = None;
+        self.naming = None;
+        self.listen_again = Rc::new(Vec::new());
+        self.quick_picks = Rc::new(Vec::new());
+        self.sections = Rc::new(Vec::new());
+        self.feeding = false;
+        self.feed(cx);
+        cx.notify();
     }
 
     pub fn feed(&mut self, cx: &mut Context<Self>) {
