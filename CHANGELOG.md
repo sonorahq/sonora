@@ -22,6 +22,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - On Windows, the sign-in window opens when Sonora is installed under Program Files. It used to
   fail with `0x80070005` because the browser it embeds tried to keep its data next to the program,
   where a normal user cannot write. That data now lives under your local app data.
+- In the fullscreen view, the volume slider is no longer cut off when you hover the speaker button
+  while the controls are still sliding in.
 
 ## [0.34.3] - 2026-09-12
 
