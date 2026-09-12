@@ -55,10 +55,11 @@ Three things that bite people:
   proprietary driver (`nvidia-utils` on Arch).
 - **mold must be on `PATH`** — `.cargo/config.toml` passes `-fuse-ld=mold` for
   `x86_64-unknown-linux-gnu`. Build with `RUSTFLAGS="" cargo build …` to drop it.
-- **Rust must be 1.85 or newer** — the workspace is edition 2024 with resolver 3, and there is no
-  `rust-toolchain.toml`, so whatever is on `PATH` builds it. Arch and Fedora ship current toolchains;
-  Debian 13 sits exactly on 1.85.0, and Debian 12 (1.63) and Ubuntu 24.04 are too old — use
-  [rustup](https://rustup.rs) there.
+- **The toolchain is pinned** — `rust-toolchain.toml` names the version and the components, so
+  [rustup](https://rustup.rs) fetches them on the first `cargo` command and every checkout builds
+  and lints with the same compiler. A distribution's own `cargo` ignores the file and needs at least
+  1.85, since the workspace is edition 2024 with resolver 3; Debian 12 (1.63) and Ubuntu 24.04 are
+  too old for that.
 
 The first build compiles GPUI from source, so expect several minutes.
 
