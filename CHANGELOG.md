@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Updated and completed the Indonesian translation.
+
 ### Fixed
 
 - On Nix, the YouTube Music sign-in no longer goes black after the email step. The package now
