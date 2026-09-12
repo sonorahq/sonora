@@ -180,6 +180,7 @@ impl RenderOnce for Picker {
 
         let menu = menu
             .unwrap_or_else(|| Menu::new(SharedString::from(format!("{key}-menu"))).w(width))
+            .inline()
             .items(items)
             .top(drop)
             .when_else(left, |menu| menu.left_0(), |menu| menu.right_0());
