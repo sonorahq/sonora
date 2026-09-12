@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.34.4] - 2026-09-12
+
 ### Changed
 
 - Updated and completed the Indonesian translation.
@@ -1532,7 +1534,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.34.3...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.34.4...HEAD
+[0.34.4]: https://github.com/sonorahq/sonora/compare/v0.34.3...v0.34.4
 [0.34.3]: https://github.com/sonorahq/sonora/compare/v0.34.2...v0.34.3
 [0.34.2]: https://github.com/sonorahq/sonora/compare/v0.34.1...v0.34.2
 [0.34.1]: https://github.com/sonorahq/sonora/compare/v0.34.0...v0.34.1
