@@ -8,7 +8,7 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent,
     SharedString, SpringState, Task,
 };
-use gpui::{Window, canvas, div, px, relative};
+use gpui::{Window, canvas, deferred, div, px, relative};
 use i18n::t;
 use input::{ToggleFullscreen, WORKSPACE_CONTEXT};
 use router::{Destination, navigate};
@@ -760,7 +760,7 @@ impl FullscreenView {
                     ),
             )
             .when(self.volume_open(), |this| {
-                this.child(
+                this.child(deferred(
                     div()
                         .id("fullscreen-volume-zone")
                         .absolute()
@@ -819,7 +819,7 @@ impl FullscreenView {
                                     ),
                                 ),
                         ),
-                )
+                ))
             })
     }
 
