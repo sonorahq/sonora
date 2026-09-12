@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::{Album, Track};
+use crate::{Album, SavedArtist, Track};
 
 use super::wire;
 
@@ -15,6 +15,7 @@ const AUDIO_EXTENSIONS: &[&str] = &[
 pub struct Scanned {
     pub tracks: Vec<Track>,
     pub albums: Vec<Album>,
+    pub artists: Vec<SavedArtist>,
     pub portraits: HashMap<String, String>,
 }
 
@@ -52,6 +53,7 @@ pub fn scan(roots: &[PathBuf], cache_dir: &Path) -> Scanned {
 
     scanned.portraits = collect_portraits(roots, &parsed);
     scanned.albums = group_albums(&parsed);
+    scanned.artists = group_artists(&parsed, &scanned.portraits, &scanned.albums);
     scanned.tracks = parsed.into_iter().map(|(track, _)| track).collect();
     scanned
 }
@@ -109,13 +111,73 @@ fn album_year(indices: &[usize], parsed: &[(Track, String)]) -> i32 {
         .unwrap_or(0)
 }
 
+fn group_artists(
+    parsed: &[(Track, String)],
+    portraits: &HashMap<String, String>,
+    albums: &[Album],
+) -> Vec<SavedArtist> {
+    let mut order: Vec<String> = Vec::new();
+    let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
+
+    for (index, (track, _)) in parsed.iter().enumerate() {
+        for artist_ref in &track.artist_refs {
+            let id = artist_ref
+                .id
+                .clone()
+                .unwrap_or_else(|| wire::artist_id(&artist_ref.name));
+            if !groups.contains_key(&id) {
+                order.push(id.clone());
+            }
+            groups.entry(id).or_default().push(index);
+        }
+    }
+
+    order
+        .into_iter()
+        .filter_map(|id| {
+            let indices = groups.get(&id)?;
+            let name = indices.iter().find_map(|&i| {
+                parsed[i].0.artist_refs.iter().find_map(|artist_ref| {
+                    (artist_ref.id.as_deref() == Some(id.as_str())).then(|| artist_ref.name.clone())
+                })
+            })?;
+            let cover = portraits
+                .get(&id)
+                .cloned()
+                .or_else(|| {
+                    albums
+                        .iter()
+                        .find(|album| {
+                            album
+                                .artist_refs
+                                .iter()
+                                .any(|album_ref| album_ref.id.as_deref() == Some(id.as_str()))
+                        })
+                        .and_then(|album| album.cover.clone())
+                })
+                .or_else(|| indices.iter().find_map(|&i| parsed[i].0.cover.clone()));
+            Some(SavedArtist {
+                id,
+                name,
+                cover,
+                added_at: indices.iter().filter_map(|&i| parsed[i].0.added_at).max(),
+            })
+        })
+        .collect()
+}
+
 fn collect_portraits(roots: &[PathBuf], parsed: &[(Track, String)]) -> HashMap<String, String> {
-    let mut by_normalized: HashMap<String, String> = HashMap::new();
+    let mut known: HashSet<String> = HashSet::new();
     for (track, _) in parsed {
         for artist_ref in &track.artist_refs {
-            by_normalized
-                .entry(wire::normalize(&artist_ref.name))
-                .or_insert_with(|| artist_ref.name.clone());
+            match artist_ref.id.as_deref() {
+                Some(id) => {
+                    known.insert(id.to_owned());
+                }
+                None => {
+                    known.insert(wire::artist_id(&artist_ref.name));
+                }
+            }
         }
     }
 
@@ -126,14 +188,12 @@ fn collect_portraits(roots: &[PathBuf], parsed: &[(Track, String)]) -> HashMap<S
 
     let mut portraits = HashMap::new();
     for dir in dirs {
-        let Some(artist) = by_normalized.get(&wire::normalize(&folder_name(&dir))) else {
-            continue;
-        };
-        if portraits.contains_key(artist) {
+        let id = wire::artist_id(&folder_name(&dir));
+        if !known.contains(&id) || portraits.contains_key(&id) {
             continue;
         }
         if let Some(portrait) = wire::artist_cover(&dir) {
-            portraits.insert(artist.clone(), portrait);
+            portraits.insert(id, portrait);
         }
     }
     portraits
