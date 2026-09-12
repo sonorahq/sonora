@@ -7,8 +7,8 @@ use input::{
 };
 use router::{Destination, NavigationEvent, SettingsTab, back, forward, navigate};
 use state::{
-    ArtistDetail, Detail, GenreDetails, Genres, Home, Io, Library, Playback, Profile, Queue,
-    SYSTEM_FONT, Search, Session, SessionState, Shelf, SideTab, SongDetail, Sonora,
+    ArtistDetail, Detail, FolderShuffle, GenreDetails, Genres, Home, Io, Library, Playback,
+    Profile, Queue, SYSTEM_FONT, Search, Session, SessionState, Shelf, SideTab, SongDetail, Sonora,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ui::WindowFrame;
@@ -20,7 +20,7 @@ use crate::shared::tracks::{LIBRARY_COLUMNS, album_columns};
 use crate::shells::Shell;
 use crate::shells::workspace::Workspace;
 use crate::{
-    Adaptive, ArtistView, DetailView, FullscreenView, GenreView, HistoryView, HomeView,
+    Adaptive, ArtistView, DetailView, FolderView, FullscreenView, GenreView, HistoryView, HomeView,
     LibraryView, LoginView, SettingsView, SongView, UserView,
 };
 
@@ -39,6 +39,7 @@ struct Screens {
     user_profile: Entity<Profile>,
     playlist: Option<Entity<DetailView>>,
     playlist_detail: Option<Entity<Detail>>,
+    folder: Option<Entity<FolderView>>,
     search: Entity<SearchView>,
     genres: Entity<Genres>,
     genre: Option<Entity<GenreView>>,
@@ -247,6 +248,7 @@ impl Root {
                 user_profile,
                 playlist: None,
                 playlist_detail: None,
+                folder: None,
                 search,
                 genres,
                 genre: None,
@@ -342,6 +344,30 @@ impl Root {
         self.screens.playlist = Some(view.clone());
         self.screens.playlist_detail = Some(detail.clone());
         (view, detail)
+    }
+
+    fn folder(&mut self, cx: &mut Context<Self>) -> Entity<FolderView> {
+        if let Some(view) = &self.screens.folder {
+            return view.clone();
+        }
+        let shuffle = cx.new(|cx| {
+            FolderShuffle::new(
+                self.session.clone(),
+                self.playback.clone(),
+                self.io.clone(),
+                cx,
+            )
+        });
+        let view = cx.new(|cx| {
+            FolderView::new(
+                Sonora::global(cx).library.clone(),
+                self.playback.clone(),
+                shuffle,
+                cx,
+            )
+        });
+        self.screens.folder = Some(view.clone());
+        view
     }
 
     fn open_search(&mut self, cx: &mut Context<Self>) {
@@ -477,6 +503,11 @@ impl Root {
                 detail.update(cx, |detail, cx| detail.open_playlist(&id, cx));
                 toolbar = Some(playlist.read(cx).toolbar());
                 playlist.into()
+            }
+            Destination::Folder(id) => {
+                let folder = self.folder(cx);
+                folder.update(cx, |folder, cx| folder.open(&id, cx));
+                folder.into()
             }
             Destination::User(id) => {
                 self.screens

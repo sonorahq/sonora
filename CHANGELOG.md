@@ -9,9 +9,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Spotify playlist folders appear in Your Library. The Playlists list and grid show each folder as
-  a group that opens and closes, nested folders included, and typing in the filter field opens
-  every folder holding a match.
+- Spotify playlist folders appear in Your Library and in the sidebar. A folder sits among the
+  playlists as a card of its own, carrying a mosaic of what is inside, and opens its own page with
+  everything it holds and a Shuffle button. Folders lead the page whichever column you sort on, a
+  search matches a folder by anything inside it, and a folder can be pinned like a playlist.
 
 ### Fixed
 

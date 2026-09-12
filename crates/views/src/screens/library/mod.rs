@@ -13,13 +13,14 @@ use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Entity, FontWeight, MouseButton, Pixels, Point, Render, ScrollHandle,
-    SharedString, WeakEntity, Window, div, point, px, relative, svg,
+    SharedString, WeakEntity, Window, div, point, px, relative,
 };
 use i18n::t;
 use music::{Shape, Track};
 use router::{Destination, LibraryTab, navigate};
 use state::{
-    AppSettings, Library, LibraryPart, LibraryState, Origin, Playback, PlaybackState, Shelf, Sonora,
+    AppSettings, FolderRow, Library, LibraryPart, LibraryState, Origin, Playback, PlaybackState,
+    Shelf, Sonora,
 };
 use ui::{
     ActiveTheme as _, Button, Card, Deck, FilterChange, LEADING, Mode, Pinnable, Popovers, Popup,
@@ -274,15 +275,8 @@ impl LibraryView {
             }
             TableState::new(delegate, cx).follow(scroll.clone())
         });
-        let folding = cx.weak_entity();
         let playlists = cx.new(|cx| {
-            let source = PlaylistSource::shelved(library.clone(), playback.clone(), shelf).folded(
-                move |id, cx| {
-                    folding
-                        .update(cx, |view, cx| view.toggle_folder(id, cx))
-                        .ok();
-                },
-            );
+            let source = PlaylistSource::shelved(library.clone(), playback.clone(), shelf);
             let mut delegate = TableDelegate::new(source, width, cx).with_sort(
                 PlaylistField::Modified,
                 RECENT,
@@ -608,76 +602,21 @@ impl LibraryView {
     }
 
     fn open_playlist(&mut self, display: usize, cx: &mut Context<Self>) {
-        let (playlist, folder) = {
+        let opened = {
             let state = self.playlists.read(cx);
             let row = state.delegate().row(display);
             let source = state.delegate().source();
-            (source.at(row, cx), source.folder_at(row, cx))
+            match source.folder_at(row, cx) {
+                Some(folder) => Some(Destination::Folder(folder.id.into())),
+                None => source
+                    .at(row, cx)
+                    .map(|playlist| Destination::Playlist(playlist.id.into())),
+            }
         };
-        if let Some(folder) = folder {
-            self.toggle_folder(&folder.id, cx);
+        let Some(opened) = opened else {
             return;
-        }
-        let Some(playlist) = playlist else {
-            return;
         };
-        navigate(Destination::Playlist(playlist.id.into()), cx);
-    }
-
-    fn toggle_folder(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.playlists.update(cx, |table, cx| {
-            table.delegate_mut().source_mut().toggle(id);
-            table.rebuild(cx);
-        });
-        self.cards_dirty = true;
-        cx.notify();
-    }
-
-    fn folder_head(&self, display: usize, cx: &App) -> Option<AnyElement> {
-        let theme = *cx.theme();
-        let folder = {
-            let state = self.playlists.read(cx);
-            let delegate = state.delegate();
-            delegate.source().folder_at(delegate.row(display), cx)?
-        };
-        let view = self.me.clone();
-        let id = folder.id.clone();
-        let icon = match folder.open {
-            true => "icons/chevron-down.svg",
-            false => "icons/chevron-right.svg",
-        };
-
-        Some(
-            div()
-                .id(("library-folder", display))
-                .flex()
-                .items_center()
-                .gap_2()
-                .w_full()
-                .pt_2()
-                .pl(cells::indent(&theme, folder.depth))
-                .line_height(relative(LEADING))
-                .cursor_pointer()
-                .on_click(move |_, _, cx| {
-                    view.update(cx, |this, cx| this.toggle_folder(&id, cx)).ok();
-                })
-                .child(
-                    svg()
-                        .path(icons::path(icon))
-                        .size(theme.text(Text::Title))
-                        .flex_none()
-                        .text_color(theme.muted_foreground),
-                )
-                .child(heading(folder.name, cx).min_w_0().truncate())
-                .child(
-                    div()
-                        .flex_none()
-                        .text_size(theme.text(Text::Small))
-                        .text_color(theme.muted_foreground)
-                        .child(t!("count-playlists", count = folder.count)),
-                )
-                .into_any_element(),
-        )
+        navigate(opened, cx);
     }
 
     fn open_artist(&mut self, display: usize, cx: &mut Context<Self>) {
@@ -884,11 +823,6 @@ impl LibraryView {
 
                         match row {
                             DeckRow::Heading(display) => {
-                                if section == Section::Playlists
-                                    && let Some(folder) = view.folder_head(*display, cx)
-                                {
-                                    return div().px(inset).child(folder).into_any_element();
-                                }
                                 let label = match section {
                                     Section::Songs => {
                                         view.songs.read(cx).delegate().group(*display, cx)
@@ -1029,6 +963,15 @@ impl LibraryView {
         card: Pixels,
         cx: &App,
     ) -> Option<AnyElement> {
+        if let Some(folder) = self
+            .playlists
+            .read(cx)
+            .delegate()
+            .source()
+            .folder_at(row, cx)
+        {
+            return Some(self.folder_card(display, folder, card, cx));
+        }
         let playlist = self.playlists.read(cx).delegate().source().at(row, cx)?;
         let view = self.me.clone();
         let build = match self.shelf.local() {
@@ -1054,6 +997,30 @@ impl LibraryView {
                 })
                 .into_any_element(),
         )
+    }
+
+    /// A folder among the playlist cards: it opens rather than plays.
+    fn folder_card(&self, display: usize, folder: FolderRow, card: Pixels, cx: &App) -> AnyElement {
+        let cover = self.library.read(cx).folder_cover(&folder.id);
+        let view = self.me.clone();
+        let opened = folder.clone();
+
+        cards::folder_card(("library-folder", display), &folder, cover)
+            .tile(card)
+            .flat()
+            .menu(move |event, _, cx| {
+                let Some(view) = view.upgrade() else {
+                    return;
+                };
+                view.update(cx, |this, cx| {
+                    this.context_menu = Some((
+                        LibraryMenu::Item(Item::Folder(opened.clone())),
+                        event.position,
+                    ));
+                    cx.notify();
+                });
+            })
+            .into_any_element()
     }
 
     fn artist_card(
@@ -1302,14 +1269,6 @@ fn deck<S: TableSource>(state: &Entity<TableState<S>>, columns: usize, cx: &App)
 
     for display in 0..delegate.row_count() {
         let row = delegate.row(display);
-        if delegate.source().branch(row, cx).is_some() {
-            if !cards.is_empty() {
-                rows.push(DeckRow::Cards(std::mem::take(&mut cards)));
-            }
-            rows.push(DeckRow::Heading(display));
-            group = None;
-            continue;
-        }
         let label = delegate.group(display, cx);
         match &label {
             Some(text) if group.as_ref() != Some(text) => {

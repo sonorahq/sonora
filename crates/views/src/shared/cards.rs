@@ -3,13 +3,14 @@ use gpui::{App, ElementId, Entity, FontWeight, SharedString, div};
 use i18n::t;
 use music::{Album, ArtistRef, Playlist, SavedArtist};
 use router::{Destination, navigate};
-use state::{Origin, Playback, PlaybackState};
-use ui::{ActiveTheme as _, Card, Pinnable, Text, Theme};
+use state::{FolderRow, Origin, Playback, PlaybackState};
+use ui::{ActiveTheme as _, Card, Pin, PinKind, Pinnable, Text, Theme};
 
 use crate::shared::cells;
 use crate::shared::pins::Pinned as _;
 
 const BULLET: SharedString = SharedString::new_static("·");
+const FOLDER: &str = "icons/folder.svg";
 
 pub(crate) fn album_card(
     id: impl Into<ElementId>,
@@ -139,4 +140,42 @@ pub(crate) fn artist_card(
         })
         .press(move |_, _, cx| navigate(Destination::Artist(opened.clone()), cx))
         .when_some(pin, Pinnable::pin)
+}
+
+/// A folder among the playlists it holds. It carries a mosaic of what is inside, marked by a
+/// glyph so it cannot be mistaken for a playlist, and it opens rather than plays.
+pub(crate) fn folder_card(
+    id: impl Into<ElementId>,
+    folder: &FolderRow,
+    cover: Option<String>,
+) -> Card {
+    let opened = SharedString::from(folder.id.clone());
+    let covered = cover.is_some();
+
+    Card::new(id, SharedString::from(folder.name.clone()))
+        .cover(cover)
+        .fallback(FOLDER)
+        .when(covered, |card| card.glyph(FOLDER))
+        .weight(FontWeight::SEMIBOLD)
+        .underline()
+        .meta(holding(folder))
+        .press(move |_, _, cx| navigate(Destination::Folder(opened.clone()), cx))
+        .pin(folder_pin(folder))
+}
+
+/// The pin a folder drags into the sidebar.
+pub(crate) fn folder_pin(folder: &FolderRow) -> Pin {
+    Pin::new(PinKind::Folder, folder.id.clone(), folder.name.clone())
+}
+
+/// What a folder holds, counting only what sits directly inside it.
+pub(crate) fn holding(folder: &FolderRow) -> SharedString {
+    match folder.folders {
+        0 => t!("count-playlists", count = folder.playlists),
+        folders => SharedString::from(format!(
+            "{} {BULLET} {}",
+            t!("count-playlists", count = folder.playlists),
+            t!("count-folders", count = folders)
+        )),
+    }
 }

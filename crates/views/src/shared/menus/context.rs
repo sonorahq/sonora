@@ -2,7 +2,7 @@ use gpui::{App, ClickEvent, ClipboardItem, Entity, SharedString, Styled as _, Wi
 use i18n::t;
 use music::{Album, MediaKind, Playlist, SavedArtist, Track};
 use router::{Destination, navigate};
-use state::{Detail, History, Library, Origin, Playback, Shelf, Sonora};
+use state::{Detail, FolderRow, History, Library, Origin, Playback, Shelf, Sonora};
 use ui::{Menu, MenuItem, Pin, PinKind, Scrollbar, SubmenuState};
 
 use crate::shared::confirm::Confirm;
@@ -14,6 +14,7 @@ use crate::shared::tag_editor::TagEditor;
 pub(crate) enum Item {
     Album(Album),
     Playlist(Playlist),
+    Folder(FolderRow),
     Artist(SavedArtist),
 }
 
@@ -22,6 +23,7 @@ impl Item {
         match self {
             Self::Album(album) => album_menu(album.clone(), playback, opened_here, cx),
             Self::Playlist(playlist) => playlist_menu(playlist.clone(), playback, opened_here, cx),
+            Self::Folder(folder) => folder_menu(&folder.id, &folder.name, cx),
             Self::Artist(artist) => artist_menu(artist.clone(), playback, opened_here, cx),
         }
     }
@@ -844,9 +846,17 @@ pub(crate) fn item_menu(
             cx,
         )),
         PinKind::Song => saved_track(&pin.id, cx).map(|track| tracks.for_track(&track, cx)),
+        // Nothing but the sparse menu fits a folder: it opens, and it pins.
+        PinKind::Folder => None,
     };
 
     built.unwrap_or_else(|| sparse_menu(pin, playback, cx))
+}
+
+/// The menu of a folder of playlists, wherever one is listed.
+pub(crate) fn folder_menu(id: &str, name: &str, cx: &App) -> Menu {
+    let pin = Pin::new(PinKind::Folder, id, name);
+    sparse_menu(&pin, Sonora::global(cx).playback.clone(), cx)
 }
 
 pub(crate) fn pinned_artist(pin: &Pin) -> SavedArtist {
@@ -866,16 +876,21 @@ fn sparse_menu(pin: &Pin, playback: Entity<Playback>, cx: &App) -> Menu {
         .icon("icons/info.svg")
         .on_click(move |_, _, cx| navigate(destination.clone(), cx));
 
+    let link = kind
+        .map(|kind| {
+            MenuItem::new("copy-pin-link", t!("menu-copy-link"))
+                .icon("icons/link.svg")
+                .on_click(move |_, _, cx| copy_link(kind, &copied, cx))
+        })
+        .into_iter()
+        .collect();
+
     sections(
         Menu::new("pin-context-menu"),
         vec![
             vec![open],
             transport_items(pin, playback),
-            vec![
-                MenuItem::new("copy-pin-link", t!("menu-copy-link"))
-                    .icon("icons/link.svg")
-                    .on_click(move |_, _, cx| copy_link(kind, &copied, cx)),
-            ],
+            link,
             vec![pin_action(pin, cx)],
         ],
     )
@@ -886,12 +901,16 @@ fn open_key(kind: PinKind) -> &'static str {
         PinKind::Album => "menu-open-album",
         PinKind::Artist => "menu-go-to-artist",
         PinKind::Playlist => "menu-open-playlist",
+        PinKind::Folder => "menu-open-folder",
         PinKind::Song => "menu-view-details",
     }
 }
 
 fn transport_items(pin: &Pin, playback: Entity<Playback>) -> Vec<MenuItem> {
-    let played = Origin::from(pin);
+    // A folder holds playlists rather than tracks, so it has no transport at all.
+    let Some(played) = Origin::from_pin(pin) else {
+        return Vec::new();
+    };
     let next = pin.id.clone();
     let queued = pin.id.clone();
     let nexting = playback.clone();
@@ -956,6 +975,7 @@ fn transport_items(pin: &Pin, playback: Entity<Playback>) -> Vec<MenuItem> {
                     playback.update(cx, |playback, cx| playback.play_origin(played.clone(), cx));
                 }),
         ],
+        PinKind::Folder => Vec::new(),
     }
 }
 
@@ -981,12 +1001,15 @@ pub(crate) fn pin_action(pin: &Pin, cx: &App) -> MenuItem {
     }
 }
 
-fn media_kind(kind: PinKind) -> MediaKind {
+/// What a pin shares as a link, or `None` for one with no page of its own on the provider: a
+/// folder only exists inside the library that lists it.
+fn media_kind(kind: PinKind) -> Option<MediaKind> {
     match kind {
-        PinKind::Album => MediaKind::Album,
-        PinKind::Artist => MediaKind::Artist,
-        PinKind::Playlist => MediaKind::Playlist,
-        PinKind::Song => MediaKind::Track,
+        PinKind::Album => Some(MediaKind::Album),
+        PinKind::Artist => Some(MediaKind::Artist),
+        PinKind::Playlist => Some(MediaKind::Playlist),
+        PinKind::Song => Some(MediaKind::Track),
+        PinKind::Folder => None,
     }
 }
 

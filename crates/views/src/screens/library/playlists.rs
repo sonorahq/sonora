@@ -1,27 +1,23 @@
 use std::cmp::Ordering;
-use std::collections::HashSet;
-use std::rc::Rc;
 
 use gpui::{AnyElement, App, Entity, TextAlign};
 use i18n::t;
 use music::Playlist;
 use router::Destination;
-use state::{Library, LibraryPart, Origin, Playback, PlaylistRow, Shelf};
+use state::{FolderRow, Library, LibraryPart, Origin, Outline, Playback, Shelf};
 use ui::rank::{ESSENTIAL, HANDY, NICE, SPARE};
 use ui::{
-    ActiveTheme as _, Branch, Cell, ColumnSpec, Filter, FilterChange, FlagAxis, Menu, Pin,
+    ActiveTheme as _, Cell, ColumnSpec, Filter, FilterChange, FlagAxis, Menu, Pin, PinKind,
     TableSource, Width,
 };
 
-use crate::shared::cells::{self, DATE, NUMBER, TRAILING, Tap};
-use crate::shared::menus::playlist_menu;
+use crate::shared::cards::holding;
+use crate::shared::cells::{self, DATE, NUMBER, TRAILING};
+use crate::shared::menus::{folder_menu, playlist_menu};
 use crate::shared::pins::Pinned as _;
 use crate::shared::text::{folded, holds};
 
 const FOLDER: &str = "icons/folder.svg";
-const FOLDER_OPEN: &str = "icons/folder-open.svg";
-
-type Fold = Rc<dyn Fn(&str, &mut App)>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum PlaylistField {
@@ -79,21 +75,13 @@ const MODIFIED: ColumnSpec<PlaylistField> = ColumnSpec {
 pub(super) const COLUMNS: &[ColumnSpec<PlaylistField>] =
     &[INDEX, COVER, NAME, OWNER, MODIFIED, TRACK_COUNT];
 
-pub(super) struct FolderRow {
-    pub id: String,
-    pub name: String,
-    pub depth: usize,
-    pub count: usize,
-    pub open: bool,
-}
-
 pub(super) struct PlaylistSource {
     library: Entity<Library>,
     playback: Entity<Playback>,
     shelf: Shelf,
+    /// The folder whose contents are listed, or the root of the shelf.
+    folder: Option<String>,
     owned: bool,
-    open: HashSet<String>,
-    fold: Option<Fold>,
 }
 
 impl PlaylistSource {
@@ -106,24 +94,12 @@ impl PlaylistSource {
             library,
             playback,
             shelf,
+            folder: None,
             owned: false,
-            open: HashSet::new(),
-            fold: None,
         }
     }
 
-    pub(super) fn folded(mut self, fold: impl Fn(&str, &mut App) + 'static) -> Self {
-        self.fold = Some(Rc::new(fold));
-        self
-    }
-
-    pub(super) fn toggle(&mut self, id: &str) {
-        if !self.open.remove(id) {
-            self.open.insert(id.to_owned());
-        }
-    }
-
-    fn outline<'a>(&self, cx: &'a App) -> &'a [PlaylistRow] {
+    fn outline<'a>(&self, cx: &'a App) -> &'a Outline {
         self.library.read(cx).state(self.shelf).outline()
     }
 
@@ -131,11 +107,17 @@ impl PlaylistSource {
         self.library.read(cx).state(self.shelf).playlists()
     }
 
+    /// Where a listed row sits in the outline.
+    fn spot(&self, row: usize, cx: &App) -> Option<usize> {
+        self.outline(cx)
+            .level(self.folder.as_deref())
+            .get(row)
+            .copied()
+    }
+
     fn playlist<'a>(&self, row: usize, cx: &'a App) -> Option<&'a Playlist> {
-        match self.outline(cx).get(row)? {
-            PlaylistRow::Playlist { index, .. } => self.playlists(cx).get(*index),
-            PlaylistRow::Folder { .. } => None,
-        }
+        let index = self.outline(cx).playlist_at(self.spot(row, cx)?)?;
+        self.playlists(cx).get(index)
     }
 
     pub(super) fn at(&self, row: usize, cx: &App) -> Option<Playlist> {
@@ -143,21 +125,18 @@ impl PlaylistSource {
     }
 
     pub(super) fn folder_at(&self, row: usize, cx: &App) -> Option<FolderRow> {
-        match self.outline(cx).get(row)? {
-            PlaylistRow::Folder {
-                id,
-                name,
-                depth,
-                count,
-            } => Some(FolderRow {
-                id: id.clone(),
-                name: name.clone(),
-                depth: *depth,
-                count: *count,
-                open: self.open.contains(id),
-            }),
-            PlaylistRow::Playlist { .. } => None,
-        }
+        self.outline(cx).folder_at(self.spot(row, cx)?)
+    }
+
+    /// Every playlist inside a folder, however deep. Sorting and filtering a folder row both
+    /// answer for what it holds rather than for the folder itself.
+    fn held<'a>(&self, folder: &str, cx: &'a App) -> Vec<&'a Playlist> {
+        let playlists = self.playlists(cx);
+        self.outline(cx)
+            .playlists_in(folder)
+            .into_iter()
+            .filter_map(|index| playlists.get(index))
+            .collect()
     }
 
     fn index_cell(&self, cell: &Cell<PlaylistField>, playlist: &Playlist, cx: &App) -> AnyElement {
@@ -171,35 +150,19 @@ impl PlaylistSource {
         cells::index(cell, state, true, None, press, cx)
     }
 
+    /// A folder reads as a row of its own: a glyph where the cover goes, what it holds where the
+    /// owner goes, and nothing in the columns that only a playlist can answer.
     fn folder_cell(&self, cell: Cell<PlaylistField>, folder: FolderRow, cx: &App) -> AnyElement {
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
 
         match cell.field {
-            PlaylistField::Index => {
-                let fold = self.fold.clone();
-                let id = folder.id;
-                let press: Tap = Box::new(move |cx| {
-                    if let Some(fold) = &fold {
-                        fold(&id, cx);
-                    }
-                });
-                cells::disclosure(&cell, folder.open, press, cx)
+            PlaylistField::Cover => cells::symbol(&cell, FOLDER, muted, cx),
+            PlaylistField::Name => cells::dim(&cell, folder.name, theme.foreground),
+            PlaylistField::Owner => cells::dim(&cell, holding(&folder), muted),
+            PlaylistField::Index | PlaylistField::TrackCount | PlaylistField::Modified => {
+                cells::blank(&cell)
             }
-            PlaylistField::Cover => {
-                let icon = match folder.open {
-                    true => FOLDER_OPEN,
-                    false => FOLDER,
-                };
-                cells::symbol(&cell, icon, muted, cx)
-            }
-            PlaylistField::Name => {
-                cells::nested(&cell, folder.depth, folder.name, theme.foreground, cx)
-            }
-            PlaylistField::Owner => {
-                cells::dim(&cell, t!("count-playlists", count = folder.count), muted)
-            }
-            PlaylistField::TrackCount | PlaylistField::Modified => cells::blank(&cell),
         }
     }
 }
@@ -212,36 +175,23 @@ impl TableSource for PlaylistSource {
     }
 
     fn rows(&self, cx: &App) -> usize {
-        self.outline(cx).len()
+        self.outline(cx).level(self.folder.as_deref()).len()
     }
 
+    /// A folder answers for itself and for everything it holds, so a search never hides a match
+    /// behind a folder the query does not name.
     fn matches(&self, row: usize, query: &str, cx: &App) -> bool {
-        match self.outline(cx).get(row) {
-            Some(PlaylistRow::Folder { name, .. }) => !self.owned && holds(name, query),
-            Some(PlaylistRow::Playlist { index, .. }) => {
-                self.playlists(cx).get(*index).is_some_and(|playlist| {
-                    (!self.owned || playlist.owned)
-                        && (holds(&playlist.name, query) || holds(&playlist.owner, query))
-                })
-            }
-            None => false,
+        if let Some(folder) = self.folder_at(row, cx) {
+            return !self.owned
+                && (holds(&folder.name, query)
+                    || self
+                        .held(&folder.id, cx)
+                        .iter()
+                        .any(|playlist| holds(&playlist.name, query)));
         }
-    }
-
-    fn parent(&self, row: usize, cx: &App) -> Option<usize> {
-        let outline = self.outline(cx);
-        let depth = outline.get(row)?.depth();
-        if depth == 0 {
-            return None;
-        }
-        (0..row).rev().find(|&above| outline[above].depth() < depth)
-    }
-
-    fn branch(&self, row: usize, cx: &App) -> Option<Branch> {
-        let folder = self.folder_at(row, cx)?;
-        Some(Branch {
-            label: folder.name.into(),
-            open: folder.open,
+        self.playlist(row, cx).is_some_and(|playlist| {
+            (!self.owned || playlist.owned)
+                && (holds(&playlist.name, query) || holds(&playlist.owner, query))
         })
     }
 
@@ -285,7 +235,10 @@ impl TableSource for PlaylistSource {
     }
 
     fn pin(&self, row: usize, cx: &App) -> Option<Pin> {
-        self.playlist(row, cx)?.pin()
+        match self.folder_at(row, cx) {
+            Some(folder) => Some(Pin::new(PinKind::Folder, folder.id, folder.name)),
+            None => self.playlist(row, cx)?.pin(),
+        }
     }
 
     fn picking(&self) -> bool {
@@ -293,8 +246,12 @@ impl TableSource for PlaylistSource {
     }
 
     fn context_menu(&self, rows: &[usize], _visible: &[PlaylistField], cx: &App) -> Option<Menu> {
+        let row = *rows.first()?;
+        if let Some(folder) = self.folder_at(row, cx) {
+            return Some(folder_menu(&folder.id, &folder.name, cx));
+        }
         Some(playlist_menu(
-            self.at(*rows.first()?, cx)?,
+            self.at(row, cx)?,
             self.playback.clone(),
             false,
             cx,
@@ -308,8 +265,7 @@ impl TableSource for PlaylistSource {
         if let Some(folder) = self.folder_at(cell.row, cx) {
             return self.folder_cell(cell, folder, cx);
         }
-        let depth = self.outline(cx).get(cell.row).map(PlaylistRow::depth);
-        let Some((playlist, depth)) = self.playlist(cell.row, cx).zip(depth) else {
+        let Some(playlist) = self.playlist(cell.row, cx) else {
             return cells::blank(&cell);
         };
 
@@ -319,9 +275,7 @@ impl TableSource for PlaylistSource {
 
         match cell.field {
             PlaylistField::Cover => cells::artwork(&cell, playlist.cover.clone()),
-            PlaylistField::Name => {
-                cells::nested(&cell, depth, playlist.name.clone(), theme.foreground, cx)
-            }
+            PlaylistField::Name => cells::dim(&cell, playlist.name.clone(), theme.foreground),
             PlaylistField::Owner => match playlist.owner_id.is_empty() {
                 true => cells::dim(&cell, playlist.owner.clone(), muted),
                 false => cells::link(
@@ -340,25 +294,65 @@ impl TableSource for PlaylistSource {
         }
     }
 
-    fn compare(&self, field: PlaylistField, a: usize, b: usize, cx: &App) -> Ordering {
-        let outline = self.outline(cx);
-        let (x, y) = (outline.get(a), outline.get(b));
-        let leaf = |row: Option<&PlaylistRow>| matches!(row, Some(PlaylistRow::Playlist { .. }));
+    /// Folders lead the page, whatever the column is sorted on.
+    fn leads(&self, row: usize, cx: &App) -> bool {
+        self.folder_at(row, cx).is_some()
+    }
 
-        leaf(x).cmp(&leaf(y)).then_with(|| match (x, y) {
-            (
-                Some(PlaylistRow::Folder { name: p, .. }),
-                Some(PlaylistRow::Folder { name: q, .. }),
-            ) => match field {
-                PlaylistField::Index | PlaylistField::Cover => a.cmp(&b),
-                _ => folded(p, q),
-            },
-            (
-                Some(PlaylistRow::Playlist { index: i, .. }),
-                Some(PlaylistRow::Playlist { index: j, .. }),
-            ) => compare_playlists(self.playlists(cx), field, *i, *j),
-            _ => a.cmp(&b),
-        })
+    fn compare(&self, field: PlaylistField, a: usize, b: usize, cx: &App) -> Ordering {
+        match (self.folder_at(a, cx), self.folder_at(b, cx)) {
+            (Some(p), Some(q)) => self
+                .compare_folders(field, &p, &q, cx)
+                .then(folded(&p.name, &q.name)),
+            (None, None) => {
+                let (Some(i), Some(j)) = (self.index_of(a, cx), self.index_of(b, cx)) else {
+                    return a.cmp(&b);
+                };
+                compare_playlists(self.playlists(cx), field, i, j)
+            }
+            // `leads` has already put the folders ahead; this only keeps the order settled.
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+        }
+    }
+}
+
+impl PlaylistSource {
+    fn index_of(&self, row: usize, cx: &App) -> Option<usize> {
+        self.outline(cx).playlist_at(self.spot(row, cx)?)
+    }
+
+    /// A folder has none of a playlist's fields, so it borrows them from what it holds: the newest
+    /// change inside it, the tracks it adds up to, the playlists it counts.
+    fn compare_folders(
+        &self,
+        field: PlaylistField,
+        a: &FolderRow,
+        b: &FolderRow,
+        cx: &App,
+    ) -> Ordering {
+        match field {
+            PlaylistField::Name | PlaylistField::Index | PlaylistField::Cover => Ordering::Equal,
+            PlaylistField::Owner => a.playlists.cmp(&b.playlists),
+            PlaylistField::TrackCount => {
+                let tracks = |folder: &FolderRow| {
+                    self.held(&folder.id, cx)
+                        .iter()
+                        .map(|playlist| playlist.track_count)
+                        .sum::<u32>()
+                };
+                tracks(a).cmp(&tracks(b))
+            }
+            PlaylistField::Modified => {
+                let touched = |folder: &FolderRow| {
+                    self.held(&folder.id, cx)
+                        .iter()
+                        .filter_map(|playlist| playlist.modified_at)
+                        .max()
+                };
+                touched(a).cmp(&touched(b))
+            }
+        }
     }
 }
 

@@ -405,23 +405,28 @@ impl SidebarLeft {
             _ => None,
         };
 
-        let origin = Origin::from(&pin);
-        let playing = matches!(
-            self.playback.read(cx).playing_from(&origin),
-            Some(PlaybackState::Playing)
-        );
+        // A folder has no origin, so its row carries no play button: it only opens.
+        let origin = Origin::from_pin(&pin);
+        let playing = origin.as_ref().is_some_and(|origin| {
+            matches!(
+                self.playback.read(cx).playing_from(origin),
+                Some(PlaybackState::Playing)
+            )
+        });
 
         let card = Card::new(("pinned", index), pin.label())
             .cover(pin.cover.clone())
             .fallback(pin.kind.icon())
             .when(pin.kind.round(), Card::circle)
-            .play(
-                playing,
-                cx.listener(move |this, _, _, cx| {
-                    this.playback
-                        .update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
-                }),
-            )
+            .when_some(origin, |card, origin| {
+                card.play(
+                    playing,
+                    cx.listener(move |this, _, _, cx| {
+                        this.playback
+                            .update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
+                    }),
+                )
+            })
             .tint(match active {
                 true => theme.foreground,
                 false => theme.muted_foreground,
