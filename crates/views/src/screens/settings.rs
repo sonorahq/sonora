@@ -7,8 +7,8 @@ use std::time::Duration;
 use crate::shared::local;
 use crate::shared::popups::{AccountPicker, SearchPopup, matches_query};
 use gpui::{
-    AnyElement, App, Context, Entity, FontWeight, MouseUpEvent, Pixels, Render, SharedString, Task,
-    Window, div, px,
+    AnyElement, App, Context, Entity, FocusHandle, FontWeight, MouseUpEvent, Pixels, Render,
+    SharedString, Task, Window, div, px,
 };
 use gpui::{ScrollHandle, prelude::*, svg};
 use i18n::{Language, t};
@@ -137,6 +137,7 @@ pub struct SettingsView {
     playback: Entity<Playback>,
     settings: Entity<AppSettings>,
     tab: SettingsTab,
+    focus: FocusHandle,
     scrollbar: Entity<Scrollbar>,
     opacity: ScrubberState,
     sleep: ScrubberState,
@@ -165,6 +166,7 @@ impl SettingsView {
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         let me = cx.entity_id();
+        let focus = cx.focus_handle();
         let languages = SearchPopup::new("settings-language-search", me, cx);
         cx.observe(&languages.input(), |this, _, cx| {
             this.languages.changed(cx);
@@ -183,6 +185,7 @@ impl SettingsView {
             playback,
             settings,
             tab: SettingsTab::General,
+            focus,
             scrollbar: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(me)),
             opacity: ScrubberState::new("opacity"),
             sleep: ScrubberState::new("sleep"),
@@ -419,10 +422,10 @@ impl SettingsView {
                 MenuItem::new(id, label)
                     .selected(place == cursor)
                     .checked(chosen == id)
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         this.settings
                             .update(cx, |settings, cx| settings.set_language(id, cx));
-                        this.popovers.close();
+                        window.focus(&this.focus, cx);
                         cx.notify();
                     }))
             }))
@@ -563,11 +566,11 @@ impl SettingsView {
                         .selected(place == cursor)
                         .checked(chosen == name.as_ref())
                         .when(shows, |item| item.face(preview))
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                        .on_click(cx.listener(move |this, _, window, cx| {
                             let name = name.to_string();
                             this.settings
                                 .update(cx, |settings, cx| settings.set_font(name, cx));
-                            this.popovers.close();
+                            window.focus(&this.focus, cx);
                             cx.notify();
                         }))
                 })
@@ -2354,6 +2357,7 @@ impl Render for SettingsView {
         div()
             .relative()
             .size_full()
+            .track_focus(&self.focus)
             .child(
                 Scroller::new("settings", &self.scrollbar)
                     .flex()
