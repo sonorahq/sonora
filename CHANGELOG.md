@@ -11,6 +11,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Updated and completed the Indonesian translation.
 - Song lengths in tables and track lists use equal-width digits, so the column lines up.
+- Settings offers Paste cookies manually for YouTube Music beside the browser sign-in, so an
+  account can be connected that way without first removing every other provider.
 
 ### Fixed
 
