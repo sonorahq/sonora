@@ -26,8 +26,6 @@ const SCRIM_RATIO: f32 = 0.45;
 const SCRIM_MIN: Pixels = px(14.);
 const GLYPH_RATIO: f32 = 0.34;
 const GLYPH_MIN: Pixels = px(12.);
-/// How far the artwork under a glyph is dimmed, so the glyph reads over any cover.
-const GLYPH_VEIL: f32 = 0.45;
 const TIGHT: Pixels = px(2.);
 
 pub const CARD_GROUP: &str = "card";
@@ -371,7 +369,7 @@ impl RenderOnce for Card {
                             .items_center()
                             .justify_center()
                             .rounded(corner)
-                            .bg(theme.overlay.opacity(GLYPH_VEIL))
+                            .bg(theme.overlay)
                             .child(
                                 svg()
                                     .path(icons::path(glyph))

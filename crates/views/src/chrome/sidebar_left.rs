@@ -1,6 +1,7 @@
 use ui::{
-    ActiveTheme as _, Button, Card, DraggedPin, Edge, MenuItem, Panel, Picker, Pin, Pinnable as _,
-    Popup, SNUG, Scroller, Shield, Side, Spot, Tabs, Text, Vacancy, drop_gap, drop_marker,
+    ActiveTheme as _, Button, Card, DraggedPin, Edge, MenuItem, Panel, Picker, Pin, PinKind,
+    Pinnable as _, Popup, SNUG, Scroller, Shield, Side, Spot, Tabs, Text, Vacancy, drop_gap,
+    drop_marker,
 };
 
 use gpui::prelude::*;
@@ -418,6 +419,10 @@ impl SidebarLeft {
             .cover(pin.cover.clone())
             .fallback(pin.kind.icon())
             .when(pin.kind.round(), Card::circle)
+            // A folder wearing a mosaic would read as a playlist without its glyph.
+            .when(pin.kind == PinKind::Folder && pin.cover.is_some(), |card| {
+                card.glyph(pin.kind.icon())
+            })
             .when_some(origin, |card, origin| {
                 card.play(
                     playing,

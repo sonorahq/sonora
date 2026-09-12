@@ -150,6 +150,7 @@ pub(crate) fn folder_card(
     cover: Option<String>,
 ) -> Card {
     let opened = SharedString::from(folder.id.clone());
+    let pin = folder_pin(folder, cover.clone());
     let covered = cover.is_some();
 
     Card::new(id, SharedString::from(folder.name.clone()))
@@ -160,12 +161,13 @@ pub(crate) fn folder_card(
         .underline()
         .meta(holding(folder))
         .press(move |_, _, cx| navigate(Destination::Folder(opened.clone()), cx))
-        .pin(folder_pin(folder))
+        .pin(pin)
 }
 
-/// The pin a folder drags into the sidebar.
-pub(crate) fn folder_pin(folder: &FolderRow) -> Pin {
-    Pin::new(PinKind::Folder, folder.id.clone(), folder.name.clone())
+/// The pin a folder drags into the sidebar. It keeps the mosaic, so pinning does not turn the
+/// card back into a bare glyph.
+pub(crate) fn folder_pin(folder: &FolderRow, cover: Option<String>) -> Pin {
+    Pin::new(PinKind::Folder, folder.id.clone(), folder.name.clone()).cover(cover)
 }
 
 /// What a folder holds, counting only what sits directly inside it.

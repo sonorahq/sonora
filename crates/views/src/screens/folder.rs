@@ -132,7 +132,10 @@ impl FolderView {
             .cover(library.folder_cover(&folder.id))
             .fallback(FOLDER)
             .eyebrow(t!("kind-folder"))
-            .pin(Some(cards::folder_pin(folder)))
+            .pin(Some(cards::folder_pin(
+                folder,
+                library.folder_cover(&folder.id),
+            )))
             .meta(strip)
             .actions(self.shuffle_button(folder, inside, cx))
     }

@@ -5,7 +5,7 @@ use music::{LibraryItem, LibraryItemKind, Playlist};
 use ui::{Pin, PinKind};
 
 use crate::library::{Library, Shelf};
-use crate::outline::{Outline, PlaylistRow};
+use crate::outline::PlaylistRow;
 use crate::session::Session;
 use crate::settings::AppSettings;
 
@@ -95,7 +95,7 @@ impl Pins {
                 continue;
             }
             let held = library.state(shelf);
-            rest.extend(top_level(held.outline(), held.playlists()));
+            rest.extend(top_level(library, shelf));
             rest.extend(held.albums().iter().map(|album| {
                 Pin::new(PinKind::Album, &album.id, &album.name)
                     .cover(album.cover_large.clone().or_else(|| album.cover.clone()))
@@ -171,6 +171,16 @@ impl Pins {
         [Shelf::Streaming, Shelf::Local]
             .into_iter()
             .any(|shelf| library.state(shelf).outline().folder(&pin.id).is_some())
+    }
+
+    /// Gives a folder pin the cover the library worked out for it. Everything else already
+    /// arrives with its own.
+    fn dressed(&self, pin: Pin, cx: &App) -> Pin {
+        if pin.kind != PinKind::Folder || pin.cover.is_some() {
+            return pin;
+        }
+        let cover = self.library.read(cx).folder_cover(&pin.id);
+        pin.cover(cover)
     }
 
     pub fn holds(&self, pin: &Pin, cx: &App) -> bool {
@@ -305,7 +315,10 @@ impl Pins {
         let mut arrived = Vec::new();
         let mut left = Vec::new();
         for item in &items {
-            let Some(pin) = pin_of(item).filter(|pin| self.listed(pin, cx)) else {
+            let Some(pin) = pin_of(item)
+                .filter(|pin| self.listed(pin, cx))
+                .map(|pin| self.dressed(pin, cx))
+            else {
                 continue;
             };
             let Some(slug) = self.session.read(cx).slug_for(&item.uri) else {
@@ -336,7 +349,10 @@ impl Pins {
 
 /// The folders and loose playlists of one shelf, in the order the provider listed them. A shelf
 /// whose outline has not arrived yet lists every playlist, so nothing disappears while it loads.
-fn top_level(outline: &Outline, playlists: &[Playlist]) -> Vec<Pin> {
+fn top_level(library: &Library, shelf: Shelf) -> Vec<Pin> {
+    let held = library.state(shelf);
+    let outline = held.outline();
+    let playlists = held.playlists();
     let playlist_pin = |playlist: &Playlist| {
         Pin::new(PinKind::Playlist, &playlist.id, &playlist.name).cover(playlist.cover.clone())
     };
@@ -348,7 +364,9 @@ fn top_level(outline: &Outline, playlists: &[Playlist]) -> Vec<Pin> {
         .level(None)
         .iter()
         .filter_map(|&at| match outline.row(at)? {
-            PlaylistRow::Folder { id, name, .. } => Some(Pin::new(PinKind::Folder, id, name)),
+            PlaylistRow::Folder { id, name, .. } => {
+                Some(Pin::new(PinKind::Folder, id, name).cover(library.folder_cover(id)))
+            }
             PlaylistRow::Playlist { index, .. } => playlists.get(*index).map(playlist_pin),
         })
         .collect()

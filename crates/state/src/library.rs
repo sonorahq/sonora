@@ -1220,26 +1220,20 @@ impl Library {
                 let PlaylistRow::Folder { id, .. } = row else {
                     return None;
                 };
-                let inside = ready.outline.playlists_in(id);
-                let covers: Vec<String> = inside
-                    .iter()
-                    .filter_map(|&at| ready.playlists.get(at)?.cover.clone())
-                    .take(mosaic::TILES)
-                    .collect();
-                (!covers.is_empty()).then(|| (id.clone(), inside.len() as u32, covers))
+                let covers: Vec<String> = tiled(
+                    ready
+                        .outline
+                        .playlists_in(id)
+                        .iter()
+                        .filter_map(|&at| ready.playlists.get(at)?.cover.clone())
+                        .take(mosaic::TILES)
+                        .collect(),
+                );
+                (!covers.is_empty()).then(|| (id.clone(), stamp_of(&covers), covers))
             })
             .collect();
 
-        for (id, stamp, mut covers) in wanted {
-            // Too few to tile: the folder wears the first cover inside it, under the same glyph.
-            if covers.len() < mosaic::TILES {
-                let Some(cover) = covers.drain(..).next() else {
-                    continue;
-                };
-                self.folder_covers.insert(id, cover);
-                continue;
-            }
-
+        for (id, stamp, covers) in wanted {
             let key = folder_mosaic(&id);
             if let Some(cover) = mosaic::cached(&key, stamp) {
                 self.folder_covers.insert(id, cover);
@@ -1664,4 +1658,24 @@ impl Library {
 /// A folder's mosaic is cached under a name of its own, so it cannot collide with a playlist's.
 fn folder_mosaic(id: &str) -> String {
     format!("folder-{id}")
+}
+
+/// Fills the four tiles from however many covers there are, repeating them in order. A folder
+/// always reads as a grid, even when one playlist inside it is all there is to draw with.
+fn tiled(covers: Vec<String>) -> Vec<String> {
+    if covers.is_empty() || covers.len() >= mosaic::TILES {
+        return covers;
+    }
+
+    covers.iter().cycle().take(mosaic::TILES).cloned().collect()
+}
+
+/// What the covers were when the mosaic was drawn. A playlist gaining art, or leaving the folder,
+/// changes it, and the cached picture is rebuilt rather than reused.
+fn stamp_of(covers: &[String]) -> u32 {
+    use std::hash::{Hash as _, Hasher as _};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    covers.hash(&mut hasher);
+    hasher.finish() as u32
 }
