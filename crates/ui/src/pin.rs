@@ -10,6 +10,8 @@ pub enum PinKind {
     Album,
     Artist,
     Playlist,
+    /// A folder of playlists. It opens, but nothing plays it.
+    Folder,
     Song,
 }
 
@@ -23,6 +25,7 @@ impl PinKind {
             Self::Album => "icons/disc-3.svg",
             Self::Artist => "icons/user.svg",
             Self::Playlist => "icons/list.svg",
+            Self::Folder => "icons/folder.svg",
             Self::Song => "icons/music.svg",
         }
     }
@@ -32,6 +35,7 @@ impl PinKind {
             Self::Album => "kind-album",
             Self::Artist => "kind-artist",
             Self::Playlist => "kind-playlist",
+            Self::Folder => "kind-folder",
             Self::Song => "kind-song",
         }
     }

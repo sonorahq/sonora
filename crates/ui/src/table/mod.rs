@@ -66,12 +66,6 @@ impl<F> Cell<F> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Branch {
-    pub label: SharedString,
-    pub open: bool,
-}
-
 pub trait TableSource: 'static {
     type Field: Copy + PartialEq + 'static;
 
@@ -101,12 +95,10 @@ pub trait TableSource: 'static {
         None
     }
 
-    fn parent(&self, _row: usize, _cx: &App) -> Option<usize> {
-        None
-    }
-
-    fn branch(&self, _row: usize, _cx: &App) -> Option<Branch> {
-        None
+    /// Rows that always come first, whichever column is sorted and whichever way. A folder leads
+    /// the playlists it sits among; `compare` then orders each group on its own.
+    fn leads(&self, _row: usize, _cx: &App) -> bool {
+        false
     }
 
     fn compare(&self, _field: Self::Field, a: usize, b: usize, _cx: &App) -> Ordering {
@@ -453,35 +445,11 @@ impl<S: TableSource> TableDelegate<S> {
     }
 
     fn reorder(&mut self, cx: &App) {
-        let count = self.source.rows(cx);
-        let mut children: Vec<Vec<usize>> = vec![Vec::new(); count + 1];
-        let mut nested = false;
-        for row in 0..count {
-            match self.source.parent(row, cx) {
-                Some(parent) if parent < count && parent != row => {
-                    nested = true;
-                    children[parent].push(row);
-                }
-                _ => children[count].push(row),
-            }
-        }
-
-        let mut order = Vec::with_capacity(count);
-        match nested {
-            false => {
-                let filtering = self.filtering(cx);
-                order.extend(
-                    children[count]
-                        .iter()
-                        .copied()
-                        .filter(|row| !filtering || self.source.matches(*row, &self.query, cx)),
-                );
-                self.sort_rows(&mut order, cx);
-            }
-            true => {
-                self.descend(&children, count, false, &mut order, cx);
-            }
-        }
+        let filtering = self.filtering(cx);
+        let mut order: Vec<usize> = (0..self.source.rows(cx))
+            .filter(|row| !filtering || self.source.matches(*row, &self.query, cx))
+            .collect();
+        self.sort_rows(&mut order, cx);
 
         self.order = order;
         self.prune_selection();
@@ -491,52 +459,22 @@ impl<S: TableSource> TableDelegate<S> {
         !self.query.is_empty() || self.source.filtered(cx)
     }
 
+    /// Orders the rows by the sorted column, keeping the leading rows ahead of the rest. The lead
+    /// is applied outside the direction on purpose: reversing a column must not sink the folders
+    /// to the bottom of the page.
     fn sort_rows(&self, rows: &mut [usize], cx: &App) {
         let Some((field, direction)) = self.sort else {
+            rows.sort_by_key(|&row| !self.source.leads(row, cx));
             return;
         };
-        match direction {
-            Sort::Ascending => rows.sort_by(|&a, &b| self.source.compare(field, a, b, cx)),
-            Sort::Descending => rows.sort_by(|&a, &b| self.source.compare(field, b, a, cx)),
-        }
-    }
 
-    fn descend(
-        &self,
-        children: &[Vec<usize>],
-        parent: usize,
-        inherited: bool,
-        order: &mut Vec<usize>,
-        cx: &App,
-    ) -> bool {
-        let filtering = self.filtering(cx);
-        let mut siblings = children[parent].clone();
-        self.sort_rows(&mut siblings, cx);
-        siblings.sort_by_cached_key(|row| self.source.branch(*row, cx).is_none());
-
-        let mut listed = false;
-        for row in siblings {
-            let hit = inherited || !filtering || self.source.matches(row, &self.query, cx);
-            let mark = order.len();
-            order.push(row);
-            let branch = self.source.branch(row, cx);
-            let shown = match &branch {
-                Some(_) => self.descend(children, row, hit, order, cx),
-                None => false,
-            };
-            if !hit && !shown {
-                order.truncate(mark);
-                continue;
-            }
-            listed = true;
-            if let Some(branch) = branch
-                && !branch.open
-                && self.query.is_empty()
-            {
-                order.truncate(mark + 1);
-            }
-        }
-        listed
+        rows.sort_by(|&a, &b| {
+            let lead = self.source.leads(b, cx).cmp(&self.source.leads(a, cx));
+            lead.then_with(|| match direction {
+                Sort::Ascending => self.source.compare(field, a, b, cx),
+                Sort::Descending => self.source.compare(field, b, a, cx),
+            })
+        });
     }
 
     fn prune_selection(&mut self) {
