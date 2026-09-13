@@ -5,8 +5,8 @@ use std::time::Duration;
 use gpui::prelude::*;
 use gpui::{
     Anchor, AnyElement, AnyWindowHandle, App, Bounds, ClickEvent, Div, ElementId, Entity, Global,
-    Interactivity, Pixels, Point, ScrollWheelEvent, SharedString, Size, Stateful, StyleRefinement,
-    Window, anchored, deferred, div, point, px, svg,
+    Interactivity, MouseButton, Pixels, Point, ScrollWheelEvent, SharedString, Size, Stateful,
+    StyleRefinement, Window, anchored, deferred, div, point, px, svg,
 };
 
 use crate::Artwork;
@@ -380,7 +380,7 @@ impl Menu {
         self
     }
 
-    pub(crate) fn inline(mut self) -> Self {
+    fn inline(mut self) -> Self {
         self.deferred = false;
         self
     }
@@ -549,16 +549,17 @@ impl RenderOnce for Menu {
                         state.near(Near::Item, *hovered, window.window_handle(), cx)
                     })
                 })
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .when_some(press, |this, press| {
                     let dismiss = press_dismiss.clone();
                     this.on_click(move |event, window, cx| {
-                        if let Some(dismiss) = dismiss.as_ref() {
-                            dismiss(&(), window, cx);
-                        }
+                        press(event, window, cx);
                         if let Some(action) = press_action.as_ref() {
                             action(event, window, cx);
                         }
-                        press(event, window, cx);
+                        if let Some(dismiss) = dismiss.as_ref() {
+                            dismiss(&(), window, cx);
+                        }
                     })
                 })
                 .when_some(submenu, |this, mut submenu| {
