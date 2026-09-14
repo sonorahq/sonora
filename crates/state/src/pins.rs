@@ -142,6 +142,14 @@ impl Pins {
             for playlist in held.playlists() {
                 (&playlist.id, &playlist.name, &playlist.cover).hash(&mut hasher);
             }
+            // A folder's mosaic is assembled after its playlists land, so the cover has to count:
+            // without it the sidebar would keep the glyph it first drew.
+            for row in held.outline().rows() {
+                let PlaylistRow::Folder { id, name, .. } = row else {
+                    continue;
+                };
+                (id, name, library.folder_cover(id)).hash(&mut hasher);
+            }
             for album in held.albums() {
                 (&album.id, &album.name, &album.cover_large, &album.cover).hash(&mut hasher);
             }
