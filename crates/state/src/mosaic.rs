@@ -89,6 +89,12 @@ fn compose(tiles: &[DynamicImage]) -> RgbaImage {
 }
 
 async fn fetch(http: &Arc<dyn HttpClient>, url: &str) -> Result<Vec<u8>> {
+    // A cover is not always remote: a playlist without art wears a mosaic of its own, and a local
+    // track's picture is a file too. Both are ours to read, and neither is a request.
+    if let Some(path) = url.strip_prefix("file://") {
+        return fs::read(path).with_context(|| format!("cannot read the cover at {path}"));
+    }
+
     let mut response = http
         .get(url, AsyncBody::empty(), true)
         .await
