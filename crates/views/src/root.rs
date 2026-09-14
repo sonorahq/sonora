@@ -639,6 +639,17 @@ impl Render for Root {
             })
             .bg(theme.background)
             .text_color(theme.foreground)
+            .capture_any_mouse_down(|event, window, cx| {
+                if event.button == MouseButton::Left {
+                    if ui::cancel_middle_scroll(cx) {
+                        window.refresh();
+                        cx.stop_propagation();
+                    }
+                } else if event.button == MouseButton::Middle {
+                    ui::cancel_middle_scroll(cx);
+                    window.refresh();
+                }
+            })
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 |_, _, cx| back(cx),

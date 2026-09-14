@@ -10,6 +10,7 @@ use gpui::{
 use crate::metrics::Text;
 use crate::motion::Rising as _;
 use crate::scrollbar::Scrollbar;
+use crate::scroller::middle_scroll;
 use crate::shield::Shield;
 use crate::theme::ActiveTheme as _;
 
@@ -187,7 +188,7 @@ impl RenderOnce for Modal {
                                 .min_h_0()
                                 .overflow_hidden()
                                 .child(
-                                    div()
+                                    middle_scroll(div(), &scroller, cx)
                                         .id(body_id.clone())
                                         .flex()
                                         .flex_col()

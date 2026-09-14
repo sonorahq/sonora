@@ -1,11 +1,11 @@
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Div, ElementId, Entity, Interactivity, Pixels, ScrollWheelEvent,
-    StyleRefinement, Window, div, px,
+    AnyElement, App, CursorStyle, Div, ElementId, Entity, Interactivity, MouseButton,
+    MouseDownEvent, MouseMoveEvent, Pixels, ScrollWheelEvent, StyleRefinement, Window, div, px,
 };
 
 use crate::button::Button;
-use crate::scrollbar::Scrollbar;
+use crate::scrollbar::{Scrollbar, activate_middle_scroll, cancel_middle_scroll};
 use crate::theme::ActiveTheme as _;
 
 /// How far a region has to be scrolled before the trip back is worth a button, in rows.
@@ -76,7 +76,7 @@ impl RenderOnce for Scroller {
         let presentation = bar.read(cx).presentation();
         let gliding = bar.clone();
 
-        let mut surface = base
+        let mut surface = middle_scroll(base, &bar, cx)
             .id(id)
             .size_full()
             .overflow_y_scroll()
@@ -102,6 +102,53 @@ impl RenderOnce for Scroller {
             .child(surface)
             .child(bar)
     }
+}
+
+/// Adds browser-style middle-button auto-scrolling to a scrollable surface.
+pub fn middle_scroll(surface: Div, bar: &Entity<Scrollbar>, cx: &mut App) -> Div {
+    surface
+        .capture_any_mouse_down({
+            move |event, window, cx| {
+                if event.button == MouseButton::Left {
+                    if cancel_middle_scroll(cx) {
+                        window.refresh();
+                        cx.stop_propagation();
+                    }
+                } else if event.button != MouseButton::Middle {
+                    cancel_middle_scroll(cx);
+                    window.refresh();
+                }
+            }
+        })
+        .on_mouse_down(MouseButton::Middle, {
+            let gliding = bar.clone();
+            move |event: &MouseDownEvent, window, cx| {
+                let started = gliding.update(cx, |bar, cx| {
+                    bar.middle_scroll_start(event.position, window, cx)
+                });
+                match started {
+                    true => activate_middle_scroll(&gliding, cx),
+                    false => {
+                        cancel_middle_scroll(cx);
+                    }
+                }
+                window.refresh();
+                cx.stop_propagation();
+            }
+        })
+        .on_mouse_move({
+            let gliding = bar.clone();
+            move |event: &MouseMoveEvent, window, cx| {
+                gliding.update(cx, |bar, cx| {
+                    bar.middle_scroll_move(event.position, window, cx)
+                });
+            }
+        })
+        .cursor(if bar.read(cx).middle_scrolling() {
+            CursorStyle::ClosedHand
+        } else {
+            CursorStyle::Arrow
+        })
 }
 
 /// The shape every control that floats over a scrolling region takes: a round bordered pill,

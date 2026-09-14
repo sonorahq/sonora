@@ -1,11 +1,12 @@
 use std::cell::Cell as Slot;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
     AnyWindowHandle, App, Context, DragMoveEvent, Empty, EntityId, ListState, MouseButton,
-    MouseDownEvent, Pixels, Render, ScrollHandle, SpringConfig, Task, Window, div, point, px,
+    MouseDownEvent, Pixels, Point, Render, ScrollHandle, SpringConfig, Task, WeakEntity, Window,
+    div, point, px,
 };
 
 use crate::glide::Glide;
@@ -21,9 +22,17 @@ const LINGER: Duration = Duration::from_secs(2);
 const IDLE: f32 = 0.;
 const RESTING: f32 = 0.35;
 const ACTIVE: f32 = 0.55;
+const MIDDLE_SCROLL_DEADZONE: Pixels = px(8.);
+const MIDDLE_SCROLL_SPEED: f32 = 6.;
+const MIDDLE_SCROLL_MAX_SPEED: f32 = 5000.;
 
 type HoverGuard = Rc<dyn Fn(bool, AnyWindowHandle, &mut App)>;
 type ScrollGuard = Rc<dyn Fn(Pixels, &mut App) -> Option<Pixels>>;
+
+#[derive(Default)]
+struct ActiveMiddleScroll(Option<WeakEntity<Scrollbar>>);
+
+impl gpui::Global for ActiveMiddleScroll {}
 
 #[derive(Clone)]
 enum Target {
@@ -89,6 +98,14 @@ struct Grab {
     offset: Slot<Pixels>,
 }
 
+#[derive(Clone, Copy)]
+struct MiddleScroll {
+    pointer: Pixels,
+    current: Pixels,
+    last: Instant,
+    armed: bool,
+}
+
 impl Render for Grab {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         Empty
@@ -122,6 +139,7 @@ pub struct Scrollbar {
     glide: Glide,
     following: bool,
     nudges: u64,
+    middle_scroll: Option<MiddleScroll>,
 }
 
 impl Scrollbar {
@@ -141,6 +159,7 @@ impl Scrollbar {
             glide: Glide::default(),
             following: false,
             nudges: 0,
+            middle_scroll: None,
         }
     }
 
@@ -268,6 +287,96 @@ impl Scrollbar {
         &self.scroll
     }
 
+    pub fn middle_scrolling(&self) -> bool {
+        self.middle_scroll.is_some()
+    }
+
+    /// Starts middle-button auto-scrolling at the pointer's current vertical position.
+    pub fn middle_scroll_start(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) -> bool {
+        let target = self.target();
+        if target.hidden() <= Pixels::ZERO {
+            return false;
+        }
+        self.stirred();
+        self.middle_scroll = Some(MiddleScroll {
+            pointer: position.y,
+            current: position.y,
+            last: Instant::now(),
+            armed: false,
+        });
+        self.schedule_middle_scroll(window, cx);
+        true
+    }
+
+    /// Updates the pointer position while middle-button auto-scrolling is active.
+    pub fn middle_scroll_move(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) {
+        let Some(middle) = self.middle_scroll.as_mut() else {
+            return;
+        };
+        middle.current = position.y;
+        self.schedule_middle_scroll(window, cx);
+    }
+
+    pub fn middle_scroll_cancel(&mut self) {
+        self.middle_scroll = None;
+    }
+
+    fn schedule_middle_scroll(&mut self, window: &mut Window, cx: &Context<Self>) {
+        let Some(middle) = self.middle_scroll.as_mut() else {
+            return;
+        };
+        if middle.armed {
+            return;
+        }
+        middle.armed = true;
+        cx.on_next_frame(window, |this, window, cx| {
+            this.middle_scroll_frame(window, cx);
+        });
+    }
+
+    fn middle_scroll_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(mut middle) = self.middle_scroll else {
+            return;
+        };
+        middle.armed = false;
+
+        let now = Instant::now();
+        let elapsed = now.duration_since(middle.last).as_secs_f32().clamp(0., 0.1);
+        middle.last = now;
+
+        let distance = middle.current - middle.pointer;
+        let direction = distance.signum();
+        let distance = distance.abs() - MIDDLE_SCROLL_DEADZONE;
+        if distance <= Pixels::ZERO || elapsed <= 0. {
+            self.middle_scroll = Some(middle);
+            return;
+        }
+
+        let speed = (distance.as_f32() * MIDDLE_SCROLL_SPEED).min(MIDDLE_SCROLL_MAX_SPEED);
+        let target = self.target();
+        let hidden = self.maximum.unwrap_or_else(|| target.hidden());
+        let offset =
+            (target.offset() + px(direction * speed * elapsed)).clamp(Pixels::ZERO, hidden);
+        if offset != target.offset() {
+            target.set_offset(offset);
+            self.moved(offset, cx);
+            self.middle_scroll = Some(middle);
+            self.schedule_middle_scroll(window, cx);
+        } else {
+            self.middle_scroll = Some(middle);
+        }
+    }
+
     pub fn on_scroll(
         mut self,
         guard: impl Fn(Pixels, &mut App) -> Option<Pixels> + 'static,
@@ -330,6 +439,28 @@ impl Scrollbar {
         }
         self.wake(cx);
     }
+}
+
+/// Makes `scrollbar` the only active middle-button auto-scroll target.
+pub fn activate_middle_scroll(scrollbar: &gpui::Entity<Scrollbar>, cx: &mut App) {
+    let previous = cx.default_global::<ActiveMiddleScroll>().0.take();
+    if let Some(previous) = previous.filter(|previous| previous != scrollbar) {
+        previous
+            .update(cx, |scrollbar, _| scrollbar.middle_scroll_cancel())
+            .ok();
+    }
+    cx.default_global::<ActiveMiddleScroll>().0 = Some(scrollbar.downgrade());
+}
+
+/// Stops the active middle-button auto-scroll, if any.
+pub fn cancel_middle_scroll(cx: &mut App) -> bool {
+    let Some(active) = cx.default_global::<ActiveMiddleScroll>().0.take() else {
+        return false;
+    };
+    active
+        .update(cx, |scrollbar, _| scrollbar.middle_scroll_cancel())
+        .ok();
+    true
 }
 
 impl Render for Scrollbar {
