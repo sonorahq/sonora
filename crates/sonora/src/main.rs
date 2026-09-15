@@ -228,7 +228,8 @@ fn percent_decode(value: &str) -> String {
     while i < bytes.len() {
         if bytes[i] == b'%'
             && i + 2 < bytes.len()
-            && let Ok(byte) = u8::from_str_radix(&value[i + 1..i + 3], 16)
+            && let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3])
+            && let Ok(byte) = u8::from_str_radix(hex, 16)
         {
             out.push(byte);
             i += 3;
@@ -453,4 +454,16 @@ unsafe extern "system" fn work_area(
 #[cfg(not(target_os = "windows"))]
 fn platform_handle(_window: &gpui::Window) -> Option<*mut std::ffi::c_void> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_percent_before_a_multibyte_letter_stays_in_the_path() {
+        assert_eq!(percent_decode("%가나"), "%가나");
+        assert_eq!(percent_decode("%a가"), "%a가");
+        assert_eq!(percent_decode("a%20b%EA%B0%80"), "a b가");
+    }
 }

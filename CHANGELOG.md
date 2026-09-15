@@ -17,6 +17,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - On Windows, the window minimizes, restores and closes with the system animations again.
 - On Windows, Sonora no longer keeps the installer's administrator privileges after an update,
   so window managers like FancyZones can control it again.
+- Opening a file whose link has a `%` before a non-ASCII letter no longer crashes Sonora.
 
 ## [0.36.0] - 2026-09-15
 
