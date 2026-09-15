@@ -62,6 +62,7 @@ windows-sys = { version = "0.61", features = [
 ] }
 webview2-com = "0.39"
 interprocess = "2.4"
+widestring = "1.2"
 image = { version = "0.25", default-features = false, features = [
   "jpeg",
   "png",

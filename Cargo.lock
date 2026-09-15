@@ -7306,6 +7306,7 @@ dependencies = [
  "tray-icon",
  "ui",
  "views",
+ "widestring",
  "windows 0.62.2",
  "windows-sys 0.61.2",
  "winresource",
