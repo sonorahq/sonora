@@ -35,6 +35,7 @@ crates/
   icons/      the icon packs: registry, active pack, path resolution, AssetSource
   embed/      build-script helper that walks a folder and writes include_bytes! literals
   webview/    a native browser window with a throwaway session, for cookie sign-ins
+  widevine/   finding the system CDM, the pssh box and CENC fMP4 parsing, for any DRM'd provider
 ```
 
 Dependency direction is strict; do not create a back edge:
@@ -43,6 +44,7 @@ Dependency direction is strict; do not create a back edge:
 sonora → views → state → music
          state, music → storage
          state → webview
+         music → widevine
          all ui-side crates → ui, router, input → ui → gpui
          every ui-side crate → i18n, icons → gpui
 ```
@@ -51,6 +53,30 @@ sonora → views → state → music
   and the models in its root; each provider lives in a submodule (`music::spotify`,
   `music::youtube`, `music::local`). `state` and `views` see only the root traits and models — never
   a provider module. Only `sonora/src/main.rs` names a concrete provider.
+- **A provider whose tracks are a file to decode writes neither an engine nor a download buffer.**
+  `music::engine` is the one playback engine: two threads, the command queue, the preload, the
+  gapless join, where a position is reported from. A provider implements `engine::Fetch` (how to
+  get a track, how to open a decoder over it) in about a hundred lines and calls `engine::start`.
+  `music::stream` is the one progressive download: a provider implements `stream::Body` for what
+  happens to the bytes, which is nothing at all for Subsonic, a Blowfish stripe for Deezer and a
+  CENC index for Apple Music. Subsonic, Deezer and Apple each had their own copy of both, 85% the
+  same code; do not start a fourth.
+- `widevine` is a leaf that knows nothing about music: the process-wide CDM behind one lock, the
+  `pssh` box, and enough ISO-BMFF to find every encrypted sample and fragment. Its `cdm` feature
+  is what links the C++ host, which ships prebuilt for `x86_64-unknown-linux-gnu` alone, so
+  `music/widevine` (which forwards to it) is only enabled on Linux. `widevine::licensing()` has
+  to be held from challenge to license: the CDM cannot have two exchanges open, and preloading
+  the next track is exactly that.
+- **The CDM is never ours to ship, and never ours to fetch.** Google licenses it to browser and
+  device vendors and publishes nothing redistributable, so no release artefact, package or
+  Flatpak may carry one, `about.toml` never gains an entry for it, and nothing in the tree
+  downloads one from Google's component service however easy that is. `widevine::find` uses a
+  copy the machine already has, read in place: `SONORA_WIDEVINE_CDM` first, so a package with a
+  module of its own can say where it is, then whatever a Chromium-family browser bundles or
+  component-updates, then Firefox's copy in the profile that fetched it. Only a successful
+  search is remembered, so a browser installed mid-run is picked up without a restart.
+  `state::Drm` holds that answer and `music::drm` is the only door `state` and `views` use, so
+  neither ever names a provider to ask about protected playback.
 - `ui` depends only on `gpui`, `serde` and `i18n`, plus the per-platform crates `ui::motion` needs
   to read the system reduce-motion preference (`objc2-app-kit`, `windows-sys`, `ashpd`). It must
   never know about `music`, `state`, or playback.

@@ -157,12 +157,14 @@ fn matches(stored: &str, domain: &str) -> bool {
     stored == domain || stored.ends_with(&format!(".{domain}"))
 }
 
-/// Whether the header names at least one of the proof cookies.
+/// Whether the header carries at least one of the proof cookies with a value. The name alone is
+/// not enough: a signed-out Apple Music page already sets an empty `media-user-token`, and
+/// taking that for a session closes the window before the user has typed anything.
 fn proven(header: &str, proof: &[String]) -> bool {
     header
         .split(';')
         .filter_map(|pair| pair.trim().split_once('='))
-        .any(|(name, _)| proof.iter().any(|wanted| wanted == name))
+        .any(|(name, value)| !value.trim().is_empty() && proof.iter().any(|wanted| wanted == name))
 }
 
 #[cfg(test)]
@@ -205,5 +207,15 @@ mod tests {
         assert!(proven("VISITOR=1; __Secure-3PAPISID=x", &proof));
         assert!(!proven("VISITOR=1; PREF=x", &proof));
         assert!(!proven("", &proof));
+    }
+
+    /// Apple Music sets the cookie it delivers the account in before anyone has signed in, with
+    /// nothing in it.
+    #[test]
+    fn an_empty_proof_cookie_is_not_a_session() {
+        let proof = vec!["media-user-token".to_string()];
+        assert!(!proven("geo=PL; media-user-token=", &proof));
+        assert!(!proven("media-user-token=   ", &proof));
+        assert!(proven("media-user-token=AbCd", &proof));
     }
 }

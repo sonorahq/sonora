@@ -14,8 +14,8 @@ use async_trait::async_trait;
 use storage::Database;
 
 use crate::{
-    InputSource, MusicApi, MusicProvider, PlaybackFactory, PromptSink, ProviderSession, Shape,
-    SignIn, UserProfile,
+    Capabilities, InputSource, MusicApi, MusicProvider, PlaybackFactory, PromptSink,
+    ProviderSession, Shape, SignIn, UserProfile,
 };
 
 pub struct LocalProvider {
@@ -53,7 +53,13 @@ impl LocalProvider {
             playback,
             shape: Shape::Catalog,
             authenticated: false,
-            playcounts: false,
+            // Files on disk: favorites are kept here, but nothing suggests a station and
+            // nothing counts a play.
+            capabilities: Capabilities {
+                follow_artists: true,
+                radio: false,
+                playcounts: false,
+            },
         })
     }
 }

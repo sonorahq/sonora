@@ -1,0 +1,17 @@
+[package]
+name = "widevine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# The host for the system CDM. Off by default: it links a C++ shim that ships prebuilt for
+# x86_64 linux alone, and everything else here is plain parsing that needs no CDM at all.
+cdm = ["dep:cdm-host"]
+
+[dependencies]
+anyhow.workspace = true
+cdm-host = { workspace = true, optional = true }
+dirs.workspace = true
+log.workspace = true
+tokio = { workspace = true }

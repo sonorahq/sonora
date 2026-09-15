@@ -11,6 +11,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Deezer as a provider: your favorites, playlists, albums and search, with FLAC playback where
   the account allows it.
+- Apple Music as a provider: your library, playlists, search and stations. Playback needs the
+  Widevine module a browser on your computer already has, and Settings says whether one was
+  found.
 
 ### Fixed
 

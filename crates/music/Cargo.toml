@@ -6,6 +6,10 @@ license.workspace = true
 
 [features]
 bundled-sqlite = ["rusqlite/bundled", "storage/bundled-sqlite"]
+# The host for the system Widevine CDM, which Apple Music playback needs. Off by default: it
+# links a C++ shim that ships prebuilt for x86_64 linux alone, and nothing else in the crate
+# wants it.
+widevine = ["widevine/cdm"]
 
 [dependencies]
 anyhow.workspace = true
@@ -43,7 +47,9 @@ serde_norway.workspace = true
 storage.workspace = true
 symphonia.workspace = true
 tokio.workspace = true
+widevine.workspace = true
 ytmusic.workspace = true
 
 [dev-dependencies]
+env_logger.workspace = true
 rustls.workspace = true

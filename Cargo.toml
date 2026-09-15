@@ -20,6 +20,7 @@ router = { path = "crates/router" }
 ui = { path = "crates/ui" }
 views = { path = "crates/views" }
 webview = { path = "crates/webview" }
+widevine = { path = "crates/widevine" }
 
 anyhow = "1.0"
 async-trait = "0.1"
@@ -27,6 +28,7 @@ base64 = "0.22"
 blowfish = "0.9"
 bytes = "1"
 cbc = "0.1"
+cdm-host = { git = "https://github.com/Kopuz-org/cdm-host", rev = "0e0d76b6b276b8c750bb0cb277b10071de5bc661" }
 flate2 = "1"
 cpal = "0.17"
 dirs = "6.0"

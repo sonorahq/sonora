@@ -299,7 +299,7 @@ impl Root {
         if let (Some(view), Some(detail)) = (&self.screens.album, &self.screens.album_detail) {
             return (view.clone(), detail.clone());
         }
-        let playcounts = self.session.read(cx).playcounts();
+        let playcounts = self.session.read(cx).capabilities().playcounts;
         let detail = cx.new(|cx| {
             Detail::new(
                 self.session.clone(),

@@ -7,7 +7,7 @@ use std::io::Read as _;
 
 use anyhow::{Context as _, Result, bail};
 use music::MusicApi as _;
-use music::deezer::{DeezerClient, Stream, arl};
+use music::deezer::{DeezerClient, Stream, Striped, arl};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
 
     let (response, key, duration) = client.open_stream(&id).await?;
     println!("stream: length {duration:?}");
-    let stream = Stream::open(response, key).await?;
+    let stream = Stream::open(response, Striped::new(&key)).await?;
 
     let mut head = [0u8; 8192];
     stream

@@ -12,13 +12,14 @@ use gpui::{
 };
 use gpui::{ScrollHandle, prelude::*, svg};
 use i18n::{Language, t};
+use music::drm::Origin;
 use music::equalizer::{self, Preset};
 use music::scrobble::{Link, Secret};
 use music::{AccountChoice, SignIn, SignInPrompt, WritingSystem};
 use router::{NavEntry, Screen, SettingsTab};
 use state::{
-    AppSettings, DiscordName, Failure, FullscreenControlsAutohide, Io, Playback, SYSTEM_FONT,
-    ScrobbleState, Scrobbling, Session, SessionState, Sleep, Sonora,
+    AppSettings, CdmState, DiscordName, Drm, Failure, FullscreenControlsAutohide, Io, Playback,
+    SYSTEM_FONT, ScrobbleState, Scrobbling, Session, SessionState, Sleep, Sonora,
 };
 use ui::{ActiveTheme as _, Scrollbar, Scroller, eyebrow};
 use ui::{
@@ -151,6 +152,7 @@ const MEMBERS: [Member; 5] = [
 pub struct SettingsView {
     session: Entity<Session>,
     playback: Entity<Playback>,
+    drm: Entity<Drm>,
     settings: Entity<AppSettings>,
     tab: SettingsTab,
     scrollbar: Entity<Scrollbar>,
@@ -187,6 +189,8 @@ impl SettingsView {
     ) -> Self {
         let settings = Sonora::global(cx).settings.clone();
         let scrobbling = Sonora::global(cx).scrobbling.clone();
+        let drm = Sonora::global(cx).drm.clone();
+        cx.observe(&drm, |_, _, cx| cx.notify()).detach();
         cx.observe(&session, |_, _, cx| cx.notify()).detach();
         cx.observe(&scrobbling, |_, _, cx| cx.notify()).detach();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
@@ -208,6 +212,7 @@ impl SettingsView {
         Self {
             session,
             playback,
+            drm,
             settings,
             tab: SettingsTab::General,
             scrollbar: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(me)),
@@ -289,9 +294,14 @@ impl SettingsView {
                     Row::Item(self.playback_row(cx).into_any_element()),
                     Row::Item(self.gapless_row(cx).into_any_element()),
                     Row::Item(self.sleep_row(cx).into_any_element()),
+                ];
+                if self.drm.read(cx).supported() {
+                    rows.push(Row::Item(self.widevine_row(cx).into_any_element()));
+                }
+                rows.extend([
                     self.title("settings-group-equalizer", cx),
                     Row::Item(self.equalizer_row(cx).into_any_element()),
-                ];
+                ]);
                 if self.playback.read(cx).equalizer() {
                     rows.push(Row::Item(self.equalizer_preset_row(cx).into_any_element()));
                     rows.push(Row::Item(self.equalizer_bands_row(cx).into_any_element()));
@@ -1543,6 +1553,38 @@ impl SettingsView {
             );
 
         MenuItem::new("sleep-dial", "").content(dial)
+    }
+
+    /// The Widevine module row, which only appears where this build has a host for one.
+    /// Protected tracks cannot play a note without the module, and Sonora neither ships one nor
+    /// downloads one, so all this row does is say whether the machine has one and what puts one
+    /// there when it does not.
+    fn widevine_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let (detail, note) = match self.drm.read(cx).state() {
+            CdmState::Looking => ("settings-widevine-detail", "settings-widevine-looking"),
+            CdmState::Ready(Origin::Configured) => {
+                ("settings-widevine-detail", "settings-widevine-configured")
+            }
+            CdmState::Ready(Origin::Installed) => {
+                ("settings-widevine-detail", "settings-widevine-installed")
+            }
+            CdmState::Missing => ("settings-widevine-none", "settings-widevine-missing"),
+        };
+
+        self.row(
+            t!("settings-widevine"),
+            i18n::lookup(detail, None),
+            muted,
+            small,
+            div()
+                .text_color(muted)
+                .text_size(small)
+                .child(i18n::lookup(note, None))
+                .into_any_element(),
+        )
     }
 
     fn updates_row(&self, cx: &mut Context<Self>) -> impl IntoElement {

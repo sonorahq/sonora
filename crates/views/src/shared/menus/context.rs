@@ -315,7 +315,10 @@ impl ItemMenu {
                 })
             }
         };
-        let radio = match (many, track.id.is_some() && track.playable) {
+        // A provider that lists no station tracks gets no station item at all, rather than one
+        // that plays the seed and stops.
+        let stations = Sonora::global(cx).session.read(cx).capabilities().radio;
+        let radio = match (many || !stations, track.id.is_some() && track.playable) {
             (true, _) => None,
             (false, true) => {
                 let track = track.clone();
@@ -448,7 +451,12 @@ impl ItemMenu {
                     .collect(),
                 [next, queue].into_iter().chain(radio).collect(),
                 album.into_iter().chain(artist).collect(),
-                details.into_iter().chain(edit).chain(copy).chain(delete_files).collect(),
+                details
+                    .into_iter()
+                    .chain(edit)
+                    .chain(copy)
+                    .chain(delete_files)
+                    .collect(),
                 pinnable
                     .map(|pin| pin_action(&pin, cx))
                     .into_iter()
@@ -691,6 +699,14 @@ pub(crate) fn artist_menu(
 }
 
 fn artist_library_item(artist: SavedArtist, cx: &App) -> Option<MenuItem> {
+    if !Sonora::global(cx)
+        .session
+        .read(cx)
+        .capabilities()
+        .follow_artists
+    {
+        return None;
+    }
     let library = Sonora::global(cx).library.clone();
     let saved = library.read(cx).saved_artist(&artist.id);
     let item = MenuItem::new(

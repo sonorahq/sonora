@@ -36,6 +36,9 @@ image.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
 ksni.workspace = true
+# The Widevine host only ships a prebuilt shim for linux, so Apple Music playback is enabled
+# there and nowhere else.
+music = { workspace = true, features = ["widevine"] }
 
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
 tray-icon.workspace = true
@@ -50,6 +53,10 @@ resvg.workspace = true
 state = { workspace = true, features = ["bundled-sqlite"] }
 windows.workspace = true
 windows-sys.workspace = true
+
+[dev-dependencies]
+# only the apple-login example, which puts up a sign-in window without the app around it
+webview.workspace = true
 
 [build-dependencies]
 embed.workspace = true

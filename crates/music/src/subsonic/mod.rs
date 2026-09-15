@@ -1,7 +1,6 @@
 mod auth;
 mod client;
 mod playback;
-mod stream;
 mod wire;
 
 use std::sync::Arc;
@@ -12,7 +11,7 @@ use async_trait::async_trait;
 pub use client::SubsonicClient;
 
 use crate::subsonic::playback::Factory;
-use crate::{MusicApi as _, MusicProvider, ProviderSession, Shape, SignIn};
+use crate::{Capabilities, MusicApi as _, MusicProvider, ProviderSession, Shape, SignIn};
 
 pub struct SubsonicProvider;
 
@@ -50,7 +49,7 @@ impl SubsonicProvider {
             playback: Arc::new(Factory::new(client)),
             shape: Shape::Catalog,
             authenticated: true,
-            playcounts: true,
+            capabilities: Capabilities::ALL,
         })
     }
 
@@ -78,7 +77,7 @@ impl SubsonicProvider {
                 playback: Arc::new(Factory::new(client)),
                 shape: Shape::Catalog,
                 authenticated: true,
-                playcounts: true,
+                capabilities: Capabilities::ALL,
             })),
             Err(error) => {
                 log::warn!("subsonic: the stored session is no longer usable: {error:#}");

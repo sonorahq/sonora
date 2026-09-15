@@ -1,7 +1,10 @@
+pub mod apple;
 mod audio;
 pub mod binimum;
 pub mod credentials;
 pub mod deezer;
+pub mod drm;
+pub mod engine;
 pub mod equalizer;
 pub mod kugou;
 #[cfg(test)]
@@ -16,7 +19,9 @@ pub mod scrobble;
 mod sink;
 mod spectrum;
 pub mod spotify;
+mod stream;
 pub mod subsonic;
+mod trim;
 pub mod youtube;
 
 use std::collections::HashMap;
@@ -316,13 +321,46 @@ pub enum Shape {
     Catalog,
 }
 
+/// What a provider can do beyond listing and playing, so a control it has no answer for is
+/// never put in front of the listener.
+///
+/// This is about the service, not the account: something a provider simply does not have, like
+/// a station Apple Music will not list or a play count Deezer does not keep. A capability that
+/// is off hides its button, its menu item and its column, rather than showing one that fails
+/// when pressed. A provider that gains one flips a flag here and the UI follows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Capabilities {
+    /// The listener can follow and unfollow an artist.
+    pub follow_artists: bool,
+    /// A track can seed a station, which is what fills the queue behind it.
+    pub radio: bool,
+    /// Tracks carry a play count worth a column of its own.
+    pub playcounts: bool,
+}
+
+impl Capabilities {
+    /// What a full streaming service offers.
+    pub const ALL: Self = Self {
+        follow_artists: true,
+        radio: true,
+        playcounts: true,
+    };
+
+    /// Nothing beyond listing and playing.
+    pub const NONE: Self = Self {
+        follow_artists: false,
+        radio: false,
+        playcounts: false,
+    };
+}
+
 pub struct ProviderSession {
     pub profile: UserProfile,
     pub api: Arc<dyn MusicApi>,
     pub playback: Arc<dyn PlaybackFactory>,
     pub shape: Shape,
     pub authenticated: bool,
-    pub playcounts: bool,
+    pub capabilities: Capabilities,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -69,6 +69,47 @@ impl Cipher {
     }
 }
 
+/// The body of a Deezer track: every complete stripe decrypted as it lands, so what the
+/// buffer holds is always in the clear.
+///
+/// A partial block is kept back until the rest of it arrives, because only whole blocks are
+/// encrypted, and whatever is left at the end of the track is appended as it is.
+pub struct Striped {
+    cipher: Cipher,
+    /// The tail of the last chunk, short of a whole block.
+    pending: Vec<u8>,
+    /// How many blocks have gone by, which is what decides an encrypted stripe.
+    blocks: u64,
+}
+
+impl Striped {
+    pub fn new(key: &Secret) -> Self {
+        Self {
+            cipher: Cipher::new(key),
+            pending: Vec::with_capacity(2 * BLOCK),
+            blocks: 0,
+        }
+    }
+}
+
+impl crate::stream::Body for Striped {
+    fn feed(&mut self, chunk: &[u8], out: &mut Vec<u8>) {
+        self.pending.extend_from_slice(chunk);
+        while self.pending.len() >= BLOCK {
+            let mut block: Vec<u8> = self.pending.drain(..BLOCK).collect();
+            self.cipher.decrypt_block(&mut block, self.blocks);
+            self.blocks += 1;
+            out.extend_from_slice(&block);
+        }
+    }
+
+    fn flush(&mut self, out: &mut Vec<u8>) {
+        // The tail is a partial block, and partial blocks are never encrypted.
+        out.extend_from_slice(&self.pending);
+        self.pending.clear();
+    }
+}
+
 /// Fetches the master secret from the web player's script bundle: two URL-encoded 8-byte hex
 /// arrays, reversed and interleaved, validated against a known MD5. Falls back to the last
 /// known value when the bundle no longer matches the extraction, so a bundle redesign

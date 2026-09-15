@@ -5,7 +5,6 @@ mod auth;
 mod client;
 mod decrypt;
 mod playback;
-mod stream;
 mod wire;
 
 use std::sync::Arc;
@@ -15,13 +14,16 @@ use async_trait::async_trait;
 
 use crate::deezer::playback::Factory;
 use crate::{
-    InputSource, MusicApi as _, MusicProvider, PromptSink, ProviderSession, Shape, SignIn,
-    SignInPrompt, WebSignIn,
+    Capabilities, InputSource, MusicApi as _, MusicProvider, PromptSink, ProviderSession, Shape,
+    SignIn, SignInPrompt, WebSignIn,
 };
 
 pub use auth::arl;
 pub use client::DeezerClient;
-pub use stream::Stream;
+pub use decrypt::Striped;
+
+/// A Deezer track downloading and decrypting as it plays.
+pub type Stream = crate::stream::Stream<Striped>;
 
 /// The page the sign-in window opens.
 const SIGN_IN_URL: &str = "https://www.deezer.com/login";
@@ -73,7 +75,10 @@ fn session(client: DeezerClient, profile: crate::UserProfile) -> ProviderSession
         playback: Arc::new(Factory::new(client)),
         shape: Shape::Saved,
         authenticated: true,
-        playcounts: false,
+        capabilities: Capabilities {
+            playcounts: false,
+            ..Capabilities::ALL
+        },
     }
 }
 

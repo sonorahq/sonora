@@ -1,5 +1,12 @@
+//! The edit list of an MP4, which is how an AAC encode says where the music actually starts.
+//!
+//! Every AAC encoder writes priming samples before the first real one, and an `elst` box names
+//! the part that should be heard. Trimming to it is what makes one track end where the next
+//! begins, so both providers whose tracks are MP4 read it: YouTube Music and Apple Music.
+
 use std::time::Duration;
 
+/// What to drop from the front of a decode, and how much of the rest is music.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Trim {
     pub skip: Duration,

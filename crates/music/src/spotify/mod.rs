@@ -22,7 +22,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::spotify::playback::Factory;
-use crate::{MusicApi as _, MusicProvider, ProviderSession, Shape, SignInFailure, SignInProblem};
+use crate::{
+    Capabilities, MusicApi as _, MusicProvider, ProviderSession, Shape, SignInFailure,
+    SignInProblem,
+};
 
 pub use auth::AuthConfig;
 pub use client::LibrespotClient;
@@ -60,7 +63,7 @@ impl SpotifyProvider {
             playback,
             shape: Shape::Saved,
             authenticated: true,
-            playcounts: true,
+            capabilities: Capabilities::ALL,
         })
     }
 }

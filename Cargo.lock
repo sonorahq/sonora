@@ -932,6 +932,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cdm-host"
+version = "0.1.0"
+source = "git+https://github.com/Kopuz-org/cdm-host?rev=0e0d76b6b276b8c750bb0cb277b10071de5bc661#0e0d76b6b276b8c750bb0cb277b10071de5bc661"
+dependencies = [
+ "anyhow",
+ "base64",
+ "cc",
+]
+
+[[package]]
 name = "cesu8"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4463,6 +4473,7 @@ dependencies = [
  "cpal 0.17.1",
  "deunicode",
  "dirs",
+ "env_logger",
  "flate2",
  "http",
  "kakasi",
@@ -4490,6 +4501,7 @@ dependencies = [
  "storage",
  "symphonia",
  "tokio",
+ "widevine",
  "ytmusic",
 ]
 
@@ -7306,6 +7318,7 @@ dependencies = [
  "tray-icon",
  "ui",
  "views",
+ "webview",
  "windows 0.62.2",
  "windows-sys 0.61.2",
  "winresource",
@@ -9416,6 +9429,17 @@ name = "widestring"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
+
+[[package]]
+name = "widevine"
+version = "0.36.0"
+dependencies = [
+ "anyhow",
+ "cdm-host",
+ "dirs",
+ "log",
+ "tokio",
+]
 
 [[package]]
 name = "winapi"

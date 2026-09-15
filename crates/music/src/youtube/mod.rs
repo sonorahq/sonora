@@ -5,7 +5,6 @@ mod genres;
 mod lyrics;
 mod playback;
 mod subscriptions;
-mod trim;
 mod wire;
 
 use std::path::PathBuf;
@@ -19,8 +18,8 @@ use ytmusic::YtMusic;
 use crate::youtube::playback::Factory;
 
 use crate::{
-    InputSource, MusicProvider, PromptSink, ProviderSession, Shape, SignIn, SignInPrompt,
-    UserProfile, WebSignIn, credentials,
+    Capabilities, InputSource, MusicProvider, PromptSink, ProviderSession, Shape, SignIn,
+    SignInPrompt, UserProfile, WebSignIn, credentials,
 };
 pub use client::YouTubeClient;
 pub use lyrics::YouTubeLyrics;
@@ -105,7 +104,10 @@ impl YouTubeProvider {
             playback: Arc::new(Factory::new(api)),
             shape: Shape::Saved,
             authenticated: true,
-            playcounts: false,
+            capabilities: Capabilities {
+                playcounts: false,
+                ..Capabilities::ALL
+            },
         }
     }
 
@@ -119,7 +121,10 @@ impl YouTubeProvider {
             playback: Arc::new(Factory::new(api)),
             shape: Shape::Saved,
             authenticated: false,
-            playcounts: false,
+            capabilities: Capabilities {
+                playcounts: false,
+                ..Capabilities::ALL
+            },
         }
     }
 

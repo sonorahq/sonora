@@ -654,6 +654,15 @@ impl LibraryView {
     }
 
     fn drop_artists(&mut self, cx: &mut Context<Self>) {
+        // Nothing to unfollow where following is not a thing the provider has.
+        if !Sonora::global(cx)
+            .session
+            .read(cx)
+            .capabilities_of(self.shelf)
+            .follow_artists
+        {
+            return;
+        }
         let rows = self.artists.read(cx).delegate().picked();
         let artists: Vec<_> = {
             let state = self.artists.read(cx);

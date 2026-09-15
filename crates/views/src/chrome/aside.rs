@@ -835,20 +835,27 @@ impl Aside {
                         .flex()
                         .items_center()
                         .gap_1()
-                        .child(
-                            Button::new("toggle-radio")
-                                .ghost()
-                                .small()
-                                .icon("icons/radio.svg")
-                                .tooltip("queue-radio")
-                                .tint(match self.playback.read(cx).radio() {
-                                    true => theme.primary,
-                                    false => theme.muted_foreground,
-                                })
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.playback
-                                        .update(cx, |playback, cx| playback.toggle_radio(cx));
-                                })),
+                        // Only where a station exists to keep the queue going.
+                        .when(
+                            Sonora::global(cx).session.read(cx).capabilities().radio,
+                            |this| {
+                                this.child(
+                                    Button::new("toggle-radio")
+                                        .ghost()
+                                        .small()
+                                        .icon("icons/radio.svg")
+                                        .tooltip("queue-radio")
+                                        .tint(match self.playback.read(cx).radio() {
+                                            true => theme.primary,
+                                            false => theme.muted_foreground,
+                                        })
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.playback.update(cx, |playback, cx| {
+                                                playback.toggle_radio(cx)
+                                            });
+                                        })),
+                                )
+                            },
                         )
                         .child(
                             Button::new("reset-queue")

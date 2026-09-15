@@ -9,7 +9,7 @@ use ytmusic::YtMusic;
 
 use crate::audio::{Chain, Output, RAMP, SmoothGain, Trimmed, Volume};
 use crate::spectrum::Spectrum;
-use crate::youtube::trim;
+use crate::trim;
 use crate::{PlaybackConfig, PlaybackEvent, PlaybackEvents, PlaybackFactory, Player};
 
 const NORMAL_CAP: f32 = 1.0;
