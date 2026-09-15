@@ -92,8 +92,13 @@ fn update(path: &Path, change: impl FnOnce(&mut Tag)) -> Result<()> {
     Ok(())
 }
 
+/// Writes the year, leaving a date that already falls in it alone so its month and day survive.
 fn set_year(tag: &mut Tag, value: &str) {
-    match year(value) {
+    let wanted = year(value);
+    if wanted.is_some() && wanted == tag.date().map(|date| date.year) {
+        return;
+    }
+    match wanted {
         Some(year) => tag.set_date(Timestamp {
             year,
             month: None,
@@ -127,8 +132,13 @@ fn year(value: &str) -> Option<u16> {
     value.trim().parse().ok().filter(|year| *year > 0)
 }
 
+/// Writes one field, leaving it alone when it already reads as `value`, so a key the file holds
+/// several values under is not cut down to the first one the editor showed.
 fn set(tag: &mut Tag, key: ItemKey, value: &str) {
     let value = value.trim();
+    if tag.get_string(key).map(str::trim) == Some(value) {
+        return;
+    }
     match value.is_empty() {
         true => {
             tag.remove_key(key);
@@ -143,5 +153,106 @@ fn counted(tag: &mut Tag, key: ItemKey, value: &str) {
     match value.trim().parse::<u32>().ok().filter(|value| *value > 0) {
         Some(value) => set(tag, key, &value.to_string()),
         None => set(tag, key, ""),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flac(path: &Path, comments: &[&str]) {
+        let mut info = vec![0x10, 0x00, 0x10, 0x00, 0, 0, 0, 0, 0, 0];
+        let packed: u64 = (44_100 << 44) | (1 << 41) | (15 << 36);
+        info.extend_from_slice(&packed.to_be_bytes());
+        info.extend_from_slice(&[0; 16]);
+
+        let vendor = b"sonora";
+        let mut block = Vec::new();
+        block.extend_from_slice(&(vendor.len() as u32).to_le_bytes());
+        block.extend_from_slice(vendor);
+        block.extend_from_slice(&(comments.len() as u32).to_le_bytes());
+        for comment in comments {
+            block.extend_from_slice(&(comment.len() as u32).to_le_bytes());
+            block.extend_from_slice(comment.as_bytes());
+        }
+
+        let mut bytes = b"fLaC".to_vec();
+        bytes.push(0x00);
+        bytes.extend_from_slice(&(info.len() as u32).to_be_bytes()[1..]);
+        bytes.extend_from_slice(&info);
+        bytes.push(0x84);
+        bytes.extend_from_slice(&(block.len() as u32).to_be_bytes()[1..]);
+        bytes.extend_from_slice(&block);
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn stored(path: &Path) -> Tag {
+        Probe::open(path)
+            .unwrap()
+            .read()
+            .unwrap()
+            .primary_tag()
+            .cloned()
+            .expect("a tag")
+    }
+
+    #[test]
+    fn saving_a_new_title_keeps_every_genre() {
+        let dir = scratch("sonora-tags-test-genres");
+        let path = dir.join("song.flac");
+        flac(&path, &["TITLE=Song", "GENRE=Rock", "GENRE=Pop"]);
+
+        let mut tags = read(&path).unwrap();
+        tags.title = "Renamed".to_owned();
+        write(&path, &tags).unwrap();
+
+        let tag = stored(&path);
+        assert_eq!(tag.title().as_deref(), Some("Renamed"));
+        assert_eq!(
+            tag.get_strings(ItemKey::Genre).collect::<Vec<_>>(),
+            ["Rock", "Pop"]
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn saving_a_new_title_keeps_the_full_date() {
+        let dir = scratch("sonora-tags-test-date");
+        let path = dir.join("song.flac");
+        flac(&path, &["TITLE=Song", "DATE=2004-05-12"]);
+
+        let mut tags = read(&path).unwrap();
+        tags.title = "Renamed".to_owned();
+        write(&path, &tags).unwrap();
+
+        assert_eq!(
+            stored(&path).get_string(ItemKey::RecordingDate),
+            Some("2004-05-12")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn saving_a_new_year_replaces_the_date() {
+        let dir = scratch("sonora-tags-test-year");
+        let path = dir.join("song.flac");
+        flac(&path, &["TITLE=Song", "DATE=2004-05-12"]);
+
+        let mut tags = read(&path).unwrap();
+        tags.year = "2010".to_owned();
+        write(&path, &tags).unwrap();
+
+        assert_eq!(
+            stored(&path).get_string(ItemKey::RecordingDate),
+            Some("2010")
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
