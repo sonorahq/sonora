@@ -631,7 +631,7 @@ pub fn stamp_of(stamp: &str) -> Option<Duration> {
     if !seconds.is_finite() || seconds < 0. {
         return None;
     }
-    Some(Duration::from_secs_f64(minutes as f64 * 60. + seconds))
+    Duration::try_from_secs_f64(minutes as f64 * 60. + seconds).ok()
 }
 
 struct Segment {
@@ -966,5 +966,12 @@ mod tests {
         let words = lines[1].words.as_ref().expect("the line is worded");
         assert_eq!(words[0].start, Duration::from_secs(31));
         assert_eq!(words[1].start, Duration::from_millis(31_500));
+    }
+
+    #[test]
+    fn a_stamp_past_the_longest_duration_is_not_a_stamp() {
+        assert_eq!(stamp_of("00:1e30"), None);
+        assert_eq!(stamp_of("18446744073709551615:00"), None);
+        assert_eq!(parse("[00:1e30]lost\n[00:01.00]kept").len(), 1);
     }
 }
