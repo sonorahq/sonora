@@ -185,7 +185,9 @@ fn leading_year(name: &str) -> Option<(String, Option<i32>)> {
         Some(rest) => (true, rest),
         None => (false, name),
     };
-    let (digits, rest) = rest.split_at_checked(4)?;
+    let (digits, rest) = rest
+        .split_at_checked(4)
+        .filter(|(_, rest)| !rest.starts_with(|letter: char| letter.is_ascii_digit()))?;
     let year = digits.parse::<i32>().ok().filter(|year| plausible(*year))?;
     let rest = match open {
         true => rest.strip_prefix([']', ')'])?,
@@ -251,6 +253,18 @@ mod tests {
         let scanned = scan(std::slice::from_ref(&dir), &dir);
         assert!(scanned.tracks.is_empty());
         assert!(scanned.albums.is_empty());
+    }
+
+    #[test]
+    fn a_folder_opening_with_a_year_gives_the_album_and_the_year() {
+        assert_eq!(dated("1999 - Album"), ("Album".to_owned(), Some(1999)));
+        assert_eq!(dated("[2004] Album"), ("Album".to_owned(), Some(2004)));
+    }
+
+    #[test]
+    fn a_longer_number_opening_a_folder_is_not_a_year() {
+        assert_eq!(dated("10000 Days"), ("10000 Days".to_owned(), None));
+        assert_eq!(dated("20000 Leagues"), ("20000 Leagues".to_owned(), None));
     }
 
     #[test]
