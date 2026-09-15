@@ -126,9 +126,9 @@ pub fn middle_scroll(surface: Div, bar: &Entity<Scrollbar>, cx: &mut App) -> Div
                         window.refresh();
                         cx.stop_propagation();
                     }
-                } else if event.button != MouseButton::Middle {
-                    cancel_middle_scroll(cx);
+                } else if cancel_middle_scroll(cx) {
                     window.refresh();
+                    cx.stop_propagation();
                 }
             }
         })

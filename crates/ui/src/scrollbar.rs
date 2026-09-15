@@ -23,8 +23,8 @@ const IDLE: f32 = 0.;
 const RESTING: f32 = 0.35;
 const ACTIVE: f32 = 0.55;
 const MIDDLE_SCROLL_DEADZONE: Pixels = px(8.);
-const MIDDLE_SCROLL_SPEED: f32 = 8.;
-const MIDDLE_SCROLL_MAX_SPEED: f32 = 10000.;
+const MIDDLE_SCROLL_SPEED: f32 = 16.;
+const MIDDLE_SCROLL_MAX_SPEED: f32 = 200000.;
 
 type HoverGuard = Rc<dyn Fn(bool, AnyWindowHandle, &mut App)>;
 type ScrollGuard = Rc<dyn Fn(Pixels, &mut App) -> Option<Pixels>>;
@@ -362,7 +362,7 @@ impl Scrollbar {
             return;
         }
 
-        let speed = (distance.as_f32() * MIDDLE_SCROLL_SPEED).min(MIDDLE_SCROLL_MAX_SPEED);
+        let speed = (distance.as_f32() * MIDDLE_SCROLL_SPEED*2.).min(MIDDLE_SCROLL_MAX_SPEED);
         let target = self.target();
         let hidden = self.maximum.unwrap_or_else(|| target.hidden());
         let offset =
