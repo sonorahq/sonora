@@ -646,6 +646,15 @@ impl Render for Root {
             })
             .bg(theme.background)
             .text_color(theme.foreground)
+            .capture_any_mouse_down(|_, window, cx| {
+                if ui::cancel_middle_scroll(cx) {
+                    window.refresh();
+                    cx.stop_propagation();
+                }
+            })
+            .on_mouse_move(|event, window, cx| {
+                ui::update_middle_scroll(event.position, window, cx);
+            })
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 |_, _, cx| back(cx),

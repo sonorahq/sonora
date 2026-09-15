@@ -13,6 +13,7 @@ use crate::Artwork;
 use crate::metrics::snapped;
 use crate::motion::Rising as _;
 use crate::scrollbar::Scrollbar;
+use crate::scroller::middle_scroll;
 use crate::separator::Separator;
 use crate::shield::Shield;
 use crate::theme::ActiveTheme as _;
@@ -617,7 +618,7 @@ impl RenderOnce for Menu {
                 scrollbar.read(cx).sync();
                 let gliding = scrollbar.clone();
 
-                div()
+                middle_scroll(div(), scrollbar, cx)
                     .id("menu-scroll-content")
                     .flex()
                     .flex_1()
