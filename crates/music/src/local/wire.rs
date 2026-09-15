@@ -89,8 +89,8 @@ pub fn id3v2_end(path: &Path) -> u64 {
 
     let skip = u64::from(size) + 10 + if footer { 10 } else { 0 };
     log::warn!(
-        "[local_music] file {:?} id3v2 bytes skiped: {}",
-        path.file_name().map(|f| f.to_str().unwrap()).unwrap(),
+        "[local_music] file {} id3v2 bytes skiped: {}",
+        path.display(),
         skip
     );
 
@@ -724,6 +724,21 @@ mod tests {
     fn a_missing_file_has_no_date() {
         let dir = scratch("sonora-wire-test-missing");
         assert_eq!(modified_at(&dir.join("gone.mp3")), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_tagged_file_whose_name_is_not_unicode_still_scans() {
+        use std::os::windows::ffi::OsStringExt;
+
+        log::set_max_level(log::LevelFilter::Warn);
+        let dir = scratch("sonora-wire-test-not-unicode");
+        let name = std::ffi::OsString::from_wide(&[0xd800, 0x2e, 0x6d, 0x70, 0x33]);
+        let path = dir.join(name);
+        std::fs::write(&path, b"ID3\x04\x00\x00\x00\x00\x00\x00").unwrap();
+
+        assert!(track_from_file(&path, None, None, &dir).is_some());
         std::fs::remove_dir_all(&dir).ok();
     }
 }
