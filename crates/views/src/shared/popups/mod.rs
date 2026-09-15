@@ -5,7 +5,10 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gpui::prelude::*;
-use gpui::{App, Context, Div, ElementId, Entity, EntityId, Pixels, ScrollHandle, Window, div, px};
+use gpui::{
+    App, Context, Div, ElementId, Entity, EntityId, FocusHandle, Pixels, ScrollHandle, Window, div,
+    px,
+};
 use ui::{Input, Menu, Picker, Scrollbar, SelectNext, SelectPrevious, Submit};
 
 pub(crate) use accounts::AccountPicker;
@@ -21,6 +24,7 @@ pub(crate) struct SearchPopup {
     cursor: Rc<Cell<usize>>,
     query: Rc<RefCell<String>>,
     open: Rc<Cell<bool>>,
+    fallback: Rc<RefCell<Option<FocusHandle>>>,
 }
 
 impl SearchPopup {
@@ -31,6 +35,7 @@ impl SearchPopup {
             cursor: Rc::new(Cell::new(0)),
             query: Rc::new(RefCell::new(String::new())),
             open: Rc::new(Cell::new(false)),
+            fallback: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -67,7 +72,13 @@ impl SearchPopup {
                 self.place(selected, cx);
                 self.input.update(cx, |input, cx| input.focus(window, cx));
             }
-            false => self.input.update(cx, |input, cx| input.set_text("", cx)),
+            false => {
+                self.input.update(cx, |input, cx| input.set_text("", cx));
+                match self.fallback.borrow().as_ref() {
+                    Some(handle) => window.focus(handle, cx),
+                    None => window.blur(),
+                }
+            }
         }
     }
 
@@ -128,6 +139,10 @@ impl SearchPopup {
                 }
             }))
             .child(picker)
+    }
+
+    pub(crate) fn set_fallback_focus(&self, handle: FocusHandle) {
+        *self.fallback.borrow_mut() = Some(handle);
     }
 
     fn walk(&self, count: usize, step: isize, cx: &App) {

@@ -434,6 +434,7 @@ impl RenderOnce for Menu {
         let bounds_guards = dismiss_guards.clone();
         let viewport_width = window.viewport_size().width;
         let tucked = crate::metrics::tucked(theme.radius, window);
+        let dismiss_for_items = dismiss.clone();
 
         let rows = items.into_iter().map(move |item| {
             let MenuItem {
@@ -470,6 +471,7 @@ impl RenderOnce for Menu {
             }
             let action = action.clone();
             let press_action = action.clone();
+            let press_dismiss = dismiss_for_items.clone();
             let submenu_state = submenu.as_ref().map(|submenu| submenu.state.clone());
             let has_artwork = artwork.is_some();
             let detailed = detail.is_some();
@@ -549,10 +551,14 @@ impl RenderOnce for Menu {
                 })
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .when_some(press, |this, press| {
+                    let dismiss = press_dismiss.clone();
                     this.on_click(move |event, window, cx| {
                         press(event, window, cx);
                         if let Some(action) = press_action.as_ref() {
                             action(event, window, cx);
+                        }
+                        if let Some(dismiss) = dismiss.as_ref() {
+                            dismiss(&(), window, cx);
                         }
                     })
                 })

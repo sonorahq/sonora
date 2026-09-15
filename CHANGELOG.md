@@ -17,6 +17,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - On Windows, the window minimizes, restores and closes with the system animations again.
 - On Windows, Sonora no longer keeps the installer's administrator privileges after an update,
   so window managers like FancyZones can control it again.
+- The language and typeface pickers left focus on their search input after closing, so 
+  `ToggleFullscreen` had no key context to dispatch into and silently failed. Give `SearchPopup`
+  a fallback focus handle, restore it on close, and pass the settings view's handle to both pickers.
 
 ## [0.36.0] - 2026-09-15
 
