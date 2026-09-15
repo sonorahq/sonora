@@ -64,6 +64,8 @@ impl Workspace {
         let sidebar_right = cx.new(|cx| SidebarRight::new(queue.clone(), playback.clone(), cx));
         let player_bar = cx.new(|cx| PlayerBar::new(playback, queue, cx));
 
+        cx.observe(&sidebar_right, |_, _, cx| cx.notify()).detach();
+
         Self {
             sidebar,
             player_bar,
