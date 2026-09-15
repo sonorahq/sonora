@@ -1,9 +1,7 @@
-use std::time::{Duration, Instant};
-
 use gpui::prelude::*;
 use gpui::{Context, Entity, Pixels, Render, StyleRefinement, Window, div, px};
 use state::{AppSettings, Playback, Queue, SideTab, Sonora};
-use ui::{ActiveTheme as _, MIN_CONTENT, Motion, Panel, Room, Side, ease_out_cubic, snapped};
+use ui::{ActiveTheme as _, MIN_CONTENT, Motion, Panel, Room, Side, Transition, slide, snapped};
 
 use crate::chrome::Aside;
 
@@ -14,48 +12,12 @@ fn fills_content(width: Pixels) -> bool {
     !Room::of(width).fits(Room::Wide)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Direction {
-    Showing,
-    Hiding,
-}
-
-#[derive(Clone, Copy)]
-struct SidebarTransition {
-    direction: Direction,
-    from: f32,
-    started: Instant,
-    span: Duration,
-}
-
-impl SidebarTransition {
-    fn fraction(&self) -> f32 {
-        if self.span.is_zero() {
-            return match self.direction {
-                Direction::Showing => 1.0,
-                Direction::Hiding => 0.0,
-            };
-        }
-        let elapsed = self.started.elapsed().as_secs_f32();
-        let progress = (elapsed / self.span.as_secs_f32()).clamp(0., 1.);
-        let eased = ease_out_cubic(progress);
-        match self.direction {
-            Direction::Showing => (self.from + (1.0 - self.from) * eased).clamp(0., 1.),
-            Direction::Hiding => (self.from - self.from * eased).clamp(0., 1.),
-        }
-    }
-
-    fn running(&self) -> bool {
-        self.started.elapsed() < self.span
-    }
-}
-
 pub(crate) struct SidebarRight {
     aside: Entity<Aside>,
     settings: Entity<AppSettings>,
     width: Pixels,
     open: bool,
-    transition: Option<SidebarTransition>,
+    transition: Option<Transition>,
 }
 
 impl SidebarRight {
@@ -148,20 +110,12 @@ impl SidebarRight {
             return;
         }
 
-        let current_fraction = self.transition.map(|t| t.fraction()).unwrap_or(match self.open {
+        let current = self.transition.map(|t| t.fraction()).unwrap_or(match self.open {
             true => 0.0,
             false => 1.0,
         });
 
-        self.transition = Some(SidebarTransition {
-            direction: match self.open {
-                true => Direction::Showing,
-                false => Direction::Hiding,
-            },
-            from: current_fraction,
-            started: Instant::now(),
-            span: Motion::Base.span(),
-        });
+        self.transition = Some(Transition::toggle(self.open, current, Motion::Base));
     }
 
     fn remember(&self, cx: &mut Context<Self>) {
@@ -178,32 +132,11 @@ impl SidebarRight {
     }
 
     fn current_fraction(&mut self, window: &mut Window, cx: &mut Context<Self>) -> f32 {
-        if cx.reduce_motion() {
-            self.transition = None;
-            return match self.open {
-                true => 1.0,
-                false => 0.0,
-            };
-        }
-
-        let Some(transition) = self.transition else {
-            return match self.open {
-                true => 1.0,
-                false => 0.0,
-            };
+        let target = match self.open {
+            true => 1.0,
+            false => 0.0,
         };
-
-        if transition.running() {
-            window.request_animation_frame();
-            transition.fraction()
-        } else {
-            self.transition = None;
-            cx.notify();
-            match self.open {
-                true => 1.0,
-                false => 0.0,
-            }
-        }
+        Transition::step(&mut self.transition, target, window, cx)
     }
 }
 
@@ -245,23 +178,7 @@ impl Render for SidebarRight {
         if fraction >= 1.0 {
             panel.into_any_element()
         } else {
-            div()
-                .relative()
-                .flex_none()
-                .h_full()
-                .w(current_width)
-                .overflow_hidden()
-                .child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .left_0()
-                        .w(self.width)
-                        .h_full()
-                        .child(panel),
-                )
-                .into_any_element()
+            slide(Side::Right, current_width, self.width, panel).into_any_element()
         }
     }
 }

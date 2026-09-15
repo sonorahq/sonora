@@ -211,3 +211,32 @@ fn grip(
 
     deferred(handle).with_priority(GRIP_PRIORITY)
 }
+
+/// Wraps an element in a clipping container that slides horizontally from a given side.
+pub fn slide(
+    side: Side,
+    current_width: Pixels,
+    full_width: Pixels,
+    content: impl IntoElement,
+) -> Div {
+    let mut inner = div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .w(full_width)
+        .h_full()
+        .child(content);
+
+    inner = match side {
+        Side::Left => inner.right_0(),
+        Side::Right => inner.left_0(),
+    };
+
+    div()
+        .relative()
+        .flex_none()
+        .h_full()
+        .w(current_width)
+        .overflow_hidden()
+        .child(inner)
+}

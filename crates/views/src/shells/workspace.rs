@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{AnyView, App, Context, Entity, FocusHandle, Render, StyleRefinement};
@@ -6,8 +6,8 @@ use gpui::{Window, div};
 use input::WORKSPACE_CONTEXT;
 use state::{Playback, Queue, SideTab};
 use ui::{
-    Activate, ActiveTheme as _, Deselect, Remove, SelectNext, SelectPrevious, ease_out_expo,
-    entering, entrance_span, shown_listing, veiled,
+    Activate, ActiveTheme as _, Deselect, Remove, SelectNext, SelectPrevious, Transition,
+    ease_out_expo, entering, entrance_span, shown_listing, veiled,
 };
 
 use crate::chrome::{
@@ -17,27 +17,6 @@ use crate::shared::confirm::Confirm;
 use crate::shared::playlist_editor::PlaylistEditor;
 use crate::shared::tag_editor::TagEditor;
 use crate::shells::Shell;
-
-#[derive(Clone, Copy)]
-struct ContentTransition {
-    started: Instant,
-    span: Duration,
-}
-
-impl ContentTransition {
-    fn hidden(self) -> f32 {
-        if self.span.is_zero() {
-            return 0.;
-        }
-        let elapsed = self.started.elapsed().as_secs_f32();
-        let progress = (elapsed / self.span.as_secs_f32()).clamp(0., 1.);
-        1. - ease_out_expo(progress)
-    }
-
-    fn running(self) -> bool {
-        self.started.elapsed() < self.span
-    }
-}
 
 pub(crate) struct Workspace {
     sidebar: Entity<SidebarLeft>,
@@ -49,7 +28,7 @@ pub(crate) struct Workspace {
     toasts: Entity<ToastStack>,
     notice: Entity<UpdateNotice>,
     content: AnyView,
-    transition: Option<ContentTransition>,
+    transition: Option<Transition>,
     focus: FocusHandle,
 }
 
@@ -115,10 +94,7 @@ impl Workspace {
         }
 
         let span = entrance_span();
-        self.transition = Some(ContentTransition {
-            started: Instant::now(),
-            span,
-        });
+        self.transition = Some(Transition::new(1.0, 0.0, span, ease_out_expo));
         cx.notify();
         span
     }
@@ -130,17 +106,7 @@ impl Workspace {
     }
 
     fn hidden(&mut self, window: &mut Window, cx: &Context<Self>) -> f32 {
-        if cx.reduce_motion() {
-            self.transition = None;
-            return 0.;
-        }
-        let Some(transition) = self.transition else {
-            return 0.;
-        };
-        if transition.running() {
-            window.request_animation_frame();
-        }
-        transition.hidden()
+        Transition::step(&mut self.transition, 0.0, window, cx)
     }
 
     #[allow(dead_code)]
