@@ -99,6 +99,7 @@ fn main() {
                 database.clone(),
             ));
         let lyrics: Vec<Arc<dyn LyricsProvider>> = vec![
+            Arc::new(music::local::LocalLyrics),
             Arc::new(music::spotify::SpotifyLyrics::from_env()),
             Arc::new(music::youtube::YouTubeLyrics::new()),
             Arc::new(music::binimum::Binimum::new()),

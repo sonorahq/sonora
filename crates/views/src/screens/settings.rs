@@ -299,6 +299,17 @@ impl SettingsView {
                 rows.extend([
                     self.title("settings-group-lyrics", cx),
                     Row::Item(self.lyrics_providers_row(cx).into_any_element()),
+                ]);
+                if self
+                    .settings
+                    .read(cx)
+                    .lyrics_provider_enabled(music::lyrics::LOCAL)
+                {
+                    rows.push(Row::Item(
+                        self.prefer_local_lyrics_row(cx).into_any_element(),
+                    ));
+                }
+                rows.extend([
                     Row::Item(self.karaoke_lyrics_row(cx).into_any_element()),
                     Row::Item(self.romanized_lyrics_row(cx).into_any_element()),
                 ]);
@@ -1841,6 +1852,7 @@ impl SettingsView {
         let theme = *cx.theme();
         let settings = self.settings.read(cx);
         let providers = [
+            (music::lyrics::LOCAL, "settings-lyrics-provider-local"),
             ("Spotify", "settings-lyrics-provider-spotify"),
             ("YouTube Music", "settings-lyrics-provider-youtube"),
             ("Apple Music", "settings-lyrics-provider-apple-music"),
@@ -1875,6 +1887,26 @@ impl SettingsView {
             theme.muted_foreground,
             theme.text(Text::Small),
             picker.into_any_element(),
+        )
+    }
+
+    fn prefer_local_lyrics_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).prefer_local_lyrics();
+
+        self.row(
+            t!("settings-prefer-local-lyrics"),
+            t!("settings-prefer-local-lyrics-detail"),
+            muted,
+            small,
+            Switch::new("prefer-local-lyrics", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.set_prefer_local_lyrics(!on, cx));
+                }))
+                .into_any_element(),
         )
     }
 

@@ -1430,7 +1430,10 @@ impl Aside {
                 .flex_col()
                 .text_size(theme.text(Text::Small))
                 .text_color(theme.muted_foreground)
-                .child(t!("lyrics-source", source = *source))
+                .child(match *source == music::lyrics::LOCAL {
+                    true => t!("lyrics-source-local"),
+                    false => t!("lyrics-source", source = *source),
+                })
                 .when(!writers.is_empty(), |this| {
                     let writers = writers.join(", ");
                     this.child(t!("lyrics-writers", writers = writers.as_str()))

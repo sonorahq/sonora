@@ -579,6 +579,8 @@ settings-fullscreen-lyrics-size-detail = Size of the lyrics text on the fullscre
 settings-lyrics-size-value = { $size }%
 settings-lyrics-for-local-files = Lyrics for local files
 settings-lyrics-for-local-files-detail = Use metadata from local files to fetch lyrics from the internet
+settings-prefer-local-lyrics = Prefer local lyrics
+settings-prefer-local-lyrics-detail = Use the lyrics stored in a local file's tags instead of searching the other providers
 settings-karaoke-lyrics = Karaoke lyrics
 settings-karaoke-lyrics-detail = Highlight lyrics word by word when timing is available
 settings-blur-lyrics = Blur inactive lyrics
@@ -592,6 +594,7 @@ settings-lyrics-providers-selected = { $count ->
     [one] { $count } selected
    *[other] { $count } selected
     }
+settings-lyrics-provider-local = Local files
 settings-lyrics-provider-spotify = Spotify
 settings-lyrics-provider-youtube = YouTube Music
 settings-lyrics-provider-apple-music = Apple Music
@@ -737,6 +740,7 @@ lyrics-instrumental = This song is instrumental
 lyrics-failed = Could not reach the lyrics service
 lyrics-follow = Follow the song again
 lyrics-source = Lyrics from { $source }
+lyrics-source-local = Lyrics from the file
 lyrics-writers = Written by { $writers }
 
 update-available = Sonora { $version } is out

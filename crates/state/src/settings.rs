@@ -281,6 +281,7 @@ struct Values {
     discord_sonora_button: bool,
     discord_provider_button: bool,
     lyrics_for_local_files: bool,
+    prefer_local_lyrics: bool,
     lyrics_providers: Vec<String>,
     karaoke_lyrics: bool,
     blur_lyrics: bool,
@@ -355,7 +356,9 @@ impl Default for Values {
             discord_sonora_button: true,
             discord_provider_button: true,
             lyrics_for_local_files: true,
+            prefer_local_lyrics: false,
             lyrics_providers: [
+                "Local",
                 "Spotify",
                 "YouTube Music",
                 "Apple Music",
@@ -654,6 +657,10 @@ impl AppSettings {
 
     pub fn lyrics_for_local_files(&self) -> bool {
         self.values.lyrics_for_local_files
+    }
+
+    pub fn prefer_local_lyrics(&self) -> bool {
+        self.values.prefer_local_lyrics
     }
 
     pub fn lyrics_providers(&self) -> &[String] {
@@ -974,6 +981,11 @@ impl AppSettings {
 
     pub fn set_lyrics_for_local_files(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.values.lyrics_for_local_files = enabled;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_prefer_local_lyrics(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.prefer_local_lyrics = enabled;
         self.schedule_save(cx);
     }
 

@@ -567,6 +567,9 @@ settings-fullscreen-lyrics-size-detail = Tamaño del texto de la letra en pantal
 settings-lyrics-size-value = { $size }%
 settings-lyrics-for-local-files = Letra para archivos locales
 settings-lyrics-for-local-files-detail = Usa metadatos de archivos locales para buscar letras en internet
+settings-prefer-local-lyrics = Preferir letras locales
+settings-prefer-local-lyrics-detail = Usa la letra guardada en las etiquetas del archivo local en lugar de buscarla en los demás proveedores
+settings-lyrics-provider-local = Archivos locales
 settings-karaoke-lyrics = Letra en karaoke
 settings-karaoke-lyrics-detail = Resalta la letra palabra por palabra cuando hay sincronización disponible
 settings-blur-lyrics = Desenfoque la letra inactiva
@@ -689,6 +692,7 @@ lyrics-instrumental = Esta canción es instrumental
 lyrics-failed = No se pudo conectar con el servicio de letras
 lyrics-follow = Volver a seguir la canción
 lyrics-source = Letra de { $source }
+lyrics-source-local = Letra del archivo
 lyrics-writers = Escrita por { $writers }
 
 update-available = Ya está disponible Sonora { $version }

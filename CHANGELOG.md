@@ -11,6 +11,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Deezer as a provider: your favorites, playlists, albums and search, with FLAC playback where
   the account allows it.
+- Local files are a lyrics provider for the synced or plain lyrics embedded in them, and can be
+  preferred over the others.
 
 ### Fixed
 
