@@ -1,9 +1,9 @@
 use std::rc::Rc;
 
 use ui::{
-    ActiveTheme as _, Button, Card, Deck, DraggedPin, Edge, MenuItem, Panel, Picker, Pin,
-    Pinnable as _, Popup, SNUG, Scroller, Shield, Side, Spot, Tabs, Text, Vacancy, drop_gap,
-    drop_marker,
+    ActiveTheme as _, Button, Card, Deck, DraggedPin, Edge, MenuItem, Motion, Panel, Picker, Pin,
+    Pinnable as _, Popup, SNUG, Scroller, Shield, Side, Spot, Tabs, Text, Transition, Vacancy,
+    drop_gap, drop_marker, slide,
 };
 
 use gpui::prelude::*;
@@ -104,6 +104,7 @@ pub(crate) struct SidebarLeft {
     open: bool,
     cramped: bool,
     forced: Option<bool>,
+    transition: Option<Transition>,
     library_open: bool,
     local_open: bool,
     settings_open: bool,
@@ -157,6 +158,7 @@ impl SidebarLeft {
             open,
             forced: None,
             cramped: false,
+            transition: None,
             library_open,
             local_open,
             settings_open,
@@ -214,11 +216,35 @@ impl SidebarLeft {
         }
     }
 
+    fn start_transition(&mut self, cx: &Context<Self>) {
+        if cx.reduce_motion() {
+            self.transition = None;
+            return;
+        }
+
+        let is_open = self.is_open();
+        let current = self.transition.map(|t| t.fraction()).unwrap_or(match is_open {
+            true => 0.0,
+            false => 1.0,
+        });
+
+        self.transition = Some(Transition::toggle(is_open, current, Motion::Base));
+    }
+
+    fn current_fraction(&mut self, window: &mut Window, cx: &mut Context<Self>) -> f32 {
+        let target = match self.is_open() {
+            true => 1.0,
+            false => 0.0,
+        };
+        Transition::step(&mut self.transition, target, window, cx)
+    }
+
     fn dismiss(&mut self, cx: &mut Context<Self>) {
         if !self.overlays() {
             return;
         }
         self.forced = Some(false);
+        self.start_transition(cx);
         cx.notify();
     }
 
@@ -237,6 +263,7 @@ impl SidebarLeft {
                 self.persist(cx);
             }
         }
+        self.start_transition(cx);
         cx.notify();
     }
 
@@ -635,6 +662,13 @@ impl Render for SidebarLeft {
             self.drop_gap = None;
         }
 
+        let fraction = self.current_fraction(window, cx);
+        if fraction <= 0.0 {
+            return div().into_any_element();
+        }
+
+        let current_width = ui::snapped(self.width * fraction, window);
+
         let mut rows = self.navigation(cx);
         rows.extend(self.pins(window, cx));
 
@@ -669,7 +703,6 @@ impl Render for SidebarLeft {
                 this.pins.update(cx, |pins, cx| pins.place(pin, gap, cx));
                 cx.notify();
             }))
-            .when(!self.is_open(), |this| this.hidden())
             .when(!theme.transparent, |this| this.bg(sidebar_bg))
             .border_color(sidebar_border)
             .when(overlaid, |this| {
@@ -700,8 +733,13 @@ impl Render for SidebarLeft {
             )
             .children(self.menu(cx));
 
+        let content = match fraction >= 1.0 {
+            true => panel.into_any_element(),
+            false => slide(Side::Left, current_width, self.width, panel).into_any_element(),
+        };
+
         match overlaid {
-            false => panel.into_any_element(),
+            false => content,
             true => div()
                 .absolute()
                 .top_0()
@@ -715,12 +753,13 @@ impl Render for SidebarLeft {
                         .left_0()
                         .right_0()
                         .bottom_0()
+                        .opacity(fraction)
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|this, _: &MouseDownEvent, _, cx| this.dismiss(cx)),
                         ),
                 )
-                .child(panel)
+                .child(content)
                 .into_any_element(),
         }
     }

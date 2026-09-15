@@ -43,6 +43,7 @@ impl Workspace {
         let sidebar_right = cx.new(|cx| SidebarRight::new(queue.clone(), playback.clone(), cx));
         let player_bar = cx.new(|cx| PlayerBar::new(playback, queue, cx));
 
+        cx.observe(&sidebar, |_, _, cx| cx.notify()).detach();
         cx.observe(&sidebar_right, |_, _, cx| cx.notify()).detach();
 
         Self {
@@ -141,19 +142,7 @@ impl Render for Workspace {
         let covered = self.sidebar_right.read(cx).covers_content(window);
         let overlay = self.sidebar.read(cx).overlays();
         let bar_height = PlayerBar::height(window, cx);
-        // A cached view is laid out from the style given here and its own root
-        // style is never consulted, so it can only be cached while it is in the
-        // flow at a width this knows: an overlaid sidebar places itself, and a
-        // closed one hides itself and takes no space at all.
-        let sidebar_width = self.sidebar.read(cx).occupied_width();
-        let sidebar = match overlay || sidebar_width == gpui::Pixels::ZERO {
-            true => self.sidebar.clone().into_any_element(),
-            false => self
-                .sidebar
-                .clone()
-                .cached(StyleRefinement::default().w(sidebar_width).h_full())
-                .into_any_element(),
-        };
+        let sidebar = self.sidebar.clone().into_any_element();
         let hidden = self.hidden(window, cx);
         // The scrim is what fades the outgoing page: it is the page's own colour at
         // full strength, so covering the content with it costs no layout and the
