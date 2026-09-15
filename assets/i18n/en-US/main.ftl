@@ -145,6 +145,7 @@ menu-paste = Paste
 menu-select-all = Select all
 menu-remove-from-queue = Remove from queue
 menu-open-playlist = Open playlist
+menu-open-folder = Open folder
 menu-play-playlist = Play playlist
 menu-rename-playlist = Rename playlist
 menu-delete-playlist = Delete playlist
@@ -377,6 +378,7 @@ kind-song = Song
 kind-artist = Artist
 kind-album = Album
 kind-playlist = Playlist
+kind-folder = Folder
 
 # song page
 song-eyebrow = Song
@@ -433,6 +435,16 @@ count-tracks =
     { $count ->
         [one] { $count } track
        *[other] { $count } tracks
+    }
+count-playlists =
+    { $count ->
+        [one] { $count } playlist
+       *[other] { $count } playlists
+    }
+count-folders =
+    { $count ->
+        [one] { $count } folder
+       *[other] { $count } folders
     }
 
 # dates
@@ -780,3 +792,7 @@ nav-pins-alphabetical = Alphabetical
 nav-pins-kind = By type
 nav-show-full-library = Show full library
 nav-return-top = Back to top
+
+# playlist folders
+folder-empty = This folder is empty
+folder-missing = This folder is no longer in your library

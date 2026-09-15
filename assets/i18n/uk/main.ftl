@@ -150,6 +150,7 @@ menu-paste = Вставити
 menu-select-all = Вибрати все
 menu-remove-from-queue = Вилучити з черги
 menu-open-playlist = Відкрити плейлист
+menu-open-folder = Відкрити папку
 menu-play-playlist = Відтворити плейлист
 menu-rename-playlist = Перейменувати плейлист
 menu-delete-playlist = Видалити плейлист
@@ -391,6 +392,7 @@ kind-song = Трек
 kind-artist = Виконавець
 kind-album = Альбом
 kind-playlist = Плейлист
+kind-folder = Папка
 
 # song page
 song-eyebrow = Трек
@@ -449,6 +451,18 @@ count-tracks =
         [one] { $count } трек
         [few] { $count } треки
        *[other] { $count } треків
+    }
+count-playlists =
+    { $count ->
+        [one] { $count } плейлист
+        [few] { $count } плейлисти
+       *[other] { $count } плейлистів
+    }
+count-folders =
+    { $count ->
+        [one] { $count } папка
+        [few] { $count } папки
+       *[other] { $count } папок
     }
 
 # dates
@@ -799,3 +813,7 @@ nav-pins-alphabetical = За абеткою
 nav-pins-kind = За типом
 nav-show-full-library = Показувати всю медіатеку
 nav-return-top = Догори
+
+# playlist folders
+folder-empty = Ця папка порожня
+folder-missing = Цієї папки більше немає у вашій медіатеці

@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Spotify playlist folders appear in Your Library and in the sidebar. A folder is a card of its
+  own, and it opens a page with everything inside it and a Shuffle button.
 - Deezer as a provider: your favorites, playlists, albums and search, with FLAC playback where
   the account allows it.
 
