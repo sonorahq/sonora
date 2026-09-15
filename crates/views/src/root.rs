@@ -650,6 +650,9 @@ impl Render for Root {
                     window.refresh();
                 }
             })
+            .on_mouse_move(|event, window, cx| {
+                ui::update_middle_scroll(event.position, window, cx);
+            })
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 |_, _, cx| back(cx),

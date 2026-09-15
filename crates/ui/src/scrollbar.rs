@@ -23,8 +23,8 @@ const IDLE: f32 = 0.;
 const RESTING: f32 = 0.35;
 const ACTIVE: f32 = 0.55;
 const MIDDLE_SCROLL_DEADZONE: Pixels = px(8.);
-const MIDDLE_SCROLL_SPEED: f32 = 6.;
-const MIDDLE_SCROLL_MAX_SPEED: f32 = 5000.;
+const MIDDLE_SCROLL_SPEED: f32 = 8.;
+const MIDDLE_SCROLL_MAX_SPEED: f32 = 10000.;
 
 type HoverGuard = Rc<dyn Fn(bool, AnyWindowHandle, &mut App)>;
 type ScrollGuard = Rc<dyn Fn(Pixels, &mut App) -> Option<Pixels>>;
@@ -461,6 +461,18 @@ pub fn cancel_middle_scroll(cx: &mut App) -> bool {
         .update(cx, |scrollbar, _| scrollbar.middle_scroll_cancel())
         .ok();
     true
+}
+
+/// Updates the active middle-button auto-scroll target from a window-level mouse move.
+pub fn update_middle_scroll(position: Point<Pixels>, window: &mut Window, cx: &mut App) {
+    let Some(active) = cx.default_global::<ActiveMiddleScroll>().0.clone() else {
+        return;
+    };
+    active
+        .update(cx, |scrollbar, cx| {
+            scrollbar.middle_scroll_move(position, window, cx);
+        })
+        .ok();
 }
 
 impl Render for Scrollbar {

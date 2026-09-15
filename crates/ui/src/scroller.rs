@@ -1,7 +1,7 @@
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, CursorStyle, Div, ElementId, Entity, Interactivity, MouseButton,
-    MouseDownEvent, MouseMoveEvent, Pixels, ScrollWheelEvent, StyleRefinement, Window, div, px,
+    MouseMoveEvent, Pixels, ScrollWheelEvent, StyleRefinement, Window, div, px,
 };
 
 use crate::button::Button;
@@ -108,8 +108,20 @@ impl RenderOnce for Scroller {
 pub fn middle_scroll(surface: Div, bar: &Entity<Scrollbar>, cx: &mut App) -> Div {
     surface
         .capture_any_mouse_down({
+            let gliding = bar.clone();
             move |event, window, cx| {
-                if event.button == MouseButton::Left {
+                if event.button == MouseButton::Middle {
+                    let started = gliding.update(cx, |bar, cx| {
+                        bar.middle_scroll_start(event.position, window, cx)
+                    });
+                    if started {
+                        activate_middle_scroll(&gliding, cx);
+                    } else {
+                        cancel_middle_scroll(cx);
+                    }
+                    window.refresh();
+                    cx.stop_propagation();
+                } else if event.button == MouseButton::Left {
                     if cancel_middle_scroll(cx) {
                         window.refresh();
                         cx.stop_propagation();
@@ -118,22 +130,6 @@ pub fn middle_scroll(surface: Div, bar: &Entity<Scrollbar>, cx: &mut App) -> Div
                     cancel_middle_scroll(cx);
                     window.refresh();
                 }
-            }
-        })
-        .on_mouse_down(MouseButton::Middle, {
-            let gliding = bar.clone();
-            move |event: &MouseDownEvent, window, cx| {
-                let started = gliding.update(cx, |bar, cx| {
-                    bar.middle_scroll_start(event.position, window, cx)
-                });
-                match started {
-                    true => activate_middle_scroll(&gliding, cx),
-                    false => {
-                        cancel_middle_scroll(cx);
-                    }
-                }
-                window.refresh();
-                cx.stop_propagation();
             }
         })
         .on_mouse_move({
