@@ -216,35 +216,13 @@ impl SidebarLeft {
         }
     }
 
-    fn start_transition(&mut self, cx: &Context<Self>) {
-        if cx.reduce_motion() {
-            self.transition = None;
-            return;
-        }
-
-        let is_open = self.is_open();
-        let current = self.transition.map(|t| t.fraction()).unwrap_or(match is_open {
-            true => 0.0,
-            false => 1.0,
-        });
-
-        self.transition = Some(Transition::toggle(is_open, current, Motion::Base));
-    }
-
-    fn current_fraction(&mut self, window: &mut Window, cx: &mut Context<Self>) -> f32 {
-        let target = match self.is_open() {
-            true => 1.0,
-            false => 0.0,
-        };
-        Transition::step(&mut self.transition, target, window, cx)
-    }
-
     fn dismiss(&mut self, cx: &mut Context<Self>) {
         if !self.overlays() {
             return;
         }
         self.forced = Some(false);
-        self.start_transition(cx);
+        let is_open = self.is_open();
+        Transition::toggle_to(&mut self.transition, is_open, Motion::Base, cx);
         cx.notify();
     }
 
@@ -263,7 +241,8 @@ impl SidebarLeft {
                 self.persist(cx);
             }
         }
-        self.start_transition(cx);
+        let is_open = self.is_open();
+        Transition::toggle_to(&mut self.transition, is_open, Motion::Base, cx);
         cx.notify();
     }
 
@@ -662,7 +641,8 @@ impl Render for SidebarLeft {
             self.drop_gap = None;
         }
 
-        let fraction = self.current_fraction(window, cx);
+        let is_open = self.is_open();
+        let fraction = Transition::step_toggle(&mut self.transition, is_open, window, cx);
         if fraction <= 0.0 {
             return div().into_any_element();
         }

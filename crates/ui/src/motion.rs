@@ -526,6 +526,74 @@ impl Transition {
             settled
         }
     }
+
+    /// Starts or interrupts a boolean toggle transition towards `open` (1.0 or 0.0).
+    pub fn toggle_to(
+        transition: &mut Option<Self>,
+        open: bool,
+        motion: Motion,
+        cx: &App,
+    ) {
+        if cx.reduce_motion() {
+            *transition = None;
+            return;
+        }
+        let current = transition.map(|t| t.fraction()).unwrap_or(match open {
+            true => 0.0,
+            false => 1.0,
+        });
+        *transition = Some(Self::toggle(open, current, motion));
+    }
+
+    /// Advances a toggle transition, settling to 1.0 if `open` is true or 0.0 if false.
+    pub fn step_toggle(
+        transition: &mut Option<Self>,
+        open: bool,
+        window: &mut Window,
+        cx: &App,
+    ) -> f32 {
+        let target = match open {
+            true => 1.0,
+            false => 0.0,
+        };
+        Self::step(transition, target, window, cx)
+    }
+}
+
+/// A stateful boolean toggle that smoothly animates between 0.0 and 1.0.
+#[derive(Clone, Copy, Debug)]
+pub struct AnimatedToggle {
+    open: bool,
+    transition: Option<Transition>,
+}
+
+impl AnimatedToggle {
+    pub fn new(open: bool) -> Self {
+        Self {
+            open,
+            transition: None,
+        }
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    pub fn set(&mut self, open: bool, motion: Motion, cx: &App) {
+        if self.open == open {
+            return;
+        }
+        self.open = open;
+        Transition::toggle_to(&mut self.transition, open, motion, cx);
+    }
+
+    pub fn toggle(&mut self, motion: Motion, cx: &App) {
+        self.set(!self.open, motion, cx);
+    }
+
+    pub fn fraction(&mut self, window: &mut Window, cx: &App) -> f32 {
+        Transition::step_toggle(&mut self.transition, self.open, window, cx)
+    }
 }
 
 #[cfg(test)]
@@ -561,5 +629,14 @@ mod tests {
 
         let instant = Transition::toggle(true, 0.0, Motion::Base);
         assert!(instant.fraction() >= 0.0 && instant.fraction() <= 1.0);
+    }
+
+    #[test]
+    fn animated_toggle_initializes_and_tracks_state() {
+        let toggle = AnimatedToggle::new(true);
+        assert!(toggle.is_open());
+
+        let closed = AnimatedToggle::new(false);
+        assert!(!closed.is_open());
     }
 }

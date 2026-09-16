@@ -99,23 +99,9 @@ impl SidebarRight {
             let tab = self.aside.read(cx).tab();
             self.aside.update(cx, |aside, cx| aside.show(tab, cx));
         }
-        self.start_transition(cx);
+        Transition::toggle_to(&mut self.transition, self.open, Motion::Base, cx);
         self.remember(cx);
         cx.notify();
-    }
-
-    fn start_transition(&mut self, cx: &Context<Self>) {
-        if cx.reduce_motion() {
-            self.transition = None;
-            return;
-        }
-
-        let current = self.transition.map(|t| t.fraction()).unwrap_or(match self.open {
-            true => 0.0,
-            false => 1.0,
-        });
-
-        self.transition = Some(Transition::toggle(self.open, current, Motion::Base));
     }
 
     fn remember(&self, cx: &mut Context<Self>) {
@@ -130,14 +116,6 @@ impl SidebarRight {
             settings.set_sidebar_right_width(width, cx)
         });
     }
-
-    fn current_fraction(&mut self, window: &mut Window, cx: &mut Context<Self>) -> f32 {
-        let target = match self.open {
-            true => 1.0,
-            false => 0.0,
-        };
-        Transition::step(&mut self.transition, target, window, cx)
-    }
 }
 
 impl Render for SidebarRight {
@@ -146,7 +124,7 @@ impl Render for SidebarRight {
             return div().into_any_element();
         }
 
-        let fraction = self.current_fraction(window, cx);
+        let fraction = Transition::step_toggle(&mut self.transition, self.open, window, cx);
         if fraction <= 0.0 {
             return div().into_any_element();
         }
