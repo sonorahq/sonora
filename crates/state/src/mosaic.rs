@@ -46,8 +46,8 @@ pub(crate) async fn build(
     stamp: u32,
     covers: Vec<String>,
 ) -> Result<String> {
-    if covers.len() < TILES {
-        bail!("cannot build a mosaic from {} covers", covers.len());
+    if covers.is_empty() {
+        bail!("cannot build a mosaic from no covers");
     }
 
     let mut tiles = Vec::with_capacity(TILES);
@@ -67,6 +67,9 @@ pub(crate) async fn build(
     Ok(located(&path))
 }
 
+/// Lays the tiles into a two by two grid, top left first. Fewer than four leaves the rest of the
+/// canvas clear rather than repeating one, so a folder holding a single playlist reads as one
+/// cover in a grid of empty slots.
 fn compose(tiles: &[DynamicImage]) -> RgbaImage {
     let mut canvas = RgbaImage::new(SIDE, SIDE);
     for (index, tile) in tiles.iter().take(TILES).enumerate() {
@@ -86,6 +89,12 @@ fn compose(tiles: &[DynamicImage]) -> RgbaImage {
 }
 
 async fn fetch(http: &Arc<dyn HttpClient>, url: &str) -> Result<Vec<u8>> {
+    // A cover is not always remote: a playlist without art wears a mosaic of its own, and a local
+    // track's picture is a file too. Both are ours to read, and neither is a request.
+    if let Some(path) = url.strip_prefix("file://") {
+        return fs::read(path).with_context(|| format!("cannot read the cover at {path}"));
+    }
+
     let mut response = http
         .get(url, AsyncBody::empty(), true)
         .await

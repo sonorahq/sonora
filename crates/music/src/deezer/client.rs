@@ -17,7 +17,7 @@ use tokio::time::Instant;
 use crate::deezer::{decrypt, wire};
 use crate::{
     Album, AlbumDetail, Artist, ArtistProfile, HomeFeed, MediaKind, MusicApi, Playlist,
-    PlaylistDetail, SavedArtist, Track, UserProfile, distinct_covers,
+    PlaylistDetail, PlaylistEntry, SavedArtist, Track, UserProfile, distinct_covers,
 };
 
 const GATEWAY: &str = "https://www.deezer.com/ajax/gw-light.php";
@@ -564,15 +564,16 @@ impl MusicApi for DeezerClient {
         Ok(None)
     }
 
-    async fn playlists(&self) -> Result<Vec<Playlist>> {
+    async fn playlists(&self) -> Result<Vec<PlaylistEntry>> {
         let user_id = self.user_id().await;
-        Ok(self
+        let playlists: Vec<Playlist> = self
             .profile_tab("playlists")
             .await
             .context("cannot load the playlists")?
             .iter()
             .filter_map(|value| wire::playlist(value, &user_id))
-            .collect())
+            .collect();
+        Ok(PlaylistEntry::flat(playlists))
     }
 
     async fn create_playlist(&self, name: &str) -> Result<String> {

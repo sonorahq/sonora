@@ -146,6 +146,8 @@ pub enum Destination {
     Album(SharedString),
     Song(SharedString),
     Playlist(SharedString),
+    /// A folder of playlists, by the id its provider's library gives it.
+    Folder(SharedString),
     Artist(SharedString),
     User(SharedString),
     Genre(SharedString),
@@ -161,6 +163,7 @@ impl From<&ui::Pin> for Destination {
             ui::PinKind::Album => Destination::Album(id),
             ui::PinKind::Artist => Destination::Artist(id),
             ui::PinKind::Playlist => Destination::Playlist(id),
+            ui::PinKind::Folder => Destination::Folder(id),
             ui::PinKind::Song => Destination::Song(id),
         }
     }

@@ -5,8 +5,9 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{App, Context, Entity, SharedString, Task};
-use music::{Album, MusicApi, Playlist, SavedArtist, Shape, Track};
+use music::{Album, MusicApi, Playlist, PlaylistEntry, SavedArtist, Shape, Track};
 
+use crate::outline::{self, Outline, PlaylistRow};
 use crate::{Io, Outcome, Session, SessionEvent, Target, Toasts, join, mosaic};
 
 const FATAL: [LibraryPart; 3] = [
@@ -152,7 +153,7 @@ struct FavoritesMut<'a> {
 
 enum Landed {
     Tracks(anyhow::Result<Vec<Track>>),
-    Playlists(anyhow::Result<Vec<Playlist>>),
+    Playlists(anyhow::Result<Vec<PlaylistEntry>>),
     Albums(anyhow::Result<Vec<Album>>),
     Artists(anyhow::Result<Vec<SavedArtist>>),
 }
@@ -185,7 +186,7 @@ fn place(
 ) {
     awaited.retain(|part| *part != landed.part());
     if !matches!(state, LibraryState::Ready(_)) {
-        *state = LibraryState::Ready(Ready::default());
+        *state = LibraryState::Ready(Box::default());
     }
 
     let failure = {
@@ -195,14 +196,17 @@ fn place(
         let Ready {
             tracks,
             playlists,
+            outline,
             albums,
             artists,
             problems,
-        } = ready;
+        } = ready.as_mut();
         let part = landed.part();
         match landed {
             Landed::Tracks(result) => *tracks = take(part, result, problems),
-            Landed::Playlists(result) => *playlists = take(part, result, problems),
+            Landed::Playlists(result) => {
+                (*playlists, *outline) = outline::split(take(part, result, problems));
+            }
             Landed::Albums(result) => *albums = take(part, result, problems),
             Landed::Artists(result) => *artists = take(part, result, problems),
         }
@@ -487,6 +491,8 @@ pub struct Problem {
 pub struct Ready {
     pub tracks: Vec<Track>,
     pub playlists: Vec<Playlist>,
+    /// The shape of `playlists`: their folders, and the order the two are read in.
+    pub outline: Outline,
     pub albums: Vec<Album>,
     pub artists: Vec<SavedArtist>,
     pub problems: Vec<Problem>,
@@ -495,7 +501,8 @@ pub struct Ready {
 pub enum LibraryState {
     Empty,
     Loading,
-    Ready(Ready),
+    /// Boxed: a ready shelf is far larger than the states beside it.
+    Ready(Box<Ready>),
     Failed(String),
 }
 
@@ -513,6 +520,12 @@ impl LibraryState {
 
     pub fn playlists(&self) -> &[Playlist] {
         self.ready().map_or(&[], |ready| ready.playlists.as_slice())
+    }
+
+    /// How the shelf's playlists are grouped into folders. Empty until the shelf is ready.
+    pub fn outline(&self) -> &Outline {
+        static BARE: std::sync::LazyLock<Outline> = std::sync::LazyLock::new(Outline::default);
+        self.ready().map_or(&BARE, |ready| &ready.outline)
     }
 
     pub fn albums(&self) -> &[Album] {
@@ -541,6 +554,8 @@ pub struct Library {
     hidden_local_tracks: HashSet<String>,
     reading: HashMap<String, Task<()>>,
     mosaics: HashMap<String, Task<()>>,
+    /// A mosaic for each folder, built from the covers of the playlists inside it.
+    folder_covers: HashMap<String, String>,
 }
 
 impl Library {
@@ -566,6 +581,7 @@ impl Library {
                 this.contents.clear();
                 this.reading.clear();
                 this.mosaics.clear();
+                this.folder_covers.clear();
                 this.playlist_task = None;
                 this.pending.clear();
                 this.pending_albums.clear();
@@ -606,6 +622,7 @@ impl Library {
             hidden_local_tracks: HashSet::new(),
             reading: HashMap::new(),
             mosaics: HashMap::new(),
+            folder_covers: HashMap::new(),
         };
         library.held_mut(Shelf::Streaming).state = LibraryState::Loading;
         if library.session.read(cx).client_of(Shelf::Local).is_some() {
@@ -1219,6 +1236,75 @@ impl Library {
         }
     }
 
+    /// The cover of a folder: a mosaic of what is inside it, or `None` while it has fewer than
+    /// four covers to draw with.
+    pub fn folder_cover(&self, id: &str) -> Option<String> {
+        self.folder_covers.get(id).cloned()
+    }
+
+    /// Gives every folder a cover made from the playlists it holds, the way a playlist without
+    /// art gets one. Nothing is fetched here: those playlists are already loaded.
+    fn paint_folders(&mut self, shelf: Shelf, cx: &mut Context<Self>) {
+        let Some(ready) = self.held(shelf).state.ready() else {
+            return;
+        };
+        let wanted: Vec<(String, u32, Vec<String>)> = ready
+            .outline
+            .rows()
+            .iter()
+            .filter_map(|row| {
+                let PlaylistRow::Folder { id, .. } = row else {
+                    return None;
+                };
+                let covers: Vec<String> = ready
+                    .outline
+                    .playlists_in(id)
+                    .iter()
+                    .filter_map(|&at| ready.playlists.get(at)?.cover.clone())
+                    .take(mosaic::TILES)
+                    .collect();
+                (!covers.is_empty()).then(|| (id.clone(), stamp_of(&covers), covers))
+            })
+            .collect();
+
+        for (id, stamp, covers) in wanted {
+            let key = folder_mosaic(&id);
+            if let Some(cover) = mosaic::cached(&key, stamp) {
+                self.folder_covers.insert(id, cover);
+                continue;
+            }
+            if self.mosaics.contains_key(&key) {
+                continue;
+            }
+
+            let io = self.io.clone();
+            let http = cx.http_client();
+            let built_for = key.clone();
+            let held = key.clone();
+            let task = cx.spawn(async move |this, cx| {
+                let built = join(
+                    io.spawn(async move { mosaic::build(http, &built_for, stamp, covers).await }),
+                )
+                .await;
+
+                this.update(cx, |this, cx| {
+                    this.mosaics.remove(&held);
+                    match built {
+                        Ok(cover) => {
+                            this.folder_covers.insert(id, cover);
+                            cx.notify();
+                        }
+                        Err(error) => {
+                            log::warn!("library: cannot build a folder mosaic: {error:#}")
+                        }
+                    }
+                })
+                .ok();
+            });
+            self.mosaics.insert(key, task);
+        }
+    }
+
     fn mosaic_stamp(&self, id: &str) -> Option<u32> {
         let playlist = self.playlist(id)?;
 
@@ -1257,6 +1343,8 @@ impl Library {
                 match built {
                     Ok(cover) => {
                         this.set_playlist_cover(&id, cover);
+                        // A folder around it may now have the covers it was short of.
+                        this.paint_folders(Shelf::Streaming, cx);
                         cx.notify();
                     }
                     Err(error) => log::warn!("library: cannot build a mosaic: {error:#}"),
@@ -1407,8 +1495,10 @@ impl Library {
         let Some(playlists) = self.playlists_mut(&playlist.id) else {
             return;
         };
-        playlists.retain(|known| known.id != playlist.id);
+        let id = playlist.id.clone();
+        playlists.retain(|known| known.id != id);
         playlists.push(playlist);
+        self.relist(&id);
         cx.notify();
     }
 
@@ -1422,7 +1512,16 @@ impl Library {
             return;
         };
         playlists.retain(|playlist| playlist.id != id);
+        self.relist(id);
         cx.notify();
+    }
+
+    /// Keeps the outline in step after a playlist is added to or dropped from its shelf.
+    fn relist(&mut self, id: &str) {
+        let Some(ready) = self.held_mut(Shelf::of(id)).ready_mut() else {
+            return;
+        };
+        outline::relist(&ready.playlists, &mut ready.outline);
     }
 
     fn amend_playlist(
@@ -1576,6 +1675,7 @@ impl Library {
         place(&mut held.state, &mut held.awaited, landed, shelf.fatal());
         if part == LibraryPart::Playlists {
             self.read_playlists(shelf, cx);
+            self.paint_folders(shelf, cx);
             if shelf == Shelf::Streaming {
                 self.build_mosaics(cx);
             }
@@ -1587,4 +1687,19 @@ impl Library {
         star(self.held_mut(shelf), landed);
         cx.notify();
     }
+}
+
+/// A folder's mosaic is cached under a name of its own, so it cannot collide with a playlist's.
+fn folder_mosaic(id: &str) -> String {
+    format!("folder-{id}")
+}
+
+/// What the covers were when the mosaic was drawn. A playlist gaining art, or leaving the folder,
+/// changes it, and the cached picture is rebuilt rather than reused.
+fn stamp_of(covers: &[String]) -> u32 {
+    use std::hash::{Hash as _, Hasher as _};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    covers.hash(&mut hasher);
+    hasher.finish() as u32
 }

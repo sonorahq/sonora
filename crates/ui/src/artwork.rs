@@ -709,6 +709,9 @@ impl RenderOnce for Artwork {
                         .size(size)
                         .object_fit(ObjectFit::Cover)
                         .rounded(rounded)
+                        // The same plate the placeholder sits on, so a picture with transparent
+                        // parts rests on it rather than on whatever happens to be behind.
+                        .bg(muted.opacity(0.12))
                         .with_loading(move || {
                             Skeleton::new()
                                 .size(size)

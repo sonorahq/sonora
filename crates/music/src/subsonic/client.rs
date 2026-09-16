@@ -13,8 +13,8 @@ use crate::subsonic::auth::Signature;
 use crate::subsonic::wire;
 use crate::{
     Album, AlbumDetail, Artist, ArtistProfile, Genre, GenreDetail, GenreItem, GenreSection,
-    HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail, SavedArtist, Track, UserProfile,
-    distinct_covers,
+    HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail, PlaylistEntry, SavedArtist, Track,
+    UserProfile, distinct_covers,
 };
 
 const PORTRAIT_LIMIT: usize = 24;
@@ -316,15 +316,16 @@ impl MusicApi for SubsonicClient {
             .map(|count| count as u64))
     }
 
-    async fn playlists(&self) -> Result<Vec<Playlist>> {
-        Ok(self
+    async fn playlists(&self) -> Result<Vec<PlaylistEntry>> {
+        let playlists: Vec<Playlist> = self
             .client
             .get_playlists(None)
             .await
             .context("cannot load the playlists")?
             .iter()
             .map(|playlist| self.convert_playlist(playlist))
-            .collect())
+            .collect();
+        Ok(PlaylistEntry::flat(playlists))
     }
 
     async fn create_playlist(&self, name: &str) -> Result<String> {
@@ -600,11 +601,11 @@ impl MusicApi for SubsonicClient {
 
     async fn search_playlists(&self, query: &str) -> Result<Vec<Playlist>> {
         let needle = query.to_lowercase();
-        Ok(self
-            .playlists()
-            .await?
+        let entries = self.playlists().await?;
+        Ok(PlaylistEntry::playlists(&entries)
             .into_iter()
             .filter(|playlist| playlist.name.to_lowercase().contains(&needle))
+            .cloned()
             .collect())
     }
 
