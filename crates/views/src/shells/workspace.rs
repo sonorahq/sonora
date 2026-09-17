@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{AnyView, App, Context, Entity, FocusHandle, Render, StyleRefinement};
@@ -6,8 +6,8 @@ use gpui::{Window, div};
 use input::WORKSPACE_CONTEXT;
 use state::{Playback, Queue, SideTab};
 use ui::{
-    Activate, ActiveTheme as _, Deselect, Remove, SelectNext, SelectPrevious, ease_out_expo,
-    entering, entrance_span, shown_listing, veiled,
+    Activate, ActiveTheme as _, Deselect, Remove, SelectNext, SelectPrevious, Transition,
+    ease_out_expo, entering, entrance_span, shown_listing, veiled,
 };
 
 use crate::chrome::{
@@ -18,27 +18,6 @@ use crate::shared::playlist_editor::PlaylistEditor;
 use crate::shared::tag_editor::TagEditor;
 use crate::shared::widevine::WidevinePrompt;
 use crate::shells::Shell;
-
-#[derive(Clone, Copy)]
-struct ContentTransition {
-    started: Instant,
-    span: Duration,
-}
-
-impl ContentTransition {
-    fn hidden(self) -> f32 {
-        if self.span.is_zero() {
-            return 0.;
-        }
-        let elapsed = self.started.elapsed().as_secs_f32();
-        let progress = (elapsed / self.span.as_secs_f32()).clamp(0., 1.);
-        1. - ease_out_expo(progress)
-    }
-
-    fn running(self) -> bool {
-        self.started.elapsed() < self.span
-    }
-}
 
 pub(crate) struct Workspace {
     sidebar: Entity<SidebarLeft>,
@@ -51,7 +30,7 @@ pub(crate) struct Workspace {
     toasts: Entity<ToastStack>,
     notice: Entity<UpdateNotice>,
     content: AnyView,
-    transition: Option<ContentTransition>,
+    transition: Option<Transition>,
     focus: FocusHandle,
 }
 
@@ -65,6 +44,9 @@ impl Workspace {
         let sidebar = cx.new(SidebarLeft::new);
         let sidebar_right = cx.new(|cx| SidebarRight::new(queue.clone(), playback.clone(), cx));
         let player_bar = cx.new(|cx| PlayerBar::new(playback, queue, cx));
+
+        cx.observe(&sidebar, |_, _, cx| cx.notify()).detach();
+        cx.observe(&sidebar_right, |_, _, cx| cx.notify()).detach();
 
         Self {
             sidebar,
@@ -116,10 +98,7 @@ impl Workspace {
         }
 
         let span = entrance_span();
-        self.transition = Some(ContentTransition {
-            started: Instant::now(),
-            span,
-        });
+        self.transition = Some(Transition::new(1.0, 0.0, span, ease_out_expo));
         cx.notify();
         span
     }
@@ -131,17 +110,7 @@ impl Workspace {
     }
 
     fn hidden(&mut self, window: &mut Window, cx: &Context<Self>) -> f32 {
-        if cx.reduce_motion() {
-            self.transition = None;
-            return 0.;
-        }
-        let Some(transition) = self.transition else {
-            return 0.;
-        };
-        if transition.running() {
-            window.request_animation_frame();
-        }
-        transition.hidden()
+        Transition::step(&mut self.transition, 0.0, window, cx)
     }
 
     #[allow(dead_code)]
@@ -176,19 +145,7 @@ impl Render for Workspace {
         let covered = self.sidebar_right.read(cx).covers_content(window);
         let overlay = self.sidebar.read(cx).overlays();
         let bar_height = PlayerBar::height(window, cx);
-        // A cached view is laid out from the style given here and its own root
-        // style is never consulted, so it can only be cached while it is in the
-        // flow at a width this knows: an overlaid sidebar places itself, and a
-        // closed one hides itself and takes no space at all.
-        let sidebar_width = self.sidebar.read(cx).occupied_width();
-        let sidebar = match overlay || sidebar_width == gpui::Pixels::ZERO {
-            true => self.sidebar.clone().into_any_element(),
-            false => self
-                .sidebar
-                .clone()
-                .cached(StyleRefinement::default().w(sidebar_width).h_full())
-                .into_any_element(),
-        };
+        let sidebar = self.sidebar.clone().into_any_element();
         let hidden = self.hidden(window, cx);
         // The scrim is what fades the outgoing page: it is the page's own colour at
         // full strength, so covering the content with it costs no layout and the

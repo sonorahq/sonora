@@ -1,7 +1,7 @@
 use gpui::prelude::*;
 use gpui::{Context, Entity, Pixels, Render, StyleRefinement, Window, div, px};
 use state::{AppSettings, Playback, Queue, SideTab, Sonora};
-use ui::{ActiveTheme as _, MIN_CONTENT, Panel, Room, Side};
+use ui::{ActiveTheme as _, MIN_CONTENT, Motion, Panel, Room, Side, Transition, slide, snapped};
 
 use crate::chrome::Aside;
 
@@ -17,6 +17,7 @@ pub(crate) struct SidebarRight {
     settings: Entity<AppSettings>,
     width: Pixels,
     open: bool,
+    transition: Option<Transition>,
 }
 
 impl SidebarRight {
@@ -36,6 +37,7 @@ impl SidebarRight {
             settings,
             width,
             open,
+            transition: None,
         }
     }
 
@@ -52,20 +54,14 @@ impl SidebarRight {
     }
 
     pub(crate) fn occupied_width(&self, window: &Window) -> Pixels {
-        match self.open && Self::available(window) {
-            false => Pixels::ZERO,
-            true => self.width,
+        if !Self::available(window) || !self.open {
+            return Pixels::ZERO;
         }
+        snapped(self.width, window)
     }
 
     pub(crate) fn toggle(&mut self, cx: &mut Context<Self>) {
-        self.open = !self.open;
-        if self.open {
-            let tab = self.aside.read(cx).tab();
-            self.aside.update(cx, |aside, cx| aside.show(tab, cx));
-        }
-        self.remember(cx);
-        cx.notify();
+        self.set_open(!self.open, cx);
     }
 
     pub(crate) fn show(&mut self, tab: SideTab, cx: &mut Context<Self>) {
@@ -78,14 +74,32 @@ impl SidebarRight {
                 .update(cx, |settings, cx| settings.set_sidebar_right_tab(tab, cx));
         }
         self.aside.update(cx, |aside, cx| aside.show(tab, cx));
-        self.open = true;
-        self.remember(cx);
-        cx.notify();
+        if !self.open {
+            self.set_open(true, cx);
+        } else {
+            self.remember(cx);
+            cx.notify();
+        }
     }
 
     pub(crate) fn close(&mut self, cx: &mut Context<Self>) {
+        if !self.open {
+            return;
+        }
         self.aside.update(cx, |aside, cx| aside.dismiss(cx));
-        self.open = false;
+        self.set_open(false, cx);
+    }
+
+    fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.open == open {
+            return;
+        }
+        self.open = open;
+        if self.open {
+            let tab = self.aside.read(cx).tab();
+            self.aside.update(cx, |aside, cx| aside.show(tab, cx));
+        }
+        Transition::toggle_to(&mut self.transition, self.open, Motion::Base, cx);
         self.remember(cx);
         cx.notify();
     }
@@ -106,13 +120,28 @@ impl SidebarRight {
 
 impl Render for SidebarRight {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !self.open || !Self::available(window) {
+        if !Self::available(window) {
             return div().into_any_element();
         }
 
+        let fraction = Transition::step_toggle(&mut self.transition, self.open, window, cx);
+        if fraction <= 0.0 {
+            return div().into_any_element();
+        }
+
+        let current_width = snapped(self.width * fraction, window);
         let theme = *cx.theme();
 
-        Panel::new("sidebar-right", Side::Right, self.width)
+        let aside = match fraction < 1.0 {
+            true => self.aside.clone().into_any_element(),
+            false => self
+                .aside
+                .clone()
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element(),
+        };
+
+        let panel = Panel::new("sidebar-right", Side::Right, self.width)
             .limits(MIN_WIDTH, MAX_WIDTH)
             .reach(super::cap(MIN_WIDTH, MAX_WIDTH, MIN_CONTENT, window))
             .on_resize(cx.listener(|this, width: &Pixels, _, cx| {
@@ -122,11 +151,12 @@ impl Render for SidebarRight {
             }))
             .when(!theme.transparent, |this| this.bg(theme.background))
             .border_color(theme.border)
-            .child(
-                self.aside
-                    .clone()
-                    .cached(StyleRefinement::default().size_full()),
-            )
-            .into_any_element()
+            .child(aside);
+
+        if fraction >= 1.0 {
+            panel.into_any_element()
+        } else {
+            slide(Side::Right, current_width, self.width, panel).into_any_element()
+        }
     }
 }

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     Animation, AnimationElement, AnimationExt as _, App, ElementId, Hsla, IntoElement, Pixels,
-    Rgba, SharedString, SpringConfig, Styled, ease_in_out, ease_out_quint, px,
+    Rgba, SharedString, SpringConfig, Styled, Window, ease_in_out, ease_out_quint, px,
 };
 use i18n::t;
 
@@ -445,6 +445,157 @@ mod system {
     }
 }
 
+/// A scalar tween between two values over time with customizable easing.
+#[derive(Clone, Copy, Debug)]
+pub struct Transition {
+    from: f32,
+    to: f32,
+    started: Instant,
+    span: Duration,
+    easing: fn(f32) -> f32,
+}
+
+impl Transition {
+    pub fn new(from: f32, to: f32, span: Duration, easing: fn(f32) -> f32) -> Self {
+        Self {
+            from,
+            to,
+            started: Instant::now(),
+            span,
+            easing,
+        }
+    }
+
+    /// Creates a transition using a preset [`Motion`] duration and [`ease_out_cubic`].
+    pub fn to(from: f32, to: f32, motion: Motion) -> Self {
+        Self::new(from, to, motion.span(), ease_out_cubic)
+    }
+
+    /// Creates a standard boolean toggle transition (0.0 <-> 1.0) using [`Motion`] duration and [`ease_out_cubic`].
+    pub fn toggle(open: bool, from: f32, motion: Motion) -> Self {
+        let to = match open {
+            true => 1.0,
+            false => 0.0,
+        };
+        Self::new(from, to, motion.span(), ease_out_cubic)
+    }
+
+    pub fn with_easing(mut self, easing: fn(f32) -> f32) -> Self {
+        self.easing = easing;
+        self
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.started.elapsed() < self.span
+    }
+
+    pub fn fraction(&self) -> f32 {
+        if self.span.is_zero() {
+            return self.to;
+        }
+        let elapsed = self.started.elapsed().as_secs_f32();
+        let progress = (elapsed / self.span.as_secs_f32()).clamp(0.0, 1.0);
+        let eased = (self.easing)(progress);
+        self.from + (self.to - self.from) * eased
+    }
+
+    pub fn target(&self) -> f32 {
+        self.to
+    }
+
+    /// Advances the transition: requests an animation frame if still running,
+    /// or clears the transition slot and returns the settled target once finished.
+    pub fn step(
+        transition: &mut Option<Self>,
+        settled: f32,
+        window: &mut Window,
+        cx: &App,
+    ) -> f32 {
+        if cx.reduce_motion() {
+            *transition = None;
+            return settled;
+        }
+        let Some(t) = transition else {
+            return settled;
+        };
+        if t.is_running() {
+            window.request_animation_frame();
+            t.fraction()
+        } else {
+            *transition = None;
+            settled
+        }
+    }
+
+    /// Starts or interrupts a boolean toggle transition towards `open` (1.0 or 0.0).
+    pub fn toggle_to(
+        transition: &mut Option<Self>,
+        open: bool,
+        motion: Motion,
+        cx: &App,
+    ) {
+        if cx.reduce_motion() {
+            *transition = None;
+            return;
+        }
+        let current = transition.map(|t| t.fraction()).unwrap_or(match open {
+            true => 0.0,
+            false => 1.0,
+        });
+        *transition = Some(Self::toggle(open, current, motion));
+    }
+
+    /// Advances a toggle transition, settling to 1.0 if `open` is true or 0.0 if false.
+    pub fn step_toggle(
+        transition: &mut Option<Self>,
+        open: bool,
+        window: &mut Window,
+        cx: &App,
+    ) -> f32 {
+        let target = match open {
+            true => 1.0,
+            false => 0.0,
+        };
+        Self::step(transition, target, window, cx)
+    }
+}
+
+/// A stateful boolean toggle that smoothly animates between 0.0 and 1.0.
+#[derive(Clone, Copy, Debug)]
+pub struct AnimatedToggle {
+    open: bool,
+    transition: Option<Transition>,
+}
+
+impl AnimatedToggle {
+    pub fn new(open: bool) -> Self {
+        Self {
+            open,
+            transition: None,
+        }
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    pub fn set(&mut self, open: bool, motion: Motion, cx: &App) {
+        if self.open == open {
+            return;
+        }
+        self.open = open;
+        Transition::toggle_to(&mut self.transition, open, motion, cx);
+    }
+
+    pub fn toggle(&mut self, motion: Motion, cx: &App) {
+        self.set(!self.open, motion, cx);
+    }
+
+    pub fn fraction(&mut self, window: &mut Window, cx: &App) -> f32 {
+        Transition::step_toggle(&mut self.transition, self.open, window, cx)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -469,5 +620,23 @@ mod tests {
             assert!(value >= previous);
             previous = value;
         }
+    }
+
+    #[test]
+    fn transition_fraction_endpoints_and_zero_duration() {
+        let zero_span = Transition::new(0.0, 1.0, Duration::ZERO, ease_out_cubic);
+        assert_eq!(zero_span.fraction(), 1.0);
+
+        let instant = Transition::toggle(true, 0.0, Motion::Base);
+        assert!(instant.fraction() >= 0.0 && instant.fraction() <= 1.0);
+    }
+
+    #[test]
+    fn animated_toggle_initializes_and_tracks_state() {
+        let toggle = AnimatedToggle::new(true);
+        assert!(toggle.is_open());
+
+        let closed = AnimatedToggle::new(false);
+        assert!(!closed.is_open());
     }
 }
