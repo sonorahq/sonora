@@ -86,14 +86,28 @@ impl Home {
     }
 
     pub fn feed(&mut self, cx: &mut Context<Self>) {
-        if self.feeding || !self.sections.is_empty() {
+        if !self.sections.is_empty() {
+            return;
+        }
+        self.load(cx);
+    }
+
+    /// Refetches the feed, keeping the current content if the request fails.
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.load(cx);
+    }
+
+    fn load(&mut self, cx: &mut Context<Self>) {
+        if self.feeding {
             return;
         }
         let Some(client) = self.session.read(cx).client() else {
             return;
         };
 
+        self.naming = None;
         self.feeding = true;
+        cx.notify();
         let io = self.io.clone();
         self.task = Some(cx.spawn(async move |this, cx| {
             let loaded = join(io.spawn(async move { client.home().await })).await;
@@ -103,9 +117,15 @@ impl Home {
                 match loaded {
                     Ok(feed) => {
                         this.listen_again = Rc::new(feed.listen_again);
-                        if let Some(quick_picks) = feed.quick_picks {
-                            this.quick_picks = Rc::new(quick_picks);
-                        }
+                        let fresh_quick_picks = feed
+                            .quick_picks
+                            .filter(|v| !v.is_empty())
+                            .map(Rc::new)
+                            .unwrap_or_else(|| {
+                                this.quick_picks_seed = fastrand::u64(..);
+                                picks(&this.library, this.quick_picks_seed, cx)
+                            });
+                        this.quick_picks = fresh_quick_picks;
                         this.sections = Rc::new(pruned(&feed.sections));
                         this.name_playlists(feed.sections, cx);
                     }

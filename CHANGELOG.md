@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A refresh button beside the navigation arrows on Home reloads Quick picks, Listen again and recommendations.
+
 ### Fixed
 
 - Apple Music similar tracks link to their artist and album again.

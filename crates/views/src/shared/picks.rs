@@ -221,7 +221,7 @@ impl RenderOnce for Picks {
             })
             .when(!barren, |this| {
                 this.child(div().flex().gap_2().p_2().when_else(
-                    empty,
+                    self.loading,
                     |this| {
                         this.children((0..shape.columns).map(|column| {
                             column_shell(column, theme.border)

@@ -179,7 +179,7 @@ impl Render for HomeView {
         .title("home-quick-picks")
         .eyebrow("home-quick-picks-eyebrow")
         .vacancy("home-quick-picks-empty")
-        .loading(self.home.read(cx).is_loading(cx))
+        .loading(self.home.read(cx).is_loading(cx) || self.home.read(cx).is_feeding())
         .on_previous(cx.listener(|this, _, _, cx| {
             this.quick_picks.page = this.quick_picks.page.saturating_sub(1);
             this.context_menu = None;

@@ -21,6 +21,7 @@ number-group = { "\u00A0" }
 # navigation
 nav-history = Historia
 nav-home = Strona główna
+nav-refresh-home = Odśwież stronę główną
 nav-search = Szukaj
 nav-library = Twoja biblioteka
 nav-settings = Ustawienia
