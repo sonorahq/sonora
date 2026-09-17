@@ -11,8 +11,8 @@ use ui::WindowControls;
 use ui::{ActiveTheme as _, Button};
 
 use crate::chrome::SidebarRight;
-use router::Navigation;
-use state::{AppSettings, Sonora};
+use router::{Destination, Navigation};
+use state::{AppSettings, Home, Sonora};
 
 const SYSTEM_ZOOMS: bool = cfg!(target_os = "windows");
 
@@ -51,6 +51,7 @@ pub(crate) enum TitleBarEvent {
 
 pub(crate) struct TitleBar {
     navigation: Entity<Navigation>,
+    home: Entity<Home>,
     settings: Entity<AppSettings>,
     options: TitleBarOptions,
     grabbed: bool,
@@ -59,14 +60,16 @@ pub(crate) struct TitleBar {
 impl EventEmitter<TitleBarEvent> for TitleBar {}
 
 impl TitleBar {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(home: Entity<Home>, cx: &mut Context<Self>) -> Self {
         let navigation = router::trail(cx);
         let settings = Sonora::global(cx).settings.clone();
 
         cx.observe(&navigation, |_, _, cx| cx.notify()).detach();
+        cx.observe(&home, |_, _, cx| cx.notify()).detach();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
         Self {
             navigation,
+            home,
             settings,
             options: TitleBarOptions::default(),
             grabbed: false,
@@ -271,7 +274,31 @@ impl Render for TitleBar {
                     .sidebar_right
                     .filter(|_| SidebarRight::available(window)),
                 |this, open| {
-                    this.child(div().flex_none().pr_3().child(self.lyrics_toggle(open, cx)))
+                    let on_home = self.navigation.read(cx).current() == Destination::Home;
+                    let home = self.home.clone();
+                    let feeding = home.read(cx).is_feeding();
+                    this.child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .items_center()
+                            .pr_3()
+                            .gap_1()
+                            .when(on_home, |this| {
+                                this.child(
+                                    Button::new("home-refresh")
+                                        .ghost()
+                                        .small()
+                                        .icon("icons/refresh-cw.svg")
+                                        .tooltip("nav-refresh-home")
+                                        .disabled(feeding)
+                                        .on_click(move |_, _, cx| {
+                                            home.update(cx, |home, cx| home.refresh(cx));
+                                        }),
+                                )
+                            })
+                            .child(self.lyrics_toggle(open, cx)),
+                    )
                 },
             )
             .when(decorated && !leading, |this| {

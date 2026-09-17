@@ -132,7 +132,7 @@ impl Root {
 
         let io = Io::global(cx);
         let home_state = cx.new(|cx| Home::new(library.clone(), session.clone(), io.clone(), cx));
-        let home = cx.new(|cx| HomeView::new(home_state, playback.clone(), cx));
+        let home = cx.new(|cx| HomeView::new(home_state.clone(), playback.clone(), cx));
         let history = Sonora::global(cx).history.clone();
         let history = cx.new(|cx| HistoryView::new(history, playback.clone(), window, cx));
 
@@ -161,7 +161,7 @@ impl Root {
         });
         let fullscreen = cx.new(|cx| FullscreenView::new(playback.clone(), queue.clone(), cx));
 
-        let title_bar = cx.new(TitleBar::new);
+        let title_bar = cx.new(|cx| TitleBar::new(home_state, cx));
         cx.subscribe(&title_bar, |this, _, event, cx| match event {
             TitleBarEvent::ToggleSidebar => this
                 .shells

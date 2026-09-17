@@ -21,6 +21,7 @@ number-group = { "," }
 # navigation
 nav-history = History
 nav-home = Home
+nav-refresh-home = Refresh Home
 nav-search = Search
 nav-library = Your Library
 nav-settings = Settings
