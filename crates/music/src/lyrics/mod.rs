@@ -11,6 +11,9 @@ use std::time::Duration;
 
 use crate::{Lyrics, LyricsHit, LyricsLine, LyricsQuery, LyricsWord};
 
+/// The provider that reads a local file's own tags.
+pub const LOCAL: &str = "Local";
+
 const CLOSE_ENOUGH: u64 = 3;
 const WAY_OFF: u64 = 10;
 const TITLE: u32 = 40;

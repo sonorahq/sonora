@@ -30,6 +30,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Playback needs Google's Widevine module. Sonora uses the copy a browser on your computer has,
   or offers to download it from Google and shows Google's terms first. Settings can remove a
   downloaded module again.
+- Local files are a lyrics provider for the synced or plain lyrics embedded in them, and can be
+  preferred over the others.
 
 ### Fixed
 

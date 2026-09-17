@@ -122,6 +122,8 @@ menu-remove-tracks-from-history = { $count ->
     [one] Quitar { $count } pista del historial
    *[other] Quitar { $count } pistas del historial
 }
+menu-delete-track-file = Eliminar archivo de pista
+menu-delete-track-files = Eliminar { $count } archivos de pista
 menu-play-next = Reproducir a continuación
 menu-play-tracks-next = { $count ->
     [one] Reproducir { $count } pista a continuación
@@ -148,6 +150,16 @@ menu-rename-playlist = Renombrar lista
 menu-delete-playlist = Eliminar lista
 menu-add-playlist-to-library = Añadir a la biblioteca
 menu-remove-playlist-from-library = Quitar de la biblioteca
+menu-library-add = Añadir a la biblioteca
+menu-library-add-tracks = { $count ->
+    [one] Añadir { $count } pista a la biblioteca
+   *[other] Añadir { $count } pistas a la biblioteca
+}
+menu-library-remove = Quitar de la biblioteca
+menu-library-remove-tracks = { $count ->
+    [one] Quitar { $count } pista de la biblioteca
+   *[other] Quitar { $count } pistas de la biblioteca
+}
 menu-make-playlist-public = Hacer pública
 menu-make-playlist-private = Hacer privada
 menu-open-album = Abrir álbum
@@ -192,6 +204,8 @@ confirm-remove-playlists = { $count ->
     [one] ¿Quitar esta lista de tu biblioteca?
    *[other] ¿Quitar { $count } listas de tu biblioteca?
 }
+confirm-delete-track-files-title = ¿Eliminar los archivos de las pistas?
+confirm-delete-track-files = El archivo o los archivos se eliminarán del disco de forma permanente. Esta acción no se puede deshacer.
 
 # queue panel
 queue-title = Cola
@@ -261,6 +275,7 @@ login-problem-refused = Spotify rechazó el inicio de sesión. Espera un momento
 login-problem-premium = Sonora reproduce a través de Spotify Premium y esta cuenta no lo tiene. Inicia sesión con una cuenta Premium para continuar.
 login-sign-in = Iniciar sesión con { $provider }
 login-connect-cookies = Pegar las cookies manualmente
+login-cookie-open = Abrir { $provider }
 login-cookie-submit = Continuar
 login-cookie-hint = Pega aquí el encabezado de solicitud Cookie
 login-cookie-step-1 = Abre music.youtube.com y comprueba que has iniciado sesión. Funciona mejor en una ventana de incógnito.
@@ -268,6 +283,16 @@ login-cookie-step-2 = Pulsa F12, abre la pestaña Red y recarga la página.
 login-cookie-step-3 = Selecciona cualquier solicitud llamada "browse" o "next".
 login-cookie-step-4 = En Encabezados, busca Cookie dentro de los encabezados de solicitud, haz clic derecho y copia su valor.
 login-cookie-step-note = Pega el valor completo abajo: el panel de cookies de la solicitud no basta, porque el valor tiene que llevar SAPISID y __Secure-3PAPISID.
+login-cookie-header-title = Pega las cookies de { $provider } para terminar de iniciar sesión
+login-cookie-apple-step-3 = Selecciona cualquier solicitud a { $site }.
+login-cookie-apple-note = Asegúrate de pegar el valor completo, incluido { $cookie }.
+login-cookie-named-title = Pega la cookie de { $provider } para terminar de iniciar sesión
+login-cookie-named-hint = Pega aquí el valor de la cookie
+login-cookie-named-step-1 = Abre { $site } y comprueba que has iniciado sesión.
+login-cookie-named-step-2 = Pulsa F12 y abre la pestaña Almacenamiento en Firefox, o la pestaña Aplicación en Chrome.
+login-cookie-named-step-3 = Despliega Cookies, selecciona { $site } y busca la cookie llamada { $cookie }.
+login-cookie-named-step-4 = Haz doble clic en su valor y cópialo.
+login-cookie-named-note = Basta con el valor de { $cookie }. También sirve un encabezado Cookie completo copiado desde la pestaña Red.
 login-window-title = Iniciar sesión en { $provider }
 login-use = Usar { $provider }
 login-guest-title = Modo invitado
@@ -538,6 +563,30 @@ settings-sleep-configure = Configurar…
 settings-sleep-off = Desactivado
 settings-sleep-end-of-track = Fin de pista
 settings-sleep-minutes = { $count } min
+settings-widevine = Módulo Widevine
+settings-widevine-detail = Las pistas de Apple Music están cifradas y necesitan el módulo Widevine de Google. Sonora usa la copia que ya tiene un navegador de este equipo, o una que descargó de Google con tu consentimiento.
+settings-widevine-none = Las pistas de Apple Music están cifradas y necesitan el módulo Widevine de Google. Ningún navegador de este equipo lo tiene, así que Sonora puede descargarlo de Google con tu consentimiento.
+settings-widevine-looking = Buscando…
+settings-widevine-asking = Esperando tu respuesta
+settings-widevine-fetching = Descargando…
+settings-widevine-installing = Instalando…
+settings-widevine-installed = Encontrado en un navegador
+settings-widevine-fetched = Descargado de Google
+settings-widevine-missing = No instalado
+settings-widevine-configured = Definido por el entorno
+settings-widevine-fetch = Descargar
+settings-widevine-uninstall = Desinstalar
+confirm-uninstall-widevine-title = ¿Desinstalar el módulo Widevine?
+confirm-uninstall-widevine = Sonora eliminará la copia que descargó de Google. Las pistas de Apple Music dejarán de reproducirse hasta que se vuelva a descargar.
+widevine-prompt-title = Módulo Widevine
+widevine-prompt-wanted = Las pistas de Apple Music están cifradas y necesitan el módulo Widevine de Google. Ningún navegador de este equipo lo tiene. Sonora puede descargarlo de los servidores de Google, el mismo archivo que instala Chrome, y guardarlo en su propia carpeta.
+widevine-prompt-downloading = Descargando…
+widevine-prompt-terms = Se descargó la versión { $version }. Instalarlo implica aceptar los términos de Google para el módulo:
+widevine-prompt-installing = Instalando…
+widevine-prompt-download = Descargar
+widevine-prompt-later = Ahora no
+widevine-prompt-accept = Aceptar e instalar
+widevine-prompt-decline = Rechazar
 settings-equalizer = Ecualizador
 settings-equalizer-detail = Da forma al sonido en diez bandas, una por octava
 settings-equalizer-preset = Preajuste
@@ -565,6 +614,22 @@ settings-fullscreen-lyrics-size-detail = Tamaño del texto de la letra en pantal
 settings-lyrics-size-value = { $size }%
 settings-lyrics-for-local-files = Letra para archivos locales
 settings-lyrics-for-local-files-detail = Usa metadatos de archivos locales para buscar letras en internet
+settings-prefer-local-lyrics = Preferir letras locales
+settings-prefer-local-lyrics-detail = Usa la letra guardada en las etiquetas del archivo local en lugar de buscarla en los demás proveedores
+settings-lyrics-providers = Proveedores de letra
+settings-lyrics-providers-detail = Elige en qué servicios buscar letra
+settings-lyrics-providers-selected = { $count ->
+    [one] { $count } seleccionado
+   *[other] { $count } seleccionados
+    }
+settings-lyrics-provider-local = Archivos locales
+settings-lyrics-provider-spotify = Spotify
+settings-lyrics-provider-youtube = YouTube Music
+settings-lyrics-provider-apple-music = Apple Music
+settings-lyrics-provider-musixmatch = Musixmatch
+settings-lyrics-provider-lrclib = LRCLIB
+settings-lyrics-provider-kugou = Kugou
+settings-lyrics-provider-netease = NetEase
 settings-karaoke-lyrics = Letra en karaoke
 settings-karaoke-lyrics-detail = Resalta la letra palabra por palabra cuando hay sincronización disponible
 settings-blur-lyrics = Desenfoque la letra inactiva
@@ -601,6 +666,28 @@ settings-provider-current = Reproduciendo desde este servicio
 settings-provider-guest = Reproduciendo como invitado
 settings-provider-switch = Cambiar a
 settings-sign-out = Cerrar sesión
+settings-group-scrobbling = Scrobbling
+settings-lastfm = Last.fm
+settings-lastfm-detail = Sonora hace scrobbling a través de tu propia cuenta de API de Last.fm. Crea una y pega aquí la clave y el secreto.
+settings-librefm = Libre.fm
+settings-listenbrainz = ListenBrainz
+settings-listenbrainz-detail = Pega un token de usuario desde la página de ajustes de tu cuenta de ListenBrainz.
+settings-maloja = Maloja
+settings-maloja-detail = Indícale a Sonora la dirección de tu servidor Maloja y pega una de sus claves de API.
+settings-scrobble-off = No conectado
+settings-scrobble-on = Conectado
+settings-scrobble-waiting = Esperando tu navegador…
+settings-scrobble-as = Scrobbling como { $name }
+settings-scrobble-failed = No se pudo conectar
+settings-scrobble-connect = Conectar
+settings-scrobble-disconnect = Desconectar
+settings-scrobble-title = Conectar { $service }
+settings-scrobble-request = Obtener una clave de API
+settings-scrobble-token-request = Obtener un token
+settings-scrobble-key = Clave de API
+settings-scrobble-secret = Secreto de API
+settings-scrobble-token = Token de usuario
+settings-scrobble-server = Dirección del servidor
 settings-local-folder = Carpeta de música importada
 settings-local-folder-empty = Sin configurar
 settings-choose-folder = Elegir carpeta…
@@ -655,6 +742,7 @@ saver-strong = Fuerte ({ $fps } FPS)
 toast-playlist-created = Lista creada
 toast-playlist-renamed = Lista renombrada
 toast-playlist-deleted = Lista eliminada
+toast-local-delete-failed = No se pudieron eliminar algunos archivos de pista
 toast-playlist-added = Lista añadida a tu biblioteca
 toast-playlist-removed = Lista quitada de tu biblioteca
 toast-playlist-visibility = Se cambió la visibilidad de la lista
@@ -677,6 +765,8 @@ toast-sign-in-to-play = { $name } solo se reproduce con la sesión iniciada
 toast-track-unplayable = No se pudo reproducir { $name }
 toast-library-add-failed = No se pudo añadir { $name } a tu biblioteca
 toast-library-remove-failed = No se pudo quitar { $name } de tu biblioteca
+toast-library-added = Añadido a tu biblioteca
+toast-library-removed = Quitado de tu biblioteca
 
 # lyrics
 lyrics-title = Letra
@@ -687,6 +777,7 @@ lyrics-instrumental = Esta canción es instrumental
 lyrics-failed = No se pudo conectar con el servicio de letras
 lyrics-follow = Volver a seguir la canción
 lyrics-source = Letra de { $source }
+lyrics-source-local = Letra del archivo
 lyrics-writers = Escrita por { $writers }
 
 update-available = Ya está disponible Sonora { $version }
