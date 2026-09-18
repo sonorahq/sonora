@@ -15,16 +15,29 @@ const GAIN: f32 = 8.;
 const ATTACK: f32 = 0.9;
 const DECAY: f32 = 0.12;
 const IDLE_POLL: Duration = Duration::from_millis(4);
+const PULSE_BASS: (f32, f32) = (18., 140.);
+const PULSE_MIDS: (f32, f32) = (140., 850.);
+const PULSE_HIGHS: f32 = 850.;
 
 #[derive(Clone)]
 pub struct Spectrum {
     bands: Arc<Vec<AtomicU32>>,
+    peak: Arc<AtomicU32>,
+    rms: Arc<AtomicU32>,
+    bass: Arc<AtomicU32>,
+    mids: Arc<AtomicU32>,
+    highs: Arc<AtomicU32>,
 }
 
 impl Spectrum {
     pub fn new() -> Self {
         Self {
             bands: Arc::new((0..N_BANDS).map(|_| AtomicU32::new(0)).collect()),
+            peak: Arc::new(AtomicU32::new(0)),
+            rms: Arc::new(AtomicU32::new(0)),
+            bass: Arc::new(AtomicU32::new(0)),
+            mids: Arc::new(AtomicU32::new(0)),
+            highs: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -33,6 +46,26 @@ impl Spectrum {
             .iter()
             .map(|band| f32::from_bits(band.load(Ordering::Relaxed)))
             .collect()
+    }
+
+    pub fn peak(&self) -> f32 {
+        load(&self.peak)
+    }
+
+    pub fn rms(&self) -> f32 {
+        load(&self.rms)
+    }
+
+    pub fn bass(&self) -> f32 {
+        load(&self.bass)
+    }
+
+    pub fn mids(&self) -> f32 {
+        load(&self.mids)
+    }
+
+    pub fn highs(&self) -> f32 {
+        load(&self.highs)
     }
 
     fn set(&self, index: usize, value: f32) {
@@ -104,10 +137,31 @@ fn analyze(mut consumer: rtrb::Consumer<f32>, spectrum: Spectrum, rate: u32, cha
         }
         filled = 0;
 
+        let mut peak = 0f32;
+        let mut energy = 0f32;
+        for sample in mono {
+            peak = peak.max(sample.abs());
+            energy += sample * sample;
+        }
+        store(&spectrum.peak, peak);
+        store(&spectrum.rms, (energy / FFT_SIZE as f32).sqrt());
+
         for ((slot, sample), weight) in buffer.iter_mut().zip(mono).zip(&window) {
             *slot = Complex32::new(sample * weight, 0.);
         }
         fft.process(&mut buffer);
+        store(
+            &spectrum.bass,
+            range_mean(&buffer, rate, PULSE_BASS.0, PULSE_BASS.1),
+        );
+        store(
+            &spectrum.mids,
+            range_mean(&buffer, rate, PULSE_MIDS.0, PULSE_MIDS.1),
+        );
+        store(
+            &spectrum.highs,
+            range_mean(&buffer, rate, PULSE_HIGHS, rate as f32 / 2.),
+        );
 
         for (band, edge) in edges.windows(2).enumerate() {
             let lo = edge[0];
@@ -148,4 +202,26 @@ fn band_edges(rate: f32) -> Vec<usize> {
             ((freq / bin_hz) as usize).clamp(1, FFT_SIZE / 2 - 1)
         })
         .collect()
+}
+
+fn range_mean(buffer: &[Complex32], rate: u32, hz_lo: f32, hz_hi: f32) -> f32 {
+    let nyquist = rate as f32 / 2.;
+    let hz_hi = hz_hi.min(nyquist);
+    if hz_lo >= hz_hi {
+        return 0.;
+    }
+    let bin_hz = rate as f32 / FFT_SIZE as f32;
+    let lo = ((hz_lo / bin_hz) as usize).clamp(1, FFT_SIZE / 2 - 1);
+    let hi = ((hz_hi / bin_hz) as usize).clamp(lo, FFT_SIZE / 2 - 1);
+    let span = &buffer[lo..=hi];
+    let sum: f32 = span.iter().map(|bin| bin.norm() / FFT_SIZE as f32).sum();
+    sum / span.len() as f32
+}
+
+fn store(slot: &AtomicU32, value: f32) {
+    slot.store(value.clamp(0., 1.).to_bits(), Ordering::Relaxed);
+}
+
+fn load(slot: &AtomicU32) -> f32 {
+    f32::from_bits(slot.load(Ordering::Relaxed)).clamp(0., 1.)
 }

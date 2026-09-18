@@ -22,6 +22,7 @@ use ui::{
 use crate::chrome::{Aside, TitleBarOptions};
 use crate::shared::menus::ItemMenu;
 use crate::shared::transport::{NOTCH, like, moved, percent, transport, volume_icon};
+use crate::shared::visualizations::{FrameGlow, Glow};
 use crate::shared::visualizer::VisualizerDrive;
 use crate::shells::Shell;
 
@@ -82,6 +83,7 @@ pub struct FullscreenView {
     rest: Option<Task<()>>,
     focus: FocusHandle,
     visualizer: VisualizerDrive,
+    glow: FrameGlow,
     root_bounds: Rc<Cell<Bounds<Pixels>>>,
     artwork_bounds: Rc<Cell<Bounds<Pixels>>>,
 }
@@ -131,6 +133,7 @@ impl FullscreenView {
             rest: None,
             focus: cx.focus_handle(),
             visualizer: VisualizerDrive::default(),
+            glow: FrameGlow::new(Glow::default()),
             root_bounds: Rc::new(Cell::new(Bounds::default())),
             artwork_bounds: Rc::new(Cell::new(Bounds::default())),
         };
@@ -277,6 +280,7 @@ impl FullscreenView {
         layout_side: Pixels,
         raster_side: Pixels,
         presentation_scale: f32,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let radius = cx.theme().radius * 2.;
@@ -319,6 +323,21 @@ impl FullscreenView {
                 )
                 .absolute()
                 .size_full(),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(inset + pad)
+                    .left(inset + pad)
+                    .size(raster_side)
+                    .child(self.glow.sync(
+                        raster_side,
+                        radius,
+                        presentation_scale,
+                        self.playback.read(cx),
+                        window,
+                        cx,
+                    )),
             )
             .child(
                 div()
@@ -1033,7 +1052,7 @@ impl Render for FullscreenView {
                                     |this| this.flex_1().h_full(),
                                     |this| this.w_full(),
                                 )
-                                .child(self.artwork(side, raster_side, cover_scale, cx))
+                                .child(self.artwork(side, raster_side, cover_scale, window, cx))
                                 .child(self.meta(hide, lift, cx))
                                 .when(split, |this| {
                                     this.child(self.dock(
