@@ -11,6 +11,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - A Play last item on track, album, artist and playlist menus queues them for after everything
   else.
+- The Windows installer offers a per-user install that needs no administrator privileges,
+  alongside the existing machine-wide one.
 
 ### Changed
 

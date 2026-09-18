@@ -25,7 +25,8 @@ Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed={#Arch}
 ArchitecturesInstallIn64BitMode={#Arch}
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=commandline dialog
 WizardStyle=modern
 
 [Tasks]
