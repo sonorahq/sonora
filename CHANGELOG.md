@@ -11,6 +11,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - A Play last item on track, album, artist and playlist menus queues them for after everything
   else.
+- OS fullscreen mode is available on all platforms by pressing F11 key or double-clinking in expanded
+  Now Playing view. A dedicated OS fullscreen button can be enabled in settings as well.
 
 ### Changed
 

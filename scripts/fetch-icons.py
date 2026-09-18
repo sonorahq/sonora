@@ -53,6 +53,7 @@ MAP = {
     "list-start": (None, None, None),
     "log-out": ("log-out", "logout-2-linear", "logout-box-r-line"),
     "maximize": ("expand", "maximize-square-3-linear", "fullscreen-line"),
+    "minimize": ("collapse", "minimize-square-3-linear", "fullscreen-exit-line"),
     "mic-off": ("microphone-mute", None, "mic-off-line"),
     "mic-vocal": ("microphone", "microphone-linear", "mic-2-line"),
     "moon": ("half-moon", "moon-linear", "moon-line"),

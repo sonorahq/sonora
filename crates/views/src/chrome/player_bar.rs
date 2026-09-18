@@ -9,7 +9,7 @@ use gpui::{
 };
 use gpui::{Window, div, px};
 use i18n::t;
-use input::{ToggleFullscreen, ToggleLyrics, ToggleQueue};
+use input::{ToggleFullscreen, ToggleLyrics, ToggleQueue, ToggleWindowFullscreen};
 use state::{AppSettings, Playback, Queue, SideTab, Sonora};
 use ui::{
     Artwork, Button, ExplicitBadge, InlineLink, InlineLinks, Popup, Room, Scrollbar, Scrubber,
@@ -39,6 +39,7 @@ pub(crate) struct PlayerBar {
     over_volume: Option<f32>,
     volume_held: bool,
     muted: Option<f32>,
+    last_volume_width: Option<Pixels>,
 }
 
 impl PlayerBar {
@@ -66,6 +67,7 @@ impl PlayerBar {
             over_volume: None,
             volume_held: false,
             muted: None,
+            last_volume_width: None,
         }
     }
 
@@ -232,9 +234,24 @@ impl PlayerBar {
         Button::new("toggle-fullscreen")
             .ghost()
             .small()
-            .icon("icons/maximize.svg")
+            .icon("icons/chevron-up.svg")
             .tooltip_above("player-fullscreen")
             .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleFullscreen), cx))
+    }
+
+    fn os_fullscreen_button(&self, window: &Window) -> Button {
+        Button::new("toggle-os-fullscreen")
+            .ghost()
+            .small()
+            .icon(match window.is_fullscreen() {
+                true => "icons/minimize.svg",
+                false => "icons/maximize.svg",
+            })
+            .tooltip_above(match window.is_fullscreen() {
+                true => "player-os-fullscreen-exit",
+                false => "player-os-fullscreen",
+            })
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleWindowFullscreen), cx))
     }
 
     fn now_playing(&self, room: bool, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -363,6 +380,16 @@ impl Render for PlayerBar {
         let height = Self::height(window, cx);
         let clock_text = theme.text(ui::Text::Tiny);
 
+        let show_os_fullscreen_btn = self.settings.read(cx).show_os_fullscreen_btn();
+        let compact_volume = stacked || show_os_fullscreen_btn && !span.fits(Room::Vast);
+        let volume_width = match compact_volume {
+            true => VOLUME_TIGHT,
+            false => VOLUME_WIDTH,
+        };
+        if self.last_volume_width.replace(px(volume_width)) != Some(px(volume_width)) {
+            window.request_animation_frame();
+        }
+
         let show_track = span.fits(Room::Snug);
         let sides = match SidebarRight::available(window) {
             true => Some(self.side_buttons(cx)),
@@ -424,7 +451,7 @@ impl Render for PlayerBar {
             .into_any_element();
 
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let radius = crate::chrome::window_radius(self.settings.read(cx));
+        let radius = crate::chrome::window_radius(window, self.settings.read(cx));
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<Pixels> = None;
 
@@ -472,8 +499,18 @@ impl Render for PlayerBar {
                         .w_full()
                         .child(div().flex_1().min_w_0().child(seek))
                         .children(sides)
-                        .child(self.sound(px(VOLUME_TIGHT), cx))
-                        .child(self.fullscreen_button()),
+                        .child(self.sound(px(volume_width), cx))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_none()
+                                .items_center()
+                                .gap_1()
+                                .child(self.fullscreen_button())
+                                .when(show_os_fullscreen_btn, |this| {
+                                    this.child(self.os_fullscreen_button(window))
+                                }),
+                        ),
                 ),
             false => base
                 .items_center()
@@ -500,8 +537,18 @@ impl Render for PlayerBar {
                         .flex_1()
                         .min_w_0()
                         .children(sides)
-                        .child(self.sound(px(VOLUME_WIDTH), cx))
-                        .child(self.fullscreen_button()),
+                        .child(self.sound(px(volume_width), cx))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_none()
+                                .items_center()
+                                .gap_1()
+                                .child(self.fullscreen_button())
+                                .when(show_os_fullscreen_btn, |this| {
+                                    this.child(self.os_fullscreen_button(window))
+                                }),
+                        ),
                 ),
         };
 

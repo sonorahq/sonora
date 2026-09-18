@@ -239,6 +239,8 @@ player-previous = Previous track
 player-next = Next track
 player-fullscreen = Fullscreen
 player-fullscreen-leave = Leave fullscreen
+player-os-fullscreen = Enter OS fullscreen
+player-os-fullscreen-exit = Exit OS fullscreen
 fullscreen-artwork = Artwork
 
 # filters
@@ -491,6 +493,8 @@ settings-visualizer = Visualizer
 settings-visualizer-detail = Show spectrum bars behind fullscreen artwork
 settings-fullscreen-controls-autohide = Hide fullscreen controls
 settings-fullscreen-controls-autohide-detail = Fade out playback controls when fullscreen is inactive
+settings-show-os-fullscreen-btn = Show OS fullscreen button
+settings-show-os-fullscreen-btn-detail = Show the button to toggle system fullscreen mode
 settings-icons = Icon pack
 settings-icons-detail = Choose the icon set the interface draws from
 settings-motion = Reduce motion

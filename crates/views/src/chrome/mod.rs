@@ -24,13 +24,14 @@ use state::AppSettings;
 use ui::{ActiveTheme as _, MIN_CONTENT, Room, eyebrow};
 
 /// The window's own corner radius, or `None` when it shouldn't visibly round: server-side
-/// decorations put the compositor in charge of the frame, and `Rounding::Square` is the
-/// explicit off state. Windows applies its rounding through DWM instead (see
-/// `state::apply_window_rounding`), so this only matters for Linux/FreeBSD chrome that
-/// rounds its own corners to match — GPUI has no way to clip a subtree to a rounded parent.
+/// decorations put the compositor in charge of the frame, `Rounding::Square` is the
+/// explicit off state, and a fullscreen window always goes square no matter the setting.
+/// Windows applies its rounding through DWM instead (see `state::apply_window_rounding`),
+/// so this only matters for Linux/FreeBSD chrome that rounds its own corners to match —
+/// GPUI has no way to clip a subtree to a rounded parent.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub(crate) fn window_radius(settings: &AppSettings) -> Option<Pixels> {
-    if settings.server_side_decorations() {
+pub(crate) fn window_radius(window: &Window, settings: &AppSettings) -> Option<Pixels> {
+    if window.is_fullscreen() || settings.server_side_decorations() {
         return None;
     }
     match settings.window_rounding() {

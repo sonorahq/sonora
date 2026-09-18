@@ -271,6 +271,7 @@ impl SettingsView {
                 Row::Item(self.blur_row(cx).into_any_element()),
                 Row::Item(self.corners_row(cx).into_any_element()),
                 Row::Item(self.fullscreen_controls_autohide_row(cx).into_any_element()),
+                Row::Item(self.show_os_fullscreen_btn_row(cx).into_any_element()),
                 self.title("settings-group-lyrics", cx),
                 Row::Item(self.panel_lyrics_size_row(cx).into_any_element()),
                 Row::Item(self.fullscreen_lyrics_size_row(cx).into_any_element()),
@@ -1193,6 +1194,27 @@ impl SettingsView {
             muted,
             small,
             picker.into_any_element(),
+        )
+    }
+
+    fn show_os_fullscreen_btn_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).show_os_fullscreen_btn();
+
+        self.row(
+            t!("settings-show-os-fullscreen-btn"),
+            t!("settings-show-os-fullscreen-btn-detail"),
+            muted,
+            small,
+            Switch::new("show-os-fullscreen", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_show_os_fullscreen_btn(!on, cx)
+                    });
+                }))
+                .into_any_element(),
         )
     }
 

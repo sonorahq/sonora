@@ -418,7 +418,12 @@ impl LoginView {
 }
 
 impl Render for LoginView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))] window: &mut Window,
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))] _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let state = self.session.read(cx).state().clone();
         let pending = self.session.read(cx).is_pending();
         let providers: Vec<state::ProviderInfo> = self.session.read(cx).providers().collect();
@@ -504,7 +509,7 @@ impl Render for LoginView {
         let orphan = asking && guest.is_none();
 
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let radius = crate::chrome::window_radius(Sonora::global(cx).settings.read(cx));
+        let radius = crate::chrome::window_radius(window, Sonora::global(cx).settings.read(cx));
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<Pixels> = None;
 

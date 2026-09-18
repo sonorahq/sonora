@@ -618,7 +618,10 @@ impl Render for Root {
         // `Opaque`; Linux/FreeBSD round their own chrome directly instead, below.
         #[cfg(target_os = "windows")]
         {
-            let rounding = Sonora::global(cx).settings.read(cx).window_rounding();
+            let rounding = match window.is_fullscreen() {
+                true => ui::Rounding::Square,
+                false => Sonora::global(cx).settings.read(cx).window_rounding(),
+            };
             if self.rounded != Some(rounding) {
                 self.rounded = Some(rounding);
                 state::apply_window_rounding(window, rounding, cx);
@@ -631,7 +634,7 @@ impl Render for Root {
         // `PlayerBar` for the top and bottom edges. Rounding the root too keeps its own
         // background quad correct and costs nothing.
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let radius = crate::chrome::window_radius(Sonora::global(cx).settings.read(cx));
+        let radius = crate::chrome::window_radius(window, Sonora::global(cx).settings.read(cx));
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<gpui::Pixels> = None;
 

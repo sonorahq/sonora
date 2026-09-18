@@ -4,13 +4,13 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
-    AnyView, App, Bounds, Context, Entity, FocusHandle, FontWeight, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent,
-    SharedString, SpringState, Task,
+    AnyView, App, Bounds, ClickEvent, Context, Entity, FocusHandle, FontWeight, KeyDownEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render,
+    ScrollWheelEvent, SharedString, SpringState, Task,
 };
 use gpui::{Window, canvas, deferred, div, px, relative};
 use i18n::t;
-use input::{ToggleFullscreen, WORKSPACE_CONTEXT};
+use input::{ToggleFullscreen, ToggleWindowFullscreen, WORKSPACE_CONTEXT};
 use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
 use ui::{
@@ -613,10 +613,14 @@ impl FullscreenView {
         let inline = self.panel.is_none();
         let clear = match room.fits(Room::Roomy) {
             true => Pixels::ZERO,
-            false => theme.metrics.control_small,
+            false => match self.settings.read(cx).show_os_fullscreen_btn() {
+                true => theme.metrics.control_small * 2. + px(4.),
+                false => theme.metrics.control_small,
+            },
         };
 
         div()
+            .id("fullscreen-controls")
             .flex()
             .flex_col()
             .items_center()
@@ -624,6 +628,7 @@ impl FullscreenView {
             .w_full()
             .max_w(px(SEEK_MAX))
             .flex_none()
+            .on_click(|_, _, cx| cx.stop_propagation())
             .when(inline, |this| this.child(self.pill(cx)))
             .child(self.seek(cx))
             .child(
@@ -875,14 +880,16 @@ impl FullscreenView {
     fn leave(&self, idle: f32, window: &Window, cx: &App) -> impl IntoElement {
         let theme = *cx.theme();
 
+        let show_os_fullscreen_btn = self.settings.read(cx).show_os_fullscreen_btn();
+
         div()
             .absolute()
             .bottom(px(SINK) * -idle - px(LEAVE_DROP))
             .right_5()
             .h(snapped(theme.metrics.player_bar, window))
             .flex()
-            .flex_col()
-            .justify_center()
+            .items_center()
+            .gap_1()
             .opacity(1. - idle)
             .child(
                 Button::new("leave-fullscreen")
@@ -894,6 +901,24 @@ impl FullscreenView {
                         window.dispatch_action(Box::new(ToggleFullscreen), cx)
                     }),
             )
+            .when(show_os_fullscreen_btn, |this| {
+                this.child(
+                    Button::new("leave-os-fullscreen")
+                        .ghost()
+                        .small()
+                        .icon(match window.is_fullscreen() {
+                            true => "icons/minimize.svg",
+                            false => "icons/maximize.svg",
+                        })
+                        .tooltip_above(match window.is_fullscreen() {
+                            true => "player-os-fullscreen-exit",
+                            false => "player-os-fullscreen",
+                        })
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(ToggleWindowFullscreen), cx)
+                        }),
+                )
+            })
     }
 }
 
@@ -991,6 +1016,11 @@ impl Render for FullscreenView {
             .gap_5()
             .px_8()
             .pb_6()
+            .on_click(|event: &ClickEvent, window, cx| {
+                if event.click_count() == 2 {
+                    window.dispatch_action(Box::new(ToggleWindowFullscreen), cx);
+                }
+            })
             .on_mouse_move(cx.listener(Self::hover))
             .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, _, cx| this.poke(cx)))
             .on_scroll_wheel(cx.listener(|this, _: &ScrollWheelEvent, _, cx| this.poke(cx)))
@@ -1048,6 +1078,7 @@ impl Render for FullscreenView {
                     .when(self.panel.is_some(), |this| {
                         this.child(
                             div()
+                                .id("fullscreen-panel")
                                 .relative()
                                 .flex()
                                 .flex_col()
@@ -1055,6 +1086,7 @@ impl Render for FullscreenView {
                                 .min_w_0()
                                 .min_h_0()
                                 .h_full()
+                                .on_click(|_, _, cx| cx.stop_propagation())
                                 .child(self.aside.clone())
                                 .when(shown, |this| this.child(self.floating(hide, cx))),
                         )
