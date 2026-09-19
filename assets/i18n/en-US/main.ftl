@@ -811,6 +811,9 @@ settings-check-updates-detail = Ask GitHub once at startup whether a newer versi
 settings-log = Log file
 settings-log-detail = What Sonora wrote while running. Attach it to a bug report
 settings-log-open = Open log
+settings-log-size = Log size
+settings-log-size-detail = How large the log file may grow before Sonora starts a fresh one, keeping the previous file beside it
+settings-log-size-value = { $size } MiB
 
 # tags
 tags-edit-title = Edit tags

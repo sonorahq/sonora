@@ -69,6 +69,7 @@ const DISCORD_NAME: &str = "discord-name";
 const DISCORD_BUTTONS: &str = "discord-buttons";
 const MOTION: &str = "motion";
 const PACE: &str = "pace";
+const LOG_SIZE: &str = "log-size";
 const SAVER: &str = "saver";
 const SLEEP: &str = "sleep";
 const EQUALIZER_PRESETS: &str = "equalizer-presets";
@@ -178,6 +179,7 @@ enum Slot {
     Version,
     Updates,
     Log,
+    LogSize,
     License,
     Source,
 }
@@ -599,6 +601,7 @@ impl SettingsView {
                 Slot::Version,
                 Slot::Updates,
                 Slot::Log,
+                Slot::LogSize,
                 Slot::Title("settings-group-project"),
                 Slot::License,
                 Slot::Source,
@@ -770,6 +773,7 @@ impl SettingsView {
                 t!("settings-check-updates-detail"),
             ),
             Slot::Log => (t!("settings-log"), t!("settings-log-detail")),
+            Slot::LogSize => (t!("settings-log-size"), t!("settings-log-size-detail")),
             Slot::License => (t!("settings-license"), t!("settings-license-detail")),
             Slot::Source => (t!("settings-source"), t!("settings-source-detail")),
         };
@@ -903,6 +907,7 @@ impl SettingsView {
             Slot::Version => self.version_row(cx).element,
             Slot::Updates => self.updates_row(cx).element,
             Slot::Log => self.log_row(cx).element,
+            Slot::LogSize => self.log_size_row(cx).element,
             Slot::License => self.license_row(cx).element,
             Slot::Source => self.source_row(cx).element,
         }
@@ -2272,6 +2277,34 @@ impl SettingsView {
                     }
                 })
                 .into_any_element(),
+        )
+    }
+
+    fn log_size_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let current = self.settings.read(cx).log_size();
+        let label = |mib: u32| t!("settings-log-size-value", size = mib);
+
+        let picker = Picker::new(LOG_SIZE, &self.popovers, label(current))
+            .width(Picker::NARROW)
+            .items(state::LOG_SIZES.into_iter().map(|mib| {
+                MenuItem::new(SharedString::from(format!("log-size-{mib}")), label(mib))
+                    .selected(current == mib)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.settings
+                            .update(cx, |settings, cx| settings.set_log_size(mib, cx));
+                        cx.notify();
+                    }))
+            }));
+
+        self.row(
+            t!("settings-log-size"),
+            t!("settings-log-size-detail"),
+            muted,
+            small,
+            picker.into_any_element(),
         )
     }
 

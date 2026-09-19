@@ -20,6 +20,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The log file is now capped while Sonora runs, not only at startup, so a fault that logs
+  without end can no longer fill the disk. Settings > About > Log size picks the cap.
 - Add to queue and Play next now line tracks up right after the current one, ahead of the rest of
   the album or playlist, in the order you added them. The queue panel lists them under Next in
   queue, above what the album or playlist plays next.

@@ -285,7 +285,7 @@ construction, layout and scene assembly, never GPU fill.
 | OAuth redirect    | `http://127.0.0.1:8989/login`, override with `SONORA_REDIRECT_URI`                                                                |
 | Scrobble callback | `http://127.0.0.1:8990/scrobble` (Last.fm and Libre.fm)                                                                           |
 | Instance socket   | `sonora.sock`, `sonora-dev.sock` in debug builds, so `cargo run` starts beside an installed Sonora rather than handing over to it |
-| Log file          | `$XDG_STATE_HOME/sonora/sonora.log`, rotated to `.1` past 8 MiB                                                                   |
+| Log file          | `$XDG_STATE_HOME/sonora/sonora.log`, rotated to `.1` past the Log size setting (16 MiB by default)                                |
 | Console logging   | `RUST_LOG`; default filter `warn,symphonia=error,lofty=error`                                                                     |
 | File logging      | `SONORA_LOG`; default adds `sonora=debug,ui=debug`                                                                                |
 

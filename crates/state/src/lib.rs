@@ -36,7 +36,7 @@ pub use genre::{GenreDetails, Genres};
 pub use history::{History, HistoryState};
 pub use home::Home;
 pub use library::{Library, LibraryEvent, LibraryPart, LibraryState, Problem, Ready, Shelf};
-pub use logging::log_file;
+pub use logging::{LOG_SIZES, log_file, log_limit};
 pub use lyrics::{Lyrics, LyricsState};
 pub use pins::{PinSort, Pins};
 pub use playback::{Origin, Playback, PlaybackState, Repeat, Sleep, Whence};

@@ -27,6 +27,7 @@ use ui::{
     Layout, Look, Mode, Pace, Pin, Rounding, Saver, Sorting, Stillness, ThemeKind, ThemeOverrides,
 };
 
+use crate::logging;
 use crate::pins::PinSort;
 use crate::queue::{Resume, gap_target};
 use crate::{Repeat, Sonora};
@@ -291,6 +292,8 @@ struct Values {
     adaptive_menu: bool,
     check_updates: bool,
     close_to_tray: bool,
+    /// How large `sonora.log` may grow before it is rotated, in MiB.
+    log_size_mib: u32,
     language: String,
     #[serde(default = "system_font")]
     font: String,
@@ -376,6 +379,7 @@ impl Default for Values {
             adaptive_menu: false,
             check_updates: cfg!(target_os = "windows"),
             close_to_tray: true,
+            log_size_mib: logging::DEFAULT_LOG_SIZE,
             language: i18n::AUTO.to_owned(),
             font: system_font(),
             startup: DEFAULT_STARTUP.to_owned(),
@@ -592,6 +596,7 @@ impl AppSettings {
             }
         };
         values.version = SETTINGS_VERSION;
+        logging::set_log_limit(values.log_size_mib);
 
         Self {
             values,
@@ -721,6 +726,11 @@ impl AppSettings {
 
     pub fn close_to_tray(&self) -> bool {
         self.values.close_to_tray
+    }
+
+    /// The log size in MiB, clamped onto the ladder's range.
+    pub fn log_size(&self) -> u32 {
+        logging::clamp_log_size(self.values.log_size_mib)
     }
 
     /// Every linked scrobbling account, keyed by its service slug.
@@ -1076,6 +1086,17 @@ impl AppSettings {
 
     pub fn set_close_to_tray(&mut self, close_to_tray: bool, cx: &mut Context<Self>) {
         self.values.close_to_tray = close_to_tray;
+        self.schedule_save(cx);
+    }
+
+    /// Applies the new limit to the running logger as well, so it needs no restart.
+    pub fn set_log_size(&mut self, mib: u32, cx: &mut Context<Self>) {
+        let mib = logging::clamp_log_size(mib);
+        if self.values.log_size_mib == mib {
+            return;
+        }
+        self.values.log_size_mib = mib;
+        logging::set_log_limit(mib);
         self.schedule_save(cx);
     }
 
