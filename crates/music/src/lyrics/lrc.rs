@@ -65,9 +65,50 @@ const WIDE_MARKS: &[(char, char)] = &[
 ];
 
 pub fn parse(lrc: &str) -> Vec<LyricsLine> {
-    let mut lines: Vec<LyricsLine> = lrc.lines().flat_map(read).collect();
+    let mut shift = 0i64;
+    let mut lines: Vec<LyricsLine> = Vec::new();
+    for line in lrc.lines() {
+        if let Some(ms) = offset_of(line) {
+            shift += ms;
+            continue;
+        }
+        lines.extend(read(line));
+    }
+    if shift != 0 {
+        apply_shift(&mut lines, shift);
+    }
     normalize(&mut lines);
     lines
+}
+
+fn offset_of(line: &str) -> Option<i64> {
+    let rest = line.trim().strip_prefix('[')?;
+    let (tag, tail) = rest.split_once(']')?;
+    if !tail.trim().is_empty() {
+        return None;
+    }
+    let (name, value) = tag.split_once(':')?;
+    if !name.trim().eq_ignore_ascii_case("offset") {
+        return None;
+    }
+    value.trim().parse().ok()
+}
+
+fn apply_shift(lines: &mut [LyricsLine], ms: i64) {
+    let shift = |at: Duration| match ms >= 0 {
+        true => at.saturating_add(Duration::from_millis(ms as u64)),
+        false => at.saturating_sub(Duration::from_millis(ms.unsigned_abs())),
+    };
+    for line in lines {
+        line.start = shift(line.start);
+        line.end = line.end.map(shift);
+        if let Some(words) = line.words.as_mut() {
+            for word in words {
+                word.start = shift(word.start);
+                word.end = shift(word.end);
+            }
+        }
+    }
 }
 
 pub fn normalize(lines: &mut Vec<LyricsLine>) {

@@ -49,6 +49,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tracks it queued, instead of keeping a pause button over its cover.
 - Lyrics timed with hours, such as `[01:02:03.00]`, show at the right moment instead of being
   skipped.
+- An LRC `[offset:]` tag is applied to every line, so a sheet that starts a few hundred
+  milliseconds late or early stays in time.
 - Deezer playlists and favorites show the day they were added or last changed, instead of leaving
   the date column blank.
 - A Deezer song whose explicit flag arrives as a number still shows the explicit mark.
