@@ -21,7 +21,7 @@ pub fn track(song: Child, cover: Option<String>) -> Track {
         album_id: song.album_id.filter(|id| !id.is_empty()),
         cover,
         duration: Duration::from_secs(song.duration.unwrap_or(0).max(0) as u64),
-        added_at: None,
+        added_at: when(song.created.as_deref()),
         added_by: None,
         playcount: song.play_count.map(|count| count as u64),
         popularity: 0,
@@ -58,7 +58,7 @@ pub fn album(source: AlbumId3, cover: Option<String>, cover_large: Option<String
         },
         label: String::new(),
         copyrights: Vec::new(),
-        added_at: None,
+        added_at: when(source.created.as_deref()),
     }
 }
 
@@ -70,6 +70,7 @@ pub fn playlist(
     track_count: u32,
     cover: Option<String>,
     username: &str,
+    modified: Option<&str>,
 ) -> Playlist {
     let owner = owner.unwrap_or_default().to_owned();
     Playlist {
@@ -83,7 +84,7 @@ pub fn playlist(
         public,
         cover,
         track_count,
-        modified_at: None,
+        modified_at: when(modified),
     }
 }
 
@@ -92,7 +93,7 @@ pub fn saved_artist(source: &ArtistId3, cover: Option<String>) -> SavedArtist {
         id: source.id.clone(),
         name: source.name.clone(),
         cover,
-        added_at: None,
+        added_at: when(source.starred.as_deref()),
     }
 }
 
@@ -139,4 +140,59 @@ pub(crate) fn artists_of(
         }],
     };
     (name, refs)
+}
+
+/// An ISO-8601 stamp as seconds since the epoch. Subsonic writes them as `2011-08-20T19:14:18`
+/// and sometimes with a `Z` or a numeric offset.
+pub(crate) fn when(stamp: Option<&str>) -> Option<i64> {
+    datetime(stamp?)
+}
+
+fn datetime(stamp: &str) -> Option<i64> {
+    let stamp = stamp.trim();
+    let (date, time) = match stamp.split_once('T').or_else(|| stamp.split_once(' ')) {
+        Some((date, time)) => (date, time),
+        None => (stamp, ""),
+    };
+    let mut parts = date.split('-');
+    let year: i64 = parts.next()?.parse().ok()?;
+    let month: i64 = parts.next().unwrap_or("1").parse().unwrap_or(1);
+    let day: i64 = parts.next().unwrap_or("1").parse().unwrap_or(1);
+    let (time, zone) = zone_of(time.trim_end_matches('Z'));
+    let mut clock = time.split(':');
+    let hour: i64 = clock
+        .next()
+        .filter(|part| !part.is_empty())
+        .and_then(|hour| hour.parse().ok())
+        .unwrap_or(0);
+    let minute: i64 = clock.next().unwrap_or("0").parse().unwrap_or(0);
+    let second: i64 = clock
+        .next()
+        .and_then(|second| second.split('.').next())
+        .unwrap_or("0")
+        .parse()
+        .unwrap_or(0);
+    Some(days(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second - zone)
+}
+
+fn zone_of(time: &str) -> (&str, i64) {
+    let Some(at) = time.rfind(['+', '-']).filter(|&at| at > 0) else {
+        return (time, 0);
+    };
+    let (clock, zone) = time.split_at(at);
+    let sign = if zone.starts_with('-') { -1i64 } else { 1 };
+    let zone = zone.trim_start_matches(['+', '-']);
+    let mut parts = zone.split(':');
+    let hours: i64 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+    let minutes: i64 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+    (clock, sign * (hours * 3_600 + minutes * 60))
+}
+
+fn days(year: i64, month: i64, day: i64) -> i64 {
+    let year = year - i64::from(month <= 2);
+    let era = year.div_euclid(400);
+    let yoe = year - era * 400;
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }

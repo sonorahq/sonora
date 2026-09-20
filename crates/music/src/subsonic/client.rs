@@ -118,7 +118,7 @@ impl SubsonicClient {
             },
             label: String::new(),
             copyrights: Vec::new(),
-            added_at: None,
+            added_at: wire::when(detail.created.as_deref()),
         }
     }
 
@@ -135,6 +135,7 @@ impl SubsonicClient {
             source.song_count.unwrap_or(0).max(0) as u32,
             cover,
             &self.username,
+            source.changed.as_deref().or(source.created.as_deref()),
         )
     }
 
@@ -530,6 +531,7 @@ impl MusicApi for SubsonicClient {
             detail.song_count.unwrap_or(0).max(0) as u32,
             cover,
             &self.username,
+            detail.changed.as_deref().or(detail.created.as_deref()),
         );
         if playlist.track_count == 0 {
             playlist.track_count = tracks.len() as u32;
