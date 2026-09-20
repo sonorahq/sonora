@@ -65,6 +65,7 @@ const WIDE_MARKS: &[(char, char)] = &[
 ];
 
 pub fn parse(lrc: &str) -> Vec<LyricsLine> {
+    let lrc = lrc.trim_start_matches('\u{feff}');
     let mut lines: Vec<LyricsLine> = lrc.lines().flat_map(read).collect();
     normalize(&mut lines);
     lines

@@ -57,6 +57,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Lyrics files that start with a UTF-8 BOM keep their first line, instead of skipping it.
 - Signing in to Spotify works on accounts whose username holds a letter outside ASCII, such as
   an ö, instead of failing straight after authentication.
 - The fullscreen button works right after picking a language or a typeface in Settings, instead
