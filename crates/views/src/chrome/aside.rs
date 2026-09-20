@@ -958,7 +958,7 @@ impl Aside {
 
     fn verses(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
-        let position = self.playback.read(cx).live_position();
+        let position = self.playback.read(cx).heard_live();
         let singing = matches!(self.playback.read(cx).state(), PlaybackState::Playing);
         let lyrics = self.lyrics.read(cx);
         let state = lyrics.state().clone();
@@ -1560,7 +1560,7 @@ impl Aside {
     fn seek_lyrics(&mut self, position: std::time::Duration, cx: &mut Context<Self>) {
         self.anchor_verse();
         self.playback
-            .update(cx, |playback, cx| playback.seek(position, cx));
+            .update(cx, |playback, cx| playback.seek_heard(position, cx));
         cx.notify();
     }
 

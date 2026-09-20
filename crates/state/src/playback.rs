@@ -336,6 +336,9 @@ pub struct Playback {
     level: f32,
     normalisation: bool,
     gapless: bool,
+    /// How far behind the engine the sound actually is, worked out from the settings and the
+    /// output in use. Everything shown against the clock is pulled back by it.
+    latency: Duration,
     /// Shared with every engine started here, so a change reaches the output without a restart.
     equalizer: Equalizer,
     repeat: Repeat,
@@ -444,6 +447,7 @@ impl Playback {
         );
         let repeat = settings.read(cx).repeat();
         let radio = settings.read(cx).radio();
+        let latency = latency_of(settings.read(cx));
 
         Self {
             state: PlaybackState::Idle,
@@ -459,6 +463,7 @@ impl Playback {
             level,
             normalisation,
             gapless,
+            latency,
             equalizer,
             repeat,
             radio,
@@ -1811,7 +1816,7 @@ impl Playback {
         };
 
         let position = Duration::from_secs_f32(total.as_secs_f32() * fraction.clamp(0., 1.));
-        self.seek(position, cx);
+        self.seek_heard(position, cx);
     }
 
     pub fn state(&self) -> &PlaybackState {
@@ -1839,7 +1844,7 @@ impl Playback {
         self.track.as_ref()
     }
 
-    /// How far through the track `position` is, from 0 to 1.
+    /// How far through the track `heard` is, from 0 to 1.
     pub fn progress(&self) -> f32 {
         let Some(total) = self.track.as_ref().map(|track| track.duration) else {
             return 0.;
@@ -1847,7 +1852,50 @@ impl Playback {
         if total.is_zero() {
             return 0.;
         }
-        (self.position.as_secs_f32() / total.as_secs_f32()).clamp(0., 1.)
+        (self.heard().as_secs_f32() / total.as_secs_f32()).clamp(0., 1.)
+    }
+
+    /// Where the sound leaving the speakers is, as last reported. The seek bar, its clock and
+    /// the lyrics follow this rather than `position`, so a buffered output does not run ahead
+    /// of what is being heard.
+    pub fn heard(&self) -> Duration {
+        self.position.saturating_sub(self.latency)
+    }
+
+    /// The live counterpart of `heard`, for what has to move between the engine's reports.
+    pub fn heard_live(&self) -> Duration {
+        self.live_position().saturating_sub(self.latency)
+    }
+
+    /// Seeks so that `at` is what comes out of the speakers, which means asking the engine for
+    /// a point one latency further on. Everything the user aims at — a spot on the seek bar, a
+    /// line of lyrics — is a heard position.
+    pub fn seek_heard(&mut self, at: Duration, cx: &mut Context<Self>) {
+        self.seek(at.saturating_add(self.latency), cx);
+    }
+
+    /// Works the latency out again, after the settings changed or the output moved to another
+    /// device. Nothing is asked of CoreAudio between these.
+    fn refresh_latency(&mut self, cx: &mut Context<Self>) {
+        let latency = latency_of(self.settings.read(cx));
+        if self.latency == latency {
+            return;
+        }
+        log::debug!("playback: output latency is now {latency:?}");
+        self.latency = latency;
+        cx.notify();
+    }
+
+    pub fn set_output_latency(&mut self, latency: Duration, cx: &mut Context<Self>) {
+        self.settings
+            .update(cx, |settings, cx| settings.set_output_latency(latency, cx));
+        self.refresh_latency(cx);
+    }
+
+    pub fn set_airplay_latency(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.settings
+            .update(cx, |settings, cx| settings.set_airplay_latency(on, cx));
+        self.refresh_latency(cx);
     }
 
     pub fn is_loading(&self) -> bool {
@@ -2131,7 +2179,10 @@ impl Playback {
             }
         }
         match event {
-            BackendEvent::OutputChanged => self.restart_output(cx),
+            BackendEvent::OutputChanged => {
+                self.refresh_latency(cx);
+                self.restart_output(cx);
+            }
             BackendEvent::Unavailable { .. } | BackendEvent::Refused if self.resume_ready => {
                 self.resume_ready = false;
                 self.state = PlaybackState::Paused;
@@ -2359,6 +2410,15 @@ fn unheard(tracks: &mut Vec<Track>, heard: &HashSet<String>) {
                 .as_ref()
                 .is_some_and(|id| !heard.contains(id.as_str()))
     });
+}
+
+/// How far behind the engine the sound is. A detected AirPlay output stands in for the manual
+/// offset rather than adding to it: its delay is the receiver's own, not something to tune.
+fn latency_of(settings: &AppSettings) -> Duration {
+    match settings.airplay_latency() && music::airplay::engaged() {
+        true => music::airplay::LATENCY,
+        false => settings.output_latency(),
+    }
 }
 
 fn song_target(track: &Track) -> Option<Target> {

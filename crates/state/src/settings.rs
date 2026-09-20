@@ -246,6 +246,9 @@ const DEFAULT_SIDEBAR_RIGHT_WIDTH: f32 = 254.;
 const DEFAULT_FONT_SIZE: f32 = 14.;
 const DEFAULT_LYRICS_SCALE: f32 = 1.;
 const DEFAULT_STARTUP: &str = "home";
+/// The longest output delay that can be dialled in. AirPlay's two seconds is the worst of the
+/// common ones; the rest is headroom for a slow receiver.
+pub const MAX_OUTPUT_LATENCY: Duration = Duration::from_secs(5);
 /// "Whatever the platform uses".
 pub const SYSTEM_FONT: &str = "auto";
 
@@ -270,6 +273,12 @@ struct Values {
     /// turning it back on restores the curve.
     equalizer_bands: Vec<f32>,
     sleep_timer: bool,
+    /// How far behind the engine the output plays, in milliseconds. Everything shown against
+    /// the clock is pulled back by it.
+    output_latency: u64,
+    /// Whether an AirPlay output is detected and given its own delay in place of the manual
+    /// one. macOS only; nothing else can be asked.
+    airplay_latency: bool,
     discord_presence: bool,
     discord_name: DiscordName,
     discord_show_paused: bool,
@@ -348,6 +357,8 @@ impl Default for Values {
             equalizer: false,
             equalizer_bands: vec![0.; equalizer::BANDS],
             sleep_timer: false,
+            output_latency: 0,
+            airplay_latency: true,
             discord_presence: false,
             discord_name: DiscordName::Sonora,
             discord_show_paused: false,
@@ -603,6 +614,16 @@ impl AppSettings {
 
     pub fn equalizer(&self) -> bool {
         self.values.equalizer
+    }
+
+    /// The delay the user dialled in, clamped into range so a hand-edited file cannot park
+    /// the clock minutes behind the music.
+    pub fn output_latency(&self) -> Duration {
+        Duration::from_millis(self.values.output_latency).min(MAX_OUTPUT_LATENCY)
+    }
+
+    pub fn airplay_latency(&self) -> bool {
+        self.values.airplay_latency
     }
 
     /// The stored curve, padded flat or cut to the band count and clamped into range, so a file
@@ -938,6 +959,16 @@ impl AppSettings {
 
     pub fn set_gapless(&mut self, gapless: bool, cx: &mut Context<Self>) {
         self.values.gapless = gapless;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_output_latency(&mut self, latency: Duration, cx: &mut Context<Self>) {
+        self.values.output_latency = latency.min(MAX_OUTPUT_LATENCY).as_millis() as u64;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_airplay_latency(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.values.airplay_latency = on;
         self.schedule_save(cx);
     }
 

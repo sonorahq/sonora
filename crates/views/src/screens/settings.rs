@@ -22,8 +22,9 @@ use music::scrobble::{Link, Secret};
 use music::{AccountChoice, SignIn, SignInPrompt, WritingSystem};
 use router::{Destination, NavEntry, Screen, SettingsTab, navigate};
 use state::{
-    AppSettings, CdmState, DiscordName, Drm, Failure, FullscreenControlsAutohide, Io, Playback,
-    SYSTEM_FONT, Scan, ScrobbleState, Scrobbling, Session, SessionState, Sleep, Sonora,
+    AppSettings, CdmState, DiscordName, Drm, Failure, FullscreenControlsAutohide, Io,
+    MAX_OUTPUT_LATENCY, Playback, SYSTEM_FONT, Scan, ScrobbleState, Scrobbling, Session,
+    SessionState, Sleep, Sonora,
 };
 use ui::{ActiveTheme as _, Deck, LEADING, Scrollbar, Scroller, eyebrow, snapped};
 use ui::{
@@ -74,6 +75,8 @@ const SLEEP: &str = "sleep";
 const EQUALIZER_PRESETS: &str = "equalizer-presets";
 // the step a dragged band snaps to, in decibels
 const EQUALIZER_STEP: f32 = 0.5;
+// the step a dragged output latency snaps to
+const LATENCY_STEP: Duration = Duration::from_millis(50);
 const SLEEP_MAX_MINUTES: u64 = 120;
 const SLEEP_MAGNETS: [u64; 4] = [15, 30, 45, 60];
 const SLEEP_MAGNET_WEIGHT: usize = 4;
@@ -160,6 +163,9 @@ enum Slot {
     Normalisation,
     Gapless,
     Sleep,
+    OutputLatency,
+    #[cfg(target_os = "macos")]
+    AirplayLatency,
     Widevine,
     Equalizer,
     EqualizerPreset,
@@ -296,6 +302,7 @@ pub struct SettingsView {
     scrollbar: Entity<Scrollbar>,
     opacity: ScrubberState,
     sleep: ScrubberState,
+    latency: ScrubberState,
     /// One slider per equalizer band, lowest first.
     bands: Vec<ScrubberState>,
     pending_sleep: Option<Option<Sleep>>,
@@ -394,6 +401,7 @@ impl SettingsView {
             scrollbar: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(me)),
             opacity: ScrubberState::new("opacity"),
             sleep: ScrubberState::new("sleep"),
+            latency: ScrubberState::new("output-latency"),
             bands: (0..equalizer::BANDS)
                 .map(|band| ScrubberState::new(format!("equalizer-band-{band}")))
                 .collect(),
@@ -577,7 +585,14 @@ impl SettingsView {
                 if self.drm.read(cx).shown(cx) {
                     slots.push(Slot::Widevine);
                 }
-                slots.extend([Slot::Title("settings-group-equalizer"), Slot::Equalizer]);
+                slots.extend([
+                    Slot::Title("settings-group-latency"),
+                    Slot::OutputLatency,
+                    #[cfg(target_os = "macos")]
+                    Slot::AirplayLatency,
+                    Slot::Title("settings-group-equalizer"),
+                    Slot::Equalizer,
+                ]);
                 if self.playback.read(cx).equalizer() {
                     slots.push(Slot::EqualizerPreset);
                     slots.push(Slot::EqualizerBands);
@@ -710,6 +725,15 @@ impl SettingsView {
             ),
             Slot::Gapless => (t!("settings-gapless"), t!("settings-gapless-detail")),
             Slot::Sleep => (t!("settings-sleep"), t!("settings-sleep-detail")),
+            Slot::OutputLatency => (
+                t!("settings-output-latency"),
+                t!("settings-output-latency-detail"),
+            ),
+            #[cfg(target_os = "macos")]
+            Slot::AirplayLatency => (
+                t!("settings-airplay-latency"),
+                t!("settings-airplay-latency-detail"),
+            ),
             Slot::Widevine => {
                 let (detail, _) = widevine_copy(self.drm.read(cx).state());
                 (t!("settings-widevine"), i18n::lookup(detail, None))
@@ -894,6 +918,9 @@ impl SettingsView {
             Slot::Normalisation => self.playback_row(cx).element,
             Slot::Gapless => self.gapless_row(cx).element,
             Slot::Sleep => self.sleep_row(cx).element,
+            Slot::OutputLatency => self.output_latency_row(cx).element,
+            #[cfg(target_os = "macos")]
+            Slot::AirplayLatency => self.airplay_latency_row(cx).element,
             Slot::Widevine => self.widevine_row(cx).element,
             Slot::Equalizer => self.equalizer_row(cx).element,
             Slot::EqualizerPreset => self.equalizer_preset_row(cx).element,
@@ -1967,6 +1994,72 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.playback
                         .update(cx, |playback, cx| playback.set_gapless(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn output_latency_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let latency = self.settings.read(cx).output_latency();
+        let value = latency.as_secs_f32() / MAX_OUTPUT_LATENCY.as_secs_f32();
+        let shown = format!("{:.2}", latency.as_secs_f32());
+
+        let control = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div().w(theme.metrics.cover).child(
+                    Scrubber::new(&self.latency, value)
+                        .colors(theme.progress_bar, theme.muted, theme.foreground)
+                        .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
+                            let latency = snapped_latency(*fraction);
+                            this.playback.update(cx, |playback, cx| {
+                                playback.set_output_latency(latency, cx);
+                            });
+                        })),
+                ),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .w(theme.metrics.control * 1.5)
+                    .whitespace_nowrap()
+                    .text_right()
+                    .child(t!(
+                        "settings-output-latency-value",
+                        seconds = shown.as_str()
+                    )),
+            );
+
+        self.row(
+            t!("settings-output-latency"),
+            t!("settings-output-latency-detail"),
+            muted,
+            small,
+            control.into_any_element(),
+        )
+    }
+
+    #[cfg(target_os = "macos")]
+    fn airplay_latency_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).airplay_latency();
+
+        self.row(
+            t!("settings-airplay-latency"),
+            t!("settings-airplay-latency-detail"),
+            muted,
+            small,
+            Switch::new("airplay-latency", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.playback
+                        .update(cx, |playback, cx| playback.set_airplay_latency(!on, cx));
                 }))
                 .into_any_element(),
         )
@@ -4269,6 +4362,13 @@ fn usable_fonts(text_system: std::sync::Arc<gpui::TextSystem>) -> Vec<SharedStri
         .filter(|name| !name.starts_with('.'))
         .map(SharedString::from)
         .collect()
+}
+
+/// Where along the slider a drag lands, snapped to `LATENCY_STEP` so a value can be hit again.
+fn snapped_latency(fraction: f32) -> Duration {
+    let steps = MAX_OUTPUT_LATENCY.as_secs_f32() / LATENCY_STEP.as_secs_f32();
+    let step = (fraction.clamp(0., 1.) * steps).round();
+    LATENCY_STEP.mul_f32(step)
 }
 
 fn sleep_slot(sleep: Option<Sleep>) -> usize {
