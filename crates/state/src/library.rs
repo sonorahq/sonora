@@ -959,7 +959,7 @@ impl Library {
                     items.as_ref().is_some_and(|items| items
                         .iter()
                         .any(|item| item.uri == uri && item.pinned == pinned)),
-                    "Spotify did not confirm the updated library pin"
+                    "the provider did not confirm the updated library pin"
                 );
                 Ok((result, items))
             }))

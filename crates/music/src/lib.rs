@@ -390,7 +390,7 @@ pub struct Capabilities {
 impl Capabilities {
     /// What a full streaming service offers. A library apart from favorites is not among
     /// them: on most services the two are one thing. We love Apple Music. Pins of the
-    /// provider's own are not either, since only Spotify keeps any.
+    /// provider's own are not either, since only Spotify and Apple Music keep any.
     pub const ALL: Self = Self {
         follow_artists: true,
         radio: true,

@@ -96,14 +96,16 @@ fn session(client: AppleClient, profile: crate::UserProfile) -> ProviderSession 
         shape: Shape::Catalog,
         authenticated: true,
         // Apple keeps no play counts. Stations it does have, through the same endpoint the web
-        // player's autoplay uses; an artist can be favorited like anything else; and the
-        // library is its own thing, which songs and albums are added to apart from the star.
+        // player's autoplay uses; an artist can be favorited like anything else; the
+        // library is its own thing, which songs and albums are added to apart from the star,
+        // and pins live behind `me/library/pins`.
         // A favorited song still lands in it, through the account's Add Favorite Songs to
         // Library setting, which is on by default.
         capabilities: Capabilities {
             radio: true,
             follow_artists: true,
             library: true,
+            pins: true,
             ..Capabilities::NONE
         },
     }

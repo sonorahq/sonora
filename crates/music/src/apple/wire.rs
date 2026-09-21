@@ -459,6 +459,20 @@ pub fn library_item(value: &Value, owner: &str) -> Option<LibraryItem> {
     })
 }
 
+/// The library ids of the listener's pinned items, in pin order. Only the `data`
+/// references are read; the listings already carry what a sidebar row shows.
+pub fn pin_ids(value: &Value) -> Vec<String> {
+    value
+        .get("data")
+        .and_then(Value::as_array)
+        .map(|refs| {
+            refs.iter()
+                .filter_map(|pin| pin.get("id")?.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
