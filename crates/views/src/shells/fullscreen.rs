@@ -622,7 +622,7 @@ impl FullscreenView {
         let playback = self.playback.read(cx);
         let seekable = playback.track().is_some();
         let progress = self.pending.unwrap_or_else(|| playback.progress());
-        let elapsed = playback.position();
+        let elapsed = playback.heard();
         let total = playback
             .track()
             .map(|track| track.duration)

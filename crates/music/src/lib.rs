@@ -1,3 +1,4 @@
+pub mod airplay;
 pub mod apple;
 mod audio;
 pub mod binimum;

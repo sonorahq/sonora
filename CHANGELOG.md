@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- An output delay under Settings > Playback pulls the seek bar and the lyrics back to match a
+  speaker that plays late. On macOS, Sonora recognises an AirPlay output and uses its own two
+  seconds while it lasts; that detection can be switched off.
+
 ### Changed
 
 - An artist page opens as soon as their profile and popular tracks arrive, and fills its
