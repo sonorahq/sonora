@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Hovering over an unavailable theme explains why it can't be selected.
+- Songs, Albums, Artists and Playlists options of "Show on startup" setting are disabled for guests,
+  since they are empty and may be confused with Local Music sections.
+
 ## [0.38.0] - 2026-09-20
 
 ### Added

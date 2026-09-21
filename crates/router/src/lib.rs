@@ -113,6 +113,19 @@ impl Screen {
         Self::ALL.into_iter().find(|screen| screen.id() == id)
     }
 
+    pub fn needs_account(self) -> bool {
+        match self {
+            Self::Home => false,
+            Self::Search => false,
+            Self::History => false,
+            Self::Songs => true,
+            Self::Albums => true,
+            Self::Playlists => true,
+            Self::Artists => true,
+            Self::Imported => false,
+        }
+    }
+
     pub fn destination(self) -> Destination {
         match self {
             Self::Home => Destination::Home,

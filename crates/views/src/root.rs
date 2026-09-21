@@ -5,11 +5,11 @@ use input::{
     CloseWindow, MinimizeWindow, NavigateBack, NavigateForward, OpenFilter, OpenSearch,
     OpenSettings, ToggleFullscreen, ToggleLyrics, ToggleQueue, ToggleWindowFullscreen, ZoomWindow,
 };
-use router::{Destination, NavigationEvent, SettingsTab, back, forward, navigate};
+use router::{Destination, NavigationEvent, Screen, SettingsTab, back, forward, navigate};
 use state::{
     ArtistDetail, Detail, GenreDetails, Genres, Home, Io, Library, Network, Playback, Profile,
-    Queue, Reconnected, SYSTEM_FONT, Scan, Search, Session, SessionState, Shelf, SideTab,
-    SongDetail, Sonora,
+    Queue, Reconnected, SYSTEM_FONT, Scan, Search, Session, SessionEvent, SessionState, Shelf,
+    SideTab, SongDetail, Sonora,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ui::WindowFrame;
@@ -109,6 +109,25 @@ impl Root {
                 this.screens.playlist_detail = None;
             }
             cx.notify();
+        })
+        .detach();
+
+        cx.subscribe(&session, |_, session, event, cx| {
+            if matches!(event, SessionEvent::SignedIn) && !session.read(cx).authenticated() {
+                let settings = Sonora::global(cx).settings.clone();
+                let startup = settings.read(cx).startup().to_owned();
+                if Screen::from_id(&startup).is_some_and(Screen::needs_account) {
+                    settings.update(cx, |settings, cx| {
+                        settings.set_startup(Screen::Home.id(), cx);
+                    });
+                }
+                if matches!(
+                    router::trail(cx).read(cx).current(),
+                    Destination::Library(_)
+                ) {
+                    navigate(Destination::Home, cx);
+                }
+            }
         })
         .detach();
 
