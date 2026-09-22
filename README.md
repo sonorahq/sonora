@@ -116,6 +116,23 @@ information, so [AppImageUpdate](https://github.com/AppImageCommunity/AppImageUp
 AppImage manager such as [AppManager](https://github.com/kem-a/AppManager) can fetch a new release
 for you.
 
+#### Snap
+
+```sh
+sudo snap install sonora
+```
+
+An `arm64` build is published beside the `amd64` one, and the `.snap` files are attached to every
+release for installing without the store (`snap install --dangerous ./sonora-*.snap`). Local music
+on an external drive needs one connection the store does not make for you:
+
+```sh
+sudo snap connect sonora:removable-media
+```
+
+Discord Rich Presence does not work under snap confinement, and neither does the Widevine module
+some providers need for playback; the Flatpak has both.
+
 ### Nix
 
 The flake packages the latest tagged release binary or builds from source if unavailable for your platform.

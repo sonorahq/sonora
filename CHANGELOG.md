@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Sonora is packaged as a snap, for x86-64 and ARM64, alongside the AppImage and the Flatpak.
+
 ### Changed
 
 - An artist page opens as soon as their profile and popular tracks arrive, and fills its

@@ -441,6 +441,12 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  # The snap has a workflow of its own so it can be built without running the release;
+  # on a tag the release calls that same definition, the way it calls announce.
+  snap:
+    uses: ./.github/workflows/snap.yml
+    secrets: inherit
+
   # Build flatpak, see: https://github.com/flatpak/flatpak-github-actions
   flatpak:
     name: "Flatpak (${{ matrix.variant.arch }})"
@@ -586,7 +592,7 @@ jobs:
           git push --force "https://x-access-token:$TOKEN@github.com/$GITHUB_REPOSITORY" flatpak-repo
 
   release:
-    needs: [build, bundle, appimage, flatpak, flatpak-repo]
+    needs: [build, bundle, appimage, snap, flatpak, flatpak-repo]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:

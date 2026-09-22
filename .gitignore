@@ -10,3 +10,7 @@ __pycache__/
 /flatpak/*.flatpak
 /flatpak/flatpak
 /.flatpak-builder
+/*.snap
+/parts
+/stage
+/prime
