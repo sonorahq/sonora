@@ -208,10 +208,14 @@ impl YouTubeProvider {
         }
     }
 
-    /// Clears whatever was stored when a guest session starts. A guest run holds no account
-    /// and nothing worth keeping, so it leaves nothing behind for the next launch either.
-    fn drop_stored(&self) {
-        credentials::remove(&self.credentials);
+    /// Records that the user chose to listen as a guest, so the next launch restores that
+    /// instead of asking again. The rotating cookie store goes with it, since a guest client
+    /// never reads one.
+    fn store_guest(&self) {
+        credentials::remove(&self.cookies);
+        if let Err(error) = self.save(&Saved::Guest) {
+            log::warn!("youtube: cannot remember the guest session: {error:#}");
+        }
     }
 }
 
@@ -297,7 +301,7 @@ impl MusicProvider for YouTubeProvider {
     ) -> Result<ProviderSession> {
         match method {
             SignIn::Anonymous | SignIn::Default => {
-                self.drop_stored();
+                self.store_guest();
                 Ok(self.guest_session(self.guest_client()))
             }
             SignIn::Secret => {
