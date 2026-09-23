@@ -245,6 +245,8 @@ const DEFAULT_SIDEBAR_WIDTH: f32 = 195.;
 const DEFAULT_SIDEBAR_RIGHT_WIDTH: f32 = 254.;
 const DEFAULT_FONT_SIZE: f32 = 14.;
 const DEFAULT_LYRICS_SCALE: f32 = 1.;
+/// The most particles the starry stage sheds. The stepper in settings steps to this too.
+pub const MAX_PARTICLES: usize = 1024;
 const DEFAULT_STARTUP: &str = "home";
 /// "Whatever the platform uses".
 pub const SYSTEM_FONT: &str = "auto";
@@ -314,6 +316,14 @@ struct Appearance {
     adaptive_theme: bool,
     ambient: bool,
     ambient_motion: bool,
+    /// Whether the fullscreen stage is on — the on bit of `stage_style`, kept
+    /// so an old settings file keeps its answer.
+    starry: bool,
+    /// The record choice from before the stage styles were one setting, read
+    /// only while `stage_style` is still empty.
+    vinyl: bool,
+    particles: usize,
+    stage_style: String,
     visualizer: bool,
     visualizer_style: String,
     icons: String,
@@ -508,6 +518,10 @@ impl Default for Appearance {
             adaptive_theme: true,
             ambient: true,
             ambient_motion: true,
+            starry: false,
+            vinyl: true,
+            particles: 36,
+            stage_style: String::new(),
             visualizer: true,
             visualizer_style: ui::VisualizerStyle::default().id().to_owned(),
             icons: icons::BASE.to_owned(),
@@ -799,6 +813,27 @@ impl AppSettings {
     /// the system reduce-motion preference does too.
     pub fn ambient_motion(&self) -> bool {
         self.values.appearance.ambient_motion
+    }
+
+    /// How fullscreen stages the cover. The old `starry` switch is still the
+    /// on bit and the old `vinyl` switch the record choice, so a settings file
+    /// written before the three were one setting keeps its answers.
+    pub fn stage_style(&self) -> ui::StageStyle {
+        match self.values.appearance.starry {
+            false => ui::StageStyle::Cover,
+            true => match self.values.appearance.stage_style.as_str() {
+                "" => match self.values.appearance.vinyl {
+                    true => ui::StageStyle::Vinyl,
+                    false => ui::StageStyle::Starry,
+                },
+                id => ui::StageStyle::from_id(id),
+            },
+        }
+    }
+
+    /// How many particles drift off the cover in the starry stage.
+    pub fn particles(&self) -> usize {
+        self.values.appearance.particles.min(MAX_PARTICLES)
     }
 
     /// Whether the playing cover should colour the theme, given whether fullscreen is up. The
@@ -1405,6 +1440,21 @@ impl AppSettings {
 
     pub fn set_ambient_motion(&mut self, motion: bool, cx: &mut Context<Self>) {
         self.values.appearance.ambient_motion = motion;
+        self.schedule_save(cx);
+    }
+
+    /// Picking a style turns the stage on; picking `Cover` turns it off and
+    /// leaves the style behind it alone, so the old choice comes back with it.
+    pub fn set_stage_style(&mut self, style: ui::StageStyle, cx: &mut Context<Self>) {
+        self.values.appearance.starry = style.shown();
+        if style.shown() {
+            self.values.appearance.stage_style = style.id().to_owned();
+        }
+        self.schedule_save(cx);
+    }
+
+    pub fn set_particles(&mut self, particles: usize, cx: &mut Context<Self>) {
+        self.values.appearance.particles = particles.clamp(0, MAX_PARTICLES);
         self.schedule_save(cx);
     }
 

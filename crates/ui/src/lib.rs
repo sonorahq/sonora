@@ -34,6 +34,7 @@ mod scrubber;
 mod separator;
 mod shield;
 mod skeleton;
+mod stage;
 mod switch;
 mod table;
 mod tabs;
@@ -99,6 +100,7 @@ pub use scrubber::{Scrubber, ScrubberState};
 pub use separator::Separator;
 pub use shield::Shield;
 pub use skeleton::{Initials, Skeleton};
+pub use stage::StageStyle;
 pub use switch::Switch;
 pub use table::{
     Activate, Cell, ColumnSpec, Deselect, Layout, Listing, ROW_GROUP, Remove, SelectNext,

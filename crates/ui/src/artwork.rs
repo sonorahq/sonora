@@ -6,14 +6,15 @@ use futures::AsyncReadExt as _;
 use gpui::prelude::*;
 use gpui::{
     App, Asset, AssetLogger, Context, Div, ElementId, Entity, Global, Hsla, ImageCache,
-    ImageCacheError, ImageSource, Interactivity, ObjectFit, Pixels, RenderImage, Resource,
+    ImageCacheError, ImageId, ImageSource, Interactivity, ObjectFit, Pixels, RenderImage, Resource,
     SharedString, SharedUri, StyleRefinement, Styled, Task, Window, div, img, px, svg,
 };
 use image::{
-    AnimationDecoder, DynamicImage, Frame, ImageDecoder, ImageFormat, RgbaImage,
+    AnimationDecoder, DynamicImage, Frame, ImageDecoder, ImageFormat, Rgba, RgbaImage,
     codecs::{gif::GifDecoder, webp::WebPDecoder},
     imageops,
 };
+use std::collections::VecDeque;
 use std::io::Cursor;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -49,6 +50,19 @@ const REPRIEVE: Duration = Duration::from_millis(250);
 /// nothing beside the frames, and holding them past an eviction is what keeps a
 /// button its colour while its cover is decoded again.
 const TINT_ITEMS: usize = 4096;
+/// A turned cover is cut this many times per revolution — one degree, finer
+/// than the eye follows at the speed a record turns — and this many cuts are
+/// kept. Holding them is cheaper than making them again, and the handful covers
+/// a second of turning, long past the frame that last showed the oldest.
+const TURN_STEPS: u32 = 360;
+const TURN_HELD: usize = 24;
+/// A cut is made from a copy no larger than this on a side. The cost of a turn
+/// is the square of the edge, and a cover in motion hides detail a still one
+/// would not.
+const TURN_EDGE: u32 = 384;
+/// How many covers may be held mid-turn at once. Only the fullscreen record
+/// turns, but a scroll past it would otherwise leave a base behind per cover.
+const TURN_COVERS: usize = 4;
 
 type ArtworkKey = (Resource, u32);
 
@@ -244,8 +258,22 @@ struct ArtworkCache {
     /// The palette of every cover decoded this run, kept apart from the frames
     /// so an eviction never costs a button its colour.
     tints: HashMap<Resource, CoverPalette>,
+    /// The covers being turned, kept apart from `items` like `soft` is: a cut
+    /// is a frame of its own, and an eviction should not cost the record its
+    /// pose.
+    turns: HashMap<ArtworkKey, Turned>,
     bytes: usize,
     _sweep: Task<()>,
+}
+
+/// One cover being turned: the square every cut is taken from, and the cuts
+/// taken from it so far.
+struct Turned {
+    /// The frames the square was taken from, so a cover decoded again — or
+    /// softened, or sampled at another edge — is cut anew.
+    of: ImageId,
+    base: RgbaImage,
+    held: VecDeque<(u32, Arc<RenderImage>)>,
 }
 
 struct Installed(Entity<ArtworkCache>);
@@ -263,6 +291,7 @@ impl ArtworkCache {
                 pending: HashMap::new(),
                 soft: HashMap::new(),
                 tints: HashMap::new(),
+                turns: HashMap::new(),
                 bytes: 0,
                 _sweep: sweeper(cx),
             });
@@ -463,6 +492,7 @@ impl ArtworkCache {
         for resource in &stale {
             self.condemn(resource);
         }
+        self.trim_turns();
         if !stale.is_empty() {
             self.condemned_at = Some(Instant::now());
             cx.refresh_windows();
@@ -583,6 +613,152 @@ impl ArtworkCache {
         self.insert(key, value.clone(), cx);
         Some(value)
     }
+
+    /// The cover turned by `turns` of a revolution about its own centre. The
+    /// renderer has no rotation for images, so a turn is cut on the CPU from
+    /// the decoded frames and handed back as a frame of its own; cuts are held
+    /// per degree, and only as many as the record is passing through.
+    fn turned(
+        &mut self,
+        key: &ArtworkKey,
+        image: &Arc<RenderImage>,
+        turns: f32,
+    ) -> Arc<RenderImage> {
+        let step = ((turns - turns.floor()) * TURN_STEPS as f32) as u32 % TURN_STEPS;
+        if self
+            .turns
+            .get(key)
+            .is_none_or(|turned| turned.of != image.id)
+        {
+            let Some(turned) = Turned::of(image) else {
+                log::warn!("artwork: cannot turn a cover");
+                return image.clone();
+            };
+            self.turns.insert(key.clone(), turned);
+        }
+        let turned = self.turns.get_mut(key).expect("held above");
+        if let Some(found) = turned.held.iter().find(|(at, _)| *at == step) {
+            return found.1.clone();
+        }
+
+        let Some(cut) = cut(image, &turned.base, step) else {
+            log::warn!("artwork: cannot cut a turn");
+            return image.clone();
+        };
+        if turned.held.len() >= TURN_HELD {
+            turned.held.pop_front();
+        }
+        turned.held.push_back((step, cut.clone()));
+        cut
+    }
+
+    /// Keeps the covers mid-turn to those still held, then to those still worth
+    /// holding. A cut is cheap to rebuild and dear to keep, so a cover that has
+    /// left the cache takes its turns with it.
+    fn trim_turns(&mut self) {
+        if self.turns.len() <= TURN_COVERS {
+            return;
+        }
+        self.turns.retain(|key, _| self.items.contains_key(key));
+        while self.turns.len() > TURN_COVERS {
+            let Some(key) = self.turns.keys().next().cloned() else {
+                break;
+            };
+            self.turns.remove(&key);
+        }
+    }
+}
+
+impl Turned {
+    /// The square a cover's turns are cut from: centred, and no larger than
+    /// `TURN_EDGE` however large the cover was decoded.
+    fn of(image: &RenderImage) -> Option<Self> {
+        let size = image.size(0);
+        let (width, height) = (size.width.0.max(0) as u32, size.height.0.max(0) as u32);
+        let bytes = image.as_bytes(0)?.to_vec();
+        let whole = RgbaImage::from_raw(width, height, bytes)?;
+
+        let side = width.min(height);
+        let square =
+            imageops::crop_imm(&whole, (width - side) / 2, (height - side) / 2, side, side)
+                .to_image();
+        let base = match side > TURN_EDGE {
+            true => imageops::thumbnail(&square, TURN_EDGE, TURN_EDGE),
+            false => square,
+        };
+
+        Some(Self {
+            of: image.id,
+            base,
+            held: VecDeque::new(),
+        })
+    }
+}
+
+/// Cuts `base` turned by `step` of `TURN_STEPS` about its centre, masked to a
+/// circle. A square turned about its centre leaves its corners behind, and the
+/// record's label is round, so the mask costs a comparison a pixel and hides
+/// what a turn would otherwise show.
+fn cut(image: &RenderImage, base: &RgbaImage, step: u32) -> Option<Arc<RenderImage>> {
+    let (edge, _) = base.dimensions();
+    if edge == 0 {
+        return None;
+    }
+    let (sin, cos) = (std::f32::consts::TAU * step as f32 / TURN_STEPS as f32).sin_cos();
+    let middle = edge as f32 / 2.;
+
+    let mut turned = RgbaImage::new(edge, edge);
+    for y in 0..edge {
+        for x in 0..edge {
+            // Walking the destination outwards and asking where the pixel came
+            // from: the inverse of the turn, so every pixel is written once.
+            let dx = x as f32 - middle + 0.5;
+            let dy = y as f32 - middle + 0.5;
+            let reach = (dx * dx + dy * dy).sqrt();
+            let cover = (middle - reach).clamp(0., 1.);
+            if cover <= 0. {
+                continue;
+            }
+            let from = x as f32 - middle;
+            let at = y as f32 - middle;
+            let sx = from * cos + at * sin + middle - 0.5;
+            let sy = -from * sin + at * cos + middle - 0.5;
+
+            let mut pixel = sample(base, sx, sy);
+            pixel.0[3] = (pixel.0[3] as f32 * cover) as u8;
+            turned.put_pixel(x, y, pixel);
+        }
+    }
+
+    Some(Arc::new(RenderImage::new([Frame::from_parts(
+        turned,
+        0,
+        0,
+        image.delay(0),
+    )])))
+}
+
+/// The colour of `base` at `(x, y)`, read between pixels so a turn stays smooth
+/// instead of snapping from one source pixel to the next.
+fn sample(base: &RgbaImage, x: f32, y: f32) -> Rgba<u8> {
+    let (width, height) = base.dimensions();
+    let x = x.clamp(0., width as f32 - 1.);
+    let y = y.clamp(0., height as f32 - 1.);
+    let left = x as u32;
+    let top = y as u32;
+    let right = (left + 1).min(width - 1);
+    let bottom = (top + 1).min(height - 1);
+    let fx = x - left as f32;
+    let fy = y - top as f32;
+
+    let read = |x: u32, y: u32, channel: usize| base.get_pixel(x, y).0[channel] as f32;
+    let mut mixed = Rgba([0; 4]);
+    for (channel, value) in mixed.0.iter_mut().enumerate() {
+        let upper = read(left, top, channel) * (1. - fx) + read(right, top, channel) * fx;
+        let lower = read(left, bottom, channel) * (1. - fx) + read(right, bottom, channel) * fx;
+        *value = (upper * (1. - fy) + lower * fy) as u8;
+    }
+    mixed
 }
 
 fn blurred(image: &RenderImage) -> Option<Arc<RenderImage>> {
@@ -692,6 +868,8 @@ pub struct Artwork {
     fallback: SharedString,
     accent: bool,
     soft: bool,
+    /// How far the cover is turned about its centre, in revolutions.
+    spin: Option<f32>,
     interactivity: Interactivity,
 }
 
@@ -704,6 +882,7 @@ impl Artwork {
             circle: false,
             radius: None,
             soft: false,
+            spin: None,
             fallback: FALLBACK_ICON.into(),
             accent: false,
             interactivity: Interactivity::new(),
@@ -744,6 +923,14 @@ impl Artwork {
         self.accent = true;
         self
     }
+
+    /// Turns the cover about its own centre by `turns` of a revolution, the way
+    /// a record carries its label. Whole revolutions are meaningless, so the
+    /// fraction is all that is read.
+    pub fn spin(mut self, turns: f32) -> Self {
+        self.spin = Some(turns);
+        self
+    }
 }
 
 impl Styled for Artwork {
@@ -768,6 +955,7 @@ impl RenderOnce for Artwork {
             fallback,
             accent,
             soft,
+            spin,
             interactivity,
         } = self;
         let theme = *cx.theme();
@@ -795,16 +983,24 @@ impl RenderOnce for Artwork {
                 let source = ImageSource::Custom(Arc::new({
                     let cache = cache.clone();
                     move |window, cx| {
+                        let key = (resource.clone(), edge);
                         if let Some(prepared) =
                             cache.update(cx, |cache, _| cache.prepared(&resource, edge, soft))
                         {
-                            return Some(Ok(prepared));
+                            return Some(Ok(cache.update(cx, |cache, _| match spin {
+                                Some(turns) => cache.turned(&key, &prepared, turns),
+                                None => prepared,
+                            })));
                         }
                         let loaded = cache
                             .update(cx, |cache, cx| cache.load_at(&resource, edge, window, cx))?
                             .map(|image| {
                                 cache.update(cx, |cache, cx| {
-                                    cache.prepare(&resource, edge, soft, image, cx)
+                                    let image = cache.prepare(&resource, edge, soft, image, cx);
+                                    match spin {
+                                        Some(turns) => cache.turned(&key, &image, turns),
+                                        None => image,
+                                    }
                                 })
                             });
                         Some(loaded)

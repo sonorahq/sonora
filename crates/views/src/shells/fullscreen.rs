@@ -12,7 +12,9 @@ use gpui::{Window, canvas, deferred, div, phi, px, relative};
 use i18n::t;
 use input::{ToggleFullscreen, WORKSPACE_CONTEXT};
 use router::{Destination, navigate};
-use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
+use state::{
+    AppSettings, Cover, FullscreenControlsAutohide, Playback, PlaybackState, Queue, SideTab, Sonora,
+};
 use ui::{
     ActiveTheme as _, Artwork, Button, ExplicitBadge, InlineLink, InlineLinks, Motion,
     Motioned as _, Popup, Room, Scrollbar, Scrubber, ScrubberState, Springs, TabBar, Text,
@@ -24,7 +26,7 @@ use crate::shared::menus::ItemMenu;
 use crate::shared::transport::{NOTCH, like, moved, percent, transport, volume_icon};
 use crate::shared::veil::{Edge, veil};
 use crate::shared::visualizer::VisualizerDrive;
-use crate::shared::{self, ambient};
+use crate::shared::{self, ambient, starry};
 use crate::shells::Shell;
 
 const COVER_TALL: f32 = 0.46;
@@ -98,6 +100,8 @@ pub struct FullscreenView {
     rest: Option<Task<()>>,
     focus: FocusHandle,
     visualizer: VisualizerDrive,
+    stage: starry::Drive,
+    stage_clock: starry::Clock,
     root_bounds: Rc<Cell<Bounds<Pixels>>>,
     artwork_bounds: Rc<Cell<Bounds<Pixels>>>,
 }
@@ -150,6 +154,8 @@ impl FullscreenView {
             rest: None,
             focus: cx.focus_handle(),
             visualizer: VisualizerDrive::default(),
+            stage: starry::Drive::default(),
+            stage_clock: starry::Clock::default(),
             root_bounds: Rc::new(Cell::new(Bounds::default())),
             artwork_bounds: Rc::new(Cell::new(Bounds::default())),
         };
@@ -357,6 +363,89 @@ impl FullscreenView {
             || small.as_ref().is_some_and(|url| url.starts_with("file://"));
         let waiting = !local && album.is_some() && cover_large.is_none();
         let artwork_bounds = self.artwork_bounds.clone();
+        let settings = self.settings.read(cx);
+        let layout = settings.stage_style();
+        let staged = layout.shown();
+        let style = settings.visualizer_style();
+        let particles = settings.particles();
+        let theme = *cx.theme();
+        let levels = self.visualizer.levels();
+
+        // Two clocks. The record and everything riding it turn only while
+        // sound plays — pausing parks them mid-turn, resuming picks them up —
+        // and the particle field fades out with the music and back in with it.
+        // Both hold their pose when motion is reduced, and the ring reads the
+        // already-eased spectrum levels, so it settles the way the bottom
+        // visualizer does.
+        let playing = matches!(
+            self.playback.read(cx).state(),
+            PlaybackState::Playing | PlaybackState::Loading
+        );
+        let pose = match staged && ui::motion::animates(cx) {
+            true => self.stage_clock.tick(playing),
+            false => starry::Pose {
+                turn: 0.,
+                presence: match playing {
+                    true => 1.,
+                    false => 0.,
+                },
+            },
+        };
+        let scene = starry::Stage {
+            levels,
+            style,
+            particles,
+            layout,
+            elapsed: match staged && ui::motion::animates(cx) {
+                true => starry::spin(),
+                false => 0.,
+            },
+            turn: pose.turn,
+            presence: pose.presence,
+            theme,
+        };
+        let cover = if staged {
+            vec![
+                div()
+                    .absolute()
+                    .top(pad)
+                    .left(pad)
+                    .child(starry::stage(raster_side, small, waiting, scene))
+                    .into_any_element(),
+            ]
+        } else {
+            let mut faces = vec![
+                div()
+                    .absolute()
+                    .top(pad)
+                    .left(pad)
+                    .child(
+                        Artwork::new(small)
+                            .size(raster_side)
+                            .corner_radius(radius)
+                            .soft(waiting),
+                    )
+                    .into_any_element(),
+            ];
+            if let Some(url) = large {
+                faces.push(
+                    div()
+                        .absolute()
+                        .top(pad)
+                        .left(pad)
+                        .child(
+                            Artwork::new(Some(url))
+                                .size(raster_side)
+                                .corner_radius(radius),
+                        )
+                        .motion(("cover-large", revision), Motion::Slow, |art, t| {
+                            art.opacity(t)
+                        })
+                        .into_any_element(),
+                );
+            }
+            faces
+        };
 
         div()
             .id("fullscreen-artwork")
@@ -382,30 +471,7 @@ impl FullscreenView {
                     .left(inset)
                     .size(raster_side + pad * 2.)
                     .layer_scale(presentation_scale)
-                    .child(
-                        div().absolute().top(pad).left(pad).child(
-                            Artwork::new(small)
-                                .size(raster_side)
-                                .corner_radius(radius)
-                                .soft(waiting),
-                        ),
-                    )
-                    .when_some(large, |this, url| {
-                        this.child(
-                            div()
-                                .absolute()
-                                .top(pad)
-                                .left(pad)
-                                .child(
-                                    Artwork::new(Some(url))
-                                        .size(raster_side)
-                                        .corner_radius(radius),
-                                )
-                                .motion(("cover-large", revision), Motion::Slow, |art, t| {
-                                    art.opacity(t)
-                                }),
-                        )
-                    }),
+                    .child(div().absolute().inset_0().children(cover)),
             )
     }
 
@@ -1078,16 +1144,33 @@ impl Render for FullscreenView {
         let cover_scale = presentation_scale(presented_side, raster_side);
         let lift = (presented_side - side) / 2.;
         let staged = self.panel.is_none() || split;
+        let layout = self.settings.read(cx).stage_style();
+        let starry = staged && layout.shown();
 
         let style = self.settings.read(cx).visualizer_style();
         let visualizer_on = self.panel.is_none() && style.shown();
-        match visualizer_on
+        match (visualizer_on || starry)
             .then(|| self.playback.read(cx).spectrum())
             .flatten()
         {
             Some(spectrum) => self.visualizer.show(cx.entity_id(), spectrum, window),
             None => self.visualizer.hide(),
         }
+        // The ring rides the spectrum drive above, which only runs while sound
+        // is being made. Everything else on the stage asks for frames of its
+        // own — the record's turn, the sheen, the particles fading in and out
+        // around the music. Once a paused stage has faded to nothing there is
+        // nothing left to draw, and the loop winds down until it is asked for
+        // again; playback starting wakes the view on its own.
+        let playing = matches!(
+            self.playback.read(cx).state(),
+            PlaybackState::Playing | PlaybackState::Loading
+        );
+        self.stage.run(
+            cx.entity_id(),
+            starry && ui::motion::animates(cx) && self.stage_clock.moving(playing),
+            window,
+        );
         let bottom = |bounds: Bounds<Pixels>| bounds.origin.y + bounds.size.height;
         let visualizer_max = (bottom(self.root_bounds.get()) - bottom(self.artwork_bounds.get()))
             .max(px(VISUALIZER_MIN));

@@ -22,15 +22,16 @@ use music::scrobble::{Link, Secret};
 use music::{AccountChoice, SignIn, SignInPrompt, WritingSystem};
 use router::{Destination, NavEntry, Screen, SettingsTab, navigate};
 use state::{
-    AppSettings, CdmState, DiscordName, Drm, Failure, FullscreenControlsAutohide, Io, Playback,
-    SYSTEM_FONT, Scan, ScrobbleState, Scrobbling, Session, SessionState, Sleep, Sonora,
+    AppSettings, CdmState, DiscordName, Drm, Failure, FullscreenControlsAutohide, Io,
+    MAX_PARTICLES, Playback, SYSTEM_FONT, Scan, ScrobbleState, Scrobbling, Session, SessionState,
+    Sleep, Sonora,
 };
 use ui::{ActiveTheme as _, Deck, LEADING, Scrollbar, Scroller, eyebrow, snapped};
 use ui::{
     Avatar, Button, Dismiss, InfoCard, Initials, Input, Look, MAX_FONT, MAX_LYRICS_SCALE,
     MAX_TRANSPARENCY, MIN_FONT, MIN_LYRICS_SCALE, MenuItem, Modal, Pace, Picker, Popovers, Radio,
-    Rounding, Saver, Scrubber, ScrubberState, Separator, Skeleton, Stillness, Switch, TabBar, Text,
-    Theme, ThemeKind, Vacancy, VisualizerStyle,
+    Rounding, Saver, Scrubber, ScrubberState, Separator, Skeleton, StageStyle, Stillness, Switch,
+    TabBar, Text, Theme, ThemeKind, Vacancy, VisualizerStyle,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -54,6 +55,7 @@ const CORNERS: &str = "corners";
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
 const WINDOW_ROUNDING: &str = "window-rounding";
 const FULLSCREEN_CONTROLS_AUTOHIDE: &str = "fullscreen-controls-autohide";
+const STAGE_STYLE: &str = "stage-style";
 const VISUALIZER_STYLE: &str = "visualizer-style";
 const LANGUAGES: &str = "languages";
 const TYPEFACES: &str = "typefaces";
@@ -132,6 +134,8 @@ enum Slot {
     Adaptive,
     Ambient,
     AmbientMotion,
+    Stage,
+    Particles,
     Visualizer,
     Icons,
     Opacity,
@@ -556,6 +560,14 @@ impl SettingsView {
                     .ambient()
                     .then_some(Slot::AmbientMotion),
             )
+            .chain([Slot::Stage])
+            .chain(
+                self.settings
+                    .read(cx)
+                    .stage_style()
+                    .fielded()
+                    .then_some(Slot::Particles),
+            )
             .chain([
                 Slot::Visualizer,
                 Slot::FullscreenControlsAutohide,
@@ -656,6 +668,8 @@ impl SettingsView {
                 t!("settings-ambient-motion"),
                 t!("settings-ambient-motion-detail"),
             ),
+            Slot::Stage => (t!("settings-stage"), t!("settings-stage-detail")),
+            Slot::Particles => (t!("settings-particles"), t!("settings-particles-detail")),
             Slot::Visualizer => (t!("settings-visualizer"), t!("settings-visualizer-detail")),
             Slot::Icons => (t!("settings-icons"), t!("settings-icons-detail")),
             Slot::Opacity => (t!("settings-opacity"), t!("settings-opacity-detail")),
@@ -877,6 +891,8 @@ impl SettingsView {
             Slot::Adaptive => self.adaptive_row(cx).element,
             Slot::Ambient => self.ambient_row(cx).element,
             Slot::AmbientMotion => self.ambient_motion_row(cx).element,
+            Slot::Stage => self.stage_row(cx).element,
+            Slot::Particles => self.particles_row(cx).element,
             Slot::Visualizer => self.visualizer_style_row(cx).element,
             Slot::Icons => self.icons_row(cx).element,
             Slot::Opacity => self.opacity_row(cx).element,
@@ -1795,6 +1811,75 @@ impl SettingsView {
                         .update(cx, |settings, cx| settings.set_ambient_motion(!on, cx));
                 }))
                 .into_any_element(),
+        )
+    }
+
+    /// How fullscreen stages the cover: bare, haloed in drifting particles,
+    /// riding a turning record as its label, or slid out of its sleeve. One
+    /// choice covers what used to be the starry and the vinyl switches.
+    fn stage_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let chosen = self.settings.read(cx).stage_style();
+
+        let picker = Picker::new(STAGE_STYLE, &self.popovers, chosen.label())
+            .width(Picker::NARROW)
+            .items(StageStyle::ALL.map(|style| {
+                MenuItem::new(style.id(), style.label())
+                    .selected(style == chosen)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.settings
+                            .update(cx, |settings, cx| settings.set_stage_style(style, cx));
+                        cx.notify();
+                    }))
+            }));
+
+        self.row(
+            t!("settings-stage"),
+            t!("settings-stage-detail"),
+            muted,
+            small,
+            picker.into_any_element(),
+        )
+    }
+
+    /// How many particles drift off the cover, stepped like the lyrics sizes.
+    fn particles_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let count = self.settings.read(cx).particles();
+
+        let step = move |suffix: &'static str, label: &'static str, delta: i64| {
+            let wanted = (count as i64 + delta).clamp(0, MAX_PARTICLES as i64) as usize;
+
+            Button::new(SharedString::from(format!("particles-{suffix}")))
+                .label(label)
+                .small()
+                .outline()
+                .disabled(wanted == count)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.set_particles(wanted, cx));
+                    cx.notify();
+                }))
+        };
+
+        let actions = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(step("fewer", "\u{2212}", -32))
+            .child(div().child(t!("settings-particles-value", count = count as i64)))
+            .child(step("more", "+", 32));
+
+        self.row(
+            t!("settings-particles"),
+            t!("settings-particles-detail"),
+            muted,
+            small,
+            actions.into_any_element(),
         )
     }
 
