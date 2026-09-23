@@ -174,6 +174,8 @@
                     install -Dm755 target/release/sonora "$out/Applications/Sonora.app/Contents/MacOS/sonora"
                     install -Dm444 "$src/assets/macos/sonora.icns" \
                       "$out/Applications/Sonora.app/Contents/Resources/sonora.icns"
+                    install -Dm444 "$src/assets/macos/Assets.car" \
+                      "$out/Applications/Sonora.app/Contents/Resources/Assets.car"
 
                     sed \
                       "s/@VERSION@/$version/g" \
