@@ -58,7 +58,7 @@ objc2-app-kit = { workspace = true, features = [
   "NSView",
   "NSWindow",
 ] }
-objc2-foundation = { workspace = true, features = ["NSData", "NSGeometry", "NSString"] }
+objc2-foundation = { workspace = true, features = ["NSBundle", "NSData", "NSGeometry", "NSString"] }
 raw-window-handle.workspace = true
 
 [target.'cfg(windows)'.dependencies]
