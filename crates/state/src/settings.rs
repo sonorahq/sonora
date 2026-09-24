@@ -237,6 +237,34 @@ fn system_font() -> String {
     SYSTEM_FONT.to_owned()
 }
 
+const fn default_true() -> bool {
+    true
+}
+
+pub fn default_hotkey_play_pause() -> String {
+    "Ctrl+Shift+Space".to_owned()
+}
+
+pub fn default_hotkey_next() -> String {
+    "Ctrl+Shift+Right".to_owned()
+}
+
+pub fn default_hotkey_previous() -> String {
+    "Ctrl+Shift+Left".to_owned()
+}
+
+pub fn default_hotkey_stop() -> String {
+    "Ctrl+Shift+V".to_owned()
+}
+
+pub fn default_hotkey_volume_up() -> String {
+    "Ctrl+Shift+Up".to_owned()
+}
+
+pub fn default_hotkey_volume_down() -> String {
+    "Ctrl+Shift+Down".to_owned()
+}
+
 /// How long a save waits after the last change, so a slider drag lands as one write.
 const SAVE_DELAY: Duration = Duration::from_millis(300);
 const DEFAULT_VOLUME: f32 = 0.7;
@@ -287,6 +315,20 @@ struct Values {
     adaptive_menu: bool,
     check_updates: bool,
     close_to_tray: bool,
+    #[serde(default = "default_true")]
+    global_hotkeys: bool,
+    #[serde(default = "default_hotkey_play_pause")]
+    hotkey_play_pause: String,
+    #[serde(default = "default_hotkey_next")]
+    hotkey_next: String,
+    #[serde(default = "default_hotkey_previous")]
+    hotkey_previous: String,
+    #[serde(default = "default_hotkey_stop")]
+    hotkey_stop: String,
+    #[serde(default = "default_hotkey_volume_up")]
+    hotkey_volume_up: String,
+    #[serde(default = "default_hotkey_volume_down")]
+    hotkey_volume_down: String,
     language: String,
     #[serde(default = "system_font")]
     font: String,
@@ -369,6 +411,13 @@ impl Default for Values {
             adaptive_menu: false,
             check_updates: cfg!(target_os = "windows"),
             close_to_tray: true,
+            global_hotkeys: true,
+            hotkey_play_pause: default_hotkey_play_pause(),
+            hotkey_next: default_hotkey_next(),
+            hotkey_previous: default_hotkey_previous(),
+            hotkey_stop: default_hotkey_stop(),
+            hotkey_volume_up: default_hotkey_volume_up(),
+            hotkey_volume_down: default_hotkey_volume_down(),
             language: i18n::AUTO.to_owned(),
             font: system_font(),
             startup: DEFAULT_STARTUP.to_owned(),
@@ -696,6 +745,34 @@ impl AppSettings {
 
     pub fn close_to_tray(&self) -> bool {
         self.values.close_to_tray
+    }
+
+    pub fn global_hotkeys(&self) -> bool {
+        self.values.global_hotkeys
+    }
+
+    pub fn hotkey_play_pause(&self) -> &str {
+        &self.values.hotkey_play_pause
+    }
+
+    pub fn hotkey_next(&self) -> &str {
+        &self.values.hotkey_next
+    }
+
+    pub fn hotkey_previous(&self) -> &str {
+        &self.values.hotkey_previous
+    }
+
+    pub fn hotkey_stop(&self) -> &str {
+        &self.values.hotkey_stop
+    }
+
+    pub fn hotkey_volume_up(&self) -> &str {
+        &self.values.hotkey_volume_up
+    }
+
+    pub fn hotkey_volume_down(&self) -> &str {
+        &self.values.hotkey_volume_down
     }
 
     /// Every linked scrobbling account, keyed by its service slug.
@@ -1052,6 +1129,77 @@ impl AppSettings {
     pub fn set_close_to_tray(&mut self, close_to_tray: bool, cx: &mut Context<Self>) {
         self.values.close_to_tray = close_to_tray;
         self.schedule_save(cx);
+    }
+
+    pub fn set_global_hotkeys(&mut self, global_hotkeys: bool, cx: &mut Context<Self>) {
+        self.values.global_hotkeys = global_hotkeys;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_hotkey_play_pause(&mut self, hotkey: String, cx: &mut Context<Self>) {
+        if self.values.hotkey_play_pause != hotkey {
+            self.values.hotkey_play_pause = hotkey;
+            self.schedule_save(cx);
+        }
+    }
+
+    pub fn set_hotkey_next(&mut self, hotkey: String, cx: &mut Context<Self>) {
+        if self.values.hotkey_next != hotkey {
+            self.values.hotkey_next = hotkey;
+            self.schedule_save(cx);
+        }
+    }
+
+    pub fn set_hotkey_previous(&mut self, hotkey: String, cx: &mut Context<Self>) {
+        if self.values.hotkey_previous != hotkey {
+            self.values.hotkey_previous = hotkey;
+            self.schedule_save(cx);
+        }
+    }
+
+    pub fn set_hotkey_stop(&mut self, hotkey: String, cx: &mut Context<Self>) {
+        if self.values.hotkey_stop != hotkey {
+            self.values.hotkey_stop = hotkey;
+            self.schedule_save(cx);
+        }
+    }
+
+    pub fn set_hotkey_volume_up(&mut self, hotkey: String, cx: &mut Context<Self>) {
+        if self.values.hotkey_volume_up != hotkey {
+            self.values.hotkey_volume_up = hotkey;
+            self.schedule_save(cx);
+        }
+    }
+
+    pub fn set_hotkey_volume_down(&mut self, hotkey: String, cx: &mut Context<Self>) {
+        if self.values.hotkey_volume_down != hotkey {
+            self.values.hotkey_volume_down = hotkey;
+            self.schedule_save(cx);
+        }
+    }
+
+    pub fn reset_hotkey_play_pause(&mut self, cx: &mut Context<Self>) {
+        self.set_hotkey_play_pause(default_hotkey_play_pause(), cx);
+    }
+
+    pub fn reset_hotkey_next(&mut self, cx: &mut Context<Self>) {
+        self.set_hotkey_next(default_hotkey_next(), cx);
+    }
+
+    pub fn reset_hotkey_previous(&mut self, cx: &mut Context<Self>) {
+        self.set_hotkey_previous(default_hotkey_previous(), cx);
+    }
+
+    pub fn reset_hotkey_stop(&mut self, cx: &mut Context<Self>) {
+        self.set_hotkey_stop(default_hotkey_stop(), cx);
+    }
+
+    pub fn reset_hotkey_volume_up(&mut self, cx: &mut Context<Self>) {
+        self.set_hotkey_volume_up(default_hotkey_volume_up(), cx);
+    }
+
+    pub fn reset_hotkey_volume_down(&mut self, cx: &mut Context<Self>) {
+        self.set_hotkey_volume_down(default_hotkey_volume_down(), cx);
     }
 
     /// Stores a linked account, or forgets the service when the account carries no session.

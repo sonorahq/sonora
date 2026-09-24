@@ -11,8 +11,8 @@ use crate::shared::popups::{AccountPicker, CookiePrompt, SearchPopup, matches_qu
 use crate::shared::text;
 use crate::shared::veil::{Edge, veil};
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Entity, FocusHandle, FontWeight, MouseButton,
-    MouseUpEvent, Pixels, Render, SharedString, Task, Window, div, px, relative,
+    AnyElement, App, ClickEvent, Context, Entity, FocusHandle, FontWeight, KeyDownEvent,
+    MouseButton, MouseUpEvent, Pixels, Render, SharedString, Task, Window, div, px, relative,
 };
 use gpui::{ScrollHandle, prelude::*, svg};
 use i18n::{Language, t};
@@ -126,6 +126,13 @@ enum Slot {
     Entries,
     Language,
     Tray,
+    GlobalHotkeys,
+    GlobalHotkeysPlayPause,
+    GlobalHotkeysNext,
+    GlobalHotkeysPrevious,
+    GlobalHotkeysStop,
+    GlobalHotkeysVolumeUp,
+    GlobalHotkeysVolumeDown,
     Accounts,
     LocalFolder,
     Theme,
@@ -331,6 +338,7 @@ pub struct SettingsView {
     installed: Option<Vec<SharedString>>,
     loading_fonts: bool,
     font_task: Option<Task<()>>,
+    recording_hotkey: Option<&'static str>,
 }
 
 impl SettingsView {
@@ -419,11 +427,13 @@ impl SettingsView {
             installed: None,
             loading_fonts: false,
             font_task: None,
+            recording_hotkey: None,
         }
     }
 
     /// Shows one category and ends any search, so a route always lands on a plain page.
     pub(crate) fn select(&mut self, tab: SettingsTab, cx: &mut Context<Self>) {
+        self.recording_hotkey = None;
         self.tab = tab;
         self.popovers.close();
         if !self.search.read(cx).text().is_empty() {
@@ -519,17 +529,36 @@ impl SettingsView {
 
     fn tab_slots(&self, tab: SettingsTab, cx: &App) -> Vec<Slot> {
         match tab {
-            SettingsTab::General => vec![
-                Slot::Startup,
-                Slot::Entries,
-                Slot::Language,
-                Slot::Title("settings-group-window"),
-                Slot::Tray,
-                Slot::Title("settings-group-accounts"),
-                Slot::Accounts,
-                Slot::Title("settings-group-library"),
-                Slot::LocalFolder,
-            ],
+            SettingsTab::General => {
+                let mut slots = vec![
+                    Slot::Startup,
+                    Slot::Entries,
+                    Slot::Language,
+                    Slot::Title("settings-group-window"),
+                    Slot::Tray,
+                ];
+                #[cfg(target_os = "windows")]
+                {
+                    slots.extend([Slot::Title("settings-group-shortcuts"), Slot::GlobalHotkeys]);
+                    if self.settings.read(cx).global_hotkeys() {
+                        slots.extend([
+                            Slot::GlobalHotkeysPlayPause,
+                            Slot::GlobalHotkeysNext,
+                            Slot::GlobalHotkeysPrevious,
+                            Slot::GlobalHotkeysStop,
+                            Slot::GlobalHotkeysVolumeUp,
+                            Slot::GlobalHotkeysVolumeDown,
+                        ]);
+                    }
+                }
+                slots.extend([
+                    Slot::Title("settings-group-accounts"),
+                    Slot::Accounts,
+                    Slot::Title("settings-group-library"),
+                    Slot::LocalFolder,
+                ]);
+                slots
+            }
             SettingsTab::Appearance => vec![
                 Slot::Title("settings-tab-general"),
                 Slot::Theme,
@@ -625,6 +654,34 @@ impl SettingsView {
             Slot::Tray => (
                 t!("settings-close-to-tray"),
                 t!("settings-close-to-tray-detail"),
+            ),
+            Slot::GlobalHotkeys => (
+                t!("settings-global-hotkeys"),
+                t!("settings-global-hotkeys-detail"),
+            ),
+            Slot::GlobalHotkeysPlayPause => (
+                t!("settings-hotkey-play-pause"),
+                t!("settings-hotkey-play-pause-detail"),
+            ),
+            Slot::GlobalHotkeysNext => (
+                t!("settings-hotkey-next"),
+                t!("settings-hotkey-next-detail"),
+            ),
+            Slot::GlobalHotkeysPrevious => (
+                t!("settings-hotkey-previous"),
+                t!("settings-hotkey-previous-detail"),
+            ),
+            Slot::GlobalHotkeysStop => (
+                t!("settings-hotkey-stop"),
+                t!("settings-hotkey-stop-detail"),
+            ),
+            Slot::GlobalHotkeysVolumeUp => (
+                t!("settings-hotkey-volume-up"),
+                t!("settings-hotkey-volume-up-detail"),
+            ),
+            Slot::GlobalHotkeysVolumeDown => (
+                t!("settings-hotkey-volume-down"),
+                t!("settings-hotkey-volume-down-detail"),
             ),
             Slot::Accounts => {
                 let detail = t!("settings-accounts-detail");
@@ -852,6 +909,13 @@ impl SettingsView {
             Slot::Entries => self.entries_row(cx).element,
             Slot::Language => self.language_row(cx).element,
             Slot::Tray => self.tray_row(cx).element,
+            Slot::GlobalHotkeys => self.global_hotkeys_row(cx).element,
+            Slot::GlobalHotkeysPlayPause => self.hotkey_play_pause_row(cx).element,
+            Slot::GlobalHotkeysNext => self.hotkey_next_row(cx).element,
+            Slot::GlobalHotkeysPrevious => self.hotkey_previous_row(cx).element,
+            Slot::GlobalHotkeysStop => self.hotkey_stop_row(cx).element,
+            Slot::GlobalHotkeysVolumeUp => self.hotkey_volume_up_row(cx).element,
+            Slot::GlobalHotkeysVolumeDown => self.hotkey_volume_down_row(cx).element,
             Slot::Accounts => self.accounts_row(cx).element,
             Slot::LocalFolder => self.local_folder_row(cx).element,
             Slot::Theme => self.theme_row(cx).element,
@@ -1940,6 +2004,260 @@ impl SettingsView {
                         .update(cx, |settings, cx| settings.set_close_to_tray(!on, cx));
                 }))
                 .into_any_element(),
+        )
+    }
+
+    fn global_hotkeys_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).global_hotkeys();
+
+        self.row(
+            t!("settings-global-hotkeys"),
+            t!("settings-global-hotkeys-detail"),
+            muted,
+            small,
+            Switch::new("global-hotkeys", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.set_global_hotkeys(!on, cx));
+                    cx.notify();
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn hotkey_row(
+        &self,
+        action_id: &'static str,
+        title: SharedString,
+        detail: SharedString,
+        current: &str,
+        default_val: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let is_recording = self.recording_hotkey == Some(action_id);
+        let is_custom = current != default_val;
+
+        let record_btn = if is_recording {
+            Button::new(SharedString::from(format!("hotkey-record-{action_id}")))
+                .small()
+                .primary()
+                .label(t!("settings-hotkey-recording"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.recording_hotkey = None;
+                    cx.notify();
+                }))
+        } else {
+            Button::new(SharedString::from(format!("hotkey-record-{action_id}")))
+                .small()
+                .outline()
+                .label(current.to_owned())
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.recording_hotkey = Some(action_id);
+                    window.focus(&this.focus, cx);
+                    cx.notify();
+                }))
+        };
+
+        let controls = div()
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .child(record_btn)
+            .when(is_custom, |this| {
+                this.child(
+                    Button::new(SharedString::from(format!("hotkey-reset-{action_id}")))
+                        .small()
+                        .ghost()
+                        .icon("icons/refresh-cw.svg")
+                        .tooltip("settings-hotkey-reset")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.reset_hotkey(action_id, cx);
+                        })),
+                )
+            });
+
+        self.row(title, detail, muted, small, controls.into_any_element())
+    }
+
+    fn reset_hotkey(&self, action: &'static str, cx: &mut Context<Self>) {
+        self.settings.update(cx, |settings, cx| match action {
+            "play_pause" => settings.reset_hotkey_play_pause(cx),
+            "next" => settings.reset_hotkey_next(cx),
+            "previous" => settings.reset_hotkey_previous(cx),
+            "stop" => settings.reset_hotkey_stop(cx),
+            "volume_up" => settings.reset_hotkey_volume_up(cx),
+            "volume_down" => settings.reset_hotkey_volume_down(cx),
+            _ => {}
+        });
+        cx.notify();
+    }
+
+    fn handle_hotkey_keystroke(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let key = event.keystroke.key.as_str();
+
+        if key == "escape" {
+            self.recording_hotkey = None;
+            cx.notify();
+            return;
+        }
+
+        match key {
+            "control" | "alt" | "shift" | "meta" | "super" | "command" => return,
+            _ => {}
+        }
+
+        let modifiers = event.keystroke.modifiers;
+
+        let key_name: String = match key {
+            k if k.starts_with('f')
+                && k.len() > 1
+                && k[1..].chars().all(|c| c.is_ascii_digit()) =>
+            {
+                k.to_ascii_uppercase()
+            }
+            "space" => "Space".into(),
+            "left" | "arrowleft" => "Left".into(),
+            "right" | "arrowright" => "Right".into(),
+            "up" | "arrowup" => "Up".into(),
+            "down" | "arrowdown" => "Down".into(),
+            "home" => "Home".into(),
+            "end" => "End".into(),
+            "pageup" | "pgup" => "PageUp".into(),
+            "pagedown" | "pgdown" => "PageDown".into(),
+            "insert" => "Insert".into(),
+            "delete" => "Delete".into(),
+            "enter" | "return" => "Enter".into(),
+            "tab" => "Tab".into(),
+            "backspace" => "Backspace".into(),
+            k if k.len() == 1 => {
+                let ch = k.chars().next().unwrap();
+                if ch.is_ascii_alphanumeric() {
+                    ch.to_ascii_uppercase().to_string()
+                } else {
+                    return;
+                }
+            }
+            _ => return,
+        };
+
+        let is_function_key = key_name.starts_with('F')
+            && key_name.len() > 1
+            && key_name[1..].chars().all(|c| c.is_ascii_digit());
+
+        let has_main_modifier = modifiers.control || modifiers.alt || modifiers.platform;
+
+        if !is_function_key && !has_main_modifier {
+            return;
+        }
+
+        let mut parts = Vec::new();
+        if modifiers.control {
+            parts.push("Ctrl");
+        }
+        if modifiers.alt {
+            parts.push("Alt");
+        }
+        if modifiers.shift {
+            parts.push("Shift");
+        }
+        if modifiers.platform {
+            parts.push("Win");
+        }
+        parts.push(&key_name);
+
+        let hotkey_str = parts.join("+");
+
+        if let Some(action) = self.recording_hotkey {
+            self.settings.update(cx, |settings, cx| match action {
+                "play_pause" => settings.set_hotkey_play_pause(hotkey_str, cx),
+                "next" => settings.set_hotkey_next(hotkey_str, cx),
+                "previous" => settings.set_hotkey_previous(hotkey_str, cx),
+                "stop" => settings.set_hotkey_stop(hotkey_str, cx),
+                "volume_up" => settings.set_hotkey_volume_up(hotkey_str, cx),
+                "volume_down" => settings.set_hotkey_volume_down(hotkey_str, cx),
+                _ => {}
+            });
+        }
+
+        self.recording_hotkey = None;
+        cx.notify();
+    }
+
+    fn hotkey_play_pause_row(&self, cx: &mut Context<Self>) -> Setting {
+        let current = self.settings.read(cx).hotkey_play_pause().to_owned();
+        self.hotkey_row(
+            "play_pause",
+            t!("settings-hotkey-play-pause"),
+            t!("settings-hotkey-play-pause-detail"),
+            &current,
+            "Ctrl+Shift+Space",
+            cx,
+        )
+    }
+
+    fn hotkey_next_row(&self, cx: &mut Context<Self>) -> Setting {
+        let current = self.settings.read(cx).hotkey_next().to_owned();
+        self.hotkey_row(
+            "next",
+            t!("settings-hotkey-next"),
+            t!("settings-hotkey-next-detail"),
+            &current,
+            "Ctrl+Shift+Right",
+            cx,
+        )
+    }
+
+    fn hotkey_previous_row(&self, cx: &mut Context<Self>) -> Setting {
+        let current = self.settings.read(cx).hotkey_previous().to_owned();
+        self.hotkey_row(
+            "previous",
+            t!("settings-hotkey-previous"),
+            t!("settings-hotkey-previous-detail"),
+            &current,
+            "Ctrl+Shift+Left",
+            cx,
+        )
+    }
+
+    fn hotkey_stop_row(&self, cx: &mut Context<Self>) -> Setting {
+        let current = self.settings.read(cx).hotkey_stop().to_owned();
+        self.hotkey_row(
+            "stop",
+            t!("settings-hotkey-stop"),
+            t!("settings-hotkey-stop-detail"),
+            &current,
+            "Ctrl+Shift+V",
+            cx,
+        )
+    }
+
+    fn hotkey_volume_up_row(&self, cx: &mut Context<Self>) -> Setting {
+        let current = self.settings.read(cx).hotkey_volume_up().to_owned();
+        self.hotkey_row(
+            "volume_up",
+            t!("settings-hotkey-volume-up"),
+            t!("settings-hotkey-volume-up-detail"),
+            &current,
+            "Ctrl+Shift+Up",
+            cx,
+        )
+    }
+
+    fn hotkey_volume_down_row(&self, cx: &mut Context<Self>) -> Setting {
+        let current = self.settings.read(cx).hotkey_volume_down().to_owned();
+        self.hotkey_row(
+            "volume_down",
+            t!("settings-hotkey-volume-down"),
+            t!("settings-hotkey-volume-down-detail"),
+            &current,
+            "Ctrl+Shift+Down",
+            cx,
         )
     }
 
@@ -3338,6 +3656,11 @@ impl SettingsView {
     /// Closes the dialog that is up, topmost first, the way clicking outside it does. A
     /// prompt a sign-in raised takes the sign-in down with it.
     fn escape(&mut self, cx: &mut Context<Self>) {
+        if self.recording_hotkey.is_some() {
+            self.recording_hotkey = None;
+            cx.notify();
+            return;
+        }
         if self.credentials_for.is_some() {
             return self.abandon_credentials(cx);
         }
@@ -4063,7 +4386,10 @@ impl Render for SettingsView {
         let sign_in_for = self.sign_in_for.filter(|_| !taken);
 
         // a dialog takes the key focus, since escape only reaches the page from inside it
-        let dialog = taken || sign_in_for.is_some() || self.scrobble_prompt.is_some();
+        let dialog = taken
+            || sign_in_for.is_some()
+            || self.scrobble_prompt.is_some()
+            || self.recording_hotkey.is_some();
         match (dialog, self.grabbed) {
             (true, false) => {
                 window.focus(&self.focus, cx);
@@ -4084,6 +4410,11 @@ impl Render for SettingsView {
                 cx.stop_propagation();
                 this.escape(cx);
             }))
+            .when(self.recording_hotkey.is_some(), |this| {
+                this.capture_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+                    this.handle_hotkey_keystroke(event, cx);
+                }))
+            })
             // the padding, the fade and the scrollbar all hang off the header's measured
             // height, so the page sits out the first frame rather than snapping into place
             .when(!self.header_measured, |this| this.invisible())

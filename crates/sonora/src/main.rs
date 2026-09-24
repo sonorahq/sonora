@@ -3,6 +3,8 @@
 mod actions;
 mod assets;
 mod dock;
+#[cfg(windows)]
+mod hotkeys;
 mod http;
 mod logging;
 mod memory;
@@ -155,6 +157,8 @@ fn main() {
         }
         actions::register(lingers, cx);
         memory::watch(cx);
+        #[cfg(windows)]
+        hotkeys::install(cx);
 
         open_window(cx);
         let session = Sonora::global(cx).session.clone();
