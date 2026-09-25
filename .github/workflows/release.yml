@@ -188,6 +188,7 @@ jobs:
 
           cp \
             assets/macos/sonora.icns \
+            assets/macos/Assets.car \
             Sonora.app/Contents/Resources/
 
           cp \
