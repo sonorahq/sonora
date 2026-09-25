@@ -1,6 +1,9 @@
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "target-cpu=native"]
 
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "target-cpu=native"]
+
 [alias]
 prof = "run --release --package sonora --features profiler"
 prober = "run --package music --example lyrics-prober --"
