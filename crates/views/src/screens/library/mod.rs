@@ -1055,24 +1055,10 @@ impl LibraryView {
     /// A folder among the playlist cards: it opens rather than plays.
     fn folder_card(&self, display: usize, folder: FolderRow, card: Pixels, cx: &App) -> AnyElement {
         let cover = self.library.read(cx).folder_cover(&folder.id);
-        let view = self.me.clone();
-        let opened = folder.clone();
 
-        cards::folder_card(("library-folder", display), &folder, cover)
+        cards::folder_card(("library-folder", display), &folder, cover, &self.playback)
             .tile(card)
             .flat()
-            .menu(move |event, _, cx| {
-                let Some(view) = view.upgrade() else {
-                    return;
-                };
-                view.update(cx, |this, cx| {
-                    this.context_menu = Some((
-                        LibraryMenu::Item(Item::Folder(opened.clone())),
-                        event.position,
-                    ));
-                    cx.notify();
-                });
-            })
             .into_any_element()
     }
 

@@ -408,6 +408,7 @@ pub(crate) fn folder_card(
     id: impl Into<ElementId>,
     folder: &FolderRow,
     cover: Option<String>,
+    playback: &Entity<Playback>,
 ) -> Card {
     let opened = SharedString::from(folder.id.clone());
     let pin = folder_pin(folder, cover.clone());
@@ -421,6 +422,10 @@ pub(crate) fn folder_card(
         .underline()
         .meta(holding(folder))
         .press(move |_, _, cx| navigate(Destination::Folder(opened.clone()), cx))
+        .menu(CardMenu::opener(
+            Item::Folder(folder.clone()),
+            playback.clone(),
+        ))
         .pin(pin)
 }
 

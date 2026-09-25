@@ -1,27 +1,19 @@
 use gpui::prelude::*;
-use gpui::{Context, Entity, Pixels, Point, Render, ScrollHandle, SharedString, Window, div, px};
+use gpui::{Context, Entity, Pixels, Render, ScrollHandle, SharedString, Window, div, px};
 use i18n::t;
 use music::Playlist;
 use router::{Destination, navigate};
 use state::{FolderRow, FolderShuffle, Library, Playback, Shelf};
-use ui::{ActiveTheme as _, Button, Popup, Scrollbar, Scroller, Vacancy};
+use ui::{ActiveTheme as _, Button, Scrollbar, Scroller, Vacancy};
 
 use crate::chrome::Chrome;
 use crate::shared::album_grid::CardGrid;
 use crate::shared::cards;
 use crate::shared::cells;
 use crate::shared::hero::{HeroMetaStrip, PageHero};
-use crate::shared::menus::{folder_menu, playlist_menu};
 
 const FOLDER: &str = "icons/folder.svg";
 const STEADY: Pixels = px(0.5);
-
-/// What the context menu of the page was summoned on.
-#[derive(Clone)]
-enum Summoned {
-    Playlist(Playlist),
-    Folder(FolderRow),
-}
 
 /// One folder of playlists: what sits directly inside it, and a shuffle over everything below it.
 /// The folder comes from the library's outline, so the page needs nothing loaded of its own.
@@ -32,7 +24,6 @@ pub(crate) struct FolderView {
     scrollbar: Entity<Scrollbar>,
     id: Option<SharedString>,
     width: Pixels,
-    context_menu: Option<(Summoned, Point<Pixels>)>,
 }
 
 impl FolderView {
@@ -58,7 +49,6 @@ impl FolderView {
             scrollbar: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(id)),
             id: None,
             width: Pixels::ZERO,
-            context_menu: None,
         }
     }
 
@@ -67,7 +57,6 @@ impl FolderView {
             return;
         }
         self.id = Some(SharedString::from(id.to_owned()));
-        self.context_menu = None;
         self.scrollbar
             .read(cx)
             .scroll()
@@ -201,44 +190,18 @@ impl FolderView {
 
         for (place, folder) in folders.iter().enumerate() {
             let cover = self.library.read(cx).folder_cover(&folder.id);
-            let summoned = Summoned::Folder(folder.clone());
-            let view = cx.entity().downgrade();
             cards.push(
-                cards::folder_card(("folder-inside", place), folder, cover)
+                cards::folder_card(("folder-inside", place), folder, cover, &self.playback)
                     .tile(layout.card)
                     .flat()
-                    .menu(move |event, _, cx| {
-                        let Some(view) = view.upgrade() else {
-                            return;
-                        };
-                        let summoned = summoned.clone();
-                        let position = event.position;
-                        view.update(cx, |this, cx| {
-                            this.context_menu = Some((summoned, position));
-                            cx.notify();
-                        });
-                    })
                     .into_any_element(),
             );
         }
         for (place, playlist) in playlists.iter().enumerate() {
-            let summoned = Summoned::Playlist(playlist.clone());
-            let view = cx.entity().downgrade();
             cards.push(
                 cards::playlist_card(("folder-playlist", place), playlist, &self.playback, cx)
                     .tile(layout.card)
                     .flat()
-                    .menu(move |event, _, cx| {
-                        let Some(view) = view.upgrade() else {
-                            return;
-                        };
-                        let summoned = summoned.clone();
-                        let position = event.position;
-                        view.update(cx, |this, cx| {
-                            this.context_menu = Some((summoned, position));
-                            cx.notify();
-                        });
-                    })
                     .into_any_element(),
             );
         }
@@ -265,41 +228,23 @@ impl Render for FolderView {
         let folder = self.folder(cx);
         let (folders, playlists) = self.contents(cx);
         let empty = folders.is_empty() && playlists.is_empty();
-        let context_menu = self.context_menu.clone().map(|(summoned, position)| {
-            let menu = match &summoned {
-                Summoned::Playlist(playlist) => {
-                    playlist_menu(playlist.clone(), self.playback.clone(), false, cx)
-                }
-                Summoned::Folder(folder) => folder_menu(&folder.id, &folder.name, cx),
-            };
-            Popup::new(position, menu).on_close(cx.listener(|this, _, _, cx| {
-                this.context_menu = None;
-                cx.notify();
-            }))
-        });
-
-        div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .when_some(context_menu, |this, menu| this.child(menu))
-            .child(
-                Scroller::new("folder-page", &self.scrollbar).p(pad).child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_8()
-                        .when_some(folder.as_ref(), |this, folder| {
-                            this.child(self.header(folder, cx))
-                        })
-                        .when(folder.is_none(), |this| {
-                            this.child(Vacancy::new(t!("folder-missing")).icon(FOLDER))
-                        })
-                        .when(folder.is_some() && empty, |this| {
-                            this.child(Vacancy::new(t!("folder-empty")).icon(FOLDER))
-                        })
-                        .when(!empty, |this| this.child(self.cards(cx))),
-                ),
-            )
+        div().flex().flex_col().size_full().child(
+            Scroller::new("folder-page", &self.scrollbar).p(pad).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_8()
+                    .when_some(folder.as_ref(), |this, folder| {
+                        this.child(self.header(folder, cx))
+                    })
+                    .when(folder.is_none(), |this| {
+                        this.child(Vacancy::new(t!("folder-missing")).icon(FOLDER))
+                    })
+                    .when(folder.is_some() && empty, |this| {
+                        this.child(Vacancy::new(t!("folder-empty")).icon(FOLDER))
+                    })
+                    .when(!empty, |this| this.child(self.cards(cx))),
+            ),
+        )
     }
 }

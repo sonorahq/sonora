@@ -8,8 +8,8 @@ use input::{
 use router::{Destination, NavigationEvent, SettingsTab, back, forward, navigate};
 use state::{
     ArtistDetail, Detail, FolderShuffle, GenreDetails, Genres, Home, Io, Library, Network,
-    Playback, Profile, Queue, Reconnected, SYSTEM_FONT, Scan, Search, Session, SessionState,
-    Shelf, SideTab, SongDetail, Sonora,
+    Playback, Profile, Queue, Reconnected, SYSTEM_FONT, Scan, Search, Session, SessionState, Shelf,
+    SideTab, SongDetail, Sonora,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ui::WindowFrame;

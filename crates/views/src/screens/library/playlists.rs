@@ -253,11 +253,7 @@ impl TableSource for PlaylistSource {
         if let Some(folder) = self.folder_at(row, cx) {
             return Some(folder_menu(&folder.id, &folder.name, cx));
         }
-        Some(playlist_menu(
-            self.at(row, cx)?,
-            self.playback.clone(),
-            cx,
-        ))
+        Some(playlist_menu(self.at(row, cx)?, self.playback.clone(), cx))
     }
 
     fn cell(&self, cell: Cell<PlaylistField>, cx: &mut App) -> AnyElement {
