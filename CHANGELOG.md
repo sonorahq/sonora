@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- NetEase Cloud Music joins the providers: sign in with the cookies from music.163.com, and its
+  songs, albums, artists, playlists and liked songs are there to play.
+
 ## [0.39.0] - 2026-09-24
 
 ### Added

@@ -1,6 +1,6 @@
 use crate::{Lyrics, LyricsHit, LyricsQuery, Track};
 
-const TRUST: u32 = 25;
+pub(crate) const TRUST: u32 = 25;
 const CANDIDATES: usize = 3;
 
 pub(crate) fn hit(source: &'static str, query: &LyricsQuery, lyrics: Lyrics) -> LyricsHit {
