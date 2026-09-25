@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Press F11 to toggle window fullscreen, expanding Sonora across the display and hiding the taskbar.
+
 ## [0.39.0] - 2026-09-24
 
 ### Added
