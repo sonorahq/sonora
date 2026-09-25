@@ -44,8 +44,8 @@ impl Control {
         }
     }
 
-    fn system(self) -> bool {
-        SYSTEM_ACTS && matches!(self, Self::Maximize | Self::Restore)
+    fn system(self, window: &Window) -> bool {
+        SYSTEM_ACTS && !window.is_fullscreen() && matches!(self, Self::Maximize | Self::Restore)
     }
 
     fn area(self) -> WindowControlArea {
@@ -86,7 +86,8 @@ impl Styled for TrafficLightControls {
 impl RenderOnce for TrafficLightControls {
     fn render(mut self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let supported = window.window_controls();
-        let maximized = window.is_maximized();
+        let fullscreen = window.is_fullscreen();
+        let maximized = window.is_maximized() || fullscreen;
         let overrides = std::mem::take(self.base.style());
         let glyph_tint = Hsla {
             h: 0.,
@@ -147,13 +148,19 @@ impl RenderOnce for TrafficLightControls {
                             .text_color(glyph_hidden)
                             .group_hover(GROUP, move |style| style.text_color(glyph_tint)),
                     )
-                    .when(!control.system(), |this| {
+                    .when(!control.system(window), |this| {
                         this.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(move |_, window, cx| {
                                 cx.stop_propagation();
                                 match control {
                                     Control::Minimize => window.minimize_window(),
-                                    Control::Maximize | Control::Restore => window.zoom_window(),
+                                    Control::Maximize | Control::Restore => {
+                                        if window.is_fullscreen() {
+                                            window.toggle_fullscreen();
+                                        } else {
+                                            window.zoom_window();
+                                        }
+                                    }
                                     Control::Close => window.remove_window(),
                                 }
                             })

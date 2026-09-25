@@ -41,8 +41,8 @@ impl Control {
         }
     }
 
-    fn system(self) -> bool {
-        SYSTEM_ACTS && matches!(self, Self::Maximize | Self::Restore)
+    fn system(self, window: &Window) -> bool {
+        SYSTEM_ACTS && !window.is_fullscreen() && matches!(self, Self::Maximize | Self::Restore)
     }
 
     fn area(self) -> WindowControlArea {
@@ -147,7 +147,8 @@ impl Styled for WindowControls {
 impl RenderOnce for WindowControls {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let supported = window.window_controls();
-        let maximized = window.is_maximized();
+        let fullscreen = window.is_fullscreen();
+        let maximized = window.is_maximized() || fullscreen;
         let theme = *cx.theme();
         let overrides = std::mem::take(self.base.style());
 
@@ -178,7 +179,7 @@ impl RenderOnce for WindowControls {
                 |this| this.h_full().self_stretch().gap_0(),
                 |this| this.gap_2(),
             )
-            .when(!SYSTEM_ACTS, |this| {
+            .when(!SYSTEM_ACTS || fullscreen, |this| {
                 this.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             })
             .children(wanted.into_iter().map(move |control| {
@@ -226,13 +227,19 @@ impl RenderOnce for WindowControls {
                                 })
                             }),
                     )
-                    .when(!control.system(), |this| {
+                    .when(!control.system(window), |this| {
                         this.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(move |_, window, cx| {
                                 cx.stop_propagation();
                                 match control {
                                     Control::Minimize => window.minimize_window(),
-                                    Control::Maximize | Control::Restore => window.zoom_window(),
+                                    Control::Maximize | Control::Restore => {
+                                        if window.is_fullscreen() {
+                                            window.toggle_fullscreen();
+                                        } else {
+                                            window.zoom_window();
+                                        }
+                                    }
                                     Control::Close => window.remove_window(),
                                 }
                             })

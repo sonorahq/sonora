@@ -752,7 +752,13 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &ToggleFullscreen, _, cx| this.toggle_fullscreen(cx)))
             .on_action(|_: &CloseWindow, window, _| window.remove_window())
             .on_action(|_: &MinimizeWindow, window, _| window.minimize_window())
-            .on_action(|_: &ZoomWindow, window, _| window.zoom_window())
+            .on_action(|_: &ZoomWindow, window, _| {
+                if window.is_fullscreen() {
+                    window.toggle_fullscreen();
+                } else {
+                    window.zoom_window();
+                }
+            })
             .on_action(|_: &ToggleWindowFullscreen, window, _| window.toggle_fullscreen())
             .on_action(cx.listener(|this, _: &Dismiss, _, cx| this.dismiss(cx)))
             .on_action(
