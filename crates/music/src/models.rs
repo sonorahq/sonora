@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 pub struct UserProfile {
     pub id: String,
     pub display_name: String,
+    /// A picture for the account, when the provider hands one out. `None` falls back to the
+    /// initials of `display_name`.
+    pub avatar: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

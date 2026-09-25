@@ -166,6 +166,10 @@ pub fn artist_profile(source: &ytmusic::Artist) -> ArtistProfile {
 
 pub fn profile(source: ytmusic::Profile) -> UserProfile {
     UserProfile {
+        avatar: source
+            .thumbnails
+            .last()
+            .map(|thumbnail| thumbnail.url.clone()),
         id: source.email.unwrap_or_else(|| source.name.clone()),
         display_name: source.name,
     }

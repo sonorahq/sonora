@@ -1,7 +1,11 @@
+use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::prelude::*;
-use gpui::{App, ClickEvent, Entity, Pixels, SharedString, Window, div, px};
+use gpui::{
+    App, ClickEvent, Entity, FontStyle, HighlightStyle, Pixels, SharedString, StyledText, Window,
+    div, px,
+};
 use i18n::t;
 use router::{Destination, navigate};
 use ui::{ActiveTheme as _, Artwork, Button, Modal, Scrollbar, Scroller, eyebrow, heading};
@@ -111,7 +115,6 @@ pub(crate) fn about_modal(
         .detail(name)
         .map(|modal| match biography {
             Some(biography) => {
-                let text = SharedString::from(biography);
                 let overflows = bar.read(cx).scroll().max_offset().y > Pixels::ZERO;
                 let tail = FADE * 0.75;
 
@@ -125,7 +128,7 @@ pub(crate) fn about_modal(
                             div()
                                 .invisible()
                                 .when(overflows, |this| this.pb(tail))
-                                .child(text.clone()),
+                                .child(bio_text(&biography)),
                         )
                         .child(
                             div().absolute().inset_0().child(
@@ -134,7 +137,7 @@ pub(crate) fn about_modal(
                                     .when(overflows && effects(), |this| {
                                         this.fade_edges(px(0.), FADE)
                                     })
-                                    .child(text),
+                                    .child(bio_text(&biography)),
                             ),
                         ),
                 )
@@ -160,6 +163,52 @@ pub(crate) fn about_modal(
 fn blurb(biography: Option<String>) -> SharedString {
     biography
         .filter(|biography| !biography.is_empty())
-        .map(SharedString::from)
+        .map(|biography| rich(&biography).0)
         .unwrap_or_else(|| t!("artist-about-fallback"))
+}
+
+/// Apple's biographies mark titles with `<i>` italics. Strips the tags and returns the plain
+/// text with the byte ranges to draw slanted, for `bio_text`. A tag without its partner, or
+/// one this does not know, is dropped rather than shown.
+fn rich(biography: &str) -> (SharedString, Vec<Range<usize>>) {
+    let mut plain = String::with_capacity(biography.len());
+    let mut italics = Vec::new();
+    let mut rest = biography;
+    let mut open: Option<usize> = None;
+    while let Some(at) = rest.find('<') {
+        plain.push_str(&rest[..at]);
+        let after = &rest[at..];
+        let Some(end) = after.find('>') else {
+            plain.push_str(after);
+            break;
+        };
+        match &after[..=end] {
+            "<i>" => open = Some(plain.len()),
+            "</i>" => {
+                if let Some(start) = open.take()
+                    && start < plain.len()
+                {
+                    italics.push(start..plain.len());
+                }
+            }
+            _ => {}
+        }
+        rest = &after[end + 1..];
+    }
+    plain.push_str(rest);
+    (SharedString::from(plain), italics)
+}
+
+/// A biography with its `<i>` titles drawn slanted, in the style around it.
+fn bio_text(biography: &str) -> StyledText {
+    let (plain, italics) = rich(biography);
+    StyledText::new(plain).with_highlights(italics.into_iter().map(|range| {
+        (
+            range,
+            HighlightStyle {
+                font_style: Some(FontStyle::Italic),
+                ..Default::default()
+            },
+        )
+    }))
 }

@@ -1602,15 +1602,26 @@ impl SettingsView {
     fn profile(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
+        // The service the account belongs to, named next to the region so the card says which
+        // provider it is rather than a bare country code.
+        let provider = self
+            .session
+            .read(cx)
+            .providers()
+            .find(|info| info.active)
+            .map(|info| info.name.to_string());
 
         div()
             .flex()
             .items_center()
             .gap_4()
             .child(match self.session.read(cx).state() {
-                SessionState::SignedIn(profile) => {
-                    Initials::new(profile.display_name.clone(), px(64.)).into_any_element()
-                }
+                SessionState::SignedIn(profile) => match &profile.avatar {
+                    Some(avatar) => Avatar::new(Some(avatar.clone()))
+                        .size(px(64.))
+                        .into_any_element(),
+                    None => Initials::new(profile.display_name.clone(), px(64.)).into_any_element(),
+                },
                 _ => Skeleton::new().size(px(64.)).circle().into_any_element(),
             })
             .child(
@@ -1628,7 +1639,14 @@ impl SettingsView {
                     })
                     .child(match self.session.read(cx).state() {
                         SessionState::SignedIn(profile) => div()
-                            .child(profile.id.clone())
+                            .child(match &provider {
+                                Some(provider) => t!(
+                                    "settings-profile-account",
+                                    provider = provider,
+                                    account = &profile.id
+                                ),
+                                None => profile.id.clone().into(),
+                            })
                             .text_color(muted)
                             .text_size(theme.text(Text::Small))
                             .into_any_element(),

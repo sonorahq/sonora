@@ -6,7 +6,10 @@ use std::time::Duration;
 use gpui::{App, Context, Entity, Task};
 use music::{GenreItem, GenreSection, HomeFeed, MusicApi, Track};
 
-use crate::{Io, Library, LibraryPart, LibraryState, Network, Session, SessionEvent, Shelf, join};
+use crate::playback::PlaybackEvent;
+use crate::{
+    Io, Library, LibraryPart, LibraryState, Network, Playback, Session, SessionEvent, Shelf, join,
+};
 
 const GROUP_SIZE: usize = 10;
 const LIMIT: usize = GROUP_SIZE * 3;
@@ -21,6 +24,10 @@ const RETRIES: [Duration; 3] = [
 /// How many rows Quick picks holds at most: the provider's own recent items first, then its
 /// picks up to here.
 const PICKS_LIMIT: usize = 30;
+
+/// How long after a play starts to re-read the recently played shelf: the provider folds a
+/// reported play in a little after the play began.
+const RECENT_DELAY: Duration = Duration::from_secs(90);
 
 pub struct Home {
     library: Entity<Library>,
@@ -49,12 +56,17 @@ pub struct Home {
     pending: Option<HomeFeed>,
     task: Option<Task<()>>,
     naming: Option<Task<()>>,
+    /// The re-read of the recently played shelf in flight, if one is.
+    recent_task: Option<Task<()>>,
+    /// The delayed re-read queued after a play started, replaced whenever another starts.
+    play_timer: Option<Task<()>>,
 }
 
 impl Home {
     pub fn new(
         library: Entity<Library>,
         session: Entity<Session>,
+        playback: Entity<Playback>,
         io: Io,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -76,6 +88,11 @@ impl Home {
         .detach();
 
         cx.observe(&library, |this, _, cx| this.mix(cx)).detach();
+        cx.subscribe(&playback, |this, _, event, cx| match event {
+            PlaybackEvent::StartedPlayback => this.played(cx),
+            PlaybackEvent::EndedPlayback | PlaybackEvent::Paused | PlaybackEvent::Seeked => {}
+        })
+        .detach();
 
         let mut home = Self {
             library,
@@ -93,6 +110,8 @@ impl Home {
             pending: None,
             task: None,
             naming: None,
+            recent_task: None,
+            play_timer: None,
         };
         home.feed(cx);
         home
@@ -148,6 +167,8 @@ impl Home {
     fn clear(&mut self) {
         self.task = None;
         self.naming = None;
+        self.recent_task = None;
+        self.play_timer = None;
         self.recent = Rc::new(Vec::new());
         self.picks = Rc::new(Vec::new());
         self.quick_picks = Rc::new(Vec::new());
@@ -162,6 +183,61 @@ impl Home {
         self.clear();
         self.feed(cx);
         cx.notify();
+    }
+
+    /// Re-reads the provider's live recently played shelf into the home page's Recently Played
+    /// section. A fetch in flight is never doubled, and a failed, empty or identical answer
+    /// leaves the drawn shelf alone.
+    pub fn refresh_recent(&mut self, cx: &mut Context<Self>) {
+        if self.recent_task.is_some() {
+            return;
+        }
+        let Some(client) = self.client(cx) else {
+            return;
+        };
+        let io = self.io.clone();
+        self.recent_task = Some(cx.spawn(async move |this, cx| {
+            let live = join(io.spawn(async move { client.recent_resources().await })).await;
+            this.update(cx, |this, cx| {
+                this.recent_task = None;
+                let live = match live {
+                    Ok(live) if !live.is_empty() => live,
+                    Ok(_) => return,
+                    Err(error) => {
+                        log::warn!("home: cannot load the recently played shelf: {error:#}");
+                        return;
+                    }
+                };
+                let mut sections = this.sections.as_ref().clone();
+                match sections
+                    .iter()
+                    .position(|section| section.title.eq_ignore_ascii_case("recently played"))
+                {
+                    Some(at) if sections[at].items != live => sections[at].items = live,
+                    Some(_) => return,
+                    None => sections.insert(
+                        1.min(sections.len()),
+                        GenreSection {
+                            title: "Recently Played".to_owned(),
+                            items: live,
+                        },
+                    ),
+                }
+                this.sections = Rc::new(sections);
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// A play just started: re-read the shelf at once, then once more after the provider has
+    /// had time to fold the play in. One-shot timers off the play event, never a poll.
+    fn played(&mut self, cx: &mut Context<Self>) {
+        self.refresh_recent(cx);
+        self.play_timer = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(RECENT_DELAY).await;
+            this.update(cx, |this, cx| this.refresh_recent(cx)).ok();
+        }));
     }
 
     pub fn feed(&mut self, cx: &mut Context<Self>) {

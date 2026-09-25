@@ -56,6 +56,7 @@ impl LocalProvider {
             profile: UserProfile {
                 id: "local".to_owned(),
                 display_name: "Local Files".to_owned(),
+                avatar: None,
             },
             api,
             playback,

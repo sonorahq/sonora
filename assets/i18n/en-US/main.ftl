@@ -707,6 +707,7 @@ settings-provider-connected = Connected
 settings-provider-current = Playing from this service
 settings-provider-guest = Playing as a guest
 settings-provider-switch = Switch to
+settings-profile-account = { $provider } · { $account }
 settings-sign-out = Sign out
 settings-group-scrobbling = Scrobbling
 settings-lastfm = Last.fm

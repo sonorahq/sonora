@@ -74,6 +74,7 @@ impl MusicApi for LibrespotClient {
         Ok(UserProfile {
             display_name,
             id: username,
+            avatar: None,
         })
     }
 

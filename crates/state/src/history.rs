@@ -257,14 +257,23 @@ impl History {
         };
         let store = self.store.clone();
         let io = self.io.clone();
-        self.state = HistoryState::Loading;
-        cx.notify();
+        // The provider's own cross-device recently played folds in here.
+        let client = self.session.read(cx).client();
+        // A refresh with something to show must not blank the list back to a skeleton.
+        if self.tracks.is_empty() {
+            self.state = HistoryState::Loading;
+            cx.notify();
+        }
 
         self.task = Some(cx.spawn(async move |this, cx| {
             let loaded = join(io.spawn(async move {
                 tokio::task::spawn_blocking(move || store.load(&scope)).await?
             }))
             .await;
+            let recent = match client {
+                Some(client) => join(io.spawn(async move { client.recently_played().await })).await,
+                None => Ok(Vec::new()),
+            };
             this.update(cx, |this, cx| {
                 this.task = None;
                 match loaded {
@@ -273,7 +282,7 @@ impl History {
                         pending.extend(tracks);
                         let mut seen = HashSet::new();
                         pending.retain(|track| seen.insert((track.id.clone(), track.added_at)));
-                        this.tracks = pending;
+                        this.tracks = merge_recent(recent, pending);
                         this.tracks.truncate(LOCAL_LIMIT);
                         this.state = HistoryState::Ready;
                     }
@@ -301,7 +310,7 @@ impl History {
         let Some(provider) = self.session.read(cx).slug_for(&track_id) else {
             return;
         };
-        let key = (provider.to_owned(), track_id);
+        let key = (provider.to_owned(), track_id.clone());
         if self.active.as_ref() == Some(&key) {
             return;
         }
@@ -317,6 +326,8 @@ impl History {
         self.state = HistoryState::Ready;
         cx.notify();
 
+        self.report(&track_id, cx);
+
         let store = self.store.clone();
         let provider = provider.to_owned();
         self.io.spawn(async move {
@@ -328,6 +339,25 @@ impl History {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => log::warn!("history: cannot save a play: {error:#}"),
                 Err(error) => log::warn!("history: save task failed: {error}"),
+            }
+        });
+    }
+
+    /// Reports the play to the provider that owns the track, fire-and-forget. A failure is
+    /// logged and dropped, never touching what the listener hears.
+    fn report(&self, track_id: &str, cx: &Context<Self>) {
+        let session = self.session.read(cx);
+        let client = match music::is_local_id(track_id) {
+            true => session.local_client(),
+            false => session.client(),
+        };
+        let Some(client) = client else {
+            return;
+        };
+        let track_id = track_id.to_owned();
+        self.io.spawn(async move {
+            if let Err(error) = client.report_play(&track_id).await {
+                log::warn!("history: cannot report the play to the provider: {error:#}");
             }
         });
     }
@@ -357,4 +387,22 @@ fn now() -> i64 {
         .unwrap_or_default()
         .as_millis()
         .min(i64::MAX as u128) as i64
+}
+
+/// Folds the provider's cross-device recently played into the local play log. The timestamped
+/// local log leads, so whatever just played here stays on top; played-elsewhere tracks fold in
+/// after, deduped, in the provider's newest-first order. A failed fetch folds in nothing.
+fn merge_recent(recent: Result<Vec<Track>>, local: Vec<Track>) -> Vec<Track> {
+    let recent = recent.unwrap_or_else(|error| {
+        log::warn!("history: cannot load the provider's recently played: {error:#}");
+        Vec::new()
+    });
+    let known: HashSet<String> = local.iter().filter_map(|track| track.id.clone()).collect();
+    let mut added = HashSet::new();
+    let mut merged = local;
+    merged.extend(recent.into_iter().filter(|track| match track.id.clone() {
+        Some(id) => !known.contains(&id) && added.insert(id),
+        None => false,
+    }));
+    merged
 }

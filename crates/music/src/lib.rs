@@ -180,6 +180,25 @@ pub trait MusicApi: Send + Sync {
     async fn played(&self, _track_id: &str, _at: SystemTime) -> Result<()> {
         Ok(())
     }
+
+    /// Tells the provider a track has started playing, so the play counts on the provider's
+    /// own side. A provider that keeps no history keeps the default and makes no request.
+    async fn report_play(&self, _track_id: &str) -> Result<()> {
+        Ok(())
+    }
+
+    /// The tracks the account has recently played, newest first, across every device. A provider
+    /// that keeps no cross-device history keeps the default and answers with nothing.
+    async fn recently_played(&self) -> Result<Vec<Track>> {
+        Ok(Vec::new())
+    }
+
+    /// The account's live recently played shelf, newest first: the albums and playlists recent
+    /// plays came from. A provider with no such shelf keeps the default and answers with nothing.
+    async fn recent_resources(&self) -> Result<Vec<GenreItem>> {
+        Ok(Vec::new())
+    }
+
     async fn playlists(&self) -> Result<Vec<Playlist>>;
     /// Changes the provider's own pin for `uri`, one of the uris `pin_targets` lists or
     /// `pin_uri` builds.

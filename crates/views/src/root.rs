@@ -143,8 +143,16 @@ impl Root {
         });
 
         let io = Io::global(cx);
-        let home_state = cx.new(|cx| Home::new(library.clone(), session.clone(), io.clone(), cx));
-        let home = cx.new(|cx| HomeView::new(home_state, playback.clone(), cx));
+        let home_state = cx.new(|cx| {
+            Home::new(
+                library.clone(),
+                session.clone(),
+                playback.clone(),
+                io.clone(),
+                cx,
+            )
+        });
+        let home = cx.new(|cx| HomeView::new(home_state.clone(), playback.clone(), cx));
         let history = Sonora::global(cx).history.clone();
         let history = cx.new(|cx| HistoryView::new(history, playback.clone(), window, cx));
 
@@ -191,10 +199,18 @@ impl Root {
         // Re-read the system preference when the window becomes active instead of keeping a
         // long-lived portal listener alive. This picks up changes after the user returns from
         // the desktop accessibility settings.
-        cx.observe_window_activation(window, |_, window, cx| {
+        let home_recent = home_state.clone();
+        cx.observe_window_activation(window, move |_, window, cx| {
             if !window.is_window_active() {
                 return;
             }
+            // Pick up plays made on other devices while Sonora was in the background, off the
+            // window coming back to the foreground rather than a poll.
+            Sonora::global(cx)
+                .history
+                .clone()
+                .update(cx, |history, cx| history.refresh(cx));
+            home_recent.update(cx, |home, cx| home.refresh_recent(cx));
             let settings = Sonora::global(cx).settings.clone();
             let (stillness, pace) = {
                 let settings = settings.read(cx);

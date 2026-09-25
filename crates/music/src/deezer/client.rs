@@ -529,6 +529,7 @@ impl MusicApi for DeezerClient {
         Ok(UserProfile {
             id: session.user_id.clone(),
             display_name: session.user_name.clone(),
+            avatar: None,
         })
     }
 
