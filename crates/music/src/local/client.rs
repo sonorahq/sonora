@@ -570,9 +570,10 @@ impl MusicApi for LocalClient {
         if !playlists.is_empty() {
             sections.push(GenreSection {
                 title: "home-playlists".to_owned(),
-                items: playlists
+                items: PlaylistEntry::playlists(&playlists)
                     .into_iter()
                     .take(15)
+                    .cloned()
                     .map(GenreItem::Playlist)
                     .collect(),
             });

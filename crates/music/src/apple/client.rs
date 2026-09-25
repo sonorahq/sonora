@@ -28,7 +28,8 @@ use crate::engine::Loudness;
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Genre, GenreDetail,
     GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Page, Pages, PinOutcome, PinTarget,
-    PinTargetKind, Playlist, PlaylistDetail, SavedArtist, Track, UserProfile, escape,
+    PinTargetKind, Playlist, PlaylistDetail, PlaylistEntry, SavedArtist, Track, UserProfile,
+    escape,
 };
 
 /// The API the web player calls.
@@ -1070,14 +1071,16 @@ impl MusicApi for AppleClient {
 
     /// The tags are asked for so this and [`favorites_playlist`](Self::favorites_playlist)
     /// read one listing between them.
-    async fn playlists(&self) -> Result<Vec<Playlist>> {
-        self.walk(
-            "/me/library/playlists",
-            PAGE,
-            &[("extend[library-playlists]", "tags")],
-            |row| wire::library_playlist(row, OWNER),
-        )
-        .await
+    async fn playlists(&self) -> Result<Vec<PlaylistEntry>> {
+        let playlists = self
+            .walk(
+                "/me/library/playlists",
+                PAGE,
+                &[("extend[library-playlists]", "tags")],
+                |row| wire::library_playlist(row, OWNER),
+            )
+            .await?;
+        Ok(PlaylistEntry::flat(playlists))
     }
 
     /// The listener's pins in pin order, all of them pinned. The rest of the library is left
