@@ -389,8 +389,6 @@ pub struct Playback {
     stored: Duration,
     sleep: Option<Sleep>,
     sleep_task: Option<Task<()>>,
-    /// Paths from a file-association open, waiting on the local engine to come up.
-    pending_open: Option<Vec<PathBuf>>,
     open: Option<Task<()>>,
 }
 
@@ -424,11 +422,6 @@ impl Playback {
                 {
                     this.start_local_engine(playback, cx);
                 }
-                if this.local_engine.is_some()
-                    && let Some(paths) = this.pending_open.take()
-                {
-                    this.resolve_paths(paths, cx);
-                }
             }
         })
         .detach();
@@ -448,7 +441,7 @@ impl Playback {
         let repeat = settings.read(cx).repeat();
         let radio = settings.read(cx).radio();
 
-        Self {
+        let mut playback = Self {
             state: PlaybackState::Idle,
             origin: None,
             position: Duration::ZERO,
@@ -490,9 +483,13 @@ impl Playback {
             stored: Duration::ZERO,
             sleep: None,
             sleep_task: None,
-            pending_open: None,
             open: None,
+        };
+        // Start the local engine at startup so files can play before the first scan.
+        if let Some(factory) = playback.session.read(cx).local_playback() {
+            playback.start_local_engine(factory, cx);
         }
+        playback
     }
 
     /// Plays a track the user picked, from its start.
@@ -804,33 +801,25 @@ impl Playback {
     /// Opens paths handed in from the OS (a file-association launch or hand-off). A single file
     /// plays right away, since picking one is a request to hear it now; several play next,
     /// right after whatever is already playing, whichever provider it came from — or start right
-    /// away if nothing is. Brings the local engine up on the fly if it never started.
+    /// away if nothing is.
     pub fn open_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         if paths.is_empty() {
             return;
         }
-        if self.local_engine.is_some() {
-            return self.resolve_paths(paths, cx);
-        }
-        self.pending_open.get_or_insert_with(Vec::new).extend(paths);
-        self.session
-            .update(cx, |session, cx| session.ensure_local_ready(cx));
+        self.resolve_paths(paths, cx);
     }
 
     fn resolve_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
-        let Some(client) = self.session.read(cx).local_client() else {
-            log::warn!("playback: local engine is not ready");
-            return;
-        };
+        let provider = self.session.read(cx).local_provider();
         let io = Io::global(cx);
         self.open = Some(cx.spawn(async move |this, cx| {
             let loaded = join(io.spawn(async move {
                 let mut tracks = Vec::new();
                 for path in paths {
-                    match client.track_from_path(&path).await {
-                        Ok(track) => tracks.push(track),
-                        Err(error) => {
-                            log::warn!("local: cannot open {}: {error:#}", path.display());
+                    match provider.track_from_path(&path) {
+                        Some(track) => tracks.push(track),
+                        None => {
+                            log::warn!("local: cannot open {}", path.display());
                         }
                     }
                 }

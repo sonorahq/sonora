@@ -151,6 +151,7 @@ impl Session {
         let active = providers
             .iter()
             .position(|provider| provider.slug() == remembered);
+        let local_playback = local_provider.playback_factory();
         let mut session = Self {
             state: SessionState::SignedOut,
             providers,
@@ -175,7 +176,7 @@ impl Session {
             local_folders,
             local_client: None,
             local_catalog: None,
-            local_playback: None,
+            local_playback,
             local_capabilities: Capabilities::NONE,
             local_task: None,
             scanning: false,
@@ -229,6 +230,12 @@ impl Session {
 
     pub fn local_playback(&self) -> Option<Arc<dyn PlaybackFactory>> {
         self.local_playback.clone()
+    }
+
+    /// The local provider itself, so a file can be read as a track without waiting for
+    /// a scan: an explorer open may point outside every configured folder.
+    pub fn local_provider(&self) -> Arc<dyn MusicProvider> {
+        self.local_provider.clone()
     }
 
     pub fn local_paths(&self) -> Vec<String> {
@@ -860,7 +867,6 @@ impl Session {
             });
             self.local_client = None;
             self.local_catalog = None;
-            self.local_playback = None;
             self.local_capabilities = Capabilities::NONE;
             self.local_task = None;
             cx.notify();
@@ -900,38 +906,6 @@ impl Session {
         }));
     }
 
-    /// Brings up the local engine even when no folder has ever been configured, so a
-    /// file-association open can play a track without the user having visited Settings first.
-    /// A no-op once a local client already exists or one is already being brought up; a
-    /// configured library goes through the normal [`Session::rescan_local`] path instead.
-    pub fn ensure_local_ready(&mut self, cx: &mut Context<Self>) {
-        if self.local_client.is_some() || self.local_task.is_some() {
-            return;
-        }
-        if !self.local_folders.is_empty() {
-            return self.rescan_local(false, cx);
-        }
-
-        let provider = self.local_provider.clone();
-        let io = self.io.clone();
-        self.local_task = Some(cx.spawn(async move |this, cx| {
-            let prompt: PromptSink = Arc::new(|_| {});
-            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-            let signed_in = join(io.spawn(async move {
-                provider.sign_in(SignIn::Path(Vec::new()), prompt, rx).await
-            }))
-            .await;
-
-            this.update(cx, |this, cx| match signed_in {
-                Ok(session) => this.local_signed_in(session, cx),
-                Err(error) => {
-                    log::warn!("session: cannot initialize local playback: {error:#}");
-                }
-            })
-            .ok();
-        }));
-    }
-
     /// Whether a local scan is under way right now.
     pub fn scanning(&self) -> bool {
         self.scanning
@@ -940,7 +914,9 @@ impl Session {
     fn local_signed_in(&mut self, session: ProviderSession, cx: &mut Context<Self>) {
         self.local_catalog = Some(Arc::new(CatalogSource::new(session.api.clone())));
         self.local_client = Some(session.api);
-        self.local_playback = Some(session.playback);
+        if self.local_playback.is_none() {
+            self.local_playback = Some(session.playback);
+        }
         self.local_capabilities = session.capabilities;
         cx.notify();
         cx.emit(SessionEvent::LocalChanged);
