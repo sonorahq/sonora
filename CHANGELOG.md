@@ -36,6 +36,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   album page's recommendations and an artist's Appears on row.
 - Album, playlist, library and history pages give their total length as 46m 15s, or 1h 2m past
   an hour, rather than a clock reading like 46:15.
+- Switched to x86_64-v2 for default release builds
 
 ### Fixed
 

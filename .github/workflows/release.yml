@@ -27,6 +27,7 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
             rustflags: >-
+              -C link-arg=-fuse-ld=mold
               -C target-cpu=x86-64-v2
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-22.04-arm
@@ -38,6 +39,7 @@ jobs:
             os: windows-latest
             arch: x64compatible
             rustflags: >-
+              -C link-arg=-fuse-ld=mold
               -C target-cpu=x86-64-v2
             setup: Sonora-Setup
           - target: aarch64-pc-windows-msvc
