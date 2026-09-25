@@ -42,8 +42,8 @@ pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
     Contributor, Credit, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed, Lyrics, LyricsHit,
     LyricsLane, LyricsLine, LyricsQuery, LyricsWord, PinOutcome, PinTarget, PinTargetKind,
-    Playlist, PlaylistDetail, ReleaseType, RomanizedText, SavedArtist, Track, TrackKey, TrackTags,
-    UserDetail, UserProfile, Voice, WritingSystem,
+    Playlist, PlaylistDetail, PlaylistEntry, PlaylistFolder, ReleaseType, RomanizedText,
+    SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
 };
 pub use spectrum::Spectrum;
 
@@ -180,7 +180,7 @@ pub trait MusicApi: Send + Sync {
     async fn played(&self, _track_id: &str, _at: SystemTime) -> Result<()> {
         Ok(())
     }
-    async fn playlists(&self) -> Result<Vec<Playlist>>;
+    async fn playlists(&self) -> Result<Vec<PlaylistEntry>>;
     /// Changes the provider's own pin for `uri`, one of the uris `pin_targets` lists or
     /// `pin_uri` builds.
     async fn set_pinned(&self, _uri: &str, _pinned: bool) -> Result<PinOutcome> {

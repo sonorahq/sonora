@@ -19,8 +19,8 @@ use i18n::t;
 use music::{Shape, Track};
 use router::{Destination, LibraryTab, navigate};
 use state::{
-    Addition, AppSettings, Library, LibraryPart, LibraryState, Origin, Playback, PlaybackState,
-    Scan, Shelf, Sonora,
+    Addition, AppSettings, FolderRow, Library, LibraryPart, LibraryState, Origin, Playback,
+    PlaybackState, Scan, Shelf, Sonora,
 };
 use ui::{
     ActiveTheme as _, Button, Card, Deck, FilterChange, LEADING, Mode, Pinnable, Popovers, Popup,
@@ -668,15 +668,21 @@ impl LibraryView {
     }
 
     fn open_playlist(&mut self, display: usize, cx: &mut Context<Self>) {
-        let playlist = {
+        let opened = {
             let state = self.playlists.read(cx);
             let row = state.delegate().row(display);
-            state.delegate().source().at(row, cx)
+            let source = state.delegate().source();
+            match source.folder_at(row, cx) {
+                Some(folder) => Some(Destination::Folder(folder.id.into())),
+                None => source
+                    .at(row, cx)
+                    .map(|playlist| Destination::Playlist(playlist.id.into())),
+            }
         };
-        let Some(playlist) = playlist else {
+        let Some(opened) = opened else {
             return;
         };
-        navigate(Destination::Playlist(playlist.id.into()), cx);
+        navigate(opened, cx);
     }
 
     fn open_artist(&mut self, display: usize, cx: &mut Context<Self>) {
@@ -1023,6 +1029,15 @@ impl LibraryView {
         card: Pixels,
         cx: &App,
     ) -> Option<AnyElement> {
+        if let Some(folder) = self
+            .playlists
+            .read(cx)
+            .delegate()
+            .source()
+            .folder_at(row, cx)
+        {
+            return Some(self.folder_card(display, folder, card, cx));
+        }
         let playlist = self.playlists.read(cx).delegate().source().at(row, cx)?;
         let build = match self.shelf.local() {
             true => cards::imported_playlist_card,
@@ -1035,6 +1050,16 @@ impl LibraryView {
                 .flat()
                 .into_any_element(),
         )
+    }
+
+    /// A folder among the playlist cards: it opens rather than plays.
+    fn folder_card(&self, display: usize, folder: FolderRow, card: Pixels, cx: &App) -> AnyElement {
+        let cover = self.library.read(cx).folder_cover(&folder.id);
+
+        cards::folder_card(("library-folder", display), &folder, cover, &self.playback)
+            .tile(card)
+            .flat()
+            .into_any_element()
     }
 
     fn artist_card(
@@ -1272,6 +1297,7 @@ fn deck<S: TableSource>(state: &Entity<TableState<S>>, columns: usize, cx: &App)
     let mut group: Option<SharedString> = None;
 
     for display in 0..delegate.row_count() {
+        let row = delegate.row(display);
         let label = delegate.group(display, cx);
         match &label {
             Some(text) if group.as_ref() != Some(text) => {
@@ -1283,7 +1309,7 @@ fn deck<S: TableSource>(state: &Entity<TableState<S>>, columns: usize, cx: &App)
             _ => {}
         }
         group = label;
-        cards.push((display, delegate.row(display)));
+        cards.push((display, row));
         if cards.len() == columns {
             rows.push(DeckRow::Cards(std::mem::take(&mut cards)));
             cards.reserve(columns);

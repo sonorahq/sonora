@@ -28,6 +28,8 @@ const PLAY_INSET: Pixels = px(8.);
 const PLAY_FILL: f32 = 0.55;
 const SCRIM_RATIO: f32 = 0.45;
 const SCRIM_MIN: Pixels = px(14.);
+const GLYPH_RATIO: f32 = 0.34;
+const GLYPH_MIN: Pixels = px(12.);
 const TIGHT: Pixels = px(2.);
 
 pub const CARD_GROUP: &str = "card";
@@ -48,6 +50,7 @@ pub struct Card {
     trailing: Option<AnyElement>,
     cover: Option<String>,
     fallback: Option<SharedString>,
+    glyph: Option<SharedString>,
     accent: bool,
     art: Option<Pixels>,
     art_radius: Option<Pixels>,
@@ -83,6 +86,7 @@ impl Card {
             trailing: None,
             cover: None,
             fallback: None,
+            glyph: None,
             accent: false,
             art: None,
             art_radius: None,
@@ -165,6 +169,13 @@ impl Card {
 
     pub fn fallback(mut self, icon: impl Into<SharedString>) -> Self {
         self.fallback = Some(icon.into());
+        self
+    }
+
+    /// A glyph resting on the artwork under a light veil. It says what the card stands for when
+    /// the picture alone cannot: a folder among the playlists it sits beside.
+    pub fn glyph(mut self, icon: impl Into<SharedString>) -> Self {
+        self.glyph = Some(icon.into());
         self
     }
 
@@ -291,6 +302,7 @@ impl RenderOnce for Card {
             trailing,
             cover,
             fallback,
+            glyph,
             accent,
             art,
             art_radius,
@@ -342,6 +354,41 @@ impl RenderOnce for Card {
                 .when(accent, Artwork::accent)
                 .into_any_element(),
         };
+        let corner = match (circle, art_radius) {
+            (true, _) => art / 2.,
+            (false, Some(radius)) => radius,
+            (false, None) => theme.radius.min(ROUNDED),
+        };
+        let leading = match glyph {
+            None => leading,
+            Some(glyph) => {
+                let size = px((art / px(1.) * GLYPH_RATIO).round()).max(GLYPH_MIN);
+
+                div()
+                    .relative()
+                    .flex_none()
+                    .size(art)
+                    .child(leading)
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(corner)
+                            .bg(theme.overlay)
+                            .child(
+                                svg()
+                                    .path(icons::path(glyph))
+                                    .size(size)
+                                    .flex_none()
+                                    .text_color(theme.overlay_foreground),
+                            ),
+                    )
+                    .into_any_element()
+            }
+        };
         let leading = match play {
             None => leading,
             Some(play) => {
@@ -389,11 +436,6 @@ impl RenderOnce for Card {
                             .into_any_element()
                     }
                     None => {
-                        let corner = match (circle, art_radius) {
-                            (true, _) => art / 2.,
-                            (false, Some(radius)) => radius,
-                            (false, None) => theme.radius.min(ROUNDED),
-                        };
                         let size = px((art / px(1.) * SCRIM_RATIO).round()).max(SCRIM_MIN);
 
                         div()

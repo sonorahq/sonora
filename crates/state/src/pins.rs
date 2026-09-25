@@ -4,10 +4,11 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 
 use gpui::{App, Context, Entity};
-use music::{PinTarget, PinTargetKind};
+use music::{PinTarget, PinTargetKind, Playlist};
 use ui::{Pin, PinKind};
 
 use crate::library::{Library, Shelf};
+use crate::outline::PlaylistRow;
 use crate::session::Session;
 use crate::settings::AppSettings;
 
@@ -102,16 +103,26 @@ impl Pins {
         self.laid
             .get_or_init(|| {
                 let slugs = self.session.read(cx).active_slugs();
-                let mut pinned = self.settings.read(cx).pinned(&slugs);
+                let mut pinned: Vec<Pin> = self
+                    .settings
+                    .read(cx)
+                    .pinned(&slugs)
+                    .into_iter()
+                    .map(|pin| self.dressed(pin, cx))
+                    .collect();
                 self.lay_out(&mut pinned, cx);
                 Rc::new(pinned)
             })
             .clone()
     }
 
-    /// Everything the live shelves hold that is not pinned: albums, artists and playlists, laid
-    /// out the same way the pins above them are. Nothing else a provider lists belongs here,
-    /// since the sidebar can only open these three. Built once per change, like `entries`.
+    /// Everything the live shelves hold that is not pinned: albums, artists, folders and the
+    /// playlists that are not inside one, laid out the same way the pins above them are. Nothing
+    /// else a provider lists belongs here, since the sidebar can only open these. Built once per
+    /// change, like `entries`.
+    ///
+    /// A playlist inside a folder is left out on purpose: it is listed on that folder's page, and
+    /// showing it here as well would leave the sidebar exactly as long as it was without folders.
     pub fn library(&self, cx: &App) -> Rc<Vec<Pin>> {
         self.rest
             .get_or_init(|| Rc::new(self.gather_library(cx)))
@@ -130,6 +141,14 @@ impl Pins {
             let held = library.state(shelf);
             for playlist in held.playlists() {
                 (&playlist.id, &playlist.name, &playlist.cover).hash(&mut hasher);
+            }
+            // A folder's mosaic is assembled after its playlists land, so the cover has to count:
+            // without it the sidebar would keep the glyph it first drew.
+            for row in held.outline().rows() {
+                let PlaylistRow::Folder { id, name, .. } = row else {
+                    continue;
+                };
+                (id, name, library.folder_cover(id)).hash(&mut hasher);
             }
             for album in held.albums() {
                 (&album.id, &album.name, &album.cover_large, &album.cover).hash(&mut hasher);
@@ -162,10 +181,7 @@ impl Pins {
                 continue;
             }
             let held = library.state(shelf);
-            rest.extend(held.playlists().iter().map(|playlist| {
-                Pin::new(PinKind::Playlist, &playlist.id, &playlist.name)
-                    .cover(playlist.cover.clone())
-            }));
+            rest.extend(top_level(library, shelf));
             rest.extend(held.albums().iter().map(|album| {
                 Pin::new(PinKind::Album, &album.id, &album.name)
                     .cover(album.cover_large.clone().or_else(|| album.cover.clone()))
@@ -229,6 +245,29 @@ impl Pins {
             settings.set_sidebar_pin_sort(sort, reversed, cx)
         });
         self.changed(cx);
+    }
+
+    /// Whether a shelf knows the pin. Only folders are checked: the provider's own library names
+    /// them apart from the playlist list Sonora reads, so one it offers may have no page here.
+    fn listed(&self, pin: &Pin, cx: &App) -> bool {
+        if pin.kind != PinKind::Folder {
+            return true;
+        }
+        let library = self.library.read(cx);
+        [Shelf::Streaming, Shelf::Local]
+            .into_iter()
+            .any(|shelf| library.state(shelf).outline().folder(&pin.id).is_some())
+    }
+
+    /// Gives a folder pin the cover the library worked out for it. A folder's mosaic is assembled
+    /// after the pin was stored, and it changes as playlists come and go, so it is filled in on
+    /// the way out rather than kept in the stored pin. Everything else arrives with its own.
+    fn dressed(&self, pin: Pin, cx: &App) -> Pin {
+        if pin.kind != PinKind::Folder {
+            return pin;
+        }
+        let cover = self.library.read(cx).folder_cover(&pin.id);
+        pin.cover(cover)
     }
 
     pub fn holds(&self, pin: &Pin, cx: &App) -> bool {
@@ -364,6 +403,8 @@ impl Pins {
             .iter()
             .filter(|item| item.pinned)
             .filter_map(|item| Some((item.uri.clone(), pin_of(item)?)))
+            .filter(|(_, pin)| self.listed(pin, cx))
+            .map(|(uri, pin)| (uri, self.dressed(pin, cx)))
             .collect();
         if now.len() == self.mirrored.len()
             && now.iter().all(|(uri, _)| self.mirrored.contains_key(uri))
@@ -401,22 +442,49 @@ impl Pins {
     }
 }
 
+/// The folders and loose playlists of one shelf, in the order the provider listed them. A shelf
+/// whose outline has not arrived yet lists every playlist, so nothing disappears while it loads.
+fn top_level(library: &Library, shelf: Shelf) -> Vec<Pin> {
+    let held = library.state(shelf);
+    let outline = held.outline();
+    let playlists = held.playlists();
+    let playlist_pin = |playlist: &Playlist| {
+        Pin::new(PinKind::Playlist, &playlist.id, &playlist.name).cover(playlist.cover.clone())
+    };
+    if outline.rows().is_empty() {
+        return playlists.iter().map(playlist_pin).collect();
+    }
+
+    outline
+        .level(None)
+        .iter()
+        .filter_map(|&at| match outline.row(at)? {
+            PlaylistRow::Folder { id, name, .. } => {
+                Some(Pin::new(PinKind::Folder, id, name).cover(library.folder_cover(id)))
+            }
+            PlaylistRow::Playlist { index, .. } => playlists.get(*index).map(playlist_pin),
+        })
+        .collect()
+}
+
 fn rank(kind: PinKind) -> u8 {
     match kind {
-        PinKind::Playlist => 0,
-        PinKind::Album => 1,
-        PinKind::Artist => 2,
-        PinKind::Song => 3,
+        PinKind::Folder => 0,
+        PinKind::Playlist => 1,
+        PinKind::Album => 2,
+        PinKind::Artist => 3,
+        PinKind::Song => 4,
     }
 }
 
 /// The pin a provider's pin target stands for, or `None` for a row Sonora cannot open on its own,
-/// such as a folder or a podcast.
+/// such as a podcast.
 fn pin_of(item: &PinTarget) -> Option<Pin> {
     let kind = match item.kind {
         PinTargetKind::Playlist => PinKind::Playlist,
         PinTargetKind::Album => PinKind::Album,
         PinTargetKind::Artist => PinKind::Artist,
+        PinTargetKind::Folder => PinKind::Folder,
         _ => return None,
     };
     let (_, id) = item.uri.rsplit_once(':')?;
@@ -430,6 +498,7 @@ fn target_kind(kind: PinKind) -> Option<PinTargetKind> {
         PinKind::Playlist => Some(PinTargetKind::Playlist),
         PinKind::Album => Some(PinTargetKind::Album),
         PinKind::Artist => Some(PinTargetKind::Artist),
+        PinKind::Folder => Some(PinTargetKind::Folder),
         PinKind::Song => None,
     }
 }

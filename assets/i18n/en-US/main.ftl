@@ -404,6 +404,7 @@ kind-song = Song
 kind-artist = Artist
 kind-album = Album
 kind-playlist = Playlist
+kind-folder = Folder
 
 # song page
 song-eyebrow = Song
@@ -460,6 +461,16 @@ count-tracks =
     { $count ->
         [one] { $count } track
        *[other] { $count } tracks
+    }
+count-playlists =
+    { $count ->
+        [one] { $count } playlist
+       *[other] { $count } playlists
+    }
+count-folders =
+    { $count ->
+        [one] { $count } folder
+       *[other] { $count } folders
     }
 
 # running times
@@ -884,3 +895,7 @@ toast-tray-unavailable = There is no system tray to put the icon in
 
 # power
 wake-reason = Music is playing
+
+# playlist folders
+folder-empty = This folder is empty
+folder-missing = This folder is no longer in your library

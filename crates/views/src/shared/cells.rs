@@ -308,6 +308,28 @@ pub(crate) fn length<F>(cell: &Cell<F>, value: Duration, muted: Hsla) -> AnyElem
         .into_any_element()
 }
 
+/// A glyph where a cell would otherwise hold artwork, sized like the artwork it stands in for.
+pub(crate) fn symbol<F>(cell: &Cell<F>, icon: &'static str, color: Hsla, cx: &App) -> AnyElement {
+    let thumb = cx.theme().metrics.thumb;
+
+    cell.middle()
+        .child(
+            div()
+                .size(thumb)
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    svg()
+                        .path(icons::path(icon))
+                        .size(thumb * 0.6)
+                        .text_color(color),
+                ),
+        )
+        .into_any_element()
+}
+
 pub(crate) fn stamp(seconds: Option<i64>) -> SharedString {
     seconds
         .and_then(|seconds| jiff::Timestamp::new(seconds, 0).ok())

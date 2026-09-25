@@ -113,6 +113,12 @@ pub trait TableSource: 'static {
         None
     }
 
+    /// Rows that always come first, whichever column is sorted and whichever way. A folder leads
+    /// the playlists it sits among; `compare` then orders each group on its own.
+    fn leads(&self, _row: usize, _cx: &App) -> bool {
+        false
+    }
+
     fn compare(&self, _field: Self::Field, a: usize, b: usize, _cx: &App) -> Ordering {
         a.cmp(&b)
     }
@@ -465,22 +471,36 @@ impl<S: TableSource> TableDelegate<S> {
     }
 
     fn reorder(&mut self, cx: &App) {
+        let filtering = self.filtering(cx);
         let mut order: Vec<usize> = (0..self.source.rows(cx))
-            .filter(|row| {
-                (self.query.is_empty() && !self.source.filtered(cx))
-                    || self.source.matches(*row, &self.query, cx)
-            })
+            .filter(|row| !filtering || self.source.matches(*row, &self.query, cx))
             .collect();
-
-        if let Some((field, direction)) = self.sort {
-            match direction {
-                Sort::Ascending => order.sort_by(|&a, &b| self.source.compare(field, a, b, cx)),
-                Sort::Descending => order.sort_by(|&a, &b| self.source.compare(field, b, a, cx)),
-            }
-        }
+        self.sort_rows(&mut order, cx);
 
         self.order = order;
         self.prune_selection();
+    }
+
+    fn filtering(&self, cx: &App) -> bool {
+        !self.query.is_empty() || self.source.filtered(cx)
+    }
+
+    /// Orders the rows by the sorted column, keeping the leading rows ahead of the rest. The lead
+    /// is applied outside the direction on purpose: reversing a column must not sink the folders
+    /// to the bottom of the page.
+    fn sort_rows(&self, rows: &mut [usize], cx: &App) {
+        let Some((field, direction)) = self.sort else {
+            rows.sort_by_key(|&row| !self.source.leads(row, cx));
+            return;
+        };
+
+        rows.sort_by(|&a, &b| {
+            let lead = self.source.leads(b, cx).cmp(&self.source.leads(a, cx));
+            lead.then_with(|| match direction {
+                Sort::Ascending => self.source.compare(field, a, b, cx),
+                Sort::Descending => self.source.compare(field, b, a, cx),
+            })
+        });
     }
 
     fn prune_selection(&mut self) {
