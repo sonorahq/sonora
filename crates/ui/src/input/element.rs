@@ -168,22 +168,22 @@ impl Element for Text {
                     theme.foreground,
                 )),
             ),
-            false => (
-                Some(fill(
-                    Bounds::from_corners(
-                        point(
-                            bounds.left() + line.x_for_index(selected.start),
-                            bounds.top(),
+            false => {
+                let x1 = bounds.left() + line.x_for_index(selected.start);
+                let x2 = bounds.left() + line.x_for_index(selected.end);
+                let left_x = x1.min(x2);
+                let right_x = x1.max(x2);
+                (
+                    Some(fill(
+                        Bounds::new(
+                            point(left_x, bounds.top()),
+                            size(right_x - left_x, bounds.size.height),
                         ),
-                        point(
-                            bounds.left() + line.x_for_index(selected.end),
-                            bounds.bottom(),
-                        ),
-                    ),
-                    theme.selection.opacity(0.4),
-                )),
-                None,
-            ),
+                        theme.selection.opacity(0.4),
+                    )),
+                    None,
+                )
+            }
         };
 
         Painted {

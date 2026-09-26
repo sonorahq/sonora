@@ -4,7 +4,7 @@ use gpui::actions;
 use gpui::{
     App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ShapedLine, SharedString,
-    UTF16Selection, Window, point, px,
+    UTF16Selection, Window, point, px, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -697,15 +697,13 @@ impl EntityInputHandler for Input {
             true => mask_map(&self.content)[offset],
             false => offset,
         };
-        Some(Bounds::from_corners(
-            point(
-                bounds.left() + line.x_for_index(at(range.start)),
-                bounds.top(),
-            ),
-            point(
-                bounds.left() + line.x_for_index(at(range.end)),
-                bounds.bottom(),
-            ),
+        let x1 = bounds.left() + line.x_for_index(at(range.start));
+        let x2 = bounds.left() + line.x_for_index(at(range.end));
+        let left_x = x1.min(x2);
+        let right_x = x1.max(x2);
+        Some(Bounds::new(
+            point(left_x, bounds.top()),
+            size(right_x - left_x, bounds.size.height),
         ))
     }
 

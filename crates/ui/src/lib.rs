@@ -1,4 +1,5 @@
 mod artwork;
+mod bidi;
 mod button;
 mod card;
 mod checkbox;
@@ -47,6 +48,7 @@ mod view;
 mod visualizer;
 
 pub use artwork::{Artwork, Avatar, artwork_usage, cover_palette};
+pub use bidi::{is_rtl, natural_align};
 pub use button::Button;
 pub use card::CARD_GROUP;
 pub use card::Card;
