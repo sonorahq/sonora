@@ -154,6 +154,17 @@ impl Store {
         Ok(id)
     }
 
+    /// Whether a playlist of exactly this name already exists, however it got there.
+    pub fn name_exists(&self, name: &str) -> Result<bool> {
+        self.open()?
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM playlists WHERE name = ?)",
+                params![name],
+                |row| row.get(0),
+            )
+            .context("cannot check for a local playlist by name")
+    }
+
     pub fn rename(&self, id: &str, name: &str) -> Result<()> {
         self.open()?
             .execute(
@@ -195,6 +206,28 @@ impl Store {
             )
             .context("cannot add a track to a local playlist")?;
         touch(&connection, id)
+    }
+
+    /// Places every track in order, in one transaction. For seeding a freshly imported
+    /// playlist, where an `add` per track would mean one query per row just to find the next
+    /// position.
+    pub fn add_all(&self, id: &str, track_ids: &[String]) -> Result<()> {
+        let mut connection = self.open()?;
+        let transaction = connection
+            .transaction()
+            .context("cannot start a local playlist import")?;
+        for (position, track_id) in track_ids.iter().enumerate() {
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id, position)
+                     VALUES (?, ?, ?)",
+                    params![id, track_id, position as i64],
+                )
+                .context("cannot add a track to a local playlist")?;
+        }
+        transaction
+            .commit()
+            .context("cannot finish a local playlist import")
     }
 
     pub fn remove(&self, id: &str, track_id: &str) -> Result<()> {

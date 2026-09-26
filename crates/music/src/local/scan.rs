@@ -17,11 +17,15 @@ const AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "m4a", "mp4", "aac", "ogg", "oga", "opus", "wav", "wv", "ape", "webm", "mka",
 ];
 
+/// Playlist files a walk recognizes beside a library's tracks.
+const PLAYLIST_EXTENSIONS: &[&str] = &["m3u", "m3u8", "pls", "xspf", "zpl", "wpl", "asx", "b4s"];
+
 #[derive(Default)]
 pub struct Scanned {
     pub tracks: Vec<Track>,
     pub albums: Vec<Album>,
     pub portraits: HashMap<String, String>,
+    pub playlists: Vec<PathBuf>,
 }
 
 /// One file the walk turned up. A file in a folder whose time has not moved is taken on trust:
@@ -81,13 +85,22 @@ pub fn scan(roots: &[PathBuf], cache_dir: &Path, index: &Index) -> Scanned {
 
     let mut files = Vec::new();
     let mut folders = Vec::new();
+    let mut playlists = Vec::new();
     let mut reached = Vec::new();
     for root in roots {
         if root.is_dir() {
             reached.push(root.clone());
-            walk(root, &remembered, &mut files, &mut folders, &progress);
+            walk(
+                root,
+                &remembered,
+                &mut files,
+                &mut folders,
+                &mut playlists,
+                &progress,
+            );
         }
     }
+    scanned.playlists = playlists;
     let found = files.len();
     // Every folder is looked at again for an artist portrait, so the count covers both passes
     // and the percentage does not sit at full while the second one runs.
@@ -365,6 +378,7 @@ fn walk(
     remembered: &Remembered,
     files: &mut Vec<Found>,
     folders: &mut Vec<Folder>,
+    playlists: &mut Vec<PathBuf>,
     progress: &progress::Scan,
 ) {
     let Some((mtime, _)) = stat(dir) else {
@@ -379,6 +393,18 @@ fn walk(
 
     match known {
         true => {
+            // Playlists aren't part of the index, so a folder whose mtime says nothing changed
+            // still needs a fresh readdir here, or an edit to a playlist file already on disk -
+            // which never moves the folder's own mtime - would never be seen again. This runs
+            // even for a folder with no cached children at all (one holding only playlists, say),
+            // which is why it comes before that lookup can return early.
+            if let Ok(read) = std::fs::read_dir(dir) {
+                playlists.extend(
+                    read.filter_map(|entry| entry.ok())
+                        .map(|entry| entry.path())
+                        .filter(|path| is_playlist_file(path)),
+                );
+            }
             let Some(children) = remembered.children(dir) else {
                 return;
             };
@@ -397,7 +423,7 @@ fn walk(
                 if !progress.live() {
                     return;
                 }
-                walk(child, remembered, files, folders, progress);
+                walk(child, remembered, files, folders, playlists, progress);
             }
         }
         false => {
@@ -418,7 +444,7 @@ fn walk(
                     return;
                 }
                 if folder {
-                    walk(&path, remembered, files, folders, progress);
+                    walk(&path, remembered, files, folders, playlists, progress);
                 } else if is_audio_file(&path) {
                     let Some((mtime, size)) = stat(&path) else {
                         continue;
@@ -433,6 +459,8 @@ fn walk(
                         size,
                         known,
                     });
+                } else if is_playlist_file(&path) {
+                    playlists.push(path);
                 }
             }
         }
@@ -539,6 +567,14 @@ fn is_audio_file(path: &Path) -> bool {
         })
 }
 
+fn is_playlist_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            PLAYLIST_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str())
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -609,11 +645,13 @@ mod tests {
 
         let mut found = Vec::new();
         let mut folders = Vec::new();
+        let mut playlists = Vec::new();
         walk(
             &dir,
             &Remembered::default(),
             &mut found,
             &mut folders,
+            &mut playlists,
             &crate::progress::start(),
         );
 

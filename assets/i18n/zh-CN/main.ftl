@@ -660,6 +660,11 @@ toast-track-removed = 已从 { $name } 中移除
 toast-playlist-failed = 该更改无法保存
 toast-playlist-busy = 另一个更改仍在进行中
 toast-playlist-signed-out = 登录以更改播放列表
+toast-playlists-import-issue = { $name }
+toast-playlists-unmatched = { $count ->
+    [one] 导入播放列表时有 { $count } 首歌曲未找到
+   *[other] 导入播放列表时有 { $count } 首歌曲未找到
+}
 toast-queued-track = { $name } 已添加到播放队列
 toast-next-track = 接下来播放 { $name }
 toast-queued-album = 专辑已添加到播放队列

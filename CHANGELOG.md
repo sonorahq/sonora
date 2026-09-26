@@ -82,6 +82,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Albanian (Shqip) interface language.
 - Guest mode now serves recommendations from your local music collection on the Home screen,
   including Quick picks, recently added albums, local playlists, and artists.
+- Local Music now imports playlists (`.m3u`, `.m3u8`, `.pls`, `.xspf`, `.zpl`, `.wpl`, `.asx`,
+  `.b4s`) found alongside a scanned folder's tracks.
 
 ### Changed
 

@@ -14,7 +14,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::Shelf;
 use crate::catalog::CatalogSource;
 use crate::settings::AppSettings;
-use crate::{Io, Network, join};
+use crate::{Io, Network, Outcome, Toasts, join};
 
 const HEARTBEAT: Duration = Duration::from_secs(30);
 /// How often the sign-in window is asked whether the user is through.
@@ -942,6 +942,12 @@ impl Session {
         self.local_client = Some(session.api);
         self.local_playback = Some(session.playback);
         self.local_capabilities = session.capabilities;
+        if let Some(imported) = self.local_provider.playlists_imported()
+            && imported.unmatched > 0
+        {
+            let name = t!("toast-playlists-unmatched", count = imported.unmatched);
+            Toasts::about(Outcome::Failed, "toast-playlists-import-issue", name, cx);
+        }
         cx.notify();
         cx.emit(SessionEvent::LocalChanged);
     }

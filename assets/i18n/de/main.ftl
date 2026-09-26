@@ -682,6 +682,11 @@ toast-track-removed = Aus { $name } entfernt
 toast-playlist-failed = Diese Änderung konnte nicht gespeichert werden
 toast-playlist-busy = Eine andere Änderung läuft noch
 toast-playlist-signed-out = Melde dich an, um Playlists zu ändern
+toast-playlists-import-issue = { $name }
+toast-playlists-unmatched = { $count ->
+    [one] { $count } Track beim Importieren von Playlists nicht gefunden
+   *[other] { $count } Tracks beim Importieren von Playlists nicht gefunden
+}
 toast-queued-track = { $name } zur Warteschlange hinzugefügt
 toast-next-track = { $name } läuft als Nächstes
 toast-queued-album = Album zur Warteschlange hinzugefügt

@@ -796,6 +796,11 @@ toast-track-removed = Removed from { $name }
 toast-playlist-failed = That change could not be saved
 toast-playlist-busy = Another change is still running
 toast-playlist-signed-out = Sign in to change playlists
+toast-playlists-import-issue = { $name }
+toast-playlists-unmatched = { $count ->
+    [one] 1 track not found while importing playlists
+   *[other] { $count } tracks not found while importing playlists
+}
 toast-queued-track = { $name } added to the queue
 toast-next-track = { $name } plays next
 toast-last-track = { $name } plays last

@@ -798,6 +798,11 @@ toast-track-removed = Usunięto z { $name }
 toast-playlist-failed = Nie udało się zapisać zmiany
 toast-playlist-busy = Inna zmiana wciąż trwa
 toast-playlist-signed-out = Zaloguj się, aby zmieniać playlisty
+toast-playlists-import-issue = { $name }
+toast-playlists-unmatched = { $count ->
+    [one] Nie znaleziono { $count } utworu podczas importu playlist
+   *[other] Nie znaleziono { $count } utworów podczas importu playlist
+}
 toast-queued-track = { $name } dodano do kolejki
 toast-next-track = { $name } zabrzmi następny
 toast-last-track = { $name } zabrzmi na końcu

@@ -769,6 +769,11 @@ toast-track-removed = U hoq nga { $name }
 toast-playlist-failed = Ai ndryshim nuk mund të ruhej
 toast-playlist-busy = Një ndryshim tjetër është ende në vazhdim
 toast-playlist-signed-out = Hyr për të ndryshuar listat e luajtjes
+toast-playlists-import-issue = { $name }
+toast-playlists-unmatched = { $count ->
+    [one] { $count } këngë nuk u gjet gjatë importimit të listave të luajtjes
+   *[other] { $count } këngë nuk u gjetën gjatë importimit të listave të luajtjes
+}
 toast-queued-track = { $name } u shtua në radhë
 toast-next-track = { $name } luhet e radhës
 toast-last-track = { $name } luhet e fundit

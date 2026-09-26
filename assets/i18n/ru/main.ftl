@@ -796,6 +796,12 @@ toast-track-removed = Удалено из { $name }
 toast-playlist-failed = Не удалось сохранить изменение
 toast-playlist-busy = Другое изменение ещё выполняется
 toast-playlist-signed-out = Войдите, чтобы менять плейлисты
+toast-playlists-import-issue = { $name }
+toast-playlists-unmatched = { $count ->
+    [one] { $count } трек не найден при импорте плейлистов
+    [few] { $count } трека не найдены при импорте плейлистов
+   *[other] { $count } треков не найдено при импорте плейлистов
+}
 toast-queued-track = { $name } добавлен в очередь
 toast-next-track = { $name } прозвучит следующим
 toast-last-track = { $name } прозвучит в конце

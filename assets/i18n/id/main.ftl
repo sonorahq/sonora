@@ -660,6 +660,11 @@ toast-track-removed = Dihapus dari { $name }
 toast-playlist-failed = Perubahan tidak dapat disimpan
 toast-playlist-busy = Perubahan lain masih diproses
 toast-playlist-signed-out = Masuk akun untuk mengubah playlist
+toast-playlists-import-issue = { $name }
+toast-playlists-unmatched = { $count ->
+    [one] { $count } lagu tidak ditemukan saat mengimpor playlist
+   *[other] { $count } lagu tidak ditemukan saat mengimpor playlist
+}
 toast-queued-track = { $name } ditambahkan ke antrean
 toast-next-track = { $name } akan diputar berikutnya
 toast-queued-album = Album ditambahkan ke antrean

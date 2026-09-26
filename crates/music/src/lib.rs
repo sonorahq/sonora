@@ -56,6 +56,13 @@ pub const LOCAL_PLAYLIST_PREFIX: &str = "local-playlist:";
 /// rail never asks for or draws more than this many releases or artists.
 pub const SUGGESTIONS: usize = 10;
 
+#[derive(Clone, Copy, Default)]
+pub struct PlaylistImportSummary {
+    pub playlists: usize,
+    pub tracks: usize,
+    pub unmatched: usize,
+}
+
 pub fn is_local_id(id: &str) -> bool {
     id.starts_with(LOCAL_TRACK_PREFIX)
         || id.starts_with(LOCAL_ALBUM_PREFIX)
@@ -614,6 +621,11 @@ pub trait MusicProvider: Send + Sync {
     /// everything again. Only a provider that scans files has anything to forget, and only a
     /// rescan the user asked for should ask it to.
     fn forget_scan(&self) {}
+    /// A summary of the playlist files the last scan found and imported, if this provider scans
+    /// playlists at all. `None` for every provider but the local library.
+    fn playlists_imported(&self) -> Option<PlaylistImportSummary> {
+        None
+    }
     fn sign_in_options(&self) -> Vec<SignIn>;
     fn stored(&self) -> bool;
     /// Whether what is stored is an anonymous session rather than an account, so a caller
