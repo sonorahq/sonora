@@ -4,7 +4,7 @@ use gpui::prelude::*;
 use gpui::{AnyView, App, Context, Entity, FocusHandle, Render, StyleRefinement};
 use gpui::{Window, div};
 use input::WORKSPACE_CONTEXT;
-use state::{Playback, Queue, SideTab};
+use state::{Playback, Queue, Search, SideTab};
 use ui::{
     Activate, ActiveTheme as _, Deselect, Remove, SelectNext, SelectPrevious, ease_out_expo,
     entering, entrance_span, shown_listing, veiled,
@@ -16,6 +16,7 @@ use crate::chrome::{
 use crate::shared::confirm::Confirm;
 use crate::shared::menus::CardMenu;
 use crate::shared::playlist_editor::PlaylistEditor;
+use crate::shared::powerbar::Powerbar;
 use crate::shared::tag_editor::TagEditor;
 use crate::shared::widevine::WidevinePrompt;
 use crate::shells::Shell;
@@ -52,6 +53,7 @@ pub(crate) struct Workspace {
     widevine: Entity<WidevinePrompt>,
     toasts: Entity<ToastStack>,
     notice: Entity<UpdateNotice>,
+    powerbar: Entity<Powerbar>,
     content: AnyView,
     /// A screen's own header, floated over the top of the page and outside its transition.
     /// The page pads itself to start beneath it.
@@ -64,12 +66,14 @@ impl Workspace {
     pub fn new(
         playback: Entity<Playback>,
         queue: Entity<Queue>,
+        search: Entity<Search>,
         content: AnyView,
         cx: &mut Context<Self>,
     ) -> Self {
         let sidebar = cx.new(SidebarLeft::new);
         let sidebar_right = cx.new(|cx| SidebarRight::new(queue.clone(), playback.clone(), cx));
-        let player_bar = cx.new(|cx| PlayerBar::new(playback, queue, cx));
+        let player_bar = cx.new(|cx| PlayerBar::new(playback.clone(), queue, cx));
+        let powerbar = Powerbar::entity(search, playback.clone(), cx);
 
         Self {
             sidebar,
@@ -82,6 +86,7 @@ impl Workspace {
             widevine: cx.new(WidevinePrompt::new),
             toasts: cx.new(ToastStack::new),
             notice: cx.new(UpdateNotice::new),
+            powerbar,
             content,
             header: None,
             transition: None,
@@ -363,5 +368,6 @@ impl Render for Workspace {
             .child(self.confirm.clone())
             .child(self.widevine.clone())
             .child(self.notice.clone())
+            .child(self.powerbar.clone())
     }
 }

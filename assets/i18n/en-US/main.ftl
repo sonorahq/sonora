@@ -384,6 +384,10 @@ home-favorite-albums = Favorite albums
 home-artists = Artists
 home-collection-albums = Albums from your collection
 
+# powerbar (quick search)
+powerbar-title = Quick search
+powerbar-placeholder = What do you want to listen to?
+
 # search page
 search-placeholder = What do you want to listen to?
 search-browse = Browse all
