@@ -2349,7 +2349,7 @@ fn lyrics_wrap_rows(
     for (text, _) in parts {
         at += text.len();
         let right = shaped.x_for_index(at);
-        widths.push(right - left);
+        widths.push((right - left).abs());
         left = right;
     }
     let breaks = fragments
