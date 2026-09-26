@@ -6,7 +6,7 @@ use rusqlite::{Connection, params};
 use storage::Cache;
 
 use super::scan::{Look, Reading};
-use crate::Track;
+use crate::{ArtistRef, Track};
 
 /// What the last scan learned about one file: when it was last written, how big it was, and the
 /// track its tags produced. A file whose time and size both match is not opened again.
@@ -14,8 +14,8 @@ pub struct Known {
     pub mtime: i64,
     pub size: u64,
     pub track: Track,
-    /// The album artist the tags name, `None` when they name none.
-    pub album_artist: Option<String>,
+    /// The album artists the tags name, empty when they name none.
+    pub album_artists: Vec<ArtistRef>,
     /// The year the tag carried, which is what an album is dated by.
     pub year: Option<i32>,
 }
@@ -161,7 +161,7 @@ impl Index {
         // Reading the rows is quick; turning ten thousand of them back into tracks is not, and
         // it is the whole cost of a scan that changed nothing. So it goes over threads.
         let raw: Vec<(String, String, i64, i64, String)> = rows.filter_map(Result::ok).collect();
-        for (path, parent, mtime, size, track, album_artist, year) in parse(raw) {
+        for (path, parent, mtime, size, track, album_artists, year) in parse(raw) {
             let path = PathBuf::from(path);
             remembered
                 .children
@@ -175,7 +175,7 @@ impl Index {
                     mtime,
                     size: size as u64,
                     track,
-                    album_artist,
+                    album_artists,
                     year,
                 },
             );
@@ -261,7 +261,7 @@ impl Changes {
                     mtime: reading.mtime,
                     size: reading.size,
                     track: reading.track.clone(),
-                    album_artist: reading.album_artist.clone(),
+                    album_artists: reading.album_artists.clone(),
                     year: reading.year,
                 },
             ));
@@ -319,7 +319,7 @@ fn write_files(connection: &Connection, files: &[(PathBuf, Known)]) -> Result<()
         .prepare("INSERT OR REPLACE INTO local_files (path, parent, mtime, size, track) VALUES (?, ?, ?, ?, ?)")
         .context("cannot record a file")?;
     for (path, known) in files {
-        let Ok(track) = serde_json::to_string(&(&known.track, known.year, &known.album_artist))
+        let Ok(track) = serde_json::to_string(&(&known.track, known.year, &known.album_artists))
         else {
             continue;
         };
@@ -358,7 +358,7 @@ fn write_folders(connection: &Connection, folders: &[(PathBuf, Seen)]) -> Result
 
 /// Turns the stored tracks back into models, a chunk of rows to a thread. A row that no longer
 /// parses is dropped, which costs one file read on the next scan and nothing else.
-type Parsed = (String, String, i64, i64, Track, Option<String>, Option<i32>);
+type Parsed = (String, String, i64, i64, Track, Vec<ArtistRef>, Option<i32>);
 
 fn parse(rows: Vec<(String, String, i64, i64, String)>) -> Vec<Parsed> {
     let threads = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
@@ -372,8 +372,8 @@ fn parse(rows: Vec<(String, String, i64, i64, String)>) -> Vec<Parsed> {
                     chunk
                         .iter()
                         .filter_map(|(path, parent, mtime, size, track)| {
-                            let (track, year, album_artist) =
-                                serde_json::from_str::<(Track, Option<i32>, Option<String>)>(track)
+                            let (track, year, album_artists) =
+                                serde_json::from_str::<(Track, Option<i32>, Vec<ArtistRef>)>(track)
                                     .ok()?;
                             Some((
                                 path.clone(),
@@ -381,7 +381,7 @@ fn parse(rows: Vec<(String, String, i64, i64, String)>) -> Vec<Parsed> {
                                 *mtime,
                                 *size,
                                 track,
-                                album_artist,
+                                album_artists,
                                 year,
                             ))
                         })
