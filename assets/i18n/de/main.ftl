@@ -448,7 +448,7 @@ settings-theme-detail = Wähle die Farbpalette der Anwendung
 settings-opacity = Deckkraft
 settings-opacity-detail = Deckkraft des App-Hintergrunds anpassen
 settings-opacity-value = { $percent } %
-settings-theme-config = Konfiguration öffnen
+settings-theme-folder = Ordner öffnen
 settings-adaptive = Adaptives Design
 settings-adaptive-detail = Färbt die Palette nach dem Cover des laufenden Albums
 settings-visualizer = Visualizer
@@ -652,6 +652,7 @@ theme-ocean = Ozean
 theme-rose = Rosé
 theme-lavender = Lavendel
 theme-amber = Bernstein
+theme-unavailable = { $name } (nicht verfügbar)
 
 # corners
 corners-square = Eckig

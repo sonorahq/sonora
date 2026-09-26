@@ -197,7 +197,7 @@ pub fn init(
     cx.set_global(io.clone());
     let settings = cx.new(|cx| {
         let mut settings = AppSettings::load(database.clone());
-        settings.watch_file(cx);
+        settings.watch_files(cx);
         settings.report_broken(cx);
         settings
     });

@@ -163,7 +163,7 @@ impl Adaptive {
                     tint_secondary: palette.secondary,
                     ..settings.look()
                 },
-                settings.theme_overrides().clone(),
+                settings.theme_overrides(),
             )
         };
 

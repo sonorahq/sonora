@@ -191,7 +191,7 @@ fn assumed() -> Option<ThemeKind> {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ThemeOverrides {
     pub background: Option<String>,
     pub foreground: Option<String>,
@@ -225,6 +225,143 @@ pub struct ThemeOverrides {
     pub table_active_border: Option<String>,
     pub radius: Option<f32>,
     pub font_size: Option<f32>,
+}
+
+impl ThemeOverrides {
+    /// Applies valid values from `overlay` and keeps the remaining values.
+    pub fn merged(mut self, overlay: &Self) -> Self {
+        macro_rules! apply_color {
+            ($($field:ident),+ $(,)?) => {
+                $(
+                    if overlay.$field.as_deref().is_some_and(|value| parse_color(value).is_some()) {
+                        self.$field = overlay.$field.clone();
+                    }
+                )+
+            };
+        }
+
+        apply_color!(
+            background,
+            foreground,
+            border,
+            muted,
+            overlay,
+            overlay_foreground,
+            muted_foreground,
+            secondary,
+            secondary_hover,
+            secondary_active,
+            primary,
+            primary_foreground,
+            primary_hover,
+            danger,
+            danger_foreground,
+            danger_hover,
+            popover,
+            popover_foreground,
+            progress_bar,
+            selection,
+            sidebar,
+            sidebar_accent,
+            sidebar_border,
+            title_bar_border,
+            table_head,
+            table_head_foreground,
+            table_row_border,
+            table_hover,
+            table_active,
+            table_active_border,
+        );
+        self.radius = overlay.radius.or(self.radius);
+        self.font_size = overlay.font_size.or(self.font_size);
+        self
+    }
+
+    /// Reports whether a field belongs to the version 1 override schema.
+    pub fn supports(field: &str) -> bool {
+        matches!(
+            field,
+            "background"
+                | "foreground"
+                | "border"
+                | "muted"
+                | "overlay"
+                | "overlay_foreground"
+                | "muted_foreground"
+                | "secondary"
+                | "secondary_hover"
+                | "secondary_active"
+                | "primary"
+                | "primary_foreground"
+                | "primary_hover"
+                | "danger"
+                | "danger_foreground"
+                | "danger_hover"
+                | "popover"
+                | "popover_foreground"
+                | "progress_bar"
+                | "selection"
+                | "sidebar"
+                | "sidebar_accent"
+                | "sidebar_border"
+                | "title_bar_border"
+                | "table_head"
+                | "table_head_foreground"
+                | "table_row_border"
+                | "table_hover"
+                | "table_active"
+                | "table_active_border"
+                | "radius"
+                | "font_size"
+        )
+    }
+
+    /// Returns the first color field whose value is not hexadecimal RGB or RGBA.
+    pub fn invalid_color(&self) -> Option<&'static str> {
+        macro_rules! check {
+            ($($field:ident),+ $(,)?) => {
+                $(
+                    if self.$field.as_deref().is_some_and(|value| parse_color(value).is_none()) {
+                        return Some(stringify!($field));
+                    }
+                )+
+            };
+        }
+
+        check!(
+            background,
+            foreground,
+            border,
+            muted,
+            overlay,
+            overlay_foreground,
+            muted_foreground,
+            secondary,
+            secondary_hover,
+            secondary_active,
+            primary,
+            primary_foreground,
+            primary_hover,
+            danger,
+            danger_foreground,
+            danger_hover,
+            popover,
+            popover_foreground,
+            progress_bar,
+            selection,
+            sidebar,
+            sidebar_accent,
+            sidebar_border,
+            title_bar_border,
+            table_head,
+            table_head_foreground,
+            table_row_border,
+            table_hover,
+            table_active,
+            table_active_border,
+        );
+        None
+    }
 }
 
 /// What a control wears when it takes its colours from a cover rather than
