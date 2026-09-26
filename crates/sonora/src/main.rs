@@ -125,7 +125,7 @@ fn main() {
             let settings = Sonora::global(cx).settings.read(cx);
             (
                 settings.look(),
-                settings.theme_overrides().clone(),
+                settings.theme_overrides(),
                 settings.language().to_owned(),
                 settings.icons().to_owned(),
                 settings.stillness(),

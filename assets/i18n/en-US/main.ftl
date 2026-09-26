@@ -500,7 +500,7 @@ settings-theme-detail = Choose the application colour palette
 settings-opacity = Opacity
 settings-opacity-detail = Adjust the app background opacity
 settings-opacity-value = { $percent }%
-settings-theme-config = Open config
+settings-theme-folder = Open folder
 settings-adaptive = Adaptive theme
 settings-adaptive-detail = Tint the palette with the artwork of the playing album
 settings-ambient = Ambient background
@@ -765,6 +765,7 @@ theme-ocean = Ocean
 theme-rose = Rose
 theme-lavender = Lavender
 theme-amber = Amber
+theme-unavailable = { $name } (unavailable)
 
 # corners
 corners-square = Square
