@@ -69,6 +69,8 @@ pub(crate) struct Picks {
     page: usize,
     detailed: bool,
     loading: bool,
+    refresh_disabled: bool,
+    on_refresh: Option<ClickHandler>,
     on_previous: Option<ClickHandler>,
     on_next: Option<ClickHandler>,
     on_context_menu: Option<ContextHandler>,
@@ -94,6 +96,8 @@ impl Picks {
             page,
             detailed: false,
             loading: false,
+            refresh_disabled: false,
+            on_refresh: None,
             on_previous: None,
             on_next: None,
             on_context_menu: None,
@@ -121,6 +125,8 @@ impl Picks {
             page,
             detailed: false,
             loading: false,
+            refresh_disabled: false,
+            on_refresh: None,
             on_previous: None,
             on_next: None,
             on_context_menu: None,
@@ -151,6 +157,21 @@ impl Picks {
 
     pub(crate) fn loading(mut self, loading: bool) -> Self {
         self.loading = loading;
+        self
+    }
+
+    /// Disables the refresh control without affecting the deck's other controls.
+    pub(crate) fn refresh_disabled(mut self, disabled: bool) -> Self {
+        self.refresh_disabled = disabled;
+        self
+    }
+
+    /// Adds a refresh control to the deck header and registers its click handler.
+    pub(crate) fn on_refresh(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_refresh = Some(Rc::new(handler));
         self
     }
 
@@ -195,6 +216,7 @@ impl RenderOnce for Picks {
         let empty = rows.len() == 0;
         let barren = empty && !self.loading;
         let id = self.id;
+        let on_refresh = self.on_refresh;
         let on_previous = self.on_previous;
         let on_next = self.on_next;
         let on_context_menu = self.on_context_menu;
@@ -231,6 +253,15 @@ impl RenderOnce for Picks {
                             .flex()
                             .items_center()
                             .gap_1()
+                            .children(on_refresh.map(|handler| {
+                                Button::new(SharedString::from(format!("{id}-refresh")))
+                                    .small()
+                                    .outline()
+                                    .icon("icons/refresh-cw.svg")
+                                    .tooltip("common-refresh")
+                                    .disabled(self.refresh_disabled)
+                                    .on_click(move |event, window, cx| handler(event, window, cx))
+                            }))
                             .child(
                                 Button::new(SharedString::from(format!("{id}-previous")))
                                     .small()

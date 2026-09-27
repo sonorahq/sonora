@@ -6,7 +6,10 @@ use std::time::Duration;
 use gpui::{App, Context, Entity, Task};
 use music::{GenreItem, GenreSection, HomeFeed, MusicApi, Track};
 
-use crate::{Io, Library, LibraryPart, LibraryState, Network, Session, SessionEvent, Shelf, join};
+use crate::{
+    Io, Library, LibraryPart, LibraryState, Network, Outcome, Session, SessionEvent, Shelf, Toasts,
+    join,
+};
 
 const GROUP_SIZE: usize = 10;
 const LIMIT: usize = GROUP_SIZE * 3;
@@ -21,6 +24,22 @@ const RETRIES: [Duration; 3] = [
 /// How many rows Quick picks holds at most: the provider's own recent items first, then its
 /// picks up to here.
 const PICKS_LIMIT: usize = 30;
+
+/// Tracks what a requested refresh supplied and whether its failure was already announced.
+#[derive(Default)]
+struct PickRefresh {
+    landed: bool,
+    /// Whether that feed supplied its own picks rather than only recent items.
+    picked: bool,
+    /// Whether this refresh has already shown its failure toast.
+    reported: bool,
+}
+
+/// Changes held until Home is hidden. A picks refresh defers only the other shelves.
+enum PendingHome {
+    Feed(HomeFeed),
+    Sections(Vec<GenreSection>),
+}
 
 pub struct Home {
     library: Entity<Library>,
@@ -41,12 +60,13 @@ pub struct Home {
     error: Option<String>,
     /// How many fetches have ended with no feed at all since the last sign-in.
     failures: usize,
-    /// Whether the home page is on screen. While it is, a lot may add to the page but never
-    /// change what is already drawn, so nothing jumps under the user's eyes.
+    /// Whether the home page is on screen. Incoming lots preserve displayed items unless
+    /// the user explicitly refreshes Quick picks; shelf replacements wait until Home is hidden.
     visible: bool,
-    /// The last lot that would have changed something on screen, kept whole for the moment
-    /// the page is out of sight.
-    pending: Option<HomeFeed>,
+    /// The latest changes held back until the page is out of sight.
+    pending: Option<PendingHome>,
+    /// Present while a user-requested refresh of Quick picks is in flight.
+    refreshing_picks: Option<PickRefresh>,
     task: Option<Task<()>>,
     naming: Option<Task<()>>,
 }
@@ -91,6 +111,7 @@ impl Home {
             failures: 0,
             visible: false,
             pending: None,
+            refreshing_picks: None,
             task: None,
             naming: None,
         };
@@ -104,6 +125,11 @@ impl Home {
 
     pub fn is_feeding(&self) -> bool {
         self.feeding
+    }
+
+    /// Whether absent shelves are loading, excluding a refresh of Quick picks alone.
+    pub fn is_loading_sections(&self) -> bool {
+        self.feeding && self.refreshing_picks.is_none() && self.sections.is_empty()
     }
 
     /// Why the page is empty, when the feed failed rather than came back empty. Nothing while
@@ -156,6 +182,7 @@ impl Home {
         self.error = None;
         self.failures = 0;
         self.pending = None;
+        self.refreshing_picks = None;
     }
 
     pub fn reload(&mut self, cx: &mut Context<Self>) {
@@ -164,11 +191,28 @@ impl Home {
         cx.notify();
     }
 
+    /// While Home is visible, only picks are replaced; shelf updates wait until it is hidden.
+    pub fn refresh_picks(&mut self, cx: &mut Context<Self>) {
+        if self.feeding {
+            return;
+        }
+        self.picks_seed = fastrand::u64(..);
+        self.refreshing_picks = Some(PickRefresh::default());
+        self.fetch(cx);
+        cx.notify();
+    }
+
     pub fn feed(&mut self, cx: &mut Context<Self>) {
         if self.feeding || !self.sections.is_empty() {
             return;
         }
+        self.fetch(cx);
+    }
+
+    /// Starts the provider request shared by the initial feed and a Quick picks refresh.
+    fn fetch(&mut self, cx: &mut Context<Self>) {
         let Some(client) = self.client(cx) else {
+            self.refreshing_picks = None;
             return;
         };
 
@@ -180,9 +224,8 @@ impl Home {
             let mut feed = match opened {
                 Ok(feed) => feed,
                 Err(error) => {
-                    log::warn!("home: cannot load the feed: {error:#}");
                     this.update(cx, |this, cx| {
-                        this.error = Some(crate::blamed(&error, cx));
+                        this.failed(&error, cx);
                         this.fed(cx);
                     })
                     .ok();
@@ -195,10 +238,7 @@ impl Home {
                 let landed = this.update(cx, |this, cx| {
                     match lot {
                         Ok(feed) => this.land(feed, cx),
-                        Err(error) => {
-                            log::warn!("home: cannot load the feed: {error:#}");
-                            this.error = Some(crate::blamed(&error, cx));
-                        }
+                        Err(error) => this.failed(&error, cx),
                     }
                     cx.notify();
                 });
@@ -210,13 +250,43 @@ impl Home {
         }));
     }
 
+    fn failed(&mut self, error: &anyhow::Error, cx: &mut Context<Self>) {
+        log::warn!("home: cannot load the feed: {error:#}");
+        self.error = Some(crate::blamed(error, cx));
+        let Some(refresh) = self.refreshing_picks.as_mut() else {
+            return;
+        };
+        if refresh.reported {
+            return;
+        }
+        refresh.reported = true;
+        Toasts::show(Outcome::Failed, "toast-home-refresh-failed", cx);
+    }
+
     /// Puts a lot on the page. With the page in view only what is missing lands: a shelf
     /// already drawn keeps its rows even when the lot has other ones for it, Quick picks may
     /// only grow at their end, and the lot is kept whole to land once the page is out of
-    /// sight. Out of sight, the lot lands as it is.
+    /// sight. An explicit refresh replaces picks immediately and holds only shelves back.
+    /// Out of sight, the lot lands as it is.
     fn land(&mut self, feed: HomeFeed, cx: &mut Context<Self>) {
         self.error = None;
         Network::reached(cx);
+        if let Some(refresh) = self.refreshing_picks.as_mut() {
+            refresh.landed = true;
+            refresh.picked |= feed.quick_picks.is_some();
+            if !self.visible {
+                self.pending = None;
+                self.take(feed, cx);
+                return;
+            }
+            self.recent = Rc::new(feed.listen_again);
+            if let Some(picks) = feed.quick_picks {
+                self.picks = Rc::new(picks);
+            }
+            self.merge();
+            self.pending = Some(PendingHome::Sections(feed.sections));
+            return;
+        }
         if !self.visible {
             self.pending = None;
             self.take(feed, cx);
@@ -246,7 +316,7 @@ impl Home {
             .filter(|picks| picks.starts_with(&self.picks));
         held |= !grown || (feed.quick_picks.is_some() && quick_picks.is_none());
 
-        self.pending = held.then_some(feed.clone());
+        self.pending = held.then(|| PendingHome::Feed(feed.clone()));
         self.take(
             HomeFeed {
                 listen_again,
@@ -264,8 +334,13 @@ impl Home {
             self.picks = Rc::new(quick_picks);
         }
         self.merge();
-        self.sections = Rc::new(pruned(&feed.sections));
-        self.name_playlists(feed.sections, cx);
+        self.take_sections(feed.sections, cx);
+    }
+
+    /// Applies shelves and resolves missing playlist names without changing Quick picks.
+    fn take_sections(&mut self, sections: Vec<GenreSection>, cx: &mut Context<Self>) {
+        self.sections = Rc::new(pruned(&sections));
+        self.name_playlists(sections, cx);
     }
 
     /// Rebuilds what the page draws as Quick picks: the recent items, then the picks that are
@@ -302,7 +377,10 @@ impl Home {
             return;
         }
         if let Some(pending) = self.pending.take() {
-            self.take(pending, cx);
+            match pending {
+                PendingHome::Feed(feed) => self.take(feed, cx),
+                PendingHome::Sections(sections) => self.take_sections(sections, cx),
+            }
             cx.notify();
         }
     }
@@ -311,6 +389,17 @@ impl Home {
     /// since a provider's home is the kind of call that fails for a moment and then works.
     fn fed(&mut self, cx: &mut Context<Self>) {
         self.feeding = false;
+        if matches!(
+            self.refreshing_picks.take(),
+            Some(PickRefresh {
+                landed: true,
+                picked: false,
+                ..
+            })
+        ) {
+            self.picks = Rc::new(Vec::new());
+            self.merge();
+        }
         self.mix(cx);
         if self.sections.is_empty() && self.recent.is_empty() {
             if let Some(&after) = RETRIES.get(self.failures) {

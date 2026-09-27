@@ -122,11 +122,16 @@ impl HomeView {
         };
         let opened = items.clone();
         let home = cx.entity().downgrade();
+        let refreshed = self.home.clone();
 
         Picks::mixed("quick-picks", items, self.playback.clone(), width, page)
             .title("home-quick-picks")
             .vacancy("home-quick-picks-empty")
             .loading(self.home.read(cx).is_loading(cx))
+            .refresh_disabled(self.home.read(cx).is_feeding())
+            .on_refresh(move |_, _, cx| {
+                refreshed.update(cx, |home, cx| home.refresh_picks(cx));
+            })
             .when_some(name.filter(|name| !name.is_empty()), |deck, name| {
                 deck.eyebrow(name)
             })
@@ -193,11 +198,11 @@ impl Render for HomeView {
 
         let picks = self.quick_picks(available, cx);
         let sections = self.home.read(cx).sections();
-        let feeding = self.home.read(cx).is_feeding();
+        let loading_sections = self.home.read(cx).is_loading_sections();
         let width = self.width;
         let shelves = self
             .shelves
-            .update(cx, |shelves, cx| match sections.is_empty() && feeding {
+            .update(cx, |shelves, cx| match loading_sections {
                 true => shelves.pending(width, cx),
                 false => vec![shelves.render(sections, Mode::Grid, width, window, cx)],
             });
