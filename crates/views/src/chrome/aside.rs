@@ -1,10 +1,10 @@
-use std::{collections::HashMap, ops::Range};
+use std::{collections::HashMap, ops::Range, path::PathBuf};
 
 use gpui::prelude::*;
 
 use gpui::{
-    Animation, AnimationExt as _, App, Bounds, Context, Div, DragMoveEvent, Entity, FontWeight,
-    MouseDownEvent, Pixels, Point, Render, ScrollHandle, ScrollStrategy, SharedString,
+    Animation, AnimationExt as _, App, Bounds, Context, Div, DragMoveEvent, Entity, ExternalPaths,
+    FontWeight, MouseDownEvent, Pixels, Point, Render, ScrollHandle, ScrollStrategy, SharedString,
     SpringConfig, SpringState, Task, UniformListScrollHandle, Window, div, ease_in_out, px,
     relative, svg, uniform_list,
 };
@@ -604,6 +604,27 @@ impl Aside {
         px(state.position)
     }
 
+    fn set_gap(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        position: Point<Pixels>,
+        row: usize,
+        from: Option<Spot>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(gap) = drop_gap(bounds, position, row) else {
+            return;
+        };
+        let gap = match from {
+            Some(held) => (gap != held.index && gap != held.index + 1).then_some(gap),
+            None => Some(gap),
+        };
+        if self.drop_gap != gap {
+            self.drop_gap = gap;
+            cx.notify();
+        }
+    }
+
     fn set_hovered(&mut self, spot: Warm, over: bool, cx: &mut Context<Self>) {
         if !over {
             if self.over == Some(spot) {
@@ -649,6 +670,15 @@ impl Aside {
     fn enqueue(&mut self, pin: &Pin, gap: Option<usize>, cx: &mut Context<Self>) {
         self.playback
             .update(cx, |playback, cx| playback.enqueue_pin(pin, gap, cx));
+    }
+
+    /// Queues files dropped from the OS at the drop line, or at the end of the queue when the drop
+    /// landed anywhere else in the panel.
+    fn enqueue_from_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let gap = self.drop_gap.take().unwrap_or(usize::MAX);
+        self.playback
+            .update(cx, |playback, cx| playback.insert_paths(paths, gap, cx));
+        cx.notify();
     }
 
     fn dismiss_menu(&mut self, cx: &mut Context<Self>) {
@@ -751,17 +781,18 @@ impl Aside {
             )
             .on_drag_move(
                 cx.listener(move |this, event: &DragMoveEvent<DraggedPin>, _, cx| {
-                    let Some(gap) = drop_gap(event.bounds, event.event.position, target) else {
-                        return;
-                    };
-                    let gap = match event.drag(cx).spot(QUEUE) {
-                        Some(held) => (gap != held.index && gap != held.index + 1).then_some(gap),
-                        None => Some(gap),
-                    };
-                    if this.drop_gap != gap {
-                        this.drop_gap = gap;
-                        cx.notify();
-                    }
+                    this.set_gap(
+                        event.bounds,
+                        event.event.position,
+                        target,
+                        event.drag(cx).spot(QUEUE),
+                        cx,
+                    );
+                }),
+            )
+            .on_drag_move(
+                cx.listener(move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
+                    this.set_gap(event.bounds, event.event.position, target, None, cx);
                 }),
             )
             .on_drop(cx.listener(move |this, dragged: &DraggedPin, _, cx| {
@@ -779,6 +810,9 @@ impl Aside {
                     None => this.enqueue(&dragged.pin, gap, cx),
                 }
                 cx.notify();
+            }))
+            .on_drop(cx.listener(|this, dragged: &ExternalPaths, _, cx| {
+                this.enqueue_from_paths(dragged.paths().to_vec(), cx);
             }))
         })
         .when_some(similar_index, |this, target| {
@@ -1799,6 +1833,13 @@ impl Render for Aside {
                     cx.notify();
                 }
             }))
+            .on_drag_move(
+                cx.listener(|this, _: &DragMoveEvent<ExternalPaths>, _, cx| {
+                    if this.drop_gap.take().is_some() {
+                        cx.notify();
+                    }
+                }),
+            )
             .when(self.titled || self.tab == SideTab::Queue, |this| {
                 this.child(self.header(sections, window, cx))
             })
@@ -1818,6 +1859,11 @@ impl Render for Aside {
                             }
                             cx.notify();
                         }))
+                        .on_drop(cx.listener(
+                            |this, dragged: &ExternalPaths, _, cx| {
+                                this.enqueue_from_paths(dragged.paths().to_vec(), cx);
+                            },
+                        ))
                     })
                     .when(self.tab == SideTab::Lyrics, |this| {
                         this.child(self.verses(window, cx))

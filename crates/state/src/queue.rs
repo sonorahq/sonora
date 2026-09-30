@@ -339,20 +339,32 @@ impl Queue {
         self.shuffle = on;
         self.settings
             .update(cx, |settings, cx| settings.set_shuffle(on, cx));
+        self.reorder(on);
+        self.changed(cx);
+    }
+
+    pub fn reshuffle(&mut self, cx: &mut Context<Self>) {
+        if !self.shuffle {
+            return;
+        }
+        self.reorder(true);
+        self.changed(cx);
+    }
+
+    pub fn toggle_shuffle(&mut self, cx: &mut Context<Self>) {
+        self.set_shuffle(!self.shuffle, cx);
+    }
+
+    fn reorder(&mut self, scrambled: bool) {
         let mut suggested = self.upcoming.split_off(self.queued());
         let mut manual: VecDeque<Track> = self.upcoming.drain(..self.manual).collect();
-        match on {
+        match scrambled {
             true => scramble(&mut self.upcoming, &self.source, self.current.as_ref()),
             false => restore(&mut self.upcoming, &self.source, self.current.as_ref()),
         }
         manual.append(&mut self.upcoming);
         self.upcoming = manual;
         self.upcoming.append(&mut suggested);
-        self.changed(cx);
-    }
-
-    pub fn toggle_shuffle(&mut self, cx: &mut Context<Self>) {
-        self.set_shuffle(!self.shuffle, cx);
     }
 
     fn changed(&mut self, cx: &mut Context<Self>) {

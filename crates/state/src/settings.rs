@@ -304,6 +304,8 @@ struct Values {
     close_to_tray: bool,
     tray_icon: bool,
     stay_awake: bool,
+    /// Whether a file handed in by the OS goes straight to the fullscreen player.
+    fullscreen_on_file_open: bool,
     language: String,
     #[serde(default = "system_font")]
     font: String,
@@ -457,6 +459,7 @@ impl Default for Values {
             close_to_tray: true,
             tray_icon: true,
             stay_awake: true,
+            fullscreen_on_file_open: true,
             language: i18n::AUTO.to_owned(),
             font: system_font(),
             startup: DEFAULT_STARTUP.to_owned(),
@@ -842,6 +845,11 @@ impl AppSettings {
     /// Whether music keeps the system awake and, in fullscreen, the display.
     pub fn stay_awake(&self) -> bool {
         self.values.stay_awake
+    }
+
+    /// Whether a file opened from a file manager goes straight to the fullscreen player.
+    pub fn fullscreen_on_file_open(&self) -> bool {
+        self.values.fullscreen_on_file_open
     }
 
     /// Every linked scrobbling account, keyed by its service slug.
@@ -1248,6 +1256,11 @@ impl AppSettings {
 
     pub fn set_stay_awake(&mut self, stay_awake: bool, cx: &mut Context<Self>) {
         self.values.stay_awake = stay_awake;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_fullscreen_on_file_open(&mut self, fullscreen: bool, cx: &mut Context<Self>) {
+        self.values.fullscreen_on_file_open = fullscreen;
         self.schedule_save(cx);
     }
 

@@ -420,7 +420,8 @@ pub struct Playback {
     stored: Duration,
     sleep: Option<Sleep>,
     sleep_task: Option<Task<()>>,
-    open: Option<Task<()>>,
+    /// The task still reading files, which the next batch waits for.
+    pending_open: Option<Task<()>>,
 }
 
 impl EventEmitter<PlaybackEvent> for Playback {}
@@ -517,7 +518,7 @@ impl Playback {
             stored: Duration::ZERO,
             sleep: None,
             sleep_task: None,
-            open: None,
+            pending_open: None,
         };
         // Start the local engine at startup so files can play before the first scan.
         if let Some(factory) = playback.session.read(cx).local_playback() {
@@ -851,29 +852,55 @@ impl Playback {
             .update(cx, |queue, cx| queue.append_last_all(tracks, cx));
     }
 
-    /// Opens paths handed in from the OS (a file-association launch or hand-off). A single file
-    /// plays right away, since picking one is a request to hear it now; several play next,
-    /// right after whatever is already playing, whichever provider it came from — or start right
-    /// away if nothing is.
+    /// Opens paths handed in from the OS (a file-association launch or hand-off). Opening files is
+    /// a request to hear them only, so the queue becomes these alone, played from the first in the
+    /// order they were given.
     pub fn open_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
-        if paths.is_empty() {
-            return;
-        }
-        self.resolve_paths(paths, cx);
+        self.resolve_paths(paths, None, false, None, cx);
     }
 
-    fn resolve_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+    /// Queues paths that arrived after the first ones of the same open, so if a file manager
+    /// launches Sonora once per selected file, we still get one queue.
+    pub fn queue_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let pending_open = self.pending_open.take();
+        self.resolve_paths(paths, Some(QueuePlacement::Last), true, pending_open, cx);
+    }
+
+    /// Queues paths dropped on the queue at `gap` upcoming tracks in.
+    pub fn insert_paths(&mut self, paths: Vec<PathBuf>, gap: usize, cx: &mut Context<Self>) {
+        let pending_open = self.pending_open.take();
+        self.resolve_paths(
+            paths,
+            Some(QueuePlacement::Gap(gap)),
+            false,
+            pending_open,
+            cx,
+        );
+    }
+
+    /// Reads `paths` as tracks, creates a new queue or puts them in the existing one, then plays
+    /// the first playable track. It waits for the previous batch, if it hasn't completed yet,
+    /// so tracks reach the queue in the order the file manager passes them.
+    fn resolve_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        placement: Option<QueuePlacement>,
+        reshuffle: bool,
+        pending_open: Option<Task<()>>,
+        cx: &mut Context<Self>,
+    ) {
         let provider = self.session.read(cx).local_provider();
         let io = Io::global(cx);
-        self.open = Some(cx.spawn(async move |this, cx| {
+        self.pending_open = Some(cx.spawn(async move |this, cx| {
+            if let Some(prev_pending_open) = pending_open {
+                prev_pending_open.await;
+            }
             let loaded = join(io.spawn(async move {
                 let mut tracks = Vec::new();
                 for path in paths {
                     match provider.track_from_path(&path) {
                         Some(track) => tracks.push(track),
-                        None => {
-                            log::warn!("local: cannot open {}", path.display());
-                        }
+                        None => log::warn!("local: cannot open {}", path.display()),
                     }
                 }
                 anyhow::Ok(tracks)
@@ -882,11 +909,24 @@ impl Playback {
 
             this.update(cx, |this, cx| match loaded {
                 Ok(tracks) if tracks.is_empty() => {}
-                Ok(mut tracks) if tracks.len() == 1 => {
-                    this.play_next(tracks.remove(0), cx);
-                    this.next(cx);
-                }
-                Ok(tracks) => this.play_next_all(tracks, cx),
+                Ok(tracks) => match placement {
+                    Some(QueuePlacement::Next) => this.play_next_all(tracks, cx),
+                    Some(QueuePlacement::End) => this.enqueue_all(tracks, cx),
+                    Some(QueuePlacement::Last) => {
+                        this.play_last_all(tracks, cx);
+                        if reshuffle {
+                            this.queue.update(cx, |queue, cx| queue.reshuffle(cx));
+                        }
+                    }
+                    Some(QueuePlacement::Gap(gap)) => this.insert_all(tracks, gap, cx),
+                    None => {
+                        let index = tracks
+                            .iter()
+                            .position(|track| track.playable)
+                            .unwrap_or_default();
+                        this.begin(tracks, index, None, cx)
+                    }
+                },
                 Err(error) => log::warn!("playback: cannot open files: {error:#}"),
             })
             .ok();
