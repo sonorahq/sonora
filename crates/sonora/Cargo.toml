@@ -11,10 +11,14 @@ bundled-sqlite = ["state/bundled-sqlite"]
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+control.workspace = true
 dirs.workspace = true
 env_logger.workspace = true
 futures.workspace = true
 log.workspace = true
+tower-http.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 i18n.workspace = true
@@ -28,6 +32,8 @@ ui.workspace = true
 views.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 interprocess.workspace = true
@@ -52,6 +58,9 @@ state = { workspace = true, features = ["bundled-sqlite"] }
 widestring.workspace = true
 windows.workspace = true
 windows-sys.workspace = true
+
+[dev-dependencies]
+tokio-tungstenite.workspace = true
 
 [build-dependencies]
 embed.workspace = true

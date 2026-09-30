@@ -6,6 +6,7 @@ mod dock;
 mod http;
 mod logging;
 mod memory;
+mod plugins;
 mod single;
 #[cfg(windows)]
 mod thumbbar;
@@ -113,6 +114,7 @@ fn main() {
         state::init(cx, io, database, providers, local_provider, lyrics);
         #[cfg(target_os = "windows")]
         state::install_rounded_window_hook(set_corner_preference, cx);
+        plugins::attach(cx);
         let opened_a_destination = opened_start.is_some();
         let start = opened_start.unwrap_or_else(|| {
             let startup = Sonora::global(cx).settings.read(cx).startup().to_owned();

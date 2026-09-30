@@ -1,5 +1,6 @@
 mod artist;
 mod catalog;
+mod control;
 mod cover;
 mod detail;
 mod discord;
@@ -14,6 +15,7 @@ mod mosaic;
 mod network;
 mod pins;
 mod playback;
+mod plugins;
 mod potoken;
 mod profile;
 mod queue;
@@ -34,6 +36,7 @@ mod wake;
 mod window_shape;
 
 pub use artist::ArtistDetail;
+pub use control::{ControlHost, attach_control};
 pub use cover::Cover;
 pub use detail::{Collection, Detail, Header};
 pub use drm::{CdmState, Drm};
@@ -48,6 +51,9 @@ pub use lyrics::{Lyrics, LyricsState};
 pub use network::{Network, Reconnected};
 pub use pins::{PinSort, Pins};
 pub use playback::{Origin, Playback, PlaybackState, Repeat, Sleep, Whence};
+pub use plugins::{
+    Auth, Plugin, PluginContext, PluginStatus, Plugins, Registration, attach_plugins,
+};
 pub use profile::Profile;
 pub use queue::{Named, Queue, Resume, Stub};
 pub use remote::{Remote, attach as attach_remote};

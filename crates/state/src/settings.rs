@@ -239,6 +239,22 @@ fn system_font() -> String {
     SYSTEM_FONT.to_owned()
 }
 
+/// A setting that stays on unless the user turns it off, such as token enforcement.
+fn default_true() -> bool {
+    true
+}
+
+/// The loopback port remote control listens on unless settings say otherwise.
+fn default_remote_port() -> u16 {
+    47630
+}
+
+/// The loopback port the retired WebSocket transport listened on. Only read while migrating
+/// a settings file written before the transports merged.
+fn default_ws_port() -> u16 {
+    47631
+}
+
 /// How long a save waits after the last change, so a slider drag lands as one write.
 const SAVE_DELAY: Duration = Duration::from_millis(300);
 const SAVE_RETRY_DELAY: Duration = Duration::from_secs(1);
@@ -315,6 +331,27 @@ struct Values {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     scrobbling: BTreeMap<String, Account>,
     appearance: Appearance,
+    /// Whether remote control listens. Off until the user opts in.
+    remote_api: bool,
+    /// Whether remote control requires the session token. On unless the user opens it.
+    #[serde(default = "default_true")]
+    remote_auth: bool,
+    #[serde(default = "default_remote_port")]
+    remote_port: u16,
+    /// The per-transport flags from before the transports merged into one server. Read once
+    /// at load and folded into the `remote_*` triple, never written back.
+    #[serde(default, skip_serializing)]
+    rest_api: bool,
+    #[serde(default, skip_serializing)]
+    ws_api: bool,
+    #[serde(default = "default_true", skip_serializing)]
+    rest_auth: bool,
+    #[serde(default = "default_true", skip_serializing)]
+    ws_auth: bool,
+    #[serde(default = "default_remote_port", skip_serializing)]
+    rest_port: u16,
+    #[serde(default = "default_ws_port", skip_serializing)]
+    ws_port: u16,
 }
 
 /// The `appearance` block of `settings.json`. Fixed choices are stored by id, removed variant
@@ -464,7 +501,40 @@ impl Default for Values {
             hidden_nav: Vec::new(),
             scrobbling: BTreeMap::new(),
             appearance: Appearance::default(),
+            remote_api: false,
+            remote_auth: true,
+            remote_port: default_remote_port(),
+            rest_api: false,
+            ws_api: false,
+            rest_auth: true,
+            ws_auth: true,
+            rest_port: default_remote_port(),
+            ws_port: default_ws_port(),
         }
+    }
+}
+
+impl Values {
+    /// Folds the retired per-transport flags into the unified `remote_*` triple, so a settings
+    /// file written before the merge keeps working. Any transport left on keeps the server on;
+    /// any transport left open keeps it open; a customized port carries over. A no-op once the
+    /// file holds only the new keys.
+    fn migrate_remote(&mut self) {
+        self.remote_api |= self.rest_api | self.ws_api;
+        self.remote_auth &= self.rest_auth & self.ws_auth;
+        if self.remote_port == default_remote_port() {
+            if self.rest_port != default_remote_port() {
+                self.remote_port = self.rest_port;
+            } else if self.ws_port != default_ws_port() {
+                self.remote_port = self.ws_port;
+            }
+        }
+        self.rest_api = false;
+        self.ws_api = false;
+        self.rest_auth = true;
+        self.ws_auth = true;
+        self.rest_port = default_remote_port();
+        self.ws_port = default_ws_port();
     }
 }
 
@@ -642,6 +712,12 @@ pub struct Reloaded;
 impl EventEmitter<Reloaded> for AppSettings {}
 
 impl AppSettings {
+    /// Loads from explicit paths instead of the standard ones, so tests never touch the
+    /// real config.
+    pub fn load_at(path: PathBuf, database: Database) -> Self {
+        Self::load_from(path, StateStore::new(database))
+    }
+
     /// Loads from the standard config and data paths.
     pub fn load(database: Database) -> Self {
         Self::load_from(settings_path(), StateStore::new(database))
@@ -658,7 +734,7 @@ impl AppSettings {
             }
         };
         let parsed = bytes.map(|bytes| (serde_json::from_slice::<Values>(json(&bytes)), bytes));
-        let (values, writable, disk, broken) = match parsed {
+        let (mut values, writable, disk, broken) = match parsed {
             Some((Ok(values), bytes)) => (values, writable, Some(bytes), None),
             Some((Err(error), _)) => {
                 log::warn!("settings: cannot parse {}: {error}", path.display());
@@ -666,6 +742,7 @@ impl AppSettings {
             }
             None => (Values::default(), writable, None, None),
         };
+        values.migrate_remote();
 
         let state = match store.load() {
             Ok(Some(saved)) => saved,
@@ -842,6 +919,21 @@ impl AppSettings {
     /// Whether music keeps the system awake and, in fullscreen, the display.
     pub fn stay_awake(&self) -> bool {
         self.values.stay_awake
+    }
+
+    /// Whether remote control listens on loopback.
+    pub fn remote_api(&self) -> bool {
+        self.values.remote_api
+    }
+
+    /// Whether remote control requires the session token.
+    pub fn remote_auth(&self) -> bool {
+        self.values.remote_auth
+    }
+
+    /// The loopback port remote control listens on. Zero asks the OS for one.
+    pub fn remote_port(&self) -> u16 {
+        self.values.remote_port
     }
 
     /// Every linked scrobbling account, keyed by its service slug.
@@ -1248,6 +1340,21 @@ impl AppSettings {
 
     pub fn set_stay_awake(&mut self, stay_awake: bool, cx: &mut Context<Self>) {
         self.values.stay_awake = stay_awake;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_remote_api(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.remote_api = enabled;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_remote_auth(&mut self, required: bool, cx: &mut Context<Self>) {
+        self.values.remote_auth = required;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_remote_port(&mut self, port: u16, cx: &mut Context<Self>) {
+        self.values.remote_port = port;
         self.schedule_save(cx);
     }
 
@@ -1984,7 +2091,7 @@ impl AppSettings {
             self.broken = None;
             return SettingsReload::Unchanged;
         }
-        let values = match serde_json::from_slice::<Values>(json(&bytes)) {
+        let mut values = match serde_json::from_slice::<Values>(json(&bytes)) {
             Ok(values) => values,
             Err(error) => {
                 log::warn!("settings: cannot parse {}: {error}", self.path.display());
@@ -1998,6 +2105,7 @@ impl AppSettings {
                 return SettingsReload::Unchanged;
             }
         };
+        values.migrate_remote();
 
         log::info!("settings: reloaded {}", self.path.display());
         let previous = std::mem::replace(&mut self.values, values);
@@ -2467,6 +2575,68 @@ mod tests {
         );
         assert!(values.romanization_scripts.contains(WritingSystem::Chinese));
         assert!(!values.romanization_scripts.contains(WritingSystem::Other));
+    }
+
+    #[test]
+    fn remote_control_stays_off_with_a_documented_port() {
+        let values: Values = serde_json::from_str("{}").expect("empty settings use defaults");
+
+        assert!(!values.remote_api);
+        assert!(values.remote_auth);
+        assert_eq!(values.remote_port, 47630);
+    }
+
+    #[test]
+    fn a_retired_transport_left_on_keeps_the_server_on() {
+        let mut values: Values = serde_json::from_str(r#"{"ws_api":true}"#)
+            .expect("split-transport settings still parse");
+        values.migrate_remote();
+
+        assert!(values.remote_api);
+        assert!(values.remote_auth);
+        assert_eq!(values.remote_port, 47630);
+    }
+
+    #[test]
+    fn a_retired_transport_left_open_keeps_the_server_open() {
+        let mut values: Values =
+            serde_json::from_str(r#"{"rest_api":true,"rest_auth":false,"rest_port":5000}"#)
+                .expect("split-transport settings still parse");
+        values.migrate_remote();
+
+        assert!(values.remote_api);
+        assert!(!values.remote_auth);
+        assert_eq!(values.remote_port, 5000);
+    }
+
+    #[test]
+    fn a_retired_websocket_port_carries_over() {
+        let mut values: Values = serde_json::from_str(r#"{"ws_port":5001}"#)
+            .expect("split-transport settings still parse");
+        values.migrate_remote();
+
+        assert!(!values.remote_api);
+        assert_eq!(values.remote_port, 5001);
+    }
+
+    #[test]
+    fn saves_drop_the_retired_transport_keys() {
+        let saved = serde_json::to_value(Values::default()).expect("settings serialize");
+        let saved = saved.as_object().expect("settings are an object");
+
+        assert!(saved.contains_key("remote_api"));
+        assert!(saved.contains_key("remote_auth"));
+        assert!(saved.contains_key("remote_port"));
+        for key in [
+            "rest_api",
+            "ws_api",
+            "rest_auth",
+            "ws_auth",
+            "rest_port",
+            "ws_port",
+        ] {
+            assert!(!saved.contains_key(key), "{key} is never written back");
+        }
     }
 
     #[test]

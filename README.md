@@ -54,6 +54,7 @@ Stream from your favorite services and play local files — all in one **native*
 * Scrobbling with LastFM, ListenBrainz, LibreFM, and Maloja
 * Themes, fonts, icons, transparency, blur, and window styling
 * Discord Rich Presence, native file opening
+* Local REST and WebSocket APIs for remote control ([docs](docs/plugins.md))
 * macOS, Windows, Linux, and (probably) FreeBSD support
 
 ## Installation
@@ -187,21 +188,21 @@ AI-assisted proofreading and translation of human-written text are permitted.
 
 | Language | Translated | Coverage |
 | --- | --- | --- |
-| English (`en-US`) | 749/749 | 100% |
-| Deutsch (`de`) | 628/749 | 84% |
-| Español (`es`) | 690/749 | 92% |
-| Français (`fr`) | 749/749 | 100% |
-| Italiano (`it`) | 605/749 | 81% |
-| Bahasa Indonesia (`id`) | 605/749 | 81% |
-| 日本語 (`ja`) | 605/749 | 81% |
-| Русский (`ru`) | 711/749 | 95% |
-| Українська (`uk`) | 711/749 | 95% |
-| Polski (`pl`) | 711/749 | 95% |
-| Čeština (`cs`) | 743/749 | 99% |
-| Português (Brasil) (`pt-BR`) | 605/749 | 81% |
-| 简体中文 (`zh-CN`) | 605/749 | 81% |
-| Türkçe (`tr`) | 605/749 | 81% |
-| Shqip (`sq`) | 714/749 | 95% |
+| English (`en-US`) | 767/767 | 100% |
+| Deutsch (`de`) | 628/767 | 82% |
+| Español (`es`) | 690/767 | 90% |
+| Français (`fr`) | 749/767 | 98% |
+| Italiano (`it`) | 605/767 | 79% |
+| Bahasa Indonesia (`id`) | 605/767 | 79% |
+| 日本語 (`ja`) | 605/767 | 79% |
+| Русский (`ru`) | 711/767 | 93% |
+| Українська (`uk`) | 711/767 | 93% |
+| Polski (`pl`) | 711/767 | 93% |
+| Čeština (`cs`) | 743/767 | 97% |
+| Português (Brasil) (`pt-BR`) | 605/767 | 79% |
+| 简体中文 (`zh-CN`) | 605/767 | 79% |
+| Türkçe (`tr`) | 605/767 | 79% |
+| Shqip (`sq`) | 714/767 | 93% |
 
 <!-- i18n:end -->
 

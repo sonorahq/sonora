@@ -9,6 +9,7 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/sonorahq/sonora"
 
 [workspace.dependencies]
+control = { path = "crates/control" }
 embed = { path = "crates/embed" }
 i18n = { path = "crates/i18n" }
 icons = { path = "crates/icons" }
@@ -24,6 +25,7 @@ widevine = { path = "crates/widevine" }
 
 anyhow = "1.0"
 async-trait = "0.1"
+axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
 blowfish = "0.9"
 bytes = "1"
@@ -38,6 +40,7 @@ env_logger = "0.11"
 fastrand = "2.5"
 futures = "0.3"
 fluent-bundle = "0.16"
+getrandom = "0.3"
 gpui = { git = "https://github.com/sonorahq/gpui", rev = "58cab2abf58257fef20a45cecda3784bfcac2286" }
 gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "58cab2abf58257fef20a45cecda3784bfcac2286", features = [
   "font-kit",
@@ -170,6 +173,8 @@ librespot-protocol = "0.8.0"
 percent-encoding = "2.3"
 protobuf = "3"
 opensubsonic = "0.4.0"
+tower-http = { version = "0.6", features = ["limit"] }
+tokio-tungstenite = "0.28"
 tokio = { version = "1.53", features = [
   "rt-multi-thread",
   "net",
