@@ -231,7 +231,13 @@ impl Render for TitleBar {
                 cx.listener(
                     |this, event: &MouseDownEvent, window, _| match event.click_count {
                         1 => this.grabbed = true,
-                        2 if !SYSTEM_ZOOMS => window.zoom_window(),
+                        2 if !SYSTEM_ZOOMS || window.is_fullscreen() => {
+                            if window.is_fullscreen() {
+                                window.toggle_fullscreen();
+                            } else {
+                                window.zoom_window();
+                            }
+                        }
                         _ => {}
                     },
                 ),
@@ -244,7 +250,9 @@ impl Render for TitleBar {
             .on_mouse_move(cx.listener(|this, _: &MouseMoveEvent, window, _| {
                 if this.grabbed {
                     this.grabbed = false;
-                    window.start_window_move();
+                    if !window.is_fullscreen() {
+                        window.start_window_move();
+                    }
                 }
             }))
             .child(
