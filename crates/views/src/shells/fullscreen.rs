@@ -359,12 +359,16 @@ impl FullscreenView {
         let album = track.as_ref().and_then(|track| track.album_id.clone());
         let small = track.as_ref().and_then(|track| track.cover.clone());
         let cover_large = self.cover.read(cx).large();
-        // Only upgrade to the cached large art when the track itself has a cover.
-        // Local folders share one album_id; Cover caches the first track's art for the
-        // album. Without this guard, a track with no art would show a sibling's cover
-        // after any track with art was played (issue #833).
+        let local = track
+            .as_ref()
+            .and_then(|track| track.id.as_deref())
+            .is_some_and(music::is_local_id)
+            || small.as_ref().is_some_and(|url| url.starts_with("file://"));
+        // Only upgrade resolution for non-local tracks, since a local cover is always
+        // the full resolution picture. The track's own embedded cover is prioritized
+        // over the cover of its album.
         let large = cover_large
-            .filter(|url| small.is_some() && Some(*url) != small.as_deref())
+            .filter(|url| !local && small.is_some() && Some(*url) != small.as_deref())
             .map(SharedString::from);
 
         if self.large != large {
@@ -372,11 +376,6 @@ impl FullscreenView {
             self.revision += 1;
         }
         let revision = self.revision;
-        let local = track
-            .as_ref()
-            .and_then(|track| track.id.as_deref())
-            .is_some_and(music::is_local_id)
-            || small.as_ref().is_some_and(|url| url.starts_with("file://"));
         let waiting = !local && album.is_some() && cover_large.is_none();
 
         div()
