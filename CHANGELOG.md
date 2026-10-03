@@ -7,6 +7,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- OS fullscreen mode is available on all platforms by pressing F11 key or double-clinking in expanded
+  Now Playing view. A dedicated OS fullscreen button can be enabled in settings as well.
+
 ## [0.42.1] - 2026-10-02
 
 ### Added

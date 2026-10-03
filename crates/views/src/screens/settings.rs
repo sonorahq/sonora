@@ -141,6 +141,7 @@ enum Slot {
     Blur,
     Corners,
     FullscreenControlsAutohide,
+    OsFullscreenBtn,
     PanelLyricsSize,
     FullscreenLyricsSize,
     BlurLyrics,
@@ -585,6 +586,7 @@ impl SettingsView {
             )
             .chain([
                 Slot::FullscreenControlsAutohide,
+                Slot::OsFullscreenBtn,
                 Slot::Title("settings-group-lyrics"),
                 Slot::PanelLyricsSize,
                 Slot::FullscreenLyricsSize,
@@ -705,6 +707,10 @@ impl SettingsView {
             Slot::FullscreenControlsAutohide => (
                 t!("settings-fullscreen-controls-autohide"),
                 t!("settings-fullscreen-controls-autohide-detail"),
+            ),
+            Slot::OsFullscreenBtn => (
+                t!("settings-show-os-fullscreen-btn"),
+                t!("settings-show-os-fullscreen-btn-detail"),
             ),
             Slot::PanelLyricsSize => (
                 i18n::lookup("settings-panel-lyrics-size", None),
@@ -946,6 +952,7 @@ impl SettingsView {
             Slot::Blur => self.blur_row(cx).element,
             Slot::Corners => self.corners_row(cx).element,
             Slot::FullscreenControlsAutohide => self.fullscreen_controls_autohide_row(cx).element,
+            Slot::OsFullscreenBtn => self.show_os_fullscreen_btn_row(cx).element,
             Slot::PanelLyricsSize => self.panel_lyrics_size_row(cx).element,
             Slot::FullscreenLyricsSize => self.fullscreen_lyrics_size_row(cx).element,
             Slot::BlurLyrics => self.blur_lyrics_row(cx).element,
@@ -2024,6 +2031,27 @@ impl SettingsView {
             muted,
             small,
             picker.into_any_element(),
+        )
+    }
+
+    fn show_os_fullscreen_btn_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).show_os_fullscreen_btn();
+
+        self.row(
+            t!("settings-show-os-fullscreen-btn"),
+            t!("settings-show-os-fullscreen-btn-detail"),
+            muted,
+            small,
+            Switch::new("show-os-fullscreen", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_show_os_fullscreen_btn(!on, cx)
+                    });
+                }))
+                .into_any_element(),
         )
     }
 

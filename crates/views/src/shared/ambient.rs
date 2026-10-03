@@ -222,7 +222,7 @@ impl Render for Ambient {
         // The field reaches into the corners the chrome rounds, and GPUI clips only to a
         // rectangle, so the sheet takes the window's radius itself.
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let radius = crate::chrome::window_radius(Sonora::global(cx).settings.read(cx), cx);
+        let radius = crate::chrome::window_radius(Sonora::global(cx).settings.read(cx), cx, window);
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<gpui::Pixels> = None;
 

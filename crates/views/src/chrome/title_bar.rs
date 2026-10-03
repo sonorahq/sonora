@@ -191,11 +191,13 @@ impl Render for TitleBar {
             false => Pixels::ZERO,
         };
         let content = self.options.content.clone();
+        let window_fullscreen = window.is_fullscreen();
         let settings = self.settings.read(cx);
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let controls = matches!(window.window_decorations(), Decorations::Client { .. });
+        let controls =
+            matches!(window.window_decorations(), Decorations::Client { .. }) && !window_fullscreen;
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-        let controls = settings.window_controls();
+        let controls = settings.window_controls() && !window_fullscreen;
         let decorated = cfg!(not(target_os = "macos")) && controls;
         let leading = decorated && settings.controls_on_left();
         #[cfg(not(target_os = "macos"))]
@@ -203,7 +205,7 @@ impl Render for TitleBar {
         #[cfg(target_os = "macos")]
         let traffic_light = false;
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let radius = crate::chrome::window_radius(settings, cx);
+        let radius = crate::chrome::window_radius(settings, cx, window);
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<Pixels> = None;
 
