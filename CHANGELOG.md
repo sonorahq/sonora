@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- The queue's "From" line and the album page's pause control follows playback when the current
+  track comes from a different album than the one the queue started from.
+
 ## [0.42.1] - 2026-10-02
 
 ### Added

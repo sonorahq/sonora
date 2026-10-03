@@ -635,6 +635,7 @@ impl Playback {
         if start == Start::Pick {
             self.throttles = 0;
         }
+        self.sync_origin(track, cx);
 
         self.track = Some(track.clone());
         self.state = PlaybackState::Loading;
@@ -1143,6 +1144,22 @@ impl Playback {
         self.settings
             .update(cx, |settings, cx| settings.set_resume_origin(None, cx));
         cx.notify();
+    }
+
+    /// When the track comes from an album, and that album changes, repoints the queue's origin to
+    /// the album the track comes from, once playback has moved on. Other origins are left alone,
+    /// and a track still from the origin's album updates nothing.
+    fn sync_origin(&mut self, track: &Track, cx: &mut Context<Self>) {
+        let Some(current_origin) = self.origin.as_ref() else {
+            return;
+        };
+        let Some(new_origin) = song_new_origin(current_origin, track) else {
+            return;
+        };
+        self.origin = Some(new_origin.clone());
+        self.settings.update(cx, |settings, cx| {
+            settings.set_resume_origin(Some(new_origin), cx)
+        });
     }
 
     /// Hands a fetched collection to the queue, remembers where it came from for resuming, and
@@ -2525,6 +2542,20 @@ fn song_target(track: &Track) -> Option<Target> {
         .map(|id| Target::Song(SharedString::from(id.to_owned())))
 }
 
+/// Returns a new origin if the track's album differs from the current one, otherwise nothing.
+/// Tracks without albums and non-album origins are left alone. The returned origin carries the
+/// track's album name and id.
+fn song_new_origin(current_origin: &Origin, track: &Track) -> Option<Origin> {
+    if current_origin.whence != Whence::Album {
+        return None;
+    }
+    let album_id = track.album_id.as_deref()?;
+    if album_id.is_empty() || album_id == current_origin.id {
+        return None;
+    }
+    Some(Origin::album(album_id).named(track.album.clone()))
+}
+
 /// How long to wait before the retry that follows the `throttles`th refusal in a row.
 fn throttle_wait(throttles: u8) -> Duration {
     let doublings = u32::from(throttles.saturating_sub(1)).min(8);
@@ -2537,7 +2568,9 @@ fn throttle_wait(throttles: u8) -> Duration {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{LiveClock, gain};
+    use music::Track;
+
+    use super::{LiveClock, Origin, gain, song_new_origin};
 
     #[test]
     fn never_amplifies_past_unity() {
@@ -2605,5 +2638,69 @@ mod tests {
             assert!(sample >= previous);
             previous = sample;
         }
+    }
+
+    fn track(album_id: Option<&str>) -> Track {
+        Track {
+            id: Some("song-1".to_owned()),
+            name: "Song".to_owned(),
+            playable: true,
+            artists: "Artist".to_owned(),
+            artist_refs: Vec::new(),
+            album: "Album".to_owned(),
+            album_id: album_id.map(ToOwned::to_owned),
+            cover: None,
+            duration: Duration::from_secs(180),
+            added_at: None,
+            added_by: None,
+            playcount: None,
+            popularity: 0,
+            explicit: false,
+            track_number: 0,
+            disc_number: 0,
+            tags: Vec::new(),
+            languages: Vec::new(),
+            credits: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn keeps_the_origin_a_track_still_belongs_to() {
+        let origin = Origin::album("album-a");
+
+        assert_eq!(song_new_origin(&origin, &track(Some("album-a"))), None);
+    }
+
+    #[test]
+    fn repoints_to_the_album_the_track_came_from() {
+        let origin = Origin::album("album-a");
+
+        assert_eq!(
+            song_new_origin(&origin, &track(Some("album-b"))),
+            Some(Origin::album("album-b").named("Album"))
+        );
+    }
+
+    #[test]
+    fn leaves_origins_other_than_albums_alone() {
+        let track = track(Some("album-b"));
+
+        for origin in [
+            Origin::playlist("list-a"),
+            Origin::artist("artist-a"),
+            Origin::radio("song-a"),
+            Origin::saved(),
+            Origin::local(),
+        ] {
+            assert_eq!(song_new_origin(&origin, &track), None);
+        }
+    }
+
+    #[test]
+    fn leaves_tracks_without_an_album_alone() {
+        let origin = Origin::album("album-a");
+
+        assert_eq!(song_new_origin(&origin, &track(None)), None);
+        assert_eq!(song_new_origin(&origin, &track(Some(""))), None);
     }
 }
