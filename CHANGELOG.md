@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Sonora is packaged as a snap, for x86-64 and ARM64, alongside the AppImage and the Flatpak.
+
 ### Changed
 
 - Fullscreen lyrics grow with a large window, up to twice their size, so they no longer look

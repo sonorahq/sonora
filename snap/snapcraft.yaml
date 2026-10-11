@@ -1,0 +1,178 @@
+name: sonora
+title: Sonora
+base: core24
+adopt-info: sonora
+summary: A native music streaming client, built with Rust and GPUI
+description: |
+  Sonora is a native music streaming client built with Rust and GPUI, streaming
+  through librespot and ytmusic-rs. It plays a Spotify or YouTube Music account
+  and a local music folder from one library.
+
+  Note: playing a Spotify account requires Spotify Premium.
+license: GPL-3.0-or-later
+website: https://github.com/sonorahq/sonora
+source-code: https://github.com/sonorahq/sonora
+issues: https://github.com/sonorahq/sonora/issues
+
+grade: stable
+confinement: strict
+compression: lzo
+
+platforms:
+  amd64:
+  arm64:
+
+apps:
+  sonora:
+    command: usr/bin/sonora
+    extensions: [gnome]
+    common-id: io.github.nolight132.sonora
+    desktop: usr/share/applications/sonora.desktop
+    environment:
+      # cpal reaches the sound server through ALSA, so the snap carries the ALSA
+      # PulseAudio plugin and a config that routes the default device to it.
+      # alsa-lib dlopens its plugins out of ALSA_PLUGIN_DIR, not off the linker path,
+      # and snapd expands only its own $SNAP_* variables here, never a craft one, so
+      # the directory the plugins are moved to in override-prime carries no triplet.
+      ALSA_CONFIG_PATH: $SNAP/etc/asound.conf
+      ALSA_PLUGIN_DIR: $SNAP/usr/lib/alsa-lib
+    plugs:
+      - audio-playback
+      - network
+      # The OAuth redirect (127.0.0.1:8989) and the scrobble callback (127.0.0.1:8990)
+      # are listening sockets, so a plain `network` plug is not enough.
+      - network-bind
+      - home
+      - removable-media
+      - screen-inhibit-control
+      # The StatusNotifierItem tray and desktop notifications.
+      - unity7
+    slots:
+      - mpris
+
+slots:
+  mpris:
+    interface: mpris
+    # souvlaki publishes org.mpris.MediaPlayer2.sonora.
+    name: sonora
+
+parts:
+  sonora:
+    # Not the rust plugin: it validates that rustup answers in the build environment,
+    # which /snap/bin is not on, and it would drive cargo for a workspace this part
+    # already overrides the build and the prime of anyway. Installing the toolchain
+    # here is the whole of what the plugin would have done.
+    plugin: nil
+    source: .
+    build-packages:
+      - curl
+      # opusic-sys and aws-lc-sys build their C libraries with cmake, and the cmake
+      # crate asks for the Ninja generator. A bare core24 container has neither; the
+      # runners and the freedesktop SDK do, which is why only the snap needs this said.
+      - cmake
+      - ninja-build
+      # .cargo/config.toml passes -fuse-ld=mold for x86_64-unknown-linux-gnu.
+      - mold
+      # crates/widevine compiles its CDM host from shim.cc.
+      - g++
+      - pkg-config
+      - libasound2-dev
+      - libdbus-1-dev
+      - libfontconfig1-dev
+      - libfreetype-dev
+      - libsqlite3-dev
+      - libvulkan-dev
+      - libwayland-dev
+      - libx11-dev
+      - libxcb1-dev
+      - libxcursor-dev
+      - libxi-dev
+      - libxkbcommon-dev
+      - libxkbcommon-x11-dev
+    stage-packages:
+      - libasound2t64
+      - libasound2-plugins
+      - libdbus-1-3
+      - libfontconfig1
+      - libfreetype6
+      - libsqlite3-0
+      - libvulkan1
+      - libwayland-client0
+      # No libwebkit2gtk here on purpose: gnome-46-2404 stages it and the extension
+      # puts the platform's library directory on the load path, so a copy of our own
+      # would be 122 MiB shadowing the one already there. Nothing links it either --
+      # the cookie sign-in dlopens it -- so there is no build dependency to match.
+      - libx11-6
+      - libxcb1
+      - libxcursor1
+      - libxi6
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+    override-pull: |
+      craftctl default
+      version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+      craftctl set version="$version"
+    override-build: |
+      craftctl default
+
+      # rust-toolchain.toml pins the version, but it also asks for rust-analyzer and
+      # friends that a build has no use for; RUSTUP_TOOLCHAIN overrides the file so
+      # only the compiler is fetched. Keep the version in step with that file.
+      export RUSTUP_HOME="$CRAFT_PART_BUILD/.rustup"
+      export CARGO_HOME="$CRAFT_PART_BUILD/.cargo"
+      export RUSTUP_TOOLCHAIN=1.98.1
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --no-modify-path --profile minimal --default-toolchain "$RUSTUP_TOOLCHAIN"
+      export PATH="$CARGO_HOME/bin:$PATH"
+
+      cargo build --release --locked --package sonora
+      install -Dm755 target/release/sonora "$CRAFT_PART_INSTALL/usr/bin/sonora"
+
+      # Every asset is compiled into the executable, so only the launcher entry
+      # and the icons are installed.
+      for icon in assets/linux/icons/hicolor/*/apps/sonora.png; do
+        size="$(basename "$(dirname "$(dirname "$icon")")")"
+        install -Dm644 "$icon" \
+          "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/$size/apps/sonora.png"
+      done
+      install -Dm644 assets/linux/sonora.svg \
+        "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/sonora.svg"
+
+      # snapd rewrites Exec=, but never Icon=, so the icon is given as an absolute
+      # path inside the snap.
+      install -d "$CRAFT_PART_INSTALL/usr/share/applications"
+      sed 's|^Icon=sonora$|Icon=${SNAP}/usr/share/icons/hicolor/512x512/apps/sonora.png|' \
+        assets/linux/sonora.desktop \
+        > "$CRAFT_PART_INSTALL/usr/share/applications/sonora.desktop"
+
+      install -Dm644 snap/local/asound.conf "$CRAFT_PART_INSTALL/etc/asound.conf"
+
+      install -Dm644 COPYING "$CRAFT_PART_INSTALL/usr/share/doc/sonora/LICENSE"
+      install -Dm644 THIRD-PARTY.md "$CRAFT_PART_INSTALL/usr/share/doc/sonora/THIRD-PARTY.md"
+      install -Dm644 assets/fonts/LICENSE.txt \
+        "$CRAFT_PART_INSTALL/usr/share/doc/sonora/LICENSE.Inter"
+      install -Dm644 assets/icons/LICENSE \
+        "$CRAFT_PART_INSTALL/usr/share/doc/sonora/icons/LICENSE"
+      for licence in assets/icons/*/LICENSE; do
+        pack="$(basename "$(dirname "$licence")")"
+        install -Dm644 "$licence" \
+          "$CRAFT_PART_INSTALL/usr/share/doc/sonora/icons/LICENSE.$pack"
+      done
+    prime:
+      # The Vulkan ICD comes from the gpu-2404 provider, which the gnome extension
+      # points the loader at; a driver staged here would only shadow it.
+      - -usr/share/vulkan/icd.d
+    override-prime: |
+      craftctl default
+
+      # libasound2-plugins installs under an architecture triplet, which ALSA_PLUGIN_DIR
+      # cannot name: it is read by snapd, which expands no craft variable. Moving the
+      # plugins to one path spells the same thing on amd64 and arm64.
+      triplet="$(dirname "$(find "$CRAFT_PRIME/usr/lib" -maxdepth 3 -type d -name alsa-lib -print -quit)")"
+      if [ -n "$triplet" ] && [ "$triplet" != "$CRAFT_PRIME/usr/lib" ]; then
+        mkdir -p "$CRAFT_PRIME/usr/lib/alsa-lib"
+        mv "$triplet/alsa-lib"/* "$CRAFT_PRIME/usr/lib/alsa-lib/"
+        rmdir "$triplet/alsa-lib"
+      fi
+      test -f "$CRAFT_PRIME/usr/lib/alsa-lib/libasound_module_pcm_pulse.so"
+      test -f "$CRAFT_PRIME/usr/lib/alsa-lib/libasound_module_conf_pulse.so"

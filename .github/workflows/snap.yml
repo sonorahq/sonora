@@ -1,0 +1,136 @@
+name: snap
+
+# The snap is built by its own workflow, not inline in the release, so it can be
+# exercised without running anything named release: a pull request that touches the
+# manifest builds it, and it can be dispatched by hand. The release calls this same
+# definition on a tag, the way it calls announce.
+#
+# Unlike the AppImage, the snap does not reuse the executable the build job staged:
+# snapcraft compiles the workspace itself inside its own core24 container, so the
+# manifest a contributor runs locally is the one that cuts the release.
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - snap/**
+      - .github/workflows/snap.yml
+
+concurrency:
+  group: snap-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  snap:
+    name: "Snap (${{ matrix.variant.arch }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+
+    runs-on: ${{ matrix.variant.runner }}
+
+    env:
+      ARCH: ${{ matrix.variant.arch }}
+      # Read at step level to decide whether the store upload can run at all: a step's
+      # own env is not visible to its own `if`, a job's is.
+      STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: name the artifact
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF" in
+            refs/tags/*) version="$GITHUB_REF_NAME" ;;
+            *) version="${GITHUB_SHA:0:7}" ;;
+          esac
+
+          # A prerelease tag goes to the beta channel, everything else to stable. An
+          # untagged run publishes nowhere, which is what the empty channel means.
+          channel=""
+          case "$GITHUB_REF" in
+            refs/tags/*-*) channel="beta" ;;
+            refs/tags/*) channel="stable" ;;
+          esac
+
+          {
+            echo "version=$version"
+            echo "channel=$channel"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: build the snap
+        id: build
+        uses: snapcore/action-build@v1
+
+      - name: inspect the snap
+        env:
+          SNAP: ${{ steps.build.outputs.snap }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools
+
+          list="$(unsquashfs -l "$SNAP")"
+          # The rust plugin installs to bin/; override-build moves it where the desktop
+          # entry and the app command both expect it.
+          grep -qx 'squashfs-root/usr/bin/sonora' <<<"$list"
+          grep -qx 'squashfs-root/usr/share/applications/sonora.desktop' <<<"$list"
+          grep -qx 'squashfs-root/etc/asound.conf' <<<"$list"
+          # ALSA_PLUGIN_DIR names one triplet-free path, so the PulseAudio plugin the
+          # asound.conf routes to has to have been moved there.
+          grep -qx 'squashfs-root/usr/lib/alsa-lib/libasound_module_pcm_pulse.so' <<<"$list"
+          # webkit comes from gnome-46-2404; a staged copy is 122 MiB of nothing.
+          if grep -q 'libwebkit2gtk' <<<"$list"; then
+            echo "libwebkit2gtk was staged; the gnome platform already provides it" >&2
+            exit 1
+          fi
+          grep -qx 'squashfs-root/usr/share/doc/sonora/THIRD-PARTY.md' <<<"$list"
+          # The Vulkan ICD has to come from the gpu-2404 provider, never from the snap.
+          if grep -q 'squashfs-root/usr/share/vulkan/icd.d' <<<"$list"; then
+            echo "a Vulkan ICD was staged; it would shadow the gpu-2404 provider's" >&2
+            exit 1
+          fi
+
+          # The snap's own version is adopted from Cargo.toml, not from the tag, so a
+          # release built off a stale version line is caught here rather than in the store.
+          unsquashfs -d snapmeta -q "$SNAP" meta/snap.yaml
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          grep -qx "version: $cargo_version" snapmeta/meta/snap.yaml
+          grep -qx "base: core24" snapmeta/meta/snap.yaml
+          grep -qx "confinement: strict" snapmeta/meta/snap.yaml
+          rm -rf snapmeta
+
+      - name: name the snap
+        env:
+          SNAP: ${{ steps.build.outputs.snap }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          mv "$SNAP" "dist/sonora-$VERSION-$ARCH.snap"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-snap-${{ matrix.variant.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+      # Publishing is optional: with no store credentials configured the release still
+      # carries the .snap file as a downloadable asset, the way it carries the Flatpak
+      # bundles, and only the Snap Store upload is skipped.
+      - name: publish to the Snap Store
+        if: steps.meta.outputs.channel != '' && env.STORE_CREDENTIALS != ''
+        uses: snapcore/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: dist/sonora-${{ steps.meta.outputs.version }}-${{ matrix.variant.arch }}.snap
+          release: ${{ steps.meta.outputs.channel }}
