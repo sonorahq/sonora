@@ -6,6 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{App, Context, Entity, SharedString, Task};
 use music::{Album, MediaKind, MusicApi, Page, Pages, Playlist, SavedArtist, Shape, Track};
+use tokio::sync::Semaphore;
 
 use crate::snapshot::{Kind, Remembered, Snapshots};
 use crate::{Io, Network, Outcome, Session, SessionEvent, Target, Toasts, join, mosaic};
@@ -16,6 +17,10 @@ const FATAL: [LibraryPart; 3] = [
     LibraryPart::Albums,
 ];
 const FATAL_LOCAL: [LibraryPart; 2] = [LibraryPart::Tracks, LibraryPart::Albums];
+/// How many playlists the background reads, for contents and for mosaic covers, ask a provider
+/// for at once. A library of hundreds of playlists would otherwise spend a provider's whole
+/// request budget in a second and leave none for the liked songs loading beside it.
+const SWEEP: usize = 4;
 
 /// Which provider a library page, an id or a playlist belongs to. The streaming shelf follows
 /// the signed-in provider; the local shelf follows the imported folder.
@@ -743,6 +748,8 @@ pub struct Library {
     hidden_local_tracks: HashSet<String>,
     reading: HashMap<String, Task<()>>,
     mosaics: HashMap<String, Task<()>>,
+    /// Shared by the playlist reads in `reading` and `mosaics`, so only `SWEEP` run at once.
+    sweep: Arc<Semaphore>,
     snapshots: Snapshots,
     priming: [Option<Task<()>>; 2],
 }
@@ -819,6 +826,7 @@ impl Library {
             hidden_local_tracks: HashSet::new(),
             reading: HashMap::new(),
             mosaics: HashMap::new(),
+            sweep: Arc::new(Semaphore::new(SWEEP)),
             snapshots: Snapshots::new(cache),
             priming: [None, None],
         };
@@ -1684,12 +1692,14 @@ impl Library {
 
             let io = self.io.clone();
             let client = client.clone();
+            let sweep = self.sweep.clone();
             let asked = id.clone();
             let key = id.clone();
             let task = cx.spawn(async move |this, cx| {
-                let covers = join(
-                    io.spawn(async move { client.playlist_covers(&asked, mosaic::TILES).await }),
-                )
+                let covers = join(io.spawn(async move {
+                    let _turn = sweep.acquire().await;
+                    client.playlist_covers(&asked, mosaic::TILES).await
+                }))
                 .await;
                 match covers {
                     Ok(covers) => {
@@ -1783,11 +1793,15 @@ impl Library {
         for id in wanted {
             let io = self.io.clone();
             let client = client.clone();
+            let sweep = self.sweep.clone();
             let key = id.clone();
             let asked = id.clone();
             let task = cx.spawn(async move |this, cx| {
-                let listed =
-                    join(io.spawn(async move { client.playlist_tracks(&asked).await })).await;
+                let listed = join(io.spawn(async move {
+                    let _turn = sweep.acquire().await;
+                    client.playlist_tracks(&asked).await
+                }))
+                .await;
 
                 this.update(cx, |this, cx| {
                     this.reading.remove(&key);

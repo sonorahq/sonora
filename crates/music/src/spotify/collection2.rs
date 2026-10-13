@@ -6,6 +6,7 @@ use http::header::{ACCEPT, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue, Method};
 use librespot_core::Session;
 
+use crate::spotify::pace::paced;
 use crate::spotify::pb::{Reader, Value, Writer, text};
 
 const PAGING: &str = "/collection/v2/paging";
@@ -105,11 +106,13 @@ async fn set_saved(session: &Session, set: &str, uri: &str, saved: bool) -> Resu
     request.string(WRITE_UPDATE_ID, &update_id);
     let body = request.finish();
 
-    session
-        .spclient()
-        .request(&Method::POST, WRITE, Some(headers()), Some(&body))
-        .await
-        .context("cannot update the saved collection")?;
+    paced(|| {
+        session
+            .spclient()
+            .request(&Method::POST, WRITE, Some(headers()), Some(&body))
+    })
+    .await
+    .context("cannot update the saved collection")?;
     Ok(())
 }
 
@@ -124,11 +127,13 @@ pub(crate) async fn saved_items(
 
     loop {
         let body = request(&username, set, &token);
-        let raw = session
-            .spclient()
-            .request(&Method::POST, PAGING, Some(headers()), Some(&body))
-            .await
-            .context("cannot read the saved collection")?;
+        let raw = paced(|| {
+            session
+                .spclient()
+                .request(&Method::POST, PAGING, Some(headers()), Some(&body))
+        })
+        .await
+        .context("cannot read the saved collection")?;
 
         let page = response(&raw).context("cannot decode the collection page")?;
 

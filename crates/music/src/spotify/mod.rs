@@ -6,6 +6,7 @@ mod client;
 mod collection;
 mod collection2;
 mod lyrics;
+mod pace;
 mod pathfinder;
 mod pb;
 mod playback;

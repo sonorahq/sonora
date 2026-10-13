@@ -5,6 +5,8 @@ use librespot_core::{Session, spclient::CLIENT_TOKEN};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
+use crate::spotify::pace;
+
 mod album;
 mod artist;
 mod browse;
@@ -99,9 +101,7 @@ async fn send<T: DeserializeOwned>(
         .header(CLIENT_TOKEN, client_token)
         .body(Bytes::from(body))
         .with_context(|| format!("cannot build {operation} Pathfinder request"))?;
-    let body = session
-        .http_client()
-        .request_body(request)
+    let body = pace::send(session, request)
         .await
         .with_context(|| format!("cannot request {operation} from Pathfinder"))?;
     decoded(&body, operation)

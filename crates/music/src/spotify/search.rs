@@ -3,6 +3,7 @@ use librespot_core::Session;
 
 use crate::Track;
 use crate::spotify::collection;
+use crate::spotify::pace::paced;
 
 const TRACK_PREFIX: &str = "spotify:track:";
 
@@ -13,9 +14,7 @@ pub async fn search(session: &Session, query: &str) -> Result<Vec<Track>> {
     }
 
     let uri = format!("spotify:search:{}", escaped(query));
-    let context = session
-        .spclient()
-        .get_context(&uri)
+    let context = paced(|| session.spclient().get_context(&uri))
         .await
         .context("cannot resolve the search context")?;
 

@@ -3,6 +3,7 @@ use librespot_core::{Session, SpotifyUri};
 use serde::Deserialize;
 
 use crate::Track;
+use crate::spotify::pace::paced;
 use crate::spotify::playlists;
 
 const TRACK_PREFIX: &str = "spotify:track:";
@@ -22,9 +23,7 @@ struct MediaItem {
 pub async fn track_radio(session: &Session, track_id: &str) -> Result<Vec<Track>> {
     let uri =
         SpotifyUri::from_uri(&format!("{TRACK_PREFIX}{track_id}")).context("invalid track ID")?;
-    let body = session
-        .spclient()
-        .get_radio_for_track(&uri)
+    let body = paced(|| session.spclient().get_radio_for_track(&uri))
         .await
         .context("cannot build track radio")?;
     let response: RadioResponse =

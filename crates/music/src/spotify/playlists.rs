@@ -12,6 +12,7 @@ use librespot_protocol::playlist4_external::{
 use protobuf::{Message as _, MessageField};
 use tokio::task::JoinSet;
 
+use crate::spotify::pace::paced;
 use crate::spotify::{collection, profiles, wire};
 use crate::{Contributor, GenreItem, GenreSection, Playlist, PlaylistDetail, Track, escape};
 
@@ -332,9 +333,7 @@ async fn stamp(session: &Session, playlist_id: &str) -> Option<i64> {
 
 async fn snapshot(session: &Session, playlist_id: &str) -> Result<SelectedListContent> {
     let id = SpotifyId::from_base62(playlist_id).context("cannot read the playlist id")?;
-    let body = session
-        .spclient()
-        .get_playlist(&id)
+    let body = paced(|| session.spclient().get_playlist(&id))
         .await
         .context("cannot read the playlist")?;
 
@@ -357,10 +356,12 @@ pub async fn rootlist_page(session: &Session, from: usize, length: usize) -> Res
         "/playlist/v2/user/{}/rootlist?decorate=revision,attributes,length,owner,capabilities,status_code&from={from}&length={length}",
         escape::component(&session.username())
     );
-    let reply = session
-        .spclient()
-        .request(&Method::GET, &endpoint, None, None)
-        .await?;
+    let reply = paced(|| {
+        session
+            .spclient()
+            .request(&Method::GET, &endpoint, None, None)
+    })
+    .await?;
     Ok(reply.to_vec())
 }
 
@@ -388,10 +389,12 @@ async fn rootlist_edit(session: &Session, body: &ListChanges) -> Result<Vec<u8>>
 }
 
 async fn post(session: &Session, endpoint: &str, body: &ListChanges) -> Result<Vec<u8>> {
-    let reply = session
-        .spclient()
-        .request_with_protobuf(&Method::POST, endpoint, None, body)
-        .await?;
+    let reply = paced(|| {
+        session
+            .spclient()
+            .request_with_protobuf(&Method::POST, endpoint, None, body)
+    })
+    .await?;
     Ok(reply.to_vec())
 }
 

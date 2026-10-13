@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Spotify liked songs and saved albums now load for accounts with hundreds of playlists, instead
+  of failing at startup while Sonora read every playlist at once.
+
 ## [0.42.2] - 2026-10-07
 
 ### Added
