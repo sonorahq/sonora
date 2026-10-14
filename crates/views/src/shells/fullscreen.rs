@@ -21,7 +21,9 @@ use ui::{
 
 use crate::chrome::{Aside, TitleBarOptions};
 use crate::shared::menus::ItemMenu;
-use crate::shared::transport::{NOTCH, like, moved, percent, transport, volume_icon};
+use crate::shared::transport::{
+    NOTCH, NOTCH_PRECISE, like, moved, percent, transport, volume_icon,
+};
 use crate::shared::veil::{Edge, veil};
 use crate::shared::visualizer::VisualizerDrive;
 use crate::shared::{self, ambient};
@@ -332,9 +334,13 @@ impl FullscreenView {
         }
         cx.stop_propagation();
 
+        let step = match event.modifiers.shift {
+            true => NOTCH_PRECISE,
+            false => NOTCH,
+        };
         let notch = match delta > Pixels::ZERO {
-            true => NOTCH,
-            false => -NOTCH,
+            true => step,
+            false => -step,
         };
         let level = (self.playback.read(cx).volume() + notch).clamp(0., 1.);
         self.muted = None;

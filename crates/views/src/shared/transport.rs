@@ -7,6 +7,7 @@ use ui::{ActiveTheme as _, Button};
 use crate::shared::ambient;
 
 pub(crate) const NOTCH: f32 = 0.05;
+pub(crate) const NOTCH_PRECISE: f32 = 0.01;
 const STEP: f32 = 0.004;
 
 pub(crate) fn volume_icon(level: f32) -> &'static str {
