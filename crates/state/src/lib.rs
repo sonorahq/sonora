@@ -12,6 +12,7 @@ mod logging;
 mod lyrics;
 mod mosaic;
 mod network;
+mod outputs;
 mod pins;
 mod playback;
 mod potoken;
@@ -47,6 +48,7 @@ pub use library::{
 pub use logging::log_file;
 pub use lyrics::{Lyrics, LyricsState};
 pub use network::{Network, Reconnected};
+pub use outputs::Outputs;
 pub use pins::{PinSort, Pins};
 pub use playback::{Origin, Playback, PlaybackState, Repeat, Sleep, Whence};
 pub use profile::Profile;
@@ -172,6 +174,7 @@ pub struct Sonora {
     pub history: Entity<History>,
     pub lyrics: Entity<Lyrics>,
     pub network: Entity<Network>,
+    pub outputs: Entity<Outputs>,
     pub pins: Entity<Pins>,
     pub playback: Entity<Playback>,
     /// The window that mints YouTube's proof-of-origin token. Nothing reads it; it is held so
@@ -224,7 +227,10 @@ pub fn init(
     let cache = storage::Cache::standard();
     let library = cx.new(|cx| Library::new(session.clone(), io.clone(), cache, cx));
     let queue = cx.new(|cx| Queue::new(session.clone(), settings.clone(), cx));
+    // Playback starts no engine until a provider is up, so the saved device is handed over
+    // before any stream opens.
     let playback = cx.new(|cx| Playback::new(session.clone(), queue.clone(), settings.clone(), cx));
+    let outputs = cx.new(|cx| Outputs::new(settings.clone(), playback.clone(), cx));
     let history = cx.new(|cx| {
         History::new(
             session.clone(),
@@ -262,7 +268,7 @@ pub fn init(
         Requirements::new(
             settings.clone(),
             session.clone(),
-            playback.clone(),
+            outputs.clone(),
             io.clone(),
             cx,
         )
@@ -288,6 +294,7 @@ pub fn init(
         history,
         lyrics,
         network,
+        outputs,
         pins,
         playback,
         potoken,

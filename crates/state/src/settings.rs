@@ -289,6 +289,10 @@ struct Values {
     discord_provider_button: bool,
     artwork_for_local_files: bool,
     lyrics_for_local_files: bool,
+    /// The output device to play on, as a cpal device id, or `None` to follow the system's
+    /// default. Kept while the device is gone, so playback returns to it, and cleared once it is
+    /// there but will not open.
+    output_device: Option<String>,
     prefer_local_lyrics: bool,
     /// Set once Local has been added to a list saved before it existed, so a user who turns it
     /// off afterwards is not given it back.
@@ -445,6 +449,7 @@ impl Default for Values {
             discord_provider_button: true,
             artwork_for_local_files: true,
             lyrics_for_local_files: true,
+            output_device: None,
             prefer_local_lyrics: false,
             local_lyrics_offered: false,
             lyrics_providers: [
@@ -814,6 +819,10 @@ impl AppSettings {
 
     pub fn lyrics_for_local_files(&self) -> bool {
         self.values.lyrics_for_local_files
+    }
+
+    pub fn output_device(&self) -> Option<&str> {
+        self.values.output_device.as_deref()
     }
 
     pub fn prefer_local_lyrics(&self) -> bool {
@@ -1217,6 +1226,11 @@ impl AppSettings {
 
     pub fn set_lyrics_for_local_files(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.values.lyrics_for_local_files = enabled;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_output_device(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+        self.values.output_device = id;
         self.schedule_save(cx);
     }
 

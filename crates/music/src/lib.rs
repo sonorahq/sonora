@@ -17,6 +17,7 @@ pub mod lyrics;
 mod models;
 pub mod musixmatch;
 pub mod netease;
+pub mod output;
 pub mod potoken;
 pub mod progress;
 pub mod scrobble;
@@ -41,7 +42,6 @@ use time::format_description::well_known::Iso8601;
 use time::parsing::Parsed;
 use time::{Month, OffsetDateTime};
 
-pub use audio::{Server as SoundServer, failing as output_failing, missing_bridge};
 pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
@@ -50,6 +50,7 @@ pub use models::{
     Playlist, PlaylistDetail, ReleaseType, RomanizedText, SavedArtist, Track, TrackKey, TrackTags,
     UserDetail, UserProfile, Voice, WritingSystem,
 };
+pub use output::{Server as SoundServer, missing_bridge};
 pub use spectrum::Spectrum;
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";

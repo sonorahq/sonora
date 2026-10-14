@@ -3,10 +3,13 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui::prelude::*;
-use gpui::{App, Div, StyleRefinement, Window, div};
+use gpui::{App, ClickEvent, Div, StyleRefinement, Window, div};
 
 use crate::button::Button;
 use crate::menu::{Menu, Trigger};
+
+/// Runs when a click on the trigger opens the popover.
+pub(crate) type Open = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 #[derive(Clone, Default)]
 pub struct Popovers {
@@ -45,6 +48,7 @@ pub struct Popover {
     menu: Option<Menu>,
     selected: bool,
     commands: bool,
+    on_open: Option<Open>,
 }
 
 impl Popover {
@@ -57,6 +61,7 @@ impl Popover {
             menu: None,
             selected: false,
             commands: false,
+            on_open: None,
         }
     }
 
@@ -79,6 +84,16 @@ impl Popover {
         self.commands = true;
         self
     }
+
+    /// Runs `handler` when a click on the trigger opens the popover, not when it closes it, as
+    /// for reading afresh what the menu lists.
+    pub fn on_open(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_open = Some(Box::new(handler));
+        self
+    }
 }
 
 impl Styled for Popover {
@@ -97,6 +112,7 @@ impl RenderOnce for Popover {
             menu,
             selected,
             commands,
+            on_open,
         } = self;
         let overrides = std::mem::take(base.style());
 
@@ -106,10 +122,15 @@ impl RenderOnce for Popover {
             let group = group.clone();
             let observed = trigger.clone();
 
-            head(observed).child(button.selected(selected || open).on_click(move |_, _, cx| {
-                group.toggle(key);
-                cx.refresh_windows();
-            }))
+            head(observed).child(button.selected(selected || open).on_click(
+                move |event, window, cx| {
+                    group.toggle(key);
+                    if let Some(on_open) = on_open.as_ref().filter(|_| group.shows(key)) {
+                        on_open(event, window, cx);
+                    }
+                    cx.refresh_windows();
+                },
+            ))
         });
         let body = menu.filter(|_| open).map(|menu| {
             let outside = group.clone();

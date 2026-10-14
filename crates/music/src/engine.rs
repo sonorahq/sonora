@@ -695,16 +695,29 @@ fn spawn<F: Fetch>(
 
 /// The track the audio thread is decoding, and where its samples land in real time.
 struct Playing<F: Fetch> {
+    /// The track's id, as the provider knows it and the engine's events report it.
     id: String,
+
     /// Kept so a seek can open a second decoder over the same download.
     loaded: F::Loaded,
+
+    /// The decoder. `Paced` resamples what it decodes to the device's rate.
     source: F::Source,
+
+    /// The number of channels the source has.
     channels: u16,
+
+    /// The source's rate, which its packets are written at.
     rate: u32,
+
+    /// Where in the track decoding started: the open, or the last seek.
     base: Duration,
+
     /// Samples queued before this track's first one. On a gapless join the one before it is
-    /// still being heard, so its own position only starts once the count passes this.
+    /// still being heard, so its own position only starts once the count passes this. The end
+    /// of that one may still be in the resampler then, so this counts what it will add too.
     offset: u64,
+
     /// The track's normalisation gain, applied to every sample as it is decoded. Each track
     /// carries its own, so a gapless join changes it on the first sample of the next one.
     gain: f32,
@@ -734,11 +747,13 @@ impl<F: Fetch> Playing<F> {
         })
     }
 
-    fn mark(&self) -> Mark {
+    /// Where this track's sound is read from, given `rate`, the device's, which is what the queue
+    /// counts samples at.
+    fn mark(&self, rate: u32) -> Mark {
         Mark {
             id: self.id.clone(),
             channels: self.channels,
-            rate: self.rate,
+            rate,
             base: self.base,
             offset: self.offset,
         }
@@ -822,15 +837,10 @@ fn audio_loop<F: Fetch>(
     let mut reported_at = Instant::now();
 
     loop {
-        // a track at another rate waits for the last one's tail to play out before the
-        // output reopens under it
-        let refitting = current
-            .as_ref()
-            .is_some_and(|held| !paced.fits(held.rate) && !paced.drained());
         // anything but decoding means waiting for work rather than spinning: no
         // track, a paused one, or a full queue. A restored track sits paused
         // with an empty queue, which the old condition mistook for decoding.
-        let idle = current.is_none() || !playing || paced.full() || refitting;
+        let idle = current.is_none() || !playing || paced.full();
         let job = match idle {
             false => match jobs.try_recv() {
                 Ok(job) => Some(job),
@@ -855,7 +865,7 @@ fn audio_loop<F: Fetch>(
                 })
                 .ok();
             events.send(PlaybackEvent::Ended { id: Some(ended) }).ok();
-            heard = current.as_ref().map(Playing::mark);
+            heard = current.as_ref().map(|held| held.mark(paced.rate()));
             match next {
                 Some((id, duration)) => {
                     announce_length(&events, &id, duration);
@@ -897,12 +907,7 @@ fn audio_loop<F: Fetch>(
                     joining = None;
                     written = 0;
                     current = Playing::open(fetch.as_ref(), &id, loaded, at, 0, normalise);
-                    if let Some(held) = &current
-                        && paced.fit(held.rate).is_err()
-                    {
-                        return;
-                    }
-                    heard = current.as_ref().map(Playing::mark);
+                    heard = current.as_ref().map(|held| held.mark(paced.rate()));
                     playing = start && current.is_some();
                     match playing {
                         true if paced.play().is_err() => return,
@@ -981,7 +986,7 @@ fn audio_loop<F: Fetch>(
                         continue;
                     }
                     written = 0;
-                    heard = current.as_ref().map(Playing::mark);
+                    heard = current.as_ref().map(|held| held.mark(paced.rate()));
                     cue.arm();
                 }
                 Job::Seek(position) => {
@@ -1011,7 +1016,7 @@ fn audio_loop<F: Fetch>(
                     }
                     joining = None;
                     written = 0;
-                    heard = current.as_ref().map(Playing::mark);
+                    heard = current.as_ref().map(|held| held.mark(paced.rate()));
                     cue.arm();
                 }
                 Job::Gain(level) => paced.set_volume(level),
@@ -1022,9 +1027,6 @@ fn audio_loop<F: Fetch>(
         let Some(held) = &mut current else { continue };
         if idle {
             continue;
-        }
-        if paced.fit(held.rate).is_err() {
-            return;
         }
 
         let buffer = paced.buffer(held.samples(CHUNK));
@@ -1038,34 +1040,40 @@ fn audio_loop<F: Fetch>(
             };
             let next = queued.take().and_then(|(id, loaded)| {
                 let duration = fetch.length(&loaded);
-                current = Playing::open(
-                    fetch.as_ref(),
-                    &id,
-                    loaded,
-                    Duration::ZERO,
-                    written,
-                    normalise,
-                );
+                current = Playing::open(fetch.as_ref(), &id, loaded, Duration::ZERO, 0, normalise);
                 current.as_ref().map(|_| (id, duration))
             });
+            // A track that follows is written straight in behind this one, so the resampler
+            // carries on across the join, as one signal at the same format or a new span at
+            // another, and says where it lands. With nothing to follow, what it holds is let out
+            // so the end is heard.
+            let at = match &mut current {
+                Some(following) => {
+                    following.offset = written + paced.held_back() as u64;
+                    following.offset
+                }
+                None => {
+                    written += paced.flush() as u64;
+                    written
+                }
+            };
             // both events wait for the queue to reach here, so the join lands on the sample
             joining = Some(Join {
                 ended,
                 loaded,
                 next,
-                at: written,
+                at,
             });
             continue;
         };
 
-        let count = samples.len() as u64;
         let Some(chunk) = packet(samples, held.channels, held.rate) else {
             continue;
         };
-        if paced.write(chunk).is_err() {
-            return;
+        match paced.write(chunk) {
+            Ok(queued) => written += queued as u64,
+            Err(_) => return,
         }
-        written += count;
     }
 }
 

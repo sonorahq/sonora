@@ -2107,17 +2107,26 @@ impl Playback {
         }
     }
 
-    /// Rebuilds the engine of the current track on the new default audio device and reloads
-    /// the track where the clock stood.
-    fn restart_output(&mut self, cx: &mut Context<Self>) {
-        let Some(track) = self.track.clone() else {
-            return;
+    /// Rebuilds every running engine on the audio device it should play on now, as when the
+    /// device is chosen in settings.
+    pub(crate) fn restart_outputs(&mut self, cx: &mut Context<Self>) {
+        self.restart_output(false, cx);
+        self.restart_output(true, cx);
+    }
+
+    /// Rebuilds the local or the streaming engine, if it is running, on the audio device it
+    /// should play on now. The engine of the current track reloads it where the clock stood,
+    /// playing if it was and held paused there if it was not; the other one, or one with nothing
+    /// loaded, comes back empty, so its stream still reopens at the device's new rate. A failed
+    /// track is left as it is.
+    fn restart_output(&mut self, local: bool, cx: &mut Context<Self>) {
+        let running = match local {
+            true => self.local_engine.is_some(),
+            false => self.engine.is_some(),
         };
-        let Some(id) = track.id.as_deref() else {
+        if !running {
             return;
-        };
-        let at = self.live_position();
-        let local = music::is_local_id(id);
+        }
         let playback = match local {
             true => self.session.read(cx).local_playback(),
             false => self.session.read(cx).playback(),
@@ -2125,21 +2134,40 @@ impl Playback {
         let Some(playback) = playback else {
             return;
         };
+        let current = self
+            .track
+            .clone()
+            .filter(|track| track.id.is_some() && local == self.local_active());
+        let at = self.live_position();
+        let playing = match self.state {
+            PlaybackState::Playing => Some(true),
+            PlaybackState::Loading => Some(self.intent == Intent::Play),
+            PlaybackState::Paused | PlaybackState::Idle => Some(false),
+            PlaybackState::Failed(_) => None,
+        };
+        // the engine holds a paused track where it stood as it starts, as it does a restored one
+        if current.is_some() && playing == Some(false) {
+            self.resume_at = Some(at);
+        }
 
         log::info!("playback: restarting after the audio output changed");
         match local {
             true => {
                 self.local_task = None;
-                self.local_engine = None;
+                retire(self.local_engine.take());
                 self.start_local_engine(playback, cx);
             }
             false => {
                 self.task = None;
-                self.engine = None;
+                retire(self.engine.take());
                 self.start_engine(playback, cx);
             }
         }
-        self.load_from(&track, at, Start::Pick, cx);
+        if let Some(track) = current
+            && playing == Some(true)
+        {
+            self.load_from(&track, at, Start::Pick, cx);
+        }
     }
 
     /// Whether a track's failure is the session having gone stale, in which case the session
@@ -2233,6 +2261,12 @@ impl Playback {
     /// or about another track, are dropped, so a late event from a previous load cannot move
     /// the clock.
     fn on_backend_event(&mut self, event: BackendEvent, local: bool, cx: &mut Context<Self>) {
+        // an engine whose output has to reopen is rebuilt whether it plays the current track
+        // or sits idle, since a dead engine would take the next track and play nothing
+        if let BackendEvent::OutputChanged = event {
+            self.restart_output(local, cx);
+            return;
+        }
         if local != self.local_active() {
             return;
         }
@@ -2248,8 +2282,7 @@ impl Playback {
             BackendEvent::Position { .. }
             | BackendEvent::Length { .. }
             | BackendEvent::Downloaded { .. }
-            | BackendEvent::Loading { .. }
-            | BackendEvent::OutputChanged => {}
+            | BackendEvent::Loading { .. } => {}
             BackendEvent::Playing { .. }
             | BackendEvent::Paused { .. }
             | BackendEvent::Seeked { .. } => {
@@ -2261,7 +2294,8 @@ impl Playback {
             }
         }
         match event {
-            BackendEvent::OutputChanged => self.restart_output(cx),
+            // rebuilt before the filters above
+            BackendEvent::OutputChanged => {}
             BackendEvent::Unavailable { .. }
             | BackendEvent::Throttled { .. }
             | BackendEvent::Refused
@@ -2568,6 +2602,21 @@ fn throttle_wait(throttles: u8) -> Duration {
     THROTTLE_WAIT
         .saturating_mul(1 << doublings)
         .min(THROTTLE_CAP)
+}
+
+/// Drops an engine on a thread of its own. Spotify's waits for its player thread to end, which
+/// sits out an output device that takes CoreAudio ten seconds to give up on, so dropping it here
+/// would hold the window for as long.
+fn retire(engine: Option<Box<dyn Player>>) {
+    let Some(engine) = engine else {
+        return;
+    };
+    let spawned = std::thread::Builder::new()
+        .name("engine-retire".to_owned())
+        .spawn(move || drop(engine));
+    if let Err(error) = spawned {
+        log::warn!("playback: cannot retire the old engine off the main thread: {error}");
+    }
 }
 
 #[cfg(test)]

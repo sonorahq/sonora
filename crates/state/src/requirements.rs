@@ -5,7 +5,7 @@
 use gpui::{App, Context, Entity, Task};
 use music::SoundServer;
 
-use crate::{AppSettings, Io, Playback, Session};
+use crate::{AppSettings, Io, Outputs, Session};
 
 /// One thing missing from the system, named by what a user installs to fix it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,8 +30,8 @@ impl Requirement {
 }
 
 /// The requirements this machine is missing. The system is looked at once at startup, off the
-/// main thread; the output is looked at again whenever playback moves, so a device that fails
-/// later or comes back is noticed.
+/// main thread; the output is followed through `Outputs`, so a device that fails later or comes
+/// back is noticed.
 pub struct Requirements {
     bridge: Option<SoundServer>,
     output: bool,
@@ -47,11 +47,11 @@ impl Requirements {
     pub fn new(
         settings: Entity<AppSettings>,
         session: Entity<Session>,
-        playback: Entity<Playback>,
+        outputs: Entity<Outputs>,
         io: Io,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.observe(&playback, |this, _, cx| this.listen(cx))
+        cx.observe(&outputs, |this, outputs, cx| this.listen(outputs, cx))
             .detach();
         // whether the browser engine matters follows the provider in use
         cx.observe(&session, |_, _, cx| cx.notify()).detach();
@@ -77,7 +77,7 @@ impl Requirements {
 
         Self {
             bridge: None,
-            output: music::output_failing(),
+            output: outputs.read(cx).failing(),
             web_engine: false,
             dismissed: Vec::new(),
             settings,
@@ -120,10 +120,10 @@ impl Requirements {
         cx.notify();
     }
 
-    /// Follows the output after playback moved. An output that came back takes its card away
+    /// Follows the output after `Outputs` changed. An output that came back takes its card away
     /// and lets it show again should it fail later in the run.
-    fn listen(&mut self, cx: &mut Context<Self>) {
-        let output = music::output_failing();
+    fn listen(&mut self, outputs: Entity<Outputs>, cx: &mut Context<Self>) {
+        let output = outputs.read(cx).failing();
         if output == self.output {
             return;
         }

@@ -757,9 +757,12 @@ impl RenderOnce for Menu {
                 .when(!disabled, |this| {
                     this.hover(move |this| this.bg(theme.secondary_hover))
                 })
+                // the label column fills the row, so a detail wraps at the menu's width rather
+                // than at the label's
                 .child(
                     div()
                         .flex()
+                        .flex_1()
                         .min_w_0()
                         .items_center()
                         .gap_2()
@@ -783,6 +786,7 @@ impl RenderOnce for Menu {
                             div()
                                 .flex()
                                 .flex_col()
+                                .flex_1()
                                 .min_w_0()
                                 .gap_1()
                                 .child(

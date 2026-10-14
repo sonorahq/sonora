@@ -1,33 +1,15 @@
 use std::num::NonZero;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use anyhow::{Context as _, Result};
-use cpal::traits::{DeviceTrait, HostTrait};
+use rodio::Source;
 use rodio::source::SeekError;
-use rodio::{DeviceSinkBuilder, MixerDeviceSink, Source};
 
 use crate::equalizer::{Equalized, Equalizer};
 use crate::spectrum::{Spectrum, Tap};
 
 pub const RAMP: Duration = Duration::from_millis(25);
-const BUFFER: Duration = Duration::from_millis(50);
-
-/// The device stream every output in the process mixes into, so the sound server sees Sonora as
-/// one client however many engines are running. It runs at the rate of whatever played last and
-/// closes when the last output on it drops.
-static SHARED: Mutex<Weak<Device>> = Mutex::new(Weak::new());
-/// Whether the last attempt to open a device stream failed, which is what `failing` reports.
-static FAILING: AtomicBool = AtomicBool::new(false);
-
-/// A desktop sound server, which ALSA reaches only through the plugin its package installs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Server {
-    PipeWire,
-    PulseAudio,
-}
-
 #[derive(Clone)]
 pub struct Volume(Arc<AtomicU32>);
 
@@ -53,207 +35,14 @@ pub struct Chain {
     pub spectrum: Spectrum,
 }
 
-/// One open stream on an output device, with the mixer the engines' chains play into.
-struct Device {
-    id: String,
-    /// The rate the stream was opened for, whether or not the device could honour it.
-    wanted: Option<u32>,
-    rate: u32,
-    failed: Arc<AtomicBool>,
-    /// Taken when an output reopens the device at another rate, which closes the stream under
-    /// every output still on it.
-    stream: Mutex<Option<MixerDeviceSink>>,
-}
-
-impl Device {
-    /// The shared stream on the default device, at `rate` when one is given. It opens a new
-    /// stream when no output holds a healthy one there at that rate, closing the old stream on
-    /// the same device first. A stream left on a device that is no longer the default stays with
-    /// the outputs still using it until they reopen.
-    fn shared(rate: Option<u32>) -> Result<Arc<Self>> {
-        let shared = Self::reach(rate);
-        FAILING.store(shared.is_err(), Ordering::Release);
-        shared
-    }
-
-    fn reach(rate: Option<u32>) -> Result<Arc<Self>> {
-        let device = cpal::default_host()
-            .default_output_device()
-            .context("no audio output device")?;
-        let id = ident(&device);
-
-        let mut shared = SHARED.lock().unwrap_or_else(PoisonError::into_inner);
-        let current = shared.upgrade().filter(|open| open.id == id);
-        if let Some(open) = &current
-            && open.live()
-            && rate.is_none_or(|rate| open.fits(rate))
-        {
-            return Ok(open.clone());
-        }
-        if let Some(open) = current {
-            open.close();
-        }
-
-        let open = Arc::new(Self::open(device, id, rate)?);
-        *shared = Arc::downgrade(&open);
-        Ok(open)
-    }
-
-    /// Opens the device at `rate` when it offers that rate and at its default otherwise.
-    fn open(device: cpal::Device, id: String, rate: Option<u32>) -> Result<Self> {
-        let default = device
-            .default_output_config()
-            .map_err(|error| anyhow::anyhow!("cannot read the output config: {error}"))?;
-        let config = match rate {
-            Some(rate) => at_rate(&device, &default, rate).unwrap_or_else(|| {
-                log::info!("sink: the device does not offer {rate} Hz, resampling instead");
-                default
-            }),
-            None => default,
-        };
-
-        log::info!(
-            "sink: using {} at {} Hz, {} channels, {}",
-            id,
-            config.sample_rate(),
-            config.channels(),
-            config.sample_format()
-        );
-
-        let format = config.sample_format();
-        let frames = (BUFFER.as_secs_f64() * config.sample_rate() as f64).round() as u32;
-        let failed = Arc::new(AtomicBool::new(false));
-        let stream_failed = failed.clone();
-        let builder = DeviceSinkBuilder::default()
-            .with_device(device)
-            .with_config(&config.config())
-            .with_buffer_size(cpal::BufferSize::Fixed(frames))
-            .with_sample_format(format)
-            .with_error_callback(move |error| match error {
-                cpal::StreamError::BufferUnderrun => log::debug!("sink: buffer underrun"),
-                error => {
-                    log::warn!("sink: audio output failed: {error}");
-                    stream_failed.store(true, Ordering::Release);
-                }
-            });
-        let mut stream = builder
-            .open_stream()
-            .map_err(|error| anyhow::anyhow!("cannot open the audio output: {error}"))?;
-        stream.log_on_drop(false);
-
-        Ok(Self {
-            id,
-            wanted: rate,
-            rate: config.sample_rate(),
-            failed,
-            stream: Mutex::new(Some(stream)),
-        })
-    }
-
-    /// Whether a track at `rate` can play on this stream without a reopen. A rate the device
-    /// turned down counts as fitting, so the output does not retry it on every track.
-    fn fits(&self, rate: u32) -> bool {
-        rate == self.rate || self.wanted == Some(rate)
-    }
-
-    /// Whether the stream is still open and has reported no error.
-    fn live(&self) -> bool {
-        !self.failed.load(Ordering::Acquire) && self.stream().is_some()
-    }
-
-    fn close(&self) {
-        self.stream().take();
-    }
-
-    /// Puts one engine's chain into the mixer. A stream that has closed drops it.
-    fn add(&self, source: impl Source + Send + 'static) {
-        if let Some(stream) = self.stream().as_ref() {
-            stream.mixer().add(source);
-        }
-    }
-
-    fn stream(&self) -> MutexGuard<'_, Option<MixerDeviceSink>> {
-        self.stream.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-}
-
-/// One engine's player on the shared device stream. Dropping it ends the player's source in the
-/// mixer, and the stream closes once no output is left on it.
-pub struct Output {
-    chain: Chain,
-    sink: Arc<rodio::Player>,
-    device: Arc<Device>,
-    /// Set when `fit` could not reopen the device, so the engine reports the output gone.
-    broken: bool,
-}
-
-impl Output {
-    /// Joins the stream on the default output device at whatever rate it runs and runs every
-    /// sample through the equalizer and then the volume ramp before it reaches the mixer.
-    pub fn open(chain: Chain) -> Result<Self> {
-        let device = Device::shared(None)?;
-        let sink = attach(&chain, &device);
-        Ok(Self {
-            chain,
-            sink: Arc::new(sink),
-            device,
-            broken: false,
-        })
-    }
-
-    pub fn sink(&self) -> &Arc<rodio::Player> {
-        &self.sink
-    }
-
-    /// Whether a track at `rate` can go out as the output stands, without `fit` reopening it.
-    pub fn fits(&self, rate: u32) -> bool {
-        self.device.live() && self.device.fits(rate)
-    }
-
-    /// Moves this output onto a shared stream at `rate` unless it `fits` already, keeping the
-    /// player paused if it was. The stream reopens when it runs at another rate, which closes
-    /// it under the other engines. Whatever this output had queued is dropped and any clone of
-    /// `sink` goes stale, so callers do this before a track and take `sink` again when it
-    /// returns true.
-    pub fn fit(&mut self, rate: u32) -> Result<bool> {
-        if self.fits(rate) {
-            return Ok(false);
-        }
-        let paused = self.sink.is_paused();
-        let device = match Device::shared(Some(rate)) {
-            Ok(device) => device,
-            Err(error) => {
-                self.broken = true;
-                return Err(error);
-            }
-        };
-        let sink = attach(&self.chain, &device);
-        if paused {
-            sink.pause();
-        }
-        self.sink = Arc::new(sink);
-        self.device = device;
-        self.broken = false;
-        Ok(true)
-    }
-
-    pub fn set_volume(&self, gain: f32) {
-        self.chain.volume.set(gain);
-    }
-
-    /// Whether what this output holds can no longer be heard: the stream reported an error,
-    /// another engine reopened it at another rate, or `fit` failed. Every output on the stream
-    /// sees an error. A fresh track recovers through `fit`, a paused one has to be reloaded.
-    pub fn failed(&self) -> bool {
-        self.broken || !self.device.live()
-    }
-
-    /// Whether the system's default device is no longer the one this output plays on.
-    pub fn changed(&self) -> bool {
-        cpal::default_host()
-            .default_output_device()
-            .map(|device| ident(&device))
-            .is_some_and(|device| device != "unknown" && device != self.device.id)
+impl Chain {
+    /// `source` run through the equalizer and then the volume ramp, with the spectrum tap at the
+    /// end, ready for the mixer.
+    pub(crate) fn apply<S: Source>(&self, source: S) -> SmoothGain<Equalized<S>> {
+        let applied = self.volume.get();
+        let tap = self.spectrum.attach();
+        let equalized = Equalized::new(source, self.equalizer.clone());
+        SmoothGain::new(equalized, self.volume.clone(), applied, RAMP).with_tap(tap)
     }
 }
 
@@ -463,90 +252,4 @@ impl<I: Source> Source for Trimmed<I> {
         self.emitted = (position.as_secs_f64() * self.lane as f64).round() as u64;
         Ok(())
     }
-}
-
-/// Whether the system has a default output device to play on. A device can be missing for as
-/// long as it takes a headset to reconnect, so the engines ask again rather than give up.
-pub fn available() -> bool {
-    cpal::default_host().default_output_device().is_some()
-}
-
-/// Whether a stream on the default device opens right now. The stream is the shared one, so it
-/// closes again at once unless an output already plays on it.
-pub fn openable() -> bool {
-    available() && Device::shared(None).is_ok()
-}
-
-/// Whether the last attempt to open the output failed, so whatever plays is not heard. On Linux
-/// ALSA always names a default device, so this rather than `available` is what tells that the
-/// sound cannot get out.
-pub fn failing() -> bool {
-    FAILING.load(Ordering::Acquire)
-}
-
-/// The sound server this session runs when ALSA has no plugin routing to it. Sonora then opens
-/// the card the server already holds and plays nothing, which `pipewire-alsa` or
-/// `pulseaudio-alsa` fixes. Only ALSA's configuration is read, no device is opened.
-#[cfg(target_os = "linux")]
-pub fn missing_bridge() -> Option<Server> {
-    let server = server()?;
-    let hints = alsa::device_name::HintIter::new_str(None, "pcm").ok()?;
-    let bridged = hints
-        .filter_map(|hint| hint.name)
-        .any(|name| name == "pipewire" || name == "pulse");
-    (!bridged).then_some(server)
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn missing_bridge() -> Option<Server> {
-    None
-}
-
-fn ident(device: &cpal::Device) -> String {
-    device
-        .id()
-        .map(|id| id.to_string())
-        .unwrap_or_else(|_| "unknown".to_owned())
-}
-
-/// A fresh player whose chain plays into `device`.
-fn attach(chain: &Chain, device: &Device) -> rodio::Player {
-    let applied = chain.volume.get();
-    let tap = chain.spectrum.attach();
-    let (sink, source) = rodio::Player::new();
-    let equalized = Equalized::new(source, chain.equalizer.clone());
-    device.add(SmoothGain::new(equalized, chain.volume.clone(), applied, RAMP).with_tap(tap));
-    sink
-}
-
-/// The device's config at `rate` in the default's channels and sample format, if the device
-/// offers that combination.
-fn at_rate(
-    device: &cpal::Device,
-    default: &cpal::SupportedStreamConfig,
-    rate: u32,
-) -> Option<cpal::SupportedStreamConfig> {
-    if default.sample_rate() == rate {
-        return Some(default.clone());
-    }
-    device
-        .supported_output_configs()
-        .ok()?
-        .filter(|range| {
-            range.channels() == default.channels()
-                && range.sample_format() == default.sample_format()
-        })
-        .find_map(|range| range.try_with_sample_rate(rate))
-}
-
-/// The sound server whose socket this session has, PipeWire first since it also answers on the
-/// PulseAudio socket.
-#[cfg(target_os = "linux")]
-fn server() -> Option<Server> {
-    let runtime = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?);
-    if runtime.join("pipewire-0").exists() {
-        return Some(Server::PipeWire);
-    }
-    let pulse = std::env::var_os("PULSE_SERVER").is_some() || runtime.join("pulse/native").exists();
-    pulse.then_some(Server::PulseAudio)
 }

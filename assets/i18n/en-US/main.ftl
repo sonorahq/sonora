@@ -596,6 +596,26 @@ settings-normalisation = Normalize loudness
 settings-normalisation-detail = Keeps tracks at a consistent volume
 settings-gapless = Gapless playback
 settings-gapless-detail = Runs one track into the next without a pause, the way an album was sequenced
+settings-output-device = Output device
+settings-output-device-detail = Audio device where Sonora plays
+settings-output-device-system = System default
+settings-output-device-system-follows = Follows the system default
+settings-output-device-system-current = Follows the system default. Currently { $device }
+settings-output-device-missing = Saved device (not connected)
+settings-sample-rate = Sample rate
+settings-sample-rate-detail = What the device runs at. Sonora converts every track to it
+settings-sample-rate-value = { $khz } kHz
+settings-sample-rate-change = Change
+settings-buffer = Buffer size
+settings-buffer-detail = How much audio Sonora hands the device at a time
+settings-buffer-value = { $frames ->
+    [one] { $frames } frame
+   *[other] { $frames } frames
+} · { $ms } ms
+settings-output-idle = Not playing
+settings-output-device-loading = Loading devices…
+settings-output-failed = Device not supported
+settings-output-failed-detail = Error: { $error }
 settings-sleep = Sleep timer
 settings-sleep-detail = Lets the music stop on its own after a set time, so it can play you to sleep
 settings-stay-awake = Stay awake during playback
@@ -699,6 +719,7 @@ settings-group-title-bar = Title bar
 settings-group-window-style = Window style
 settings-group-lyrics = Lyrics
 settings-group-equalizer = Equalizer
+settings-group-devices = Devices
 settings-group-discord = Discord
 settings-group-project = Project
 settings-adaptive-menu = Adaptive context menu
@@ -886,6 +907,8 @@ tags-isrc = ISRC
 tags-comment = Comment
 toast-tags-saved = Saved the tags for { $name }
 toast-tags-failed = The tags could not be saved
+toast-output-select-failed = Unable to select { $name }
+toast-output-default-failed = Unable to select the system default device
 
 nav-pin = Pin
 toast-library-pin-failed = Could not update the pin.

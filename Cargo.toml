@@ -24,6 +24,7 @@ widevine = { path = "crates/widevine" }
 
 alsa = "0.10"
 anyhow = "1.0"
+ardftsrc = { version = "0.4.4", features = ["rodio"] }
 async-trait = "0.1"
 base64 = "0.22"
 blowfish = "0.9"
@@ -116,6 +117,11 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
   "NSRunningApplication",
   "NSStatusItem",
   "NSWorkspace",
+] }
+objc2-core-audio = { version = "0.3", default-features = false, features = [
+  "std",
+  "AudioHardware",
+  "objc2-core-audio-types",
 ] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = [
   "std",
@@ -211,3 +217,23 @@ opt-level = 2
 [profile.dev.package."*"]
 debug = false
 opt-level = 2
+
+# The audio path runs in real time, decoding, resampling and mixing every sample, so it is built
+# fully optimised even in debug builds.
+[profile.dev.package.music]
+opt-level = 3
+
+[profile.dev.package.rodio]
+opt-level = 3
+
+[profile.dev.package.cpal]
+opt-level = 3
+
+[profile.dev.package.ardftsrc]
+opt-level = 3
+
+[profile.dev.package.realfft]
+opt-level = 3
+
+[profile.dev.package.rustfft]
+opt-level = 3

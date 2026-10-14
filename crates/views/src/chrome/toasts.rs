@@ -50,6 +50,7 @@ impl Render for ToastStack {
 
                 Toast::new(("toast", id), message)
                     .when_some(toast.name.clone(), Toast::strong)
+                    .when_some(toast.detail.clone(), Toast::detail)
                     .when(toast.outcome == Outcome::Failed, Toast::failed)
                     .when_some(toast.target.clone().map(destination), |this, dest| {
                         this.on_open(move |_, _, cx| navigate(dest.clone(), cx))

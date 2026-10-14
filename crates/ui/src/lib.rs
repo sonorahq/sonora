@@ -35,6 +35,7 @@ mod scrubber;
 mod separator;
 mod shield;
 mod skeleton;
+mod spinner;
 mod switch;
 mod table;
 mod tabs;
@@ -101,6 +102,7 @@ pub use scrubber::{Scrubber, ScrubberState};
 pub use separator::Separator;
 pub use shield::Shield;
 pub use skeleton::{Initials, Skeleton};
+pub use spinner::Spinner;
 pub use switch::Switch;
 pub use table::{
     Activate, Cell, ColumnSpec, Deselect, Layout, Listing, Pending, ROW_GROUP, Remove, SelectNext,

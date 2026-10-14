@@ -290,6 +290,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 
 [[package]]
+name = "ardftsrc"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "163b8a08477ce56fea07e0f5506f3265b9e8eae5781f4ca5a56cc59953ca0f3a"
+dependencies = [
+ "num-traits",
+ "realfft",
+ "rodio 0.22.2",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "arg_enum_proc_macro"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4539,6 +4551,7 @@ version = "0.43.0"
 dependencies = [
  "alsa 0.10.0",
  "anyhow",
+ "ardftsrc",
  "async-trait",
  "base64",
  "blowfish",
@@ -4561,6 +4574,8 @@ dependencies = [
  "log",
  "md-5",
  "oauth2",
+ "objc2-core-audio",
+ "objc2-core-foundation",
  "open",
  "opensubsonic",
  "percent-encoding",
@@ -6306,6 +6321,15 @@ dependencies = [
  "bytemuck",
  "font-types 0.12.2",
  "once_cell",
+]
+
+[[package]]
+name = "realfft"
+version = "3.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f821338fddb99d089116342c46e9f1fbf3828dba077674613e734e01d6ea8677"
+dependencies = [
+ "rustfft",
 ]
 
 [[package]]

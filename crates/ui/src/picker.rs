@@ -1,9 +1,9 @@
 use gpui::prelude::*;
-use gpui::{App, Hsla, Pixels, SharedString, StyleRefinement, Window, px};
+use gpui::{App, ClickEvent, Hsla, Pixels, SharedString, StyleRefinement, Window, px};
 
 use crate::button::Button;
 use crate::menu::{Menu, MenuItem, TRIGGER_GAP};
-use crate::popover::{Popover, Popovers};
+use crate::popover::{Open, Popover, Popovers};
 use crate::theme::ActiveTheme as _;
 
 enum Face {
@@ -26,8 +26,10 @@ pub struct Picker {
     width: Pixels,
     left: bool,
     sticky: bool,
+    disabled: bool,
     items: Vec<MenuItem>,
     menu: Option<Menu>,
+    on_open: Option<Open>,
 }
 
 impl Picker {
@@ -49,8 +51,10 @@ impl Picker {
             width: Self::REGULAR,
             left: false,
             sticky: false,
+            disabled: false,
             items: Vec::new(),
             menu: None,
+            on_open: None,
         }
     }
 
@@ -111,6 +115,12 @@ impl Picker {
         self
     }
 
+    /// Holds the trigger still, so the menu cannot open, as while an earlier choice is applied.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
     pub fn item(mut self, item: MenuItem) -> Self {
         self.items.push(item);
         self
@@ -118,6 +128,15 @@ impl Picker {
 
     pub fn items(mut self, items: impl IntoIterator<Item = MenuItem>) -> Self {
         self.items.extend(items);
+        self
+    }
+
+    /// Runs `handler` when a click opens the menu, as for reading afresh what it lists.
+    pub fn on_open(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_open = Some(Box::new(handler));
         self
     }
 
@@ -148,8 +167,10 @@ impl RenderOnce for Picker {
             width,
             left,
             sticky,
+            disabled,
             items,
             menu,
+            on_open,
         } = self;
 
         let theme = *cx.theme();
@@ -176,7 +197,8 @@ impl RenderOnce for Picker {
                 true => button.tooltip_above(key),
                 false => button.tooltip(key),
             })
-            .when_some(tint, Button::tint);
+            .when_some(tint, Button::tint)
+            .disabled(disabled);
 
         let menu = menu
             .unwrap_or_else(|| Menu::new(SharedString::from(format!("{key}-menu"))).w(width))
@@ -188,7 +210,8 @@ impl RenderOnce for Picker {
             .button(button)
             .selected(selected)
             .menu(menu)
-            .when(!sticky, Popover::commands);
+            .when(!sticky, Popover::commands)
+            .when_some(on_open, |popover, on_open| popover.on_open(on_open));
         *popover.style() = style;
         popover
     }

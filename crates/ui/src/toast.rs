@@ -20,6 +20,7 @@ pub struct Toast {
     id: ElementId,
     message: SharedString,
     strong: Option<SharedString>,
+    detail: Option<SharedString>,
     failed: bool,
     dismiss: Option<Press>,
     open: Option<Press>,
@@ -35,6 +36,7 @@ impl Toast {
             id,
             message: message.into(),
             strong: None,
+            detail: None,
             failed: false,
             dismiss: None,
             open: None,
@@ -48,6 +50,12 @@ impl Toast {
 
     pub fn strong(mut self, name: impl Into<SharedString>) -> Self {
         self.strong = Some(name.into());
+        self
+    }
+
+    /// A muted line below the message, wrapping rather than truncating, such as why it failed.
+    pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
+        self.detail = Some(detail.into());
         self
     }
 
@@ -89,6 +97,7 @@ impl RenderOnce for Toast {
             id,
             message,
             strong,
+            detail,
             failed,
             dismiss,
             open,
@@ -131,7 +140,16 @@ impl RenderOnce for Toast {
                             .flex_none()
                             .text_color(tint),
                     )
-                    .child(with_name_emphasised(&id, message, strong, open)),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .min_w_0()
+                            .child(with_name_emphasised(&id, message, strong, open))
+                            .when_some(detail, |text, detail| {
+                                text.child(div().text_color(theme.muted_foreground).child(detail))
+                            }),
+                    ),
             )
             .children(dismiss.map(|dismiss| {
                 Button::new("dismiss-toast")

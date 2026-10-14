@@ -52,6 +52,7 @@ MAP = {
     "list-music": ("playlist", "playlist-linear", "play-list-line"),
     "list-plus": ("playlist-plus", "list-arrow-up-linear", "play-list-add-line"),
     "list-start": (None, None, None),
+    "loader-circle": ("refresh-circle", "loader-linear", "loader-4-line"),
     "lock": ("lock", "lock-linear", "lock-line"),
     "log-out": ("log-out", "logout-2-linear", "logout-box-r-line"),
     "maximize": ("expand", "maximize-square-3-linear", "fullscreen-line"),

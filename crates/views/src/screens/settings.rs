@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use crate::chrome::OutputPicker;
 use crate::shared::confirm::{Confirm, Kind};
 use crate::shared::effects;
 use crate::shared::local;
@@ -22,8 +23,8 @@ use music::scrobble::{Link, Secret};
 use music::{AccountChoice, SignIn, SignInPrompt, WritingSystem};
 use router::{Destination, NavEntry, Screen, SettingsTab, navigate};
 use state::{
-    AppSettings, CdmState, DiscordName, Drm, Failure, FullscreenControlsAutohide, Io, Playback,
-    SYSTEM_FONT, Scan, ScrobbleState, Scrobbling, Session, SessionState, Sleep, Sonora,
+    AppSettings, CdmState, DiscordName, Drm, Failure, FullscreenControlsAutohide, Io, Outputs,
+    Playback, SYSTEM_FONT, Scan, ScrobbleState, Scrobbling, Session, SessionState, Sleep, Sonora,
 };
 use ui::{ActiveTheme as _, Deck, LEADING, Scrollbar, Scroller, eyebrow, snapped};
 use ui::{
@@ -176,6 +177,10 @@ enum Slot {
     Sleep,
     StayAwake,
     Widevine,
+    OutputDevice,
+    OutputFailure,
+    SampleRate,
+    Buffer,
     Equalizer,
     EqualizerPreset,
     EqualizerBands,
@@ -300,6 +305,8 @@ pub struct SettingsView {
     playback: Entity<Playback>,
     drm: Entity<Drm>,
     settings: Entity<AppSettings>,
+    outputs: Entity<Outputs>,
+    output_picker: Entity<OutputPicker>,
     tab: SettingsTab,
     search: Entity<Input>,
     /// The search field's text, trimmed. Empty means the page shows one category.
@@ -363,7 +370,9 @@ impl SettingsView {
         let settings = Sonora::global(cx).settings.clone();
         let scrobbling = Sonora::global(cx).scrobbling.clone();
         let drm = Sonora::global(cx).drm.clone();
+        let outputs = Sonora::global(cx).outputs.clone();
         cx.observe(&drm, |_, _, cx| cx.notify()).detach();
+        cx.observe(&outputs, |_, _, cx| cx.notify()).detach();
         cx.observe(&session, |_, _, cx| cx.notify()).detach();
         cx.observe(&scrobbling, |_, _, cx| cx.notify()).detach();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
@@ -404,11 +413,16 @@ impl SettingsView {
         })
         .detach();
 
+        let popovers = Popovers::default();
+        let output_picker = cx.new(|cx| OutputPicker::new(outputs.clone(), popovers.clone(), cx));
+
         Self {
             session,
             playback,
             drm,
             settings,
+            outputs,
+            output_picker,
             tab: SettingsTab::General,
             search,
             query: String::new(),
@@ -422,7 +436,7 @@ impl SettingsView {
                 .map(|band| ScrubberState::new(format!("equalizer-band-{band}")))
                 .collect(),
             pending_sleep: None,
-            popovers: Popovers::default(),
+            popovers,
             server: cx.new(|cx| Input::new("login-server-hint", cx)),
             username: cx.new(|cx| Input::new("login-username-hint", cx)),
             password: cx.new(|cx| Input::new("login-password-hint", cx).masked()),
@@ -451,6 +465,10 @@ impl SettingsView {
     pub(crate) fn select(&mut self, tab: SettingsTab, cx: &mut Context<Self>) {
         self.tab = tab;
         self.popovers.close();
+        // a device plugged in since the list was read is only found by asking again
+        if tab == SettingsTab::Playback {
+            self.outputs.update(cx, |outputs, cx| outputs.refresh(cx));
+        }
         if !self.search.read(cx).text().is_empty() {
             self.search.update(cx, |input, cx| input.set_text("", cx));
         }
@@ -623,6 +641,15 @@ impl SettingsView {
                 if self.drm.read(cx).shown(cx) {
                     slots.push(Slot::Widevine);
                 }
+                slots.extend([Slot::Title("settings-group-devices"), Slot::OutputDevice]);
+                let outputs = self.outputs.read(cx);
+                if outputs.failure().is_some() {
+                    slots.push(Slot::OutputFailure);
+                }
+                // with nothing open there is no rate or buffer to show
+                if outputs.failure().is_none() {
+                    slots.extend([Slot::SampleRate, Slot::Buffer]);
+                }
                 slots.extend([Slot::Title("settings-group-equalizer"), Slot::Equalizer]);
                 if self.playback.read(cx).equalizer() {
                     slots.push(Slot::EqualizerPreset);
@@ -784,6 +811,16 @@ impl SettingsView {
                 let (detail, _) = widevine_copy(self.drm.read(cx).state());
                 (t!("settings-widevine"), i18n::lookup(detail, None))
             }
+            Slot::OutputDevice => (
+                t!("settings-output-device"),
+                t!("settings-output-device-detail"),
+            ),
+            Slot::OutputFailure => self.output_failure(cx),
+            Slot::SampleRate => (
+                t!("settings-sample-rate"),
+                t!("settings-sample-rate-detail"),
+            ),
+            Slot::Buffer => (t!("settings-buffer"), t!("settings-buffer-detail")),
             Slot::Equalizer => (t!("settings-equalizer"), t!("settings-equalizer-detail")),
             Slot::EqualizerPreset => (
                 t!("settings-equalizer-preset"),
@@ -996,6 +1033,10 @@ impl SettingsView {
             Slot::Gapless => self.gapless_row(cx).element,
             Slot::Sleep => self.sleep_row(cx).element,
             Slot::StayAwake => self.stay_awake_row(cx).element,
+            Slot::OutputDevice => self.output_device_row(cx).element,
+            Slot::OutputFailure => self.output_failure_row(cx).element,
+            Slot::SampleRate => self.sample_rate_row(cx).element,
+            Slot::Buffer => self.buffer_row(cx).element,
             Slot::Widevine => self.widevine_row(cx).element,
             Slot::Equalizer => self.equalizer_row(cx).element,
             Slot::EqualizerPreset => self.equalizer_preset_row(cx).element,
@@ -2290,6 +2331,120 @@ impl SettingsView {
                         .update(cx, |settings, cx| settings.set_stay_awake(!on, cx));
                 }))
                 .into_any_element(),
+        )
+    }
+
+    /// The device picker, whose "System default" follows whatever the system plays on.
+    fn output_device_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        self.row(
+            t!("settings-output-device"),
+            t!("settings-output-device-detail"),
+            theme.muted_foreground,
+            theme.text(Text::Small),
+            self.output_picker.clone().into_any_element(),
+        )
+    }
+
+    /// Why nothing plays: the device to play on would not open. It stands in for the rate and
+    /// buffer rows.
+    fn output_failure_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let (title, detail) = self.output_failure(cx);
+
+        self.row(
+            title,
+            detail,
+            theme.muted_foreground,
+            theme.text(Text::Small),
+            div().into_any_element(),
+        )
+    }
+
+    /// The failure row's title and detail.
+    fn output_failure(&self, cx: &App) -> (SharedString, SharedString) {
+        let outputs = self.outputs.read(cx);
+        let error = outputs
+            .failure()
+            .map(|failure| failure.error.clone())
+            .unwrap_or_default();
+        (
+            t!("settings-output-failed"),
+            t!("settings-output-failed-detail", error = error),
+        )
+    }
+
+    /// The rate the device runs at, with a way into the system's own settings to change it
+    /// where the system has one.
+    fn sample_rate_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let outputs = self.outputs.read(cx);
+        // while another device is being tried, the open stream is not the one that will play
+        let active = outputs.active().filter(|_| !outputs.switching());
+        let settings_uri =
+            music::output::system_audio_settings_uri(active.map(|active| active.id.as_str()));
+        let rate = active
+            .map(|active| {
+                t!(
+                    "settings-sample-rate-value",
+                    khz = f64::from(active.rate) / 1_000.
+                )
+            })
+            .unwrap_or_else(|| match outputs.switching() {
+                true => SharedString::default(),
+                false => t!("settings-output-idle"),
+            });
+
+        self.row(
+            t!("settings-sample-rate"),
+            t!("settings-sample-rate-detail"),
+            theme.muted_foreground,
+            theme.text(Text::Small),
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(rate)
+                .when_some(settings_uri, |row, uri| {
+                    row.child(
+                        Button::new("sample-rate-change")
+                            .label(t!("settings-sample-rate-change"))
+                            .small()
+                            .outline()
+                            .icon("icons/link.svg")
+                            .on_click(move |_, _, cx| cx.open_url(&uri)),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
+    /// The buffer Sonora asks the device for, in frames and in time at the device's rate.
+    fn buffer_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let outputs = self.outputs.read(cx);
+        let buffer = outputs
+            .active()
+            .filter(|_| !outputs.switching())
+            .map(|active| {
+                let ms = f64::from(active.buffer) * 1_000. / f64::from(active.rate.max(1));
+                t!(
+                    "settings-buffer-value",
+                    frames = active.buffer,
+                    ms = ms.round() as i64
+                )
+            })
+            .unwrap_or_else(|| match outputs.switching() {
+                true => SharedString::default(),
+                false => t!("settings-output-idle"),
+            });
+
+        self.row(
+            t!("settings-buffer"),
+            t!("settings-buffer-detail"),
+            theme.muted_foreground,
+            theme.text(Text::Small),
+            div().child(buffer).into_any_element(),
         )
     }
 

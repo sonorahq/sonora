@@ -24,6 +24,8 @@ pub struct Toast {
     pub outcome: Outcome,
     pub key: SharedString,
     pub name: Option<SharedString>,
+    /// A line of its own below the text, such as the error behind a failure. Not translated.
+    pub detail: Option<SharedString>,
     pub target: Option<Target>,
     held: bool,
     rest: Instant,
@@ -53,7 +55,7 @@ impl Toasts {
     pub fn show(outcome: Outcome, key: impl Into<SharedString>, cx: &mut App) {
         let toasts = Self::entity(cx);
         toasts.update(cx, |this, cx| {
-            this.push(outcome, key.into(), None, None, cx)
+            this.push(outcome, key.into(), None, None, None, cx)
         });
     }
 
@@ -66,7 +68,7 @@ impl Toasts {
         let toasts = Self::entity(cx);
         let name = Some(name.into());
         toasts.update(cx, |this, cx| {
-            this.push(outcome, key.into(), name, None, cx)
+            this.push(outcome, key.into(), name, None, None, cx)
         });
     }
 
@@ -80,7 +82,22 @@ impl Toasts {
         let toasts = Self::entity(cx);
         let name = Some(name.into());
         toasts.update(cx, |this, cx| {
-            this.push(outcome, key.into(), name, target, cx)
+            this.push(outcome, key.into(), name, None, target, cx)
+        });
+    }
+
+    /// Shows a toast with `detail` on a line below the text, and `name`, when given, as `$name`.
+    pub fn with_detail(
+        outcome: Outcome,
+        key: impl Into<SharedString>,
+        name: Option<SharedString>,
+        detail: impl Into<SharedString>,
+        cx: &mut App,
+    ) {
+        let toasts = Self::entity(cx);
+        let detail = Some(detail.into());
+        toasts.update(cx, |this, cx| {
+            this.push(outcome, key.into(), name, detail, None, cx)
         });
     }
 
@@ -112,13 +129,16 @@ impl Toasts {
         outcome: Outcome,
         key: SharedString,
         name: Option<SharedString>,
+        detail: Option<SharedString>,
         target: Option<Target>,
         cx: &mut Context<Self>,
     ) {
-        let showing = self
-            .shown
-            .iter()
-            .any(|toast| toast.outcome == outcome && toast.key == key && toast.name == name);
+        let showing = self.shown.iter().any(|toast| {
+            toast.outcome == outcome
+                && toast.key == key
+                && toast.name == name
+                && toast.detail == detail
+        });
         if showing {
             return;
         }
@@ -130,6 +150,7 @@ impl Toasts {
             outcome,
             key,
             name,
+            detail,
             target,
             held: false,
             rest: Instant::now(),
