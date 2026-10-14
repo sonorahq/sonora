@@ -954,6 +954,31 @@ impl SubsonicClient {
             .context("the server refused the stream")
     }
 
+    /// The lyrics the server holds for a track, by the OpenSubsonic `songLyrics` extension. A
+    /// plain Subsonic server fails the call.
+    pub(crate) async fn lyrics_by_song(
+        &self,
+        track_id: &str,
+    ) -> Result<opensubsonic::data::LyricsList> {
+        self.client
+            .get_lyrics_by_song_id(track_id, None)
+            .await
+            .context("cannot fetch the structured lyrics")
+    }
+
+    /// The plain lyrics a Subsonic server finds for an artist and title, the only form a server
+    /// without the `songLyrics` extension offers.
+    pub(crate) async fn lyrics_by_name(
+        &self,
+        artist: &str,
+        title: &str,
+    ) -> Result<opensubsonic::data::Lyrics> {
+        self.client
+            .get_lyrics(Some(artist), Some(title))
+            .await
+            .context("cannot fetch the lyrics")
+    }
+
     /// The length and ReplayGain the server records for a track, whichever it has. The track
     /// gain wins, and the album gain stands in when that is all the server knows.
     pub async fn details(&self, track_id: &str) -> Details {

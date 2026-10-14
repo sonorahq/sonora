@@ -674,6 +674,7 @@ settings-lyrics-providers-selected = { $count ->
    *[other] { $count } selected
     }
 settings-lyrics-provider-local = Local files
+settings-lyrics-provider-subsonic = Subsonic
 settings-lyrics-provider-spotify = Spotify
 settings-lyrics-provider-youtube = YouTube Music
 settings-lyrics-provider-apple-music = Apple Music

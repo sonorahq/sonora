@@ -1,5 +1,6 @@
 pub(crate) mod auth;
 mod client;
+mod lyrics;
 mod playback;
 mod wire;
 
@@ -9,9 +10,14 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 
 pub use client::SubsonicClient;
+pub use lyrics::SubsonicLyrics;
 
 use crate::subsonic::playback::Factory;
 use crate::{Capabilities, MusicApi as _, MusicProvider, ProviderSession, Shape, SignIn};
+
+/// The name the provider and its lyrics source go by. It is saved in settings and in the lyrics
+/// cache, so it must not change.
+pub(crate) const NAME: &str = "Subsonic";
 
 pub struct SubsonicProvider;
 
@@ -97,7 +103,7 @@ impl Default for SubsonicProvider {
 #[async_trait]
 impl MusicProvider for SubsonicProvider {
     fn name(&self) -> &'static str {
-        "Subsonic"
+        NAME
     }
 
     fn slug(&self) -> &'static str {

@@ -2942,6 +2942,7 @@ impl SettingsView {
         let settings = self.settings.read(cx);
         let providers = [
             (music::lyrics::LOCAL, "settings-lyrics-provider-local"),
+            ("Subsonic", "settings-lyrics-provider-subsonic"),
             ("Spotify", "settings-lyrics-provider-spotify"),
             ("YouTube Music", "settings-lyrics-provider-youtube"),
             ("Apple Music", "settings-lyrics-provider-apple-music"),

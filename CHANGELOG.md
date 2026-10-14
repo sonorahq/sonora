@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Navidrome and other Subsonic servers are a lyrics provider, so the lyrics a server holds, such
+  as ones embedded in the files, show for its tracks.
+
 ## [0.43.0] - 2026-10-13
 
 ### Added

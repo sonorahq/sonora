@@ -293,6 +293,9 @@ struct Values {
     /// Set once Local has been added to a list saved before it existed, so a user who turns it
     /// off afterwards is not given it back.
     local_lyrics_offered: bool,
+    /// Set once Subsonic has been added to a list saved before it existed, so a user who turns it
+    /// off afterwards is not given it back.
+    subsonic_lyrics_offered: bool,
     lyrics_providers: Vec<String>,
     karaoke_lyrics: bool,
     blur_lyrics: bool,
@@ -447,8 +450,10 @@ impl Default for Values {
             lyrics_for_local_files: true,
             prefer_local_lyrics: false,
             local_lyrics_offered: false,
+            subsonic_lyrics_offered: false,
             lyrics_providers: [
                 LOCAL,
+                "Subsonic",
                 "Spotify",
                 "YouTube Music",
                 "Apple Music",
@@ -694,6 +699,7 @@ impl AppSettings {
             }
         };
         let parsed = bytes.map(|bytes| (serde_json::from_slice::<Values>(json(&bytes)), bytes));
+        let parsed = parsed.map(|(values, bytes)| (values.map(offer_subsonic_lyrics), bytes));
         let (values, writable, disk, broken) = match parsed {
             Some((Ok(values), bytes)) => (values, writable, Some(bytes), None),
             Some((Err(error), _)) => {
@@ -2048,7 +2054,7 @@ impl AppSettings {
             return SettingsReload::Unchanged;
         }
         let values = match serde_json::from_slice::<Values>(json(&bytes)) {
-            Ok(values) => values,
+            Ok(values) => offer_subsonic_lyrics(values),
             Err(error) => {
                 log::warn!("settings: cannot parse {}: {error}", self.path.display());
                 let newly_broken = self.broken != Some(error.line());
@@ -2234,6 +2240,21 @@ fn load_themes(directory: &Path, previous: &[CustomTheme]) -> LoadedThemes {
 /// front of it on Windows, which serde_json rejects as an unexpected character.
 fn json(bytes: &[u8]) -> &[u8] {
     bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes)
+}
+
+/// A saved provider list replaces the default one, so Subsonic reaches an existing user once.
+fn offer_subsonic_lyrics(mut values: Values) -> Values {
+    if !values.subsonic_lyrics_offered {
+        values.subsonic_lyrics_offered = true;
+        if !values
+            .lyrics_providers
+            .iter()
+            .any(|name| name == "Subsonic")
+        {
+            values.lyrics_providers.push("Subsonic".to_owned());
+        }
+    }
+    values
 }
 
 /// Parses one theme file and assigns the identifier derived from its path.
