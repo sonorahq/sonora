@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Ctrl+F (Cmd+F on macOS) opens the page's filter again after you close it with Escape or the
+  close button. Before, closing it left the keyboard pointed at nothing, so Ctrl+F and the other
+  shortcuts did nothing.
+
 ## [0.43.0] - 2026-10-13
 
 ### Added

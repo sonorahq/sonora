@@ -1,5 +1,8 @@
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Context, Entity, Pixels, Render, SharedString, Window, div, px};
+use gpui::{
+    AnyElement, App, Context, Entity, FocusHandle, Focusable as _, Pixels, Render, SharedString,
+    Window, div, px,
+};
 use ui::Button;
 use ui::{Dismiss, Input};
 
@@ -32,6 +35,8 @@ pub(crate) struct Toolbar {
     apply: Option<Apply>,
     tools: Option<Tools>,
     open: bool,
+    /// Where focus was before the field took it, handed back when the field closes.
+    restore: Option<FocusHandle>,
 }
 
 impl Toolbar {
@@ -56,6 +61,7 @@ impl Toolbar {
             apply: None,
             tools: None,
             open: false,
+            restore: None,
         }
     }
 
@@ -111,20 +117,33 @@ impl Toolbar {
         }
 
         self.open = true;
-        self.input.update(cx, |input, cx| input.focus(window, cx));
+        let own = self.input.read(cx).focus_handle(cx);
+        if !own.is_focused(window) {
+            self.restore = window.focused(cx);
+        }
+        window.focus(&own, cx);
         cx.notify();
     }
 
     fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.open {
-            true => self.close(cx),
+            true => self.close(window, cx),
             false => self.focus(window, cx),
         }
     }
 
-    fn close(&mut self, cx: &mut Context<Self>) {
+    /// Empties and hides the field, and hands focus back to where it was before the field took
+    /// it. Focus left on a field that is no longer drawn reaches no handler, shortcuts included.
+    fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = false;
         self.input.update(cx, |input, cx| input.set_text("", cx));
+        let restore = self.restore.take();
+        if self.input.read(cx).focus_handle(cx).is_focused(window) {
+            match restore {
+                Some(focus) => window.focus(&focus, cx),
+                None => window.blur(),
+            }
+        }
         cx.notify();
     }
 }
@@ -143,7 +162,7 @@ impl Render for Toolbar {
             .items_center()
             .justify_end()
             .gap_1()
-            .on_action(cx.listener(|this, _: &Dismiss, _, cx| this.close(cx)))
+            .on_action(cx.listener(|this, _: &Dismiss, window, cx| this.close(window, cx)))
             .children(tools)
             .when(self.apply.is_some(), |this| {
                 this.when(self.open, |this| {
