@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- The song details of a local file now show its release year, genres, label, language and composer
+  from the file's tags.
+
 ## [0.43.0] - 2026-10-13
 
 ### Added

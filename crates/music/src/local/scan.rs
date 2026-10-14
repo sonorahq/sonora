@@ -286,7 +286,7 @@ fn name_portraits(looks: &[Look], readings: &[Reading]) -> HashMap<String, Strin
 
 /// Groups tracks into albums by the id each one carries, in scan order. An album is credited to
 /// the first album artist its tags name, or to the artists all of its tracks share, and takes the
-/// first release type any of its tracks names.
+/// first release type and label any of its tracks names.
 fn group_albums(parsed: &[Tagged]) -> Vec<Album> {
     let mut order: Vec<String> = Vec::new();
     let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
@@ -320,6 +320,12 @@ fn group_albums(parsed: &[Tagged]) -> Vec<Album> {
                 .iter()
                 .find_map(|&i| parsed[i].release)
                 .unwrap_or(ReleaseType::Album);
+            let label = indices
+                .iter()
+                .map(|&i| &parsed[i].label)
+                .find(|label| !label.is_empty())
+                .cloned()
+                .unwrap_or_default();
 
             Some(wire::album_from_tracks(
                 &id,
@@ -328,6 +334,7 @@ fn group_albums(parsed: &[Tagged]) -> Vec<Album> {
                 &tracks,
                 year,
                 release,
+                label,
             ))
         })
         .collect()
