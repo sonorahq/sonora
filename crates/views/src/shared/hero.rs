@@ -10,7 +10,7 @@ use music::{Album, Track};
 use state::{Origin, Playback};
 use ui::{
     ActiveTheme as _, Artwork, Button, ExplicitBadge, LEADING, Pin, Pinnable as _, TableState,
-    Text, upper,
+    Tails as _, Text, upper,
 };
 
 use crate::shared::tracks::{self, TrackSource};
@@ -429,6 +429,7 @@ impl RenderOnce for PageHero {
                                 div()
                                     .min_w_0()
                                     .truncate()
+                                    .tails()
                                     .when_some(drag_start, |this, drag_start: Rc<DragStart>| {
                                         this.on_mouse_down(
                                             MouseButton::Right,

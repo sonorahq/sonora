@@ -74,7 +74,7 @@ pub use input::{
     SelectLeft, SelectRight, SelectWordLeft, SelectWordRight, ShowCharacterPalette, Space,
     WordLeft, WordRight,
 };
-pub use label::{eyebrow, faint, heading, upper, vacant};
+pub use label::{Tails, eyebrow, faint, heading, upper, vacant};
 pub use layout::{ALWAYS, MIN_CONTENT, ROOMY, Room, SNUG, VAST, WIDE};
 pub use lazy::Lazy;
 pub use menu::{MENU_CONTEXT, Menu, MenuItem, MenuSearch, SubmenuState};

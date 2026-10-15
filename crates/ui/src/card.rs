@@ -12,7 +12,7 @@ use crate::artwork::cover_palette;
 use crate::artwork::{Artwork, Avatar, ROUNDED};
 use crate::button::Button;
 use crate::glass::{GLASS_BLUR, blurring};
-use crate::label::upper;
+use crate::label::{Tails as _, upper};
 use crate::metrics::{LEADING, Text, snapped};
 use crate::skeleton::Skeleton;
 use crate::theme::ActiveTheme as _;
@@ -448,6 +448,7 @@ impl RenderOnce for Card {
             .id("card-title")
             .min_w_0()
             .truncate()
+            .tails()
             .when_some(drag_start.clone(), |this, drag_start| {
                 this.on_mouse_down(MouseButton::Right, move |event, window, cx| {
                     drag_start(event, window, cx)
@@ -477,6 +478,7 @@ impl RenderOnce for Card {
             false => div()
                 .min_w_0()
                 .truncate()
+                .tails()
                 .text_size(theme.text(Text::Small))
                 .text_color(theme.muted_foreground)
                 .child(meta),

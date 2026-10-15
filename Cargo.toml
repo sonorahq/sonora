@@ -39,8 +39,8 @@ env_logger = "0.11"
 fastrand = "2.5"
 futures = "0.3"
 fluent-bundle = "0.16"
-gpui = { git = "https://github.com/sonorahq/gpui", rev = "5ff26c7dedb1c8e27b69f89be13ce2744484874a" }
-gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "5ff26c7dedb1c8e27b69f89be13ce2744484874a", features = [
+gpui = { git = "https://github.com/sonorahq/gpui", rev = "de7e0891abc368be04f031b17adae4b470ea4108" }
+gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "de7e0891abc368be04f031b17adae4b470ea4108", features = [
   "font-kit",
   "wayland",
   "x11",
@@ -156,6 +156,7 @@ symphonia = { version = "0.5.5", default-features = false, features = ["mkv", "o
 tempfile = "3.27"
 tray-icon = { version = "0.24", default-features = false }
 unic-langid = { version = "0.9", features = ["macros"] }
+unicode-bidi = "0.3"
 unicode-segmentation = "1.12"
 ytmusic = { git = "https://github.com/sonorahq/ytmusic-rs", rev = "0022146" }
 

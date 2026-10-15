@@ -9,7 +9,7 @@ use router::{Destination, Link as _};
 use state::{Playback, SongDetail, Sonora};
 use ui::{
     ActiveTheme as _, Avatar, Button, Fact, InfoCard, Initials, Popup, Scrollbar, Scroller,
-    Skeleton, Text, clock,
+    Skeleton, Tails as _, Text, clock,
 };
 
 use crate::shared::about::{AboutArtist, about_modal};
@@ -275,6 +275,7 @@ impl SongView {
                                         div()
                                             .min_w_0()
                                             .truncate()
+                                            .tails()
                                             .font_weight(FontWeight::MEDIUM)
                                             .child(credit.name),
                                     )

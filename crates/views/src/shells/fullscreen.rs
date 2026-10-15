@@ -15,8 +15,8 @@ use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
 use ui::{
     ActiveTheme as _, Artwork, Button, ExplicitBadge, InlineLink, InlineLinks, Motion,
-    Motioned as _, Popup, Room, Scrollbar, Scrubber, ScrubberState, Springs, TabBar, Text,
-    Visualizer, clock, glass, snapped,
+    Motioned as _, Popup, Room, Scrollbar, Scrubber, ScrubberState, Springs, TabBar, Tails as _,
+    Text, Visualizer, clock, glass, snapped,
 };
 
 use crate::chrome::{Aside, TitleBarOptions};
@@ -607,6 +607,7 @@ impl FullscreenView {
                                     .id("strip-title")
                                     .min_w_0()
                                     .truncate()
+                                    .tails()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .when_some(album, |this, album| {
                                         this.cursor_pointer()

@@ -98,6 +98,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Arabic, Hebrew and other right-to-left titles now read in the right order on Windows, instead
+  of back to front. The tails of letters such as ر and ز are no longer cut off at the bottom.
+- Arabic and Hebrew lyrics wrap at the right words, sit against the right edge, and the karaoke
+  highlight sweeps from right to left.
+- Longer Arabic and Hebrew text, such as playlist descriptions and artist bios, wraps onto lines
+  that read in order.
+- Typing Arabic or Hebrew in the search box puts the caret and selection where they belong, and
+  the arrow keys move the caret the way they point.
 - Sonora no longer freezes for a moment every second when your audio output cannot be opened.
   It waits quietly and picks the output up as soon as it works.
 - The queue's "From" line and the pause button on album, playlist and artist cards and pins now

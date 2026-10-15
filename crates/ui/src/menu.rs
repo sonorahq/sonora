@@ -14,6 +14,7 @@ use crate::Artwork;
 use crate::form::Submit;
 use crate::glass::{GLASS_BLUR, blurring};
 use crate::input::Input;
+use crate::label::Tails as _;
 use crate::metrics::snapped;
 use crate::motion::{Fading as _, Rising as _};
 use crate::scrollbar::Scrollbar;
@@ -788,6 +789,7 @@ impl RenderOnce for Menu {
                                 .child(
                                     div()
                                         .truncate()
+                                        .tails()
                                         .when_some(face, |this, family| {
                                             this.font(gpui::font(family))
                                         })

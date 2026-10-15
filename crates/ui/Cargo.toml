@@ -12,6 +12,7 @@ icons.workspace = true
 image.workspace = true
 log.workspace = true
 serde.workspace = true
+unicode-bidi.workspace = true
 unicode-segmentation.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
