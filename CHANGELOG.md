@@ -9,6 +9,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+### Added
+
+- Songs, albums and artists uploaded to your Apple Music library through iTunes or the Music app
+  can now be browsed and played.
 - Listen together on any streaming service with Sonora Session: start one from the Sessions button in the player bar, share its six-digit code, and everyone who joins hears the same song in step.
 - `sonora session` starts, joins or leaves a Sonora Session from the command line.
 - A Members panel, opened from the Sessions menu, lists who is in your Sonora Session or Spotify Jam and lets the host remove someone. An accent dot on the Sessions button shows one is under way, and while another Spotify device plays the button wears that device's icon.
