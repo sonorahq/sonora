@@ -12,6 +12,8 @@ mod logging;
 mod lyrics;
 mod mosaic;
 mod network;
+mod outputs;
+mod overload;
 mod pins;
 mod playback;
 mod potoken;
@@ -25,6 +27,7 @@ mod search;
 mod session;
 mod settings;
 mod sheets;
+mod signal;
 mod snapshot;
 mod song;
 mod tags;
@@ -47,6 +50,7 @@ pub use library::{
 pub use logging::log_file;
 pub use lyrics::{Lyrics, LyricsState};
 pub use network::{Network, Reconnected};
+pub use outputs::Outputs;
 pub use pins::{PinSort, Pins};
 pub use playback::{Origin, Playback, PlaybackState, Repeat, Sleep, Whence};
 pub use profile::Profile;
@@ -58,9 +62,11 @@ pub use scrobble::{ScrobbleRow, ScrobbleState, Scrobbling};
 pub use search::{AlbumHit, ArtistHit, Hit, Kind, PlaylistHit, Search};
 pub use session::{Failure, ProviderInfo, Session, SessionEvent, SessionState};
 pub use settings::{
-    AppSettings, DiscordName, FilterValue, FullscreenControlsAutohide, LYRICS_SOURCES, Reloaded,
-    RomanizationScripts, SYSTEM_FONT, SideTab, remember_window, window_placement,
+    AppSettings, BoundOutput, DiscordName, FilterValue, FullscreenControlsAutohide, LYRICS_SOURCES,
+    Reloaded, RomanizationScripts, SYSTEM_FONT, SideTab, equalizer_profile_label, remember_window,
+    window_placement,
 };
+pub use signal::{Change, Equalizing, Signal, SignalPath, Source};
 pub use song::SongDetail;
 pub use tags::{TagState, Tags};
 pub use toast::{Outcome, Target, Toast, ToastAction, Toasts};
@@ -172,6 +178,7 @@ pub struct Sonora {
     pub history: Entity<History>,
     pub lyrics: Entity<Lyrics>,
     pub network: Entity<Network>,
+    pub outputs: Entity<Outputs>,
     pub pins: Entity<Pins>,
     pub playback: Entity<Playback>,
     /// The window that mints YouTube's proof-of-origin token. Nothing reads it; it is held so
@@ -182,6 +189,7 @@ pub struct Sonora {
     pub scan: Entity<Scan>,
     pub scrobbling: Entity<Scrobbling>,
     pub settings: Entity<AppSettings>,
+    pub signal: Entity<Signal>,
     pub updates: Entity<Updates>,
     pub usage: Entity<Usage>,
     pub wake: Entity<Wake>,
@@ -277,6 +285,8 @@ pub fn init(
     let usage = cx.new(|cx| Usage::new(session.clone(), database, io.clone(), cx));
     let pins = cx.new(|cx| Pins::new(settings.clone(), library.clone(), session.clone(), cx));
     let potoken = potoken::attach(cx);
+    let outputs = cx.new(|cx| Outputs::new(playback.clone(), cx));
+    let signal = cx.new(|_| Signal::new(playback.clone(), outputs.clone()));
     let wake = cx.new(|cx| Wake::new(settings.clone(), playback.clone(), io.clone(), cx));
     discord::attach(
         playback.clone(),
@@ -295,6 +305,7 @@ pub fn init(
         history,
         lyrics,
         network,
+        outputs,
         pins,
         playback,
         potoken,
@@ -303,6 +314,7 @@ pub fn init(
         scan,
         scrobbling,
         settings,
+        signal,
         updates,
         usage,
         wake,

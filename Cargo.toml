@@ -172,6 +172,7 @@ librespot-playback = { version = "0.8.0", default-features = false, features = [
 librespot-protocol = "0.8.0"
 percent-encoding = "2.3"
 protobuf = "3"
+pulseaudio = "0.3.2"
 opensubsonic = "0.4.0"
 tokio = { version = "1.53", features = [
   "rt-multi-thread",

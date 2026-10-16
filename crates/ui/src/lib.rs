@@ -29,6 +29,7 @@ mod pin;
 mod popover;
 mod popup;
 mod radio;
+mod response_graph;
 mod scrollbar;
 mod scroller;
 mod scrubber;
@@ -93,6 +94,9 @@ pub use pin::{DraggedPin, Pin, PinKind, Pinnable, Spot};
 pub use popover::{Popover, Popovers};
 pub use popup::Popup;
 pub use radio::Radio;
+pub use response_graph::{
+    GraphEdit, ResponseAxes, ResponseGraph, ResponseGraphState, ResponseNode, ResponsePoint,
+};
 pub use scrollbar::{
     Scrollbar, cancel_middle_scroll, quantize, release_middle_scroll, scrolled,
     update_middle_scroll,

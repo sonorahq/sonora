@@ -17,8 +17,10 @@ pub mod lyrics;
 mod models;
 pub mod musixmatch;
 pub mod netease;
+pub mod output;
 pub mod potoken;
 pub mod progress;
+mod route;
 pub mod scrobble;
 mod sink;
 mod spectrum;
@@ -41,7 +43,7 @@ use time::format_description::well_known::Iso8601;
 use time::parsing::Parsed;
 use time::{Month, OffsetDateTime};
 
-pub use audio::{Server as SoundServer, failing as output_failing, missing_bridge};
+pub use audio::{Meter, Server as SoundServer, failing as output_failing, missing_bridge};
 pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
@@ -50,7 +52,8 @@ pub use models::{
     Playlist, PlaylistDetail, ReleaseType, RomanizedText, SavedArtist, Track, TrackKey, TrackTags,
     UserDetail, UserProfile, Voice, WritingSystem,
 };
-pub use spectrum::Spectrum;
+pub use route::{Codec, Encoding, Normalisation, Route, TrackSignal};
+pub use spectrum::{Analyzer, Level, Spectrum, Watch};
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";
 pub const LOCAL_ALBUM_PREFIX: &str = "local-album:";
@@ -343,6 +346,8 @@ pub struct PlaybackConfig {
     pub position_interval: Duration,
     pub gain: f32,
     pub equalizer: Equalizer,
+    /// Shared like `equalizer`: every output the engine opens reports its loudest sample here.
+    pub meter: Meter,
 }
 
 /// What an engine reports back. `Playing` and `Seeked` mean audio from `at` is reaching the
@@ -437,6 +442,11 @@ pub trait Player: Send + Sync {
     fn set_gain(&self, gain: f32);
 
     fn spectrum(&self) -> Option<Spectrum> {
+        None
+    }
+
+    /// What the engine knows about the sound it plays, for the signal path.
+    fn route(&self) -> Option<Route> {
         None
     }
 }

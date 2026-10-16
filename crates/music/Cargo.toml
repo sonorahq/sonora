@@ -56,6 +56,7 @@ ytmusic.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 alsa.workspace = true
+pulseaudio.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true

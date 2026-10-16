@@ -105,6 +105,7 @@ MAP = {
 MIRROR = {
     "panel-right-close": "panel-left-close",
     "panel-right-open": "panel-left-open",
+    "redo-2": "undo-2",
 }
 
 SLASH = {

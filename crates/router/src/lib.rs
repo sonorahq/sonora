@@ -212,6 +212,8 @@ pub enum Destination {
     Genre(SharedString),
     Search,
     Settings(SettingsTab),
+    /// The equalizer's own screen, opened from the playback settings.
+    Equalizer,
     Fullscreen,
 }
 
@@ -232,7 +234,9 @@ impl Destination {
         match (self, other) {
             (Destination::Library(_), Destination::Library(_))
             | (Destination::Local(_), Destination::Local(_))
-            | (Destination::Settings(_), Destination::Settings(_)) => true,
+            | (Destination::Settings(_), Destination::Settings(_))
+            | (Destination::Settings(_), Destination::Equalizer)
+            | (Destination::Equalizer, Destination::Settings(_)) => true,
             _ => self == other,
         }
     }

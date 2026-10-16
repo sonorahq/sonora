@@ -16,6 +16,7 @@ use ytmusic::{AudioStream, YtMusic};
 
 use crate::audio::Trimmed;
 use crate::engine::{self, Fetch, Loudness};
+use crate::route::{Codec, Encoding};
 use crate::stream::{PREROLL, Plain, Reader, Source, Stream};
 use crate::trim::{self, Trim};
 use crate::youtube::segments::Segments;
@@ -42,6 +43,7 @@ pub struct Loaded {
     edit: Option<Trim>,
     loudness_db: Option<f32>,
     duration: Option<Duration>,
+    encoding: Encoding,
 }
 
 pub struct Factory {
@@ -109,6 +111,10 @@ impl Fetch for YouTube {
             lufs: REFERENCE_LUFS + db,
             peak: None,
         })
+    }
+
+    fn encoding(&self, loaded: &Loaded) -> Option<Encoding> {
+        Some(loaded.encoding)
     }
 
     fn gated(&self, error: &anyhow::Error) -> bool {
@@ -206,5 +212,14 @@ async fn attempt_open(api: &Arc<YtMusic>, id: &str) -> Result<Loaded> {
         edit,
         loudness_db: format.loudness_db,
         duration: format.duration,
+        encoding: Encoding {
+            codec: match format.codec.as_str() {
+                "opus" => Codec::Opus,
+                codec if codec.starts_with("mp4a") => Codec::Aac,
+                _ => Codec::Other,
+            },
+            bits: None,
+            kbps: (format.bitrate > 0).then_some(format.bitrate / 1000),
+        },
     })
 }

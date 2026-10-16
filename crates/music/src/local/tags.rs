@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use lofty::config::{ParseOptions, WriteOptions};
-use lofty::file::{AudioFile, FileType, TaggedFileExt};
+use lofty::file::{AudioFile, FileType, TaggedFile, TaggedFileExt};
 use lofty::id3::v2::{Frame, SyncTextContentType, SynchronizedTextFrame, TimestampFormat};
 use lofty::mpeg::MpegFile;
 use lofty::prelude::{Accessor, ItemKey};
@@ -15,6 +15,7 @@ use lofty::tag::{ItemValue, Tag, TagItem};
 
 use crate::engine::Loudness;
 use crate::lyrics::lrc;
+use crate::route::{Codec, Encoding};
 use crate::{Lyrics, LyricsLine, LyricsWord, TrackTags, Voice};
 
 use super::wire;
@@ -53,14 +54,43 @@ pub fn read(path: &Path) -> Result<TrackTags> {
     })
 }
 
-/// The ReplayGain a file's tags carry, from whichever of its tags has it. The track gain wins,
-/// and the album gain stands in when that is all the file was tagged with.
-pub fn loudness(path: &Path) -> Option<Loudness> {
-    let tagged = Probe::open(path)
+/// A file's tags and properties without its cover art, for `encoding` and `loudness`.
+pub fn tagged(path: &Path) -> Option<TaggedFile> {
+    Probe::open(path)
         .ok()?
         .options(ParseOptions::new().read_cover_art(false))
         .read()
-        .ok()?;
+        .ok()
+}
+
+/// How a file is encoded: its codec, and the bit depth of a lossless one or the bit rate of a
+/// lossy one.
+pub fn encoding(tagged: &TaggedFile) -> Encoding {
+    let properties = tagged.properties();
+    let bits = properties.bit_depth();
+    let codec = match tagged.file_type() {
+        FileType::Flac => Codec::Flac,
+        FileType::Wav | FileType::Aiff => Codec::Pcm,
+        FileType::Mpeg => Codec::Mp3,
+        FileType::Aac => Codec::Aac,
+        // An MP4 holds AAC or ALAC, and only ALAC has a bit depth.
+        FileType::Mp4 if bits.is_some() => Codec::Alac,
+        FileType::Mp4 => Codec::Aac,
+        FileType::Vorbis => Codec::Vorbis,
+        FileType::Opus => Codec::Opus,
+        _ => Codec::Other,
+    };
+    let lossless = matches!(codec, Codec::Flac | Codec::Pcm | Codec::Alac);
+    Encoding {
+        codec,
+        bits: bits.filter(|_| lossless),
+        kbps: properties.audio_bitrate().filter(|_| !lossless),
+    }
+}
+
+/// The ReplayGain a file's tags carry, from whichever of its tags has it. The track gain wins,
+/// and the album gain stands in when that is all the file was tagged with.
+pub fn loudness(tagged: &TaggedFile) -> Option<Loudness> {
     tagged.tags().iter().find_map(|tag| {
         let read = |key| tag.get_string(key).and_then(decibels);
         let (gain, peak) = match read(ItemKey::ReplayGainTrackGain) {

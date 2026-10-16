@@ -12,7 +12,7 @@ use anyhow::Result;
 use rodio::{ChannelCount, SampleRate, Source};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
-use crate::audio::{Chain, Output};
+use crate::audio::{Chain, Format, Output};
 
 /// How many packets stay queued before a write blocks. This is what paces the decoder to real
 /// time; deeper rides out network hiccups, but the decoder's position runs this far ahead of
@@ -191,6 +191,8 @@ struct Chunk {
     at: usize,
     channels: ChannelCount,
     rate: SampleRate,
+    /// Where the chunk announces its format to the chain as it starts playing.
+    format: Format,
     born: u32,
     generation: Arc<AtomicU32>,
     played: Arc<AtomicU64>,
@@ -199,13 +201,20 @@ struct Chunk {
 }
 
 impl Chunk {
-    fn new(packet: Packet, cue: &Cue, live: &Arc<AtomicUsize>, spares: &Spares) -> Self {
+    fn new(
+        packet: Packet,
+        format: &Format,
+        cue: &Cue,
+        live: &Arc<AtomicUsize>,
+        spares: &Spares,
+    ) -> Self {
         live.fetch_add(1, Ordering::Relaxed);
         Self {
             samples: packet.samples,
             at: 0,
             channels: packet.channels,
             rate: packet.rate,
+            format: format.clone(),
             born: cue.generation.load(Ordering::Relaxed),
             generation: cue.generation.clone(),
             played: cue.played.clone(),
@@ -223,6 +232,9 @@ impl Iterator for Chunk {
             return None;
         }
         let sample = *self.samples.get(self.at)?;
+        if self.at == 0 {
+            self.format.publish(self.rate, self.channels);
+        }
         self.at += 1;
         self.played.fetch_add(1, Ordering::Relaxed);
         Some(sample)
@@ -326,9 +338,14 @@ impl Paced {
             return Ok(());
         }
 
-        self.output
-            .sink()
-            .append(Chunk::new(packet, &self.cue, &self.live, &self.spares));
+        let chunk = Chunk::new(
+            packet,
+            self.output.format(),
+            &self.cue,
+            &self.live,
+            &self.spares,
+        );
+        self.output.sink().append(chunk);
         Ok(())
     }
 
@@ -429,4 +446,173 @@ pub fn packet(samples: Vec<f32>, channels: u16, rate: u32) -> Option<Packet> {
         channels: NonZero::new(channels)?,
         rate: NonZero::new(rate)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use rodio::queue::SourcesQueueOutput;
+
+    use super::*;
+    use crate::audio::{Chain, Chained, Frames, Meter, Volume};
+    use crate::equalizer::{Curve, EqualizerWriter};
+    use crate::route::Route;
+    use crate::spectrum::Spectrum;
+
+    /// A named sequence of pushes, pulls, clears and pauses run against a fresh rig.
+    type Scenario = (&'static str, fn(&mut Rig));
+
+    /// A player whose queue is read the way a chain stage reads it. Every pushed sample is a
+    /// distinct number indexing the place it should land on, so a misplaced one names itself.
+    struct Rig {
+        name: &'static str,
+        player: rodio::Player,
+        queue: SourcesQueueOutput,
+        format: Format,
+        frames: Frames,
+        cue: Cue,
+        live: Arc<AtomicUsize>,
+        spares: Spares,
+        /// The channel, channel count and rate expected for the sample `i + 1`.
+        expected: Vec<(u16, u16, u32)>,
+    }
+
+    impl Rig {
+        fn new(name: &'static str) -> Self {
+            let (player, queue) = rodio::Player::new();
+            let format = Format::default();
+            Self {
+                name,
+                player,
+                queue,
+                frames: Frames::new(format.clone()),
+                format,
+                cue: Cue::new().0,
+                live: Arc::default(),
+                spares: Spares::new(),
+                expected: Vec::new(),
+            }
+        }
+
+        fn append(&self, samples: Vec<f32>, channels: u16, rate: u32) {
+            let packet = packet(samples, channels, rate).unwrap();
+            let chunk = Chunk::new(packet, &self.format, &self.cue, &self.live, &self.spares);
+            self.player.append(chunk);
+        }
+
+        fn push(&mut self, channels: u16, rate: u32, samples: usize) {
+            let first = self.expected.len();
+            self.expected
+                .extend((0..samples).map(|i| (i as u16 % channels, channels, rate)));
+            let numbered = (first..first + samples).map(|i| (i + 1) as f32);
+            self.append(numbered.collect(), channels, rate);
+        }
+
+        fn pull(&mut self, count: usize) {
+            for _ in 0..count {
+                self.step();
+            }
+        }
+
+        /// Pulls until `count` pushed samples have come out, through any zeros in between.
+        fn until(&mut self, count: usize) {
+            let mut left = count;
+            for _ in 0..20_000 {
+                if left == 0 {
+                    return;
+                }
+                left -= usize::from(self.step());
+            }
+            panic!("{}: {left} samples never came out", self.name);
+        }
+
+        /// Pulls one sample and checks where the frame counter put it, if it was a pushed one.
+        fn step(&mut self) -> bool {
+            let (sample, place) = self.frames.pull(&mut self.queue).unwrap();
+            if sample == 0. {
+                return false;
+            }
+            let place = place.unwrap_or_else(|| panic!("{}: {sample} has no format", self.name));
+            let found = (place.channel, self.frames.channels(), self.frames.rate());
+            let expected = self.expected[sample as usize - 1];
+            assert_eq!(found, expected, "{}: sample {sample}", self.name);
+            true
+        }
+    }
+
+    #[test]
+    fn every_sample_keeps_its_channel() {
+        let scenarios: [Scenario; 4] = [
+            ("mono retired by a clear, stereo follows", |rig| {
+                rig.push(1, 48_000, 6);
+                rig.pull(2);
+                rig.cue.clear();
+                rig.push(2, 44_100, 4);
+                rig.until(4);
+            }),
+            ("stereo retired mid-frame, stereo follows", |rig| {
+                rig.push(2, 44_100, 6);
+                rig.pull(3);
+                rig.cue.clear();
+                rig.push(2, 44_100, 4);
+                rig.until(4);
+            }),
+            ("paused between a stereo chunk and a mono one", |rig| {
+                rig.push(2, 44_100, 4);
+                rig.push(1, 88_200, 4);
+                rig.until(4);
+                rig.player.pause();
+                rig.pull(3);
+                rig.player.play();
+                rig.until(4);
+            }),
+            ("paused mid-frame inside a stereo chunk", |rig| {
+                rig.push(2, 44_100, 1_000);
+                // rodio applies controls every 5 ms, 441 samples here, so the pause lands
+                // between the left and right samples of a frame.
+                rig.until(441);
+                rig.player.pause();
+                assert!(
+                    !rig.step(),
+                    "{}: the pause did not land mid-frame",
+                    rig.name
+                );
+                rig.pull(2);
+                rig.player.play();
+                rig.until(559);
+            }),
+        ];
+        for (name, run) in scenarios {
+            run(&mut Rig::new(name));
+        }
+    }
+
+    #[test]
+    fn silent_right_channel_stays_silent() {
+        let rig = Rig::new("tone on the left");
+        let tone = |i: usize| (i as f32 * 0.05).sin();
+        rig.append((0..3).map(tone).collect(), 1, 44_100);
+        rig.append((0..2_048).flat_map(|i| [tone(i), 0.]).collect(), 2, 44_100);
+
+        let Rig {
+            player: _player,
+            queue,
+            format,
+            ..
+        } = rig;
+        let writer = EqualizerWriter::new(true, Curve::bands(&[12.; 10]));
+        let chain = Chain {
+            volume: Volume::new(0.5),
+            equalizer: writer.reader(),
+            spectrum: Spectrum::default(),
+            meter: Meter::default(),
+            route: Route::default(),
+        };
+        let chained = Chained::new(queue, &chain, format, false);
+        let right: Vec<f32> = chained.skip(3).take(4_096).skip(1).step_by(2).collect();
+        assert!(
+            right.iter().all(|sample| sample.to_bits() == 0),
+            "{:?}",
+            &right[..8]
+        );
+    }
 }

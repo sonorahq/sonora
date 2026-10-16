@@ -10,6 +10,7 @@ use librespot_playback::player::{Player, PlayerEvent};
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use crate::audio::{Chain, Volume};
+use crate::route::{Codec, Encoding, Normalisation, Route, TrackSignal};
 use crate::sink::Cue;
 use crate::spectrum::Spectrum;
 use crate::spotify::sink::OutputSink;
@@ -110,7 +111,9 @@ pub struct Engine {
     volume: Volume,
     cue: Cue,
     spectrum: Spectrum,
+    route: Route,
     gapless: bool,
+    normalisation: bool,
 }
 
 impl Engine {
@@ -118,6 +121,7 @@ impl Engine {
         let volume = Volume::new(config.gain);
         let (cue, written) = Cue::new();
         let spectrum = Spectrum::new();
+        let route = Route::default();
 
         let player_config = PlayerConfig {
             bitrate: Bitrate::Bitrate320,
@@ -132,6 +136,8 @@ impl Engine {
             volume: volume.clone(),
             equalizer: config.equalizer.clone(),
             spectrum: spectrum.clone(),
+            meter: config.meter.clone(),
+            route: route.clone(),
         };
         let (output_tx, output_rx) = unbounded_channel();
         let player = Player::new(player_config, session, Box::new(NoOpVolume), move || {
@@ -151,7 +157,9 @@ impl Engine {
             volume,
             cue,
             spectrum,
+            route,
             gapless: config.gapless,
+            normalisation: config.normalisation,
         };
         (engine, events)
     }
@@ -162,6 +170,7 @@ impl Engine {
         if !seamless || !self.gapless {
             self.cue.clear();
         }
+        self.learn(track_id);
         self.player.load(uri, true, at.as_millis() as u32);
         Ok(())
     }
@@ -170,6 +179,7 @@ impl Engine {
         let uri = track_uri(track_id)?;
 
         self.cue.clear();
+        self.learn(track_id);
         self.player.load(uri, false, at.as_millis() as u32);
         Ok(())
     }
@@ -198,6 +208,25 @@ impl Engine {
 
     fn spectrum(&self) -> Spectrum {
         self.spectrum.clone()
+    }
+
+    /// Notes what every Spotify track is: Ogg Vorbis, decoded and normalised by librespot.
+    fn learn(&self, track_id: &str) {
+        let encoding = Encoding {
+            codec: Codec::Vorbis,
+            bits: None,
+            kbps: None,
+        };
+        self.route.learn(
+            track_id,
+            TrackSignal {
+                encoding: Some(encoding),
+                normalisation: match self.normalisation {
+                    true => Normalisation::Limited,
+                    false => Normalisation::Off,
+                },
+            },
+        );
     }
 }
 
@@ -232,6 +261,10 @@ impl MusicPlayer for Engine {
 
     fn spectrum(&self) -> Option<Spectrum> {
         Some(self.spectrum())
+    }
+
+    fn route(&self) -> Option<Route> {
+        Some(self.route.clone())
     }
 }
 

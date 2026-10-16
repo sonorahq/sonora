@@ -23,8 +23,8 @@ use crate::shared::tracks::{LIBRARY_COLUMNS, album_columns};
 use crate::shells::Shell;
 use crate::shells::workspace::Workspace;
 use crate::{
-    Adaptive, ArtistView, DetailView, FullscreenView, GenreView, HistoryView, HomeView,
-    LibraryView, LoginView, SettingsView, SongView, UserView,
+    Adaptive, ArtistView, DetailView, EqualizerView, FullscreenView, GenreView, HistoryView,
+    HomeView, LibraryView, LoginView, SettingsView, SongView, UserView,
 };
 
 struct Screens {
@@ -48,6 +48,7 @@ struct Screens {
     genre_detail: Option<Entity<GenreDetails>>,
     settings: Entity<SettingsView>,
     settings_header: Entity<SettingsHeader>,
+    equalizer: Entity<EqualizerView>,
 }
 
 struct Shells {
@@ -189,6 +190,7 @@ impl Root {
 
         let settings = cx.new(|cx| SettingsView::new(session.clone(), playback.clone(), cx));
         let settings_header = cx.new(|cx| SettingsHeader::new(settings.clone(), cx));
+        let equalizer = cx.new(|cx| EqualizerView::new(playback.clone(), window, cx));
 
         let song_detail = cx.new(|cx| SongDetail::new(session.clone(), io.clone(), cx));
         let song = cx.new(|cx| SongView::new(song_detail.clone(), playback.clone(), cx));
@@ -313,6 +315,7 @@ impl Root {
                 genre_detail: None,
                 settings,
                 settings_header,
+                equalizer,
             },
             adaptive,
             ambient,
@@ -596,12 +599,19 @@ impl Root {
             self.os_follow = Some(opening);
         }
         // Leaving settings is what clears the note about the last scan, so every move tells it.
-        let settings = matches!(destination, Destination::Settings(_));
+        let settings = matches!(
+            destination,
+            Destination::Settings(_) | Destination::Equalizer
+        );
         Scan::global(cx).update(cx, |scan, cx| scan.viewing_settings(settings, cx));
         let home = matches!(destination, Destination::Home);
         self.screens
             .home
             .update(cx, |view, cx| view.set_visible(home, cx));
+        let equalizer = matches!(destination, Destination::Equalizer);
+        self.screens
+            .equalizer
+            .update(cx, |view, cx| view.set_visible(equalizer, cx));
         if let Destination::Fullscreen = destination {
             self.view = RootView::Fullscreen;
             self.announce_fullscreen(true, cx);
@@ -679,6 +689,7 @@ impl Root {
                 genre.into()
             }
             Destination::Search => self.screens.search.clone().into(),
+            Destination::Equalizer => self.screens.equalizer.clone().into(),
             Destination::Settings(tab) => {
                 self.screens
                     .settings
