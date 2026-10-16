@@ -1,12 +1,12 @@
 use std::num::NonZero;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use cpal::traits::{DeviceTrait, HostTrait};
 use rodio::source::SeekError;
-use rodio::{DeviceSinkBuilder, MixerDeviceSink, Source};
+use rodio::{ChannelCount, DeviceSinkBuilder, MixerDeviceSink, SampleRate, Source};
 
 use crate::equalizer::{Equalized, Equalizer};
 use crate::spectrum::{Spectrum, Tap};
@@ -42,6 +42,80 @@ impl Volume {
 
     fn get(&self) -> f32 {
         f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+}
+
+/// The rate and channel count of what one player is playing, published by each chunk as it
+/// yields its first sample. The queue's own answer depends on how the previous chunk ended, so
+/// the chain follows this instead. Zero means no chunk has played yet.
+#[derive(Clone, Default)]
+pub(crate) struct Format(Arc<AtomicU64>);
+
+impl Format {
+    pub(crate) fn publish(&self, rate: SampleRate, channels: ChannelCount) {
+        let word = u64::from(rate.get()) << 16 | u64::from(channels.get());
+        self.0.store(word, Ordering::Relaxed);
+    }
+}
+
+/// Which channel of its frame each sample a chain stage pulls belongs to, counted from the
+/// format the playing chunk published. A change of format starts a new frame.
+pub(crate) struct Frames {
+    format: Format,
+    /// The word last read, so a change is noticed on the sample that brings it.
+    seen: u64,
+    channel: u16,
+}
+
+/// Where the sample just pulled sits in its frame.
+pub(crate) struct Place {
+    pub channel: u16,
+    /// Whether this sample brought a new format, which the stage takes up before using it.
+    pub changed: bool,
+}
+
+impl Frames {
+    pub(crate) fn new(format: Format) -> Self {
+        Self {
+            format,
+            seen: 0,
+            channel: 0,
+        }
+    }
+
+    /// Pulls the next sample from `input` and places it in its frame. The place is `None` until a
+    /// chunk has published a format, and the stage passes those samples through untouched.
+    pub(crate) fn pull(
+        &mut self,
+        input: &mut impl Iterator<Item = f32>,
+    ) -> Option<(f32, Option<Place>)> {
+        let sample = input.next()?;
+        // The chunk publishes during the pull, so the word is read after it.
+        let word = self.format.0.load(Ordering::Relaxed);
+        let changed = word != self.seen;
+        if changed {
+            self.seen = word;
+            self.channel = 0;
+        }
+        let channels = self.channels();
+        if channels == 0 {
+            return Some((sample, None));
+        }
+
+        let channel = self.channel;
+        self.channel += 1;
+        if self.channel >= channels {
+            self.channel = 0;
+        }
+        Some((sample, Some(Place { channel, changed })))
+    }
+
+    pub(crate) fn rate(&self) -> u32 {
+        (self.seen >> 16) as u32
+    }
+
+    pub(crate) fn channels(&self) -> u16 {
+        self.seen as u16
     }
 }
 
@@ -182,6 +256,8 @@ impl Device {
 pub struct Output {
     chain: Chain,
     sink: Arc<rodio::Player>,
+    /// What every chunk appended to `sink` publishes its format into.
+    format: Format,
     device: Arc<Device>,
     /// Set when `fit` could not reopen the device, so the engine reports the output gone.
     broken: bool,
@@ -192,10 +268,11 @@ impl Output {
     /// sample through the equalizer and then the volume ramp before it reaches the mixer.
     pub fn open(chain: Chain) -> Result<Self> {
         let device = Device::shared(None)?;
-        let sink = attach(&chain, &device);
+        let (sink, format) = attach(&chain, &device);
         Ok(Self {
             chain,
             sink: Arc::new(sink),
+            format,
             device,
             broken: false,
         })
@@ -205,16 +282,20 @@ impl Output {
         &self.sink
     }
 
+    /// The format word of the current `sink`. A chunk appended to `sink` must publish into this
+    /// word, from the same `Output`, or the chain never learns its format.
+    pub(crate) fn format(&self) -> &Format {
+        &self.format
+    }
+
     /// Whether a track at `rate` can go out as the output stands, without `fit` reopening it.
     pub fn fits(&self, rate: u32) -> bool {
         self.device.live() && self.device.fits(rate)
     }
 
-    /// Moves this output onto a shared stream at `rate` unless it `fits` already, keeping the
-    /// player paused if it was. The stream reopens when it runs at another rate, which closes
-    /// it under the other engines. Whatever this output had queued is dropped and any clone of
-    /// `sink` goes stale, so callers do this before a track and take `sink` again when it
-    /// returns true.
+    /// Moves this output onto a shared stream at `rate` unless it `fits` already, reopening the
+    /// stream under the other engines when it runs at another rate. On `true` the queue was
+    /// dropped and `sink` and `format` replaced, so take both again.
     pub fn fit(&mut self, rate: u32) -> Result<bool> {
         if self.fits(rate) {
             return Ok(false);
@@ -227,11 +308,12 @@ impl Output {
                 return Err(error);
             }
         };
-        let sink = attach(&self.chain, &device);
+        let (sink, format) = attach(&self.chain, &device);
         if paused {
             sink.pause();
         }
         self.sink = Arc::new(sink);
+        self.format = format;
         self.device = device;
         self.broken = false;
         Ok(true)
@@ -273,13 +355,17 @@ pub struct SmoothGain<I> {
     frames_left: u32,
     ramp_frames: u32,
 
-    channel: u16,
-    channels: u16,
-    rate: u32,
+    frames: Frames,
 }
 
 impl<I: Source> SmoothGain<I> {
-    pub fn new(input: I, volume: Volume, initial: f32, ramp: Duration) -> Self {
+    pub(crate) fn new(
+        input: I,
+        volume: Volume,
+        initial: f32,
+        ramp: Duration,
+        format: Format,
+    ) -> Self {
         Self {
             input,
             volume,
@@ -291,9 +377,7 @@ impl<I: Source> SmoothGain<I> {
             ramp,
             frames_left: 0,
             ramp_frames: 1,
-            channel: 0,
-            channels: 0,
-            rate: 0,
+            frames: Frames::new(format),
         }
     }
 
@@ -302,15 +386,10 @@ impl<I: Source> SmoothGain<I> {
         self
     }
 
+    /// Takes up a new format. The tap learns it, and the ramp keeps its length in time.
     fn resync(&mut self) {
-        let channels = self.input.channels().get();
-        let rate = self.input.sample_rate().get();
-        if channels == self.channels && rate == self.rate {
-            return;
-        }
-
-        self.channels = channels;
-        self.rate = rate;
+        let rate = self.frames.rate();
+        let channels = self.frames.channels();
         if let Some(tap) = &self.tap {
             tap.format(rate, channels);
         }
@@ -323,10 +402,15 @@ impl<I: Source> Iterator for SmoothGain<I> {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let sample = self.input.next()?;
+        let (sample, place) = self.frames.pull(&mut self.input)?;
+        let Some(place) = place else {
+            return Some(sample);
+        };
 
-        if self.channel == 0 {
+        if place.changed {
             self.resync();
+        }
+        if place.channel == 0 {
             self.unscaled = self.tap.as_ref().is_some_and(Tap::absolute);
             let requested = self.volume.get().max(0.0);
 
@@ -352,11 +436,6 @@ impl<I: Source> Iterator for SmoothGain<I> {
                 true => sample,
                 false => output,
             });
-        }
-
-        self.channel += 1;
-        if self.channel >= self.channels {
-            self.channel = 0;
         }
 
         Some(output)
@@ -391,26 +470,33 @@ pub struct Trimmed<I> {
     body: Option<u64>,
     emitted: u64,
     primed: bool,
-    lane: u64,
+    rate: u64,
+    channels: u64,
 }
 
 impl<I: Source> Trimmed<I> {
     pub fn new(input: I, skip: Duration, take: Option<Duration>) -> Self {
-        let lane = (input.sample_rate().get() as u64) * (input.channels().get() as u64);
-        let samples = |span: Duration| (span.as_secs_f64() * lane as f64).round() as u64;
+        let rate = input.sample_rate().get() as u64;
+        let channels = input.channels().get() as u64;
 
         Self {
-            head: samples(skip),
-            body: take.map(samples),
+            head: whole_frames(skip, rate, channels),
+            body: take.map(|take| whole_frames(take, rate, channels)),
             emitted: 0,
             primed: false,
-            lane,
+            rate,
+            channels,
             input,
         }
     }
 
     fn offset(&self) -> Duration {
-        Duration::from_secs_f64(self.head as f64 / self.lane as f64)
+        self.playing_time(self.head)
+    }
+
+    /// How long `samples` play for.
+    fn playing_time(&self, samples: u64) -> Duration {
+        Duration::from_secs_f64(samples as f64 / (self.rate * self.channels) as f64)
     }
 }
 
@@ -449,7 +535,7 @@ impl<I: Source> Source for Trimmed<I> {
 
     fn total_duration(&self) -> Option<Duration> {
         match self.body {
-            Some(body) => Some(Duration::from_secs_f64(body as f64 / self.lane as f64)),
+            Some(body) => Some(self.playing_time(body)),
             None => self
                 .input
                 .total_duration()
@@ -460,7 +546,7 @@ impl<I: Source> Source for Trimmed<I> {
     fn try_seek(&mut self, position: Duration) -> Result<(), SeekError> {
         self.input.try_seek(position + self.offset())?;
         self.primed = true;
-        self.emitted = (position.as_secs_f64() * self.lane as f64).round() as u64;
+        self.emitted = whole_frames(position, self.rate, self.channels);
         Ok(())
     }
 }
@@ -502,6 +588,12 @@ pub fn missing_bridge() -> Option<Server> {
     None
 }
 
+/// The samples `span` covers at `rate` frames a second, rounded to whole frames, so a cut never
+/// lands between the channels of one frame and swaps them for the rest of the track.
+fn whole_frames(span: Duration, rate: u64, channels: u64) -> u64 {
+    (span.as_secs_f64() * rate as f64).round() as u64 * channels
+}
+
 fn ident(device: &cpal::Device) -> String {
     device
         .id()
@@ -509,14 +601,22 @@ fn ident(device: &cpal::Device) -> String {
         .unwrap_or_else(|_| "unknown".to_owned())
 }
 
-/// A fresh player whose chain plays into `device`.
-fn attach(chain: &Chain, device: &Device) -> rodio::Player {
+/// A fresh player whose chain plays into `device`, and the format word its chunks publish into.
+fn attach(chain: &Chain, device: &Device) -> (rodio::Player, Format) {
     let applied = chain.volume.get();
     let tap = chain.spectrum.attach();
+    let format = Format::default();
     let (sink, source) = rodio::Player::new();
-    let equalized = Equalized::new(source, chain.equalizer.clone());
-    device.add(SmoothGain::new(equalized, chain.volume.clone(), applied, RAMP).with_tap(tap));
-    sink
+    let equalized = Equalized::new(source, chain.equalizer.clone(), format.clone());
+    let gained = SmoothGain::new(
+        equalized,
+        chain.volume.clone(),
+        applied,
+        RAMP,
+        format.clone(),
+    );
+    device.add(gained.with_tap(tap));
+    (sink, format)
 }
 
 /// The device's config at `rate` in the default's channels and sample format, if the device

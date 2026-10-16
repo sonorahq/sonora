@@ -43,6 +43,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Removing several playlists from your library at once no longer stops after the first one.
 - Sonora now tells you when your settings could not be saved, or when downloading, installing
   or removing Widevine fails. Both used to fail without a word.
+- Songs on YouTube Music and Apple Music no longer sometimes play with left and right swapped
+  after you seek or pick up partway through.
 
 ## [0.43.0] - 2026-10-13
 
