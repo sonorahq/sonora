@@ -1,7 +1,8 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::fs::File;
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use crate::shared::confirm::{Confirm, Kind};
@@ -1838,7 +1839,7 @@ impl SettingsView {
                     .on_click(move |_, _, cx| {
                         let path =
                             settings.update(cx, |settings, _| settings.ensure_themes_directory());
-                        if let Err(error) = open_path(&path) {
+                        if let Err(error) = open::that_detached(&path) {
                             log::warn!("settings: cannot open {}: {error}", path.display());
                         }
                     }),
@@ -2659,8 +2660,8 @@ impl SettingsView {
         )
     }
 
-    /// The About row that opens the current log file in whatever the system reads text with.
-    /// The button is disabled when the platform names no state or cache folder to log into.
+    /// The About row that opens a copy of the current log file in whatever the system reads text
+    /// with. The button is disabled when the platform names no state or cache folder to log into.
     fn log_row(&self, cx: &mut Context<Self>) -> Setting {
         let theme = *cx.theme();
         let path = state::log_file();
@@ -2677,8 +2678,11 @@ impl SettingsView {
                 .disabled(path.is_none())
                 .on_click(move |_, _, _| {
                     let Some(path) = &path else { return };
-                    if let Err(error) = open_path(path) {
-                        log::warn!("settings: cannot open {}: {error}", path.display());
+                    if let Err(error) = snapshot(path).and_then(open::that_detached) {
+                        log::warn!(
+                            "settings: cannot open a copy of {}: {error}",
+                            path.display()
+                        );
                     }
                 })
                 .into_any_element(),
@@ -4566,21 +4570,12 @@ fn wrapped_lines(text: SharedString, size: Pixels, width: Pixels, window: &Windo
         .unwrap_or(1)
 }
 
-/// Hands a file to the system's default application for it, without waiting on that program.
-fn open_path(path: &Path) -> std::io::Result<()> {
-    #[cfg(target_os = "windows")]
-    Command::new("cmd")
-        .args(["/C", "start", ""])
-        .arg(path)
-        .spawn()?;
-
-    #[cfg(target_os = "macos")]
-    Command::new("open").arg(path).spawn()?;
-
-    #[cfg(target_os = "linux")]
-    Command::new("xdg-open").arg(path).spawn()?;
-
-    Ok(())
+/// Notepad on Windows refuses a file that Sonora still writes to, so the button opens a copy
+/// `File::open` shares write access, `fs::copy` documents no share mode
+fn snapshot(log: &Path) -> io::Result<PathBuf> {
+    let copy = log.with_file_name("sonora.copy.log");
+    io::copy(&mut File::open(log)?, &mut File::create(&copy)?)?;
+    Ok(copy)
 }
 
 impl Render for DraggedSource {

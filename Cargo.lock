@@ -9013,6 +9013,7 @@ dependencies = [
  "jiff",
  "log",
  "music",
+ "open",
  "router",
  "state",
  "ui",
