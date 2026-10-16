@@ -43,8 +43,15 @@ zbus.workspace = true
 tray-icon.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace = true
 objc2.workspace = true
-objc2-app-kit = { workspace = true, features = ["NSToolbar", "NSView", "NSWindow"] }
+objc2-app-kit = { workspace = true, features = [
+  "block2",
+  "NSEvent",
+  "NSToolbar",
+  "NSView",
+  "NSWindow",
+] }
 objc2-foundation = { workspace = true, features = ["NSString"] }
 raw-window-handle.workspace = true
 

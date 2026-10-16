@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- On macOS, you can move back and forward through history by swiping left or right with two
+  or three fingers, depending on your gesture preferences.
+
 ## [0.43.0] - 2026-10-13
 
 ### Added

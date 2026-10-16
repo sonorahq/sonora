@@ -3,6 +3,8 @@
 mod actions;
 mod assets;
 mod dock;
+#[cfg(target_os = "macos")]
+mod gestures;
 mod http;
 mod logging;
 mod memory;
@@ -171,6 +173,8 @@ fn main() {
             cx.set_quit_mode(QuitMode::Explicit);
         }
         actions::register(lingers, cx);
+        #[cfg(target_os = "macos")]
+        gestures::install(cx);
         memory::watch(cx);
 
         open_window(cx);
