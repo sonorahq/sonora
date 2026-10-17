@@ -70,8 +70,8 @@ pub fn register(lingers: bool, cx: &mut App) {
     });
 
     cx.on_action(|_: &ToggleShuffle, cx: &mut App| {
-        let queue = Sonora::global(cx).queue.clone();
-        queue.update(cx, |queue, cx| queue.toggle_shuffle(cx));
+        let playback = Sonora::global(cx).playback.clone();
+        playback.update(cx, |playback, cx| playback.toggle_shuffle(cx));
     });
 
     cx.on_action(|_: &ToggleRepeat, cx: &mut App| {

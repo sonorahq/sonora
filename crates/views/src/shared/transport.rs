@@ -1,13 +1,28 @@
+use std::time::Duration;
+
 use gpui::prelude::*;
 use gpui::{App, Entity, SharedString, div};
 use i18n::t;
-use state::{Playback, Queue, Repeat, Sonora};
+use state::{Playback, Queue, Repeat, Sonora, Steered};
 use ui::{ActiveTheme as _, Button};
 
 use crate::shared::ambient;
 
 pub(crate) const NOTCH: f32 = 0.05;
 const STEP: f32 = 0.004;
+
+/// The other device playback is on, which the player shows instead of this app's own.
+pub(crate) fn steered(cx: &App) -> Option<Steered> {
+    Sonora::global(cx).devices.read(cx).steered()
+}
+
+/// How far through `total` `elapsed` is, from 0 to 1.
+pub(crate) fn fraction(elapsed: Duration, total: Duration) -> f32 {
+    match total.is_zero() {
+        true => 0.,
+        false => (elapsed.as_secs_f32() / total.as_secs_f32()).clamp(0., 1.),
+    }
+}
 
 pub(crate) fn volume_icon(level: f32) -> &'static str {
     match level {
@@ -70,7 +85,7 @@ pub(crate) fn transport(
         .flex()
         .items_center()
         .gap_2()
-        .child(shuffle(queue, frosted, cx))
+        .child(shuffle(playback, frosted, cx))
         .child(previous(playback, frosted, cx))
         .child(toggle(playback, big, frosted, cx))
         .child(next(playback, queue, frosted, cx))
@@ -79,8 +94,11 @@ pub(crate) fn transport(
 
 pub(crate) fn toggle(playback: &Entity<Playback>, big: bool, frosted: bool, cx: &App) -> Button {
     let held = playback.read(cx);
-    let playing = held.wants_playing();
-    let idle = held.track().is_none();
+    let steered = steered(cx);
+    let playing = steered
+        .as_ref()
+        .map_or_else(|| held.wants_playing(), |steered| steered.playing);
+    let idle = held.track().is_none() && steered.is_none();
     let playback = playback.clone();
 
     let (id, icon, tooltip) = match playing {
@@ -100,10 +118,10 @@ pub(crate) fn toggle(playback: &Entity<Playback>, big: bool, frosted: bool, cx: 
         })
 }
 
-fn shuffle(queue: &Entity<Queue>, frosted: bool, cx: &App) -> Button {
+fn shuffle(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
     let theme = *cx.theme();
-    let on = queue.read(cx).shuffle();
-    let queue = queue.clone();
+    let on = playback.read(cx).shown_shuffle(cx);
+    let playback = playback.clone();
 
     Button::new("shuffle")
         .ghost()
@@ -116,13 +134,13 @@ fn shuffle(queue: &Entity<Queue>, frosted: bool, cx: &App) -> Button {
             false => theme.muted_foreground,
         })
         .on_click(move |_, _, cx| {
-            queue.update(cx, |queue, cx| queue.toggle_shuffle(cx));
+            playback.update(cx, |playback, cx| playback.toggle_shuffle(cx));
         })
 }
 
 fn repeat(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
     let theme = *cx.theme();
-    let repeat = playback.read(cx).repeat();
+    let repeat = playback.read(cx).shown_repeat(cx);
     let playback = playback.clone();
 
     Button::new("repeat")
@@ -148,7 +166,7 @@ fn repeat(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
 }
 
 fn previous(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
-    let enabled = playback.read(cx).has_previous(cx);
+    let enabled = steered(cx).is_some() || playback.read(cx).has_previous(cx);
     let playback = playback.clone();
 
     Button::new("previous")
@@ -164,7 +182,7 @@ fn previous(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
 }
 
 fn next(playback: &Entity<Playback>, queue: &Entity<Queue>, frosted: bool, cx: &App) -> Button {
-    let enabled = queue.read(cx).has_next();
+    let enabled = steered(cx).is_some() || queue.read(cx).has_next();
     let playback = playback.clone();
 
     Button::new("next")

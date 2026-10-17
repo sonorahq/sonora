@@ -2499,6 +2499,29 @@ impl Library {
         true
     }
 
+    /// Shows a like, or the taking back of one, made in another of the account's apps, without
+    /// asking the provider again. `track` comes with a like; an unlike needs only `id`. A change
+    /// still on its way from this app wins.
+    pub fn liked_elsewhere(&mut self, id: &str, track: Option<Track>, cx: &mut Context<Self>) {
+        if self.pending.contains_key(id) {
+            return;
+        }
+        match track {
+            Some(_) if self.saved(id) => return,
+            Some(mut track) => {
+                track.added_at = Some(stamp());
+                self.set_saved(track, true);
+            }
+            None => {
+                let Some(track) = <Track as Savable>::saved_now(self, id) else {
+                    return;
+                };
+                self.set_saved(track, false);
+            }
+        }
+        cx.notify();
+    }
+
     fn set_saved(&mut self, track: Track, saved: bool) {
         let Some(id) = track.id.clone() else {
             return;

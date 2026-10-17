@@ -561,6 +561,13 @@ impl Queue {
         self.current.as_ref()?.origin.as_ref()
     }
 
+    /// Where the current track sits in the collection the queue was started from. `None` when it
+    /// is not in that collection, as for a track queued by hand.
+    pub fn place(&self) -> Option<usize> {
+        let current = self.current.as_ref()?;
+        self.source.iter().position(|entry| entry == current)
+    }
+
     fn queued(&self) -> usize {
         self.upcoming.len() - self.similar
     }

@@ -5,6 +5,7 @@ mod artists;
 mod client;
 mod collection;
 mod collection2;
+mod connect;
 mod lyrics;
 mod pathfinder;
 mod pb;
