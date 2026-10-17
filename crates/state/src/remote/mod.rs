@@ -158,9 +158,7 @@ impl Remote {
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 Command::Repeat(repeat) => playback.set_repeat(repeat, cx),
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                Command::Shuffle(on) => {
-                    self.queue.update(cx, |queue, cx| queue.set_shuffle(on, cx))
-                }
+                Command::Shuffle(on) => playback.set_shuffle(on, cx),
             });
     }
 

@@ -17,20 +17,28 @@ use ui::{
 };
 
 use crate::chrome::SidebarRight;
+use crate::chrome::devices::DevicePicker;
 use crate::shared::menus::ItemMenu;
-use crate::shared::transport::{NOTCH, like, moved, percent, transport, volume_icon};
+use crate::shared::transport::{NOTCH, fraction, like, moved, percent, transport, volume_icon};
 
 const SEEK_MAX: f32 = 560.;
 const VOLUME_WIDTH: f32 = 110.;
 const VOLUME_TIGHT: f32 = 72.;
 const CLOCK_SHORT: f32 = 3.4;
 const CLOCK_LONG: f32 = 5.4;
+/// The height of the strip above the bar that names the other device playback is on.
+const ELSEWHERE: f32 = 28.;
+const ELSEWHERE_ICON: f32 = 14.;
+/// How much of the popover colour the strip keeps over its blur, as a menu does, so what it
+/// covers does not read through the text.
+const ELSEWHERE_FILL: f32 = 0.75;
 
 pub(crate) struct PlayerBar {
     playback: Entity<Playback>,
     queue: Entity<Queue>,
     settings: Entity<AppSettings>,
     track_menu: ItemMenu,
+    devices: Entity<DevicePicker>,
     context_menu: Option<(music::Track, Point<Pixels>)>,
     seek: ScrubberState,
     volume: ScrubberState,
@@ -45,7 +53,9 @@ impl PlayerBar {
     pub fn new(playback: Entity<Playback>, queue: Entity<Queue>, cx: &mut Context<Self>) -> Self {
         let library = Sonora::global(cx).library.clone();
         let settings = Sonora::global(cx).settings.clone();
+        let devices = Sonora::global(cx).devices.clone();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
+        cx.observe(&devices, |_, _, cx| cx.notify()).detach();
         cx.observe(&queue, |_, _, cx| cx.notify()).detach();
         cx.observe(&library, |_, _, cx| cx.notify()).detach();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
@@ -58,6 +68,7 @@ impl PlayerBar {
             queue,
             settings,
             track_menu: ItemMenu::new(playlist_scrollbar, cx),
+            devices: cx.new(DevicePicker::new),
             context_menu: None,
             seek: ScrubberState::new("seek"),
             volume: ScrubberState::new("volume"),
@@ -83,7 +94,7 @@ impl PlayerBar {
     /// Opens the track menu on whatever is playing when the click lands, so a render does not
     /// have to hold a copy of the track for a menu that is rarely asked for.
     fn open_playing_menu(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some(track) = self.playback.read(cx).track().cloned() else {
+        let Some(track) = self.playback.read(cx).shown_track(cx) else {
             return;
         };
         self.open_context_menu(track, position, cx);
@@ -222,6 +233,7 @@ impl PlayerBar {
             .flex_none()
             .items_center()
             .gap_1()
+            .child(self.devices.clone())
             .child(button(
                 "player-lyrics",
                 "icons/mic-vocal.svg",
@@ -251,7 +263,8 @@ impl PlayerBar {
         let muted = theme.muted_foreground;
         let artwork = ui::snapped(theme.metrics.row, window);
         let artists = theme.text(ui::Text::Small);
-        let track = self.playback.read(cx).track();
+        let shown = self.playback.read(cx).shown_track(cx);
+        let track = shown.as_ref();
         let cover = track.and_then(|track| track.cover.clone());
         let explicit = track.is_some_and(|track| track.explicit);
         let like = like(track, &self.playback, cx);
@@ -377,13 +390,9 @@ impl Render for PlayerBar {
         };
 
         let playback = self.playback.read(cx);
-        let seekable = playback.track().is_some();
-        let progress = self.pending.unwrap_or_else(|| playback.progress());
-        let elapsed = playback.position();
-        let total = playback
-            .track()
-            .map(|track| track.duration)
-            .unwrap_or(Duration::ZERO);
+        let seekable = playback.shown_track(cx).is_some();
+        let (elapsed, total) = playback.shown_time(cx);
+        let progress = self.pending.unwrap_or_else(|| fraction(elapsed, total));
         let clock_width = clock_text
             * match total.as_secs() >= 3600 {
                 true => CLOCK_LONG,
@@ -505,14 +514,61 @@ impl Render for PlayerBar {
                         .items_center()
                         .justify_end()
                         .gap_2()
+                        // never narrower than its buttons, or they spill over the seek bar's clock
                         .flex_1()
-                        .min_w_0()
                         .children(sides)
                         .child(self.sound(px(VOLUME_WIDTH), cx))
                         .child(self.fullscreen_button()),
                 ),
         };
 
-        content.when_some(context_menu, |this, menu| this.child(menu))
+        let frosting = ui::blurring(cx);
+        let fill = match frosting {
+            true => theme.popover.opacity(ELSEWHERE_FILL),
+            false => theme.popover,
+        };
+        let elsewhere = self.playback.read(cx).steered(cx).map(|steered| {
+            let devices = Sonora::global(cx).devices.clone();
+            div()
+                .absolute()
+                .left_0()
+                .bottom(height)
+                .w_full()
+                .h(px(ELSEWHERE))
+                .px_5()
+                .flex()
+                .items_center()
+                .gap_2()
+                .text_size(theme.text(ui::Text::Small))
+                .text_color(theme.foreground)
+                .bg(fill)
+                .when(frosting, ui::frost)
+                .child(
+                    gpui::svg()
+                        .path(icons::path("icons/monitor-speaker.svg"))
+                        .size(px(ELSEWHERE_ICON))
+                        .flex_none()
+                        .text_color(theme.foreground),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .child(t!("devices-elsewhere-banner", device = steered.device.name)),
+                )
+                .child(
+                    Button::new("elsewhere-here")
+                        .ghost()
+                        .small()
+                        .label(t!("devices-elsewhere-here"))
+                        .on_click(move |_, _, cx| devices.read(cx).transfer_here()),
+                )
+        });
+
+        content
+            .relative()
+            .when_some(elsewhere, |this, banner| this.child(banner))
+            .when_some(context_menu, |this, menu| this.child(menu))
     }
 }

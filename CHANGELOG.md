@@ -9,6 +9,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Turn on Show as a Spotify device in Settings and Sonora shows up in Spotify's device list, so
+  Spotify and Discord show what you play in it. Your phone can pause, skip, seek, change the
+  volume and start music in Sonora.
+- A devices button in the player bar moves playback between Sonora and your other Spotify
+  devices. While another device plays, the player bar and lyrics follow its song, and Sonora's
+  controls and the songs you pick play there, the way Spotify's own apps do.
 - You can rank your lyrics providers in Settings, by dragging them or with the arrows. When two
   of them have equally good lyrics for a song, Sonora shows the one you ranked higher.
 - You can undo clearing the queue or removing songs from it. Press Undo on the toast that

@@ -21,6 +21,7 @@ fastrand.workspace = true
 flate2.workspace = true
 cpal.workspace = true
 futures.workspace = true
+gethostname.workspace = true
 deunicode.workspace = true
 dirs.workspace = true
 http.workspace = true

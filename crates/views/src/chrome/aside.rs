@@ -1024,8 +1024,14 @@ impl Aside {
 
     fn verses(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
-        let position = self.playback.read(cx).live_position();
-        let singing = matches!(self.playback.read(cx).state(), PlaybackState::Playing);
+        let playback = self.playback.read(cx);
+        let (position, singing) = match playback.steered(cx) {
+            Some(steered) => (steered.position, steered.playing),
+            None => (
+                playback.live_position(),
+                matches!(playback.state(), PlaybackState::Playing),
+            ),
+        };
         let lyrics = self.lyrics.read(cx);
         let state = lyrics.state().clone();
         let shown = lyrics.current().is_some();

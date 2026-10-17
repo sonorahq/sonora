@@ -1,6 +1,6 @@
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, anyhow};
 
@@ -245,10 +245,30 @@ fn session(config: &AuthConfig) -> Result<Session> {
 
     let session_config = SessionConfig {
         client_id: config.client_id.clone(),
+        device_id: device_id(&config.cache_dir),
         ..Default::default()
     };
 
     Ok(Session::new(session_config, Some(cache)))
+}
+
+/// The id this install goes by on Spotify's device list. A new one each launch would leave a
+/// stale Sonora behind every time, so the first one is kept next to the credentials.
+fn device_id(dir: &Path) -> String {
+    let file = dir.join("device-id");
+    let kept = std::fs::read_to_string(&file)
+        .map(|id| id.trim().to_owned())
+        .ok()
+        .filter(|id| !id.is_empty());
+    if let Some(id) = kept {
+        return id;
+    }
+
+    let id = SessionConfig::default().device_id;
+    if let Err(error) = std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&file, &id)) {
+        log::warn!("auth: cannot keep the device id: {error}");
+    }
+    id
 }
 
 #[cfg(test)]

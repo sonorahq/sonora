@@ -21,7 +21,7 @@ use ui::{
 
 use crate::chrome::{Aside, TitleBarOptions};
 use crate::shared::menus::ItemMenu;
-use crate::shared::transport::{NOTCH, like, moved, percent, transport, volume_icon};
+use crate::shared::transport::{NOTCH, fraction, like, moved, percent, transport, volume_icon};
 use crate::shared::veil::{Edge, veil};
 use crate::shared::visualizer::VisualizerDrive;
 use crate::shared::{self, ambient};
@@ -360,12 +360,11 @@ impl FullscreenView {
         let radius = cx.theme().radius * 2.;
         let pad = px(COVER_LAYER_PAD);
         let inset = (layout_side - raster_side) / 2. - pad;
-        let (album, small, local_id) = match self.playback.read(cx).track() {
-            Some(track) => (
-                track.album_id.clone(),
-                track.cover.clone(),
-                track.id.as_deref().is_some_and(music::is_local_id),
-            ),
+        let (album, small, local_id) = match self.playback.read(cx).shown_track(cx) {
+            Some(track) => {
+                let local = track.id.as_deref().is_some_and(music::is_local_id);
+                (track.album_id, track.cover, local)
+            }
             None => (None, None, false),
         };
         let cover_large = self.cover.read(cx).large();
@@ -442,7 +441,8 @@ impl FullscreenView {
     fn meta(&self, hide: f32, lift: Pixels, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         let frosted = ambient::shown(cx);
-        let track = self.playback.read(cx).track();
+        let shown = self.playback.read(cx).shown_track(cx);
+        let track = shown.as_ref();
         let title = match track {
             Some(track) => SharedString::from(track.name.clone()),
             None => t!("player-nothing-playing"),
@@ -526,8 +526,7 @@ impl FullscreenView {
                             .on_mouse_down(
                                 MouseButton::Right,
                                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                                    let Some(track) = this.playback.read(cx).track().cloned()
-                                    else {
+                                    let Some(track) = this.playback.read(cx).shown_track(cx) else {
                                         return;
                                     };
                                     window.prevent_default();
@@ -567,7 +566,8 @@ impl FullscreenView {
         let theme = *cx.theme();
         let frosted = ambient::shown(cx);
         let cover = ui::snapped(theme.metrics.row, window);
-        let track = self.playback.read(cx).track();
+        let shown = self.playback.read(cx).shown_track(cx);
+        let track = shown.as_ref();
         let title = match track {
             Some(track) => SharedString::from(track.name.clone()),
             None => t!("player-nothing-playing"),
@@ -619,7 +619,7 @@ impl FullscreenView {
                                         cx.listener(
                                             move |this, event: &MouseDownEvent, window, cx| {
                                                 let Some(track) =
-                                                    this.playback.read(cx).track().cloned()
+                                                    this.playback.read(cx).shown_track(cx)
                                                 else {
                                                     return;
                                                 };
@@ -665,13 +665,9 @@ impl FullscreenView {
         let empty = muted.opacity(0.3);
         let text = theme.text(Text::Tiny);
         let playback = self.playback.read(cx);
-        let seekable = playback.track().is_some();
-        let progress = self.pending.unwrap_or_else(|| playback.progress());
-        let elapsed = playback.position();
-        let total = playback
-            .track()
-            .map(|track| track.duration)
-            .unwrap_or(Duration::ZERO);
+        let seekable = playback.shown_track(cx).is_some();
+        let (elapsed, total) = playback.shown_time(cx);
+        let progress = self.pending.unwrap_or_else(|| fraction(elapsed, total));
         let width = text
             * match total.as_secs() >= 3600 {
                 true => CLOCK_LONG,

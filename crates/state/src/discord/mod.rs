@@ -7,7 +7,7 @@ use music::artwork::{ArtworkQuery, ArtworkSearch};
 use music::{MediaKind, MusicProvider, Track};
 use tokio::sync::watch;
 
-use crate::{AppSettings, Cover, DiscordName, Io, Playback, Session, Shelf, join};
+use crate::{AppSettings, Cover, Devices, DiscordName, Io, Playback, Session, Shelf, join};
 
 #[cfg(unix)]
 mod socket;
@@ -38,10 +38,11 @@ pub(crate) fn attach(
     settings: Entity<AppSettings>,
     session: Entity<Session>,
     cover: Entity<Cover>,
+    devices: Entity<Devices>,
     io: Io,
     cx: &mut App,
 ) {
-    let discord = cx.new(|cx| Discord::new(playback, settings, session, cover, io, cx));
+    let discord = cx.new(|cx| Discord::new(playback, settings, session, cover, devices, io, cx));
     cx.set_global(Attached { _discord: discord });
 }
 
@@ -118,6 +119,7 @@ struct Discord {
     settings: Entity<AppSettings>,
     session: Entity<Session>,
     cover: Entity<Cover>,
+    devices: Entity<Devices>,
     sender: watch::Sender<Shown>,
     timing: Timing,
     io: Io,
@@ -138,6 +140,7 @@ impl Discord {
         settings: Entity<AppSettings>,
         session: Entity<Session>,
         cover: Entity<Cover>,
+        devices: Entity<Devices>,
         io: Io,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -154,12 +157,15 @@ impl Discord {
         cx.observe(&settings, |this, _, cx| this.publish(cx))
             .detach();
         cx.observe(&cover, |this, _, cx| this.publish(cx)).detach();
+        cx.observe(&devices, |this, _, cx| this.publish(cx))
+            .detach();
 
         Self {
             playback,
             settings,
             session,
             cover,
+            devices,
             sender,
             timing: Timing::default(),
             io,
@@ -228,6 +234,12 @@ impl Discord {
         let since = self.timing.listening_since();
         let settings = self.settings.read(cx);
         if !settings.discord_presence() || !playing && !settings.discord_show_paused() {
+            return Shown::Off;
+        }
+        // Spotify's own status already covers a track that Spotify is told about, and one that
+        // plays on another of the account's devices
+        let devices = self.devices.read(cx);
+        if devices.publishing() || devices.steered().is_some() {
             return Shown::Off;
         }
 
