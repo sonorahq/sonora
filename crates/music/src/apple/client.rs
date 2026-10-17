@@ -80,12 +80,12 @@ const SONGS: &str = "/me/library/songs";
 const ALBUMS: &str = "/me/library/albums";
 const ARTISTS: &str = "/me/library/artists";
 const SONGS_QUERY: &[(&str, &str)] = &[
-    ("include[library-songs]", "catalog,albums"),
+    ("include[library-songs]", "catalog,albums,artists"),
     ("include[songs]", "artists,albums"),
     ("fields[library-albums]", "dateAdded"),
 ];
 const CATALOG_QUERY: &[(&str, &str)] = &[("include", "catalog")];
-const ALBUMS_QUERY: &[(&str, &str)] = &[("include", "catalog"), ALBUM_ARTISTS];
+const ALBUMS_QUERY: &[(&str, &str)] = &[("include", "catalog,artists"), ALBUM_ARTISTS];
 
 /// Asks for the artists behind every album in an answer, nested ones included. Apple otherwise
 /// names them in one string with no id, and a card cannot link to an artist without one. Only
@@ -755,7 +755,10 @@ impl AppleClient {
     /// Apple itself adds a favorited song to the library when the account's Add Favorite Songs
     /// to Library setting is on, which it is by default. Removing a favorite never touches it.
     async fn favorite(&self, kind: &str, id: &str, saved: bool) -> Result<()> {
-        let key = format!("ids[{kind}]");
+        let key = match Self::is_mine(id) {
+            true => format!("ids[library-{kind}]"),
+            false => format!("ids[{kind}]"),
+        };
         let query = [(key.as_str(), id)];
         match saved {
             true => self.post("/me/favorites", &query, None).await.map(|_| ()),
@@ -826,6 +829,9 @@ impl AppleClient {
     /// dBFS. The same figures sit in the `ludt` box of Apple's enhanced HLS encodes, but the
     /// Widevine encode this path plays carries no `udta` at all.
     pub async fn playback_details(&self, id: &str) -> Details {
+        if Self::is_mine(id) {
+            return Details::default();
+        }
         let answered = self
             .get(
                 &self.catalog(&format!("/songs/{}", escape::component(id))),
@@ -877,7 +883,7 @@ impl AppleClient {
                 &[
                     ("limit", &limit),
                     ("include[songs]", "artists,albums"),
-                    ("include[library-songs]", "catalog"),
+                    ("include[library-songs]", "catalog,albums,artists"),
                 ],
             )
             .await;
@@ -1032,6 +1038,104 @@ impl AppleClient {
         }
         Ok(sections)
     }
+
+    /// Fetches an artist page from the catalog.
+    async fn catalog_artist_page(&self, id: &str) -> Result<Artist> {
+        let body = self
+            .get(
+                &self.catalog(&format!("/artists/{}", escape::component(id))),
+                &[
+                    (
+                        "views",
+                        "top-songs,full-albums,live-albums,compilation-albums,singles",
+                    ),
+                    ("include[songs]", "artists,albums"),
+                    ALBUM_ARTISTS,
+                    ("extend", "artistBio"),
+                ],
+            )
+            .await?;
+        let answered: wire::Answer = wire::answer(&body);
+        answered
+            .data
+            .first()
+            .and_then(wire::artist)
+            .with_context(|| format!("cannot read the apple artist {id}"))
+    }
+
+    /// Fetches an artist page for a library artist, falling back to a pure library view if
+    /// the artist is not linked to Apple's catalog.
+    async fn library_artist_page(&self, artist_id: &str) -> Result<Artist> {
+        let body = self
+            .get(
+                &format!("/me/library/artists/{}", escape::component(artist_id)),
+                &[
+                    ("include", "catalog,albums"),
+                    ("include[library-albums]", "catalog,artists,tracks"),
+                    ALBUM_ARTISTS,
+                ],
+            )
+            .await?;
+        let answered: wire::Answer = wire::answer(&body);
+        let found = answered
+            .data
+            .first()
+            .with_context(|| format!("apple music has no artist {artist_id}"))?;
+        let Some(catalog_id) = wire::catalog(found).and_then(|catalog| catalog.id.as_str()) else {
+            return wire::library_artist_page(found)
+                .with_context(|| format!("cannot read the apple artist {artist_id}"));
+        };
+        let library_albums: Vec<Album> = found
+            .relationships
+            .albums
+            .rows()
+            .iter()
+            .filter_map(wire::library_album)
+            .collect();
+        let mut artist = self.catalog_artist_page(catalog_id).await?;
+        if artist.top_tracks.is_empty() {
+            artist.top_tracks = found
+                .relationships
+                .albums
+                .rows()
+                .iter()
+                .flat_map(|album| album.relationships.tracks.rows())
+                .filter_map(wire::library_song)
+                .collect();
+        }
+        artist.albums = wire::merge_albums(artist.albums, library_albums);
+        Ok(artist)
+    }
+
+    /// The library-only releases of an artist that the listener uploaded or synced, matched
+    /// either by catalog artist id or artist name.
+    pub(crate) async fn artist_library_albums(
+        &self,
+        artist_id: &str,
+        artist_name: &str,
+    ) -> Vec<Album> {
+        let albums = match self
+            .walk(ALBUMS, PAGE, ALBUMS_QUERY, wire::library_album)
+            .await
+        {
+            Ok(albums) => albums,
+            Err(error) => {
+                log::warn!("apple: cannot walk library albums for {artist_id}: {error}");
+                return Vec::new();
+            }
+        };
+        albums
+            .into_iter()
+            .filter(|album| {
+                Self::is_mine(&album.id)
+                    && (album
+                        .artist_refs
+                        .iter()
+                        .any(|artist| artist.id.as_deref() == Some(artist_id))
+                        || album.artists.eq_ignore_ascii_case(artist_name))
+            })
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -1142,8 +1246,23 @@ impl MusicApi for AppleClient {
             .collect())
     }
 
-    /// A catalog song, with its artists and album so both are somewhere to go.
+    /// A catalog song or library song, with its artists and album so both are somewhere to go.
     async fn track(&self, track_id: &str) -> Result<Track> {
+        if Self::is_mine(track_id) {
+            let body = self
+                .get(
+                    &format!("/me/library/songs/{}", escape::component(track_id)),
+                    SONGS_QUERY,
+                )
+                .await?;
+            let answered: wire::Answer = wire::answer(&body);
+            let found = answered
+                .data
+                .first()
+                .with_context(|| format!("apple music has no song {track_id}"))?;
+            return wire::library_song(found)
+                .with_context(|| format!("cannot read the apple song {track_id}"));
+        }
         let body = self
             .get(
                 &self.catalog(&format!("/songs/{}", escape::component(track_id))),
@@ -1428,16 +1547,22 @@ impl MusicApi for AppleClient {
                     .await
                     .map(|_| ())
             }
-            false => match self.mine(kind, id).await? {
-                Some(mine) => {
-                    self.delete(
-                        &format!("/me/library/{kind}/{}", escape::component(&mine)),
-                        &[],
-                    )
-                    .await
+            false => {
+                let mine = match Self::is_mine(id) {
+                    true => Some(id.to_owned()),
+                    false => self.mine(kind, id).await?,
+                };
+                match mine {
+                    Some(mine) => {
+                        self.delete(
+                            &format!("/me/library/{kind}/{}", escape::component(&mine)),
+                            &[],
+                        )
+                        .await
+                    }
+                    None => Ok(()),
                 }
-                None => Ok(()),
-            },
+            }
         }
     }
 
@@ -1446,9 +1571,10 @@ impl MusicApi for AppleClient {
             true => (
                 format!("/me/library/albums/{}", escape::component(album_id)),
                 vec![
-                    ("include", "tracks,catalog"),
+                    ("include", "tracks,catalog,artists"),
                     ALBUM_ARTISTS,
-                    ("include[songs]", "artists"),
+                    ("include[library-songs]", "catalog,artists,albums"),
+                    ("include[songs]", "artists,albums"),
                 ],
             ),
             false => (
@@ -1499,27 +1625,15 @@ impl MusicApi for AppleClient {
     }
 
     async fn artist(&self, artist_id: &str) -> Result<Artist> {
-        let id = self.catalog_artist(artist_id).await?;
-        let body = self
-            .get(
-                &self.catalog(&format!("/artists/{}", escape::component(&id))),
-                &[
-                    (
-                        "views",
-                        "top-songs,full-albums,live-albums,compilation-albums,singles",
-                    ),
-                    ("include[songs]", "artists,albums"),
-                    ALBUM_ARTISTS,
-                    ("extend", "artistBio"),
-                ],
-            )
-            .await?;
-        let answered: wire::Answer = wire::answer(&body);
-        answered
-            .data
-            .first()
-            .and_then(wire::artist)
-            .with_context(|| format!("cannot read the apple artist {id}"))
+        match Self::is_mine(artist_id) {
+            true => self.library_artist_page(artist_id).await,
+            false => {
+                let mut artist = self.catalog_artist_page(artist_id).await?;
+                let library_albums = self.artist_library_albums(artist_id, &artist.name).await;
+                artist.albums = wire::merge_albums(artist.albums, library_albums);
+                Ok(artist)
+            }
+        }
     }
 
     async fn artist_catalogue(&self, artist_id: &str, _known: &[Track]) -> Result<ArtistCatalogue> {
@@ -1527,9 +1641,10 @@ impl MusicApi for AppleClient {
     }
 
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
+        let id = self.catalog_artist(artist_id).await?;
         let body = self
             .get(
-                &self.catalog(&format!("/artists/{}", escape::component(artist_id))),
+                &self.catalog(&format!("/artists/{}", escape::component(&id))),
                 &[("extend", "artistBio")],
             )
             .await?;
@@ -1628,7 +1743,7 @@ impl MusicApi for AppleClient {
                 PAGE,
                 &[
                     ("include[songs]", "artists,albums"),
-                    ("include[library-songs]", "catalog"),
+                    ("include[library-songs]", "catalog,albums,artists"),
                 ],
                 None,
             )
@@ -1728,6 +1843,10 @@ impl MusicApi for AppleClient {
     }
 
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
+        let kind = match Self::is_mine(track_id) {
+            true => "library-songs",
+            false => "songs",
+        };
         self.post(
             &format!(
                 "/me/library/playlists/{}/tracks",
@@ -1735,7 +1854,7 @@ impl MusicApi for AppleClient {
             ),
             &[],
             Some(serde_json::json!({
-                "data": [{ "id": track_id, "type": "songs" }]
+                "data": [{ "id": track_id, "type": kind }]
             })),
         )
         .await
@@ -1762,11 +1881,13 @@ impl MusicApi for AppleClient {
             row = outline
                 .rows()
                 .find(|row| {
-                    row.attributes
+                    let params = row
+                        .attributes
                         .as_ref()
-                        .and_then(|attributes| attributes.play_params.as_ref())
-                        .and_then(|params| params.catalog_id.as_str())
-                        == Some(track_id)
+                        .and_then(|attributes| attributes.play_params.as_ref());
+                    params.and_then(|params| params.catalog_id.as_str()) == Some(track_id)
+                        || params.and_then(|params| params.id.as_str()) == Some(track_id)
+                        || row.id.as_str() == Some(track_id)
                 })
                 .and_then(|row| row.id.as_str().map(str::to_owned));
             if row.is_some() || outline.data.is_empty() || !outline.next.is_present() {
@@ -1901,6 +2022,9 @@ impl MusicApi for AppleClient {
         track_id: &str,
         _from: Option<&str>,
     ) -> Result<(Vec<Track>, Option<String>)> {
+        if Self::is_mine(track_id) {
+            return Ok((Vec::new(), None));
+        }
         let mut tracks = Vec::new();
         let station = match self.playing_station(track_id) {
             Some(station) => station,

@@ -2,8 +2,9 @@
 //!
 //! Every resource arrives in the same envelope: an `id`, a `type`, an `attributes` object and
 //! sometimes `relationships`. A library resource carries its own id (`i.`, `l.`, `r.`, `p.`)
-//! and, when it was asked for with `include=catalog`, the catalog resource it came from. Only
-//! the catalog id can be played or opened, so a library row that has none is dropped.
+//! and, when it was asked for with `include=catalog`, the catalog resource it came from.
+//! Library rows without a catalog id (uploads, iTunes-synced albums, and library-only artists)
+//! keep their library id (`i.`, `l.`, `r.`).
 //!
 //! An answer is read straight from its text into the shapes below, which keep only the fields a
 //! reader here looks at and borrow their strings from that text. A field Apple sends in some
@@ -13,6 +14,7 @@
 //! odd entry in a library of thousands from emptying a page.
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::fmt::{self, Write as _};
 use std::marker::PhantomData;
 use std::time::Duration;
@@ -201,6 +203,7 @@ pub struct Attributes<'a> {
 #[derive(Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", bound(deserialize = "'de: 'a"))]
 pub struct PlayParams<'a> {
+    pub id: Leaf<'a>,
     pub catalog_id: Leaf<'a>,
 }
 
@@ -775,25 +778,67 @@ pub fn playlist_track(row: &Resource) -> Option<Track> {
     }
 }
 
-/// One library song, which plays through the catalog id its play parameters name. A library row
-/// without one is an upload, and this path has no way to play it. A row whose catalog
-/// relationship was asked for and came back empty names a song Apple has since pulled: the
-/// play parameters still carry its id, but web playback refuses it, so it is listed unplayable.
+/// One library song, which plays through the catalog id its play parameters name or its library
+/// id for uploads. A row whose catalog relationship was asked for and came back empty names a
+/// song Apple has since pulled: the play parameters still carry its id, but web playback refuses
+/// it, so it is listed unplayable.
 pub fn library_song(value: &Resource) -> Option<Track> {
     let attributes = value.attributes.as_ref();
-    let id = attributes
-        .and_then(|attributes| attributes.play_params.as_ref())
+    let params = attributes.and_then(|attributes| attributes.play_params.as_ref());
+    let catalog_id = params
         .and_then(|params| params.catalog_id.as_str())
-        .or_else(|| catalog(value)?.id.as_str())?
-        .to_owned();
-    // The catalog copy is richer when it came along. Apple puts no date on a library song row,
-    // so the date is the library album's when that was included: the day the first song of
-    // that album joined the library, which is also the order Apple itself sorts songs by.
+        .or_else(|| catalog(value)?.id.as_str());
+    let id = catalog_id.or_else(|| value.id.as_str())?.to_owned();
     let mut track = match catalog(value) {
-        Some(found) => song_as(found, id)?,
+        Some(found) => {
+            let mut track = song_as(found, id)?;
+            if let Some(own) = attributes {
+                if let Some(name) = text(&own.name) {
+                    track.name = name;
+                }
+                if let Some(artists) = text(&own.artist_name) {
+                    track.artists = artists;
+                }
+                if let Some(album) = text(&own.album_name) {
+                    track.album = album;
+                }
+                if let Some(cover) = artwork(own, ART) {
+                    track.cover = Some(cover);
+                }
+                if own.track_number.is_present() {
+                    track.track_number = number(&own.track_number);
+                }
+                if own.disc_number.is_present() {
+                    track.disc_number = number(&own.disc_number);
+                }
+                let library_album_id = value
+                    .relationships
+                    .albums
+                    .rows()
+                    .first()
+                    .and_then(|album| album.id.as_str());
+                let catalog_album_name = found
+                    .attributes
+                    .as_ref()
+                    .and_then(|attributes| attributes.album_name.as_str());
+                let own_album_name = own.album_name.as_str();
+                if let Some(library_album_id) = library_album_id
+                    && (own_album_name.is_some_and(|name| catalog_album_name != Some(name))
+                        || track.album_id.is_none())
+                {
+                    track.album_id = Some(library_album_id.to_owned());
+                }
+                if track.artist_refs.iter().all(|artist| artist.id.is_none()) {
+                    track.artist_refs = artist_refs(value, own);
+                }
+            }
+            track
+        }
         None => {
             let mut track = song_as(value, id)?;
-            track.playable = value.relationships.catalog.data.is_none();
+            if catalog_id.is_some() && value.relationships.catalog.data.is_some() {
+                track.playable = false;
+            }
             track
         }
     };
@@ -838,16 +883,21 @@ pub fn album(value: &Resource) -> Option<Album> {
     })
 }
 
-/// One library album, which opens through the catalog release it came from.
+/// One library album, which opens through the catalog release it came from or its library id
+/// when not in the catalog.
 pub fn library_album(value: &Resource) -> Option<Album> {
-    let found = catalog(value)?;
-    let id = found.id.as_str()?;
-    let mut album = match album(found) {
-        Some(album) => album,
-        None => Album {
-            id: id.to_owned(),
-            ..album(value)?
-        },
+    let mut album = match catalog(value) {
+        Some(found) => {
+            let id = found.id.as_str()?;
+            match album(found) {
+                Some(album) => album,
+                None => Album {
+                    id: id.to_owned(),
+                    ..album(value)?
+                },
+            }
+        }
+        None => album(value)?,
     };
     album.added_at = value
         .attributes
@@ -910,20 +960,32 @@ pub fn library_playlist(value: &Resource, owner: &str) -> Option<Playlist> {
     })
 }
 
-/// One library artist. Only the catalog counterpart has a picture, and only its id can open a
-/// page, so an artist without one is left out.
+/// One library artist, read from its catalog counterpart when present or from the library row
+/// itself.
 pub fn saved_artist(value: &Resource) -> Option<SavedArtist> {
-    let found = catalog(value)?;
-    let attributes = found.attributes.as_ref()?;
-    Some(SavedArtist {
-        id: found.id.as_str()?.to_owned(),
-        name: text(&attributes.name).or_else(|| text(&value.attributes.as_ref()?.name))?,
-        cover: artwork(attributes, ART),
-        added_at: value
-            .attributes
-            .as_ref()
-            .and_then(|attributes| moment(attributes.date_added.as_str())),
-    })
+    match catalog(value) {
+        Some(found) => {
+            let attributes = found.attributes.as_ref()?;
+            Some(SavedArtist {
+                id: found.id.as_str()?.to_owned(),
+                name: text(&attributes.name).or_else(|| text(&value.attributes.as_ref()?.name))?,
+                cover: artwork(attributes, ART),
+                added_at: value
+                    .attributes
+                    .as_ref()
+                    .and_then(|attributes| moment(attributes.date_added.as_str())),
+            })
+        }
+        None => {
+            let attributes = value.attributes.as_ref()?;
+            Some(SavedArtist {
+                id: value.id.as_str()?.to_owned(),
+                name: text(&attributes.name)?,
+                cover: artwork(attributes, ART),
+                added_at: moment(attributes.date_added.as_str()),
+            })
+        }
+    }
 }
 
 /// A catalog artist page, with whatever its views brought along.
@@ -948,11 +1010,58 @@ pub fn artist(value: &Resource) -> Option<Artist> {
     })
 }
 
+/// A library artist page built from the albums and tracks the listener has by them.
+pub fn library_artist_page(value: &Resource) -> Option<Artist> {
+    let attributes = value.attributes.as_ref()?;
+    let albums = newest_first(
+        value
+            .relationships
+            .albums
+            .rows()
+            .iter()
+            .filter_map(library_album)
+            .collect(),
+    );
+    let top_tracks = value
+        .relationships
+        .albums
+        .rows()
+        .iter()
+        .flat_map(|album| album.relationships.tracks.rows())
+        .filter_map(library_song)
+        .collect();
+    let cover_large = artwork(attributes, HERO).or_else(|| {
+        albums
+            .iter()
+            .find_map(|album| album.cover_large.as_ref().or(album.cover.as_ref()))
+            .cloned()
+    });
+    Some(Artist {
+        name: text(&attributes.name)?,
+        cover_large,
+        biography: None,
+        monthly_listeners: None,
+        top_tracks,
+        albums,
+    })
+}
+
 /// Orders releases by release date, newest first, keeping the order Apple gave for releases on
 /// the same day.
 pub fn newest_first(mut albums: Vec<Album>) -> Vec<Album> {
     albums.sort_by(|a, b| b.release_date.cmp(&a.release_date));
     albums
+}
+
+/// Combines catalog and library releases, deduplicating by id and ordering newest first.
+pub fn merge_albums(mut albums: Vec<Album>, additions: Vec<Album>) -> Vec<Album> {
+    let mut seen: HashSet<String> = albums.iter().map(|album| album.id.clone()).collect();
+    albums.extend(
+        additions
+            .into_iter()
+            .filter(|album| seen.insert(album.id.clone())),
+    );
+    newest_first(albums)
 }
 
 pub fn artist_profile(value: &Resource) -> Option<ArtistProfile> {
@@ -1039,14 +1148,16 @@ pub fn pin_uri(kind: PinTargetKind, id: &str) -> Option<String> {
 }
 
 /// One library album, artist or playlist as an unpinned pin target, read with `catalog` as the
-/// catalog item behind it. An album or artist needs that item, whose id is the one Sonora opens.
+/// catalog item behind it when present.
 fn pin_target(value: &Resource, catalog: Option<&Resource>, owner: &str) -> Option<PinTarget> {
     let kind = value.kind.as_str()?;
     let attributes = value.attributes.as_ref()?;
     let (kind, id, subtitle) = match kind {
         "library-albums" | "albums" => (
             PinTargetKind::Album,
-            catalog.and_then(|found| found.id.as_str()),
+            catalog
+                .and_then(|found| found.id.as_str())
+                .or_else(|| value.id.as_str()),
             text(&attributes.artist_name).unwrap_or_default(),
         ),
         "library-playlists" | "playlists" => (
@@ -1056,7 +1167,9 @@ fn pin_target(value: &Resource, catalog: Option<&Resource>, owner: &str) -> Opti
         ),
         "library-artists" | "artists" => (
             PinTargetKind::Artist,
-            catalog.and_then(|found| found.id.as_str()),
+            catalog
+                .and_then(|found| found.id.as_str())
+                .or_else(|| value.id.as_str()),
             String::new(),
         ),
         _ => return None,
@@ -1238,13 +1351,18 @@ mod tests {
     }
 
     #[test]
-    fn an_upload_with_no_catalog_id_is_dropped() {
+    fn an_upload_with_no_catalog_id_keeps_its_library_id() {
         let row = serde_json::json!({
             "id": "i.abc123",
             "type": "library-songs",
-            "attributes": { "name": "Home Recording" }
+            "attributes": {
+                "name": "Home Recording",
+                "playParams": { "id": "i.abc123", "isLibrary": true }
+            }
         });
-        assert!(library_song(&read(&row)).is_none());
+        let track = library_song(&read(&row)).unwrap();
+        assert_eq!(track.id.as_deref(), Some("i.abc123"));
+        assert!(track.playable);
     }
 
     /// The library row carries the date, the catalog row everything else.
