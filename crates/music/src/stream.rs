@@ -35,9 +35,10 @@ pub const PREROLL: usize = 256 * 1024;
 /// output for the rest of the session.
 const PATIENCE: Duration = Duration::from_secs(20);
 
-/// The most one track may spool. A long album side is tens of megabytes, so this is only a
-/// ceiling on what a wrong `Content-Length` or an endless body can cost.
-const CEILING: usize = 256 * 1024 * 1024;
+/// The most one track may spool. 24-bit FLAC runs to 35 MB a minute at 96 kHz and 70 MB at
+/// 192 kHz, so this leaves room for an hour-long hi-res track and is otherwise only a ceiling
+/// on what a wrong `Content-Length` or an endless body can cost.
+const CEILING: usize = 2 * 1024 * 1024 * 1024;
 
 /// What a provider does to the body of one track: as it arrives, and before it is served.
 ///

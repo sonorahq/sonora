@@ -19,7 +19,7 @@ As the case with any network request, hosting and network infrastructure (Cloudf
 
 ## Streaming and third-party services
 
-When you use Spotify, YouTube Music, lyrics providers, or other online integrations, Sonora communicates with those third-party services as necessary to provide the requested functionality.
+When you use Spotify, Apple Music, YouTube Music, Deezer, Tidal, lyrics providers, or other online integrations, Sonora communicates with those third-party services as necessary to provide the requested functionality.
 
 Data handled by those services is subject to their respective privacy policies and terms.
 
@@ -27,7 +27,7 @@ Data handled by those services is subject to their respective privacy policies a
 
 Authentication credentials used by Sonora are stored locally on the user's device.
 
-Sonora does not transmit Spotify or YouTube Music credentials to Sonora-operated servers.
+Sonora does not transmit Spotify, Apple Music, YouTube Music, Deezer, Tidal, or other provider credentials to Sonora-operated servers.
 
 Credentials are sent only to the relevant third-party service when required for authentication or API requests.
 

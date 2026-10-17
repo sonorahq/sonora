@@ -24,7 +24,7 @@ use serde_json::value::RawValue;
 
 use crate::{
     Album, Artist, ArtistProfile, ArtistRef, PinTarget, PinTargetKind, Playlist, ReleaseType,
-    SavedArtist, Track,
+    SavedArtist, Track, calendar,
 };
 
 /// The size artwork is asked to render at, and the larger one for a page header.
@@ -691,49 +691,7 @@ pub fn artwork(attributes: &Attributes, size: u32) -> Option<String> {
 /// An ISO-8601 stamp as seconds since the epoch. Apple writes them two ways, `2026-09-15` and
 /// `2026-09-15T12:03:39Z`, and only the date part matters for sorting a library.
 pub fn moment(stamp: Option<&str>) -> Option<i64> {
-    let stamp = stamp?;
-    let (date, time) = match stamp.split_once('T') {
-        Some((date, time)) => (date, time),
-        None => (stamp, ""),
-    };
-    let mut parts = date.split('-');
-    let year: i64 = parts.next()?.parse().ok()?;
-    let month: i64 = parts.next().unwrap_or("1").parse().unwrap_or(1);
-    let day: i64 = parts.next().unwrap_or("1").parse().unwrap_or(1);
-    let (time, zone) = zone_of(time.trim_end_matches('Z'));
-    let mut clock = time.split(':');
-    let hour: i64 = clock.next().unwrap_or("0").parse().unwrap_or(0);
-    let minute: i64 = clock.next().unwrap_or("0").parse().unwrap_or(0);
-    let second: i64 = clock
-        .next()
-        .and_then(|second| second.split('.').next())
-        .unwrap_or("0")
-        .parse()
-        .unwrap_or(0);
-    Some(days(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second - zone)
-}
-
-fn zone_of(time: &str) -> (&str, i64) {
-    let Some(at) = time.rfind(['+', '-']).filter(|&at| at > 0) else {
-        return (time, 0);
-    };
-    let (clock, zone) = time.split_at(at);
-    let sign = if zone.starts_with('-') { -1i64 } else { 1 };
-    let zone = zone.trim_start_matches(['+', '-']);
-    let mut parts = zone.split(':');
-    let hours: i64 = parts.next().unwrap_or("0").parse().unwrap_or(0);
-    let minutes: i64 = parts.next().unwrap_or("0").parse().unwrap_or(0);
-    (clock, sign * (hours * 3_600 + minutes * 60))
-}
-
-/// Days from the epoch to a civil date, by Howard Hinnant's algorithm.
-fn days(year: i64, month: i64, day: i64) -> i64 {
-    let year = year - i64::from(month <= 2);
-    let era = year.div_euclid(400);
-    let yoe = year - era * 400;
-    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
+    calendar::seconds(stamp?)
 }
 
 /// The artists of a resource. Apple only names them in one string unless the relationship was

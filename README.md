@@ -60,7 +60,7 @@ Stream from your favorite services and play local files — all in one **native*
 
 ## Features
 
-- **Apple Music, Spotify, YouTube Music, Deezer, Subsonic/Navidrome** and local playback
+- **Apple Music, Spotify, YouTube Music, Deezer, Tidal, Subsonic/Navidrome** and local playback
 - Gapless playback, audio normalization, shuffle, sleep timer
 - Synced/karaoke lyrics, background vocals, and romanization
 - Scrobbling with LastFM, ListenBrainz, LibreFM, and Maloja

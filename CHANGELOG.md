@@ -24,6 +24,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Copy link tells you it worked. Where there is no link to copy, the entry is greyed out and
   says why.
 - Sonora tells you when a library scan you started has finished.
+- Tidal as a provider: sign in with a code on link.tidal.com, then play your favorites,
+  playlists, mixes and search in up to 24-bit FLAC, whatever your plan includes.
 
 ### Changed
 

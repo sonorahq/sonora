@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::{Album, ArtistRef, Playlist, ReleaseType, SavedArtist, Track, UserProfile};
+use crate::{Album, ArtistRef, Playlist, ReleaseType, SavedArtist, Track, UserProfile, calendar};
 
 /// A track id is a numeric string. Zero and negative ids are user uploads, which the
 /// streaming endpoints treat differently; the sign stays in the string.
@@ -58,43 +58,12 @@ fn when(value: &Value, keys: &[&str]) -> Option<i64> {
     if let Some(at) = number(value, keys) {
         return Some(at as i64);
     }
-    keys.iter()
-        .find_map(|key| value.get(*key).and_then(Value::as_str).and_then(datetime))
-}
-
-fn datetime(stamp: &str) -> Option<i64> {
-    let stamp = stamp.trim();
-    let (date, time) = stamp
-        .split_once('T')
-        .or_else(|| stamp.split_once(' '))
-        .unwrap_or((stamp, ""));
-    let mut parts = date.split('-');
-    let year: i64 = parts.next()?.parse().ok()?;
-    let month: i64 = parts.next()?.parse().ok()?;
-    let day: i64 = parts.next()?.parse().ok()?;
-    let mut clock = time.trim_end_matches('Z').split(':');
-    let hour: i64 = clock
-        .next()
-        .filter(|part| !part.is_empty())
-        .and_then(|hour| hour.parse().ok())
-        .unwrap_or(0);
-    let minute: i64 = clock.next().unwrap_or("0").parse().unwrap_or(0);
-    let second: i64 = clock
-        .next()
-        .and_then(|second| second.split('.').next())
-        .unwrap_or("0")
-        .parse()
-        .unwrap_or(0);
-    Some(days(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second)
-}
-
-fn days(year: i64, month: i64, day: i64) -> i64 {
-    let year = year - i64::from(month <= 2);
-    let era = year.div_euclid(400);
-    let yoe = year - era * 400;
-    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
+    keys.iter().find_map(|key| {
+        value
+            .get(*key)
+            .and_then(Value::as_str)
+            .and_then(calendar::seconds)
+    })
 }
 
 /// The signed-in account from the `USER` of `deezer.getUserData`. A refused arl answers user
