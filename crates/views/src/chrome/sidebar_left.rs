@@ -1,15 +1,16 @@
 use std::rc::Rc;
 
+use i18n::t;
 use ui::{
-    ActiveTheme as _, Button, Card, Deck, DraggedPin, Edge, MenuItem, Panel, Picker, Pin,
-    Pinnable as _, Popup, SNUG, Scroller, Shield, Side, Spot, Tabs, Text, Vacancy, drop_gap,
-    drop_marker,
+    ActiveTheme as _, Button, Card, Deck, DraggedPin, Edge, Menu, MenuItem, Panel, Picker, Pin,
+    Pinnable as _, Popover, Popup, SNUG, Scroller, Shield, Side, Spot, Tabs, Text, Vacancy,
+    drop_gap, drop_marker,
 };
 
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, DragMoveEvent, ElementId, Entity, Hsla, MouseButton, MouseDownEvent,
-    Pixels, Point, Render, ScrollHandle, svg,
+    Pixels, Point, Render, ScrollHandle, SharedString, svg,
 };
 use gpui::{Window, div, px};
 use router::{
@@ -22,32 +23,23 @@ use crate::shared::menus::{ItemMenu, item_menu};
 /// The one drag list the pinned section keeps, so a pin dropped anywhere in it lands in order.
 const PINS: &str = "sidebar-pins";
 
-const NAV: [(Option<NavEntry>, &str, Destination); 6] = [
-    (Some(NavEntry::Home), "icons/house.svg", Destination::Home),
+const NAV: [(NavEntry, &str, Destination); 5] = [
+    (NavEntry::Home, "icons/house.svg", Destination::Home),
+    (NavEntry::Search, "icons/search.svg", Destination::Search),
     (
-        Some(NavEntry::Search),
-        "icons/search.svg",
-        Destination::Search,
-    ),
-    (
-        Some(NavEntry::Library),
+        NavEntry::Library,
         "icons/library-big.svg",
         Destination::Library(LibraryTab::Songs),
     ),
     (
-        Some(NavEntry::Local),
+        NavEntry::Local,
         "icons/file-music.svg",
         Destination::Local(LibraryTab::Songs),
     ),
     (
-        Some(NavEntry::History),
+        NavEntry::History,
         "icons/rotate-ccw-clock.svg",
         Destination::History,
-    ),
-    (
-        None,
-        "icons/settings.svg",
-        Destination::Settings(SettingsTab::General),
     ),
 ];
 
@@ -262,7 +254,7 @@ impl SidebarLeft {
             || self.library.read(cx).stocked(Shelf::Streaming);
         let mut rows = Vec::new();
         for (index, (entry, _, destination)) in NAV.iter().enumerate() {
-            if entry.is_some_and(|entry| !self.settings.read(cx).nav_shown(entry.id())) {
+            if !self.settings.read(cx).nav_shown(entry.id()) {
                 continue;
             }
             let group = Group::of(destination);
@@ -274,6 +266,14 @@ impl SidebarLeft {
                 rows.push(self.tabs(group, cx));
             }
         }
+        if self
+            .settings
+            .read(cx)
+            .nav_shown(NavEntry::ProviderSwitcher.id())
+        {
+            rows.push(self.provider_switcher(cx));
+        }
+        rows.push(self.settings_row(cx));
         rows
     }
 
@@ -537,7 +537,6 @@ impl SidebarLeft {
         let theme = *cx.theme();
         let accent = theme.sidebar_accent;
         let (entry, icon, destination) = NAV[index].clone();
-        let key = entry.map_or("nav-settings", NavEntry::key);
         let current = self.trail.read(cx).current();
         let group = Group::of(&destination);
         let active = match group {
@@ -548,7 +547,7 @@ impl SidebarLeft {
             true => theme.foreground,
             false => theme.muted_foreground,
         };
-        let row = nav_row(index, key, tint, accent).icon(icon);
+        let row = nav_row(index, i18n::lookup(entry.key(), None), tint, accent).icon(icon);
 
         match group {
             Some(group) => row
@@ -564,6 +563,29 @@ impl SidebarLeft {
         .into_any_element()
     }
 
+    fn settings_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
+        let accent = theme.sidebar_accent;
+        let current = self.trail.read(cx).current();
+        let destination = Destination::Settings(SettingsTab::General);
+        let active = destination.same_section(&current);
+        let tint = match active {
+            true => theme.foreground,
+            false => theme.muted_foreground,
+        };
+
+        nav_row(
+            "nav-settings",
+            i18n::lookup("nav-settings", None),
+            tint,
+            accent,
+        )
+        .icon("icons/settings.svg")
+        .when(active, |button| button.bg(accent))
+        .on_click(move |_, _, cx| navigate(destination.clone(), cx))
+        .into_any_element()
+    }
+
     /// The tabs under an expanded group.
     fn tabs(&self, group: Group, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
@@ -576,7 +598,7 @@ impl SidebarLeft {
                 false => theme.muted_foreground,
             };
 
-            nav_row(id, key, tint, accent)
+            nav_row(id, i18n::lookup(key, None), tint, accent)
                 .flex_1()
                 .when(chosen, |button| button.bg(accent))
                 .on_click(move |_, _, cx| navigate(destination.clone(), cx))
@@ -595,6 +617,64 @@ impl SidebarLeft {
             )),
         }
         .into_any_element()
+    }
+
+    fn provider_switcher(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
+        let accent = theme.sidebar_accent;
+        let tint = theme.muted_foreground;
+
+        let session = self.session.read(cx);
+        let active_name = session.provider_name();
+        let active_slug = session.provider_slug();
+
+        let (label, logo): (SharedString, &'static str) = match (active_name, active_slug) {
+            (Some(name), Some(slug)) => (name.into(), crate::shared::provider_logo(slug)),
+            _ => (t!("settings-provider-none"), "icons/music.svg"),
+        };
+
+        let button = nav_row("nav-provider-switcher", label, tint, accent)
+            .icon(logo)
+            .trailing("icons/chevrons-up-down.svg")
+            .tooltip("nav-switch-provider")
+            .w_full();
+
+        let connected: Vec<_> = self.session.read(cx).connected().collect();
+        let mut items = Vec::new();
+        for account in connected {
+            let slug = account.slug;
+            let name = account.name;
+            let active = account.active;
+            let session = self.session.clone();
+            items.push(
+                MenuItem::new(format!("switch-provider-{slug}"), name)
+                    .icon(crate::shared::provider_logo(slug))
+                    .checked(active)
+                    .on_click(move |_, _, cx| {
+                        session.update(cx, |session, cx| session.switch(slug, cx));
+                    }),
+            );
+        }
+
+        if !items.is_empty() {
+            items.push(MenuItem::separator("provider-switcher-sep"));
+        }
+
+        items.push(
+            MenuItem::new("manage-providers", t!("nav-manage-providers"))
+                .icon("icons/settings.svg")
+                .on_click(move |_, _, cx| {
+                    navigate(Destination::Settings(SettingsTab::General), cx);
+                }),
+        );
+
+        let menu = Menu::new("sidebar-provider-menu").items(items);
+
+        Popover::new("sidebar-provider-switcher", self.popovers.clone())
+            .button(button)
+            .menu(menu)
+            .commands()
+            .into_any_element()
     }
 
     fn persist(&self, cx: &mut Context<Self>) {
@@ -782,10 +862,15 @@ fn chevron(open: bool) -> &'static str {
     }
 }
 
-fn nav_row(id: impl Into<ElementId>, key: &'static str, tint: Hsla, accent: Hsla) -> Button {
+fn nav_row(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    tint: Hsla,
+    accent: Hsla,
+) -> Button {
     Button::new(id)
         .ghost()
-        .label(i18n::lookup(key, None))
+        .label(label)
         .tint(tint)
         .gap_2p5()
         .justify_start()

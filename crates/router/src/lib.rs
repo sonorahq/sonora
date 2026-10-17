@@ -23,16 +23,18 @@ pub enum NavEntry {
     Library,
     History,
     Local,
+    ProviderSwitcher,
     Pins,
 }
 
 impl NavEntry {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Home,
         Self::Search,
         Self::Library,
         Self::History,
         Self::Local,
+        Self::ProviderSwitcher,
         Self::Pins,
     ];
 
@@ -43,6 +45,7 @@ impl NavEntry {
             Self::Library => "library",
             Self::History => "history",
             Self::Local => "local",
+            Self::ProviderSwitcher => "provider-switcher",
             Self::Pins => "sidebar-pins",
         }
     }
@@ -54,6 +57,7 @@ impl NavEntry {
             Self::Library => "nav-library",
             Self::History => "nav-history",
             Self::Local => "nav-local",
+            Self::ProviderSwitcher => "nav-provider-switcher",
             Self::Pins => "nav-pinned",
         }
     }
