@@ -231,8 +231,7 @@ impl RenderOnce for Modal {
                                 .min_h_0()
                                 .overflow_hidden()
                                 .child(
-                                    middle_scroll(div(), &scroller)
-                                        .id(body_id.clone())
+                                    middle_scroll(div().id(body_id.clone()), &scroller)
                                         .flex()
                                         .flex_col()
                                         .flex_1()

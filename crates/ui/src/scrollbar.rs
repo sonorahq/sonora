@@ -312,6 +312,20 @@ impl Scrollbar {
         self.target().offset()
     }
 
+    /// Moves the region to `offset` while a pointer drag is scrolling it.
+    ///
+    /// The offset is clamped to the region's current hidden height and keeps the
+    /// glide, follow and scroll-guard state in sync with wheel scrolling.
+    pub fn drag_to(&mut self, offset: Pixels, cx: &mut Context<Self>) {
+        let hidden = self.maximum.unwrap_or_else(|| self.target().hidden());
+        let offset = offset.clamp(Pixels::ZERO, hidden);
+        if offset == self.offset() {
+            return;
+        }
+        self.target().set_offset(offset);
+        self.moved(offset, cx);
+    }
+
     /// The height of the part on screen.
     pub fn viewport(&self) -> Pixels {
         self.target().viewport()

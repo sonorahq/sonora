@@ -31,6 +31,12 @@ use crate::shared::pins::Pinned as _;
 
 const QUEUE: &str = "queue";
 const BULLET: SharedString = SharedString::new_static("·");
+const EDGE_DWELL: std::time::Duration = std::time::Duration::from_secs(1);
+const EDGE_HZ: u32 = 60;
+const EDGE_FRAME: std::time::Duration =
+    std::time::Duration::from_nanos(1_000_000_000 / EDGE_HZ as u64);
+// row slices per frame once the dwell passes
+const EDGE_STEP: f32 = 6.;
 const FADE: f32 = 96.;
 const REST: f32 = FADE * 0.75;
 const TAIL_ROWS: usize = 2;
@@ -285,6 +291,13 @@ impl QueuePosition {
     }
 }
 
+/// A dragged pin held at one end of the queue, waiting out the dwell before the list scrolls.
+#[derive(Clone, Copy)]
+struct EdgeHold {
+    edge: Edge,
+    since: std::time::Instant,
+}
+
 pub(crate) struct Aside {
     queue: Entity<Queue>,
     playback: Entity<Playback>,
@@ -302,6 +315,8 @@ pub(crate) struct Aside {
     context_menu: Option<ContextMenuState>,
     track_menu: ItemMenu,
     drop_gap: Option<usize>,
+    edge_hold: Option<EdgeHold>,
+    edge_task: Option<Task<()>>,
     scroll: UniformListScrollHandle,
     scrollbar: Entity<Scrollbar>,
     past_len: usize,
@@ -405,6 +420,8 @@ impl Aside {
             context_menu: None,
             track_menu: ItemMenu::new(playlist_scrollbar, cx),
             drop_gap: None,
+            edge_hold: None,
+            edge_task: None,
             scroll,
             scrollbar,
             past_len: 0,
@@ -730,6 +747,71 @@ impl Aside {
             (None, gap) => self.enqueue(&dragged.pin, gap, cx),
         }
         cx.notify();
+    }
+
+    /// Tracks a dragged pin held against the queue's top or bottom edge. The dwell restarts
+    /// whenever the pin crosses to the other edge or back into the middle.
+    fn hold_edge(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let zone = cx.theme().metrics.list_row;
+        let edge = match position.y {
+            y if y - bounds.origin.y < zone => Some(Edge::Above),
+            y if bounds.origin.y + bounds.size.height - y < zone => Some(Edge::Below),
+            _ => None,
+        };
+        if self.edge_hold.map(|hold| hold.edge) != edge {
+            self.edge_hold = edge.map(|edge| EdgeHold {
+                edge,
+                since: std::time::Instant::now(),
+            });
+        }
+        if self.edge_hold.is_some() {
+            self.drive_edge(cx);
+        }
+    }
+
+    /// Scrolls the queue toward the held edge once the dwell has passed, a slice of a row per
+    /// frame, until the pin leaves the edge, the drag ends, or the panel switches away.
+    fn drive_edge(&mut self, cx: &mut Context<Self>) {
+        if self.edge_task.is_some() {
+            return;
+        }
+        self.edge_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(EDGE_FRAME).await;
+                let run = this
+                    .update(cx, |this, cx| {
+                        let run = match &this.edge_hold {
+                            Some(hold) if this.tab == SideTab::Queue && cx.has_active_drag() => {
+                                if hold.since.elapsed() >= EDGE_DWELL {
+                                    let step = cx.theme().metrics.list_row / EDGE_STEP;
+                                    let offset = this.scrollbar.read(cx).offset();
+                                    let offset = match hold.edge {
+                                        Edge::Above => offset - step,
+                                        Edge::Below => offset + step,
+                                    };
+                                    this.scrollbar.update(cx, |bar, cx| bar.drag_to(offset, cx));
+                                }
+                                true
+                            }
+                            _ => false,
+                        };
+                        if !run {
+                            this.edge_hold = None;
+                            this.edge_task = None;
+                        }
+                        run
+                    })
+                    .unwrap_or(false);
+                if !run {
+                    break;
+                }
+            }
+        }));
     }
 
     fn dismiss_menu(&mut self, cx: &mut Context<Self>) {
@@ -1938,6 +2020,11 @@ impl Render for Aside {
                         this.on_drop(
                             cx.listener(|this, dragged: &DraggedPin, _, cx| this.land(dragged, cx)),
                         )
+                        .on_drag_move(cx.listener(
+                            |this, event: &DragMoveEvent<DraggedPin>, _, cx| {
+                                this.hold_edge(event.bounds, event.event.position, cx);
+                            },
+                        ))
                     })
                     .when(self.tab == SideTab::Lyrics, |this| {
                         this.child(self.verses(window, cx)).child(self.witness())

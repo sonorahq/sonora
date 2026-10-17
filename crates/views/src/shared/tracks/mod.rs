@@ -612,6 +612,10 @@ impl TableSource for TrackSource {
         self.provider.tracks(cx).get(row)?.pin()
     }
 
+    fn pin_field(&self) -> Option<TrackField> {
+        Some(TrackField::Title)
+    }
+
     fn cell(&self, cell: Cell<TrackField>, cx: &mut App) -> AnyElement {
         let muted = cx.theme().muted_foreground;
 

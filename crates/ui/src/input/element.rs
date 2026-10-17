@@ -307,6 +307,8 @@ impl Render for Input {
         });
 
         div()
+            .id(&self.focus_handle)
+            .role(gpui::Role::TextInput)
             .flex()
             .flex_1()
             .items_center()

@@ -52,6 +52,7 @@ pub struct Cell<F> {
     pub align: TextAlign,
     pub display: usize,
     pub row: usize,
+    pub pin: Option<Pin>,
 }
 
 impl<F> Cell<F> {
@@ -106,6 +107,13 @@ pub trait TableSource: 'static {
     fn context_menu_will_open(&self, _rows: &[usize], _cx: &App) {}
 
     fn pin(&self, _row: usize, _cx: &App) -> Option<Pin> {
+        None
+    }
+
+    /// The field whose cell carries the row's drag when it belongs to one column rather
+    /// than the whole row. Consulted only while touch-mode drag is on; `None` leaves the
+    /// drag on the row itself.
+    fn pin_field(&self) -> Option<Self::Field> {
         None
     }
 
@@ -1055,6 +1063,8 @@ impl<S: TableSource> TableState<S> {
                 let tail = display + 1 == count;
                 let selected = marked.contains(&row);
                 let playing = self.delegate.source.playing(row, cx);
+                let pin = self.delegate.source.pin(row, cx);
+                let pin_field = self.delegate.source.pin_field();
                 let cells: Vec<AnyElement> = (0..self.delegate.columns.len())
                     .map(|ix| {
                         let column = &self.delegate.columns[ix];
@@ -1065,6 +1075,10 @@ impl<S: TableSource> TableState<S> {
                             align: column.spec.align,
                             display,
                             row,
+                            pin: match pin_field {
+                                Some(field) if field == column.spec.field => pin.clone(),
+                                _ => None,
+                            },
                         };
                         self.delegate.source.cell(cell, cx)
                     })
@@ -1092,7 +1106,9 @@ impl<S: TableSource> TableState<S> {
                     .when(!selected, |this| {
                         this.hover(move |style| style.bg(theme.table_hover))
                     })
-                    .when_some(self.delegate.source.pin(row, cx), Pinnable::pin)
+                    .when(pin_field.is_none(), |this| {
+                        this.when_some(pin, Pinnable::pin)
+                    })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, event: &MouseDownEvent, window, cx| {
