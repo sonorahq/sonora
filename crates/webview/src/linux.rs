@@ -33,6 +33,8 @@ const SETUP: Duration = Duration::from_secs(5);
 /// Where the kernel lists every GPU with a link to the driver bound to it. One of the sysfs
 /// subtrees a Flatpak sandbox shares, unlike `/sys/module` or `/proc/driver`.
 const DRM: &str = "/sys/class/drm";
+/// The first WebKitGTK `(major, minor)` whose DMA-BUF renderer runs the web process out of memory.
+const RUNAWAY_DMABUF: (c_uint, c_uint) = (2, 54);
 
 /// Firefox on Linux. WebKitGTK's own agent claims Safari on X11, a browser that does not exist,
 /// and Google answers a browser it cannot place with "this browser may not be secure".
@@ -100,6 +102,8 @@ macro_rules! symbols {
 }
 
 symbols! {
+    webkit_get_major_version: unsafe extern "C" fn() -> c_uint,
+    webkit_get_minor_version: unsafe extern "C" fn() -> c_uint,
     gdk_set_allowed_backends: unsafe extern "C" fn(*const c_char),
     gdk_display_get_default: unsafe extern "C" fn() -> Ptr,
     g_type_name_from_instance: unsafe extern "C" fn(Ptr) -> *const c_char,
@@ -566,13 +570,11 @@ fn run(api: &'static Api, host: &'static Host) {
     // XWayland otherwise, so the sign-in window never depends on an XWayland being present. A
     // GDK_BACKEND in the environment outranks this list, which is fine: either name works.
     unsafe { (api.gdk_set_allowed_backends)(c"wayland,x11".as_ptr()) };
-    // WebKit's DMA-BUF renderer hands the compositor buffers the NVIDIA driver allocates, and
-    // the compositor answers with a protocol error that takes the whole process down. WebKit
-    // upstream declined to detect the driver itself (bug 262607), so every embedder does. Shared
-    // memory is slower and only ever paints a sign-in page. A value the user exported wins.
     // SAFETY: nothing else in the process reads this variable, and no other thread is in GTK yet.
-    if nvidia() && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-        log::debug!("webview: nvidia driver loaded, disabling the dmabuf renderer");
+    if let Some(why) = shared_memory_only(api)
+        && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
+    {
+        log::debug!("webview: {why}, disabling the dmabuf renderer");
         unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
     }
     // gtk_init would otherwise move the whole process onto the user's locale.
@@ -692,6 +694,21 @@ unsafe fn read(api: &'static Api, list: *mut Node) -> Vec<Cookie> {
         node = unsafe { (*node).next };
     }
     cookies
+}
+
+/// Why WebKit's DMA-BUF renderer must stay off, or none when it may run. The NVIDIA driver
+/// crashes it, and WebKitGTK 2.54 and newer grows the web process without bound on any GPU.
+fn shared_memory_only(api: &'static Api) -> Option<&'static str> {
+    if nvidia() {
+        return Some("nvidia driver loaded");
+    }
+    let version = unsafe {
+        (
+            (api.webkit_get_major_version)(),
+            (api.webkit_get_minor_version)(),
+        )
+    };
+    (version >= RUNAWAY_DMABUF).then_some("webkitgtk 2.54 or newer")
 }
 
 /// Whether any GPU is bound to the NVIDIA driver, proprietary or open. Nouveau binds under its
