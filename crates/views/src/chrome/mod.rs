@@ -1,4 +1,6 @@
 mod aside;
+mod devices;
+mod jam;
 mod notice;
 mod player_bar;
 mod sidebar_left;
@@ -9,6 +11,7 @@ mod toolbar;
 pub(crate) mod tools;
 
 pub(crate) use aside::Aside;
+pub(crate) use jam::{JamCode, JamInvite};
 pub(crate) use notice::AppNotice;
 pub(crate) use player_bar::PlayerBar;
 pub(crate) use sidebar_left::SidebarLeft;

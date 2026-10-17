@@ -34,7 +34,40 @@ use crate::pins::PinSort;
 use crate::queue::{Resume, gap_target};
 use crate::{Outcome, Repeat, Sonora, Toasts};
 
-/// Which panel the right sidebar shows.
+/// How Sonora is named on the device list of the provider's apps. `Both` is the app's name with
+/// the computer's in brackets, so two machines on one account tell apart.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConnectName {
+    Sonora,
+    #[default]
+    Both,
+    Computer,
+    Custom,
+}
+
+impl ConnectName {
+    pub const ALL: [Self; 4] = [Self::Sonora, Self::Both, Self::Computer, Self::Custom];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Sonora => "sonora",
+            Self::Both => "both",
+            Self::Computer => "computer",
+            Self::Custom => "custom",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Sonora => "settings-spotify-connect-name-sonora",
+            Self::Both => "settings-spotify-connect-name-both",
+            Self::Computer => "settings-spotify-connect-name-computer",
+            Self::Custom => "settings-spotify-connect-name-custom",
+        }
+    }
+}
+
 /// What the Discord status calls itself. `Provider` asks the provider the track came from, so
 /// local files say Local Music rather than the provider's own name. `ArtistTitle` shows as
 /// "Artist - Title".
@@ -125,6 +158,7 @@ impl FullscreenControlsAutohide {
     }
 }
 
+/// Which panel the right sidebar shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SideTab {
@@ -292,6 +326,9 @@ struct Values {
     /// turning it back on restores the curve.
     equalizer_bands: Vec<f32>,
     sleep_timer: bool,
+    spotify_connect: bool,
+    spotify_connect_name: ConnectName,
+    spotify_connect_custom_name: String,
     discord_presence: bool,
     discord_name: DiscordName,
     discord_show_paused: bool,
@@ -451,6 +488,9 @@ impl Default for Values {
             equalizer: false,
             equalizer_bands: vec![0.; equalizer::BANDS],
             sleep_timer: false,
+            spotify_connect: false,
+            spotify_connect_name: ConnectName::Both,
+            spotify_connect_custom_name: String::new(),
             discord_presence: false,
             discord_name: DiscordName::Sonora,
             discord_show_paused: false,
@@ -783,6 +823,21 @@ impl AppSettings {
 
     pub fn sleep_timer(&self) -> bool {
         self.values.sleep_timer
+    }
+
+    /// Whether Sonora shows up as a Spotify Connect device while a Spotify account is signed in.
+    pub fn spotify_connect(&self) -> bool {
+        self.values.spotify_connect
+    }
+
+    /// How Sonora is named in the device list of Spotify's apps.
+    pub fn spotify_connect_name(&self) -> ConnectName {
+        self.values.spotify_connect_name
+    }
+
+    /// The name Sonora goes by in that list when it is `ConnectName::Custom`.
+    pub fn spotify_connect_custom_name(&self) -> &str {
+        &self.values.spotify_connect_custom_name
     }
 
     /// Whether the playing track is published to a local Discord client.
@@ -1208,6 +1263,24 @@ impl AppSettings {
 
     pub fn set_sleep_timer(&mut self, sleep_timer: bool, cx: &mut Context<Self>) {
         self.values.sleep_timer = sleep_timer;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_spotify_connect(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.spotify_connect = enabled;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_spotify_connect_name(&mut self, name: ConnectName, cx: &mut Context<Self>) {
+        self.values.spotify_connect_name = name;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_spotify_connect_custom_name(&mut self, name: String, cx: &mut Context<Self>) {
+        if self.values.spotify_connect_custom_name == name {
+            return;
+        }
+        self.values.spotify_connect_custom_name = name;
         self.schedule_save(cx);
     }
 

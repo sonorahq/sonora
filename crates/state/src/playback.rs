@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
-use gpui::{App, Context, Entity, EventEmitter, SharedString, Task};
+use gpui::{App, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
+use music::connect::{self, Command};
 use music::equalizer::{Equalizer, Gains};
 use music::{
     MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent, PlaybackEvents, PlaybackFactory,
@@ -88,8 +89,10 @@ impl QueuePlacement {
 use crate::queue::Queue;
 use serde::{Deserialize, Serialize};
 
+use crate::devices::{collection_of, mode_of};
 use crate::{
-    AppSettings, Io, Network, Outcome, Session, SessionEvent, Target, Toast, Toasts, join,
+    AppSettings, Devices, Io, Network, Outcome, Session, SessionEvent, Steered, Target, Toast,
+    Toasts, join,
 };
 
 const POSITION_INTERVAL: Duration = Duration::from_millis(500);
@@ -452,6 +455,10 @@ pub struct Playback {
     sleep: Option<Sleep>,
     sleep_task: Option<Task<()>>,
     open: Option<Task<()>>,
+    /// The device network, asked whether another device has playback to steer.
+    devices: Option<WeakEntity<Devices>>,
+    /// Whether the call being carried out is this app's own doing, which never steers.
+    local: bool,
 }
 
 impl EventEmitter<PlaybackEvent> for Playback {}
@@ -548,12 +555,106 @@ impl Playback {
             sleep: None,
             sleep_task: None,
             open: None,
+            devices: None,
+            local: false,
         };
         // Start the local engine at startup so files can play before the first scan.
         if let Some(factory) = playback.session.read(cx).local_playback() {
             playback.start_local_engine(factory, cx);
         }
         playback
+    }
+
+    /// Takes the device network, which tells whether another device has playback to steer.
+    pub(crate) fn set_devices(&mut self, devices: WeakEntity<Devices>) {
+        self.devices = Some(devices);
+    }
+
+    /// Runs `act` as this app's own doing, on the engine here even while another device has
+    /// playback. What the device network asks of this app goes through it, which also keeps it
+    /// from reading `Devices`, as that is being updated when such a request comes in.
+    pub(crate) fn locally(
+        &mut self,
+        cx: &mut Context<Self>,
+        act: impl FnOnce(&mut Self, &mut Context<Self>),
+    ) {
+        self.local = true;
+        act(self, cx);
+        self.local = false;
+    }
+
+    /// The device network and the other device that has playback, when one does and a user action
+    /// is to reach it instead of the engine here.
+    fn steering(&self, cx: &App) -> Option<(Entity<Devices>, Steered)> {
+        if self.local {
+            return None;
+        }
+        let devices = self.devices.as_ref()?.upgrade()?;
+        let steered = devices.read(cx).steered()?;
+        Some((devices, steered))
+    }
+
+    /// The other device that has playback, which is shown in place of this app's own track.
+    pub fn steered(&self, cx: &App) -> Option<Steered> {
+        self.steering(cx).map(|(_, steered)| steered)
+    }
+
+    /// The track the player shows: the other device's while one is steered, else this app's own.
+    pub fn shown_track(&self, cx: &App) -> Option<Track> {
+        match self.steered(cx) {
+            Some(steered) => steered.track,
+            None => self.track.clone(),
+        }
+    }
+
+    /// How far into the shown track playback is, and how long that track is.
+    pub fn shown_time(&self, cx: &App) -> (Duration, Duration) {
+        match self.steered(cx) {
+            Some(steered) => (steered.position, steered.duration),
+            None => (
+                self.position,
+                self.track
+                    .as_ref()
+                    .map_or(Duration::ZERO, |track| track.duration),
+            ),
+        }
+    }
+
+    /// Sends the command `make` builds to the other device that has playback, if one does, and
+    /// says whether it did. A caller that got `true` leaves its own engine and queue alone, except
+    /// that a `Start` the device refuses is played here once it comes back as an event.
+    fn steer(&self, make: impl FnOnce(&Steered) -> Command, cx: &App) -> bool {
+        let Some((devices, steered)) = self.steering(cx) else {
+            return false;
+        };
+        devices.read(cx).control(&steered.device.id, make(&steered));
+        true
+    }
+
+    /// Has the other device that has playback start the track at `index` of `tracks`, from the
+    /// collection `origin` names, and says whether it did. A local file has no place there and
+    /// plays here.
+    fn hand_over(&self, tracks: &[Track], index: usize, origin: Option<&Origin>, cx: &App) -> bool {
+        let Some(id) = tracks
+            .get(index)
+            .and_then(|track| track.id.clone())
+            .filter(|id| !music::is_local_id(id))
+        else {
+            return false;
+        };
+        self.steer(
+            |_| {
+                Command::Start(connect::Start {
+                    collection: origin.and_then(|origin| match origin.whence {
+                        Whence::Radio => Some(connect::Collection::Radio(origin.id.clone())),
+                        _ => collection_of(origin),
+                    }),
+                    track: Some(id),
+                    ..Default::default()
+                })
+            },
+            cx,
+        )
     }
 
     /// Plays a track the user picked, from its start.
@@ -715,6 +816,27 @@ impl Playback {
         self.begin(tracks, index, origin, cx);
     }
 
+    /// Replaces the queue with `tracks` and plays the one at `index` here from `at`, as another
+    /// device handed it over. A seek after `start` would be lost while the track loads.
+    pub(crate) fn start_at(
+        &mut self,
+        tracks: Vec<Track>,
+        index: usize,
+        origin: Option<Origin>,
+        at: Duration,
+        cx: &mut Context<Self>,
+    ) {
+        self.fetch = None;
+        let Some(track) = self
+            .queue
+            .update(cx, |queue, cx| queue.start(tracks, index, origin, cx))
+        else {
+            return;
+        };
+        self.leave_station();
+        self.load_from(&track, at, Start::Pick, cx);
+    }
+
     /// Replaces the queue with `tracks` and plays the first playable one, or a random one when
     /// shuffle is on.
     pub fn start_any(
@@ -768,7 +890,9 @@ impl Playback {
         };
 
         self.fetch = None;
-        self.begin(vec![seed.clone()], 0, Some(origin.clone()), cx);
+        if !self.begin(vec![seed.clone()], 0, Some(origin.clone()), cx) {
+            return;
+        }
 
         let seed_id = seed.id.clone();
         let title = seed.name.clone();
@@ -954,17 +1078,15 @@ impl Playback {
             .await;
 
             this.update(cx, |this, cx| match loaded {
-                Ok((tracks, unread)) => {
+                Ok((mut tracks, unread)) => {
                     report_unread(&unread, tracks.is_empty(), cx);
                     match tracks.len() {
                         0 => {}
-                        1 => {
-                            this.place(tracks, None, QueuePlacement::Next, cx);
+                        1 => this.locally(cx, |this, cx| {
+                            this.play_next(tracks.remove(0), cx);
                             this.next(cx);
-                        }
-                        _ => {
-                            this.place(tracks, None, QueuePlacement::Next, cx);
-                        }
+                        }),
+                        _ => this.play_next_all(tracks, None, cx),
                     }
                 }
                 Err(error) => log::warn!("playback: cannot open files: {error:#}"),
@@ -1223,22 +1345,27 @@ impl Playback {
     }
 
     /// Hands a fetched collection to the queue, every track tagged with `origin`, and plays the
-    /// chosen one.
+    /// chosen one. While another device has playback it starts the track there instead and leaves
+    /// the queue alone, which is when this returns `false`.
     fn begin(
         &mut self,
         tracks: Vec<Track>,
         index: usize,
         origin: Option<Origin>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
+        if self.hand_over(&tracks, index, origin.as_ref(), cx) {
+            return false;
+        }
         let Some(track) = self
             .queue
             .update(cx, |queue, cx| queue.start(tracks, index, origin, cx))
         else {
-            return;
+            return true;
         };
         self.leave_station();
         self.play(&track, cx);
+        true
     }
 
     /// Fetches a collection and starts the queue from it, keeping the continuation if it is a
@@ -1253,7 +1380,7 @@ impl Playback {
         };
 
         let io = Io::global(cx);
-        if !self.has_active_playback() {
+        if !self.has_active_playback() && self.steering(cx).is_none() {
             self.state = PlaybackState::Loading;
             cx.notify();
         }
@@ -1268,8 +1395,9 @@ impl Playback {
                         origin: origin.clone(),
                         next,
                     });
-                    this.begin(tracks, index, Some(origin), cx);
-                    this.station = station;
+                    if this.begin(tracks, index, Some(origin), cx) {
+                        this.station = station;
+                    }
                 }
                 Err(error) if this.has_active_playback() => {
                     log::error!("playback: cannot load context: {error:#}");
@@ -1285,6 +1413,9 @@ impl Playback {
 
     /// Skips to the next playable track.
     pub fn next(&mut self, cx: &mut Context<Self>) {
+        if self.steer(|_| Command::Next, cx) {
+            return;
+        }
         self.fetch = None;
         let start = self.burst();
         self.follow_queue(start, cx);
@@ -1535,6 +1666,9 @@ impl Playback {
 
     /// Switches the repeat mode and remembers it in settings.
     pub fn set_repeat(&mut self, repeat: Repeat, cx: &mut Context<Self>) {
+        if self.steer(|_| Command::Repeat(mode_of(repeat)), cx) {
+            return;
+        }
         if self.repeat == repeat {
             return;
         }
@@ -1545,7 +1679,7 @@ impl Playback {
     }
 
     pub fn cycle_repeat(&mut self, cx: &mut Context<Self>) {
-        let repeat = match self.repeat {
+        let repeat = match self.shown_repeat(cx) {
             Repeat::Off => Repeat::All,
             Repeat::All => Repeat::One,
             Repeat::One => Repeat::Off,
@@ -1556,11 +1690,38 @@ impl Playback {
     /// A binary on/off flip for surfaces (tray, dock menu) that do not fit the three-way
     /// cycle the player bar's button drives; `One` counts as on and flips straight to `Off`.
     pub fn toggle_repeat(&mut self, cx: &mut Context<Self>) {
-        let repeat = match self.repeat {
+        let repeat = match self.shown_repeat(cx) {
             Repeat::Off => Repeat::All,
             Repeat::All | Repeat::One => Repeat::Off,
         };
         self.set_repeat(repeat, cx);
+    }
+
+    /// The repeat setting of the device that has playback, which is this app's own unless
+    /// another device is being steered.
+    pub fn shown_repeat(&self, cx: &App) -> Repeat {
+        self.steered(cx)
+            .map_or(self.repeat, |steered| steered.repeat)
+    }
+
+    /// Turns shuffle on or off, on the other device when one has playback.
+    pub fn set_shuffle(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.steer(|_| Command::Shuffle(on), cx) {
+            return;
+        }
+        self.queue.update(cx, |queue, cx| queue.set_shuffle(on, cx));
+    }
+
+    /// Flips shuffle from what the player shows, which is the other device's when it has playback.
+    pub fn toggle_shuffle(&mut self, cx: &mut Context<Self>) {
+        self.set_shuffle(!self.shown_shuffle(cx), cx);
+    }
+
+    /// Whether the device that has playback shuffles, which is this app's queue unless another
+    /// device is being steered.
+    pub fn shown_shuffle(&self, cx: &App) -> bool {
+        self.steered(cx)
+            .map_or_else(|| self.queue.read(cx).shuffle(), |steered| steered.shuffle)
     }
 
     /// Decides what follows a track that ended: the same one on repeat-one, the queue's start
@@ -1678,6 +1839,9 @@ impl Playback {
     }
 
     pub fn previous(&mut self, cx: &mut Context<Self>) {
+        if self.steer(|_| Command::Previous, cx) {
+            return;
+        }
         if self.restarts(cx) {
             return self.seek(Duration::ZERO, cx);
         }
@@ -1714,6 +1878,9 @@ impl Playback {
     /// Plays on. A restored track the engine does not hold yet, or one paused for longer than
     /// `STALE_PAUSE`, is loaded afresh at its position.
     pub fn resume(&mut self, cx: &mut Context<Self>) {
+        if self.steer(|_| Command::Play, cx) {
+            return;
+        }
         self.intent = Intent::Play;
         if let Some(at) = self.resume_at {
             if !self.resume_ready {
@@ -1822,6 +1989,9 @@ impl Playback {
     }
 
     pub fn pause(&mut self, cx: &mut Context<Self>) {
+        if self.steer(|_| Command::Pause, cx) {
+            return;
+        }
         self.intent = Intent::Pause;
         if let Some(engine) = self.active_engine() {
             engine.pause();
@@ -1830,6 +2000,13 @@ impl Playback {
     }
 
     pub fn toggle_play(&mut self, cx: &mut Context<Self>) {
+        let command = |steered: &Steered| match steered.playing {
+            true => Command::Pause,
+            false => Command::Play,
+        };
+        if self.steer(command, cx) {
+            return;
+        }
         match self.wants_playing() {
             true => self.pause(cx),
             false => self.resume(cx),
@@ -1938,6 +2115,9 @@ impl Playback {
     /// audio from it, and a second seek meanwhile waits for the first to land. A restored track
     /// not yet held by the engine only moves its resume point.
     pub fn seek(&mut self, position: Duration, cx: &mut Context<Self>) {
+        if self.steer(|_| Command::Seek(position), cx) {
+            return;
+        }
         if self.resume_at.is_some() {
             self.resume_at = Some(position);
             if self.resume_ready
@@ -1996,6 +2176,11 @@ impl Playback {
 
     /// Seeks to a share of the track, as the progress bar asks.
     pub fn seek_fraction(&mut self, fraction: f32, cx: &mut Context<Self>) {
+        let seek =
+            |steered: &Steered| Command::Seek(steered.duration.mul_f32(fraction.clamp(0., 1.)));
+        if self.steer(seek, cx) {
+            return;
+        }
         let Some(total) = self
             .track
             .as_ref()
@@ -2034,17 +2219,6 @@ impl Playback {
         self.track.as_ref()
     }
 
-    /// How far through the track `position` is, from 0 to 1.
-    pub fn progress(&self) -> f32 {
-        let Some(total) = self.track.as_ref().map(|track| track.duration) else {
-            return 0.;
-        };
-        if total.is_zero() {
-            return 0.;
-        }
-        (self.position.as_secs_f32() / total.as_secs_f32()).clamp(0., 1.)
-    }
-
     pub fn is_loading(&self) -> bool {
         matches!(self.state, PlaybackState::Loading)
     }
@@ -2063,6 +2237,9 @@ impl Playback {
     }
 
     pub fn set_volume(&mut self, level: f32, cx: &mut Context<Self>) {
+        if self.steer(|_| Command::Volume(level.clamp(0., 1.)), cx) {
+            return;
+        }
         self.level = level.clamp(0., 1.);
         self.settings
             .update(cx, |settings, cx| settings.set_volume(self.level, cx));

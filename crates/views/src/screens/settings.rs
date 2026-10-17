@@ -23,7 +23,7 @@ use music::scrobble::{Link, Secret};
 use music::{AccountChoice, SignIn, SignInPrompt, WritingSystem};
 use router::{Destination, NavEntry, Screen, SettingsTab, navigate};
 use state::{
-    AppSettings, CdmState, DiscordName, Drm, Failure, FullscreenControlsAutohide, Io,
+    AppSettings, CdmState, ConnectName, DiscordName, Drm, Failure, FullscreenControlsAutohide, Io,
     LYRICS_SOURCES, Playback, SYSTEM_FONT, Scan, ScrobbleState, Scrobbling, Session, SessionState,
     Sleep, Sonora,
 };
@@ -76,6 +76,7 @@ const TYPEFACE_BATCH: usize = 3;
 const STARTUP: &str = "startup";
 const ENTRIES: &str = "entries";
 const DISCORD_NAME: &str = "discord-name";
+const CONNECT_NAME: &str = "spotify-connect-name";
 const DISCORD_BUTTONS: &str = "discord-buttons";
 const MOTION: &str = "motion";
 const PACE: &str = "pace";
@@ -190,6 +191,9 @@ enum Slot {
     Romanized,
     LyricsForLocal,
     ArtworkForLocal,
+    SpotifyConnect,
+    SpotifyConnectName,
+    SpotifyConnectCustom,
     Discord,
     DiscordName,
     DiscordShowPaused,
@@ -347,6 +351,8 @@ pub struct SettingsView {
     scrobbling: Entity<Scrobbling>,
     scrobble_first: Entity<Input>,
     scrobble_second: Entity<Input>,
+    /// The field for the custom name Sonora goes by in Spotify's device list.
+    connect_name: Entity<Input>,
     /// The service whose link dialog is open, by slug.
     scrobble_prompt: Option<&'static str>,
     /// The provider whose sign-in choice is up, by slug and name.
@@ -422,6 +428,18 @@ impl SettingsView {
         })
         .detach();
 
+        let connect_name =
+            cx.new(|cx| Input::new("settings-spotify-connect-custom-hint", cx).compact());
+        let custom = settings.read(cx).spotify_connect_custom_name().to_owned();
+        connect_name.update(cx, |input, cx| input.set_text(custom, cx));
+        cx.observe(&connect_name, |this, input, cx| {
+            let text = input.read(cx).text().to_owned();
+            this.settings.update(cx, |settings, cx| {
+                settings.set_spotify_connect_custom_name(text, cx)
+            });
+        })
+        .detach();
+
         Self {
             session,
             playback,
@@ -456,6 +474,7 @@ impl SettingsView {
             scrobbling,
             scrobble_first: cx.new(|cx| Input::new("settings-scrobble-key", cx)),
             scrobble_second: cx.new(|cx| Input::new("settings-scrobble-secret", cx)),
+            connect_name,
             scrobble_prompt: None,
             languages,
             typefaces,
@@ -669,8 +688,9 @@ impl SettingsView {
                 ]
             }
             SettingsTab::Integrations => self
-                .discord_slots(cx)
+                .connect_slots(cx)
                 .into_iter()
+                .chain(self.discord_slots(cx))
                 .chain([Slot::Title("settings-group-scrobbling")])
                 .chain(self.scrobble_slots(cx))
                 .collect(),
@@ -834,6 +854,18 @@ impl SettingsView {
             Slot::LyricsForLocal => (
                 t!("settings-lyrics-for-local-files"),
                 t!("settings-lyrics-for-local-files-detail"),
+            ),
+            Slot::SpotifyConnect => (
+                t!("settings-spotify-connect"),
+                t!("settings-spotify-connect-detail"),
+            ),
+            Slot::SpotifyConnectName => (
+                t!("settings-spotify-connect-name"),
+                t!("settings-spotify-connect-name-detail"),
+            ),
+            Slot::SpotifyConnectCustom => (
+                t!("settings-spotify-connect-custom"),
+                t!("settings-spotify-connect-custom-detail"),
             ),
             Slot::Discord => (t!("settings-discord"), t!("settings-discord-detail")),
             Slot::DiscordName => (
@@ -1041,6 +1073,9 @@ impl SettingsView {
             Slot::Karaoke => self.karaoke_lyrics_row(cx).element,
             Slot::Romanized => self.romanized_lyrics_row(cx).element,
             Slot::LyricsForLocal => self.lyrics_for_local_files_row(cx).element,
+            Slot::SpotifyConnect => self.spotify_connect_row(cx).element,
+            Slot::SpotifyConnectName => self.spotify_connect_name_row(cx).element,
+            Slot::SpotifyConnectCustom => self.spotify_connect_custom_row(cx).element,
             Slot::Discord => self.discord_row(cx).element,
             Slot::DiscordName => self.discord_name_row(cx).element,
             Slot::DiscordShowPaused => self.discord_show_paused_row(cx).element,
@@ -2759,6 +2794,25 @@ impl SettingsView {
         )
     }
 
+    fn connect_slots(&self, cx: &App) -> Vec<Slot> {
+        if !Sonora::global(cx).devices.read(cx).supported() {
+            return Vec::new();
+        }
+
+        let settings = self.settings.read(cx);
+        let mut slots = vec![
+            Slot::Title("settings-group-spotify-connect"),
+            Slot::SpotifyConnect,
+        ];
+        if settings.spotify_connect() {
+            slots.push(Slot::SpotifyConnectName);
+            if settings.spotify_connect_name() == ConnectName::Custom {
+                slots.push(Slot::SpotifyConnectCustom);
+            }
+        }
+        slots
+    }
+
     fn discord_slots(&self, cx: &App) -> Vec<Slot> {
         let mut slots = vec![Slot::Title("settings-group-discord"), Slot::Discord];
         if self.settings.read(cx).discord_presence() {
@@ -2769,6 +2823,75 @@ impl SettingsView {
             slots.push(Slot::DiscordButtons);
         }
         slots
+    }
+
+    fn spotify_connect_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).spotify_connect();
+
+        self.row(
+            t!("settings-spotify-connect"),
+            t!("settings-spotify-connect-detail"),
+            muted,
+            small,
+            Switch::new("spotify-connect", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.set_spotify_connect(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn spotify_connect_name_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let chosen = self.settings.read(cx).spotify_connect_name();
+
+        let picker = Picker::new(
+            CONNECT_NAME,
+            &self.popovers,
+            i18n::lookup(chosen.key(), None),
+        )
+        .width(Picker::NARROW)
+        .items(ConnectName::ALL.map(|name| {
+            MenuItem::new(name.id(), i18n::lookup(name.key(), None))
+                .selected(name == chosen)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_spotify_connect_name(name, cx)
+                    });
+                    cx.notify();
+                }))
+        }));
+
+        self.row(
+            t!("settings-spotify-connect-name"),
+            t!("settings-spotify-connect-name-detail"),
+            muted,
+            small,
+            picker.into_any_element(),
+        )
+    }
+
+    fn spotify_connect_custom_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+
+        self.row(
+            t!("settings-spotify-connect-custom"),
+            t!("settings-spotify-connect-custom-detail"),
+            muted,
+            small,
+            div()
+                .w(Picker::WIDE)
+                .child(self.connect_name.clone())
+                .into_any_element(),
+        )
     }
 
     fn discord_row(&self, cx: &mut Context<Self>) -> Setting {

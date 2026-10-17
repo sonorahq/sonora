@@ -11,6 +11,7 @@ i18n.workspace = true
 icons.workspace = true
 image.workspace = true
 log.workspace = true
+qrcodegen.workspace = true
 serde.workspace = true
 unicode-segmentation.workspace = true
 

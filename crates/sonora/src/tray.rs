@@ -128,18 +128,19 @@ impl Tray {
                         open(cx);
                     }
                     Event::Quit => cx.quit(),
-                    Event::Toggle | Event::Previous | Event::Next | Event::Repeat => {
+                    Event::Toggle
+                    | Event::Previous
+                    | Event::Next
+                    | Event::Repeat
+                    | Event::Shuffle => {
                         let playback = Sonora::global(cx).playback.clone();
                         playback.update(cx, |playback, cx| match event {
                             Event::Toggle => playback.toggle_play(cx),
                             Event::Previous => playback.previous(cx),
                             Event::Repeat => playback.toggle_repeat(cx),
+                            Event::Shuffle => playback.toggle_shuffle(cx),
                             _ => playback.next(cx),
                         });
-                    }
-                    Event::Shuffle => {
-                        let queue = Sonora::global(cx).queue.clone();
-                        queue.update(cx, |queue, cx| queue.toggle_shuffle(cx));
                     }
                 });
             }

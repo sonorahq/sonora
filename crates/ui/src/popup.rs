@@ -17,6 +17,7 @@ pub struct Popup {
     at: Point<Pixels>,
     menu: Menu,
     close: Option<Close>,
+    above: bool,
 }
 
 impl Popup {
@@ -25,7 +26,15 @@ impl Popup {
             at,
             menu,
             close: None,
+            above: false,
         }
+    }
+
+    /// Opens the panel upward, ending at `at` rather than starting there, for a popup that
+    /// belongs to something along the bottom of the window.
+    pub fn above(mut self) -> Self {
+        self.above = true;
+        self
     }
 
     pub fn on_close(mut self, handler: impl Fn(&(), &mut Window, &mut App) + 'static) -> Self {
@@ -42,8 +51,17 @@ impl Styled for Popup {
 
 impl RenderOnce for Popup {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let Self { at, menu, close } = self;
+        let Self {
+            at,
+            menu,
+            close,
+            above,
+        } = self;
         let menu = menu.pressed_at(at);
+        let (menu, nudge) = match above {
+            true => (menu.above(), point(NUDGE, -NUDGE)),
+            false => (menu, point(NUDGE, NUDGE)),
+        };
         let menu = match close {
             None => menu,
             Some(close) => {
@@ -63,7 +81,7 @@ impl RenderOnce for Popup {
         };
 
         anchored()
-            .position(at + point(NUDGE, NUDGE))
+            .position(at + nudge)
             .snap_to_window_with_margin(MARGIN)
             .child(menu)
     }

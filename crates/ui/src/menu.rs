@@ -494,6 +494,7 @@ pub struct Menu {
     hover_guard: Option<SubmenuState>,
     trigger: Option<Trigger>,
     pressed: Option<Point<Pixels>>,
+    above: bool,
 }
 
 impl Menu {
@@ -512,6 +513,7 @@ impl Menu {
             hover_guard: None,
             trigger: None,
             pressed: None,
+            above: false,
         }
     }
 
@@ -534,6 +536,14 @@ impl Menu {
     /// button over an item to pick it, as long as the pointer moved `HOLD_REACH` away first.
     pub(crate) fn pressed_at(mut self, at: Point<Pixels>) -> Self {
         self.pressed = Some(at);
+        self
+    }
+
+    /// Grows the panel upward from where the menu is placed instead of downward, for one opened
+    /// at a point along the bottom of the window. Only a menu with no trigger takes it, since a
+    /// trigger already says which side to open on.
+    pub(crate) fn above(mut self) -> Self {
+        self.above = true;
         self
     }
 
@@ -622,6 +632,7 @@ impl RenderOnce for Menu {
             hover_guard,
             trigger,
             pressed,
+            above,
         } = self;
 
         if let Some(search) = search.as_ref() {
@@ -976,9 +987,11 @@ impl RenderOnce for Menu {
         let width = overrides.size.width.take();
         let ceiling = overrides.max_size.height.take();
         let right = overrides.inset.left.is_none() && overrides.inset.right.is_some();
-        let corner = match right {
-            true => Anchor::TopRight,
-            false => Anchor::TopLeft,
+        let corner = match (right, above && trigger.is_none()) {
+            (true, false) => Anchor::TopRight,
+            (false, false) => Anchor::TopLeft,
+            (true, true) => Anchor::BottomRight,
+            (false, true) => Anchor::BottomLeft,
         };
         let perch = trigger
             .as_ref()
