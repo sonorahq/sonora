@@ -62,6 +62,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Autoplay of similar tracks is now on for new installs, so playback carries on with similar songs when a queue ends. You can still turn it off in the queue.
 - Fullscreen lyrics grow with a large window, up to twice their size, so they no longer look
   small on a big screen. Small windows keep the size they had.
 - On Windows, the minimize, maximize, restore and close buttons now use Windows' own icons, so

@@ -540,7 +540,7 @@ impl Default for StateValues {
             fullscreen_tab: Some(SideTab::Lyrics),
             shuffle: false,
             repeat: Repeat::Off,
-            radio: false,
+            radio: true,
             provider: "spotify".to_owned(),
             tables: HashMap::new(),
             sorting: HashMap::new(),
