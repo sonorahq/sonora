@@ -333,6 +333,9 @@ struct Held {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 struct Values {
+    /// The provider to select on startup. Omit to restore the last-used provider.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<String>,
     normalisation: bool,
     gapless: bool,
     /// Whether played tracks are kept, sealed, so playing one again downloads nothing.
@@ -581,6 +584,7 @@ enum SettingsSave {
 impl Default for Values {
     fn default() -> Self {
         Self {
+            provider: None,
             normalisation: false,
             gapless: true,
             keep_tracks: true,
@@ -1251,8 +1255,12 @@ impl AppSettings {
         &self.values.font
     }
 
+    /// The configured startup provider, or the last-used provider when none is configured.
     pub fn provider(&self) -> &str {
-        &self.state.provider
+        self.values
+            .provider
+            .as_deref()
+            .unwrap_or(&self.state.provider)
     }
 
     pub fn local_folders(&self) -> &[PathBuf] {

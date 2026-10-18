@@ -110,22 +110,41 @@ chmod +x sonora-*.AppImage
 
 ### Nix
 
-Add either of those inputs:
+Run without installing Sonora:
+
+```console
+nix run github:sonorahq/sonora
+```
+
+Add Sonora to your flake inputs:
 
 ```nix
 inputs.sonora.url = "github:sonorahq/sonora";
 ```
 
-```text
-inputs.sonora.packages.${system}.default     (prebuilt where available, else from source)
-inputs.sonora.packages.${system}.sonora      (same as default)
-inputs.sonora.packages.${system}.sonora-bin  (prebuilt, x86_64-linux, aarch64-linux, aarch64-darwin)
-inputs.sonora.packages.${system}.sonora-src  (always built from source)
+Import and enable the module in your NixOS or Home Manager configuration:
+
+```nix
+{ inputs, pkgs, ... }: {
+  # Use homeModules.default for Home Manager.
+  # Without flakes, import /path/to/sonora/nix/nixos.nix directly.
+  imports = [ inputs.sonora.nixosModules.default ];
+  programs.sonora = {
+    enable = true;
+    # Optional: build the pinned revision from source.
+    # package = inputs.sonora.packages.${pkgs.stdenv.hostPlatform.system}.sonora-src;
+    settings = {
+      provider = "youtube"; # Only works with the source package
+      gapless = true;
+      appearance.theme = "dark";
+    };
+  };
+}
 ```
 
-Building from source on macOS needs Xcode added to the Nix store, because the shaders compile with Apple's Metal compiler.
-
-Configuration with Home Manager is provided by the module under `programs.sonora`.
+The default package uses a prebuilt release on `x86_64-linux`, `aarch64-linux`, and
+`aarch64-darwin`, and builds from source elsewhere. Building from source on macOS requires
+Xcode in the Nix store.
 
 ### Windows
 
