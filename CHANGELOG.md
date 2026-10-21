@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Sorting by Date added puts the songs you added most recently first.
+
 ## [0.44.1] - 2026-10-22
 
 ### Added
