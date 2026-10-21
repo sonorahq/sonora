@@ -17,6 +17,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Import an M3U or M3U8 playlist from the button or right-click menu on your local Playlists
   page, and export a local playlist from its right-click menu. Songs outside your library are
   left out, and an export saved beside your music lists it by relative path.
+- Local songs show lyrics from a `.ttml` file of the same name beside them, word by word.
 
 ### Changed
 

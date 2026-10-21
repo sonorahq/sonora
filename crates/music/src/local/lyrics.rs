@@ -1,11 +1,11 @@
 use std::fs;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 
-use crate::lyrics::{LOCAL, lrc};
+use crate::lyrics::{LOCAL, lrc, ttml};
 use crate::{Lyrics, LyricsHit, LyricsProvider, LyricsQuery};
 
 use super::{tags, wire};
@@ -13,11 +13,14 @@ use super::{tags, wire};
 /// Wins a tie against most services without outranking a better kind of sheet.
 const TRUST: u32 = 100;
 
-/// Extensions a lyrics file beside the track may carry. Linux filesystems tell the two apart.
-const SIDECARS: [&str; 2] = ["lrc", "LRC"];
+/// Extensions a TTML file beside the track may carry. Linux filesystems tell the two apart.
+const TTML: [&str; 2] = ["ttml", "TTML"];
 
-/// Reads the lyrics of a local file: an `.lrc` file beside it, else what its own tags carry.
-/// Any other track gets no answer.
+/// Extensions an LRC file beside the track may carry, looked for after the TTML ones.
+const LRC: [&str; 2] = ["lrc", "LRC"];
+
+/// Reads the lyrics of a local file: a `.ttml` or `.lrc` file beside it, else what its own tags
+/// carry. Any other track gets no answer.
 pub struct LocalLyrics;
 
 #[async_trait]
@@ -53,35 +56,56 @@ impl LyricsProvider for LocalLyrics {
     }
 }
 
-/// The `.lrc` file of the same name wins, since someone put it there for this track; the tags are
-/// the fallback when there is none, or when it holds no timed line.
+/// A `.ttml` file of the same name wins, since it can time each word, then an `.lrc` file; both
+/// were put there for this track. The tags are the fallback when neither holds a timed line.
 fn read(path: &Path) -> Result<Option<Lyrics>> {
-    match sidecar(path) {
+    match from_ttml(path).or_else(|| from_lrc(path)) {
         Some(lyrics) => Ok(Some(lyrics)),
         None => tags::lyrics(path),
     }
 }
 
-/// Timed lyrics from `Song.lrc` beside `Song.flac`. A file that cannot be read or has no valid
-/// line is logged and skipped rather than failing the lookup, so the tags still get their turn.
-fn sidecar(path: &Path) -> Option<Lyrics> {
-    let (lrc_path, text) = SIDECARS.iter().find_map(|extension| {
-        let lrc_path = path.with_extension(extension);
-        match fs::read_to_string(&lrc_path) {
-            Ok(text) => Some((lrc_path, text)),
-            Err(error) if error.kind() == ErrorKind::NotFound => None,
-            Err(error) => {
-                log::warn!("lyrics: cannot read {}: {error}", lrc_path.display());
-                None
-            }
-        }
-    })?;
-    let lines = lrc::parse(text.trim_start_matches('\u{feff}'));
+/// Timed lyrics from `Song.ttml` beside `Song.flac`, word by word when its spans carry times. A
+/// file that cannot be parsed or has no timed line is logged and skipped, so the `.lrc` and the
+/// tags still get their turn.
+fn from_ttml(path: &Path) -> Option<Lyrics> {
+    let (file, text) = sidecar(path, &TTML)?;
+    let sheet = ttml::parse(&text)
+        .inspect_err(|error| log::warn!("lyrics: cannot read {}: {error:#}", file.display()))
+        .ok()?;
+    if sheet.lyrics.is_empty() || !sheet.lyrics.synced() {
+        log::warn!("lyrics: {} holds no timed TTML line", file.display());
+        return None;
+    }
+    Some(sheet.lyrics)
+}
+
+/// Timed lyrics from `Song.lrc` beside `Song.flac`. A file with no valid line is logged and
+/// skipped, so the tags still get their turn.
+fn from_lrc(path: &Path) -> Option<Lyrics> {
+    let (file, text) = sidecar(path, &LRC)?;
+    let lines = lrc::parse(&text);
     if lines.is_empty() {
-        log::warn!("lyrics: {} holds no valid LRC line", lrc_path.display());
+        log::warn!("lyrics: {} holds no valid LRC line", file.display());
         return None;
     }
     Some(Lyrics::Synced {
         lines: lines.into(),
+    })
+}
+
+/// The first file beside the track with one of these extensions that reads, with any BOM
+/// stripped. A missing file is quiet; any other read error is logged and that format skipped.
+fn sidecar(path: &Path, extensions: &[&str]) -> Option<(PathBuf, String)> {
+    extensions.iter().find_map(|extension| {
+        let file = path.with_extension(extension);
+        match fs::read_to_string(&file) {
+            Ok(text) => Some((file, text.trim_start_matches('\u{feff}').to_owned())),
+            Err(error) if error.kind() == ErrorKind::NotFound => None,
+            Err(error) => {
+                log::warn!("lyrics: cannot read {}: {error}", file.display());
+                None
+            }
+        }
     })
 }
