@@ -17,7 +17,7 @@ use gpui::{
     ScrollHandle, SharedString, WeakEntity, Window, div, point, px, relative,
 };
 use i18n::t;
-use music::{Shape, Track};
+use music::{Arrival, Shape, Track};
 use router::{Destination, LibraryTab, navigate};
 use state::{
     Addition, AppSettings, DownloadsChanged, Library, LibraryPart, LibraryState, Network, Origin,
@@ -175,6 +175,14 @@ impl Tracks for ShelfTracks {
 
     fn is_loading(&self, cx: &App) -> bool {
         loading(&self.library, self.shelf, Section::Songs, cx)
+    }
+
+    fn arrival(&self, cx: &App) -> Option<Arrival> {
+        Sonora::global(cx)
+            .session
+            .read(cx)
+            .capabilities_of(self.shelf)
+            .song_arrival
     }
 }
 

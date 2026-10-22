@@ -8,11 +8,11 @@ use gpui::{
 use std::rc::Rc;
 
 use i18n::t;
-use music::{Album, AlbumDetail, Playlist, ReleaseType, Track};
+use music::{Album, AlbumDetail, Arrival, Playlist, ReleaseType, Track};
 use router::{Destination, navigate};
 use state::{
     AppSettings, Collection, Detail, DownloadsChanged, LibraryEvent, Origin, Playback, Progress,
-    Sonora,
+    Shelf, Sonora,
 };
 use ui::{
     ActiveTheme as _, ArrowRing, Button, InlineLink, InlineLinks, Menu, Picker, Popovers, Popup,
@@ -94,6 +94,21 @@ impl Tracks for DetailTracks {
                 count => Pending::Rows(count as usize),
             },
         )
+    }
+
+    /// Your own playlist's songs come in the order its provider says. Anyone else's playlist is
+    /// in its curator's order, and an album's never by when they were added.
+    fn arrival(&self, cx: &App) -> Option<Arrival> {
+        let detail = self.0.read(cx);
+        if detail.kind() != Some(Collection::Playlist) || !detail.playlist()?.owned {
+            return None;
+        }
+        let shelf = Shelf::of(detail.id()?);
+        Sonora::global(cx)
+            .session
+            .read(cx)
+            .capabilities_of(shelf)
+            .playlist_arrival
     }
 }
 
