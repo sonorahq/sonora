@@ -27,8 +27,8 @@ use async_trait::async_trait;
 
 use crate::apple::playback::Factory;
 use crate::{
-    Capabilities, Catalog, InputSource, MusicApi as _, MusicProvider, PromptSink, ProviderSession,
-    Shape, SignIn, SignInPrompt, WebSignIn,
+    Arrival, Capabilities, Catalog, InputSource, MusicApi as _, MusicProvider, PromptSink,
+    ProviderSession, Shape, SignIn, SignInPrompt, WebSignIn,
 };
 
 pub use client::AppleClient;
@@ -102,7 +102,8 @@ fn session(client: AppleClient, profile: crate::UserProfile) -> ProviderSession 
         // Apple keeps no play counts. Stations it does have, through the same endpoint the web
         // player's autoplay uses. An artist can be favorited like anything else, and pins live
         // behind `me/library/pins`. A download only saves the fetch, since every play still
-        // needs a license.
+        // needs a license. A library song or one in your own playlist carries no date, but both
+        // are listed in the order they were added, oldest first.
         capabilities: Capabilities {
             radio: true,
             follow_artists: true,
@@ -110,6 +111,8 @@ fn session(client: AppleClient, profile: crate::UserProfile) -> ProviderSession 
             keeps: true,
             downloads: true,
             qualities: stream::QUALITIES,
+            song_arrival: Some(Arrival::OldestFirst),
+            playlist_arrival: Some(Arrival::OldestFirst),
             ..Capabilities::NONE
         },
     }
