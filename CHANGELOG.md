@@ -18,6 +18,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Local songs read word-by-word lyrics from a `.ttml` file beside them or from TTML in their
   lyrics tag.
 - The Now playing preview in Appearance settings draws the visualizer style you pick.
+- A download button in the title bar while anything downloads. It lists each album, playlist and
+  song with its cover, how far it has got and a rough time left, and the tracks running now. Click
+  a row to open it, or the cross to cancel that download.
 
 ### Changed
 
@@ -28,6 +31,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A song's right-click menu groups Artist, Album, Radio and Details under one Go to submenu.
 - Sorting by Date added puts the songs you added most recently first.
 - When a service signs you out, the toast says your session was invalidated and stays up with a Sign in button that opens the Providers settings.
+- Closing a download's toast no longer cancels the download. Cancel it from the title bar button.
+- After Spotify refuses a burst of downloads, Sonora checks back every fifteen seconds without
+  fetching a song first, and carries on as soon as Spotify allows it, so a big playlist finishes
+  sooner.
 
 ### Fixed
 

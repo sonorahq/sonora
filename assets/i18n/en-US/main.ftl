@@ -66,6 +66,10 @@ library-local-unconfigured = Configure your local library
 
 # app menu
 app-refresh = Refresh
+downloads-active = Downloading
+downloads-count = { $done } of { $total } songs
+downloads-cancel = Cancel download
+downloads-count-eta = { $done } of { $total } songs · About { $minutes } min left
 app-sign-out = Sign Out
 app-quit = Quit
 app-settings = Settings…

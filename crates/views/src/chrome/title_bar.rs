@@ -12,6 +12,7 @@ use ui::WindowControls;
 use ui::{ActiveTheme as _, Button, Spin};
 
 use crate::chrome::SidebarRight;
+use crate::chrome::downloads::DownloadsButton;
 use input::Refresh;
 use router::Navigation;
 use state::{AppSettings, Sonora};
@@ -79,6 +80,7 @@ pub(crate) struct TitleBar {
     busy: Option<Busy>,
     /// The refresh icon's turn, which springs back to rest once `busy` is gone.
     spin: Spin,
+    downloads: Entity<DownloadsButton>,
 }
 
 impl EventEmitter<TitleBarEvent> for TitleBar {}
@@ -101,6 +103,7 @@ impl TitleBar {
             grabbed: false,
             busy: None,
             spin: Spin::default(),
+            downloads: cx.new(DownloadsButton::new),
         }
     }
 
@@ -342,6 +345,16 @@ impl Render for TitleBar {
                     .children(content)
                     .pr_3(),
             )
+            .when(navigation, |this| {
+                this.child(
+                    div()
+                        .flex_none()
+                        .pr_1()
+                        .occlude()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(self.downloads.clone()),
+                )
+            })
             .when_some(
                 self.options
                     .sidebar_right
