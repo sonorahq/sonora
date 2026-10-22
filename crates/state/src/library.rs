@@ -7,8 +7,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{App, Context, Entity, SharedString, Task};
 use music::{
-    Album, Catalog, ImportedPlaylist, MediaKind, MusicApi, Page, Pages, Playlist, SavedArtist,
-    Shape, Track,
+    Album, Arrival, Catalog, ImportedPlaylist, MediaKind, MusicApi, Page, Pages, Playlist,
+    SavedArtist, Shape, Track,
 };
 use tokio::sync::Semaphore;
 
@@ -81,6 +81,9 @@ impl Shelf {
 /// carries the favorites beside them.
 struct Held {
     shape: Shape,
+    /// Which end of the provider's song list holds the latest addition, when that list has no
+    /// dates. A song added here goes in at that end, so it sits where a reload would put it.
+    arrival: Option<Arrival>,
     state: LibraryState,
     awaited: Vec<LibraryPart>,
     /// How many rows each part will have once it has all arrived, for the parts whose
@@ -97,6 +100,7 @@ impl Held {
     fn empty() -> Self {
         Self {
             shape: Shape::Saved,
+            arrival: None,
             state: LibraryState::Empty,
             awaited: Vec::new(),
             expected: HashMap::new(),
@@ -865,7 +869,7 @@ impl Savable for Track {
 
     /// Puts the track onto the shelf's own pages where the library is a set apart from the
     /// favorites. Apple Music, the one such provider, adds a favorited song to the library
-    /// itself, so the Songs page lists it without a reload.
+    /// itself, so the Songs page lists it without a reload, at the end Apple will list it.
     fn admit(library: &mut Library, track: Self, cx: &mut Context<Library>) {
         let Some(id) = track.id.clone() else {
             return;
@@ -874,13 +878,15 @@ impl Savable for Track {
         if !library.session.read(cx).shape_of(shelf).editable() {
             return;
         }
-        let Some(ready) = library.held_mut(shelf).ready_mut() else {
+        let held = library.held_mut(shelf);
+        let arrival = held.arrival.unwrap_or(Arrival::NewestFirst);
+        let Some(ready) = held.ready_mut() else {
             return;
         };
         if ready.tracks.iter().any(|known| known.id == track.id) {
             return;
         }
-        ready.tracks.insert(0, track);
+        arrival.admit(&mut ready.tracks, track);
     }
 
     async fn ask(client: Arc<dyn MusicApi>, id: String, saved: bool) -> anyhow::Result<()> {
@@ -1690,11 +1696,16 @@ impl Library {
         cx: &mut Context<Self>,
     ) {
         let gone = Gone::LibraryTrack(track.clone());
+        let arrival = track
+            .id
+            .as_deref()
+            .and_then(|id| self.held(Shelf::of(id)).arrival)
+            .unwrap_or(Arrival::NewestFirst);
         track.stamp_added();
         self.set_in_library(MediaKind::Track, present, gone, cx, move |ready| {
             ready.tracks.retain(|known| known.id != track.id);
             if present {
-                ready.tracks.insert(0, track);
+                arrival.admit(&mut ready.tracks, track);
             }
         });
     }
@@ -2990,13 +3001,15 @@ impl Library {
         let Some(id) = track.id.clone() else {
             return;
         };
-        let Some(favorites) = self.held_mut(Shelf::of(&id)).favorites_mut() else {
+        let held = self.held_mut(Shelf::of(&id));
+        let arrival = held.arrival.unwrap_or(Arrival::OldestFirst);
+        let Some(favorites) = held.favorites_mut() else {
             return;
         };
         let tracks = favorites.tracks;
         let same = |held: &Track| held.id.as_deref() == Some(id.as_str());
         match saved {
-            true if !tracks.iter().any(same) => tracks.push(track),
+            true if !tracks.iter().any(same) => arrival.admit(tracks, track),
             false => tracks.retain(|held| !same(held)),
             _ => {}
         }
@@ -3110,9 +3123,11 @@ impl Library {
             return;
         };
         let shape = session.shape_of(shelf);
+        let arrival = session.capabilities_of(shelf).song_arrival;
 
         let held = self.held_mut(shelf);
         held.shape = shape;
+        held.arrival = arrival;
         held.awaited = LibraryPart::ALL.to_vec();
         match held.stale.is_empty() {
             true => {
