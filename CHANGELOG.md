@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Local songs show lyrics from a `.ttml` file of the same name beside them, word by word when
+  the file times each word.
+
 ## [0.44.1] - 2026-10-22
 
 ### Added

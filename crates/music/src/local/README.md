@@ -60,20 +60,23 @@ file that has it, so a well-formed file keeps its LAME encoder delay/padding tri
 Playback → Lyrics providers. With it enabled it answers only for local tracks, from the first of
 these that has lyrics:
 
-1. A `Song.lrc` (or `Song.LRC`) beside `Song.flac`, read as UTF-8 with or without a BOM. It wins
-   over the tags, since someone put it there for this track. A file that cannot be read or holds no
-   timed line is logged and skipped, so the tags still get their turn.
-2. An ID3v2 `SYLT` frame (MP3 only), with millisecond stamps. A frame typed as chords, events or
+1. A `Song.ttml` (or `Song.TTML`) beside `Song.flac`, such as one exported from Apple Music, read
+   as UTF-8 with or without a BOM. It shows word by word when its spans carry their own times, with
+   background vocals and a second singer kept apart, so it wins over an `.lrc`.
+2. A `Song.lrc` (or `Song.LRC`) beside it, read the same way. Either file wins over the tags, since
+   someone put it there for this track. A sidecar that cannot be read or parsed, or holds no timed
+   line, is logged and skipped, so the next one and then the tags still get their turn.
+3. An ID3v2 `SYLT` frame (MP3 only), with millisecond stamps. A frame typed as chords, events or
    trivia is skipped. A newline at either end of an entry breaks the line, so a frame timed by
    syllable keeps its words for karaoke.
-3. The lyrics tag (`USLT`, Vorbis `LYRICS`, …): timed when it parses as LRC, plain text when it
+4. The lyrics tag (`USLT`, Vorbis `LYRICS`, …): timed when it parses as LRC, plain text when it
    doesn't.
 
 - It competes in the ranking with the other providers. Its trust wins most ties against a sheet of
   the same kind, never against a better kind (timed over plain, word by word over timed).
 - Prefer local lyrics, shown only while Local is enabled, reads the file first and asks no service
   when it has lyrics.
-- Never cached: `lyrics.json` holds only the services' sheets, so an edit to the tags or the `.lrc` shows on the next play.
+- Never cached: `lyrics.json` holds only the services' sheets, so an edit to the tags or a `.ttml` or `.lrc` file shows on the next play.
   A local track whose services already answered rereads just the file.
 - Lyrics for local files holds back only the online services. Local still answers, since the file
   never leaves the computer.
