@@ -51,7 +51,7 @@ use time::{Month, OffsetDateTime};
 pub use audio::Meter;
 pub use equalizer::Equalizer;
 pub use models::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
+    Album, AlbumCatalogue, AlbumDetail, Arrival, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
     Contributor, Credit, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed, Lyrics, LyricsHit,
     LyricsLane, LyricsLine, LyricsQuery, LyricsWord, PinOutcome, PinTarget, PinTargetKind,
     Playlist, PlaylistDetail, ReleaseType, RomanizedText, SavedArtist, Track, TrackKey, TrackTags,
@@ -774,6 +774,14 @@ pub struct Capabilities {
     /// one. Such a service downloads one track at a time, with no pause until it first refuses.
     /// Zero lets downloads run side by side.
     pub download_gap: Duration,
+    /// Set when the library's Songs page comes in the order its songs were added but carries
+    /// no date for each, saying which end is newest. The page then sorts by Date added through
+    /// that order and shows no Date added column. None when the songs have dates of their own
+    /// or come in some other order.
+    pub song_arrival: Option<Arrival>,
+    /// The same, for the songs of a playlist the listener owns. Anyone else's playlist keeps
+    /// the order its curator gave it.
+    pub playlist_arrival: Option<Arrival>,
 }
 
 impl Capabilities {
@@ -790,6 +798,8 @@ impl Capabilities {
         downloads: true,
         qualities: &[],
         download_gap: Duration::ZERO,
+        song_arrival: None,
+        playlist_arrival: None,
     };
 
     /// Nothing beyond listing and playing.
@@ -803,6 +813,8 @@ impl Capabilities {
         downloads: false,
         qualities: &[],
         download_gap: Duration::ZERO,
+        song_arrival: None,
+        playlist_arrival: None,
     };
 }
 

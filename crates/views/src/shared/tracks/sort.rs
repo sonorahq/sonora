@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
 use gpui::SharedString;
-use music::Track;
+use music::{Arrival, Track};
 
 use super::TrackField;
 use crate::shared::text::{folded, holds};
@@ -29,6 +29,15 @@ pub(super) fn compare(tracks: &[Track], field: TrackField, a: usize, b: usize) -
             .map(|track| track.duration)
             .cmp(&tracks.get(b).map(|track| track.duration)),
         TrackField::Index | TrackField::Cover => a.cmp(&b),
+    }
+}
+
+/// Orders two rows of a list that comes in the order it was added, oldest first, so a
+/// descending sort puts the latest addition on top whichever end the provider lists it at.
+pub(super) fn by_arrival(arrival: Arrival, a: usize, b: usize) -> Ordering {
+    match arrival {
+        Arrival::OldestFirst => a.cmp(&b),
+        Arrival::NewestFirst => b.cmp(&a),
     }
 }
 

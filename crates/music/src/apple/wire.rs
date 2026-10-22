@@ -749,8 +749,9 @@ pub fn library_song(value: &Resource) -> Option<Track> {
         .or_else(|| catalog(value)?.id.as_str())?
         .to_owned();
     // The catalog copy is richer when it came along. Apple puts no date on a library song row,
-    // so the date is the library album's when that was included: the day the first song of
-    // that album joined the library, which is also the order Apple itself sorts songs by.
+    // and the album's would group songs by album, so the song goes undated. The library lists
+    // its songs oldest first, which `Capabilities::song_arrival` says, so they still sort by
+    // when they were added.
     let mut track = match catalog(value) {
         Some(found) => song_as(found, id)?,
         None if value.relationships.catalog.data.is_none() => song_as(value, id)?,
@@ -768,16 +769,6 @@ pub fn library_song(value: &Resource) -> Option<Track> {
     };
     track.added_at = attributes
         .and_then(|attributes| moment(attributes.date_added.as_str()))
-        .or_else(|| {
-            value
-                .relationships
-                .albums
-                .rows()
-                .first()?
-                .attributes
-                .as_ref()
-                .and_then(|attributes| moment(attributes.date_added.as_str()))
-        })
         .or(track.added_at);
     Some(track)
 }

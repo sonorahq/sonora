@@ -257,6 +257,25 @@ pub struct PlaylistDetail {
     pub continuation: Option<String>,
 }
 
+/// Which end of a list holds the songs added last, for a list that comes in the order its songs
+/// were added but has no date on each. A Date added sort on such a list follows its order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Arrival {
+    OldestFirst,
+    NewestFirst,
+}
+
+impl Arrival {
+    /// Puts a row the listener just added where the provider will list it: last in an
+    /// oldest-first list, first in a newest-first one.
+    pub fn admit<T>(self, rows: &mut Vec<T>, row: T) {
+        match self {
+            Self::OldestFirst => rows.push(row),
+            Self::NewestFirst => rows.insert(0, row),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArtistProfile {
     pub name: String,
