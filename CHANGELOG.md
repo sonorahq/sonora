@@ -10,6 +10,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Sorting by Date added puts the songs you added most recently first.
+- Apple Music and YouTube Music songs and playlists, and local playlists, sort by Date added in
+  the order you added them, instead of showing guessed dates.
 
 ## [0.44.1] - 2026-10-22
 
