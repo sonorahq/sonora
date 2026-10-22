@@ -22,8 +22,8 @@ use ytmusic::YtMusic;
 use crate::youtube::playback::Factory;
 
 use crate::{
-    Capabilities, InputSource, MusicProvider, PlaybackFactory, PromptSink, ProviderSession, Shape,
-    SignIn, SignInPrompt, UserProfile, WebSignIn, credentials,
+    Arrival, Capabilities, InputSource, MusicProvider, PlaybackFactory, PromptSink,
+    ProviderSession, Shape, SignIn, SignInPrompt, UserProfile, WebSignIn, credentials,
 };
 pub use client::YouTubeClient;
 pub use lyrics::YouTubeLyrics;
@@ -154,10 +154,14 @@ impl YouTubeProvider {
             playback: Arc::new(Factory::new(api)),
             shape: Shape::Saved,
             authenticated: true,
+            // Liked music carries no dates, but it lists the latest like first. Your own
+            // playlists carry none either, and add a song at the bottom unless set otherwise.
             capabilities: Capabilities {
                 playcounts: false,
                 playlist_covers: true,
                 qualities: playback::QUALITIES,
+                song_arrival: Some(Arrival::NewestFirst),
+                playlist_arrival: Some(Arrival::OldestFirst),
                 ..Capabilities::ALL
             },
         }
@@ -177,6 +181,7 @@ impl YouTubeProvider {
             capabilities: Capabilities {
                 playcounts: false,
                 qualities: playback::QUALITIES,
+                song_arrival: Some(Arrival::NewestFirst),
                 ..Capabilities::ALL
             },
         }
