@@ -818,6 +818,22 @@ impl Queue {
         Toasts::post(toast, cx);
     }
 
+    /// Shuffles everything queued to play, the hand-queued songs and the rest of the collection
+    /// together, so collections queued one after another mix. The suggestions stay last, and the
+    /// mix becomes one run with nothing queued by hand ahead of it.
+    pub fn shuffle_upcoming(&mut self, cx: &mut Context<Self>) {
+        let end = self.context_end();
+        if end < 2 {
+            return;
+        }
+        let ahead = &mut self.upcoming.make_contiguous()[..end];
+        fastrand::shuffle(ahead);
+        for entry in ahead {
+            entry.kind = QueueKind::Context;
+        }
+        self.changed(cx);
+    }
+
     pub fn reordered(&self) -> bool {
         let sequence = self
             .past
