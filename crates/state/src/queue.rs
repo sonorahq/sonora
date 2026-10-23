@@ -701,6 +701,19 @@ impl Queue {
         Toasts::post(toast, cx);
     }
 
+    /// Shuffles everything queued to play, the hand-queued tracks and the rest of the source
+    /// together, so collections queued one after another mix. The suggestions stay last, and the
+    /// mix becomes one run with nothing queued by hand ahead of it.
+    pub fn shuffle_upcoming(&mut self, cx: &mut Context<Self>) {
+        let queued = self.queued();
+        if queued < 2 {
+            return;
+        }
+        fastrand::shuffle(&mut self.upcoming.make_contiguous()[..queued]);
+        self.manual = 0;
+        self.changed(cx);
+    }
+
     /// The Queue cleared toast, whose Undo hands `snapshot` back to the queue once.
     fn cleared_toast(snapshot: Snapshot<Cleared>, cx: &mut Context<Self>) -> Toast {
         let queue = cx.entity().downgrade();
