@@ -231,6 +231,7 @@ queue-from = From
 queue-from-radio = { $name } radio
 queue-next-in-queue = Next in queue
 queue-up-next = Up next
+queue-shuffle = Shuffle
 queue-reset = Reset
 queue-clear = Clear
 queue-added-by = Added by { $name }

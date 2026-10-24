@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A Shuffle button in the queue panel mixes everything waiting to play, so queued playlists play
+  together.
+
 ### Fixed
 
 - Playing YouTube Music videos and looking up lyrics no longer fills your YouTube search history
