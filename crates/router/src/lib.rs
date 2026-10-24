@@ -140,7 +140,7 @@ impl Screen {
 }
 
 /// One page of settings. The first twelve are sections of the six tabs, each tab showing its sections
-/// one after another on one scrolling page, and the last two are drill-ins that open from a row
+/// one after another on one scrolling page, and the last three are drill-ins that open from a row
 /// on their parent page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SettingsPage {
@@ -158,11 +158,12 @@ pub enum SettingsPage {
     About,
     LyricsSources,
     MusicFolders,
+    Blocked,
 }
 
 impl SettingsPage {
     /// Every page, the sections first and the drill-ins after them.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Providers,
         Self::General,
         Self::Appearance,
@@ -177,6 +178,7 @@ impl SettingsPage {
         Self::About,
         Self::LyricsSources,
         Self::MusicFolders,
+        Self::Blocked,
     ];
 
     pub fn id(self) -> &'static str {
@@ -195,6 +197,7 @@ impl SettingsPage {
             Self::About => "about",
             Self::LyricsSources => "lyrics-sources",
             Self::MusicFolders => "music-folders",
+            Self::Blocked => "blocked",
         }
     }
 
@@ -215,6 +218,7 @@ impl SettingsPage {
             Self::About => "settings-page-about",
             Self::LyricsSources => "settings-page-lyrics-sources",
             Self::MusicFolders => "settings-page-music-folders",
+            Self::Blocked => "settings-page-blocked",
         }
     }
 
@@ -223,6 +227,7 @@ impl SettingsPage {
         match self {
             Self::LyricsSources => Some(Self::Lyrics),
             Self::MusicFolders => Some(Self::Providers),
+            Self::Blocked => Some(Self::Playback),
             _ => None,
         }
     }
@@ -238,7 +243,7 @@ impl SettingsPage {
             Self::Providers | Self::MusicFolders => SettingsTab::Providers,
             Self::Appearance | Self::PlayerBar | Self::NowPlaying => SettingsTab::Appearance,
             Self::Lyrics | Self::LyricsSources => SettingsTab::Lyrics,
-            Self::Playback | Self::Sound | Self::Storage => SettingsTab::Playback,
+            Self::Playback | Self::Sound | Self::Storage | Self::Blocked => SettingsTab::Playback,
             Self::Discord | Self::Scrobbling => SettingsTab::Integrations,
         }
     }
