@@ -4,16 +4,16 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Div, Entity, Hsla, MouseButton, Pixels, SharedString, Stateful, Task,
-    Window, div, px, svg,
+    AnyElement, App, Context, Div, ElementId, Entity, Hsla, MouseButton, Pixels, SharedString,
+    Stateful, Task, Window, div, px, svg,
 };
 use i18n::t;
 use music::{ArtistRef, Contributor};
 use router::{Destination, Link as _, navigate};
 use state::Playback;
 use ui::{
-    ActiveTheme as _, Artwork, Avatar, Cell, ExplicitBadge, InlineLink, InlineLinks, ROW_GROUP,
-    Theme, clock, tabular,
+    ActiveTheme as _, Artwork, Avatar, Cell, ExplicitBadge, InlineLink, InlineLinks, Perch,
+    ROW_GROUP, Theme, Tipped as _, clock, tabular,
 };
 
 use crate::chrome::Chrome;
@@ -23,6 +23,7 @@ const PLAY: &str = "icons/play.svg";
 const PLAYING: &str = "icons/music-2.svg";
 const PAUSE: &str = "icons/pause.svg";
 const UNAVAILABLE: &str = "icons/play-off.svg";
+const BLOCKED: &str = "icons/ban.svg";
 const HOVER_PRELOAD_DELAY: Duration = Duration::from_millis(200);
 const PERSON: &str = "icons/user.svg";
 
@@ -360,7 +361,7 @@ pub(crate) fn title<F>(
     color: Option<Hsla>,
     explicit: bool,
     press: Option<Tap>,
-    status: Option<AnyElement>,
+    status: impl IntoIterator<Item = AnyElement>,
     is_liked: Option<AnyElement>,
 ) -> AnyElement {
     let text = div()
@@ -385,8 +386,22 @@ pub(crate) fn title<F>(
         .when(explicit, |this| {
             this.child(div().flex_none().child(ExplicitBadge::new()))
         })
-        .when_some(status, |this, status| this.child(status))
+        .children(status)
         .when_some(is_liked, |this, is_liked| this.child(is_liked))
+        .into_any_element()
+}
+
+/// The muted mark on a row whose song is blocked, for itself or for one of its artists. The row
+/// keeps its colours and stays playable, since a blocked song still plays when it is picked.
+pub(crate) fn blocked_mark(id: impl Into<ElementId>, cx: &App) -> AnyElement {
+    div()
+        .id(id)
+        .flex_none()
+        .tip("track-blocked", Perch::Above)
+        .child(Glyph {
+            icon: BLOCKED,
+            color: cx.theme().muted_foreground,
+        })
         .into_any_element()
 }
 

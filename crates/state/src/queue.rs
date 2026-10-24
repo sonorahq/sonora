@@ -120,6 +120,10 @@ struct Taken {
     spot: Spot,
 }
 
+/// The tracks a block took out of the queue, and where each sat, which the block's Undo puts
+/// back.
+pub(crate) struct Lifted(Vec<Taken>);
+
 /// Where a removed track sat, counted from the start of its run.
 #[derive(Clone, Copy)]
 enum Spot {
@@ -677,6 +681,11 @@ impl Queue {
         self.queued() == 0 && self.similar > 0
     }
 
+    /// Whether the track `next` would hand back is one the user queued by hand.
+    pub fn next_is_manual(&self) -> bool {
+        self.manual > 0
+    }
+
     pub fn has_previous(&self) -> bool {
         !self.past.is_empty()
     }
@@ -933,6 +942,43 @@ impl Queue {
         self.report_removal(Taken { entry, spot }, cx);
     }
 
+    /// Takes every upcoming track and suggestion `drop` picks out of the queue at once, as a
+    /// block does, and returns them for [`Self::unlift`]. The current track, the history and the
+    /// source are left alone, as when a track is removed by hand.
+    pub(crate) fn lift(&mut self, drop: impl Fn(&Track) -> bool, cx: &mut Context<Self>) -> Lifted {
+        let mut taken = Vec::new();
+        let mut at = 0;
+        while at < self.upcoming.len() {
+            if !drop(&self.upcoming[at].track) {
+                at += 1;
+                continue;
+            }
+            let queued = self.queued();
+            let spot = match (at < self.manual, at < queued) {
+                (true, _) => Spot::Manual(at),
+                (false, true) => Spot::Source(at - self.manual, self.rebuilt),
+                (false, false) => Spot::Similar(at - queued, self.suggested),
+            };
+            let Some(entry) = self.upcoming.remove(at) else {
+                break;
+            };
+            self.manual -= usize::from(at < self.manual);
+            self.similar -= usize::from(at >= queued);
+            taken.push(Taken { entry, spot });
+        }
+        if !taken.is_empty() {
+            self.changed(cx);
+        }
+        Lifted(taken)
+    }
+
+    /// Puts back what [`Self::lift`] took, each where it sat as far as the queue now allows.
+    pub(crate) fn unlift(&mut self, lifted: Lifted, cx: &mut Context<Self>) {
+        if !lifted.0.is_empty() {
+            self.put_back(lifted.0, cx);
+        }
+    }
+
     /// Adds a removed track to the toast that reports removals, or posts a new one once the
     /// last has gone. Every removal restarts its clock.
     fn report_removal(&mut self, taken: Taken, cx: &mut Context<Self>) {
@@ -1038,8 +1084,14 @@ impl Queue {
         self.fill(entries, 0, cx)
     }
 
+    /// Goes back to the last track in the history that plays and is not blocked. No going back to
+    /// an ex.
     pub fn previous(&mut self, cx: &mut Context<Self>) -> Option<Track> {
-        let index = self.past.iter().rposition(|entry| entry.track.playable)?;
+        let blocklist = crate::blocks::blocklist(cx);
+        let index = self
+            .past
+            .iter()
+            .rposition(|entry| entry.track.playable && !blocklist.holds(&entry.track))?;
         self.play_past(index, cx)
     }
 

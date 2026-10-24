@@ -11,8 +11,8 @@ use i18n::{Language, t};
 use music::SignInPrompt;
 use router::{Destination, SettingsPage, SettingsTab, navigate};
 use state::{
-    AppSettings, Drm, Equalizer, Io, Outputs, Playback, Scan, Scrobbling, Session, SessionState,
-    Sleep, Sonora,
+    AppSettings, BlockKind, Drm, Equalizer, Io, Outputs, Playback, Scan, Scrobbling, Session,
+    SessionState, Sleep, Sonora,
 };
 use ui::{
     ActiveTheme as _, Card, Deck, Dismiss, Input, Lazy, Popovers, Scrollbar, ScrubberState,
@@ -26,6 +26,7 @@ use crate::shared::text;
 mod about;
 mod accounts;
 mod appearance;
+mod blocked;
 mod connect;
 mod discord;
 mod general;
@@ -98,6 +99,9 @@ enum Slot {
     OfflineMode,
     Sleep,
     StayAwake,
+    Blocked,
+    BlockedSongs,
+    BlockedArtists,
     StreamQuality,
     StreamFormat,
     StreamBitrate,
@@ -302,6 +306,9 @@ impl SettingsView {
         cx.observe(&scrobbling, |this, _, cx| this.remeasure(cx))
             .detach();
         cx.observe(&settings, |this, _, cx| this.remeasure(cx))
+            .detach();
+        let blocks = Sonora::global(cx).blocks.clone();
+        cx.observe(&blocks, |this, _, cx| this.remeasure(cx))
             .detach();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         playback.update(cx, |playback, cx| playback.measure_storage(cx));
@@ -517,6 +524,7 @@ impl SettingsView {
             SettingsPage::About => self.about_groups(),
             SettingsPage::LyricsSources => self.lyrics_sources_groups(),
             SettingsPage::MusicFolders => self.music_folders_groups(),
+            SettingsPage::Blocked => self.blocked_groups(),
         }
     }
 
@@ -655,7 +663,7 @@ impl SettingsView {
     )]
     fn slot_meta(&self, slot: Slot, cx: &App) -> Option<(SharedString, SharedString)> {
         let meta = match slot {
-            Slot::Folders => return None,
+            Slot::Folders | Slot::BlockedSongs | Slot::BlockedArtists => return None,
             Slot::Startup => (t!("settings-startup"), t!("settings-startup-detail")),
             Slot::Entries => (t!("settings-entries"), t!("settings-entries-detail")),
             Slot::Language => (t!("settings-language"), t!("settings-language-detail")),
@@ -796,6 +804,7 @@ impl SettingsView {
             ),
             Slot::Sleep => (t!("settings-sleep"), t!("settings-sleep-detail")),
             Slot::StayAwake => (t!("settings-stay-awake"), t!("settings-stay-awake-detail")),
+            Slot::Blocked => (t!("settings-blocked"), t!("settings-blocked-detail")),
             Slot::Widevine => (t!("settings-widevine"), self.widevine_detail(cx)),
             Slot::OutputDevice => (
                 t!("settings-output-device"),
@@ -950,6 +959,9 @@ impl SettingsView {
             Slot::StreamBitrate => self.stream_bitrate_row(cx),
             Slot::Sleep => self.sleep_row(cx),
             Slot::StayAwake => self.stay_awake_row(cx),
+            Slot::Blocked => self.blocked_row(cx),
+            Slot::BlockedSongs => self.blocked_list(BlockKind::Song, cx),
+            Slot::BlockedArtists => self.blocked_list(BlockKind::Artist, cx),
             Slot::OutputDevice => self.output_device_row(),
             Slot::OutputFailure => self.output_failure_row(cx),
             Slot::SampleRate => self.sample_rate_row(cx),
