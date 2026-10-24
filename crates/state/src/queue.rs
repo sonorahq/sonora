@@ -183,6 +183,10 @@ struct Taken {
     batch: u64,
 }
 
+/// The tracks a block took out of the queue, and where each sat, which the block's Undo puts
+/// back.
+pub(crate) struct Lifted(Vec<Taken>);
+
 fn stub(track: &Track) -> Option<Stub> {
     Some(Stub {
         id: track.id.clone()?,
@@ -1114,6 +1118,39 @@ impl Queue {
             },
             cx,
         );
+    }
+
+    /// Takes every upcoming track and suggestion `drop` picks out of the queue at once, as a
+    /// block does, and returns them for [`Self::unlift`]. The current track, the history and the
+    /// source are left alone, as when a track is removed by hand.
+    pub(crate) fn lift(&mut self, drop: impl Fn(&Track) -> bool, cx: &mut Context<Self>) -> Lifted {
+        let mut taken = Vec::new();
+        let mut at = 0;
+        while at < self.upcoming.len() {
+            if !drop(&self.upcoming[at].track) {
+                at += 1;
+                continue;
+            }
+            let Some(entry) = self.upcoming.remove(at) else {
+                break;
+            };
+            taken.push(Taken {
+                entry,
+                index: at,
+                batch: self.suggested,
+            });
+        }
+        if !taken.is_empty() {
+            self.changed(cx);
+        }
+        Lifted(taken)
+    }
+
+    /// Puts back what [`Self::lift`] took, each where it sat as far as the queue now allows.
+    pub(crate) fn unlift(&mut self, lifted: Lifted, cx: &mut Context<Self>) {
+        if !lifted.0.is_empty() {
+            self.put_back(lifted.0, cx);
+        }
     }
 
     /// Adds a removed track to the toast that reports removals, or posts a new one once the

@@ -1,14 +1,17 @@
+use std::cell::RefCell;
 use std::collections::HashSet;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
-use gpui::{App, Context, Entity, Task};
+use gpui::{App, Context, Entity, EventEmitter, Task};
 use music::{SavedArtist, Track};
 use rusqlite::{Connection, params};
 use storage::Database;
 
-use crate::{Io, Session, join};
+use crate::queue::{Lifted, Queue};
+use crate::{Io, Outcome, Session, Target, Toast, Toasts, join};
 
 /// What a block covers: one song, or every song an artist is credited on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +39,26 @@ pub struct Blocked {
 impl Blocked {
     fn is(&self, provider: &str, kind: BlockKind, id: &str) -> bool {
         self.kind == kind && self.id == id && self.provider == provider
+    }
+
+    /// Whether this block passes over `track`.
+    pub(crate) fn covers(&self, track: &Track) -> bool {
+        match self.kind {
+            BlockKind::Song => track.id.as_deref() == Some(self.id.as_str()),
+            BlockKind::Artist => track
+                .artist_refs
+                .iter()
+                .any(|artist| artist.id.as_deref() == Some(self.id.as_str())),
+        }
+    }
+
+    /// The page the toast about this block links to.
+    fn target(&self) -> Target {
+        let id = self.id.clone().into();
+        match self.kind {
+            BlockKind::Song => Target::Song(id),
+            BlockKind::Artist => Target::Artist(id),
+        }
     }
 }
 
@@ -98,6 +121,7 @@ enum Edit {
 /// disk and apply again at its next sign-in.
 pub struct Blocks {
     session: Entity<Session>,
+    queue: Entity<Queue>,
     store: Store,
     io: Io,
     /// Every block of every provider, newest first.
@@ -114,9 +138,16 @@ pub struct Blocks {
     writing: Option<Task<()>>,
 }
 
+/// Raised when a song or an artist is newly blocked, so playback can move off the track playing
+/// now when the block covers it.
+pub(crate) struct NewlyBlocked(pub Blocked);
+
+impl EventEmitter<NewlyBlocked> for Blocks {}
+
 impl Blocks {
     pub fn new(
         session: Entity<Session>,
+        queue: Entity<Queue>,
         database: Database,
         io: Io,
         cx: &mut Context<Self>,
@@ -126,6 +157,7 @@ impl Blocks {
         let slugs = session.read(cx).active_slugs();
         let mut blocks = Self {
             session,
+            queue,
             store: Store { database },
             io,
             all: Vec::new(),
@@ -161,8 +193,9 @@ impl Blocks {
             .filter(move |entry| slugs.contains(&entry.provider.as_str()))
     }
 
-    /// Blocks `track`, or unblocks it when it is blocked on its own already. A track with no id
-    /// is left alone.
+    /// Blocks `track` and takes it out of the queue, or unblocks it when it is blocked on its
+    /// own already. A track with no id is left alone. Unblocking says nothing, since the menu
+    /// is the way back.
     pub fn toggle_song(&mut self, track: &Track, cx: &mut Context<Self>) {
         let Some(id) = track.id.clone() else {
             return;
@@ -179,7 +212,8 @@ impl Blocks {
         }
     }
 
-    /// Blocks every song by `artist`, or unblocks them when the artist is blocked already.
+    /// Blocks every song by `artist` and takes them out of the queue, or unblocks them when the
+    /// artist is blocked already.
     pub fn toggle_artist(&mut self, artist: &SavedArtist, cx: &mut Context<Self>) {
         let id = artist.id.clone();
         match self.artist_blocked(&id) {
@@ -218,7 +252,36 @@ impl Blocks {
             artists,
             added_at: now(),
         };
-        self.keep(entry, cx);
+        self.keep(entry.clone(), cx);
+        let lifted = self
+            .queue
+            .update(cx, |queue, cx| queue.lift(|track| entry.covers(track), cx));
+        cx.emit(NewlyBlocked(entry.clone()));
+        self.report(entry, lifted, cx);
+    }
+
+    /// Says what was blocked, with an Undo that lifts the block and puts back the tracks it
+    /// took out of the queue. Every block gets a toast of its own.
+    fn report(&self, entry: Blocked, lifted: Lifted, cx: &mut Context<Self>) {
+        let toast = Toast::new(Outcome::Done, "toast-blocked")
+            .name(entry.name.clone())
+            .target(Some(entry.target()));
+        let snapshot = Rc::new(RefCell::new(Some((entry, lifted))));
+        let blocks = cx.entity().downgrade();
+        let toast = toast.undo(move |cx| {
+            let Some((entry, lifted)) = snapshot.borrow_mut().take() else {
+                return;
+            };
+            blocks
+                .update(cx, |blocks, cx| blocks.undo(entry, lifted, cx))
+                .ok();
+        });
+        Toasts::post(toast, cx);
+    }
+
+    fn undo(&mut self, entry: Blocked, lifted: Lifted, cx: &mut Context<Self>) {
+        self.unblock(&entry, cx);
+        self.queue.update(cx, |queue, cx| queue.unlift(lifted, cx));
     }
 
     fn unblock_id(&mut self, kind: BlockKind, id: String, cx: &mut Context<Self>) {
