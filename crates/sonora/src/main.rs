@@ -300,6 +300,7 @@ fn show_window(cx: &mut App) {
 fn open_window(cx: &mut App) {
     let Sonora {
         session,
+        blocks: _,
         control: _,
         cover: _,
         devices: _,
