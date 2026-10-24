@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Changing playback volume no longer notifies every settings observer, avoiding unrelated
+  layout work while dragging the volume slider.
+
 ## [0.44.1] - 2026-10-22
 
 ### Added

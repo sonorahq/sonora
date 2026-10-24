@@ -1429,9 +1429,11 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    /// Persists playback's volume without invalidating views that observe preferences.
+    /// Live volume changes are published by `Playback`, not by settings.
     pub fn set_volume(&mut self, volume: f32, cx: &mut Context<Self>) {
         self.state.volume = volume.clamp(0., 1.);
-        self.schedule_state_save(cx);
+        self.save_state_quietly(cx);
     }
 
     pub fn set_normalisation(&mut self, normalisation: bool, cx: &mut Context<Self>) {
@@ -2185,7 +2187,7 @@ impl AppSettings {
         self.save_state_quietly(cx);
     }
 
-    /// Debounces a `state.sqlite` write without waking observers, for state no view renders.
+    /// Debounces a `state.sqlite` write without waking settings observers.
     fn save_state_quietly(&mut self, cx: &mut Context<Self>) {
         self.save_state = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SAVE_DELAY).await;
