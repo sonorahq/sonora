@@ -470,6 +470,8 @@ impl ItemMenu {
                 .on_click(move |_, window, cx| TagEditor::open(track.clone(), window, cx))
         });
 
+        let block = (!many).then(|| block_song_item(track, cx)).flatten();
+
         let delete_files = imported.then(|| {
             let ids = ids.clone();
             MenuItem::new(
@@ -509,6 +511,7 @@ impl ItemMenu {
                     .into_iter()
                     .chain(edit)
                     .chain(copy)
+                    .chain(block)
                     .chain(delete_files)
                     .collect(),
                 pinnable
@@ -874,6 +877,7 @@ pub(crate) fn artist_menu(
             ],
             artist_library_item(artist.clone(), cx)
                 .into_iter()
+                .chain([block_artist_item(artist.clone(), cx)])
                 .collect(),
             vec![copy_link_item(
                 "copy-artist-link",
@@ -922,6 +926,44 @@ fn artist_library_item(artist: SavedArtist, cx: &App) -> Option<MenuItem> {
                 library.update(cx, |library, cx| library.toggle_artist(artist.clone(), cx));
             }
         }),
+    })
+}
+
+/// Block song or Unblock song for one track. It reads the song's own block, not its artists',
+/// and a track with no id gets none.
+fn block_song_item(track: &Track, cx: &App) -> Option<MenuItem> {
+    let id = track.id.as_deref()?;
+    let blocks = Sonora::global(cx).blocks.clone();
+    let blocked = blocks.read(cx).song_blocked(id);
+    let track = track.clone();
+    Some(
+        MenuItem::new(
+            "toggle-block-song",
+            match blocked {
+                true => t!("menu-unblock-song"),
+                false => t!("menu-block-song"),
+            },
+        )
+        .icon("icons/ban.svg")
+        .on_click(move |_, _, cx| {
+            blocks.update(cx, |blocks, cx| blocks.toggle_song(&track, cx));
+        }),
+    )
+}
+
+fn block_artist_item(artist: SavedArtist, cx: &App) -> MenuItem {
+    let blocks = Sonora::global(cx).blocks.clone();
+    let blocked = blocks.read(cx).artist_blocked(&artist.id);
+    MenuItem::new(
+        "toggle-block-artist",
+        match blocked {
+            true => t!("menu-unblock-artist"),
+            false => t!("menu-block-artist"),
+        },
+    )
+    .icon("icons/ban.svg")
+    .on_click(move |_, _, cx| {
+        blocks.update(cx, |blocks, cx| blocks.toggle_artist(&artist, cx));
     })
 }
 
