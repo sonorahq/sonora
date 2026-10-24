@@ -784,6 +784,13 @@ impl Queue {
             .is_some_and(|entry| entry.kind == QueueKind::Suggested)
     }
 
+    /// Whether the track `next` would hand back is one the user queued by hand.
+    pub fn next_is_manual(&self) -> bool {
+        self.upcoming
+            .front()
+            .is_some_and(|entry| entry.kind == QueueKind::Queued)
+    }
+
     pub fn has_previous(&self) -> bool {
         !self.past.is_empty()
     }
@@ -1206,8 +1213,14 @@ impl Queue {
         self.fill(entries, 0, cx)
     }
 
+    /// Goes back to the last track in the history that plays and is not blocked. No going back to
+    /// an ex.
     pub fn previous(&mut self, cx: &mut Context<Self>) -> Option<Track> {
-        let index = self.past.iter().rposition(|entry| entry.track.playable)?;
+        let blocklist = crate::blocks::blocklist(cx);
+        let index = self
+            .past
+            .iter()
+            .rposition(|entry| entry.track.playable && !blocklist.holds(&entry.track))?;
         self.select(QueuePosition::Past(index), cx)
     }
 
