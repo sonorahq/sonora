@@ -229,6 +229,9 @@ fn hit(song: &Song, sheet: &Sheet) -> Option<LyricsHit> {
                 }
                 writers
             }),
+        origin: None,
+        contributors: Vec::new(),
+        expires: None,
     })
 }
 

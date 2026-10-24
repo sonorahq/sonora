@@ -433,6 +433,7 @@ pub(super) fn source_name(provider: &str) -> SharedString {
         "LrcLib" => "settings-lyrics-provider-lrclib",
         "Kugou" => "settings-lyrics-provider-kugou",
         "NetEase" => "settings-lyrics-provider-netease",
+        "Spicy Lyrics" => "settings-lyrics-provider-spicy",
         _ => return SharedString::from(provider.to_owned()),
     };
     i18n::lookup(key, None)

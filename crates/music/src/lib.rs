@@ -54,9 +54,10 @@ pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
     Contributor, CoverSize, Credit, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
-    ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsWord,
-    PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail, ReleaseType, RomanizedText,
-    SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
+    ImportedPlaylist, Lyrics, LyricsContributor, LyricsHit, LyricsLane, LyricsLine, LyricsQuery,
+    LyricsRole, LyricsWord, PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail,
+    ReleaseType, RomanizedText, SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile,
+    Voice, WritingSystem,
 };
 pub use output::{Server as SoundServer, missing_bridge};
 pub use spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
