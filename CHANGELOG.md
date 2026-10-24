@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Block a song or an artist from its menu, so radio, autoplay and the queue skip it. Unblock it
+  in Settings → Playback.
+
 ### Fixed
 
 - Playing YouTube Music videos and looking up lyrics no longer fills your YouTube search history
