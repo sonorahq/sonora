@@ -1,3 +1,4 @@
+use std::sync::RwLock;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{Context as _, Result};
@@ -14,7 +15,7 @@ use crate::{
 
 const SOURCE: &str = "Spicy Lyrics";
 const ENDPOINT: &str = "https://api.spicylyrics.org/v1/lyrics";
-/// The environment variable holding the developer key, `sl_sk_…` or `sl_pk_…`.
+/// The environment variable a developer key may come from when Settings holds none.
 const KEY_ENV: &str = "SPICY_LYRICS_KEY";
 /// The source the catalogue names for its own community sheets.
 const COMMUNITY: &str = "spicy_lyrics";
@@ -33,25 +34,38 @@ const AGENT: &str = concat!(
 
 /// The Spicy Lyrics developer API, which answers with the best sync it has for a Spotify track
 /// id: its own community sheets, or one it relays from another catalogue. It needs a key of the
-/// user's own in `SPICY_LYRICS_KEY`, and a Spotify sign-in only to find the id of a song played
-/// from another service.
+/// user's own, entered in Settings or else read from `SPICY_LYRICS_KEY`, and a Spotify sign-in
+/// only to find the id of a song played from another service.
 pub struct SpicyLyrics {
     spotify: SpotifyLyrics,
     http: reqwest::Client,
-    key: Option<String>,
+    /// The key from the environment, used while Settings holds none.
+    fallback: Option<String>,
+    entered: RwLock<Option<String>>,
 }
 
 impl SpicyLyrics {
-    pub fn new(spotify: SpotifyLyrics, key: Option<String>) -> Self {
+    pub fn new(spotify: SpotifyLyrics, fallback: Option<String>) -> Self {
         Self {
             spotify,
             http: reqwest::Client::new(),
-            key: key.filter(|key| !key.trim().is_empty()),
+            fallback: usable(fallback),
+            entered: RwLock::new(None),
         }
     }
 
     pub fn from_env() -> Self {
         Self::new(SpotifyLyrics::from_env(), std::env::var(KEY_ENV).ok())
+    }
+
+    /// The key a request goes out with: the one entered in Settings, or else the environment's.
+    fn key(&self) -> Option<String> {
+        let entered = self
+            .entered
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        entered.or_else(|| self.fallback.clone())
     }
 
     /// The answer for one Spotify track, or `None` when the catalogue has nothing for it.
@@ -121,11 +135,22 @@ impl LyricsProvider for SpicyLyrics {
         SOURCE
     }
 
+    fn set_key(&self, key: Option<&str>) {
+        *self
+            .entered
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = usable(key.map(str::to_owned));
+    }
+
+    fn ready(&self) -> bool {
+        self.key().is_some()
+    }
+
     async fn search(&self, query: &LyricsQuery) -> Result<Vec<LyricsHit>> {
-        let Some(key) = self.key.as_deref() else {
-            log::debug!("lyrics: spicy lyrics has no key, set {KEY_ENV}");
+        let Some(key) = self.key() else {
             return Ok(Vec::new());
         };
+        let key = key.as_str();
         if let Some(id) = query.id_for("spotify") {
             let hit = catalog::hit(SOURCE, query, Lyrics::plain(String::new()));
             return Ok(self.hit(key, id, hit).await?.into_iter().collect());
@@ -403,6 +428,12 @@ fn joined(words: &[LyricsWord]) -> String {
         .collect::<String>()
         .trim()
         .to_owned()
+}
+
+/// A key with its whitespace trimmed, or `None` when nothing is left.
+fn usable(key: Option<String>) -> Option<String> {
+    key.map(|key| key.trim().to_owned())
+        .filter(|key| !key.is_empty())
 }
 
 fn voice(opposite: bool) -> Voice {

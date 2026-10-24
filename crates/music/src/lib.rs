@@ -355,6 +355,14 @@ pub trait MusicApi: Send + Sync {
 #[async_trait]
 pub trait LyricsProvider: Send + Sync {
     fn name(&self) -> &'static str;
+    /// Hands over the key the user entered for this source, `None` once it is cleared. Only a
+    /// source that needs a key of the user's own keeps it.
+    fn set_key(&self, _key: Option<&str>) {}
+    /// Whether the source can be asked now. One that needs a key is left out until it has one,
+    /// so it is never recorded as having had nothing.
+    fn ready(&self) -> bool {
+        true
+    }
     async fn search(&self, query: &LyricsQuery) -> Result<Vec<LyricsHit>>;
 }
 

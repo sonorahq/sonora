@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -41,6 +41,8 @@ pub struct Lyrics {
     unsaved: Vec<Unsaved>,
     providers: Vec<Arc<dyn LyricsProvider>>,
     enabled_providers: Vec<String>,
+    /// The keys last handed to the providers, so a change hands them over again.
+    keys: BTreeMap<String, String>,
     /// The order of the sources the answer on show was ranked by. A new order looks the track
     /// up again, from what is held, so the source now ranked first is the one shown.
     priority: Vec<String>,
@@ -76,8 +78,14 @@ impl Lyrics {
             let settings = settings.read(cx);
             let enabled = settings.lyrics_providers();
             let priority = settings.lyrics_provider_priority();
-            if enabled == this.enabled_providers && priority == this.priority {
+            let keys = settings.lyrics_keys();
+            if enabled == this.enabled_providers && priority == this.priority && *keys == this.keys
+            {
                 return;
+            }
+            if *keys != this.keys {
+                this.keys = keys.clone();
+                hand_keys(&this.providers, &this.keys);
             }
             this.enabled_providers = enabled.to_vec();
             this.priority = priority;
@@ -90,6 +98,8 @@ impl Lyrics {
         .detach();
         let enabled_providers = settings.read(cx).lyrics_providers().to_vec();
         let priority = settings.read(cx).lyrics_provider_priority();
+        let keys = settings.read(cx).lyrics_keys().clone();
+        hand_keys(&providers, &keys);
         let store = Sheets::new(storage::Cache::standard());
         let moving = store.clone();
         let migration = cx
@@ -108,6 +118,7 @@ impl Lyrics {
             unsaved: Vec::new(),
             providers,
             enabled_providers,
+            keys,
             priority,
             playback,
             session,
@@ -267,6 +278,7 @@ impl Lyrics {
         self.providers
             .iter()
             .filter(|provider| settings.lyrics_provider_enabled(provider.name()))
+            .filter(|provider| provider.ready())
             .filter(|provider| match provider.name() == LOCAL {
                 true => reads_file,
                 false => online,
@@ -653,6 +665,13 @@ fn ordered(query: &LyricsQuery, hits: Vec<LyricsHit>, priority: &[String]) -> Ve
     let mut ranked = music::lyrics::rank_with_priority(query, hits, priority);
     music::lyrics::reshape(&mut ranked);
     ranked
+}
+
+/// Gives every provider the key the user entered for it, or `None` when there is none.
+fn hand_keys(providers: &[Arc<dyn LyricsProvider>], keys: &BTreeMap<String, String>) {
+    for provider in providers {
+        provider.set_key(keys.get(provider.name()).map(String::as_str));
+    }
 }
 
 /// Hits sent to a lookup, with the provider that has now answered. Hits held from an earlier
