@@ -1,6 +1,8 @@
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, DragMoveEvent, Pixels, Point, Render, SharedString, Window, div};
+use gpui::{
+    AnyElement, App, Context, DragMoveEvent, Pixels, Point, Render, SharedString, Window, div,
+};
 use i18n::t;
 use music::WritingSystem;
 use router::{Destination, SettingsPage, navigate};
@@ -13,6 +15,9 @@ use ui::{
 use super::rows::drill;
 use super::{Group, SettingsView, Slot};
 
+/// The lyrics source that needs a key of the user's own, by the name its provider reports.
+pub(super) const SPICY_LYRICS: &str = "Spicy Lyrics";
+
 /// A lyrics source being dragged within the priority list. It draws as a chip under the cursor
 /// and changes the saved order only when dropped.
 #[derive(Clone)]
@@ -24,7 +29,12 @@ pub(super) struct DraggedSource {
 }
 
 impl SettingsView {
-    pub(super) fn lyrics_groups(&self) -> Vec<Group> {
+    /// The lyrics groups. The Spicy Lyrics key row only stands while that source is on.
+    pub(super) fn lyrics_groups(&self, cx: &App) -> Vec<Group> {
+        let mut sources = vec![Slot::LyricsSources, Slot::LyricsForLocal];
+        if self.settings.read(cx).lyrics_provider_enabled(SPICY_LYRICS) {
+            sources.push(Slot::SpicyLyricsKey);
+        }
         vec![
             Group::new("settings-group-display", "icons/mic-vocal.svg").rows([
                 Slot::Karaoke,
@@ -33,8 +43,7 @@ impl SettingsView {
                 Slot::PanelLyricsSize,
                 Slot::FullscreenLyricsSize,
             ]),
-            Group::new("settings-group-sources", "icons/list-music.svg")
-                .rows([Slot::LyricsSources, Slot::LyricsForLocal]),
+            Group::new("settings-group-sources", "icons/list-music.svg").rows(sources),
         ]
     }
 
@@ -110,6 +119,16 @@ impl SettingsView {
             .child(step("larger", "+", "settings-font-larger", 0.1));
 
         self.row(i18n::lookup(title, None), actions.into_any_element())
+    }
+
+    pub(super) fn spicy_lyrics_key_row(&self) -> AnyElement {
+        self.row(
+            t!("settings-spicy-lyrics-key"),
+            div()
+                .w(Picker::WIDE)
+                .child(self.spicy_key.clone())
+                .into_any_element(),
+        )
     }
 
     pub(super) fn lyrics_for_local_files_row(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -433,7 +452,7 @@ pub(super) fn source_name(provider: &str) -> SharedString {
         "LrcLib" => "settings-lyrics-provider-lrclib",
         "Kugou" => "settings-lyrics-provider-kugou",
         "NetEase" => "settings-lyrics-provider-netease",
-        "Spicy Lyrics" => "settings-lyrics-provider-spicy",
+        SPICY_LYRICS => "settings-lyrics-provider-spicy",
         _ => return SharedString::from(provider.to_owned()),
     };
     i18n::lookup(key, None)
