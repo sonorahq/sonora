@@ -285,6 +285,8 @@ impl Aside {
         cx.observe(&lyrics, |_, _, cx| cx.notify()).detach();
         let settings = Sonora::global(cx).settings.clone();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+        let blocks = Sonora::global(cx).blocks.clone();
+        cx.observe(&blocks, |_, _, cx| cx.notify()).detach();
         let verse_bar = cx.new(|_| {
             Scrollbar::new(ScrollHandle::new())
                 .spring(Springs::LYRICS_SCROLL)
@@ -693,6 +695,7 @@ impl Aside {
             )),
             None => SharedString::from(track.artists.clone()),
         };
+        let blocked = Sonora::global(cx).blocks.read(cx).blocks(&track);
 
         let card = Card::new(
             SharedString::from(format!("queue-track-{key}")),
@@ -706,6 +709,12 @@ impl Aside {
                 .items_center()
                 .gap_1()
                 .min_w_0()
+                .when(blocked, |this| {
+                    this.child(crate::shared::cells::blocked_mark(
+                        SharedString::from(format!("queue-blocked-{key}")),
+                        cx,
+                    ))
+                })
                 .child(
                     crate::shared::cells::artist_links(
                         SharedString::from(format!("queue-track-artist-{key}")),

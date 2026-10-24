@@ -52,7 +52,7 @@ impl HistoryView {
         let scroll = scrollbar.read(cx).scroll().clone();
         let table = cx.new(|cx| {
             let menu = cx.new(|_| Scrollbar::inset().watching(id));
-            crate::shared::tracks::follow_downloads(cx);
+            crate::shared::tracks::follow_marks(cx);
             let source = TrackSource::new(
                 HISTORY_COLUMNS,
                 HistoryTracks(history.clone()),
