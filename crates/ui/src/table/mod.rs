@@ -9,8 +9,8 @@ use gpui::prelude::*;
 use gpui::{
     AbsoluteLength, AnyElement, App, Context, Corners, Div, DragMoveEvent, Empty, Entity,
     EventEmitter, FocusHandle, Focusable, Global, Interactivity, MouseButton, MouseDownEvent,
-    MouseUpEvent, Pixels, Point, ScrollHandle, SharedString, Stateful, StyleRefinement, TextAlign,
-    Window, actions, div, point, px, svg,
+    MouseUpEvent, Pixels, Point, SharedString, Stateful, StyleRefinement, TextAlign, Window,
+    actions, div, point, px, svg,
 };
 
 use crate::artwork::{PREFETCH_REACH, Prefetch};
@@ -602,7 +602,7 @@ pub struct TableState<S: TableSource> {
     viewport: Viewport,
     corners: Corners<Pixels>,
     focus: FocusHandle,
-    scroll: Option<ScrollHandle>,
+    scrollbar: Option<Entity<crate::Scrollbar>>,
     context_menu: Option<(Vec<usize>, Point<Pixels>)>,
     moving: Option<(usize, usize)>,
     sizing: Option<Sizing>,
@@ -623,15 +623,16 @@ impl<S: TableSource> TableState<S> {
             viewport: Viewport::default(),
             corners: Corners::default(),
             focus: cx.focus_handle(),
-            scroll: None,
+            scrollbar: None,
             context_menu: None,
             moving: None,
             sizing: None,
         }
     }
 
-    pub fn follow(mut self, scroll: ScrollHandle) -> Self {
-        self.scroll = Some(scroll);
+    /// Follows the surrounding scrollbar for keyboard navigation and the current-row marker.
+    pub fn follow(mut self, scrollbar: &Entity<crate::Scrollbar>) -> Self {
+        self.scrollbar = Some(scrollbar.clone());
         self
     }
 
@@ -711,9 +712,10 @@ impl<S: TableSource> TableState<S> {
     }
 
     fn reveal(&self, display: usize, window: &Window, cx: &App) {
-        let Some(scroll) = &self.scroll else {
+        let Some(bar) = &self.scrollbar else {
             return;
         };
+        let scroll = bar.read(cx).scroll();
 
         let metrics = cx.theme().metrics;
         let row = snapped(metrics.row, window);
@@ -1286,6 +1288,11 @@ impl<S: TableSource> Render for TableState<S> {
             true => pinned,
             false => pinned + head,
         };
+        let playing = self
+            .delegate
+            .order
+            .iter()
+            .position(|row| self.delegate.source.playing(*row, cx));
         let context_menu = self.context_menu.clone().and_then(|(rows, position)| {
             let visible = self.delegate.visible();
             self.delegate
@@ -1360,6 +1367,19 @@ impl<S: TableSource> Render for TableState<S> {
                     .rounded_tr(top.top_right)
                     .child(self.header(head, top, cx)),
             )
+            .when_some(self.scrollbar.clone(), |this, bar| {
+                let scroll = bar.read(cx).scroll().clone();
+                this.on_children_prepainted(move |bounds, _, cx| {
+                    let position = playing.and_then(|display| {
+                        bounds.first().map(|bounds| {
+                            let top =
+                                bounds.top() - masked - scroll.bounds().top() - scroll.offset().y;
+                            top + head + row * (display as f32 + 0.5)
+                        })
+                    });
+                    bar.update(cx, |bar, cx| bar.set_table_marker(position, cx));
+                })
+            })
             .when_some(context_menu, |this, menu| this.child(menu))
     }
 }

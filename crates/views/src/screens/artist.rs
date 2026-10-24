@@ -117,7 +117,6 @@ impl ArtistView {
                 .capabilities()
                 .playcounts,
         );
-        let scroll = scrollbar.read(cx).scroll().clone();
         let shown = Rc::new(Cell::new(LISTED));
         let table = cx.new(|cx| {
             let menu_scrollbar = cx.new(|_| Scrollbar::inset().watching(id));
@@ -145,7 +144,7 @@ impl ArtistView {
             let mut delegate = TableDelegate::new(source, width, cx);
             delegate.set_layout(saved, cx);
             delegate.set_sorting(sorting.flatten(), cx);
-            TableState::new(delegate, cx).follow(scroll)
+            TableState::new(delegate, cx).follow(&scrollbar)
         });
 
         cx.subscribe(&detail, |_, _, event, cx| {
@@ -268,8 +267,11 @@ impl ArtistView {
 
     fn set_mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
         self.mode = mode;
-        if mode == Mode::List {
-            self.table.clone().set_width(self.width, cx);
+        match mode {
+            Mode::List => self.table.clone().set_width(self.width, cx),
+            Mode::Grid => self
+                .scrollbar
+                .update(cx, |bar, cx| bar.clear_table_marker(cx)),
         }
         self.track_context = None;
         self.settings
