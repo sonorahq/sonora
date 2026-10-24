@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Spicy Lyrics can supply word-by-word lyrics once you add your own key in Settings → Lyrics.
 - Open music links from the search field or send browser pages to Sonora with a bookmark.
 - Open YouTube handle links on their artist pages.
 - Preview music links in search suggestions and search by their titles or artist names.
