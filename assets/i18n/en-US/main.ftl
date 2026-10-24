@@ -1106,6 +1106,7 @@ toast-last-tracks = { $count } tracks play last
 toast-queue-cleared = Queue cleared
 toast-queue-removed-track = Removed { $name } from the queue
 toast-queue-removed-tracks = Removed { $count } tracks from the queue
+toast-blocked = Blocked { $name }
 toast-sleep-ended = Sleep timer ended
 toast-radio-failed = Could not start radio for { $name }
 toast-similar-failed = Could not find tracks similar to { $name }

@@ -264,7 +264,15 @@ pub fn init(
     let cache = storage::Cache::standard();
     let library = cx.new(|cx| Library::new(session.clone(), io.clone(), cache, cx));
     let queue = cx.new(|cx| Queue::new(session.clone(), settings.clone(), cx));
-    let blocks = cx.new(|cx| Blocks::new(session.clone(), database.clone(), io.clone(), cx));
+    let blocks = cx.new(|cx| {
+        Blocks::new(
+            session.clone(),
+            queue.clone(),
+            database.clone(),
+            io.clone(),
+            cx,
+        )
+    });
     // Playback starts no engine until a provider is up, so the saved device is handed over
     // before any stream opens.
     let equalizer = cx.new(|cx| Equalizer::new(settings.clone(), cx));
@@ -276,6 +284,13 @@ pub fn init(
             &equalizer,
             cx,
         )
+    });
+    // Blocking the track that plays moves on from it, as the block would when it came up next.
+    playback.update(cx, |_, cx| {
+        cx.subscribe(&blocks, |this, _, blocked: &blocks::NewlyBlocked, cx| {
+            this.pass_over(&blocked.0, cx)
+        })
+        .detach();
     });
     let outputs = cx.new(|cx| Outputs::new(settings.clone(), playback.clone(), cx));
     let downloads = cx.new(|cx| {

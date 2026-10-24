@@ -90,7 +90,7 @@ impl QueuePlacement {
 use crate::queue::Queue;
 use serde::{Deserialize, Serialize};
 
-use crate::blocks::Blocklist;
+use crate::blocks::{Blocked, Blocklist};
 use crate::devices::{collection_of, mode_of};
 use crate::{
     AppSettings, Devices, Equalizer, Io, Network, Outcome, Session, SessionEvent, SessionState,
@@ -1632,6 +1632,14 @@ impl Playback {
         self.fetch = None;
         let start = self.burst();
         self.follow_queue(start, cx);
+    }
+
+    /// Moves on when `entry` covers the track playing now, so a block made while it plays is
+    /// heard at once rather than when the track ends.
+    pub(crate) fn pass_over(&mut self, entry: &Blocked, cx: &mut Context<Self>) {
+        if self.track.as_ref().is_some_and(|track| entry.covers(track)) {
+            self.next(cx);
+        }
     }
 
     /// Removing tracks from queue
