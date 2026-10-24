@@ -17,6 +17,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Import an M3U or M3U8 playlist from the button or right-click menu on your local Playlists
   page, and export a local playlist from its right-click menu. Songs outside your library are
   left out, and an export saved beside your music lists it by relative path.
+- Block a song or an artist from its menu so radio, autoplay and the queue skip it.
 
 ### Changed
 
