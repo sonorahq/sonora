@@ -90,6 +90,7 @@ impl QueuePlacement {
 use crate::queue::Queue;
 use serde::{Deserialize, Serialize};
 
+use crate::blocks::Blocklist;
 use crate::devices::{collection_of, mode_of};
 use crate::{
     AppSettings, Devices, Equalizer, Io, Network, Outcome, Session, SessionEvent, SessionState,
@@ -1016,7 +1017,8 @@ impl Playback {
         self.start_any(tracks, origin, cx);
     }
 
-    /// Which of `tracks` a collection opens with.
+    /// Which of `tracks` a collection opens with. Blocked tracks are passed over, unless
+    /// nothing else would play, so Play on a collection that is all blocked still plays it.
     fn opener(&self, tracks: &[Track], cx: &Context<Self>) -> Option<usize> {
         let playable = tracks
             .iter()
@@ -1024,9 +1026,19 @@ impl Playback {
             .filter(|(_, track)| track.playable && self.unreachable_reason(track, cx).is_none())
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
+        let blocklist = crate::blocks::blocklist(cx);
+        let unblocked = playable
+            .iter()
+            .copied()
+            .filter(|&index| !blocklist.holds(&tracks[index]))
+            .collect::<Vec<_>>();
+        let pool = match unblocked.is_empty() {
+            true => &playable,
+            false => &unblocked,
+        };
         match self.queue.read(cx).shuffle() {
-            true => fastrand::choice(&playable).copied(),
-            false => playable.first().copied(),
+            true => fastrand::choice(pool).copied(),
+            false => pool.first().copied(),
         }
     }
 
@@ -1051,11 +1063,14 @@ impl Playback {
 
         let seed_id = seed.id.clone();
         let title = seed.name.clone();
+        let blocklist = crate::blocks::blocklist(cx);
         let io = Io::global(cx);
         self.fetch = Some(cx.spawn(async move |this, cx| {
             let loaded = join(io.spawn(async move {
                 let (mut tracks, next) = client.track_radio(&id, None).await?;
-                tracks.retain(|track| track.id != seed_id && track.playable);
+                tracks.retain(|track| {
+                    track.id != seed_id && track.playable && !blocklist.holds(track)
+                });
                 Ok((tracks, next))
             }))
             .await;
@@ -1086,10 +1101,11 @@ impl Playback {
     /// stretch is the queue, the seed at the front, and its continuation is kept.
     fn play_radio_of(&mut self, origin: Origin, cx: &mut Context<Self>) {
         let id = origin.id.clone();
+        let blocklist = crate::blocks::blocklist(cx);
         self.gather(origin, cx, move |client| {
             Box::pin(async move {
                 let (mut tracks, next) = client.track_radio(&id, None).await?;
-                tracks.retain(|track| track.playable);
+                tracks.retain(|track| track.playable && !blocklist.holds(track));
                 Ok((tracks, next))
             })
         });
@@ -1663,8 +1679,14 @@ impl Playback {
     /// Asks the engine to fetch the track that plays after this one. With `segue` it is also
     /// lined up to follow gaplessly, which waits for the end because the queue can still change.
     fn preload_upcoming(&mut self, segue: bool, cx: &Context<Self>) {
+        let queue = self.queue.read(cx);
+        let manual = queue.manual().len();
         let next = match self.repeat != Repeat::One {
-            true => self.queue.read(cx).upcoming().next().cloned(),
+            true => queue
+                .upcoming()
+                .enumerate()
+                .find(|(index, track)| passes(track, *index < manual, cx))
+                .map(|(_, track)| track.clone()),
             false => None,
         };
         let Some(next) = next else {
@@ -1734,13 +1756,14 @@ impl Playback {
         };
 
         let heard = self.queue.read(cx).ids();
+        let blocklist = crate::blocks::blocklist(cx);
         let io = Io::global(cx);
         self.topping = Some(cx.spawn(async move |this, cx| {
             let seed = station.origin.id.clone();
             let token = station.next.clone();
             let loaded = join(io.spawn(async move {
                 let (mut tracks, next) = client.track_radio(&seed, Some(&token)).await?;
-                unheard(&mut tracks, &heard);
+                unheard(&mut tracks, &heard, &blocklist);
                 anyhow::Ok((tracks, next))
             }))
             .await;
@@ -1825,6 +1848,7 @@ impl Playback {
         };
 
         let queued = self.queue.read(cx).ids();
+        let blocklist = crate::blocks::blocklist(cx);
         self.seeded = Some(id.clone());
         let title = seed.name.clone();
         let origin = Origin::radio(id.clone()).named(seed.name);
@@ -1832,7 +1856,7 @@ impl Playback {
         self.suggest = Some(cx.spawn(async move |this, cx| {
             let loaded = join(io.spawn(async move {
                 let (mut tracks, _) = client.track_radio(&id, None).await?;
-                unheard(&mut tracks, &queued);
+                unheard(&mut tracks, &queued, &blocklist);
                 tracks.truncate(SIMILAR_LIMIT);
                 anyhow::Ok(tracks)
             }))
@@ -1969,10 +1993,11 @@ impl Playback {
         let origin = Origin::radio(id.clone()).named(seed.name.clone());
         let io = Io::global(cx);
         let heard = self.queue.read(cx).ids();
+        let blocklist = crate::blocks::blocklist(cx);
         self.fetch = Some(cx.spawn(async move |this, cx| {
             let loaded = join(io.spawn(async move {
                 let (mut tracks, _) = client.track_radio(&id, None).await?;
-                unheard(&mut tracks, &heard);
+                unheard(&mut tracks, &heard, &blocklist);
                 anyhow::Ok(tracks)
             }))
             .await;
@@ -1998,23 +2023,25 @@ impl Playback {
         self.load_after(&track, start, cx);
     }
 
-    /// The next playable track the queue has, dropping the ones that are not. Reaching the
-    /// suggestions means radio has taken over from the station the queue was playing.
+    /// The next track the queue has that plays and is not blocked, dropping the ones before it.
+    /// A blocked track the user queued by hand still plays. Reaching the suggestions means radio
+    /// has taken over from the station the queue was playing.
     fn playable_next(&mut self, cx: &mut Context<Self>) -> Option<Track> {
         loop {
             let suggested = self.queue.read(cx).next_is_suggested();
+            let manual = self.queue.read(cx).next_is_manual();
             let track = self.queue.update(cx, |queue, cx| queue.next(cx))?;
             if suggested {
                 self.leave_station();
             }
-            if track.playable {
+            if passes(&track, manual, cx) {
                 return Some(track);
             }
         }
     }
 
     fn follow_after(&mut self, track: Track, start: Start, cx: &mut Context<Self>) {
-        let track = match track.playable {
+        let track = match passes(&track, false, cx) {
             true => Some(track),
             false => self.playable_next(cx),
         };
@@ -3220,15 +3247,24 @@ impl Playback {
     }
 }
 
-/// Keeps the playable tracks that are not among `heard`, the ids a queue already holds.
-fn unheard(tracks: &mut Vec<Track>, heard: &HashSet<String>) {
+/// Keeps the playable tracks that are not among `heard`, the ids a queue already holds, and
+/// not blocked.
+fn unheard(tracks: &mut Vec<Track>, heard: &HashSet<String>, blocklist: &Blocklist) {
     tracks.retain(|track| {
         track.playable
+            && !blocklist.holds(track)
             && track
                 .id
                 .as_ref()
                 .is_some_and(|id| !heard.contains(id.as_str()))
     });
+}
+
+/// Whether the queue may move on to `track` by itself: it plays, and it is not blocked unless the
+/// user queued it by hand (`manual`). A blocked track the user picks still plays, because a pick
+/// never comes through here.
+fn passes(track: &Track, manual: bool, cx: &App) -> bool {
+    track.playable && (manual || !crate::blocks::blocked(track, cx))
 }
 
 fn song_target(track: &Track) -> Option<Target> {

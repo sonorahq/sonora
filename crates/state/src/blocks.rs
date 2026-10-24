@@ -341,6 +341,14 @@ pub fn blocked(track: &Track, cx: &App) -> bool {
         .is_some_and(|sonora| sonora.blocks.read(cx).blocks(track))
 }
 
+/// The blocklist as it stands, for code with no handle on the [`Blocks`] entity, such as a
+/// radio fetch about to leave for tokio. It is empty before the app state is up.
+pub(crate) fn blocklist(cx: &App) -> Blocklist {
+    cx.try_global::<crate::Sonora>()
+        .map(|sonora| sonora.blocks.read(cx).live.clone())
+        .unwrap_or_default()
+}
+
 #[derive(Clone)]
 struct Store {
     database: Database,

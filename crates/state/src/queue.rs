@@ -677,6 +677,11 @@ impl Queue {
         self.queued() == 0 && self.similar > 0
     }
 
+    /// Whether the track `next` would hand back is one the user queued by hand.
+    pub fn next_is_manual(&self) -> bool {
+        self.manual > 0
+    }
+
     pub fn has_previous(&self) -> bool {
         !self.past.is_empty()
     }
@@ -1038,8 +1043,14 @@ impl Queue {
         self.fill(entries, 0, cx)
     }
 
+    /// Goes back to the last track in the history that plays and is not blocked. No going back to
+    /// an ex.
     pub fn previous(&mut self, cx: &mut Context<Self>) -> Option<Track> {
-        let index = self.past.iter().rposition(|entry| entry.track.playable)?;
+        let blocklist = crate::blocks::blocklist(cx);
+        let index = self
+            .past
+            .iter()
+            .rposition(|entry| entry.track.playable && !blocklist.holds(&entry.track))?;
         self.play_past(index, cx)
     }
 
