@@ -568,6 +568,7 @@ settings-tab-integrations = Integrations
 settings-about-name = Sonora
 settings-page-lyrics-sources = Lyrics sources
 settings-page-music-folders = Music folders
+settings-page-blocked = Blocked
 settings-group-services = Streaming services
 settings-group-local-files = Local files
 settings-group-background = Background
@@ -788,6 +789,18 @@ settings-sleep = Sleep timer
 settings-sleep-detail = Lets the music stop on its own after a set time, so it can play you to sleep
 settings-stay-awake = Stay awake while playing
 settings-stay-awake-detail = Prevent sleep while playing and keep the display on while Now playing is open
+settings-blocked = Blocked songs and artists
+settings-blocked-detail = Songs and artists that radio, autoplay and the queue skip
+settings-blocked-count = { $count ->
+    [one] { $count } blocked
+   *[other] { $count } blocked
+    }
+settings-blocked-empty = None
+settings-blocked-songs = Songs
+settings-blocked-artists = Artists
+settings-blocked-songs-none = No songs blocked
+settings-blocked-artists-none = No artists blocked
+settings-unblock = Unblock
 settings-sleep-configure = Configure…
 settings-sleep-off = Off
 settings-sleep-end-of-track = End of track
