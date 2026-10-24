@@ -289,6 +289,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- On Linux with WebKitGTK 2.54, signing in to Apple Music no longer fills all your memory and
+  crashes Sonora before the sign-in page loads.
 - YouTube Music and Apple Music artist pages now list the artist's whole discography instead
   of stopping at ten albums and ten singles, and Deezer artist pages no longer stop at 50.
 - Apple Music artist pages now list the artist's live albums and compilations, which were
