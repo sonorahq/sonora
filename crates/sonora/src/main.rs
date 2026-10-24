@@ -329,6 +329,7 @@ fn show_window(cx: &mut App) {
 fn open_window(cx: &mut App) {
     let Sonora {
         session,
+        blocks: _,
         cover: _,
         devices: _,
         downloads: _,

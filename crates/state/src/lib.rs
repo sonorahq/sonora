@@ -1,4 +1,5 @@
 mod artist;
+mod blocks;
 mod catalog;
 mod cover;
 mod detail;
@@ -43,6 +44,7 @@ mod wake;
 mod window_shape;
 
 pub use artist::{ArtistDetail, ArtistDetailEvent};
+pub use blocks::{BlockKind, Blocked, Blocks, blocked};
 pub use cover::Cover;
 pub use detail::{Collection, Detail, Header};
 pub use devices::{Devices, Steered, Upcoming};
@@ -183,6 +185,7 @@ pub(crate) fn settled<T>(result: Result<T>, cx: &mut gpui::App) -> std::result::
 
 pub struct Sonora {
     pub session: Entity<Session>,
+    pub blocks: Entity<Blocks>,
     pub cover: Entity<Cover>,
     pub devices: Entity<Devices>,
     pub downloads: Entity<Downloads>,
@@ -261,6 +264,7 @@ pub fn init(
     let cache = storage::Cache::standard();
     let library = cx.new(|cx| Library::new(session.clone(), io.clone(), cache, cx));
     let queue = cx.new(|cx| Queue::new(session.clone(), settings.clone(), cx));
+    let blocks = cx.new(|cx| Blocks::new(session.clone(), database.clone(), io.clone(), cx));
     // Playback starts no engine until a provider is up, so the saved device is handed over
     // before any stream opens.
     let equalizer = cx.new(|cx| Equalizer::new(settings.clone(), cx));
@@ -358,6 +362,7 @@ pub fn init(
 
     cx.set_global(Sonora {
         session,
+        blocks,
         cover,
         devices,
         downloads,
