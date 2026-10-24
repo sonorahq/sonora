@@ -287,6 +287,9 @@ fn hit(song: &Song, krc: &str, title: &str) -> Option<LyricsHit> {
         album: (!song.album.is_empty()).then(|| song.album.clone()),
         duration: (song.duration > 0).then(|| Duration::from_secs(song.duration)),
         writers: Vec::new(),
+        origin: None,
+        contributors: Vec::new(),
+        expires: None,
     })
 }
 

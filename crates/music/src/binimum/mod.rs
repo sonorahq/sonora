@@ -149,6 +149,9 @@ impl LyricsProvider for Binimum {
             album: (!best.album_name.is_empty()).then(|| best.album_name.clone()),
             duration: (best.duration > 0).then(|| Duration::from_secs(best.duration)),
             writers: sheet.writers,
+            origin: None,
+            contributors: Vec::new(),
+            expires: None,
         }])
     }
 }

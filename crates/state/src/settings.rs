@@ -303,7 +303,7 @@ const DEFAULT_STARTUP: &str = "home";
 pub const SYSTEM_FONT: &str = "auto";
 /// Every lyrics source Sonora knows by the name its provider reports, in the order a fresh
 /// install prefers them.
-pub const LYRICS_SOURCES: [&str; 9] = [
+pub const LYRICS_SOURCES: [&str; 10] = [
     LOCAL,
     "Subsonic",
     "Spotify",
@@ -313,6 +313,7 @@ pub const LYRICS_SOURCES: [&str; 9] = [
     "LrcLib",
     "Kugou",
     "NetEase",
+    "Spicy Lyrics",
 ];
 
 /// A pin together with the provider it belongs to. The pin is flattened so the stored JSON
@@ -602,7 +603,8 @@ impl Default for Values {
             local_lyrics_offered: false,
             subsonic_lyrics_offered: false,
             lyrics_provider_priority: lyrics_priority(&[]),
-            // Kugou and NetEase, the last two, start switched off.
+            // Kugou, NetEase and Spicy Lyrics, the last three, start switched off. Spicy Lyrics
+            // needs a developer key of the user's own, so it waits to be asked for.
             lyrics_providers: LYRICS_SOURCES[..7]
                 .iter()
                 .map(|name| name.to_string())
@@ -2942,7 +2944,8 @@ mod tests {
                 "Musixmatch",
                 "LrcLib",
                 "Kugou",
-                "NetEase"
+                "NetEase",
+                "Spicy Lyrics"
             ]
             .map(str::to_owned)
         );
@@ -2965,7 +2968,7 @@ mod tests {
     fn lyrics_priority_ignores_unknown_and_duplicate_sources_and_appends_missing_ones() {
         let order = lyrics_priority(&["LrcLib".into(), "unknown".into(), "LrcLib".into()]);
         assert_eq!(order[0], "LrcLib");
-        assert_eq!(order.len(), 9);
+        assert_eq!(order.len(), 10);
         assert!(!order.iter().any(|name| name == "unknown"));
         assert_eq!(order.iter().filter(|name| *name == "LrcLib").count(), 1);
     }

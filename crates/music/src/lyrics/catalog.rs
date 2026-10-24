@@ -14,6 +14,9 @@ pub(crate) fn hit(source: &'static str, query: &LyricsQuery, lyrics: Lyrics) -> 
         album: query.album.clone(),
         duration: (!query.duration.is_zero()).then_some(query.duration),
         writers: Vec::new(),
+        origin: None,
+        contributors: Vec::new(),
+        expires: None,
     }
 }
 

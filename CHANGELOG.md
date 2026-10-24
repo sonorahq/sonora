@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Spicy Lyrics can supply word-by-word lyrics once you add your own key in Settings → Lyrics.
 - Drop a song onto a playlist you own or collaborate on in the sidebar to add it to that playlist.
 
 ### Changed

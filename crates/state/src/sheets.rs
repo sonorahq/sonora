@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use music::{Lyrics as Sheet, LyricsHit};
+use music::{Lyrics as Sheet, LyricsContributor, LyricsHit};
 use serde::{Deserialize, Serialize};
 
 const VERSION: u32 = 5;
@@ -42,6 +42,12 @@ struct Held {
     duration: Option<Duration>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     writers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    origin: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    contributors: Vec<LyricsContributor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expires: Option<SystemTime>,
 }
 
 /// One track's answer on its way to the database.
@@ -80,13 +86,19 @@ impl Sheets {
         let kept: Kept = serde_json::from_str(&value)
             .inspect_err(|error| log::warn!("lyrics: cannot read the cached sheet: {error}"))
             .ok()?;
+        // An expired hit is dropped and its source asked again, as the catalogue requires.
+        let now = SystemTime::now();
+        let (hits, expired): (Vec<Held>, Vec<Held>) = kept
+            .hits
+            .into_iter()
+            .partition(|held| held.expires.is_none_or(|expires| expires > now));
         let answered = kept
             .answered
             .iter()
+            .filter(|source| !expired.iter().any(|held| held.source == **source))
             .filter_map(|source| known.iter().copied().find(|name| name == source))
             .collect();
-        let hits = kept
-            .hits
+        let hits = hits
             .into_iter()
             .filter_map(|held| held.hit(known))
             .collect();
@@ -152,6 +164,9 @@ impl Held {
             album: hit.album.clone(),
             duration: hit.duration,
             writers: hit.writers.clone(),
+            origin: hit.origin.clone(),
+            contributors: hit.contributors.clone(),
+            expires: hit.expires,
         }
     }
 
@@ -167,6 +182,9 @@ impl Held {
             album: self.album,
             duration: self.duration,
             writers: self.writers,
+            origin: self.origin,
+            contributors: self.contributors,
+            expires: self.expires,
         })
     }
 }
