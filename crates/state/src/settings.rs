@@ -467,6 +467,8 @@ struct Values {
     /// Whether lyrics timed word by word are shown ahead of any others, whatever source they
     /// come from. The source order then only settles lyrics of the same kind.
     lyrics_word_synced_first: bool,
+    /// Keys the user entered for lyrics sources that need one of their own, by source name.
+    lyrics_keys: BTreeMap<String, String>,
     karaoke_lyrics: bool,
     blur_lyrics: bool,
     romanized_lyrics: bool,
@@ -679,6 +681,7 @@ impl Default for Values {
                 .map(|name| name.to_string())
                 .collect(),
             lyrics_word_synced_first: false,
+            lyrics_keys: BTreeMap::new(),
             karaoke_lyrics: true,
             blur_lyrics: true,
             romanized_lyrics: true,
@@ -1192,6 +1195,19 @@ impl AppSettings {
             .lyrics_providers
             .iter()
             .any(|name| name == provider)
+    }
+
+    /// Every key the user entered for a lyrics source, by source name.
+    pub fn lyrics_keys(&self) -> &BTreeMap<String, String> {
+        &self.values.lyrics_keys
+    }
+
+    /// The key the user entered for `provider`, empty when there is none.
+    pub fn lyrics_key(&self, provider: &str) -> &str {
+        self.values
+            .lyrics_keys
+            .get(provider)
+            .map_or("", String::as_str)
     }
 
     pub fn karaoke_lyrics(&self) -> bool {
@@ -1783,6 +1799,22 @@ impl AppSettings {
 
     pub fn set_quality(&mut self, quality: Quality, cx: &mut Context<Self>) {
         self.values.stream_quality = quality.id().to_owned();
+        self.schedule_save(cx);
+    }
+
+    /// Keeps `key` for `provider`, or forgets it when it is blank.
+    pub fn set_lyrics_key(&mut self, provider: &str, key: &str, cx: &mut Context<Self>) {
+        let key = key.trim();
+        if self.lyrics_key(provider) == key {
+            return;
+        }
+        match key.is_empty() {
+            true => self.values.lyrics_keys.remove(provider),
+            false => self
+                .values
+                .lyrics_keys
+                .insert(provider.to_owned(), key.to_owned()),
+        };
         self.schedule_save(cx);
     }
 
