@@ -239,7 +239,7 @@ impl LibraryView {
 
         let songs = cx.new(|cx| {
             let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(id));
-            crate::shared::tracks::follow_downloads(cx);
+            crate::shared::tracks::follow_marks(cx);
             let from = origin(shelf);
             let source = TrackSource::new(
                 LIBRARY_COLUMNS,

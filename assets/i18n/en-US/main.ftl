@@ -162,6 +162,7 @@ menu-block-song = Block song
 menu-unblock-song = Unblock song
 menu-block-artist = Block artist
 menu-unblock-artist = Unblock artist
+track-blocked = Blocked
 menu-copy-link = Copy link
 menu-cut = Cut
 menu-copy = Copy

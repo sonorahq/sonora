@@ -443,7 +443,9 @@ impl TrackSource {
             color,
             track.explicit,
             None,
-            download_mark(cell, track, cx),
+            blocked_mark(cell, track, cx)
+                .into_iter()
+                .chain(download_mark(cell, track, cx)),
             self.liked_button(cell, track, cx),
         )
     }
@@ -797,10 +799,23 @@ fn download_mark(cell: &Cell<TrackField>, track: &Track, cx: &App) -> Option<Any
     Some(div().flex_none().child(ring).into_any_element())
 }
 
-/// Redraws a track table whenever downloads move, so the marks on its rows keep up.
-pub(crate) fn follow_downloads<T: 'static>(cx: &mut Context<T>) {
-    let downloads = Sonora::global(cx).downloads.clone();
+/// The mark on a song that is blocked, for itself or for one of its artists, shown before the
+/// download mark.
+fn blocked_mark(cell: &Cell<TrackField>, track: &Track, cx: &App) -> Option<AnyElement> {
+    Sonora::global(cx)
+        .blocks
+        .read(cx)
+        .blocks(track)
+        .then(|| cells::blocked_mark(("blocked-mark", cell.row), cx))
+}
+
+/// Redraws a track table whenever downloads move or a block changes, so the marks on its rows
+/// keep up.
+pub(crate) fn follow_marks<T: 'static>(cx: &mut Context<T>) {
+    let sonora = Sonora::global(cx);
+    let (downloads, blocks) = (sonora.downloads.clone(), sonora.blocks.clone());
     cx.observe(&downloads, |_, _, cx| cx.notify()).detach();
+    cx.observe(&blocks, |_, _, cx| cx.notify()).detach();
 }
 
 #[cfg(test)]
