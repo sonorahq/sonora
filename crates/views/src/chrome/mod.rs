@@ -12,7 +12,7 @@ mod sidebar_left;
 mod sidebar_right;
 mod swipe_cue;
 mod theme_invite;
-mod timeline;
+pub(crate) mod timeline;
 mod title_bar;
 mod toasts;
 mod toolbar;

@@ -11,7 +11,7 @@ use gpui::{
 };
 use gpui::{Div, Window, deferred, div, px, rems};
 use i18n::t;
-use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
+use input::{OpenMiniPlayer, ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
 use state::{AppSettings, Playback, PlayerBarLayout, Queue, QueuePosition, SideTab, Sonora};
 use ui::{Artwork, Button, Flight, Pinnable, Popup, Room, Scrollbar, ScrubberState, Sprung};
 
@@ -321,6 +321,19 @@ impl PlayerBar {
             .icon("icons/maximize.svg")
             .tooltip_above("player-fullscreen")
             .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleFullscreen), cx));
+        let button = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(
+                Button::new("open-mini-player")
+                    .ghost()
+                    .small()
+                    .icon("icons/external-link.svg")
+                    .tooltip_above("mini-player-new")
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenMiniPlayer), cx)),
+            )
+            .child(button);
         match cx.try_global::<ShellSwap>().copied().unwrap_or_default() {
             ShellSwap::Closing => deferred(button).into_any_element(),
             ShellSwap::Opening => button.invisible().into_any_element(),

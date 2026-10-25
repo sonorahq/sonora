@@ -89,8 +89,8 @@ pub use session::{Failure, ProviderInfo, Session, SessionEvent, SessionState};
 pub use settings::{
     AppSettings, ConnectName, DiscordName, FilterValue, FullscreenControlsAutohide, LYRICS_SOURCES,
     PageWidth, PlayerBarLayout, Reloaded, RomanizationScripts, SYSTEM_FONT, SideTab, ThemeFamily,
-    ThemeOffer, ThemeVariant, VisualizerScreens, equalizer_profile_label, remember_window,
-    window_placement,
+    ThemeOffer, ThemeVariant, VisualizerScreens, equalizer_profile_label, mini_player_placement,
+    remember_mini_player, remember_window, window_placement,
 };
 pub use signal::{Change, Equalizing, FLOAT_BITS, Following, Signal, SignalPath};
 pub use soloist::{Soloist, SoloistProblem, SoloistState, SoloistStep, SoloistSwitched};

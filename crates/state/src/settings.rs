@@ -862,6 +862,7 @@ struct StateValues {
     sidebar_pin_reversed: bool,
     resume: Option<Resume>,
     window: Option<Frame>,
+    mini_player: Option<Frame>,
     system_theme: String,
     /// The variant last chosen in each theme family, by family id.
     theme_variants: HashMap<String, String>,
@@ -895,6 +896,7 @@ impl Default for StateValues {
             sidebar_pin_reversed: false,
             resume: None,
             window: None,
+            mini_player: None,
             system_theme: ThemeKind::Dark.id().to_owned(),
             theme_variants: HashMap::new(),
             picks: Vec::new(),
@@ -1022,6 +1024,7 @@ pub struct AppSettings {
     save: Option<Task<()>>,
     save_state: Option<Task<()>>,
     watch: Option<Subscription>,
+    mini_watch: Option<Subscription>,
     writable: bool,
     /// What `settings.json` held when it was last read or written, so the watcher can tell our
     /// own writes from another program's.
@@ -1109,6 +1112,7 @@ impl AppSettings {
             save: None,
             save_state: None,
             watch: None,
+            mini_watch: None,
             writable,
             disk,
             broken,
@@ -2700,6 +2704,23 @@ impl AppSettings {
         self.schedule_state_save(cx);
     }
 
+    /// Saves the mini player's frame separately from the main window.
+    pub fn watch_mini_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.keep_mini_frame(window, cx);
+        self.mini_watch = Some(cx.observe_window_bounds(window, |this, window, cx| {
+            this.keep_mini_frame(window, cx);
+        }));
+    }
+
+    fn keep_mini_frame(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let frame = Frame::of(window);
+        if !frame.sane() || self.state.mini_player == Some(frame) {
+            return;
+        }
+        self.state.mini_player = Some(frame);
+        self.schedule_state_save(cx);
+    }
+
     /// Wakes observers and debounces a `settings.json` write.
     fn schedule_save(&mut self, cx: &mut Context<Self>) {
         cx.notify();
@@ -3059,6 +3080,37 @@ pub fn window_placement(least: Size<Pixels>, cx: &App) -> Option<(WindowBounds, 
 pub fn remember_window(window: &mut Window, cx: &mut App) {
     let settings = Sonora::global(cx).settings.clone();
     settings.update(cx, |settings, cx| settings.watch_window(window, cx));
+}
+
+/// Restores the mini player on a connected display, keeping its frame inside the usable area.
+pub fn mini_player_placement(least: Size<Pixels>, cx: &App) -> Option<(WindowBounds, DisplayId)> {
+    let frame = Sonora::global(cx).settings.read(cx).state.mini_player?;
+    if !frame.sane() {
+        return None;
+    }
+    let mut bounds = frame.placement(least).get_bounds();
+    let display = cx
+        .displays()
+        .into_iter()
+        .find(|display| display.bounds().contains(&bounds.center()))?;
+    let area = display.visible_bounds();
+    bounds.size.width = bounds.size.width.min(area.size.width);
+    bounds.size.height = bounds.size.height.min(area.size.height);
+    bounds.origin.x = bounds
+        .origin
+        .x
+        .clamp(area.origin.x, area.right() - bounds.size.width);
+    bounds.origin.y = bounds
+        .origin
+        .y
+        .clamp(area.origin.y, area.bottom() - bounds.size.height);
+    Some((WindowBounds::Windowed(bounds), display.id()))
+}
+
+/// Starts saving the mini player's position and size for the next launch.
+pub fn remember_mini_player(window: &mut Window, cx: &mut App) {
+    let settings = Sonora::global(cx).settings.clone();
+    settings.update(cx, |settings, cx| settings.watch_mini_player(window, cx));
 }
 
 /// Whether reloading `current` from disk would replace the values that serialize to `ours`. A

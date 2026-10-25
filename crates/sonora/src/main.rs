@@ -29,7 +29,7 @@ use std::time::Duration;
 use cli::commands::CommandType;
 use gpui::{
     App, AppContext as _, Bounds, Pixels, QuitMode, Size, TitlebarOptions, WindowBounds,
-    WindowOptions, px, size,
+    WindowKind, WindowOptions, point, px, size,
 };
 use music::LyricsProvider;
 use music::link::Linked;
@@ -37,7 +37,7 @@ use router::{Destination, Screen};
 use state::{Opened, Outcome, Sonora, Toasts};
 use ui::ActiveTheme as _;
 use ui::ThemeKind;
-use views::Root;
+use views::{MiniPlayer, Root};
 
 const LEAST_SIZE: Size<Pixels> = size(px(480.), px(400.));
 const FIRST_SIZE: Size<Pixels> = size(px(920.), px(640.));
@@ -320,7 +320,11 @@ fn destination(linked: &Linked) -> Option<Destination> {
 }
 
 fn show_window(cx: &mut App) {
-    match cx.windows().first() {
+    match cx
+        .windows()
+        .into_iter()
+        .find(|window| window.downcast::<Root>().is_some())
+    {
         Some(window) => {
             window
                 .update(cx, |_, window, _| window.activate_window())
@@ -331,6 +335,18 @@ fn show_window(cx: &mut App) {
             open_window(cx);
         }
     }
+    // The mini player may still be handling the expand click, so close it after its update.
+    cx.defer(|cx| {
+        for window in cx
+            .windows()
+            .into_iter()
+            .filter(|window| window.downcast::<MiniPlayer>().is_some())
+        {
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .ok();
+        }
+    });
     cx.activate(true);
 }
 
@@ -382,6 +398,132 @@ fn window_action(visible: Option<bool>) -> WindowAction {
     match visible {
         Some(true) => WindowAction::Hide,
         Some(false) | None => WindowAction::Show,
+    }
+}
+
+/// Drops the main view after the mini player opens. Shared playback and navigation stay alive,
+/// using the same window lifecycle as closing to the tray.
+fn dismiss_main_window(cx: &mut App) {
+    for window in cx
+        .windows()
+        .into_iter()
+        .filter(|window| window.downcast::<Root>().is_some())
+    {
+        window
+            .update(cx, |_, window, _| window.remove_window())
+            .ok();
+    }
+}
+
+/// Shows the mini player, creating it without another remote-control bridge or changing the
+/// main window's saved placement.
+fn open_mini_player(cx: &mut App) {
+    if let Some(window) = cx
+        .windows()
+        .into_iter()
+        .find(|window| window.downcast::<MiniPlayer>().is_some())
+    {
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .ok();
+        cx.defer(dismiss_main_window);
+        return;
+    }
+    let display = cx
+        .active_window()
+        .and_then(|handle| {
+            handle
+                .update(cx, |_, window, cx| window.display(cx))
+                .ok()
+                .flatten()
+        })
+        .or_else(|| cx.primary_display());
+    let theme = *cx.theme();
+    let size = size(theme.metrics.cover * 2.6, theme.metrics.cover * 3.);
+    let bounds = display.as_ref().map_or_else(
+        || Bounds::centered(None, size, cx),
+        |display| {
+            let area = display.visible_bounds();
+            let size = gpui::size(
+                size.width.min(area.size.width),
+                size.height.min(area.size.height),
+            );
+            let right = (area.right() - size.width - theme.metrics.pad).max(area.origin.x);
+            let top = (area.origin.y + theme.metrics.pad).min(area.bottom() - size.height);
+            Bounds::new(point(right, top), size)
+        },
+    );
+    let least = gpui::size(theme.metrics.cover * 2., theme.metrics.cover * 2.);
+    let (placement, display_id) = state::mini_player_placement(least, cx)
+        .map(|(placement, display)| (placement, Some(display)))
+        .unwrap_or_else(|| {
+            (
+                WindowBounds::Windowed(bounds),
+                display.map(|display| display.id()),
+            )
+        });
+    let result = cx.open_window(
+        WindowOptions {
+            window_bounds: Some(placement),
+            display_id,
+            kind: WindowKind::Floating,
+            titlebar: Some(TitlebarOptions {
+                title: Some(i18n::t!("mini-player-title")),
+                appears_transparent: true,
+                // The mini player's header supplies its own close button.
+                traffic_light_position: Some(point(-theme.metrics.cover * 2., Pixels::ZERO)),
+            }),
+            is_movable: true,
+            is_resizable: true,
+            is_minimizable: false,
+            app_owns_titlebar_drag: true,
+            window_min_size: Some(least),
+            inactive_frame_interval: Sonora::global(cx).settings.read(cx).saver().interval(),
+            app_id: Some("sonora".into()),
+            ..Default::default()
+        },
+        |window, cx| {
+            #[cfg(target_os = "windows")]
+            {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                use windows_sys::Win32::UI::WindowsAndMessaging::{
+                    HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+                };
+                set_corner_preference(
+                    window,
+                    Sonora::global(cx).settings.read(cx).window_rounding(),
+                );
+                if let Ok(RawWindowHandle::Win32(handle)) =
+                    HasWindowHandle::window_handle(window).map(|handle| handle.as_raw())
+                {
+                    // GPUI's floating kind does not set the Windows topmost style.
+                    let pinned = unsafe {
+                        SetWindowPos(
+                            handle.hwnd.get() as _,
+                            HWND_TOPMOST,
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                        )
+                    };
+                    if pinned == 0 {
+                        log::warn!(
+                            "window: cannot keep mini player on top: {}",
+                            std::io::Error::last_os_error()
+                        );
+                    }
+                }
+            }
+            state::remember_mini_player(window, cx);
+            cx.new(|cx| MiniPlayer::new(window, cx))
+        },
+    );
+    match result {
+        // The main window is still handling the button click and cannot be updated yet.
+        Ok(_) => cx.defer(dismiss_main_window),
+        Err(error) => log::error!("window: cannot open mini player: {error:#}"),
     }
 }
 

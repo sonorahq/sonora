@@ -35,6 +35,8 @@ actions!(
         OpenFilter,
         OpenSearch,
         OpenSettings,
+        OpenMiniPlayer,
+        ShowMainWindow,
         ToggleFullscreen,
         ToggleQueue,
         ToggleLyrics,
