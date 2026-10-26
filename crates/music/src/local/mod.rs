@@ -76,6 +76,7 @@ impl LocalProvider {
                 downloads: false,
                 qualities: &[],
                 download_gap: Duration::ZERO,
+                playlist_visibility: true,
             },
         })
     }

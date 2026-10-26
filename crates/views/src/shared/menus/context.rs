@@ -1171,7 +1171,12 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
     let public = playlist.public;
     let imported = music::is_local_id(&playlist.id);
     let tiles = playlist_tiles(&playlist, cx);
-    let visibility = (!imported).then(|| {
+    let visibility_offered = Sonora::global(cx)
+        .session
+        .read(cx)
+        .capabilities()
+        .playlist_visibility;
+    let visibility = (!imported && visibility_offered).then(|| {
         MenuItem::new(
             "playlist-visibility",
             match public {
