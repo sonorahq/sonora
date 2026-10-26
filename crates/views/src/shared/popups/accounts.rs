@@ -57,13 +57,17 @@ impl RenderOnce for AccountPicker {
             pick,
             cancel,
         } = self;
-        let theme = *cx.theme();
-        let dismissed = cancel.clone();
-
         let (title, detail) = match kind {
             AccountKind::Session => (t!("login-account-title"), t!("login-account-detail")),
             AccountKind::Profile => (t!("login-profile-title"), t!("login-profile-detail")),
+            AccountKind::Server => (
+                t!("login-server-pick-title"),
+                t!("login-server-pick-detail"),
+            ),
+            AccountKind::Library => (t!("login-library-title"), t!("login-library-detail")),
         };
+        let theme = *cx.theme();
+        let dismissed = cancel.clone();
 
         Modal::new("account-picker", title)
             .w(px(440.))

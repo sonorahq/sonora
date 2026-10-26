@@ -353,10 +353,11 @@ const DEFAULT_STARTUP: &str = "home";
 pub const SYSTEM_FONT: &str = "auto";
 /// Every lyrics source Sonora knows by the name its provider reports, in the order a fresh
 /// install prefers them.
-pub const LYRICS_SOURCES: [&str; 10] = [
+pub const LYRICS_SOURCES: [&str; 11] = [
     LOCAL,
     "Subsonic",
     "Jellyfin",
+    "Plex",
     "Spotify",
     "YouTube Music",
     "Apple Music",
@@ -479,6 +480,9 @@ struct Values {
     jellyfin_lyrics_offered: bool,
     /// Whether lyrics show anywhere and are looked up at all.
     lyrics_enabled: bool,
+    /// Set once Plex has been added to a list saved before it existed, so a user who turns it
+    /// off afterwards is not given it back.
+    plex_lyrics_offered: bool,
     lyrics_providers: Vec<String>,
     /// Every known lyrics source, the preferred one first. Lyrics of the same kind from two
     /// sources go to the one listed higher.
@@ -754,9 +758,10 @@ impl Default for Values {
             subsonic_lyrics_offered: false,
             jellyfin_lyrics_offered: false,
             lyrics_enabled: true,
+            plex_lyrics_offered: false,
             lyrics_provider_priority: lyrics_priority(&[]),
             // Kugou and NetEase, the last two, start switched off.
-            lyrics_providers: LYRICS_SOURCES[..8]
+            lyrics_providers: LYRICS_SOURCES[..9]
                 .iter()
                 .map(|name| name.to_string())
                 .collect(),
@@ -1042,12 +1047,13 @@ impl AppSettings {
                 log::warn!("settings: cannot parse {}: {error}", path.display());
                 (Values::default().settled(), false, None, Some(error.line()))
             }
-            // The default provider list already has Subsonic and Jellyfin, so a fresh install marks
-            // them offered and a user who turns one off does not get it back on the next launch.
+            // The default provider list already has Subsonic, Jellyfin and Plex, so a fresh install
+            // marks them offered and a user who turns one off does not get it back on the next launch.
             None => {
                 let values = Values {
                     subsonic_lyrics_offered: true,
                     jellyfin_lyrics_offered: true,
+                    plex_lyrics_offered: true,
                     ..Values::default()
                 };
                 (values.settled(), writable, None, None)
@@ -3047,6 +3053,7 @@ fn offer_new_lyrics(mut values: Values) -> Values {
     let sources = [
         (&mut values.subsonic_lyrics_offered, "Subsonic"),
         (&mut values.jellyfin_lyrics_offered, "Jellyfin"),
+        (&mut values.plex_lyrics_offered, "Plex"),
     ];
     for (offered, name) in sources {
         if !*offered {
@@ -3481,6 +3488,7 @@ mod tests {
                 LOCAL,
                 "Subsonic",
                 "Jellyfin",
+                "Plex",
                 "Spotify",
                 "YouTube Music",
                 "Apple Music",
