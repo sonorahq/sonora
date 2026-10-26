@@ -259,7 +259,10 @@ fn session(client: PlexClient, profile: crate::UserProfile) -> ProviderSession {
         playback: Arc::new(Factory::new(client)),
         shape: Shape::Catalog(Catalog::Fixed),
         authenticated: true,
-        capabilities: Capabilities::ALL,
+        capabilities: Capabilities {
+            playlist_visibility: false,
+            ..Capabilities::ALL
+        },
     }
 }
 

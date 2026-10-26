@@ -82,6 +82,7 @@ impl LocalProvider {
                 download_gap: Duration::ZERO,
                 song_arrival: None,
                 playlist_arrival: Some(Arrival::OldestFirst),
+                playlist_visibility: true,
             },
         })
     }

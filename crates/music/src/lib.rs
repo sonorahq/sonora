@@ -961,6 +961,9 @@ pub struct Capabilities {
     /// The same, for the songs of a playlist the listener owns. Anyone else's playlist keeps
     /// the order its curator gave it.
     pub playlist_arrival: Option<Arrival>,
+    /// A playlist can be made public or private. A service whose playlists have no such setting
+    /// leaves this off, and the menu item that changes it is never shown.
+    pub playlist_visibility: bool,
 }
 
 impl Capabilities {
@@ -984,6 +987,7 @@ impl Capabilities {
         download_gap: Duration::ZERO,
         song_arrival: None,
         playlist_arrival: None,
+        playlist_visibility: true,
     };
 
     /// Nothing beyond listing and playing.
@@ -1003,6 +1007,7 @@ impl Capabilities {
         download_gap: Duration::ZERO,
         song_arrival: None,
         playlist_arrival: None,
+        playlist_visibility: false,
     };
 }
 
