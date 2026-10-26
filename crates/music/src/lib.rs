@@ -23,6 +23,7 @@ mod models;
 pub mod musixmatch;
 pub mod netease;
 pub mod output;
+pub mod plex;
 pub mod potoken;
 pub mod progress;
 pub mod scrobble;
@@ -932,11 +933,28 @@ pub struct AccountChoice {
     pub detail: Option<String>,
 }
 
+/// What a `SignInPrompt::Accounts` asks the listener to choose between.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Choosing {
+    /// One of several accounts the sign-in found.
+    Account,
+    /// One of several servers the account can use.
+    Server,
+    /// One of several libraries a server has.
+    Library,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SignInPrompt {
-    Accounts(Vec<AccountChoice>),
-    Code { code: String, url: String },
+    Accounts(Choosing, Vec<AccountChoice>),
+    Code {
+        code: String,
+        url: String,
+    },
     Url(String),
+    /// A page the provider's sign-in finishes on, which the app shows in a browser window. The
+    /// provider notices the end of the sign-in itself, so nothing is handed back.
+    Window(String),
     Secret,
 }
 

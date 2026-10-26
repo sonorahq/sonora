@@ -37,6 +37,7 @@ const YOUTUBE: u32 = 0xff0033;
 const DEEZER: u32 = 0xa238ff;
 const APPLE: u32 = 0xfa2d48;
 const SUBSONIC: u32 = 0xffa31a;
+const PLEX: u32 = 0xe5a00d;
 /// How much of the foreground text keeps where the theme would grey it over the ambient field.
 /// The theme's grey is about that share of white over the page colour.
 const QUIET: f32 = 0.56;
@@ -46,6 +47,7 @@ pub(crate) fn provider_logo(slug: &str) -> &'static str {
         "spotify" => "icons/spotify.svg",
         "youtube" => "icons/youtubemusic.svg",
         "subsonic" => "icons/subsonic.svg",
+        "plex" => "icons/plex.svg",
         "deezer" => "icons/deezer.svg",
         "apple" => "icons/applemusic.svg",
         "tidal" => "icons/tidal.svg",
@@ -62,6 +64,7 @@ pub(crate) fn provider_brand(slug: &str, cx: &gpui::App) -> gpui::Hsla {
         "deezer" => gpui::rgb(DEEZER).into(),
         "apple" => gpui::rgb(APPLE).into(),
         "subsonic" => gpui::rgb(SUBSONIC).into(),
+        "plex" => gpui::rgb(PLEX).into(),
         _ => ui::ActiveTheme::theme(cx).foreground,
     }
 }

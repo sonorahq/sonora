@@ -9,6 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Plex is a new provider. Sign in with your Plex account, pick a server and music library if you
+  have more than one, and play, search, rate, make playlists and read lyrics from your own Plex
+  Media Server.
 - Drag the playing song from the player bar onto a playlist, Pinned or the queue.
 - Play directly to hardware on macOS. Every output device is listed a second time under Direct
   to hardware, and picking one there keeps every other app off it.
