@@ -35,6 +35,8 @@ const COVER_WIDE_TIGHT: f32 = 0.86;
 const COVER_TALL_REST: f32 = 0.56;
 const COVER_WIDE_REST: f32 = 0.4;
 const COVER_TALL_TIGHT_REST: f32 = 0.72;
+/// The most of the window's height the cover takes when it stands over the panel.
+const COVER_STACKED: f32 = 0.42;
 const COVER_MIN: f32 = 96.;
 const COVER_MAX: f32 = 520.;
 const COVER_MAX_REST: f32 = 560.;
@@ -43,6 +45,11 @@ const COVER_LAYER_PAD: f32 = 2.;
 /// fitted against the room actually left over. GPUI's spacing scale is a quarter rem a step.
 const COLUMN_GAP: f32 = 1.25;
 const PAGE_PAD: f32 = 1.5;
+/// The page's `px_8` on each side, in rems, which a stacked cover spans the width between.
+const PAGE_SIDE: f32 = 2.;
+/// The least height a stacked panel keeps under the cover, so the queue or the lyrics show a few
+/// rows rather than a sliver.
+const PANEL_MIN: f32 = 180.;
 const META_GAP: f32 = 0.25;
 const DOCK: f32 = 1.15;
 const DOCK_FULL: f32 = 1.7;
@@ -1092,6 +1099,10 @@ impl Render for FullscreenView {
         let viewport = window.viewport_size();
         let room = Room::of(viewport.width);
         let split = room.fits(Room::Wide) && self.panel.is_some();
+        // A window too narrow to set the panel beside the cover but taller than it is wide, the
+        // shape of a phone, stands the cover, the meta and the controls over the panel instead
+        // of cutting the cover down to the strip.
+        let portrait = !split && self.panel.is_some() && viewport.height > viewport.width;
         self.watch(window, cx);
         let idle = self.hidden(window, cx);
         let hide = match self.settings.read(cx).fullscreen_controls_autohide() {
@@ -1128,10 +1139,29 @@ impl Render for FullscreenView {
         let line = |step: Text| phi().to_pixels(theme.text(step).into(), rem).round();
         let meta = line(Text::Title) + rem * META_GAP + line(Text::Body);
         let stack = theme.metrics.title_bar + rem * (COLUMN_GAP * 2. + PAGE_PAD) + meta;
+        // A stacked cover spans the column, as wide as the panel under it, unless that would
+        // squeeze the panel below its least height. Without room for even the smallest cover,
+        // the window keeps the strip.
+        let stacked_side = portrait
+            .then(|| {
+                (viewport.width - rem * PAGE_SIDE * 2.)
+                    .min(viewport.height * COVER_STACKED)
+                    .min(
+                        viewport.height
+                            - stack
+                            - theme.metrics.player_bar * DOCK
+                            - rem * COLUMN_GAP
+                            - px(PANEL_MIN),
+                    )
+            })
+            .filter(|side| *side >= px(COVER_MIN));
+        let stacked = stacked_side.is_some();
+        // Whether the cover's column carries the controls, rather than the page's foot.
+        let docked = split || stacked;
         // The dock reserves the cap it clamps itself to while fading, and nothing at all once
         // it is hidden, which is the whole difference between the awake and the resting fit.
         let dock = theme.metrics.player_bar
-            * match split {
+            * match docked {
                 true => DOCK,
                 false => DOCK_FULL,
             };
@@ -1153,6 +1183,12 @@ impl Render for FullscreenView {
         let far = fit(tall_rest, wide_rest, stack, ceiling_rest)
             .min(near + above * 2.)
             .max(near);
+        // A stacked cover keeps its size while the controls rest, since growing it would push
+        // the panel under it about.
+        let (near, far) = match stacked_side {
+            Some(side) => (side, side),
+            None => (near, far),
+        };
         let presented_side = near + (far - near) * hide;
         // The flex item must never change size when the idle state flips: even a one-frame
         // near/far swap makes the centred column relayout. Keep its awake footprint forever and
@@ -1161,7 +1197,7 @@ impl Render for FullscreenView {
         let raster_side = snapped(far, window);
         let cover_scale = presentation_scale(presented_side, raster_side);
         let lift = (presented_side - side) / 2.;
-        let staged = self.panel.is_none() || split;
+        let staged = self.panel.is_none() || docked;
 
         let style = self.settings.read(cx).visualizer_style();
         let visualizer_on =
@@ -1274,6 +1310,7 @@ impl Render for FullscreenView {
                     .items_center()
                     .justify_between()
                     .gap_8()
+                    .when(stacked, |this| this.flex_col().gap_5())
                     .when(staged, |this| {
                         this.child(
                             div()
@@ -1288,9 +1325,10 @@ impl Render for FullscreenView {
                                     |this| this.flex_1().h_full(),
                                     |this| this.w_full(),
                                 )
+                                .when(stacked, |this| this.flex_none())
                                 .child(self.artwork(side, raster_side, cover_scale, cx))
                                 .child(self.meta(hide, lift, cx))
-                                .when(split, |this| {
+                                .when(docked, |this| {
                                     this.child(self.dock(
                                         theme.metrics.player_bar * DOCK,
                                         hide,
@@ -1310,17 +1348,17 @@ impl Render for FullscreenView {
                                 .flex_1()
                                 .min_w_0()
                                 .min_h_0()
-                                .h_full()
+                                .when_else(stacked, |this| this.w_full(), |this| this.h_full())
                                 .on_click(|_, _, cx| cx.stop_propagation())
                                 .child(self.aside.clone())
                                 .when(shown, |this| this.child(self.floating(hide, cx))),
                         )
                     }),
             )
-            .when(!split && self.panel.is_some(), |this| {
+            .when(!docked && self.panel.is_some(), |this| {
                 this.child(self.strip(hide, window, cx))
             })
-            .when(!split, |this| {
+            .when(!docked, |this| {
                 this.child(self.dock(theme.metrics.player_bar * DOCK_FULL, hide, room, cx))
             })
             .when(idle < 1., |this| this.child(self.leave(idle, window, cx)))

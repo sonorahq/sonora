@@ -19,6 +19,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- In a tall, narrow window such as a phone-shaped one, the fullscreen player puts the cover, the
+  song and its controls on top with the queue or lyrics underneath, and the cover spans the width
+  of the queue instead of shrinking to a small thumbnail.
 - When Spotify refuses to play on your account, a Why? button opens the FAQ explaining it.
 - Right-click a list's column headers to show or hide columns. The Columns button is gone.
 
