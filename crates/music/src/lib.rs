@@ -26,6 +26,7 @@ pub mod potoken;
 pub mod progress;
 pub mod scrobble;
 mod sink;
+pub mod soundcloud;
 mod spectrum;
 pub mod spotify;
 mod stream;
@@ -850,6 +851,19 @@ impl std::fmt::Display for Throttled {
 }
 
 impl std::error::Error for Throttled {}
+
+/// A provider operation this client does not implement, such as writes on a read-only sign-in.
+/// The app shows a notice instead of pretending the operation failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Unsupported;
+
+impl std::fmt::Display for Unsupported {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("not implemented")
+    }
+}
+
+impl std::error::Error for Unsupported {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SignInFailure(pub SignInProblem);

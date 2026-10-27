@@ -102,6 +102,7 @@ fn main() {
             Arc::new(music::subsonic::SubsonicProvider::new()),
             Arc::new(music::deezer::DeezerProvider::new()),
             Arc::new(music::tidal::TidalProvider::new()),
+            Arc::new(music::soundcloud::SoundCloudProvider::new()),
         ];
         let local_provider: Arc<dyn music::MusicProvider> =
             Arc::new(music::local::LocalProvider::new(
