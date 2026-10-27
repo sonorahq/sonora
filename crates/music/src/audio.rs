@@ -6,6 +6,7 @@ use std::time::Duration;
 use rodio::source::SeekError;
 use rodio::{ChannelCount, SampleRate, Source};
 
+use crate::effects::Effects;
 use crate::equalizer::{Equalizer, FilterStage};
 use crate::spectrum::{Analyzer, Probe, Spectrum, Tap};
 
@@ -128,11 +129,13 @@ impl Frames {
     }
 }
 
-/// What sits between the queue and the device: the analyzer listening ahead of the equalizer,
-/// then the equalizer and the volume ramp, with the spectrum tap and the meter listening at the
-/// end. Every engine builds one and hands it to the output.
+/// What sits between the queue and the device: the effects, the analyzer listening ahead of the
+/// equalizer, then the equalizer and the volume ramp, with the spectrum tap and the meter
+/// listening at the end. Every engine builds one and hands it to the output.
 pub struct Chain {
     pub volume: Volume,
+    /// Shared like `equalizer`, and run by the output ahead of everything else.
+    pub effects: Effects,
     /// Hears the music ahead of the equalizer for the equalizer screen, shared like `meter`.
     pub analyzer: Analyzer,
     pub equalizer: Equalizer,

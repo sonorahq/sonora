@@ -25,6 +25,7 @@ impl SettingsView {
             Group::new("settings-group-output", "icons/volume-2.svg").rows(output),
             Group::new("settings-equalizer", "icons/sliders-horizontal.svg")
                 .rows([Slot::Equalizer]),
+            self.effects_group(cx),
         ]
     }
 

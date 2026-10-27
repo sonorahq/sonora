@@ -11,7 +11,8 @@ use std::f64::consts::{FRAC_1_SQRT_2, LN_2, SQRT_2};
 use std::fmt;
 use std::ops::RangeInclusive;
 
-use design::{Biquad, Coefficients, Shape, phi};
+use design::{Biquad, phi};
+pub(crate) use design::{Coefficients, Shape, State};
 pub use shared::{Edit, Equalizer, EqualizerWriter};
 pub(crate) use stage::FilterStage;
 pub use stage::MAX_CHANNELS;

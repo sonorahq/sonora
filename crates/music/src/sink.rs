@@ -578,6 +578,7 @@ mod tests {
         let writer = EqualizerWriter::new(true, Curve::bands(&[12.; 10]));
         let chain = Chain {
             volume: Volume::new(0.5),
+            effects: crate::Effects::default(),
             equalizer: writer.reader(),
             spectrum: Spectrum::new(),
             meter: Meter::default(),

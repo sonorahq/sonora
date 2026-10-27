@@ -26,6 +26,7 @@ use gpui::{
     App, Bounds, Context, DisplayId, EventEmitter, Pixels, Size, Subscription, Task, Window,
     WindowBounds, point, px, size,
 };
+use music::effects;
 use music::lyrics::LOCAL;
 use music::scrobble::Account;
 use music::{Codec, Quality, Transcode, WritingSystem};
@@ -231,6 +232,47 @@ impl Default for RomanizationScripts {
     }
 }
 
+/// The effect values as `settings.json` keeps them. Missing keys take the neutral value.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(default)]
+struct EffectValues {
+    speed: f32,
+    keep_pitch: bool,
+    cutoff: f32,
+    reverb: f32,
+    room: f32,
+}
+
+impl Default for EffectValues {
+    fn default() -> Self {
+        effects::Settings::NEUTRAL.into()
+    }
+}
+
+impl From<effects::Settings> for EffectValues {
+    fn from(settings: effects::Settings) -> Self {
+        Self {
+            speed: settings.speed,
+            keep_pitch: settings.keep_pitch,
+            cutoff: settings.cutoff,
+            reverb: settings.reverb,
+            room: settings.room,
+        }
+    }
+}
+
+impl From<EffectValues> for effects::Settings {
+    fn from(values: EffectValues) -> Self {
+        Self {
+            speed: values.speed,
+            keep_pitch: values.keep_pitch,
+            cutoff: values.cutoff,
+            reverb: values.reverb,
+            room: values.room,
+        }
+    }
+}
+
 /// A window's saved position and size in logical pixels, plus whether it was maximized.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -343,6 +385,10 @@ struct Values {
     /// none, never written back, and read leniently like the keys that replaced it.
     #[serde(skip_serializing, deserialize_with = "equalizer::read_gains")]
     equalizer_bands: Vec<f32>,
+    /// Whether speed, the low-pass and reverb are applied.
+    effects: bool,
+    /// The effect values. Kept even while `effects` is off, so turning it back on restores them.
+    effect_values: EffectValues,
     /// The stored curves, kept even while `equalizer` is off. `equalizer_profile` picks the one
     /// that plays. Both read leniently, so a hand-edited mistake never makes the file unreadable.
     #[serde(deserialize_with = "equalizer::Profile::read_all")]
@@ -574,6 +620,8 @@ impl Default for Values {
             cache_gb: crate::vault::CACHE_GB,
             equalizer: false,
             equalizer_bands: Vec::new(),
+            effects: false,
+            effect_values: EffectValues::default(),
             equalizer_profiles: Vec::new(),
             equalizer_profile: 0,
             equalizer_rules: Vec::new(),
@@ -943,6 +991,15 @@ impl AppSettings {
 
     pub fn keep_tracks(&self) -> bool {
         self.values.keep_tracks
+    }
+
+    pub fn effects(&self) -> bool {
+        self.values.effects
+    }
+
+    /// The stored effect values, clamped into range so a file edited by hand still loads.
+    pub fn effect_settings(&self) -> effects::Settings {
+        effects::Settings::from(self.values.effect_values).clamped()
     }
 
     /// The cache limit in gigabytes, held within the setting's bounds whatever a hand-edited
@@ -1504,6 +1561,16 @@ impl AppSettings {
 
     pub fn set_gapless(&mut self, gapless: bool, cx: &mut Context<Self>) {
         self.values.gapless = gapless;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_effects(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.values.effects = on;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_effect_settings(&mut self, settings: effects::Settings, cx: &mut Context<Self>) {
+        self.values.effect_values = settings.clamped().into();
         self.schedule_save(cx);
     }
 

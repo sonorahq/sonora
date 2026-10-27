@@ -408,6 +408,7 @@ async fn engine_loop<F: Fetch>(
     let (changed, mut gone) = unbounded_channel();
     let chain = Chain {
         volume: Volume::new(config.gain),
+        effects: config.effects.clone(),
         equalizer: config.equalizer.clone(),
         spectrum,
         meter: config.meter.clone(),

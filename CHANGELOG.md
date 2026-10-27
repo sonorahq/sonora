@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Change the speed with or without shifting the pitch, muffle the sound and add reverb under Effects in Sound settings, with presets like slowed + reverb and nightcore.
+
 ## [0.45.0] - 2026-10-27
 
 ### Added

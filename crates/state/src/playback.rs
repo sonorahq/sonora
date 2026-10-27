@@ -7,6 +7,7 @@ use anyhow::Result;
 use futures::future::BoxFuture;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use music::connect::{self, Command, Repeat};
+use music::effects::{self, Effects};
 use music::vault::Vault;
 use music::{
     Analyzer, Meter, MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent, PlaybackEvents,
@@ -125,9 +126,9 @@ struct Preloaded {
     segue: bool,
 }
 
-/// The position shown between the engine's reports. It runs on wall time from `reset` and is
-/// nudged toward each report by `correct`, spread over a moment so the progress bar and the
-/// lyrics glide instead of stepping. Parked, it holds `base`.
+/// The position shown between the engine's reports. It runs on wall time from `reset`, scaled
+/// by the playback speed, and is nudged toward each report by `correct`, spread over a moment
+/// so the progress bar and the lyrics glide instead of stepping. Parked, it holds `base`.
 struct LiveClock {
     base: Duration,
     since: Option<Instant>,
@@ -135,6 +136,8 @@ struct LiveClock {
     correction: f64,
     /// Seconds over which the correction is folded in.
     settle: f64,
+    /// Track seconds per wall second: the speed the effects play at.
+    rate: f64,
 }
 
 impl LiveClock {
@@ -144,7 +147,23 @@ impl LiveClock {
             since: None,
             correction: 0.,
             settle: CLOCK_SETTLE.as_secs_f64(),
+            rate: 1.,
         }
+    }
+
+    /// Runs on at `rate` from where it shows now. Whatever correction was still being folded
+    /// in is dropped, and the next report brings it back.
+    fn set_rate(&mut self, rate: f64) {
+        if rate == self.rate {
+            return;
+        }
+        let now = Instant::now();
+        if self.since.is_some() {
+            self.base = self.at(now);
+            self.since = Some(now);
+            self.correction = 0.;
+        }
+        self.rate = rate;
     }
 
     /// Puts the clock at `at`, running from now or parked there.
@@ -180,7 +199,7 @@ impl LiveClock {
         };
         let elapsed = now.saturating_duration_since(since).as_secs_f64();
         let blend = (elapsed / self.settle).clamp(0., 1.);
-        shifted(self.base, elapsed + self.correction * blend)
+        shifted(self.base, elapsed * self.rate + self.correction * blend)
     }
 }
 
@@ -440,6 +459,9 @@ pub struct Playback {
     /// The `state::Equalizer`'s reader, shared with every engine started here, so a change
     /// reaches the output without a restart.
     equalizer: music::Equalizer,
+    /// Shared with every engine like the equalizer's reader, so a change reaches the output
+    /// without a restart.
+    effects: Effects,
     /// Shared with every engine like the equalizer's reader, and read only while watched.
     meter: Meter,
     /// Shared with every engine like the meter, so the equalizer screen can hear the music ahead
@@ -589,13 +611,19 @@ impl Playback {
         vault.set_caching(keep_tracks);
         let unlock = crate::vault::unlock(vault.clone(), cx);
         let (equalizer, meter) = (equalizer.read(cx).reader(), equalizer.read(cx).meter());
+        let effects = Effects::new(
+            settings.read(cx).effects(),
+            settings.read(cx).effect_settings(),
+        );
+        let mut clock = LiveClock::new();
+        clock.set_rate(f64::from(effects.speed()));
         let repeat = settings.read(cx).repeat();
         let radio = settings.read(cx).radio();
 
         let mut playback = Self {
             state: PlaybackState::Idle,
             position: Duration::ZERO,
-            clock: LiveClock::new(),
+            clock,
             track: None,
             engine: None,
             local_engine: None,
@@ -615,6 +643,7 @@ impl Playback {
             usage: None,
             measuring: None,
             equalizer,
+            effects,
             meter,
             analyzer: Analyzer::default(),
             signals: VecDeque::new(),
@@ -2415,6 +2444,32 @@ impl Playback {
         cx.notify();
     }
 
+    pub fn effects(&self) -> bool {
+        self.effects.enabled()
+    }
+
+    pub fn effect_settings(&self) -> effects::Settings {
+        self.effects.settings()
+    }
+
+    /// Turns the effects on or off. The engines glide to the change, and the shown position
+    /// follows the new speed at once.
+    pub fn set_effects(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.effects.set_enabled(on);
+        self.clock.set_rate(f64::from(self.effects.speed()));
+        self.settings
+            .update(cx, |settings, cx| settings.set_effects(on, cx));
+        cx.notify();
+    }
+
+    pub fn set_effect_settings(&mut self, settings: effects::Settings, cx: &mut Context<Self>) {
+        self.effects.set_settings(settings);
+        self.clock.set_rate(f64::from(self.effects.speed()));
+        self.settings
+            .update(cx, |stored, cx| stored.set_effect_settings(settings, cx));
+        cx.notify();
+    }
+
     pub fn set_gapless(&mut self, on: bool, cx: &mut Context<Self>) {
         if self.gapless == on {
             return;
@@ -2591,6 +2646,7 @@ impl Playback {
             gain: gain(self.level),
             transcode: self.transcode,
             quality: self.quality,
+            effects: self.effects.clone(),
             equalizer: self.equalizer.clone(),
             meter: self.meter.clone(),
             analyzer: self.analyzer.clone(),
@@ -2618,6 +2674,7 @@ impl Playback {
             gain: gain(self.level),
             transcode: self.transcode,
             quality: self.quality,
+            effects: self.effects.clone(),
             equalizer: self.equalizer.clone(),
             meter: self.meter.clone(),
             analyzer: self.analyzer.clone(),
@@ -3163,6 +3220,7 @@ mod tests {
             since: Some(began),
             correction: 0.,
             settle: 1.,
+            rate: 1.,
         };
         let corrected = began + Duration::from_millis(500);
         let before = clock.at(corrected);
@@ -3181,6 +3239,7 @@ mod tests {
             since: Some(began),
             correction: 0.,
             settle: 1.,
+            rate: 1.,
         };
         clock.correct_at(Duration::from_secs(9), corrected);
 

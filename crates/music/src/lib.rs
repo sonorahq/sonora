@@ -8,6 +8,7 @@ pub mod connect;
 pub mod credentials;
 pub mod deezer;
 pub mod drm;
+pub mod effects;
 pub mod engine;
 pub mod equalizer;
 pub mod escape;
@@ -49,6 +50,7 @@ use time::parsing::Parsed;
 use time::{Month, OffsetDateTime};
 
 pub use audio::Meter;
+pub use effects::Effects;
 pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
@@ -366,6 +368,8 @@ pub struct PlaybackConfig {
     pub gapless: bool,
     pub position_interval: Duration,
     pub gain: f32,
+    /// Shared like `equalizer`: speed, the low-pass and reverb every output plays through.
+    pub effects: Effects,
     pub equalizer: Equalizer,
     pub transcode: Transcode,
     pub quality: Quality,

@@ -22,6 +22,7 @@ mod output_host;
 mod output_rate;
 
 use std::collections::HashSet;
+use std::num::NonZero;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread;
@@ -35,6 +36,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::watch;
 
 use crate::audio::{self, Chain};
+use crate::effects::Effected;
 #[cfg(target_os = "linux")]
 use output_host::host;
 
@@ -601,15 +603,28 @@ pub(crate) struct Output {
 
 impl Output {
     /// Joins the shared stream for packets resampled to its rate already, and runs every sample
-    /// through the equalizer and then the volume ramp before it reaches the mixer. `changed`
-    /// hears when the stream has to reopen, playing or not.
+    /// through the effects, the equalizer and then the volume ramp before it reaches the mixer.
+    /// `changed` hears when the stream has to reopen, playing or not.
     pub fn open(chain: Chain, changed: UnboundedSender<()>) -> Result<Self> {
         let device = Device::acquire()?;
         device.listen(changed);
         let (sink, source) = rodio::Player::new();
         let format = audio::PublishedFormat::default();
         let integer = matches!(device.info.format.sample, Sample::Integer(_));
-        device.add(chain.apply(source, format.clone(), integer));
+        let rate = NonZero::new(device.info.format.rate).unwrap_or(NonZero::<u32>::MIN);
+        let channels = NonZero::new(device.info.format.channels).unwrap_or(NonZero::<u16>::MIN);
+        // The effects hand on frames at the device's format alone, so the rest of the chain
+        // hears that one format rather than the ones the chunks publish.
+        let effected = Effected::new(
+            source,
+            format.clone(),
+            chain.effects.clone(),
+            rate,
+            channels,
+        );
+        let device_format = audio::PublishedFormat::default();
+        device_format.publish(rate, channels);
+        device.add(chain.apply(effected, device_format, integer));
         Ok(Self {
             chain,
             sink: Arc::new(sink),

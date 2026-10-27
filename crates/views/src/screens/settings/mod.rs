@@ -29,6 +29,7 @@ mod accounts;
 mod appearance;
 mod connect;
 mod discord;
+mod effects;
 mod general;
 mod header;
 mod layout;
@@ -109,6 +110,13 @@ enum Slot {
     SampleRate,
     Buffer,
     Equalizer,
+    Effects,
+    EffectsPreset,
+    Speed,
+    KeepPitch,
+    LowPass,
+    Reverb,
+    Room,
     SpotifyConnect,
     SpotifyConnectName,
     SpotifyConnectCustom,
@@ -239,6 +247,10 @@ pub struct SettingsView {
     geometry: Option<(Pixels, Pixels, Pixels)>,
     opacity: ScrubberState,
     sleep: ScrubberState,
+    speed: ScrubberState,
+    cutoff: ScrubberState,
+    reverb: ScrubberState,
+    room: ScrubberState,
     pending_sleep: Option<Option<Sleep>>,
     cache: ScrubberState,
     /// The cache size a drag of its slider points at, until it lets go.
@@ -400,6 +412,10 @@ impl SettingsView {
             geometry: None,
             opacity: ScrubberState::new("opacity"),
             sleep: ScrubberState::new("sleep"),
+            speed: ScrubberState::new("effects-speed"),
+            cutoff: ScrubberState::new("effects-cutoff"),
+            reverb: ScrubberState::new("effects-reverb"),
+            room: ScrubberState::new("effects-room"),
             pending_sleep: None,
             cache: ScrubberState::new("cache-size"),
             pending_cache: None,
@@ -826,6 +842,31 @@ impl SettingsView {
                 )
                 .into(),
             ),
+            Slot::Effects => (t!("settings-effects"), t!("settings-effects-detail")),
+            Slot::EffectsPreset => (
+                t!("settings-effects-preset"),
+                t!("settings-effects-preset-detail"),
+            ),
+            Slot::Speed => (
+                t!("settings-effects-speed"),
+                t!("settings-effects-speed-detail"),
+            ),
+            Slot::KeepPitch => (
+                t!("settings-effects-keep-pitch"),
+                t!("settings-effects-keep-pitch-detail"),
+            ),
+            Slot::LowPass => (
+                t!("settings-effects-low-pass"),
+                t!("settings-effects-low-pass-detail"),
+            ),
+            Slot::Reverb => (
+                t!("settings-effects-reverb"),
+                t!("settings-effects-reverb-detail"),
+            ),
+            Slot::Room => (
+                t!("settings-effects-room"),
+                t!("settings-effects-room-detail"),
+            ),
             Slot::LyricsSources => (
                 t!("settings-lyrics-sources"),
                 t!("settings-lyrics-providers-detail"),
@@ -971,6 +1012,13 @@ impl SettingsView {
             Slot::Buffer => self.buffer_row(cx),
             Slot::Widevine => self.widevine_row(cx),
             Slot::Equalizer => self.equalizer_row(cx),
+            Slot::Effects => self.effects_row(cx),
+            Slot::EffectsPreset => self.effects_preset_row(cx),
+            Slot::Speed => self.speed_row(cx),
+            Slot::KeepPitch => self.keep_pitch_row(cx),
+            Slot::LowPass => self.low_pass_row(cx),
+            Slot::Reverb => self.reverb_row(cx),
+            Slot::Room => self.room_row(cx),
             Slot::LyricsSources => self.lyrics_sources_row(cx),
             Slot::LyricsPriority => self.lyrics_priority(cx),
             Slot::Karaoke => self.karaoke_lyrics_row(cx),
