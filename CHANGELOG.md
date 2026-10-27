@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Sign in to SoundCloud and play its music. Your liked tracks and followed artists fill the
+  library, and the wider catalogue — tracks, playlists, artists and albums — is there to search.
+
 ### Changed
 
 - The fullscreen background now folds the cover's colours into one another in slow soft waves instead of drifting blurred spots, and shows a strong second colour from the art.
