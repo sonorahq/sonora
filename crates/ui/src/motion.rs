@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Animation, AnimationElement, AnimationExt as _, App, ElementId, Hsla, IntoElement, Pixels,
-    Rgba, SharedString, SpringConfig, Styled, ease_in_out, ease_out_quint, px,
+    Animation, AnimationElement, AnimationExt as _, App, ElementId, Hsla, Interpolate as _,
+    IntoElement, Pixels, Rgba, SharedString, SpringConfig, Styled, ease_in_out, ease_out_quint, px,
 };
 use i18n::t;
 
@@ -250,17 +250,7 @@ impl<E: Styled + IntoElement + 'static> Rising for E {
 }
 
 pub fn mix(from: Hsla, to: Hsla, t: f32) -> Hsla {
-    let (from, to) = (Rgba::from(from), Rgba::from(to));
-    let step = t.clamp(0., 1.);
-    let blend = |a: f32, b: f32| a + (b - a) * step;
-
-    Rgba {
-        r: blend(from.r, to.r),
-        g: blend(from.g, to.g),
-        b: blend(from.b, to.b),
-        a: blend(from.a, to.a),
-    }
-    .into()
+    Rgba::interpolate(from.into(), to.into(), t.clamp(0., 1.)).into()
 }
 
 /// The CSS `ease` timing function, cubic-bezier(0.25, 0.1, 0.25, 1), for motion copied from

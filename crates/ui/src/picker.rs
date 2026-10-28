@@ -5,7 +5,7 @@ use crate::button::Button;
 use crate::menu::{Menu, MenuItem, TRIGGER_GAP};
 use crate::popover::{Open, Popover, Popovers};
 use crate::scrollbar::Scrollbar;
-use crate::theme::ActiveTheme as _;
+use crate::theme::{ActiveTheme as _, Theme, ThemeKind};
 
 enum Face {
     Label(SharedString),
@@ -16,7 +16,7 @@ enum Face {
 #[derive(IntoElement)]
 pub struct Picker {
     style: StyleRefinement,
-    key: &'static str,
+    key: SharedString,
     group: Popovers,
     face: Face,
     /// What a screen reader calls the trigger, read before the current choice.
@@ -26,6 +26,7 @@ pub struct Picker {
     tooltip: Option<&'static str>,
     above: bool,
     tint: Option<Hsla>,
+    appearance: Option<ThemeKind>,
     selected: bool,
     small: bool,
     width: Pixels,
@@ -44,10 +45,14 @@ impl Picker {
     pub const REGULAR: Pixels = px(190.);
     pub const WIDE: Pixels = px(260.);
 
-    pub fn new(key: &'static str, group: &Popovers, current: impl Into<SharedString>) -> Self {
+    pub fn new(
+        key: impl Into<SharedString>,
+        group: &Popovers,
+        current: impl Into<SharedString>,
+    ) -> Self {
         Self {
             style: StyleRefinement::default(),
-            key,
+            key: key.into(),
             group: group.clone(),
             face: Face::Label(current.into()),
             name: None,
@@ -55,6 +60,7 @@ impl Picker {
             tooltip: None,
             above: false,
             tint: None,
+            appearance: None,
             selected: false,
             small: true,
             width: Self::REGULAR,
@@ -68,7 +74,7 @@ impl Picker {
         }
     }
 
-    pub fn icon(key: &'static str, group: &Popovers, icon: &'static str) -> Self {
+    pub fn icon(key: impl Into<SharedString>, group: &Popovers, icon: &'static str) -> Self {
         Self {
             face: Face::Icon(icon),
             ..Self::new(key, group, "")
@@ -77,7 +83,11 @@ impl Picker {
 
     /// A labelled trigger without the chevron, for a popover that holds a control rather than a
     /// list of choices.
-    pub fn plain(key: &'static str, group: &Popovers, label: impl Into<SharedString>) -> Self {
+    pub fn plain(
+        key: impl Into<SharedString>,
+        group: &Popovers,
+        label: impl Into<SharedString>,
+    ) -> Self {
         Self {
             face: Face::Plain(label.into()),
             ..Self::new(key, group, "")
@@ -111,6 +121,12 @@ impl Picker {
 
     pub fn tint(mut self, tint: Hsla) -> Self {
         self.tint = Some(tint);
+        self
+    }
+
+    /// Gives the trigger a fixed light or dark surface without changing the menu or app theme.
+    pub fn appearance(mut self, kind: ThemeKind) -> Self {
+        self.appearance = Some(kind);
         self
     }
 
@@ -195,6 +211,7 @@ impl RenderOnce for Picker {
             tooltip,
             above,
             tint,
+            appearance,
             selected,
             small,
             width,
@@ -234,6 +251,15 @@ impl RenderOnce for Picker {
                 false => button.tooltip(key),
             })
             .when_some(tint, Button::tint)
+            .when_some(appearance, |button, kind| {
+                let palette = Theme::for_kind(kind);
+                button
+                    .w_full()
+                    .bg(palette.background)
+                    .fill(palette.background, palette.secondary_hover)
+                    .tint(palette.foreground)
+                    .border_color(palette.border)
+            })
             .disabled(disabled);
 
         let menu = menu.unwrap_or_else(|| {

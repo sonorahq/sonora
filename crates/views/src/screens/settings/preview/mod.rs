@@ -106,8 +106,8 @@ impl Previews {
     /// The track playing, or while nothing is loaded the one picked from history this time
     /// settings opened, or a placeholder while history is empty.
     pub(super) fn playing_or_picked(&self, cx: &App) -> Sample {
-        match Sonora::global(cx).playback.read(cx).track() {
-            Some(track) => Sample::of(track),
+        match Sonora::global(cx).playback.read(cx).shown_track(cx) {
+            Some(track) => Sample::of(&track),
             None => self.picked(cx),
         }
     }

@@ -19,7 +19,6 @@ pub(crate) struct Row {
     title: SharedString,
     detail: Option<SharedString>,
     control: AnyElement,
-    disabled: bool,
 }
 
 impl Row {
@@ -28,19 +27,12 @@ impl Row {
             title,
             detail: None,
             control,
-            disabled: false,
         }
     }
 
     /// Adds a muted explanation below the label, wrapping within the space beside the control.
     pub(crate) fn detail(mut self, detail: SharedString) -> Self {
         self.detail = Some(detail);
-        self
-    }
-
-    /// Mutes an unavailable setting's label. The caller also disables its control.
-    pub(crate) fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
         self
     }
 }
@@ -51,7 +43,6 @@ impl RenderOnce for Row {
             title,
             detail,
             control,
-            disabled,
         } = self;
         let theme = *cx.theme();
 
@@ -61,7 +52,6 @@ impl RenderOnce for Row {
             .justify_between()
             .gap_4()
             .min_h(theme.metrics.list_row)
-            .when(disabled, |this| this.text_color(theme.muted_foreground))
             .child(
                 div()
                     .flex_1()

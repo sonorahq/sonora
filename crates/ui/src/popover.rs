@@ -1,9 +1,11 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui::prelude::*;
-use gpui::{AnyElement, App, ClickEvent, Div, MouseButton, StyleRefinement, Window, div};
+use gpui::{
+    AnyElement, App, ClickEvent, Div, MouseButton, SharedString, StyleRefinement, Window, div,
+};
 
 use crate::button::Button;
 use crate::menu::{Menu, Trigger};
@@ -15,47 +17,51 @@ type Toggle = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
 #[derive(Clone, Default)]
 pub struct Popovers {
-    open: Rc<Cell<Option<&'static str>>>,
-    triggers: Rc<RefCell<HashMap<&'static str, Trigger>>>,
+    open: Rc<RefCell<Option<SharedString>>>,
+    triggers: Rc<RefCell<HashMap<SharedString, Trigger>>>,
 }
 
 impl Popovers {
     pub fn close(&self) {
-        self.open.set(None);
+        *self.open.borrow_mut() = None;
     }
 
     /// Whether any popover of the group is open.
     pub fn any(&self) -> bool {
-        self.open.get().is_some()
+        self.open.borrow().is_some()
     }
 
-    pub fn shows(&self, key: &'static str) -> bool {
-        self.open.get() == Some(key)
+    pub fn shows(&self, key: &str) -> bool {
+        self.open.borrow().as_deref() == Some(key)
     }
 
     /// Opens the popover `key` names and closes any other of the group, for a trigger drawn
     /// apart from the popover itself.
-    pub fn open(&self, key: &'static str) {
-        self.open.set(Some(key));
+    pub fn open(&self, key: impl Into<SharedString>) {
+        *self.open.borrow_mut() = Some(key.into());
     }
 
-    fn toggle(&self, key: &'static str) {
-        let next = match self.shows(key) {
+    fn toggle(&self, key: SharedString) {
+        let next = match self.shows(&key) {
             true => None,
             false => Some(key),
         };
-        self.open.set(next);
+        *self.open.borrow_mut() = next;
     }
 
-    fn trigger(&self, key: &'static str) -> Trigger {
-        self.triggers.borrow_mut().entry(key).or_default().clone()
+    fn trigger(&self, key: &SharedString) -> Trigger {
+        self.triggers
+            .borrow_mut()
+            .entry(key.clone())
+            .or_default()
+            .clone()
     }
 }
 
 #[derive(IntoElement)]
 pub struct Popover {
     base: Div,
-    key: &'static str,
+    key: SharedString,
     group: Popovers,
     button: Option<Button>,
     /// A trigger the caller draws instead of a button, which the popover makes clickable.
@@ -67,10 +73,10 @@ pub struct Popover {
 }
 
 impl Popover {
-    pub fn new(key: &'static str, group: Popovers) -> Self {
+    pub fn new(key: impl Into<SharedString>, group: Popovers) -> Self {
         Self {
             base: div(),
-            key,
+            key: key.into(),
             group,
             button: None,
             face: None,
@@ -140,13 +146,14 @@ impl RenderOnce for Popover {
         } = self;
         let overrides = std::mem::take(base.style());
 
-        let open = group.shows(key);
-        let trigger = group.trigger(key);
+        let open = group.shows(&key);
+        let trigger = group.trigger(&key);
         let toggle: Toggle = {
             let group = group.clone();
+            let key = key.clone();
             Rc::new(move |event, window, cx| {
-                group.toggle(key);
-                if let Some(on_open) = on_open.as_ref().filter(|_| group.shows(key)) {
+                group.toggle(key.clone());
+                if let Some(on_open) = on_open.as_ref().filter(|_| group.shows(&key)) {
                     on_open(event, window, cx);
                 }
                 cx.refresh_windows();

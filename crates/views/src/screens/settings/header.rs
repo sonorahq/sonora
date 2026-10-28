@@ -111,16 +111,19 @@ impl Render for SettingsHeader {
             // A see-through page has content of its own passing under the header and reads
             // worse without the haze, so only the flat fallback is dropped there, since a solid
             // band over a see-through page is a slab.
-            .when(effects() || !theme.transparent, |header| {
-                header.child(veil(
-                    VeilEdge::Top,
-                    layout.top,
-                    BLUR,
-                    theme.background,
-                    None,
-                    window,
-                ))
-            })
+            .when(
+                effects() || (!theme.transparent && !ui::AmbientStyle::get(cx).active()),
+                |header| {
+                    header.child(veil(
+                        VeilEdge::Top,
+                        layout.top,
+                        BLUR,
+                        theme.background,
+                        None,
+                        window,
+                    ))
+                },
+            )
             .child(
                 div()
                     .flex()

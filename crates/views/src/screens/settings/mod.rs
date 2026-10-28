@@ -66,8 +66,10 @@ enum Slot {
     LocalFolder,
     Folders,
     Theme,
-    Adaptive,
     CommunityThemes,
+    AppearanceMode,
+    AmbientIntensity,
+    AmbientMotion,
     Icons,
     Corners,
     Typeface,
@@ -75,8 +77,6 @@ enum Slot {
     Opacity,
     WindowBlur,
     Blur,
-    Ambient,
-    AmbientMotion,
     Visualizer,
     VisualizerAbsolute,
     PlayerBarLayout,
@@ -162,12 +162,12 @@ enum Reveal {
     Section(SettingsPage),
 }
 
-/// One group of a page: an uppercase eyebrow with its icon, an optional block of option cards
+/// One group of a page: an uppercase eyebrow with its icon, blocks of option cards
 /// under it, and the rows below.
 struct Group {
     title: Option<&'static str>,
     icon: Option<&'static str>,
-    cards: Option<Slot>,
+    cards: Vec<Slot>,
     rows: Vec<Slot>,
 }
 
@@ -177,7 +177,7 @@ impl Group {
         Self {
             title: Some(title),
             icon: Some(icon),
-            cards: None,
+            cards: Vec::new(),
             rows: Vec::new(),
         }
     }
@@ -187,14 +187,14 @@ impl Group {
         Self {
             title: None,
             icon: None,
-            cards: None,
+            cards: Vec::new(),
             rows: Vec::new(),
         }
     }
 
-    /// The setting drawn as option cards between the heading and the rows.
+    /// Appends a row of option cards between the shared heading and the controls.
     fn cards(mut self, slot: Slot) -> Self {
-        self.cards = Some(slot);
+        self.cards.push(slot);
         self
     }
 
@@ -205,7 +205,7 @@ impl Group {
 
     /// Every setting the group shows, cards first.
     fn slots(&self) -> impl Iterator<Item = Slot> + '_ {
-        self.cards.into_iter().chain(self.rows.iter().copied())
+        self.cards.iter().copied().chain(self.rows.iter().copied())
     }
 }
 
@@ -238,14 +238,14 @@ pub struct SettingsView {
     /// The column width, text size and rounding the cached heights were measured for.
     geometry: Option<(Pixels, Pixels, Pixels)>,
     opacity: ScrubberState,
+    ambient_intensity: ScrubberState,
+    ambient_motion: ScrubberState,
     sleep: ScrubberState,
     pending_sleep: Option<Option<Sleep>>,
     cache: ScrubberState,
     /// The cache size a drag of its slider points at, until it lets go.
     pending_cache: Option<u32>,
     popovers: Popovers,
-    /// The theme family whose variant menu opened last, which owns that menu's popover.
-    theme_variants: Option<String>,
     /// The user's theme family waiting for the user to confirm its deletion.
     deleting_theme: Option<String>,
     server: Entity<Input>,
@@ -309,6 +309,8 @@ impl SettingsView {
         cx.observe(&settings, |this, _, cx| this.remeasure(cx))
             .detach();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
+        let devices = Sonora::global(cx).devices.clone();
+        cx.observe(&devices, |_, _, cx| cx.notify()).detach();
         playback.update(cx, |playback, cx| playback.measure_storage(cx));
         let storage = cx.spawn(async move |this, cx| {
             loop {
@@ -399,12 +401,13 @@ impl SettingsView {
             layout_revision: 0,
             geometry: None,
             opacity: ScrubberState::new("opacity"),
+            ambient_intensity: ScrubberState::new("ambient-brightness"),
+            ambient_motion: ScrubberState::new("ambient-motion"),
             sleep: ScrubberState::new("sleep"),
             pending_sleep: None,
             cache: ScrubberState::new("cache-size"),
             pending_cache: None,
             popovers,
-            theme_variants: None,
             deleting_theme: None,
             server: cx.new(|cx| Input::new("login-server-hint", cx)),
             username: cx.new(|cx| Input::new("login-username-hint", cx)),
@@ -510,7 +513,7 @@ impl SettingsView {
     fn groups(&self, page: SettingsPage, cx: &App) -> Vec<Group> {
         match page {
             SettingsPage::Providers => self.accounts_groups(),
-            SettingsPage::Appearance => self.appearance_groups(),
+            SettingsPage::Appearance => self.appearance_groups(cx),
             SettingsPage::PlayerBar => self.player_bar_groups(),
             SettingsPage::NowPlaying => self.now_playing_groups(cx),
             SettingsPage::Lyrics => self.lyrics_groups(),
@@ -683,12 +686,18 @@ impl SettingsView {
                 },
             ),
             Slot::Theme => (t!("settings-theme"), t!("settings-theme-detail")),
-            Slot::Adaptive => (t!("settings-adaptive"), t!("settings-adaptive-detail")),
             Slot::CommunityThemes => (
                 t!("settings-theme-explore"),
                 t!("settings-theme-explore-detail"),
             ),
-            Slot::Ambient => (t!("settings-ambient"), t!("settings-ambient-detail")),
+            Slot::AppearanceMode => (
+                t!("settings-page-appearance"),
+                t!("settings-appearance-mode-detail"),
+            ),
+            Slot::AmbientIntensity => (
+                t!("settings-ambient-strength"),
+                t!("settings-ambient-strength-detail"),
+            ),
             Slot::AmbientMotion => (
                 t!("settings-ambient-motion"),
                 t!("settings-ambient-motion-detail"),
@@ -916,9 +925,9 @@ impl SettingsView {
             Slot::LocalFolder => self.local_folder_row(cx),
             Slot::Folders => self.folders(cx),
             Slot::Theme | Slot::Icons | Slot::Corners => div().into_any_element(),
-            Slot::Adaptive => self.adaptive_row(cx),
             Slot::CommunityThemes => self.community_themes_row(cx),
-            Slot::Ambient => self.ambient_row(cx),
+            Slot::AppearanceMode => div().into_any_element(),
+            Slot::AmbientIntensity => self.ambient_intensity_row(cx),
             Slot::AmbientMotion => self.ambient_motion_row(cx),
             Slot::Visualizer => div().into_any_element(),
             Slot::PlayerBarLayout => div().into_any_element(),
@@ -1008,6 +1017,7 @@ impl SettingsView {
             Slot::Theme => self.theme_cards(cx),
             Slot::Icons => self.icon_cards(window, cx),
             Slot::Corners => self.corner_cards(window, cx),
+            Slot::AppearanceMode => self.appearance_cards(window, cx),
             Slot::Visualizer => self.visualizer_cards(window, cx),
             Slot::PlayerBarLayout => self.player_bar_cards(window, cx),
             Slot::StreamQuality => self.quality_cards(window, cx),
@@ -1031,11 +1041,14 @@ impl SettingsView {
                 .role(Role::Heading)
                 .aria_label(label)
         });
-        let carded = cards.is_some();
-        let cards = cards.map(|slot| {
-            let cards = self.cards(slot, window, cx);
-            self.revealing(Reveal::Slot(slot), cards, cx)
-        });
+        let carded = !cards.is_empty();
+        let cards = cards
+            .into_iter()
+            .map(|slot| {
+                let cards = self.cards(slot, window, cx);
+                self.revealing(Reveal::Slot(slot), cards, cx)
+            })
+            .collect::<Vec<_>>();
         let rows = rows
             .into_iter()
             .map(|slot| {

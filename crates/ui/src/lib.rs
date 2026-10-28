@@ -1,3 +1,4 @@
+mod appearance;
 mod arrow_ring;
 mod artwork;
 mod button;
@@ -57,6 +58,7 @@ mod veil;
 mod view;
 mod visualizer;
 
+pub use appearance::{AmbientStyle, Appearance};
 pub use arrow_ring::ArrowRing;
 pub use artwork::{
     Artwork, Avatar, PREFETCH_REACH, Prefetch, artwork_usage, cover_palette, prefetch,
@@ -76,7 +78,8 @@ pub use filters::{
 };
 pub use form::{FORM_CONTEXT, Submit};
 pub use glass::{
-    GLASS_BLUR, GLASS_FILL, bar_surface, blurring, frost, glass, popover_fill, popover_surface,
+    GLASS_BLUR, GLASS_FILL, bar_fill, bar_surface, blurring, frost, glass, popover_fill,
+    popover_surface,
 };
 pub use glide::{Glide, ScrollPosition};
 pub use grain::grain;
@@ -103,7 +106,7 @@ pub use motion::{
 };
 pub use notice::Notice;
 pub use option_card::OptionCard;
-pub use palette::{CoverPalette, palette, tint};
+pub use palette::{AmbientPalette, CoverPalette, palette};
 pub use panel::{Panel, Side};
 pub use picker::Picker;
 pub use pin::{DraggedPin, Pin, PinKind, Pinnable, Spot};

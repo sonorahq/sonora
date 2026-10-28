@@ -10,10 +10,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Drop a song onto a playlist you own or collaborate on in the sidebar to add it to that playlist.
+- Ambient brings artwork colours throughout the app and Now playing, with adjustable strength
+  and motion intensity. Colours fade between songs, including playback on another device.
 
 ### Changed
 
 - Quick picks on Home no longer shows your account name above its title.
+- Choose System, Dark or Light appearance separately from your colour theme.
 
 ### Fixed
 
@@ -22,6 +25,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The translucent player bar no longer looks much darker than the rest of a see-through window.
 - Covers saved for the system media controls no longer fill Sonora's cache folder without limit,
   and playlist mosaics no longer leave old copies behind.
+- The sidebars, title bar and player bar now use the same frame border colour.
+- Player-bar layout previews now follow the selected corner shape.
 
 ## [0.45.0] - 2026-10-27
 

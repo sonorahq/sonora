@@ -583,7 +583,15 @@ impl Render for PlayerBar {
             .when_else(
                 transparent,
                 |this| ui::bar_surface(this, cx).text_color(theme.popover_foreground),
-                |this| this.when(!theme.transparent, |this| this.bg(theme.secondary)),
+                |this| {
+                    this.when(!theme.transparent, |this| {
+                        let fill = match ui::AmbientStyle::get(cx).active() {
+                            true => ui::bar_fill(cx),
+                            false => theme.secondary,
+                        };
+                        this.bg(fill)
+                    })
+                },
             )
             .border_t_1()
             .border_color(theme.border)
@@ -735,7 +743,7 @@ impl Render for PlayerBar {
                 .when_else(
                     frosting,
                     |this| ui::bar_surface(this, cx),
-                    |this| this.bg(theme.popover),
+                    |this| this.bg(ui::bar_fill(cx)),
                 )
         };
         let banner = devices.jam().filter(|_| devices.available()).map(|jam| {
