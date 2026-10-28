@@ -83,6 +83,10 @@ pub struct Remote {
     io: Io,
     shown: Option<String>,
     source: Option<String>,
+    /// The cover and length last handed to the widget, so a length that only arrives once
+    /// the stream loads can be republished without dropping the cover already on show.
+    art: Option<String>,
+    length: Option<Duration>,
     reported: Option<PlaybackState>,
     at: Duration,
     /// When `at` was published, so the next position can be checked against steady playback.
@@ -125,6 +129,8 @@ impl Remote {
             io,
             shown: None,
             source: None,
+            art: None,
+            length: None,
             reported: None,
             at: Duration::ZERO,
             stamp: Instant::now(),
@@ -205,12 +211,16 @@ impl Remote {
                 // track already on show leaves the published thumbnail up until the file lands
                 (false, true) => {}
                 // anything else is a file already
-                _ => self.controls.describe(track, cover.filter(|_| !remote), cx),
+                _ => self.describe(track, cover.filter(|_| !remote), cx),
             }
             if let (Some(track), Some(url), true) = (track, cover, remote) {
                 let (track, url) = (track.clone(), url.to_owned());
                 self.artwork = Some(self.fetch_artwork(track, url, cx));
             }
+        }
+        if track.map(|track| track.duration) != self.length {
+            let art = self.art.take();
+            self.describe(track, art.as_deref(), cx);
         }
 
         if self.reported.as_ref() == Some(&state) && self.at.as_secs() == at.as_secs() {
@@ -233,6 +243,13 @@ impl Remote {
 }
 
 impl Remote {
+    /// Hands the track to the widget and remembers what it was given.
+    fn describe(&mut self, track: Option<&Track>, cover: Option<&str>, cx: &App) {
+        self.controls.describe(track, cover, cx);
+        self.art = cover.map(str::to_owned);
+        self.length = track.map(|track| track.duration);
+    }
+
     /// The cover to publish: the album art `Cover` resolves once it arrives, the thumbnail the
     /// track carries until then. Spotify ships a 64px thumbnail with a track, which is plenty
     /// for a list row and blurry in a desktop widget that draws it several times that size.
@@ -246,7 +263,8 @@ impl Remote {
 
     /// Brings a remote cover into the cache and republishes the track with the file. The
     /// platform widget would otherwise download it itself, on its own thread, and on macOS a
-    /// download that fails there takes the process down.
+    /// download that fails there takes the process down. The track is described as it stands
+    /// when the file lands, since its length may have arrived in the meantime.
     fn fetch_artwork(&self, track: Track, url: String, cx: &mut Context<Self>) -> Task<()> {
         let io = self.io.clone();
         cx.spawn(async move |this, cx| {
@@ -256,9 +274,12 @@ impl Remote {
                 Err(error) => return log::debug!("remote: cannot fetch the cover: {error:#}"),
             };
             this.update(cx, |this, cx| {
-                if this.shown == track.id {
+                let current = this.playback.read(cx).shown_track(cx);
+                if let Some(current) = current.filter(|current| current.id == track.id)
+                    && this.shown == track.id
+                {
                     let cover = format!("file://{}", path.display());
-                    this.controls.describe(Some(&track), Some(&cover), cx);
+                    this.describe(Some(&current), Some(&cover), cx);
                 }
             })
             .ok();
