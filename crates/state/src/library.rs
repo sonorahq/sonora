@@ -608,9 +608,12 @@ impl Library {
                             None => S::hold(this, item, false),
                         }
                         log::warn!("library: cannot update the {}: {error:#}", S::TROUBLE);
-                        let key = match saved {
-                            true => "toast-library-add-failed",
-                            false => "toast-library-remove-failed",
+                        let key = match error.downcast_ref::<music::Unsupported>() {
+                            Some(_) => "toast-not-implemented",
+                            None => match saved {
+                                true => "toast-library-add-failed",
+                                false => "toast-library-remove-failed",
+                            },
                         };
                         Toasts::linked(Outcome::Failed, key, name, target, cx);
                         None
@@ -2508,7 +2511,11 @@ impl Library {
                     }
                     Err(error) => {
                         log::warn!("library: cannot {action}: {error:#}");
-                        Toasts::show(Outcome::Failed, "toast-playlist-failed", cx);
+                        let key = match error.downcast_ref::<music::Unsupported>() {
+                            Some(_) => "toast-not-implemented",
+                            None => "toast-playlist-failed",
+                        };
+                        Toasts::show(Outcome::Failed, key, cx);
                         for id in invalidated {
                             cx.emit(LibraryEvent::PlaylistChanged(id));
                         }

@@ -7,54 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.45.0] - 2026-10-27
-
 ### Added
 
-- Nightly builds for every platform, plus `sonora-nightly-bin` on the AUR and a Nix flake ref.
-- Choose between stable and nightly updates in Settings when Sonora updates itself.
-- Sonora installed from the disk image or as an AppImage updates itself with one button.
-- `sonora --version` prints the version.
-- Apple Music Home now shows recently added library albums and playlists when available.
-- The song details of a local file now show its release year, genres, label, language and composer
-  from the file's tags.
-- Install themes people share on sonorahq.org/themes with one click. Sonora shows a preview of
-  the theme and asks before it adds it to your themes folder and switches to it.
-- Explore community themes from Settings, Appearance, Theme.
-- Delete a theme you added with the trash button on its card in Settings, Appearance, Theme.
-
-### Changed
-
-- When Spotify refuses to play on your account, a Why? button opens the FAQ explaining it.
-- Right-click a list's column headers to show or hide columns. The Columns button is gone.
-
-### Fixed
-
-- Sonora now works with screen readers such as NVDA: buttons, lists, dialogs and settings
-  announce their names and states instead of staying silent.
-- Arabic, Hebrew and other right-to-left text reads in the right order on Windows.
-- Right-to-left lyrics, descriptions and bios wrap between words and keep their reading order.
-- Arabic and Hebrew lyrics sit against the right edge, and the karaoke highlight sweeps from there.
-- The tails of letters such as ر and ز are no longer cut off at the bottom of titles.
-- Typing Arabic or Hebrew in the search box puts the caret where it belongs.
-- YouTube Music libraries with more than about two dozen playlists or albums now show all of
-  them. A new playlist no longer drops out of Add to playlist after you sign in again.
-- Album covers in the fullscreen player are sharper with YouTube Music, Subsonic, Spotify and
-  Deezer.
-- The layout previews under Settings, Player bar line up the cover, title and controls.
-- Unsynced lyrics are brighter and a little larger, so they are easier to read.
-- Refreshing your local library picks up songs added, moved or deleted since Sonora started.
-- Dragging the volume slider uses less CPU and GPU.
-- Romanized unsynced lyrics show each line's romanization under that line.
-- Moving playback to or from another Spotify device keeps the queue, history, shuffle and repeat.
-- Editing the queue from another Spotify device no longer restarts the song.
-- Going back through the queue keeps replayed songs apart from the ones you queued.
-- Spotify library, playlist and pin changes made elsewhere show up without a restart.
-- Song-change notifications on Linux name the song instead of showing a blank label.
-- A song with no lyrics found before is looked up again, so lyrics added to a service since then
-  show up.
-
-## [0.44.2] - 2026-10-25
+- Sign in to SoundCloud and play its music. Your liked tracks and followed artists fill the
+  library, and the wider catalogue — tracks, playlists, artists and albums — is there to search.## [0.44.2] - 2026-10-25
 
 ### Fixed
 
