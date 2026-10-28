@@ -134,7 +134,6 @@ impl DetailView {
 
         let id = cx.entity_id();
         let scrollbar = cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(id));
-        let scroll = scrollbar.read(cx).scroll().clone();
 
         let table = cx.new(|cx| {
             let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(id));
@@ -176,7 +175,7 @@ impl DetailView {
             let source = source.table(cx.weak_entity());
             let mut delegate = TableDelegate::new(source, width, cx).with_column_menu(&PINNED);
             delegate.set_layout(saved, cx);
-            TableState::new(delegate, cx).follow(scroll)
+            TableState::new(delegate, cx).follow(&scrollbar)
         });
 
         cx.observe(&detail, |this, detail, cx| {

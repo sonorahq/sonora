@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Table scrollbars show a marker for the current song in the playlist/album list. Click the marker to scroll to the song.
+  Scrollbars fade smoothly, with table scrollbars staying faintly visible when idle.
+
 ## [0.45.0] - 2026-10-27
 
 ### Added

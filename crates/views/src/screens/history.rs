@@ -49,7 +49,6 @@ impl HistoryView {
         let width = cells::content_width(window, Pixels::ZERO, cx);
         let id = cx.entity_id();
         let scrollbar = cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(id));
-        let scroll = scrollbar.read(cx).scroll().clone();
         let table = cx.new(|cx| {
             let menu = cx.new(|_| Scrollbar::inset().watching(id));
             crate::shared::tracks::follow_downloads(cx);
@@ -63,7 +62,7 @@ impl HistoryView {
             .with_history(history.clone())
             .with_liked(Sonora::global(cx).library.clone())
             .table(cx.weak_entity());
-            TableState::new(TableDelegate::new(source, width, cx), cx).follow(scroll)
+            TableState::new(TableDelegate::new(source, width, cx), cx).follow(&scrollbar)
         });
 
         cx.observe(&history, |this, _, cx| {
