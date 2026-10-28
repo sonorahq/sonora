@@ -10,7 +10,6 @@ use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis, RangeAxis, Unit};
 
 use crate::shared::menus::{ItemMenu, TrackColumns};
 use gpui::accesskit::Role;
-use gpui::prelude::FluentBuilder as _;
 use gpui::prelude::StatefulInteractiveElement as _;
 use gpui::{
     AnyElement, App, Context, Entity, Hsla, InteractiveElement as _, IntoElement as _,
@@ -19,14 +18,12 @@ use gpui::{
 use music::Track;
 use router::Destination;
 use state::{Detail, History, Library, Network, Origin, Playback, Progress, Shelf, Sonora};
-use ui::{
-    ArrowRing, Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, Scrollbar, TableSource,
-    TableState,
-};
+use ui::{ArrowRing, Cell, ColumnSpec, Menu, Pending, Pin, Scrollbar, TableSource, TableState};
 
 use crate::shared::cells;
 use crate::shared::confirm::{Confirm, Kind};
 use crate::shared::pins::Pinned as _;
+use crate::shared::rating::rating;
 
 pub(crate) use columns::{
     HISTORY_COLUMNS, LIBRARY_COLUMNS, TrackField, album_columns, artist_columns, playlist_columns,
@@ -35,9 +32,6 @@ pub(crate) use sieve::TrackSieve;
 pub(crate) use sort::initial;
 
 use sort::hits;
-
-/// How strongly an unsaved track's heart shows on its row.
-const SETTLED: f32 = 0.5;
 
 /// The current track, its `Playback::control` and its queue origin. A screen keeps the last
 /// status and redraws only when it changes, including a move between collections of the same song.
@@ -267,8 +261,12 @@ impl TrackSource {
         self.whence.as_ref().and_then(|whence| whence(cx))
     }
 
-    pub(crate) fn table(mut self, table: WeakEntity<TableState<TrackSource>>) -> Self {
-        self.table = Some(table);
+    /// Attaches the source to its table, and rebuilds the table when ratings change.
+    pub(crate) fn table(mut self, cx: &mut Context<TableState<TrackSource>>) -> Self {
+        self.table = Some(cx.weak_entity());
+        let ratings = Sonora::global(cx).ratings.clone();
+        cx.observe(&ratings, |table, _, cx| table.rebuild(cx))
+            .detach();
         self
     }
 
@@ -446,55 +444,12 @@ impl TrackSource {
             track.explicit.then(|| t!("song-explicit")),
             None,
             download_mark(cell, track, cx),
-            self.liked_button(cell, track, cx),
         )
     }
 
-    fn liked_button(&self, cell: &Cell<TrackField>, track: &Track, cx: &App) -> Option<AnyElement> {
-        let library = self.is_liked.as_ref()?;
-        // on a saved shelf every listed track is a favorite, so the heart would say nothing
-        if self.starrable.is_some() && !self.catalog(cx) {
-            return None;
-        }
-        let id = track.id.clone()?;
-        let theme = *cx.theme();
-        let state = library.read(cx);
-        let saved = state.saved(&id);
-        let pending = state.pending(&id);
-        let library = library.clone();
-        let source = self.provider.clone();
-        let at = cell.row;
-
-        Some(
-            Button::new(("toggle-liked-track", cell.row))
-                .ghost()
-                .backgroundless()
-                .small()
-                .icon(match saved {
-                    true => "icons/heart-filled.svg",
-                    false => "icons/heart.svg",
-                })
-                .tooltip(match saved {
-                    true => "menu-remove-from-library",
-                    false => "menu-add-to-library",
-                })
-                .tint(match saved {
-                    true => theme.primary,
-                    false => theme.muted_foreground.opacity(SETTLED),
-                })
-                .when(!saved, |this| {
-                    this.invisible()
-                        .group_hover(ROW_GROUP, |style| style.visible())
-                })
-                .disabled(pending)
-                .on_click(move |_, _, cx| {
-                    let Some(track) = source.tracks(cx).get(at).cloned() else {
-                        return;
-                    };
-                    library.update(cx, |library, cx| library.toggle(track, cx));
-                })
-                .into_any_element(),
-        )
+    /// Whether rows show a heart. A saved shelf has none, since every track on it is liked.
+    fn hearts(&self, cx: &App) -> bool {
+        self.is_liked.is_some() && (self.starrable.is_none() || self.catalog(cx))
     }
 
     /// The row's `Playback::control` when it holds the current track. A track listed twice
@@ -550,6 +505,10 @@ impl TableSource for TrackSource {
                 tracks.iter().any(|track| track.added_at.is_some())
             }
             TrackField::AddedBy => tracks.iter().any(|track| track.added_by.is_some()),
+            // Empty without hearts or stars, as on a saved shelf with ratings off.
+            TrackField::Rating => {
+                self.hearts(cx) || Sonora::global(cx).ratings.read(cx).enabled(cx)
+            }
             TrackField::Plays => tracks.iter().any(|track| track.playcount.is_some()),
             _ => true,
         }
@@ -701,6 +660,12 @@ impl TableSource for TrackSource {
         };
 
         match cell.field {
+            TrackField::Rating => cell
+                .frame()
+                .flex()
+                .items_center()
+                .children(rating(("track-rating", cell.row), Some(track), None, false))
+                .into_any_element(),
             TrackField::Cover => cells::artwork(&cell, track.cover.clone()),
             TrackField::Title => self.title_cell(&cell, track, title, cx),
             TrackField::Artists => self.artist_cell(&cell, track, detail),
@@ -768,6 +733,21 @@ impl TableSource for TrackSource {
     }
 
     fn compare(&self, field: TrackField, a: usize, b: usize, cx: &App) -> Ordering {
+        if field == TrackField::Rating {
+            // By rating, then by liked.
+            let ratings = Sonora::global(cx).ratings.read(cx);
+            let rated = ratings.enabled(cx);
+            let tracks = self.provider.tracks(cx);
+            let key = |at: usize| {
+                let track = tracks.get(at)?;
+                let id = track.id.as_deref().filter(|_| rated);
+                Some((
+                    id.and_then(|id| ratings.for_track(id)),
+                    self.starred(track, cx),
+                ))
+            };
+            return key(a).cmp(&key(b));
+        }
         sort::compare(self.provider.tracks(cx), field, a, b)
     }
 

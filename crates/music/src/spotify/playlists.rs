@@ -1,3 +1,5 @@
+pub(super) mod ratings;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -23,6 +25,13 @@ const COVER_SLACK: usize = 4;
 const MODIFIED_LIMIT: usize = 300;
 
 pub async fn create(session: &Session, name: &str) -> Result<String> {
+    let id = create_unlisted(session, name).await?;
+    add_to_library(session, &id).await?;
+    Ok(id)
+}
+
+/// Creates a playlist without adding it to the rootlist.
+async fn create_unlisted(session: &Session, name: &str) -> Result<String> {
     let body = changes(None, rename_op(name));
     let reply = post(session, "/playlist/v2/playlist", &body)
         .await
@@ -38,8 +47,6 @@ pub async fn create(session: &Session, name: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("cannot read the created playlist id"))?;
 
     rename(session, &id, name).await?;
-
-    add_to_library(session, &id).await?;
 
     Ok(id)
 }
@@ -423,8 +430,13 @@ fn item(uri: &str) -> Item {
 }
 
 fn add_op(uri: &str) -> Op {
+    add_items(vec![item(uri)])
+}
+
+/// An op that appends `items` to the list.
+fn add_items(items: Vec<Item>) -> Op {
     let mut add = Add::new();
-    add.items.push(item(uri));
+    add.items = items;
     add.set_add_last(true);
 
     let mut op = Op::new();
@@ -434,10 +446,17 @@ fn add_op(uri: &str) -> Op {
 }
 
 fn remove_op(uri: &str, index: i32) -> Op {
-    let mut rem = Rem::new();
+    let mut op = remove_items(vec![item(uri)]);
+    let rem = op.rem.mut_or_insert_default();
     rem.set_from_index(index);
     rem.set_length(1);
-    rem.items.push(item(uri));
+    op
+}
+
+/// An op that removes `items` by uri, wherever they sit.
+fn remove_items(items: Vec<Item>) -> Op {
+    let mut rem = Rem::new();
+    rem.items = items;
     rem.set_items_as_key(true);
 
     let mut op = Op::new();

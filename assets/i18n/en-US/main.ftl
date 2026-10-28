@@ -1005,6 +1005,7 @@ settings-group-text = Text
 settings-group-motion = Motion
 settings-group-streaming = Streaming
 settings-group-spotify-connect = Spotify Connect
+settings-group-star-ratings = Star ratings
 settings-adaptive-menu = Adaptive context menu
 settings-adaptive-menu-detail = Leaves out entries the row already shows, such as the album or the artist
 settings-accounts = Streaming services
@@ -1349,3 +1350,29 @@ response-graph-readout = { $frequency } · { $direction ->
         [down] -{ $gain }
        *[flat] { $gain }
     } dB
+
+# star ratings
+ratings-set = Rate { $rating } out of 5 stars
+ratings-clear = Clear rating
+ratings-change = { $previous } → { $current }
+ratings-loading = Loading or saving rating…
+ratings-retry = Could not load ratings. Click to retry.
+ratings-save-failed = Could not save your rating. Please try again.
+toast-rating-set = Rated { $name }
+toast-rating-changed = Changed the rating of { $name }
+toast-rating-changed-liked = Changed the rating of { $name } and liked the song
+toast-rating-changed-unliked = Changed the rating of { $name } and unliked the song
+toast-rating-cleared = Cleared the rating of { $name }
+
+column-rating = Rating
+settings-star-ratings = Star ratings
+settings-star-ratings-detail = Show song star ratings for Spotify.
+settings-half-ratings = Half-star ratings
+settings-half-ratings-detail = Select ratings in half-star steps.
+settings-rating-auto-like = Automatically like rated songs
+settings-rating-auto-like-detail = Like songs you rate at or above this threshold, and unlike songs you rate below it.
+ratings-threshold =
+    { $rating ->
+        [one] { $rating } star
+       *[other] { $rating } stars
+    }

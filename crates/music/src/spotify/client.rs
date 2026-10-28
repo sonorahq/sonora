@@ -38,6 +38,18 @@ impl LibrespotClient {
 
 #[async_trait]
 impl MusicApi for LibrespotClient {
+    fn supports_ratings(&self) -> bool {
+        true
+    }
+
+    async fn ratings(&self) -> Result<(HashMap<String, u8>, HashSet<String>)> {
+        playlists::ratings::load(&self.session).await
+    }
+
+    async fn set_rating(&self, track_id: &str, rating: Option<u8>) -> Result<()> {
+        playlists::ratings::set(&self.session, track_id, rating).await
+    }
+
     fn alive(&self) -> bool {
         !self.session.is_invalid()
     }

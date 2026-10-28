@@ -93,6 +93,9 @@ enum Slot {
     LyricsForLocal,
     Normalisation,
     Gapless,
+    StarRatings,
+    HalfRatings,
+    RatingAutoLike,
     KeepTracks,
     CacheSize,
     CacheUsage,
@@ -778,6 +781,18 @@ impl SettingsView {
                 t!("settings-normalisation-detail"),
             ),
             Slot::Gapless => (t!("settings-gapless"), t!("settings-gapless-detail")),
+            Slot::StarRatings => (
+                t!("settings-star-ratings"),
+                t!("settings-star-ratings-detail"),
+            ),
+            Slot::HalfRatings => (
+                t!("settings-half-ratings"),
+                t!("settings-half-ratings-detail"),
+            ),
+            Slot::RatingAutoLike => (
+                t!("settings-rating-auto-like"),
+                t!("settings-rating-auto-like-detail"),
+            ),
             Slot::KeepTracks => (
                 t!("settings-keep-tracks"),
                 t!("settings-keep-tracks-detail"),
@@ -955,6 +970,9 @@ impl SettingsView {
             Slot::AdaptiveMenu => self.adaptive_menu_row(cx),
             Slot::Normalisation => self.playback_row(cx),
             Slot::Gapless => self.gapless_row(cx),
+            Slot::StarRatings => self.star_ratings_row(false, cx),
+            Slot::HalfRatings => self.star_ratings_row(true, cx),
+            Slot::RatingAutoLike => self.rating_auto_like_row(cx),
             Slot::KeepTracks => self.keep_tracks_row(cx),
             Slot::CacheSize => self.cache_size_row(cx),
             Slot::CacheUsage => self.cache_usage_row(cx),

@@ -28,7 +28,7 @@ pub(super) fn compare(tracks: &[Track], field: TrackField, a: usize, b: usize) -
             .get(a)
             .map(|track| track.duration)
             .cmp(&tracks.get(b).map(|track| track.duration)),
-        TrackField::Index | TrackField::Cover => a.cmp(&b),
+        TrackField::Index | TrackField::Cover | TrackField::Rating => a.cmp(&b),
     }
 }
 
