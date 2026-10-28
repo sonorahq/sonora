@@ -72,7 +72,7 @@ impl Render for DevicePicker {
                     devices.read(cx).control(&id, command.clone())
                 }
             };
-            let (toggle, label, glyph) = match elsewhere.playing {
+            let (toggle, label, glyph) = match elsewhere.state.playing {
                 true => (Command::Pause, t!("devices-pause"), "icons/pause.svg"),
                 false => (Command::Play, t!("devices-resume"), "icons/play.svg"),
             };

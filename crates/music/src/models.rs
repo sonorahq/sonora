@@ -40,9 +40,11 @@ impl Contributor {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ArtistRef {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
 }
 
@@ -302,6 +304,7 @@ impl ArtistCatalogue {
 pub enum Lyrics {
     Plain {
         text: String,
+        /// One line for each line of `text`, blank where that line needs no romanization.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         romanized: Option<RomanizedText>,
     },

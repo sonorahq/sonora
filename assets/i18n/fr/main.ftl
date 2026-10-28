@@ -313,7 +313,6 @@ view-list = Liste
 view-cards = Cartes
 
 # toolbar
-tool-columns = Colonnes
 tool-sort = Trier
 tool-filters = Filtres
 
@@ -1117,7 +1116,9 @@ toast-open-failed = Impossible d'ouvrir { $name }
 toast-open-unsupported = { $name } n'est pas un fichier audio que Sonora peut lire
 toast-open-all-failed = { $count } fichiers n'ont pas pu être ouverts
 toast-open-some-failed = Certains fichiers n'ont pas pu être ouverts
-toast-keys-refused = Spotify n'accorde pas de clés de lecture à ce compte
+toast-keys-error = Erreur de clé de lecture
+toast-keys-refused = Spotify peut échouer
+toast-why = Pourquoi ?
 toast-sign-in-to-play = { $name } ne diffuse qu'aux auditeurs connectés
 toast-restore-failed = { $name } n'a pas pu se reconnecter, Sonora a donc continué sans
 toast-track-unplayable = { $name } n'a pas pu être lu

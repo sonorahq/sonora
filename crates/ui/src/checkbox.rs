@@ -140,6 +140,9 @@ impl RenderOnce for Checkbox {
         };
 
         let mut checkbox = base
+            .role(gpui::accesskit::Role::CheckBox)
+            .aria_toggled(gpui::accesskit::Toggled::from(checked))
+            .when_some(label.clone(), |this, label| this.aria_label(label))
             .flex()
             .items_center()
             .gap(px(GAP))

@@ -7,15 +7,12 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash as _, Hasher as _};
-use std::sync::Mutex;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use futures::StreamExt as _;
-use http::{
-    HeaderMap, HeaderValue, Method,
-    header::{CONTENT_LENGTH, CONTENT_TYPE},
-};
-use librespot_core::dealer::manager::{BoxedStream, BoxedStreamResult, Reply, RequestReply};
+use futures::{StreamExt as _, stream::SelectAll};
+use http::{HeaderMap, HeaderValue, Method, header::CONTENT_TYPE};
+use librespot_core::dealer::manager::{BoxedStreamResult, Reply, RequestReply};
 use librespot_core::dealer::protocol::{
     Command as Wire, Message, PayloadValue, PlayCommand, TransferOptions,
 };
@@ -33,16 +30,17 @@ use librespot_protocol::media::AudioQuality;
 use librespot_protocol::player::{
     ContextIndex, ContextPlayerOptions, PlayOrigin, PlayerState, ProvidedTrack, Suppressions,
 };
+use librespot_protocol::playlist4_external::PlaylistModificationInfo;
 use librespot_protocol::social_connect_v2::Session as SocialSession;
 use librespot_protocol::transfer_state::TransferState;
 use protobuf::rt::WireType;
 use protobuf::{CodedInputStream, EnumOrUnknown, Message as _, MessageField};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::Instant;
 
 use crate::connect::{
     Collection, Command, Connect, Device, DeviceKind, Elsewhere, Event, Invite, Jam, JamMember,
-    Listed, Naming, NowPlaying, RepeatMode, Roster, Start,
+    Naming, QueuedTrack, Repeat, Request as Input, Roster, Snapshot, Start,
 };
 
 const DEVICE_NAME: &str = "Sonora";
@@ -57,9 +55,11 @@ const ACK_DELAY: Duration = Duration::from_millis(600);
 /// the claim.
 const CLAIM_GRACE: Duration = Duration::from_secs(3);
 /// The most upcoming tracks a start carries over from the device that sent it.
-const CARRIED: usize = 40;
-/// The most tracks of another device's queue that are read.
-const LISTED: usize = 25;
+const CARRIED: usize = 80;
+/// The recent history window Spotify includes in its player state.
+const PREVIOUS: usize = 10;
+/// A fresh cluster snapshot carries the exact shuffled queue and previous-track order.
+const QUEUE_SNAPSHOT_AGE: Duration = Duration::from_secs(10);
 /// The metadata keys a queued track may name the person who queued it under.
 const ADDERS: [&str; 4] = ["added_by", "added_by_username", "adder", "queued_by"];
 /// How long a new name settles before it is put, so a name typed in is put once.
@@ -94,152 +94,80 @@ const JAM_START: &str = "/social-connect/v2/sessions/current_or_new";
 const JAM_INFO: &str = "/social-connect/v2/sessions/info";
 const JAM_END: &str = "/social-connect/v3/sessions";
 
-enum Input {
-    Enable(bool),
-    Rename(Naming),
-    Publish(Option<NowPlaying>),
-    Transfer(String),
-    Control(String, Command),
-    Join(String),
-    Peek(String),
-    Start,
-    Leave,
-    Kick(String),
-}
-
-/// The handle the app holds. The work happens on a task of the session's runtime, which ends
-/// when this is dropped.
-pub struct Connection {
-    device: String,
-    inputs: UnboundedSender<Input>,
-    events: Mutex<Option<UnboundedReceiver<Event>>>,
-}
-
-impl Connection {
-    /// Prepares the device on `session`. Nothing leaves the machine until `enable(true)`.
-    pub fn new(session: Session) -> Self {
-        let (inputs, receiver) = unbounded_channel();
-        let (out, events) = unbounded_channel();
-        let device = session.device_id().to_owned();
-        let worker = Worker::new(session.clone(), out);
-        session.spawn(worker.run(receiver));
-        Self {
-            device,
-            inputs,
-            events: Mutex::new(Some(events)),
-        }
-    }
-}
-
-impl Connect for Connection {
-    fn enable(&self, on: bool) {
-        self.inputs.send(Input::Enable(on)).ok();
-    }
-
-    fn rename(&self, naming: Naming) {
-        self.inputs.send(Input::Rename(naming)).ok();
-    }
-
-    fn publish(&self, now: Option<NowPlaying>) {
-        self.inputs.send(Input::Publish(now)).ok();
-    }
-
-    fn events(&self) -> Option<UnboundedReceiver<Event>> {
-        self.events.lock().ok()?.take()
-    }
-
-    fn device(&self) -> String {
-        self.device.clone()
-    }
-
-    fn transfer(&self, to: &str) {
-        self.inputs.send(Input::Transfer(to.to_owned())).ok();
-    }
-
-    fn control(&self, device: &str, command: Command) {
-        self.inputs
-            .send(Input::Control(device.to_owned(), command))
-            .ok();
-    }
-
-    fn join(&self, link: &str) {
-        self.inputs.send(Input::Join(link.to_owned())).ok();
-    }
-
-    fn start(&self) {
-        self.inputs.send(Input::Start).ok();
-    }
-
-    fn peek(&self, link: &str) {
-        self.inputs.send(Input::Peek(link.to_owned())).ok();
-    }
-
-    fn leave(&self) {
-        self.inputs.send(Input::Leave).ok();
-    }
-
-    fn kick(&self, member: &str) {
-        self.inputs.send(Input::Kick(member.to_owned())).ok();
-    }
+/// Starts one worker on the session runtime; it stays idle until device discovery is enabled.
+pub fn open(session: Session) -> Connect {
+    let (connection, requests, events) = Connect::new(session.device_id().to_owned());
+    session.spawn(Worker::new(session.clone(), events).run(requests));
+    connection
 }
 
 /// What the dealer hands the worker: the connection id Spotify gave this session, changes to the
 /// account's devices, volume requests, playback commands, and likes made in other apps.
-struct Streams {
-    connection_ids: BoxedStreamResult<String>,
-    clusters: BoxedStreamResult<ClusterUpdate>,
-    volumes: BoxedStreamResult<SetVolumeCommand>,
-    commands: BoxedStream<RequestReply>,
-    likes: BoxedStreamResult<Vec<(String, bool)>>,
-    jams: BoxedStreamResult<Message>,
+enum Incoming {
+    Connection(String),
+    Cluster(ClusterUpdate),
+    Volume(SetVolumeCommand),
+    Command(Box<RequestReply>),
+    Changes(Vec<Event>),
+    Jam(Message),
 }
 
-impl Streams {
-    /// Streams that never yield, for the time before the dealer is started and after one ends.
-    fn idle() -> Self {
-        Self {
-            connection_ids: Box::pin(futures::stream::pending()),
-            clusters: Box::pin(futures::stream::pending()),
-            volumes: Box::pin(futures::stream::pending()),
-            commands: Box::pin(futures::stream::pending()),
-            likes: Box::pin(futures::stream::pending()),
-            jams: Box::pin(futures::stream::pending()),
-        }
-    }
+/// Dealer subscriptions share dispatch, errors and automatic removal of closed streams.
+type Subscriptions = SelectAll<BoxedStreamResult<Incoming>>;
 
-    /// Subscribes to everything the device listens to. This has to happen before the dealer
-    /// starts, because starting it closes the list.
-    fn subscribe(session: &Session) -> Result<Self, Error> {
-        let dealer = session.dealer();
-        Ok(Self {
-            connection_ids: dealer.listen_for("hm://pusher/v1/connections/", |message| {
-                message
-                    .headers
-                    .get("Spotify-Connection-Id")
-                    .cloned()
-                    .ok_or_else(|| Error::failed_precondition("no connection id in the message"))
-            })?,
-            clusters: dealer.listen_for("hm://connect-state/v1/cluster", Message::from_raw)?,
-            volumes: dealer
-                .listen_for("hm://connect-state/v1/connect/volume", Message::from_raw)?,
-            commands: dealer.handle_for("hm://connect-state/v1/player/command")?,
-            likes: dealer.listen_for("hm://collection/collection/", |message| {
-                match message.payload {
-                    PayloadValue::Raw(bytes) => Ok(likes(&bytes)?),
-                    // the same update comes again as JSON, which carries nothing more
-                    _ => Ok(Vec::new()),
-                }
-            })?,
-            jams: dealer.listen_for(JAM_TOPIC, Ok)?,
-        })
-    }
+/// Subscribes to everything the device listens to. This has to happen before the dealer
+/// starts, because starting it closes the list.
+fn subscribe(session: &Session) -> Result<Subscriptions, Error> {
+    let dealer = session.dealer();
+    Ok(Subscriptions::from_iter([
+        dealer.listen_for("hm://pusher/v1/connections/", |message| {
+            message
+                .headers
+                .get("Spotify-Connection-Id")
+                .cloned()
+                .map(Incoming::Connection)
+                .ok_or_else(|| Error::failed_precondition("no connection id in the message"))
+        })?,
+        dealer.listen_for("hm://connect-state/v1/cluster", |message| {
+            Message::from_raw(message).map(Incoming::Cluster)
+        })?,
+        dealer.listen_for("hm://connect-state/v1/connect/volume", |message| {
+            Message::from_raw(message).map(Incoming::Volume)
+        })?,
+        dealer
+            .handle_for("hm://connect-state/v1/player/command")?
+            .map(|request| Ok(Incoming::Command(Box::new(request))))
+            .boxed(),
+        dealer.listen_for("hm://collection/collection/", |message| {
+            match message.payload {
+                PayloadValue::Raw(bytes) => Ok(Incoming::Changes(collection_changes(&bytes)?)),
+                // the same update comes again as JSON, which carries nothing more
+                _ => Ok(Incoming::Changes(Vec::new())),
+            }
+        })?,
+        dealer.listen_for(JAM_TOPIC, |message| Ok(Incoming::Jam(message)))?,
+        dealer.listen_for("hm://playlist/v2/playlist/", |message| {
+            let change: PlaylistModificationInfo = Message::from_raw(message)?;
+            let uri = String::from_utf8(change.uri.unwrap_or_default())?;
+            let changes = uri
+                .strip_prefix("spotify:playlist:")
+                .map(|id| Event::PlaylistChanged(id.to_owned()))
+                .into_iter()
+                .collect();
+            Ok(Incoming::Changes(changes))
+        })?,
+        dealer.listen_for(
+            format!("hm://playlist/v2/user/{}/rootlist", session.username()),
+            |_| Ok(Incoming::Changes(vec![Event::LibraryChanged])),
+        )?,
+    ]))
 }
 
 struct Worker {
     session: Session,
     out: UnboundedSender<Event>,
     info: DeviceInfo,
-    streams: Streams,
+    streams: Subscriptions,
     enabled: bool,
     /// The dealer is started once and cannot be restarted on the same session.
     started: bool,
@@ -252,10 +180,7 @@ struct Worker {
     connected: bool,
     /// A Jam link asked about before the dealer connected, looked up once it has.
     held: Option<String>,
-    now: Option<NowPlaying>,
-    /// When `now` was reported, which its position is as of.
-    now_at: Instant,
-    active: bool,
+    now: Option<Arc<Snapshot>>,
     active_since: Option<SystemTime>,
     claimed_at: Option<Instant>,
     /// The id and sender of the last command handled, which the next state echoes back.
@@ -264,6 +189,8 @@ struct Worker {
     rename_at: Option<Instant>,
     /// The device that has playback on the account, as the last cluster said.
     active_device: String,
+    /// Last queue published by another active device, retained across a transfer here.
+    remote_queue: Option<(Arc<Snapshot>, Instant)>,
     /// The reason of a put that is due but held back, and when it may go out.
     pending: Option<PutStateReason>,
     flush_at: Option<Instant>,
@@ -279,7 +206,7 @@ impl Worker {
             session,
             out,
             info,
-            streams: Streams::idle(),
+            streams: Subscriptions::new(),
             enabled: false,
             started: false,
             launch_failed: false,
@@ -288,14 +215,13 @@ impl Worker {
             connected: false,
             held: None,
             now: None,
-            now_at: Instant::now(),
-            active: false,
             active_since: None,
             claimed_at: None,
             last_command: (0, String::new()),
             ack_at: None,
             rename_at: None,
             active_device: String::new(),
+            remote_queue: None,
             pending: None,
             flush_at: None,
             last_put: None,
@@ -311,38 +237,17 @@ impl Worker {
                     let Some(input) = input else { break };
                     self.input(input).await;
                 }
-                id = self.streams.connection_ids.next() => match id {
-                    Some(Ok(id)) => self.connection_id(id).await,
-                    Some(Err(error)) => log::warn!("connect: bad connection id message: {error}"),
-                    None => self.streams.connection_ids = Box::pin(futures::stream::pending()),
-                },
-                likes = self.streams.likes.next() => match likes {
-                    Some(Ok(likes)) => {
-                        for (track, liked) in likes {
-                            self.out.send(Event::Liked { track, liked }).ok();
-                        }
+                message = self.streams.next(), if !self.streams.is_empty() => match message {
+                    Some(Ok(Incoming::Connection(id))) => self.connection_id(id).await,
+                    Some(Ok(Incoming::Cluster(update))) => self.cluster(update),
+                    Some(Ok(Incoming::Volume(volume))) => self.volume(volume),
+                    Some(Ok(Incoming::Command(request))) => self.request(*request),
+                    Some(Ok(Incoming::Jam(update))) => self.jam_update(update),
+                    Some(Ok(Incoming::Changes(changes))) => {
+                        for event in changes { self.out.send(event).ok(); }
                     }
-                    Some(Err(error)) => log::warn!("connect: bad collection update: {error}"),
-                    None => self.streams.likes = Box::pin(futures::stream::pending()),
-                },
-                update = self.streams.clusters.next() => match update {
-                    Some(Ok(update)) => self.cluster(update),
-                    Some(Err(error)) => log::warn!("connect: bad cluster update: {error}"),
-                    None => self.streams.clusters = Box::pin(futures::stream::pending()),
-                },
-                volume = self.streams.volumes.next() => match volume {
-                    Some(Ok(volume)) => self.volume(volume),
-                    Some(Err(error)) => log::warn!("connect: bad volume request: {error}"),
-                    None => self.streams.volumes = Box::pin(futures::stream::pending()),
-                },
-                update = self.streams.jams.next() => match update {
-                    Some(Ok(update)) => self.jam_update(update),
-                    Some(Err(error)) => log::warn!("connect: bad jam update: {error}"),
-                    None => self.streams.jams = Box::pin(futures::stream::pending()),
-                },
-                request = self.streams.commands.next() => match request {
-                    Some(request) => self.request(request),
-                    None => self.streams.commands = Box::pin(futures::stream::pending()),
+                    Some(Err(error)) => log::warn!("connect: bad dealer update: {error}"),
+                    None => {}
                 },
                 () = acknowledge(self.rename_at) => {
                     self.rename_at = None;
@@ -361,7 +266,7 @@ impl Worker {
             }
         }
 
-        // the dealer's socket closing is what takes the device off the account's list
+        // The dealer's socket closing takes the device off the account's list.
         if self.started {
             self.session.dealer().close().await;
         }
@@ -409,24 +314,13 @@ impl Worker {
             "{JAM_JOIN}/{token}?playback_control=listen_and_control&join_type=deeplinking&local_device_id={}",
             self.session.device_id()
         );
-        let answer = self
-            .session
-            .spclient()
-            .request(
-                &Method::POST,
-                &endpoint,
-                Some(jam_headers(&self.session, true)),
-                None,
-            )
-            .await;
-        match answer {
-            Ok(body) => {
+        match jam_read(&self.session, &Method::POST, &endpoint).await {
+            Ok(Some(read)) => {
                 log::info!("connect: joined a jam");
                 // the update that follows has the members, and this has them too when it reads
-                if let Some(read) = read_session(&body, &self.session.username()) {
-                    self.out.send(Event::Jam(Some(read.jam))).ok();
-                }
+                self.out.send(Event::Jam(Some(read.jam))).ok();
             }
+            Ok(None) => {}
             Err(error) => {
                 log::warn!("connect: cannot join the jam: {error}");
                 self.out.send(Event::JamFailed).ok();
@@ -447,19 +341,9 @@ impl Worker {
     /// The group session the account is in. Spotify answers 404 when there is none, which is
     /// `Ok(None)`, unlike a request that failed.
     async fn current_session(session: &Session) -> Result<Option<Read>, Error> {
-        let answer = session
-            .spclient()
-            .request(
-                &Method::GET,
-                JAM_CURRENT,
-                Some(jam_headers(session, false)),
-                None,
-            )
-            .await;
-        match answer {
-            Ok(body) => read_session(&body, &session.username())
-                .map(Some)
-                .ok_or_else(|| Error::data_loss("the jam answer cannot be read")),
+        match jam_read(session, &Method::GET, JAM_CURRENT).await {
+            Ok(Some(read)) => Ok(Some(read)),
+            Ok(None) => Err(Error::data_loss("the jam answer cannot be read")),
             Err(error) if error.kind == ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error),
         }
@@ -485,19 +369,10 @@ impl Worker {
             log::warn!("connect: no jam token in the link");
             return None;
         };
-        let body = self
-            .session
-            .spclient()
-            .request(
-                &Method::GET,
-                &format!("{JAM_INFO}/{token}"),
-                Some(jam_headers(&self.session, false)),
-                None,
-            )
+        let read = jam_read(&self.session, &Method::GET, &format!("{JAM_INFO}/{token}"))
             .await
             .inspect_err(|error| log::warn!("connect: cannot look up the jam: {error}"))
-            .ok()?;
-        let read = read_session(&body, &self.session.username())?;
+            .ok()??;
         Some(Invite {
             link: format!("{INVITE}{token}"),
             jam: read.jam,
@@ -515,27 +390,15 @@ impl Worker {
             "{JAM_START}?activate=true&local_device_id={}&type=REMOTE",
             self.session.device_id()
         );
-        let answer = self
-            .session
-            .spclient()
-            .request(
-                &Method::GET,
-                &endpoint,
-                Some(jam_headers(&self.session, false)),
-                None,
-            )
-            .await;
-        match answer {
-            Ok(body) => match read_session(&body, &self.session.username()) {
-                Some(read) => {
-                    log::info!("connect: started a jam, link {}", read.jam.link.is_some());
-                    self.out.send(Event::Jam(Some(read.jam))).ok();
-                }
-                None => {
-                    log::warn!("connect: the jam that started cannot be read");
-                    self.out.send(Event::JamFailed).ok();
-                }
-            },
+        match jam_read(&self.session, &Method::GET, &endpoint).await {
+            Ok(Some(read)) => {
+                log::info!("connect: started a jam, link {}", read.jam.link.is_some());
+                self.out.send(Event::Jam(Some(read.jam))).ok();
+            }
+            Ok(None) => {
+                log::warn!("connect: the jam that started cannot be read");
+                self.out.send(Event::JamFailed).ok();
+            }
             Err(error) => {
                 log::warn!("connect: cannot start a jam: {error}");
                 self.out.send(Event::JamFailed).ok();
@@ -547,7 +410,7 @@ impl Worker {
     /// only hand it on. A session that cannot be read is left as it is, since it may be owned.
     async fn leave(&mut self) {
         let owned = match Self::current_session(&self.session).await {
-            Ok(Some(read)) if read.owner && is_path_id(&read.id, "_-") => Some(read.id),
+            Ok(Some(read)) if read.jam.owner && is_path_id(&read.id, "_-") => Some(read.id),
             Ok(_) => None,
             Err(error) => {
                 log::warn!("connect: cannot read the jam to leave it: {error}");
@@ -560,27 +423,9 @@ impl Worker {
                     "{JAM_END}/{id}?local_device_id={}",
                     self.session.device_id()
                 );
-                self.session
-                    .spclient()
-                    .request(
-                        &Method::DELETE,
-                        &endpoint,
-                        Some(jam_headers(&self.session, false)),
-                        None,
-                    )
-                    .await
+                jam_request(&self.session, &Method::DELETE, &endpoint).await
             }
-            None => {
-                self.session
-                    .spclient()
-                    .request(
-                        &Method::POST,
-                        JAM_LEAVE,
-                        Some(jam_headers(&self.session, true)),
-                        None,
-                    )
-                    .await
-            }
+            None => jam_request(&self.session, &Method::POST, JAM_LEAVE).await,
         };
         match answer {
             Ok(_) => {
@@ -610,7 +455,7 @@ impl Worker {
             return log::warn!("connect: not a member id to remove");
         }
         let id = match Self::current_session(&self.session).await {
-            Ok(Some(read)) if read.owner && is_path_id(&read.id, "_-") => read.id,
+            Ok(Some(read)) if read.jam.owner && is_path_id(&read.id, "_-") => read.id,
             Ok(_) => return log::warn!("connect: only the owner of a jam can remove a member"),
             Err(error) => {
                 return log::warn!("connect: cannot read the jam to remove from: {error}");
@@ -620,16 +465,7 @@ impl Worker {
             "{JAM_END}/{id}/member/{member}/kick?local_device_id={}",
             self.session.device_id()
         );
-        let answer = self
-            .session
-            .spclient()
-            .request(
-                &Method::POST,
-                &endpoint,
-                Some(jam_headers(&self.session, true)),
-                None,
-            )
-            .await;
+        let answer = jam_request(&self.session, &Method::POST, &endpoint).await;
         match answer {
             Ok(_) => {
                 log::info!("connect: removed a member from the jam");
@@ -641,8 +477,7 @@ impl Worker {
         }
     }
 
-    /// Reads a change to the group session. The payload is read as loose JSON, since a value
-    /// Spotify added since the proto was cut would fail a typed parse and lose the update.
+    /// Reads session updates without requiring the reason enum to be known to librespot.
     fn jam_update(&self, message: Message) {
         let PayloadValue::Json(json) = message.payload else {
             return;
@@ -658,7 +493,8 @@ impl Worker {
         );
         let jam = json
             .get("session")
-            .and_then(|_| session_of(&json, &self.session.username()));
+            .and_then(|session| social_json(session.clone()))
+            .map(|session| read_social(session, &self.session.username()).jam);
         match (ended, jam) {
             (true, _) => self.out.send(Event::Jam(None)).ok(),
             // an update with no session says nothing about who is in it
@@ -671,7 +507,11 @@ impl Worker {
     /// ends, and hands it on from itself, or from whichever device the last cluster named.
     async fn transfer(&mut self, to: String) {
         let mine = self.session.device_id().to_owned();
-        let from = match (to == mine, self.active, self.active_device.is_empty()) {
+        let from = match (
+            to == mine,
+            self.active_since.is_some(),
+            self.active_device.is_empty(),
+        ) {
             // playback is here already
             (true, true, _) => return,
             (true, false, _) | (false, true, _) => mine.clone(),
@@ -689,38 +529,21 @@ impl Worker {
         log::info!(
             "connect: moving playback, from here {}, state put {put}, held back {blocked}, at {:?}s, playing {:?}",
             from == mine,
-            self.now
-                .as_ref()
-                .map(|now| self.live_position(now).as_secs()),
+            self.now.as_ref().map(|now| now.live_position().as_secs()),
             self.now.as_ref().map(|now| now.playing),
         );
-        // without this the device that takes over may start paused
-        let request = TransferRequest {
-            transfer_options: TransferOptions {
-                restore_paused: Some("restore".to_owned()),
-                ..Default::default()
-            },
-        };
         // Spotify answers a move here only once this device has answered the command it sends
         // for it, which the loop can give only if it is not waiting on the move itself
         if to == mine {
             let session = self.session.clone();
             self.session.spawn(async move {
-                let answer = session
-                    .spclient()
-                    .transfer(&from, &to, Some(&request))
-                    .await;
-                if let Err(error) = answer {
+                if let Err(error) = move_playback(&session, &from, &to).await {
                     log::warn!("connect: cannot move playback here: {error}");
                 }
             });
             return;
         }
-        let answer = self
-            .session
-            .spclient()
-            .transfer(&from, &to, Some(&request))
-            .await;
+        let answer = move_playback(&self.session, &from, &to).await;
         match answer {
             Ok(_) => {
                 log::info!("connect: moved playback");
@@ -771,7 +594,7 @@ impl Worker {
         }
         self.start_wait = START_FIRST;
         self.started = true;
-        let launched = match Streams::subscribe(&self.session) {
+        let launched = match subscribe(&self.session) {
             Ok(streams) => {
                 self.streams = streams;
                 self.session.dealer().start().await
@@ -779,7 +602,7 @@ impl Worker {
             Err(error) => Err(error),
         };
         if let Err(error) = launched {
-            self.streams = Streams::idle();
+            self.streams = Subscriptions::new();
             self.launch_failed = true;
             log::warn!("connect: cannot start the dealer, off until the next session: {error}");
             self.drop_held();
@@ -797,6 +620,9 @@ impl Worker {
     /// and the device can only be announced once it is known.
     async fn connection_id(&mut self, id: String) {
         self.session.set_connection_id(&id);
+        if self.connected {
+            self.out.send(Event::LibraryChanged).ok();
+        }
         self.connected = true;
         if self.enabled {
             self.announce().await;
@@ -835,7 +661,6 @@ impl Worker {
     }
 
     async fn withdraw(&mut self) {
-        self.active = false;
         self.active_since = None;
         self.out.send(Event::Roster(Roster::default())).ok();
         if !self.connected {
@@ -846,56 +671,34 @@ impl Worker {
         }
     }
 
-    async fn publish(&mut self, now: Option<NowPlaying>) {
+    async fn publish(&mut self, now: Option<Arc<Snapshot>>) {
         let before = std::mem::replace(&mut self.now, now);
-        self.now_at = Instant::now();
         self.sync(before).await;
     }
 
-    /// How far into its track `now` is at this moment. The app only reports the position when it
-    /// jumps, so in between it has moved on by the time since the report.
-    fn live_position(&self, now: &NowPlaying) -> Duration {
-        let position = match now.playing {
-            true => now.position + self.now_at.elapsed(),
-            false => now.position,
-        };
-        match now.duration.is_zero() {
-            true => position,
-            false => position.min(now.duration),
-        }
-    }
-
     /// Puts the state the device is in now, given what it reported `before`.
-    async fn sync(&mut self, before: Option<NowPlaying>) {
+    async fn sync(&mut self, before: Option<Arc<Snapshot>>) {
         if !self.enabled || !self.connected {
             return;
         }
-        let Some(now) = self.now.clone() else {
-            if self.active {
-                self.active = false;
-                self.active_since = None;
-                if let Err(error) = self
+        let Some(now) = &self.now else {
+            if self.active_since.take().is_some()
+                && let Err(error) = self
                     .session
                     .spclient()
                     .put_connect_state_inactive(false)
                     .await
-                {
-                    log::warn!("connect: cannot go inactive: {error}");
-                }
+            {
+                log::warn!("connect: cannot go inactive: {error}");
             }
             return;
         };
 
-        if !self.active {
-            self.active = true;
+        if self.active_since.is_none() {
             self.active_since = Some(SystemTime::now());
             self.claimed_at = Some(Instant::now());
         }
-        let only_volume = before.is_some_and(|before| {
-            let mut same = before;
-            same.volume = now.volume;
-            same == now
-        });
+        let only_volume = before.is_some_and(|before| now.change(&before) == Some("volume"));
         let reason = match only_volume {
             true => PutStateReason::VOLUME_CHANGED,
             false => PutStateReason::PLAYER_STATE_CHANGED,
@@ -982,7 +785,7 @@ impl Worker {
         PutStateRequest {
             member_type: EnumOrUnknown::new(MemberType::CONNECT_STATE),
             put_state_reason: EnumOrUnknown::new(reason),
-            is_active: self.active && self.now.is_some(),
+            is_active: self.active_since.is_some() && self.now.is_some(),
             started_playing_at: self.active_since.map(millis).unwrap_or_default(),
             client_side_timestamp: stamp,
             last_command_message_id: self.last_command.0,
@@ -1011,23 +814,25 @@ impl Worker {
         let Some(now) = &self.now else {
             return state;
         };
+        let Some(track) = &now.track else {
+            return state;
+        };
 
-        // a device taking over loads the context by its uri, so a track with no album or playlist
-        // behind it names itself, and what follows it in Sonora goes over as a queue
+        // A standalone song names itself when there is no collection to load on transfer.
         let uri = match &now.context {
-            Some(context) => self.context_uri(context),
-            None => format!("{TRACK_PREFIX}{}", now.track),
+            Some(context) => collection_uri(context, &self.session.username()),
+            None => format!("{TRACK_PREFIX}{}", track.id),
         };
-        let upcoming = match now.context {
-            Some(_) => "context",
-            None => "queue",
-        };
-        state.track = MessageField::some(provided(&now.track, "current", "context", &uri));
+        state.track = MessageField::some(provided(track, &uri));
+        state.prev_tracks = now
+            .previous
+            .iter()
+            .map(|track| provided(track, &uri))
+            .collect();
         state.next_tracks = now
             .upcoming
             .iter()
-            .enumerate()
-            .map(|(at, id)| provided(id, &at.to_string(), upcoming, &uri))
+            .map(|track| provided(track, &uri))
             .collect();
         state.context_url = format!("context://{uri}");
         state.context_uri = uri;
@@ -1036,20 +841,27 @@ impl Worker {
             track: track as u32,
             ..Default::default()
         }));
-        state.timestamp = stamp as i64;
-        state.position_as_of_timestamp = self.live_position(now).as_millis() as i64;
+        state.timestamp =
+            (stamp as i64).saturating_add(self.session.time_delta().saturating_mul(1000));
+        state.position_as_of_timestamp = now.live_position().as_millis() as i64;
         state.duration = now.duration.as_millis() as i64;
         state.options = MessageField::some(ContextPlayerOptions {
-            shuffling_context: now.shuffle,
-            repeating_context: now.repeat == RepeatMode::Context,
-            repeating_track: now.repeat == RepeatMode::Track,
+            shuffling_context: now.shuffle.unwrap_or_default(),
+            repeating_context: now.repeat == Some(Repeat::All),
+            repeating_track: now.repeat == Some(Repeat::One),
             ..Default::default()
         });
         let mut hasher = DefaultHasher::new();
         state
-            .next_tracks
+            .prev_tracks
             .iter()
-            .for_each(|track| track.uri.hash(&mut hasher));
+            .chain(state.track.iter())
+            .chain(&state.next_tracks)
+            .for_each(|track| {
+                track.uri.hash(&mut hasher);
+                track.uid.hash(&mut hasher);
+                track.provider.hash(&mut hasher);
+            });
         state.queue_revision = hasher.finish().to_string();
 
         // desktop and mobile apps want every flag set while paused, or their play button greys out
@@ -1069,10 +881,6 @@ impl Worker {
         state
     }
 
-    fn context_uri(&self, context: &Collection) -> String {
-        collection_uri(context, &self.session.username())
-    }
-
     fn cluster(&mut self, update: ClusterUpdate) {
         let Some(cluster) = update.cluster.as_ref() else {
             return;
@@ -1083,15 +891,41 @@ impl Worker {
             .claimed_at
             .is_none_or(|claimed| claimed.elapsed() > CLAIM_GRACE);
         self.active_device = cluster.active_device_id.clone();
-        if self.active && elsewhere && fresh {
-            self.active = false;
+        if self.active_since.is_some() && elsewhere && fresh {
             self.active_since = None;
             self.out.send(Event::Command(Command::Released)).ok();
         }
-        self.out.send(Event::Roster(self.roster(cluster))).ok();
+        let roster = self.roster(cluster);
+        self.out.send(Event::Roster(roster)).ok();
     }
 
-    fn roster(&self, cluster: &Cluster) -> Roster {
+    /// Uses a matching fresh player report to preserve queue order that transfer contexts can omit.
+    fn transferred(&self, state: TransferState) -> Start {
+        let now =
+            (unix_millis() as i64).saturating_add(self.session.time_delta().saturating_mul(1000));
+        let start = started_by_transfer(state, now);
+        if let Some((queue, stamp)) = &self.remote_queue {
+            let matching_context = start
+                .state
+                .context
+                .as_ref()
+                .is_none_or(|context| queue.context.as_ref() == Some(context));
+            if stamp.elapsed() <= QUEUE_SNAPSHOT_AGE
+                && matching_context
+                && queue.track.as_ref().map(|track| &track.id)
+                    == start.state.track.as_ref().map(|track| &track.id)
+            {
+                return Start {
+                    state: queue.clone(),
+                    preserve_queue: true,
+                    restart: true,
+                };
+            }
+        }
+        start
+    }
+
+    fn roster(&mut self, cluster: &Cluster) -> Roster {
         let mine = self.session.device_id();
         let known = |id: &str, info: &DeviceInfo| Device {
             id: id.to_owned(),
@@ -1117,23 +951,33 @@ impl Worker {
                 let millis = |value: i64| Duration::from_millis(value.max(0) as u64);
                 Elsewhere {
                     device: known(&cluster.active_device_id, info),
-                    track: track_id(&state.track.uri),
-                    playing: state.is_playing && !state.is_paused,
-                    position: millis(state.position_as_of_timestamp),
-                    stamp: UNIX_EPOCH + millis(state.timestamp),
-                    duration: millis(state.duration),
-                    shuffle: state.options.shuffling_context,
-                    repeat: match (
-                        state.options.repeating_track,
-                        state.options.repeating_context,
-                    ) {
-                        (true, _) => RepeatMode::Track,
-                        (false, true) => RepeatMode::Context,
-                        (false, false) => RepeatMode::Off,
-                    },
-                    upcoming: listed(&state.next_tracks),
+                    state: Arc::new(Snapshot {
+                        track: state.track.as_ref().and_then(listed_track),
+                        playing: state.is_playing && !state.is_paused,
+                        position: millis(state.position_as_of_timestamp),
+                        stamp: Some(
+                            UNIX_EPOCH
+                                + millis(state.timestamp.saturating_sub(
+                                    self.session.time_delta().saturating_mul(1000),
+                                )),
+                        ),
+                        duration: millis(state.duration),
+                        shuffle: Some(state.options.shuffling_context),
+                        repeat: repeat_mode(
+                            Some(state.options.repeating_track),
+                            Some(state.options.repeating_context),
+                        ),
+                        volume: info.volume as f32 / u16::MAX as f32,
+                        context: collection(&state.context_uri),
+                        index: state.index.as_ref().map(|index| index.track as usize),
+                        previous: listed(&state.prev_tracks, state.prev_tracks.len()),
+                        upcoming: listed(&state.next_tracks, CARRIED),
+                    }),
                 }
             });
+        if let Some(remote) = &elsewhere {
+            self.remote_queue = Some((remote.state.clone(), Instant::now()));
+        }
         Roster { devices, elsewhere }
     }
 
@@ -1194,9 +1038,9 @@ impl Worker {
 
     /// What a command from Spotify asks of the app, or `None` for one this device does not
     /// know.
-    fn translate(&self, command: Wire) -> Option<Vec<Command>> {
+    fn translate(&mut self, command: Wire) -> Option<Vec<Command>> {
         Some(match command {
-            Wire::Transfer(transfer) => vec![Command::Start(started_by_transfer(transfer.data?))],
+            Wire::Transfer(transfer) => vec![Command::Start(self.transferred(transfer.data?))],
             Wire::Play(play) => vec![Command::Start(started_by_play(&play))],
             Wire::Pause(_) => vec![Command::Pause],
             Wire::Resume(_) => vec![Command::Play],
@@ -1235,10 +1079,21 @@ impl Worker {
                     .into_iter()
                     .collect()
             }
-            // the app keeps its own queue, which it reports back with the next state
-            Wire::SetQueue(_) | Wire::UpdateContext(_) => Vec::new(),
-            Wire::Unknown(value) => {
-                describe_unknown(&value);
+            Wire::SetQueue(queue) => {
+                let previous = listed(&queue.prev_tracks, queue.prev_tracks.len());
+                // an edit that added songs runs past the window it was shown, and all of it counts
+                let upcoming = listed(&queue.next_tracks, queue.next_tracks.len());
+                // Acknowledge the edit with its new queue while the host resolves missing metadata.
+                if let Some(now) = self.now.as_mut() {
+                    let now = Arc::make_mut(now);
+                    now.previous = previous.clone();
+                    now.upcoming = upcoming.clone();
+                }
+                vec![Command::SetQueue { previous, upcoming }]
+            }
+            Wire::UpdateContext(_) => Vec::new(),
+            Wire::Unknown(_) => {
+                log::debug!("connect: unsupported player command");
                 return None;
             }
         })
@@ -1246,16 +1101,35 @@ impl Worker {
 
     /// The repeat mode after a request to switch the context or the track repeat, each of which
     /// leaves the other as it is.
-    fn repeat(&self, context: Option<bool>, track: Option<bool>) -> RepeatMode {
-        let current = self.now.as_ref().map(|now| now.repeat).unwrap_or_default();
+    fn repeat(&self, context: Option<bool>, track: Option<bool>) -> Repeat {
+        let current = self
+            .now
+            .as_ref()
+            .and_then(|now| now.repeat)
+            .unwrap_or_default();
         match (context, track) {
-            (_, Some(true)) => RepeatMode::Track,
-            (Some(true), _) => RepeatMode::Context,
-            (Some(false), _) if current == RepeatMode::Context => RepeatMode::Off,
-            (_, Some(false)) if current == RepeatMode::Track => RepeatMode::Off,
+            (_, Some(true)) => Repeat::One,
+            (Some(true), _) => Repeat::All,
+            (Some(false), _) if current == Repeat::All => Repeat::Off,
+            (_, Some(false)) if current == Repeat::One => Repeat::Off,
             _ => current,
         }
     }
+}
+
+/// Asks Spotify to move playback from one device to another, restoring a paused state.
+async fn move_playback(session: &Session, from: &str, to: &str) -> Result<(), Error> {
+    let request = TransferRequest {
+        transfer_options: TransferOptions {
+            restore_paused: Some("restore".to_owned()),
+            ..Default::default()
+        },
+    };
+    session
+        .spclient()
+        .transfer(from, to, Some(&request))
+        .await
+        .map(|_| ())
 }
 
 /// Sends a command to another device of the account through the session. Returns `false` when
@@ -1270,19 +1144,8 @@ async fn control(session: Session, device: &str, command: Command) -> bool {
             format!("/connect-state/v1/connect/volume/from/{mine}/to/{device}"),
             serde_json::json!({ "volume": volume_word(level) }),
         ),
-        Command::Start(start) => {
-            let Some(command) = play_command(&start, &session.username()) else {
-                log::warn!("connect: nothing to send for {what}");
-                return true;
-            };
-            (
-                Method::POST,
-                format!("/connect-state/v1/player/command/from/{mine}/to/{device}"),
-                serde_json::json!({ "command": command }),
-            )
-        }
         command => {
-            let Some(command) = wire_command(&command) else {
+            let Some(command) = wire_command(&command, &session.username()) else {
                 log::warn!("connect: nothing to send for {what}");
                 return true;
             };
@@ -1308,13 +1171,6 @@ async fn control(session: Session, device: &str, command: Command) -> bool {
             false
         }
     }
-}
-
-/// The headers of a POST with no body, which Spotify wants to see a length of 0 on.
-fn empty_body() -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    headers.insert(CONTENT_LENGTH, HeaderValue::from_static("0"));
-    headers
 }
 
 /// The token of a group session in a shared link. Only an https `spotify.link` short link is
@@ -1357,26 +1213,38 @@ fn invite(url: &str) -> Option<String> {
 struct Read {
     jam: Jam,
     id: String,
-    owner: bool,
 }
 
-/// Reads a group session from an answer, which is JSON or a protobuf `Session`.
+/// Reads JSON through librespot's protobuf schema, ignoring fields the app does not use.
+fn social_json(mut json: serde_json::Value) -> Option<SocialSession> {
+    let object = json.as_object_mut()?;
+    // This unused enum can acquire names newer than the pinned schema.
+    object.remove("initial_session_type");
+    object.remove("initialSessionType");
+    librespot_core::deserialize_with::json_proto(json).ok()
+}
+
+/// Reads a group session from a REST answer, or `None` when the answer names none.
+async fn jam_read(
+    session: &Session,
+    method: &Method,
+    endpoint: &str,
+) -> Result<Option<Read>, Error> {
+    let body = jam_request(session, method, endpoint).await?;
+    Ok(read_session(&body, &session.username()))
+}
+
+/// Both REST encodings use the same session conversion as dealer updates.
 fn read_session(body: &[u8], own: &str) -> Option<Read> {
-    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) {
-        let session = json.get("session").unwrap_or(&json);
-        return Some(Read {
-            jam: session_of(&json, own)?,
-            id: key_of(session, ["session_id", "sessionId"])?
-                .as_str()?
-                .to_owned(),
-            owner: is_owner(session),
-        });
-    }
-    let session = SocialSession::parse_from_bytes(body).ok()?;
-    // an empty answer parses as a session with nothing in it
-    if session.session_id.is_empty() {
-        return None;
-    }
+    let session = match serde_json::from_slice::<serde_json::Value>(body) {
+        Ok(json) => social_json(json.get("session").cloned().unwrap_or(json))?,
+        Err(_) => SocialSession::parse_from_bytes(body).ok()?,
+    };
+    (!session.session_id.is_empty()).then(|| read_social(session, own))
+}
+
+/// Converts one decoded session, retaining owner-only invite links.
+fn read_social(session: SocialSession, own: &str) -> Read {
     let link = session
         .is_session_owner
         .then(|| invite(&session.join_session_url))
@@ -1388,7 +1256,7 @@ fn read_session(body: &[u8], own: &str) -> Option<Read> {
         };
         [&member.id, &member.username, &member.display_name, image].map(String::as_str)
     });
-    Some(Read {
+    Read {
         jam: Jam {
             members: members_of(
                 listed,
@@ -1400,8 +1268,7 @@ fn read_session(body: &[u8], own: &str) -> Option<Read> {
             link,
         },
         id: session.session_id,
-        owner: session.is_session_owner,
-    })
+    }
 }
 
 /// The people in a session, from what it lists of each as `[id, username, name, image]`.
@@ -1446,74 +1313,22 @@ fn image_of(image: &str) -> Option<String> {
     }
 }
 
-/// The text under the first of `keys` in a JSON object, or nothing.
-fn text_of<'a>(object: &'a serde_json::Value, keys: [&str; 2]) -> &'a str {
-    key_of(object, keys)
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-}
-
-/// The value under the first of `keys` a JSON object has, since the case of the keys varies.
-fn key_of<'a>(object: &'a serde_json::Value, keys: [&str; 2]) -> Option<&'a serde_json::Value> {
-    keys.into_iter().find_map(|key| object.get(key))
-}
-
-fn is_owner(session: &serde_json::Value) -> bool {
-    key_of(session, ["is_session_owner", "isSessionOwner"])
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
-}
-
-/// The group session in a JSON `Session`, or in a `SessionUpdate` holding one, whichever case
-/// its keys are in. The link to invite others is there only when `own` owns the session.
-fn session_of(json: &serde_json::Value, own: &str) -> Option<Jam> {
-    let session = json.get("session").unwrap_or(json);
-    let owned = is_owner(session);
-    // a session nobody else is in has no member list, since JSON leaves out an empty one
-    let members = key_of(session, ["session_members", "sessionMembers"])
-        .and_then(serde_json::Value::as_array)
-        .map_or(&[][..], Vec::as_slice);
-    let link = key_of(session, ["join_session_url", "joinSessionUrl"])
-        .and_then(serde_json::Value::as_str)
-        .filter(|_| owned)
-        .and_then(invite);
-    let listed = members.iter().map(|member| {
-        let image = match text_of(member, ["image_url", "imageUrl"]) {
-            "" => text_of(member, ["large_image_url", "largeImageUrl"]),
-            image => image,
-        };
-        [
-            text_of(member, ["id", "id"]),
-            text_of(member, ["username", "username"]),
-            text_of(member, ["display_name", "displayName"]),
-            image,
-        ]
-    });
-    Some(Jam {
-        members: members_of(
-            listed,
-            text_of(session, ["session_owner_id", "sessionOwnerId"]),
-            owned,
-            own,
-        ),
-        owner: owned,
-        link,
-    })
-}
-
-/// The headers every Jam request carries: the dealer connection this device listens on, which
-/// ties the session to this device, and a zero length for a request with no body.
-fn jam_headers(session: &Session, post: bool) -> HeaderMap {
-    let mut headers = match post {
-        true => empty_body(),
-        false => HeaderMap::new(),
-    };
+/// Ties group-session requests to the dealer; spclient supplies Content-Length itself.
+async fn jam_request(
+    session: &Session,
+    method: &Method,
+    endpoint: &str,
+) -> librespot_core::spclient::SpClientResult {
+    let mut headers = HeaderMap::new();
     if let Ok(id) = HeaderValue::from_str(&session.connection_id())
         && !id.is_empty()
     {
         headers.insert("spotify-connection-id", id);
     }
-    headers
+    session
+        .spclient()
+        .request(method, endpoint, Some(headers), None)
+        .await
 }
 
 /// Whether `id` is non-empty and made only of letters, digits and the `extra` characters, which
@@ -1591,7 +1406,7 @@ fn device_info(session: &Session, naming: &Naming) -> DeviceInfo {
 }
 
 /// A command for another device in the JSON the player command endpoint takes.
-fn wire_command(command: &Command) -> Option<serde_json::Value> {
+fn wire_command(command: &Command, username: &str) -> Option<serde_json::Value> {
     Some(match command {
         Command::Play => serde_json::json!({ "endpoint": "resume" }),
         Command::Pause => serde_json::json!({ "endpoint": "pause" }),
@@ -1605,8 +1420,8 @@ fn wire_command(command: &Command) -> Option<serde_json::Value> {
         }
         Command::Repeat(mode) => serde_json::json!({
             "endpoint": "set_options",
-            "repeating_context": *mode != RepeatMode::Off,
-            "repeating_track": *mode == RepeatMode::Track,
+            "repeating_context": *mode != Repeat::Off,
+            "repeating_track": *mode == Repeat::One,
             "logging_params": {},
         }),
         Command::Enqueue { id, .. } => serde_json::json!({
@@ -1618,6 +1433,7 @@ fn wire_command(command: &Command) -> Option<serde_json::Value> {
             },
             "logging_params": {},
         }),
+        Command::Start(start) => play_command(start, username)?,
         _ => return None,
     })
 }
@@ -1625,11 +1441,12 @@ fn wire_command(command: &Command) -> Option<serde_json::Value> {
 /// A play command asking another device to start `start`: its collection from the track, or the
 /// track on its own. `None` when it names neither.
 fn play_command(start: &Start, username: &str) -> Option<serde_json::Value> {
+    let start = &start.state;
     let track = start
         .track
-        .as_deref()
-        .map(|id| format!("{TRACK_PREFIX}{id}"));
-    let context = match &start.collection {
+        .as_ref()
+        .map(|track| format!("{TRACK_PREFIX}{}", track.id));
+    let context = match &start.context {
         Some(collection) => collection_uri(collection, username),
         None => track.clone()?,
     };
@@ -1640,10 +1457,20 @@ fn play_command(start: &Start, username: &str) -> Option<serde_json::Value> {
         "options": {
             "skip_to": track.map(|uri| serde_json::json!({ "track_uri": uri })),
             "seek_to": start.position.as_millis() as u64,
-            "initially_paused": start.paused,
+            "initially_paused": !start.playing,
         },
         "logging_params": {},
     }))
+}
+
+/// The repeat mode a player state's two flags name, when it says either.
+fn repeat_mode(track: Option<bool>, context: Option<bool>) -> Option<Repeat> {
+    match (track, context) {
+        (Some(true), _) => Some(Repeat::One),
+        (_, Some(true)) => Some(Repeat::All),
+        (Some(false), _) | (_, Some(false)) => Some(Repeat::Off),
+        _ => None,
+    }
 }
 
 /// The uri Spotify knows a collection by.
@@ -1675,20 +1502,28 @@ fn kind(info: &DeviceInfo) -> DeviceKind {
     }
 }
 
-/// A track as the player state lists it, from `provider` (the context or the queue), labelled
-/// with the context it plays in as librespot labels its own. Spotify's apps look the track up by
-/// its uri.
-fn provided(id: &str, uid: &str, provider: &str, context: &str) -> ProvidedTrack {
-    ProvidedTrack {
-        uri: format!("{TRACK_PREFIX}{id}"),
-        uid: format!("sonora-{uid}"),
-        provider: provider.to_owned(),
+/// Reports the occurrence's identity and provenance consistently in every part of play order.
+fn provided(track: &QueuedTrack, context: &str) -> ProvidedTrack {
+    let mut provided = ProvidedTrack {
+        uri: format!("{TRACK_PREFIX}{}", track.id),
+        uid: track.uid.clone(),
+        provider: match track.queued {
+            true => "queue",
+            false => "context",
+        }
+        .to_owned(),
         metadata: [("context_uri", context), ("entity_uri", context)]
             .into_iter()
             .map(|(key, value)| (key.to_owned(), value.to_owned()))
             .collect(),
         ..Default::default()
+    };
+    if let Some(adder) = &track.added_by {
+        provided
+            .metadata
+            .insert("added_by".to_owned(), adder.clone());
     }
+    provided
 }
 
 fn track_id(uri: &str) -> Option<String> {
@@ -1698,26 +1533,26 @@ fn track_id(uri: &str) -> Option<String> {
 }
 
 /// The first tracks of a player state's queue, with who queued each when the state says.
-fn listed(tracks: &[ProvidedTrack]) -> Vec<Listed> {
+fn listed(tracks: &[ProvidedTrack], limit: usize) -> Vec<QueuedTrack> {
     let listed = tracks
         .iter()
-        .filter_map(|track| {
-            Some(Listed {
-                id: track_id(&track.uri)?,
-                queued: track.provider == "queue"
-                    || track
-                        .metadata
-                        .get("is_queued")
-                        .is_some_and(|queued| queued == "true"),
-                added_by: adder(track),
-            })
-        })
-        .take(LISTED)
+        .filter_map(listed_track)
+        .take(limit)
         .collect::<Vec<_>>();
     if let Some(track) = tracks.iter().find(|track| track.provider == "queue") {
         log::debug!("connect: a queued track carries {:?}", keys(track));
     }
     listed
+}
+
+/// Reads the same occurrence provenance for current, previous and upcoming tracks.
+fn listed_track(track: &ProvidedTrack) -> Option<QueuedTrack> {
+    Some(QueuedTrack {
+        id: track_id(&track.uri)?,
+        uid: track.uid.clone(),
+        queued: is_queued(track),
+        added_by: adder(track),
+    })
 }
 
 /// Who queued a track, read from the first of the metadata keys Spotify names them by.
@@ -1729,61 +1564,20 @@ fn adder(track: &ProvidedTrack) -> Option<String> {
         .cloned()
 }
 
+/// Reads explicit queue provenance independently of the track's current position.
+fn is_queued(track: &ProvidedTrack) -> bool {
+    track.provider == "queue"
+        || track
+            .metadata
+            .get("is_queued")
+            .is_some_and(|value| value == "true")
+}
+
 /// The metadata keys a track carries, sorted, so a log shows what Spotify sends without the values.
 fn keys(track: &ProvidedTrack) -> Vec<&String> {
     let mut keys = track.metadata.keys().collect::<Vec<_>>();
     keys.sort();
     keys
-}
-
-/// Logs a command this device cannot read, with its keys and the kind of each value and, for a
-/// transfer, what the state it carries holds. Jams send user data this way, so no value is
-/// logged.
-fn describe_unknown(value: &serde_json::Value) {
-    use base64::Engine as _;
-    use protobuf::Message as _;
-    use serde_json::Value;
-
-    let Some(object) = value.as_object() else {
-        return log::debug!("connect: an unknown command is not an object");
-    };
-    let shape = object
-        .iter()
-        .map(|(key, value)| match value {
-            Value::Null => format!("{key}=null"),
-            Value::Bool(_) => format!("{key}=<bool>"),
-            Value::Number(_) => format!("{key}=<number>"),
-            Value::String(text) => format!("{key}=<{} chars>", text.len()),
-            Value::Array(items) => format!("{key}=<{} items>", items.len()),
-            Value::Object(fields) => format!("{key}={:?}", fields.keys().collect::<Vec<_>>()),
-        })
-        .collect::<Vec<_>>();
-    log::debug!("connect: an unknown command carries {shape:?}");
-
-    let state = object
-        .get("data")
-        .and_then(|data| data.as_str())
-        .and_then(|data| base64::engine::general_purpose::STANDARD.decode(data).ok())
-        .and_then(|bytes| TransferState::parse_from_bytes(&bytes).ok());
-    let Some(state) = state else {
-        return log::debug!("connect: the unknown command holds no readable state");
-    };
-    let queue = state
-        .queue
-        .tracks
-        .iter()
-        .take(LISTED)
-        .map(|track| {
-            let mut keys = track.metadata.keys().cloned().collect::<Vec<_>>();
-            keys.sort();
-            (redacted(track.uri.as_deref().unwrap_or_default()), keys)
-        })
-        .collect::<Vec<_>>();
-    log::debug!(
-        "connect: the unknown command holds a state, playing queue {:?}, {} queued: {queue:?}",
-        state.queue.is_playing_queue,
-        state.queue.tracks.len(),
-    );
 }
 
 /// `uri` with the name after each `user:` replaced, so a log never carries a Spotify user name.
@@ -1826,14 +1620,21 @@ fn collection(uri: &str) -> Option<Collection> {
     }
 }
 
+/// The occurrences a list of provider ids names, all with the same provenance.
+fn occurrences(ids: impl IntoIterator<Item = String>, queued: bool) -> Vec<QueuedTrack> {
+    ids.into_iter()
+        .map(|id| QueuedTrack::new(id, queued))
+        .collect()
+}
+
 /// Where a transfer from another device leaves off: its track, how far in, and what follows.
-fn started_by_transfer(state: TransferState) -> Start {
+fn started_by_transfer(state: TransferState, now: i64) -> Start {
     let playback = &state.playback;
     let paused = playback.is_paused.unwrap_or_default();
     let mut position = playback.position_as_of_timestamp.unwrap_or_default().max(0) as u64;
     if let (false, Some(stamp)) = (paused, playback.timestamp) {
         // the position was true when the timestamp was taken, and the music went on since
-        position += (unix_millis() as i64 - stamp).clamp(0, 60_000) as u64;
+        position += now.saturating_sub(stamp).clamp(0, 60_000) as u64;
     }
 
     let from_queue = state.queue.is_playing_queue.unwrap_or_default();
@@ -1844,39 +1645,81 @@ fn started_by_transfer(state: TransferState) -> Start {
     let track = current.and_then(listed_id);
 
     let context = &state.current_session.context;
-    let queued = state
+    let context_tracks: Vec<_> = context.pages.iter().flat_map(|page| &page.tracks).collect();
+    let anchor = match from_queue {
+        true => playback.current_track.as_ref().and_then(listed_id),
+        false => track.clone(),
+    };
+    let place = context_tracks
+        .iter()
+        .position(|item| listed_id(item).as_ref() == anchor.as_ref());
+    let mut previous: Vec<_> = state
+        .play_history
+        .backward_items
+        .iter()
+        .filter_map(|item| {
+            let uid = item.uid.as_deref()?;
+            context_tracks
+                .iter()
+                .find(|track| track.uid.as_deref() == Some(uid))
+                .and_then(|track| listed_id(track))
+        })
+        .collect();
+    if previous.is_empty() {
+        previous = context_tracks
+            .iter()
+            .take(place.unwrap_or(0) + usize::from(from_queue && place.is_some()))
+            .filter_map(|track| listed_id(track))
+            .collect();
+    }
+    previous.drain(..previous.len().saturating_sub(PREVIOUS));
+    let queued: Vec<_> = state
         .queue
         .tracks
         .iter()
         .skip(from_queue as usize)
-        .filter_map(listed_id);
-    let following = context
-        .pages
-        .iter()
-        .flat_map(|page| page.tracks.iter())
         .filter_map(listed_id)
-        .skip_while(|id| Some(id) != track.as_ref())
-        .skip(1);
-
+        .collect();
+    let following = context_tracks
+        .iter()
+        .skip(place.map(|place| place + 1).unwrap_or(0))
+        .filter_map(|track| listed_id(track));
+    let repeat = repeat_mode(
+        state.options.repeating_track,
+        state.options.repeating_context,
+    );
     Start {
-        collection: context.uri.as_deref().and_then(collection),
-        upcoming: queued.chain(following).take(CARRIED).collect(),
-        track,
-        index: None,
-        position: Duration::from_millis(position),
-        paused,
+        state: Arc::new(Snapshot {
+            context: context.uri.as_deref().and_then(collection),
+            upcoming: occurrences(queued, true)
+                .into_iter()
+                .chain(occurrences(following, false))
+                .take(CARRIED)
+                .collect(),
+            previous: occurrences(previous, false),
+            shuffle: state.options.shuffling_context,
+            repeat,
+            track: track.map(|id| QueuedTrack::new(id, from_queue)),
+            index: place,
+            position: Duration::from_millis(position),
+            playing: !paused,
+            stamp: Some(SystemTime::now()),
+            ..Default::default()
+        }),
+        preserve_queue: true,
+        restart: true,
     }
 }
 
 /// What a play command from another device asks for.
 fn started_by_play(play: &PlayCommand) -> Start {
-    let listed = play
+    let tracks: Vec<_> = play
         .context
         .pages
         .iter()
-        .flat_map(|page| page.tracks.iter())
-        .filter_map(listed_id)
-        .collect::<Vec<_>>();
+        .flat_map(|page| &page.tracks)
+        .collect();
+    let listed: Vec<_> = tracks.iter().filter_map(|track| listed_id(track)).collect();
 
     // the same order librespot resolves a skip in: uri, then uid, then place
     let skip = play.options.skip_to.as_ref();
@@ -1891,40 +1734,45 @@ fn started_by_play(play: &PlayCommand) -> Start {
         .and_then(track_id)
         .or_else(|| {
             let uid = skip?.track_uid.as_deref().filter(|uid| !uid.is_empty())?;
-            play.context
-                .pages
+            tracks
                 .iter()
-                .flat_map(|page| page.tracks.iter())
                 .find(|track| track.uid.as_deref() == Some(uid))
-                .and_then(listed_id)
+                .and_then(|track| listed_id(track))
         })
         .or_else(|| {
             let index = skip.and_then(|skip| skip.track_index)? as usize;
             // the place counts every entry of the page, including ones that name no track
-            play.context
-                .pages
-                .iter()
-                .flat_map(|page| page.tracks.iter())
-                .nth(index)
-                .and_then(listed_id)
+            tracks.get(index).and_then(|track| listed_id(track))
         });
     let index = skip
         .and_then(|skip| skip.track_index)
         .map(|index| index as usize);
-    let upcoming = listed
-        .into_iter()
-        .skip_while(|id| Some(id) != track.as_ref())
-        .skip(1)
-        .take(CARRIED)
-        .collect();
+    let upcoming = occurrences(
+        listed
+            .into_iter()
+            .skip_while(|id| Some(id) != track.as_ref())
+            .skip(1)
+            .take(CARRIED),
+        false,
+    );
 
     Start {
-        collection: play.context.uri.as_deref().and_then(collection),
-        track,
-        index,
-        upcoming,
-        position: Duration::from_millis(play.options.seek_to.unwrap_or_default().into()),
-        paused: play.options.initially_paused.unwrap_or_default(),
+        state: Arc::new(Snapshot {
+            context: play.context.uri.as_deref().and_then(collection),
+            track: track.map(|id| QueuedTrack::new(id, false)),
+            index,
+            upcoming,
+            position: Duration::from_millis(play.options.seek_to.unwrap_or_default().into()),
+            playing: !play.options.initially_paused.unwrap_or_default(),
+            shuffle: play
+                .options
+                .player_options_override
+                .as_ref()
+                .and_then(|options| options.shuffling_context),
+            ..Default::default()
+        }),
+        preserve_queue: false,
+        restart: true,
     }
 }
 
@@ -1943,15 +1791,15 @@ fn millis(time: SystemTime) -> u64 {
         .as_millis() as u64
 }
 
-/// The tracks a collection update likes or unlikes, as their ids and whether they are liked now.
+/// Track-like deltas and invalidations for other saved collections reported by the dealer.
 /// librespot has no message for the update, so its few fields are read by their tags: a list of
 /// items, each with its kind (0 for a track), raw id and whether it was removed.
-fn likes(bytes: &[u8]) -> protobuf::Result<Vec<(String, bool)>> {
+fn collection_changes(bytes: &[u8]) -> protobuf::Result<Vec<Event>> {
     let mut input = CodedInputStream::from_bytes(bytes);
     let mut likes = Vec::new();
     while let Some(tag) = input.read_raw_tag_or_eof()? {
         match tag {
-            ITEM => likes.extend(like(&input.read_bytes()?)?),
+            ITEM => likes.extend(collection_item(&input.read_bytes()?)?),
             tag => match WireType::new(tag & 7) {
                 Some(wire) => input.skip_field(wire)?,
                 None => break,
@@ -1961,7 +1809,8 @@ fn likes(bytes: &[u8]) -> protobuf::Result<Vec<(String, bool)>> {
     Ok(likes)
 }
 
-fn like(bytes: &[u8]) -> protobuf::Result<Option<(String, bool)>> {
+/// Reads a track delta exactly; other item kinds invalidate the library without guessing IDs.
+fn collection_item(bytes: &[u8]) -> protobuf::Result<Option<Event>> {
     let mut input = CodedInputStream::from_bytes(bytes);
     let (mut kind, mut gid, mut removed) = (0, Vec::new(), false);
     while let Some(tag) = input.read_raw_tag_or_eof()? {
@@ -1975,9 +1824,11 @@ fn like(bytes: &[u8]) -> protobuf::Result<Option<(String, bool)>> {
             },
         }
     }
-    let track = (kind == 0)
-        .then(|| SpotifyId::from_raw(&gid).ok())
-        .flatten()
-        .map(|id| id.to_base62());
-    Ok(track.map(|track| (track, !removed)))
+    Ok(match kind {
+        0 => SpotifyId::from_raw(&gid).ok().map(|id| Event::Liked {
+            track: id.to_base62(),
+            liked: !removed,
+        }),
+        _ => Some(Event::LibraryChanged),
+    })
 }

@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{AnyView, App, Context, Entity, FocusHandle, Pixels, Render, StyleRefinement};
 use gpui::{Window, deferred, div};
@@ -268,6 +269,8 @@ impl Render for Workspace {
         };
 
         div()
+            .id("workspace")
+            .role(Role::Main)
             .relative()
             .flex()
             .flex_col()

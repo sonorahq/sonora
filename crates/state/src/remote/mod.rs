@@ -79,7 +79,6 @@ pub fn attach(hwnd: Option<*mut c_void>, cx: &mut App) {
 pub struct Remote {
     controls: Controls,
     playback: Entity<Playback>,
-    queue: Entity<Queue>,
     cover: Entity<Cover>,
     io: Io,
     shown: Option<String>,
@@ -122,7 +121,6 @@ impl Remote {
         Self {
             controls,
             playback,
-            queue,
             cover,
             io,
             shown: None,
@@ -164,12 +162,21 @@ impl Remote {
 
     fn publish(&mut self, cx: &mut Context<Self>) {
         let playback = self.playback.read(cx);
-        let state = playback.state().clone();
-        let at = playback.position();
-        let track = playback.track();
-        let volume = playback.volume();
-        let repeat = playback.repeat();
-        let shuffle = self.queue.read(cx).shuffle();
+        // Desktop media widgets follow the same device the player bar shows. In particular,
+        // Spotify Connect playback can be active on a phone while the local engine is idle.
+        let steered = playback.steered(cx);
+        let state = match steered.as_ref() {
+            Some(steered) => match steered.state.playing {
+                true => PlaybackState::Playing,
+                false => PlaybackState::Paused,
+            },
+            None => playback.state().clone(),
+        };
+        let (at, _) = playback.shown_time(cx);
+        let track = playback.shown_track(cx);
+        let volume = playback.shown_volume(cx);
+        let repeat = playback.shown_repeat(cx);
+        let shuffle = playback.shown_shuffle(cx);
 
         if self.volume != Some(volume) {
             self.volume = Some(volume);
@@ -184,6 +191,7 @@ impl Remote {
             self.controls.set_repeat(repeat);
         }
 
+        let track = track.as_ref();
         let id = track.and_then(|track| track.id.as_deref());
         let cover = track.and_then(|track| self.artwork_url(track, cx));
         let moved = id != self.shown.as_deref();
@@ -197,7 +205,7 @@ impl Remote {
                 // track already on show leaves the published thumbnail up until the file lands
                 (false, true) => {}
                 // anything else is a file already
-                _ => self.controls.describe(track, cover.filter(|_| !remote)),
+                _ => self.controls.describe(track, cover.filter(|_| !remote), cx),
             }
             if let (Some(track), Some(url), true) = (track, cover, remote) {
                 let (track, url) = (track.clone(), url.to_owned());
@@ -247,10 +255,10 @@ impl Remote {
                 Ok(path) => path,
                 Err(error) => return log::debug!("remote: cannot fetch the cover: {error:#}"),
             };
-            this.update(cx, |this, _| {
+            this.update(cx, |this, cx| {
                 if this.shown == track.id {
                     let cover = format!("file://{}", path.display());
-                    this.controls.describe(Some(&track), Some(&cover));
+                    this.controls.describe(Some(&track), Some(&cover), cx);
                 }
             })
             .ok();

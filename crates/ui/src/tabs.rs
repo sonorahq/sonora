@@ -251,6 +251,7 @@ impl RenderOnce for TabBar {
 
         let row = div()
             .id(id)
+            .role(gpui::accesskit::Role::TabList)
             .flex()
             .items_center()
             .gap_1()

@@ -1,5 +1,5 @@
 use gpui::prelude::*;
-use gpui::{App, Div, ElementId, StyleRefinement, Window, div, px};
+use gpui::{App, Div, ElementId, Stateful, StyleRefinement, Window, div, px};
 
 use crate::motion::{Motion, Motioned as _, Movement, mix};
 use crate::theme::ActiveTheme as _;
@@ -14,16 +14,17 @@ const HOLE: f32 = 0.34;
 #[derive(IntoElement)]
 pub struct Radio {
     id: ElementId,
-    base: Div,
+    base: Stateful<Div>,
     selected: bool,
 }
 
 impl Radio {
     #[track_caller]
     pub fn new(id: impl Into<ElementId>, selected: bool) -> Self {
+        let id = id.into();
         Self {
-            id: id.into(),
-            base: div(),
+            base: div().id(id.clone()),
+            id,
             selected,
         }
     }
@@ -101,6 +102,11 @@ impl RenderOnce for Radio {
         };
 
         let mut radio = base
+            // The mark takes no clicks itself, so the row around it stays the
+            // pointer target and this node only names the state for the reader.
+            // Callers label it from the row, since the mark holds no text.
+            .role(gpui::accesskit::Role::RadioButton)
+            .aria_toggled(gpui::accesskit::Toggled::from(selected))
             .flex()
             .flex_none()
             .items_center()

@@ -273,7 +273,7 @@ pub fn album(value: &Value) -> Option<Album> {
         artists,
         artist_refs,
         cover: cover(value, 300),
-        cover_large: cover(value, 1000),
+        cover_large: cover(value, 1200),
         release_type: match text(value, &["record_type"]) {
             Some("single") => ReleaseType::Single,
             Some("ep") => ReleaseType::Ep,

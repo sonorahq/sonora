@@ -66,8 +66,9 @@ pub(super) enum Value {
 
 impl Fields {
     pub(super) fn new(cx: &mut Context<EqualizerView>) -> Self {
-        let mut number =
-            |unit: &'static str| cx.new(|cx| Input::new("", cx).compact().align_end().suffix(unit));
+        let mut number = |unit: &'static str| {
+            cx.new(|cx| Input::new(unit, cx).compact().align_end().suffix(unit))
+        };
         Self {
             frequency: number("equalizer-hertz"),
             gain: number("equalizer-decibels"),

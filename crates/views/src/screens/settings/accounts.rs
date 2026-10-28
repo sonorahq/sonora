@@ -540,6 +540,10 @@ impl SettingsView {
     /// prompt a sign-in raised takes the sign-in down with it. Returns false when no dialog
     /// was up.
     pub(super) fn close_dialog(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.deleting_theme.is_some() {
+            self.close_theme_delete(cx);
+            return true;
+        }
         if self.credentials_for.is_some() {
             self.abandon_credentials(cx);
             return true;

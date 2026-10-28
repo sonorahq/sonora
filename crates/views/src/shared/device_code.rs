@@ -24,6 +24,7 @@ pub(crate) fn device_code(code: String, cx: &App) -> impl IntoElement {
         .child(
             Button::new("copy-code")
                 .icon("icons/copy.svg")
+                .tooltip("app-copy")
                 .ghost()
                 .small()
                 .on_click(move |_, _, cx| {

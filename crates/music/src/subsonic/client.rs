@@ -33,6 +33,12 @@ const API_VERSION: &str = "1.16.1";
 const CLIENT_NAME: &str = "sonora";
 /// The OpenSubsonic extension that takes a playback position and state.
 const PLAYBACK_REPORT: &str = "playbackReport";
+/// The edge of a list cover, in pixels.
+const COVER: i32 = 300;
+/// The edge of a large cover, wide enough for the fullscreen player on a 2x display. The server
+/// only scales down, so a smaller original comes back as it is. Asking for the original instead
+/// would send whole multi-megabyte scans to every album card.
+const COVER_LARGE: i32 = 1200;
 
 #[derive(Clone)]
 pub struct SubsonicClient {
@@ -113,11 +119,14 @@ impl SubsonicClient {
     }
 
     fn cover(&self, art: Option<&str>, fallback: &str) -> Option<String> {
-        self.cover_url(art.filter(|id| !id.is_empty()).unwrap_or(fallback), 300)
+        self.cover_url(art.filter(|id| !id.is_empty()).unwrap_or(fallback), COVER)
     }
 
     fn cover_large(&self, art: Option<&str>, fallback: &str) -> Option<String> {
-        self.cover_url(art.filter(|id| !id.is_empty()).unwrap_or(fallback), 600)
+        self.cover_url(
+            art.filter(|id| !id.is_empty()).unwrap_or(fallback),
+            COVER_LARGE,
+        )
     }
 
     fn song(&self, song: Child) -> Track {
@@ -172,7 +181,7 @@ impl SubsonicClient {
         let cover = source
             .cover_art
             .as_deref()
-            .and_then(|id| self.cover_url(id, 300));
+            .and_then(|id| self.cover_url(id, COVER));
         wire::playlist(
             &source.id,
             &source.name,
@@ -733,7 +742,7 @@ impl MusicApi for SubsonicClient {
         let cover = detail
             .cover_art
             .as_deref()
-            .and_then(|id| self.cover_url(id, 300));
+            .and_then(|id| self.cover_url(id, COVER));
         let mut playlist = wire::playlist(
             &detail.id,
             &detail.name,

@@ -488,7 +488,9 @@ pub(crate) fn copy_link(link: &str, cx: &mut App) {
 
 /// The name of the person who owns `jam`, when the provider gave one.
 pub(crate) fn host_name(jam: &Jam) -> Option<&str> {
-    jam.host()
+    jam.members
+        .iter()
+        .find(|member| member.host)
         .map(|host| host.name.as_str())
         .filter(|name| !name.is_empty())
 }

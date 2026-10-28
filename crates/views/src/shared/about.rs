@@ -1,6 +1,7 @@
 use std::ops::Range;
 use std::rc::Rc;
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     App, ClickEvent, Entity, FontStyle, HighlightStyle, Pixels, SharedString, StyledText, Window,
@@ -62,9 +63,16 @@ impl AboutArtist {
 impl RenderOnce for AboutArtist {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = *cx.theme();
+        let pressable = self.on_open.is_some();
+        let name = self.name.clone();
 
         div()
             .id(self.id)
+            // The card opens the artist only when it has somewhere to open, so it
+            // reads as a button only then.
+            .when(pressable, |this| {
+                this.role(Role::Button).aria_label(name.clone())
+            })
             .flex()
             .items_center()
             .gap_5()

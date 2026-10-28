@@ -89,13 +89,13 @@ pub use input::{
     WordLeft, WordRight, refresh_primary_paste,
 };
 pub use kbd::Kbd;
-pub use label::{eyebrow, faint, heading, upper, vacant};
+pub use label::{Tails, eyebrow, faint, heading, upper, vacant};
 pub use layout::{ALWAYS, MIN_CONTENT, ROOMY, Room, SNUG, VAST, WIDE};
 pub use lazy::Lazy;
 pub use level_meter::LevelMeter;
 pub use menu::{MENU_CONTEXT, Menu, MenuItem, MenuSearch, SubmenuState};
 pub use metrics::{LEADING, Metrics, Rounding, Text, snapped, tucked};
-pub use modal::Modal;
+pub use modal::{Modal, corners};
 pub use motion::{
     Entrance, Fading, HoverFade, Motion, Motioned, Pace, Rising, Saver, Springs, Stillness,
     css_ease, css_ease_out, ease_in_out_cubic, ease_in_out_expo, ease_out_cubic, ease_out_expo,

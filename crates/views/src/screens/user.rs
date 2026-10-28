@@ -1,3 +1,4 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, Context, Entity, Pixels, Render, ScrollHandle, SharedString, Window, div, px,
@@ -111,9 +112,22 @@ impl UserView {
             .flex()
             .flex_col()
             .gap_4()
-            .child(heading(t!("user-playlists"), cx))
+            .child({
+                let label = t!("user-playlists");
+                heading(label.clone(), cx)
+                    .id("user-playlists-heading")
+                    .role(Role::Heading)
+                    .aria_label(label)
+            })
             .when(empty, |this| {
-                this.child(vacant(t!("user-playlists-empty"), cx))
+                let label = t!("user-playlists-empty");
+                this.child(
+                    div()
+                        .id("user-playlists-empty")
+                        .role(Role::Status)
+                        .aria_label(label.clone())
+                        .child(vacant(label, cx)),
+                )
             })
             .when(!empty, |this| {
                 this.child(
@@ -160,7 +174,14 @@ impl UserView {
 impl Render for UserView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(failure) = self.failure(cx) {
-            return div().flex().flex_col().size_full().child(failure);
+            return div()
+                .id("user-failure")
+                .role(Role::Alert)
+                .flex()
+                .flex_col()
+                .size_full()
+                .child(failure)
+                .into_any_element();
         }
 
         let theme = *cx.theme();
@@ -170,18 +191,23 @@ impl Render for UserView {
             self.width = room;
         }
 
-        div().flex().flex_col().size_full().child(
-            Scroller::new("user-page", &self.scrollbar)
-                .bottom_inset(crate::chrome::Chrome::bottom(cx))
-                .p(pad)
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_8()
-                        .child(self.header(cx))
-                        .child(self.playlists(cx)),
-                ),
-        )
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(
+                Scroller::new("user-page", &self.scrollbar)
+                    .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .p(pad)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_8()
+                            .child(self.header(cx))
+                            .child(self.playlists(cx)),
+                    ),
+            )
+            .into_any_element()
     }
 }

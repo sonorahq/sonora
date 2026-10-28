@@ -267,7 +267,6 @@ view-list = リスト
 view-cards = グリッド
 
 # toolbar
-tool-columns = 列
 tool-sort = 並べ替え
 tool-filters = フィルター
 
@@ -1060,7 +1059,9 @@ toast-open-failed = { $name } を開けませんでした
 toast-open-unsupported = { $name } は Sonora で再生できる音声ファイルではありません
 toast-open-all-failed = { $count }個のファイルを開けませんでした
 toast-open-some-failed = 一部のファイルを開けませんでした
-toast-keys-refused = Spotify がこのアカウントに再生キーを発行していません
+toast-keys-error = 再生キーのエラー
+toast-keys-refused = Spotify が使えないかも
+toast-why = なぜ？
 toast-sign-in-to-play = { $name } のストリーミングにはサインインが必要です
 toast-restore-failed = { $name } に再サインインできなかったため、Sonora はそれなしで続行しました
 toast-track-unplayable = { $name } を再生できませんでした

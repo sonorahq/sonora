@@ -310,7 +310,6 @@ view-list = Daftar
 view-cards = Kisi
 
 # toolbar
-tool-columns = Kolom
 tool-sort = Urutkan
 tool-filters = Filter
 
@@ -1113,7 +1112,9 @@ toast-open-failed = { $name } tidak dapat dibuka
 toast-open-unsupported = { $name } bukan file audio yang dapat diputar Sonora
 toast-open-all-failed = { $count } file tidak dapat dibuka
 toast-open-some-failed = Beberapa file tidak dapat dibuka
-toast-keys-refused = Spotify tidak memberikan izin kunci pemutaran untuk akun ini
+toast-keys-error = Kunci putar gagal
+toast-keys-refused = Spotify mungkin gagal
+toast-why = Kenapa?
 toast-sign-in-to-play = { $name } hanya dapat diputar untuk pendengar yang sudah masuk akun
 toast-restore-failed = { $name } gagal masuk kembali, jadi Sonora berjalan tanpanya
 toast-track-unplayable = { $name } tidak dapat diputar

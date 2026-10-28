@@ -329,7 +329,6 @@ view-list = Список
 view-cards = Картки
 
 # toolbar
-tool-columns = Колонки
 tool-sort = Сортування
 tool-filters = Фільтри
 
@@ -1148,7 +1147,9 @@ toast-open-failed = Не вдалося відкрити { $name }
 toast-open-unsupported = { $name } не є аудіофайлом, який може відтворити Sonora
 toast-open-all-failed = Не вдалося відкрити файли ({ $count })
 toast-open-some-failed = Деякі файли не вдалося відкрити
-toast-keys-refused = Spotify не надає цьому обліковому запису ключі відтворення
+toast-keys-error = Помилка ключа
+toast-keys-refused = Spotify може не грати
+toast-why = Чому?
 toast-sign-in-to-play = { $name } віддає музику лише тим, хто увійшов в акаунт
 toast-restore-failed = Не вдалося знову увійти в { $name }, тож Sonora працює без нього
 toast-track-unplayable = Не вдалося відтворити { $name }

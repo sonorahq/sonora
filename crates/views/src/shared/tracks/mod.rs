@@ -9,7 +9,9 @@ use std::rc::Rc;
 use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis, RangeAxis, Unit};
 
 use crate::shared::menus::{ItemMenu, TrackColumns};
+use gpui::accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
+use gpui::prelude::StatefulInteractiveElement as _;
 use gpui::{
     AnyElement, App, Context, Entity, Hsla, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, WeakEntity, div,
@@ -441,7 +443,7 @@ impl TrackSource {
             cell,
             track.name.clone(),
             color,
-            track.explicit,
+            track.explicit.then(|| t!("song-explicit")),
             None,
             download_mark(cell, track, cx),
             self.liked_button(cell, track, cx),
@@ -788,13 +790,23 @@ fn download_mark(cell: &Cell<TrackField>, track: &Track, cx: &App) -> Option<Any
             .arrow(theme.muted_foreground)
             .backdrop(theme.muted)
     };
-    let ring = match downloads.track(id)? {
-        Progress::Done => ring(Some(1.)),
-        Progress::Running => ring(downloads.fraction(id)),
+    let (ring, landed) = match downloads.track(id)? {
+        Progress::Done => (ring(Some(1.)), true),
+        Progress::Running => (ring(downloads.fraction(id)), false),
         Progress::Waiting => return None,
-        Progress::Failed => ring(Some(0.)).arrow(theme.danger),
+        Progress::Failed => (ring(Some(0.)).arrow(theme.danger), false),
     };
-    Some(div().flex_none().child(ring).into_any_element())
+    let ring = div().flex_none().child(ring);
+    // Only a landed download keeps a name, since no catalogued string says what a
+    // running or failed one is doing here.
+    Some(match landed {
+        true => ring
+            .id(("downloaded-mark", cell.row))
+            .role(Role::Image)
+            .aria_label(t!("filter-downloaded"))
+            .into_any_element(),
+        false => ring.into_any_element(),
+    })
 }
 
 /// Redraws a track table whenever downloads move, so the marks on its rows keep up.

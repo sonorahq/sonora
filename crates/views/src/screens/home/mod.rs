@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use crate::chrome::Chrome;
 use crate::shared::menus::{Item, ItemMenu};
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Entity, MouseDownEvent, Pixels, Point, Render, ScrollHandle,
@@ -187,7 +188,12 @@ impl HomeView {
 impl Render for HomeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(failure) = self.failure(cx) {
-            return div().size_full().child(failure).into_any_element();
+            return div()
+                .id("home-failure")
+                .role(Role::Alert)
+                .size_full()
+                .child(failure)
+                .into_any_element();
         }
 
         let theme = *cx.theme();

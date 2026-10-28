@@ -108,6 +108,11 @@ impl RenderOnce for Switch {
         let knob = div().size(thumb).flex_none().rounded(thumb / 2.);
 
         let mut switch = base
+            // The role sits on the inner div because the animation wrapper
+            // around it never forwards one, while the real tree still nests
+            // this node during prepaint.
+            .role(gpui::accesskit::Role::Switch)
+            .aria_toggled(gpui::accesskit::Toggled::from(checked))
             .flex()
             .flex_none()
             .items_center()

@@ -289,7 +289,6 @@ view-list = Liste
 view-cards = Izgara
 
 # toolbar
-tool-columns = Sütunlar
 tool-sort = Sırala
 tool-filters = Süzgeçler
 
@@ -1088,7 +1087,9 @@ toast-open-failed = { $name } açılamadı
 toast-open-unsupported = { $name }, Sonora'nın çalabildiği bir ses dosyası değil
 toast-open-all-failed = { $count } dosya açılamadı
 toast-open-some-failed = Bazı dosyalar açılamadı
-toast-keys-refused = Spotify bu hesaba çalma anahtarları vermiyor
+toast-keys-error = Çalma anahtarı hatası
+toast-keys-refused = Spotify çalışmayabilir
+toast-why = Neden?
 toast-sign-in-to-play = { $name } yalnızca oturum açmış dinleyicilere yayınlanır
 toast-restore-failed = { $name } oturumu yeniden açılamadı, Sonora onsuz devam etti
 toast-track-unplayable = { $name } çalınamadı

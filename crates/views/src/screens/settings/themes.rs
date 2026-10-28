@@ -8,19 +8,14 @@ use gpui::{
 };
 use i18n::t;
 use state::ThemeFamily;
-use ui::{ActiveTheme as _, Look, Menu, MenuItem, OptionCard, Picker, Rail, Theme, ThemeKind};
+use ui::{
+    ActiveTheme as _, Button, Look, Menu, MenuItem, Modal, OptionCard, Picker, Rail, Theme,
+    ThemeKind,
+};
 
 use super::SettingsView;
+use crate::shared::theme_miniature::{CARD, THUMB, sliced};
 
-/// How wide a theme card stands.
-const CARD: Pixels = px(150.);
-/// How tall a theme card's picture stands, its border included.
-const THUMB: Pixels = px(96.);
-/// How thick the card's border is, which the miniature sits inside.
-const EDGE: Pixels = px(1.);
-/// The miniature window inside the card's border, in whole pixels.
-const WIDTH: f32 = 148.;
-const HEIGHT: f32 = 94.;
 /// How many variants of a family its card shows side by side at most.
 const SLICES: usize = 4;
 /// The popover key of the variant menu, which one card at a time owns.
@@ -29,31 +24,6 @@ const VARIANTS: &str = "theme-variants";
 const SWATCH: f32 = 14.;
 /// How large the open folder glyph draws on its card.
 const GLYPH: Pixels = px(18.);
-/// How much of the theme's corner radius the miniature's tiles keep.
-const RADIUS_SCALE: f32 = 0.3;
-/// How strongly the bars show against what they sit on, the first bar of the sidebar standing
-/// for the active entry, and how much of its strength the accent tile keeps.
-const BAR: f32 = 0.2;
-const ACTIVE_BAR: f32 = 0.4;
-const ACCENT: f32 = 0.9;
-
-/// The sidebar's width. It runs the full height, so it alone carries the left corners.
-const SIDEBAR: f32 = 38.;
-/// The columns a cut between two palettes may run down: the sidebar's edge and the middle of
-/// each gap between two tiles, so a cut never splits a tile or the play button.
-const SEAMS: [f32; 3] = [SIDEBAR, 76., 110.];
-/// How far a slice runs on under the slice after it.
-const SEAM_OVERLAP: f32 = 1.;
-/// The sidebar's entries and the content's heading, as left, top, width and height.
-const ENTRIES: [[f32; 4]; 3] = [[8., 14., 22., 5.], [8., 25., 16., 5.], [8., 36., 19., 5.]];
-const HEADING: [f32; 4] = [45., 14., 34., 5.];
-/// The row of tiles under the heading by their left edges, the first one in the accent.
-const TILES: [f32; 3] = [45., 79., 113.];
-const TILE_TOP: f32 = 27.;
-const TILE: f32 = 28.;
-/// The player floating at the foot of the content, and its play button.
-const PLAYER: [f32; 4] = [45., 66., 96., 14.];
-const PLAY: [f32; 4] = [50., 70., 6., 6.];
 
 /// One card of the rail: a built-in theme or a family of theme files.
 enum Entry {
@@ -166,7 +136,7 @@ impl SettingsView {
                 OptionCard::new(kind.id())
                     .w(CARD)
                     .thumb_height(THUMB)
-                    .thumb(sliced(&palettes, radius))
+                    .thumb(sliced(&palettes, radius, 1.))
                     .label(kind.label())
                     .selected(chosen)
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -200,12 +170,13 @@ impl SettingsView {
                     None => family.name.clone(),
                 };
                 let id = family.id.clone();
+                let doomed = family.id.clone();
 
                 let card =
                     OptionCard::new(SharedString::from(format!("theme-family:{}", family.id)))
                         .w(CARD)
                         .thumb_height(THUMB)
-                        .thumb(sliced(&palettes, radius))
+                        .thumb(sliced(&palettes, radius, 1.))
                         .label(label)
                         .selected(chosen)
                         .disabled(adaptive)
@@ -224,7 +195,16 @@ impl SettingsView {
                                 cx,
                             );
                             cx.notify();
-                        }));
+                        }))
+                        .when(!family.bundled, |card| {
+                            card.on_delete(
+                                "settings-theme-delete",
+                                cx.listener(move |this, _, _, cx| {
+                                    this.deleting_theme = Some(doomed.clone());
+                                    cx.notify();
+                                }),
+                            )
+                        });
                 match picked {
                     Some((picked, _)) => self.with_variants(card, &family, &picked, cx),
                     None => card,
@@ -232,6 +212,74 @@ impl SettingsView {
                 .into_any_element()
             }
         }
+    }
+
+    /// The question before the user's theme family is deleted, or `None` while none waits or
+    /// the family is already gone.
+    pub(super) fn theme_delete_modal(&self, cx: &mut Context<Self>) -> Option<Modal> {
+        let id = self.deleting_theme.as_deref()?;
+        let name = self
+            .settings
+            .read(cx)
+            .theme_families()
+            .iter()
+            .find(|family| family.id == id)?
+            .name
+            .clone();
+        let modal = Modal::new(
+            "theme-delete",
+            t!("settings-theme-delete-title", name = &name),
+        )
+        .detail(t!("settings-theme-delete-detail"))
+        .action(
+            Button::new("cancel-theme-delete")
+                .ghost()
+                .label(t!("common-cancel"))
+                .on_click(cx.listener(|this, _, _, cx| this.close_theme_delete(cx))),
+        )
+        .action(
+            Button::new("apply-theme-delete")
+                .destructive()
+                .label(t!("common-delete"))
+                .on_click(cx.listener(|this, _, _, cx| this.delete_theme(cx))),
+        )
+        .on_dismiss(cx.listener(|this, _, _, cx| this.close_theme_delete(cx)));
+        Some(modal)
+    }
+
+    pub(super) fn close_theme_delete(&mut self, cx: &mut Context<Self>) {
+        self.deleting_theme = None;
+        cx.notify();
+    }
+
+    /// Deletes the family the dialog asked about. When it was the theme in use the window fades
+    /// to Dark, the theme settings fall back to.
+    fn delete_theme(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.deleting_theme.take() else {
+            return;
+        };
+        let look = self.look(cx);
+        let fell_back = self.settings.update(cx, |settings, cx| {
+            let chosen = settings
+                .theme_variant()
+                .is_some_and(|(family, _)| family.id == id);
+            settings.delete_theme_family(&id, cx) && chosen
+        });
+        if fell_back {
+            let overrides = self.settings.read(cx).theme_overrides();
+            Theme::fade(
+                Look {
+                    kind: ThemeKind::Dark,
+                    ..look
+                },
+                &overrides,
+                cx,
+            );
+        }
+        if self.theme_variants.as_deref() == Some(id.as_str()) {
+            self.theme_variants = None;
+        }
+        cx.notify();
     }
 
     /// Gives a family's card the menu of its variants, `picked` checked, opened from its name.
@@ -287,91 +335,6 @@ impl SettingsView {
     }
 }
 
-/// The miniature cut into one vertical slice per palette, left to right, each slice the same
-/// window painted in its own palette so the layout runs on across the cuts. The cuts run down
-/// `SEAMS` and show only as the change of colour. `radius` is the card's, whose inside the
-/// miniature's outer corners follow.
-fn sliced(palettes: &[Theme], radius: Pixels) -> Div {
-    let count = palettes.len().max(1);
-    let cuts = (1..count).map(|index| {
-        let even = WIDTH * index as f32 / count as f32;
-        SEAMS
-            .into_iter()
-            .min_by(|a, b| (a - even).abs().total_cmp(&(b - even).abs()))
-            .unwrap_or(even)
-    });
-    let edges: Vec<f32> = std::iter::once(0.)
-        .chain(cuts)
-        .chain(std::iter::once(WIDTH))
-        .collect();
-    let mark = (radius * RADIUS_SCALE).floor();
-    // the card does not clip to its corners, so the miniature rounds its own inside the border
-    let outer = (radius - EDGE).max(Pixels::ZERO).min(px(SIDEBAR / 2.));
-
-    div().relative().size_full().children(
-        palettes
-            .iter()
-            .zip(edges.windows(2))
-            // each slice runs one pixel on under the next, so a cut that lands between pixels
-            // while the rail scrolls never opens a seam, but stops short of the far corners,
-            // whose soft edges only the last slice draws
-            .map(|(palette, edge)| {
-                let left = edge[0];
-                let right = match edge[1] < WIDTH {
-                    true => edge[1] + SEAM_OVERLAP,
-                    false => WIDTH,
-                };
-                rect([left, 0., right - left, HEIGHT])
-                    .overflow_hidden()
-                    .child(miniature(palette, outer, mark).left(px(-left)))
-            }),
-    )
-}
-
-/// The Sonora window in `palette`'s colours as a few soft, flat shapes, `WIDTH` by `HEIGHT`
-/// pixels: the sidebar with three entries, a heading over a row of tiles, the first in the
-/// accent, and a floating player with its play button. Nothing is outlined. The window and the
-/// sidebar round the outer corners by `outer`, and `mark` rounds the tiles.
-fn miniature(palette: &Theme, outer: Pixels, mark: Pixels) -> Div {
-    let panel = match palette.sidebar == palette.background {
-        true => palette.secondary,
-        false => palette.sidebar,
-    };
-    let bar = |shape: [f32; 4], strength: f32| {
-        rect(shape)
-            .rounded_full()
-            .bg(palette.foreground.opacity(strength))
-    };
-
-    div()
-        .absolute()
-        .top_0()
-        .w(px(WIDTH))
-        .h(px(HEIGHT))
-        .rounded(outer)
-        .bg(palette.background)
-        .child(rect([0., 0., SIDEBAR, HEIGHT]).rounded_l(outer).bg(panel))
-        .children(ENTRIES.into_iter().enumerate().map(|(index, entry)| {
-            bar(
-                entry,
-                match index {
-                    0 => ACTIVE_BAR,
-                    _ => BAR,
-                },
-            )
-        }))
-        .child(bar(HEADING, ACTIVE_BAR))
-        .children(TILES.into_iter().enumerate().map(|(index, left)| {
-            let fill = match index {
-                0 => palette.primary.opacity(ACCENT),
-                _ => palette.muted,
-            };
-            rect([left, TILE_TOP, TILE, TILE]).rounded(mark).bg(fill)
-        }))
-        .child(rect(PLAYER).rounded_full().bg(panel))
-        .child(rect(PLAY).rounded_full().bg(palette.primary))
-}
-
 /// A variant's swatch in the menu: a circle cut on the diagonal into its page colour at the top
 /// left and its accent at the bottom right. The cut blends over one pixel so its edge stays
 /// smooth.
@@ -386,14 +349,4 @@ fn swatch(palette: &Theme) -> Div {
             linear_color_stop(palette.background, 0.5 - blend),
             linear_color_stop(palette.primary, 0.5 + blend),
         ))
-}
-
-/// A box in the miniature from its left, top, width and height in pixels.
-fn rect([x, y, width, height]: [f32; 4]) -> Div {
-    div()
-        .absolute()
-        .left(px(x))
-        .top(px(y))
-        .w(px(width))
-        .h(px(height))
 }

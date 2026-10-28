@@ -1,3 +1,4 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, Context, Entity, FontWeight, Pixels, Point, Render, SharedString, WeakEntity,
@@ -9,7 +10,7 @@ use router::{Destination, Link as _};
 use state::{Playback, SongDetail, Sonora};
 use ui::{
     ActiveTheme as _, Avatar, Button, Fact, InfoCard, Initials, Popup, Scrollbar, Scroller,
-    Skeleton, Text, clock,
+    Skeleton, Tails as _, Text, clock,
 };
 
 use crate::shared::about::{AboutArtist, about_modal};
@@ -255,6 +256,7 @@ impl SongView {
                             None => Initials::new(credit.name.clone(), theme.metrics.thumb)
                                 .into_any_element(),
                         };
+                        let name = SharedString::from(credit.name.clone());
                         let row = div()
                             .flex()
                             .items_center()
@@ -275,6 +277,7 @@ impl SongView {
                                         div()
                                             .min_w_0()
                                             .truncate()
+                                            .tails()
                                             .font_weight(FontWeight::MEDIUM)
                                             .child(credit.name),
                                     )
@@ -290,6 +293,9 @@ impl SongView {
                         match credit.id {
                             Some(id) => row
                                 .id(("song-credit", index))
+                                // The link role comes from `Link`; the name is
+                                // the credit's, since its text stays anonymous.
+                                .aria_label(name)
                                 .cursor_pointer()
                                 .hover(|style| style.bg(theme.secondary_hover))
                                 .rounded(theme.radius)
@@ -526,7 +532,13 @@ impl SongView {
 impl Render for SongView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(failure) = self.failure(cx) {
-            return div().relative().size_full().child(failure);
+            return div()
+                .id("song-failure")
+                .role(Role::Alert)
+                .relative()
+                .size_full()
+                .child(failure)
+                .into_any_element();
         }
 
         let theme = *cx.theme();
@@ -595,5 +607,6 @@ impl Render for SongView {
             )
             .children(self.menu(cx))
             .children(self.about_dialog(cx))
+            .into_any_element()
     }
 }

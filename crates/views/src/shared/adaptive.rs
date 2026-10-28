@@ -1,5 +1,5 @@
 use gpui::{App, Context, Entity, Task};
-use state::{AppSettings, Playback, Queue, Reloaded, Sonora};
+use state::{AppSettings, Playback, QueuePosition, Reloaded, Sonora};
 use ui::{ActiveTheme as _, CoverPalette, Look, Theme, ThemeKind};
 
 /// Drives the theme's tint from the playing track's cover, and keeps the next
@@ -7,7 +7,6 @@ use ui::{ActiveTheme as _, CoverPalette, Look, Theme, ThemeKind};
 /// it happens rather than once a download and a decode have come back.
 pub struct Adaptive {
     playback: Entity<Playback>,
-    queue: Entity<Queue>,
     settings: Entity<AppSettings>,
     /// Whether the fullscreen shell is up. The ambient background is painted
     /// out of the tint, so fullscreen samples the cover whatever the adaptive
@@ -52,7 +51,6 @@ impl Adaptive {
 
         let mut adaptive = Self {
             playback,
-            queue,
             settings,
             fullscreen: false,
             cover: None,
@@ -87,8 +85,8 @@ impl Adaptive {
             .then(|| {
                 self.playback
                     .read(cx)
-                    .track()
-                    .and_then(|track| track.cover.clone())
+                    .shown_track(cx)
+                    .and_then(|track| track.cover)
             })
             .flatten();
 
@@ -96,6 +94,7 @@ impl Adaptive {
             // The kind can still have changed under the same cover, which is what entering
             // and leaving fullscreen does.
             self.apply(self.painted, instant, cx);
+            self.look_ahead(cx);
             return;
         }
         self.cover = cover.clone();
@@ -190,14 +189,12 @@ impl Adaptive {
     /// misses and falls back to sampling on the change.
     fn look_ahead(&mut self, cx: &mut Context<Self>) {
         let next = match self.settings.read(cx).cover_tint(self.fullscreen) {
-            true => {
-                let queue = self.queue.read(cx);
-                queue
-                    .upcoming()
-                    .next()
-                    .or_else(|| queue.similar().next())
-                    .and_then(|track| track.cover.clone())
-            }
+            true => self
+                .playback
+                .read(cx)
+                .shown_queue(cx)
+                .track(QueuePosition::Upcoming(0), cx)
+                .and_then(|track| track.cover),
             false => None,
         };
 

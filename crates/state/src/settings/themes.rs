@@ -4,18 +4,41 @@
 //! `assets/themes`, the user adds their own to the themes folder, and both are read by the same
 //! parser. A folder is a family and each file in it a variant, while a loose file is a family of
 //! one. A user file with the id of a bundled one takes its place.
+//!
+//! A theme link carries a whole theme file in the link itself, so installing one never fetches
+//! anything. Sonora checks it as strictly as a file in the folder and writes a clean copy rebuilt
+//! from what it parsed.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use anyhow::{Context as _, Result};
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::Deserialize;
 use ui::{Theme, ThemeKind, ThemeOverrides};
 
 include!(concat!(env!("OUT_DIR"), "/themes.rs"));
 
 const FORMAT_VERSION: u32 = 1;
+/// The scheme every link meant for Sonora itself uses.
+const SCHEME: &str = "sonora:";
+/// What a theme link starts with. The theme file follows as unpadded base64url.
+const THEME_LINK: &str = "sonora://theme/";
+/// The longest theme link read. A full theme file encodes to about 2 KiB.
+const LINK_LIMIT: usize = 16 * 1024;
+/// How many characters a linked theme's name or author may have.
+const LABEL_LIMIT: usize = 64;
+/// How many bytes of a theme's name its file name keeps.
+const SLUG_LIMIT: usize = 40;
+/// How many numbered names an install tries before it gives up on finding a free one.
+const NAME_ATTEMPTS: usize = 100;
+/// Names Windows keeps for devices whatever the extension, so a theme file never takes one.
+const DEVICE_NAMES: [&str; 22] = [
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
 /// The bundled themes in the order the Appearance page lists them. A bundled file missing here
 /// sorts after these by id.
 const ORDER: [&str; 15] = [
@@ -109,6 +132,15 @@ impl ThemeFamily {
     pub fn variant(&self, id: &str) -> Option<&ThemeVariant> {
         self.variants.iter().find(|variant| variant.id == id)
     }
+}
+
+/// A theme a link offered, checked and waiting for the user to install it or turn it down.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThemeOffer {
+    /// The theme as it would load. Its id is a placeholder until it is installed.
+    pub variant: ThemeVariant,
+    /// The file to write, rebuilt from the parsed fields rather than copied from the link.
+    file: Vec<u8>,
 }
 
 /// A scan of the user's themes folder and whether transient I/O failures merit another scan.
@@ -288,6 +320,142 @@ pub(super) fn adopt_legacy(id: &str, directory: &Path) -> bool {
     true
 }
 
+/// Whether `text` is a link in Sonora's own scheme, which no provider reads and which is never
+/// a file to play.
+pub fn is_own_link(text: &str) -> bool {
+    text.trim()
+        .get(..SCHEME.len())
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case(SCHEME))
+}
+
+/// Reads the theme a `sonora://theme/` link carries. The link has to be short, its payload pure
+/// base64url, and the file inside has to pass the same checks as one in the themes folder. A
+/// name or author with control or direction characters is refused, since both are shown as
+/// they are.
+pub fn read_link(text: &str) -> Result<ThemeOffer> {
+    let text = text.trim();
+    anyhow::ensure!(text.len() <= LINK_LIMIT, "theme link is too long");
+    let payload = text
+        .get(..THEME_LINK.len())
+        .filter(|prefix| prefix.eq_ignore_ascii_case(THEME_LINK))
+        .map(|_| &text[THEME_LINK.len()..])
+        .context("not a theme link")?;
+    // a browser on Windows may hand the link over with a slash added
+    let payload = payload.strip_suffix('/').unwrap_or(payload);
+    let payload = payload.trim_end_matches('=');
+    anyhow::ensure!(
+        !payload.is_empty()
+            && payload
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'),
+        "theme link is not base64url"
+    );
+    let bytes = URL_SAFE_NO_PAD
+        .decode(payload)
+        .context("cannot decode the theme link")?;
+    let variant = parse(&bytes, "theme link", "")?;
+    for (field, value) in [("name", &variant.title), ("author", &variant.author)] {
+        anyhow::ensure!(
+            value.chars().count() <= LABEL_LIMIT,
+            "theme {field} is too long"
+        );
+        anyhow::ensure!(
+            !value.chars().any(hidden),
+            "theme {field} has control characters"
+        );
+    }
+
+    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let colors = value
+        .get("theme")
+        .and_then(serde_json::Value::as_object)
+        .context("theme must contain an object")?
+        .iter()
+        .filter(|(_, color)| color.is_string())
+        .map(|(field, color)| (field.clone(), color.clone()))
+        .collect::<serde_json::Map<_, _>>();
+    let file = serde_json::to_vec_pretty(&serde_json::json!({
+        "name": variant.title,
+        "author": variant.author,
+        "version": FORMAT_VERSION,
+        "theme": colors,
+    }))
+    .context("cannot encode the theme")?;
+    let variant = parse(&file, "theme link", "")?;
+    let id = slug(&variant.title);
+    Ok(ThemeOffer {
+        variant: ThemeVariant {
+            family: id.clone(),
+            id,
+            ..variant
+        },
+        file,
+    })
+}
+
+/// Writes `offer` into `directory` as a loose theme file and returns its id. The id comes from
+/// the theme's name. It replaces an installed theme only when that one has the same name and
+/// author, and otherwise takes the first numbered name that no bundled theme, reserved id or
+/// existing file or folder holds.
+pub(super) fn install(
+    offer: &ThemeOffer,
+    directory: &Path,
+    installed: &[ThemeVariant],
+) -> Result<String> {
+    fs::create_dir_all(directory).context("cannot create the themes folder")?;
+    let base = slug(&offer.variant.title);
+    for attempt in 1..=NAME_ATTEMPTS {
+        let id = match attempt {
+            1 => base.clone(),
+            attempt => format!("{base}-{attempt}"),
+        };
+        let bundled = BUNDLED_THEMES
+            .iter()
+            .any(|theme| theme.id == id || theme.family == id);
+        if bundled || reserved(&id) || fs::symlink_metadata(directory.join(&id)).is_ok() {
+            continue;
+        }
+        let path = directory.join(format!("{id}.json"));
+        let same = installed.iter().any(|theme| {
+            theme.id == id
+                && theme.title == offer.variant.title
+                && theme.author == offer.variant.author
+        });
+        if fs::symlink_metadata(&path).is_ok() && !same {
+            continue;
+        }
+        write(directory, &path, &offer.file)?;
+        return Ok(id);
+    }
+    anyhow::bail!("cannot find a free name for theme {base}")
+}
+
+/// Deletes every file of the user's `family` from `directory`, then its folder once nothing else
+/// is left in it. A file already gone counts as deleted. Bundled families are refused.
+pub(super) fn remove(family: &ThemeFamily, directory: &Path) -> Result<()> {
+    anyhow::ensure!(!family.bundled, "cannot delete bundled theme {}", family.id);
+    for variant in &family.variants {
+        let path = directory.join(format!("{}.json", variant.id));
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| format!("cannot delete {}", path.display()));
+            }
+        }
+    }
+    // only the variants of a folder carry a slash in their id, and a folder that still holds
+    // anything else stays
+    if family
+        .variants
+        .iter()
+        .any(|variant| variant.id.contains('/'))
+    {
+        fs::remove_dir(directory.join(&family.id)).ok();
+    }
+    Ok(())
+}
+
 /// Parses one theme file. The id it returns is `family`, which a caller inside a folder
 /// replaces with the full one. `origin` names the file in errors.
 fn parse(bytes: &[u8], origin: &str, family: &str) -> Result<ThemeVariant> {
@@ -414,4 +582,50 @@ fn name(family: &mut ThemeFamily) {
             _ => variant.title.clone(),
         };
     }
+}
+
+/// Whether `character` would act on the text around it rather than show: a control, a
+/// direction mark or override, or an invisible joiner.
+fn hidden(character: char) -> bool {
+    character.is_control()
+        || matches!(
+            character,
+            '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}'
+        )
+}
+
+/// A file name for a theme called `title`: its ASCII letters and digits lowercased, every other
+/// run of characters made one hyphen. A name with none of those, or one Windows keeps for a
+/// device, becomes `theme` or gains a `-theme` suffix.
+fn slug(title: &str) -> String {
+    let mut slug = String::new();
+    for character in title.chars().flat_map(char::to_lowercase) {
+        match character.is_ascii_alphanumeric() {
+            true => slug.push(character),
+            false if !slug.is_empty() && !slug.ends_with('-') => slug.push('-'),
+            false => {}
+        }
+    }
+    slug.truncate(SLUG_LIMIT);
+    let slug = slug.trim_matches('-');
+    match slug {
+        "" => "theme".to_owned(),
+        slug if DEVICE_NAMES.contains(&slug) => format!("{slug}-theme"),
+        slug => slug.to_owned(),
+    }
+}
+
+/// Writes `bytes` to `path` through a hidden file beside it, so the folder watcher never reads
+/// half a theme.
+fn write(directory: &Path, path: &Path, bytes: &[u8]) -> Result<()> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("theme path has no file name")?;
+    let partial = directory.join(format!(".{name}.part"));
+    fs::write(&partial, bytes).with_context(|| format!("cannot write {}", partial.display()))?;
+    fs::rename(&partial, path).map_err(|error| {
+        fs::remove_file(&partial).ok();
+        anyhow::Error::new(error).context(format!("cannot write {}", path.display()))
+    })
 }

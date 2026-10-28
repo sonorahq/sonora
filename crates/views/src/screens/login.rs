@@ -1,5 +1,6 @@
 use crate::shared::device_code::device_code;
 use crate::shared::popups::{AccountPicker, CookiePrompt};
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     ClipboardItem, Context, Entity, FontWeight, IntoElement, Pixels, Render, SharedString, Window,
@@ -511,12 +512,18 @@ impl Render for LoginView {
                     .gap_2()
                     .child(
                         div()
+                            .id("login-title")
+                            .role(Role::Heading)
+                            .aria_label("Sonora")
                             .child("Sonora")
                             .text_size(theme.text(Text::Display))
                             .font_weight(FontWeight::BOLD),
                     )
                     .child(
                         div()
+                            .id("login-status")
+                            .role(Role::Status)
+                            .aria_label(status.clone())
                             .max_w(px(560.))
                             .text_center()
                             .text_size(theme.text(Text::Body))
@@ -525,7 +532,12 @@ impl Render for LoginView {
                     ),
             )
             .when_some(failure, |this, failure| {
-                this.child(crate::shared::trouble::trouble(failure, true))
+                this.child(
+                    div()
+                        .id("login-failure")
+                        .role(Role::Alert)
+                        .child(crate::shared::trouble::trouble(failure, true)),
+                )
             })
             .when_some(code, |this, (code, url)| {
                 this.child(self.code_prompt(code, url, cx).into_any_element())

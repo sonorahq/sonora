@@ -1,0 +1,191 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # A scheduled run builds only when main has changed beyond flake.nix since the commit the current
+  # nightly was built from. A manual run always builds. Either way the build is main, never another
+  # branch.
+  gate:
+    if: github.repository == 'sonorahq/sonora' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      number: ${{ steps.decide.outputs.number }}
+      aur: ${{ steps.decide.outputs.aur }}
+      tap: ${{ steps.decide.outputs.tap }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: decide
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          HAS_AUR_KEY: ${{ secrets.AUR_SSH_KEY != '' }}
+          HAS_TAP_KEY: ${{ secrets.TAP_DEPLOY_KEY != '' }}
+        run: |
+          set -euo pipefail
+          # The nightly tag sits one commit above the main it built, the one that adds nix/nightly.json.
+          built="$(gh api "repos/$GITHUB_REPOSITORY/commits/nightly" --jq '.parents[0].sha' 2> /dev/null || true)"
+          if [ "$EVENT" = schedule ] && [ "$built" = "$GITHUB_SHA" ]; then
+            echo "::notice::main is still at ${GITHUB_SHA:0:7}, which the current nightly was built from"
+            exit 0
+          fi
+          # A release rebuilds the nightly and then points the flake at itself in a commit of its
+          # own. flake.nix does not go into the binary, so that commit alone needs no build.
+          if [ "$EVENT" = schedule ] && [ -n "$built" ]; then
+            changed="$(gh api "repos/$GITHUB_REPOSITORY/compare/$built...$GITHUB_SHA" \
+              --jq '[.files[].filename | select(. != "flake.nix")] | length' || echo unknown)"
+            if [ "$changed" = 0 ]; then
+              echo "::notice::main has changed only flake.nix since ${built:0:7}, which the current nightly was built from"
+              exit 0
+            fi
+          fi
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          {
+            echo "number=$version-nightly.$(date -u +%Y%m%d)"
+            echo "aur=$HAS_AUR_KEY"
+            echo "tap=$HAS_TAP_KEY"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: gate
+    if: needs.gate.outputs.number != ''
+    uses: ./.github/workflows/release.yml
+    # GitHub refuses to start a reusable workflow when any of its jobs asks for more than the caller
+    # grants. release.yml's refresh-nightly wants actions: write, though it never runs here.
+    permissions:
+      contents: write
+      actions: write
+    with:
+      nightly: ${{ needs.gate.outputs.number }}
+
+  # sonora-nightly-bin is rendered from aur/sonora-nightly-bin/PKGBUILD every night, so the AUR
+  # repository only ever holds what this job pushed. It needs AUR_SSH_KEY, a private key whose
+  # public half is registered on the AUR account that maintains the package.
+  aur:
+    needs: [gate, build]
+    if: needs.gate.outputs.aur == 'true'
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: system dependencies
+        run: pacman -Syu --noconfirm --needed git openssh
+
+      - uses: actions/checkout@v5
+
+      - name: render the PKGBUILD
+        env:
+          NUMBER: ${{ needs.gate.outputs.number }}
+        run: |
+          set -euo pipefail
+          base="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          curl -fsSL "$base/releases/download/nightly/SHA256SUMS" > sums
+          sum() { awk -v file="$1" '$2 == file { print $1 }' sums; }
+          source="$(curl -fsSL "$base/archive/$GITHUB_SHA.tar.gz" | sha256sum | cut -d ' ' -f 1)"
+          x86_64="$(sum sonora-nightly-x86_64-unknown-linux-gnu)"
+          aarch64="$(sum sonora-nightly-aarch64-unknown-linux-gnu)"
+          test -n "$x86_64"
+          test -n "$aarch64"
+
+          mkdir package
+          sed \
+            -e "s/@PKGVER@/${NUMBER//-/.}/" \
+            -e "s/@COMMIT@/$GITHUB_SHA/" \
+            -e "s/@SHA256_SOURCE@/$source/" \
+            -e "s/@SHA256_X86_64@/$x86_64/" \
+            -e "s/@SHA256_AARCH64@/$aarch64/" \
+            aur/sonora-nightly-bin/PKGBUILD > package/PKGBUILD
+          if grep -n '@[A-Z0-9_]*@' package/PKGBUILD; then exit 1; fi
+
+          # makepkg refuses to run as root, even only to print the metadata.
+          useradd -m builder
+          chown -R builder package
+          su builder -c 'cd package && makepkg --printsrcinfo > .SRCINFO'
+          cat package/.SRCINFO
+
+      - name: push to the AUR
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+          NUMBER: ${{ needs.gate.outputs.number }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          # The AUR's published ed25519 host key. ssh reads its known_hosts from the passwd home,
+          # which in a job container is not $HOME, so the file is named explicitly.
+          echo "aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN" \
+            > ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+
+          # The AUR creates the package on the first push to a name nobody holds yet.
+          git clone -q ssh://aur@aur.archlinux.org/sonora-nightly-bin.git aur-repo
+          cp package/PKGBUILD package/.SRCINFO aur-repo/
+          cd aur-repo
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "::notice::the AUR package is already at $NUMBER"
+            exit 0
+          fi
+          git \
+            -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "upgpkg: sonora-nightly-bin ${NUMBER//-/.}-1"
+          git push origin HEAD:master
+
+  # sonora-nightly in nolight132/homebrew-tap follows the nightly disk image, whose name never
+  # changes, so only its version and checksum move. It needs TAP_DEPLOY_KEY, a deploy key with
+  # write access to the tap.
+  tap:
+    needs: [gate, build]
+    if: needs.gate.outputs.tap == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: point the cask at the nightly
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+          NUMBER: ${{ needs.gate.outputs.number }}
+        run: |
+          set -euo pipefail
+          sum="$(curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/nightly/SHA256SUMS" \
+            | awk '$2 == "sonora-nightly-macos.dmg" { print $1 }')"
+          test -n "$sum"
+
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$TAP_DEPLOY_KEY" > ~/.ssh/tap
+          chmod 600 ~/.ssh/tap
+          # GitHub's published ed25519 host key.
+          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" \
+            > ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/tap -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+
+          git clone -q git@github.com:nolight132/homebrew-tap.git tap
+          cd tap
+          sed -i \
+            -e "s/^  version \".*\"$/  version \"$NUMBER\"/" \
+            -e "s/^  sha256 \".*\"$/  sha256 \"$sum\"/" \
+            Casks/sonora-nightly.rb
+          if git diff --quiet; then
+            echo "::notice::the cask is already at $NUMBER"
+            exit 0
+          fi
+          git diff
+          git \
+            -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -am "chore(sonora-nightly): update to $NUMBER"
+          git push origin HEAD:main

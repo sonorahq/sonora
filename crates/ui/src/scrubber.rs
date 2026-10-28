@@ -374,6 +374,14 @@ impl RenderOnce for Scrubber {
         };
 
         let mut scrubber = base
+            .role(gpui::accesskit::Role::Slider)
+            .aria_numeric_value(f64::from(fraction))
+            .aria_min_numeric_value(0.)
+            .aria_max_numeric_value(1.)
+            .aria_orientation(match vertical {
+                true => gpui::accesskit::Orientation::Vertical,
+                false => gpui::accesskit::Orientation::Horizontal,
+            })
             .relative()
             .flex()
             .when_else(

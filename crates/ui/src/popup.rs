@@ -18,6 +18,7 @@ pub struct Popup {
     menu: Menu,
     close: Option<Close>,
     above: bool,
+    sticky: bool,
 }
 
 impl Popup {
@@ -27,6 +28,7 @@ impl Popup {
             menu,
             close: None,
             above: false,
+            sticky: false,
         }
     }
 
@@ -34,6 +36,13 @@ impl Popup {
     /// belongs to something along the bottom of the window.
     pub fn above(mut self) -> Self {
         self.above = true;
+        self
+    }
+
+    /// Keeps the panel open after an item is picked, for a menu of toggles the listener may flip
+    /// several of in a row. A click outside still closes it.
+    pub fn sticky(mut self) -> Self {
+        self.sticky = true;
         self
     }
 
@@ -56,6 +65,7 @@ impl RenderOnce for Popup {
             menu,
             close,
             above,
+            sticky,
         } = self;
         let menu = menu.pressed_at(at);
         let (menu, nudge) = match above {
@@ -69,9 +79,12 @@ impl RenderOnce for Popup {
                 let outside = close.clone();
                 let toggled = close.clone();
                 let searches = menu.searches();
+                let menu = match sticky {
+                    true => menu,
+                    false => menu.on_action(move |_, window, cx| close(&(), window, cx)),
+                };
 
                 menu.on_dismiss(move |_, window, cx| outside(&(), window, cx))
-                    .on_action(move |_, window, cx| close(&(), window, cx))
                     .on_mouse_down(MouseButton::Right, move |_, window, cx| {
                         cx.stop_propagation();
                         menu::release(&searches, window, cx);

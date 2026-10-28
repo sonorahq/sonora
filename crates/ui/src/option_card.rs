@@ -6,6 +6,7 @@ use gpui::{
 
 use std::time::Duration;
 
+use crate::button::Button;
 use crate::menu::Menu;
 use crate::metrics::Text;
 use crate::motion::{HoverFade, mix};
@@ -61,6 +62,8 @@ pub struct OptionCard {
     dashed: bool,
     tooltip: Option<SharedString>,
     on_click: Option<Click>,
+    /// The tooltip key and handler of the trash button in the thumbnail's corner.
+    delete: Option<(SharedString, Click)>,
 }
 
 impl OptionCard {
@@ -80,6 +83,7 @@ impl OptionCard {
             dashed: false,
             tooltip: None,
             on_click: None,
+            delete: None,
         }
     }
 
@@ -159,6 +163,17 @@ impl OptionCard {
         self.on_click = Some(Box::new(handler));
         self
     }
+
+    /// Puts a trash button in the bottom right corner of the thumbnail, named by the tooltip
+    /// `key`, for an option the user can remove. It works while the card is disabled too.
+    pub fn on_delete(
+        mut self,
+        key: impl Into<SharedString>,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.delete = Some((key.into(), Box::new(handler)));
+        self
+    }
 }
 
 impl Styled for OptionCard {
@@ -190,6 +205,7 @@ impl RenderOnce for OptionCard {
             dashed,
             tooltip,
             on_click,
+            delete,
         } = self;
 
         let theme = *cx.theme();
@@ -244,6 +260,28 @@ impl RenderOnce for OptionCard {
                             true => theme.foreground.opacity(FADED),
                             false => theme.foreground,
                         }),
+                )
+            })
+            // the button keeps its press to itself so the card under it is not chosen too
+            .when_some(delete, |this, (key, handler)| {
+                let corner = theme.metrics.pad / 2.;
+                this.child(
+                    div()
+                        .absolute()
+                        .right(corner)
+                        .bottom(corner)
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(
+                            Button::new((id.clone(), "delete"))
+                                .ghost()
+                                .small()
+                                .icon("icons/trash-2.svg")
+                                .tooltip(key)
+                                .on_click(move |event, window, cx| {
+                                    cx.stop_propagation();
+                                    handler(event, window, cx);
+                                }),
+                        ),
                 )
             });
 

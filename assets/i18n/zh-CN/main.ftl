@@ -310,7 +310,6 @@ view-list = 列表
 view-cards = 网格
 
 # toolbar
-tool-columns = 列
 tool-sort = 排序
 tool-filters = 筛选
 
@@ -1113,7 +1112,9 @@ toast-open-failed = 无法打开 { $name }
 toast-open-unsupported = { $name } 不是 Sonora 可以播放的音频文件
 toast-open-all-failed = { $count } 个文件无法打开
 toast-open-some-failed = 部分文件无法打开
-toast-keys-refused = Spotify 未授予此账户播放密钥
+toast-keys-error = 播放密钥错误
+toast-keys-refused = Spotify 可能无法使用
+toast-why = 为什么？
 toast-sign-in-to-play = { $name } 仅向已登录用户播放
 toast-restore-failed = { $name } 无法重新登录，Sonora 已在没有它的情况下继续运行
 toast-track-unplayable = { $name } 无法播放

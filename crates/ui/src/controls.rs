@@ -204,6 +204,9 @@ impl RenderOnce for WindowControls {
 
                 div()
                     .id(control.id())
+                    // No Fluent keys name these yet, so the node carries the
+                    // role without a label until catalogued strings land.
+                    .role(gpui::accesskit::Role::Button)
                     .group(control.id())
                     .flex()
                     .flex_none()

@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 use gpui::prelude::*;
 use gpui::{AnyElement, Context, FontWeight, SharedString, div, img};
 use i18n::t;
+use state::Channel;
 use ui::{ActiveTheme as _, Avatar, Switch, Text};
 
-use super::rows::outward;
+use super::rows::{outward, segmented};
 use super::{Group, SettingsView, Slot, group_heading};
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// How large the app icon stands, in covers.
 const MARK_TILE: f32 = 0.5;
 /// The app icon as this platform shows it, registered by the binary's asset source.
@@ -64,19 +64,21 @@ const MEMBERS: [Member; 5] = [
 
 impl SettingsView {
     pub(super) fn about_groups(&self) -> Vec<Group> {
-        vec![Group::untitled().rows([
-            Slot::Version,
-            Slot::Updates,
-            Slot::Log,
-            Slot::License,
-            Slot::Source,
-        ])]
+        let channel = state::updates_itself().then_some(Slot::Channel);
+        vec![
+            Group::untitled().rows(
+                [Slot::Version, Slot::Updates]
+                    .into_iter()
+                    .chain(channel)
+                    .chain([Slot::Log, Slot::License, Slot::Source]),
+            ),
+        ]
     }
 
     pub(super) fn version_row(&self) -> AnyElement {
         self.row(
             t!("settings-version"),
-            div().child(VERSION).into_any_element(),
+            div().child(state::VERSION).into_any_element(),
         )
     }
 
@@ -92,6 +94,23 @@ impl SettingsView {
                 }))
                 .into_any_element(),
         )
+    }
+
+    pub(super) fn channel_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let current = self.settings.read(cx).update_channel();
+
+        let choices = segmented(
+            "update-channel",
+            Channel::ALL.map(|channel| (channel, channel.label())),
+            current,
+            cx.listener(|this, channel: &Channel, _, cx| {
+                let channel = *channel;
+                this.settings
+                    .update(cx, |settings, cx| settings.set_update_channel(channel, cx));
+            }),
+        );
+
+        self.row(t!("settings-update-channel"), choices.into_any_element())
     }
 
     /// The row that opens a copy of the current log file in whatever the system reads text

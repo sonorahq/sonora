@@ -1,5 +1,7 @@
 use std::fmt::Write as _;
 
+use librespot_protocol::metadata::Image;
+use librespot_protocol::metadata::image::Size as ImageSize;
 use librespot_protocol::playlist4_external::{ListAttributes, SelectedListContent as RootList};
 
 use crate::models;
@@ -19,6 +21,21 @@ pub fn image_url(file_id: &[u8]) -> Option<String> {
         hex
     });
     Some(format!("{IMAGE_CDN}{hex}"))
+}
+
+/// An image's width in pixels, taken from its size class when the metadata leaves the width
+/// out.
+pub fn image_width(image: &Image) -> i32 {
+    if image.width() > 0 {
+        return image.width();
+    }
+
+    match image.size() {
+        ImageSize::SMALL => 64,
+        ImageSize::DEFAULT => 300,
+        ImageSize::LARGE => 640,
+        ImageSize::XLARGE => 1_000,
+    }
 }
 
 pub fn blend(attributes: &ListAttributes) -> bool {

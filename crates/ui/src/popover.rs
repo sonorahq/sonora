@@ -157,6 +157,8 @@ impl RenderOnce for Popover {
                 head(trigger.clone()).max_w_full().child(
                     div()
                         .id(key)
+                        .role(gpui::accesskit::Role::Button)
+                        .aria_expanded(open)
                         .max_w_full()
                         .cursor_pointer()
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

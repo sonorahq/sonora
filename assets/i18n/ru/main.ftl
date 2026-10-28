@@ -329,7 +329,6 @@ view-list = Список
 view-cards = Карточки
 
 # toolbar
-tool-columns = Колонки
 tool-sort = Сортировка
 tool-filters = Фильтры
 
@@ -1169,7 +1168,9 @@ toast-open-all-failed = { $count ->
    *[other] Не удалось открыть { $count } файлов
 }
 toast-open-some-failed = Не удалось открыть часть файлов
-toast-keys-refused = Spotify не выдаёт этому аккаунту ключи воспроизведения
+toast-keys-error = Ошибка ключа
+toast-keys-refused = Spotify может не играть
+toast-why = Почему?
 toast-sign-in-to-play = { $name } отдаёт музыку только тем, кто вошёл в аккаунт
 toast-restore-failed = Не удалось снова войти в { $name }, Sonora продолжила работу без него
 toast-track-unplayable = Не удалось воспроизвести { $name }

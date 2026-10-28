@@ -5,10 +5,9 @@ use gpui::prelude::*;
 use gpui::{AnyElement, App, div};
 use ui::{
     ActiveTheme as _, Button, Filter, FilterChange, MenuItem, Mode, Picker, Popovers,
-    RangeScrubber, RangeState, Sort, SortAxis, Text, Toggle, eyebrow,
+    RangeScrubber, RangeState, Sort, SortAxis, Text, eyebrow,
 };
 
-const COLUMNS: &str = "columns";
 const FILTERS: &str = "filters";
 const SORTS: &str = "sorts";
 
@@ -26,27 +25,6 @@ impl Sliders {
         cache.push((key, state.clone()));
         state
     }
-}
-
-pub(crate) fn columns(
-    group: &Popovers,
-    toggles: Vec<Toggle>,
-    switch: impl Fn(&'static str, &mut App) + 'static,
-) -> AnyElement {
-    let switch = Rc::new(switch);
-
-    Picker::icon(COLUMNS, group, "icons/columns-3.svg")
-        .tooltip("tool-columns")
-        .sticky()
-        .items(toggles.into_iter().map(move |toggle| {
-            let key = toggle.key;
-            let switch = switch.clone();
-
-            MenuItem::new(key, toggle.label)
-                .selected(toggle.visible)
-                .on_click(move |_, _, cx| switch(key, cx))
-        }))
-        .into_any_element()
 }
 
 pub(crate) fn sorts(

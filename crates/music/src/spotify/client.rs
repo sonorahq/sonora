@@ -9,7 +9,6 @@ use librespot_core::Session;
 use librespot_protocol::playlist4_external::SelectedListContent as RootList;
 use protobuf::Message as _;
 
-use crate::spotify::connect::Connection;
 use crate::spotify::{
     albums, artists, collection, collection2, pathfinder, playlists, profiles, radio, search, wire,
 };
@@ -23,12 +22,12 @@ const MADE_FOR_YOU: &str = "0JQ5DAt0tbjZptfcdMSKl3";
 
 pub struct LibrespotClient {
     session: Session,
-    connect: Arc<Connection>,
+    connect: Arc<Connect>,
 }
 
 impl LibrespotClient {
     pub fn new(session: Session) -> Self {
-        let connect = Arc::new(Connection::new(session.clone()));
+        let connect = Arc::new(crate::spotify::connect::open(session.clone()));
         Self { session, connect }
     }
 
@@ -43,7 +42,7 @@ impl MusicApi for LibrespotClient {
         !self.session.is_invalid()
     }
 
-    fn connect(&self) -> Option<Arc<dyn Connect>> {
+    fn connect(&self) -> Option<Arc<Connect>> {
         Some(self.connect.clone())
     }
 

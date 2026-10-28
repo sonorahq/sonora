@@ -115,7 +115,7 @@ pub trait MusicApi: Send + Sync {
 
     /// The provider's device network, for a provider that has one. Spotify Connect is the
     /// only one so far.
-    fn connect(&self) -> Option<Arc<dyn connect::Connect>> {
+    fn connect(&self) -> Option<Arc<connect::Connect>> {
         None
     }
 

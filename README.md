@@ -84,6 +84,8 @@ After installing (thanks Apple):
 xattr -dr com.apple.quarantine /Applications/Sonora.app
 ```
 
+Or install the [disk image](https://github.com/sonorahq/sonora/releases/latest), which updates itself.
+
 ### Linux
 
 #### Arch
@@ -122,12 +124,6 @@ it:
 chmod +x sonora-*.AppImage
 ./sonora-*.AppImage
 ```
-
-An `aarch64` build is published beside it. The AppImage carries no Vulkan driver and no ALSA
-bridge, so both still come from your system. It does not update itself, but it carries its update
-information, so [AppImageUpdate](https://github.com/AppImageCommunity/AppImageUpdate) or an
-AppImage manager such as [AppManager](https://github.com/kem-a/AppManager) can fetch a new release
-for you.
 
 ### Nix
 
@@ -173,6 +169,18 @@ on Windows on ARM.
 #### Portable
 
 Download the latest `windows-msvc.exe` for your architecture from [Releases](https://github.com/sonorahq/sonora/releases/latest).
+
+### Nightly
+
+[Nightly builds](https://github.com/sonorahq/sonora/releases/tag/nightly) are available.
+
+```sh
+brew install --cask nolight132/tap/sonora-nightly
+yay -S sonora-nightly-bin
+nix run github:sonorahq/sonora/nightly
+```
+
+Either `pipewire-alsa` or `pulseaudio-alsa` is required.
 
 ## Community
 

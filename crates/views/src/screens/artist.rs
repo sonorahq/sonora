@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Entity, FontWeight, Pixels, Point, Render, ScrollHandle,
@@ -633,12 +634,16 @@ impl ArtistView {
                 .flex_col()
                 .gap_3()
                 .pt_6()
-                .child(
+                .child({
+                    let label = t!("artist-releases");
                     div()
+                        .id("artist-releases-heading")
+                        .role(Role::Heading)
+                        .aria_label(label.clone())
                         .text_size(theme.text(Text::Title))
                         .font_weight(FontWeight::BOLD)
-                        .child(t!("artist-releases")),
-                )
+                        .child(label)
+                })
                 .when(!filters.is_empty(), |this| {
                     this.child(
                         div()
@@ -951,7 +956,13 @@ impl Tooled for ArtistView {
 impl Render for ArtistView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(failure) = self.failure(cx) {
-            return div().relative().size_full().child(failure);
+            return div()
+                .id("artist-failure")
+                .role(Role::Alert)
+                .relative()
+                .size_full()
+                .child(failure)
+                .into_any_element();
         }
 
         let theme = *cx.theme();
@@ -1020,12 +1031,16 @@ impl Render for ArtistView {
             .pb(inset)
             .on_scroll_wheel(cx.listener(Self::release_scroll))
             .child(div().child(head).when(listed, |this| {
+                let label = t!("artist-popular");
                 this.child(
                     div()
+                        .id("artist-popular-heading")
+                        .role(Role::Heading)
+                        .aria_label(label.clone())
                         .pb_3()
                         .text_size(theme.text(Text::Title))
                         .font_weight(FontWeight::BOLD)
-                        .child(t!("artist-popular")),
+                        .child(label),
                 )
             }))
             .child(tracks)
@@ -1042,6 +1057,7 @@ impl Render for ArtistView {
             .child(page)
             .when_some(track_menu, |this, menu| this.child(menu))
             .children(self.about_dialog(cx))
+            .into_any_element()
     }
 }
 

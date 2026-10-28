@@ -1,5 +1,6 @@
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use gpui::Decorations;
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Window, div};
 use gpui::{
@@ -134,6 +135,9 @@ impl TitleBar {
         let forward = self.navigation.clone();
 
         div()
+            .id("titlebar-history")
+            .role(Role::Toolbar)
+            .aria_label(i18n::lookup("nav-history", None))
             .flex()
             .flex_none()
             .items_center()
@@ -266,6 +270,8 @@ impl Render for TitleBar {
         let radius: Option<Pixels> = None;
 
         div()
+            .id("title-bar")
+            .role(Role::Banner)
             .flex()
             .items_center()
             .w_full()

@@ -16,7 +16,7 @@ use gpui::{
 use crate::artwork::{PREFETCH_REACH, Prefetch};
 use crate::filters::FilterChange;
 use crate::glass::{blurring, popover_surface};
-use crate::menu::Menu;
+use crate::menu::{Menu, MenuItem};
 use crate::metrics::{snapped, text_width};
 use crate::pin::{Pin, Pinnable};
 use crate::popup::Popup;
@@ -184,6 +184,7 @@ pub struct TableDelegate<S: TableSource> {
     sort: Option<(S::Field, Sort)>,
     query: String,
     order: Vec<usize>,
+    locked: Option<&'static [&'static str]>,
 }
 
 impl<S: TableSource> TableDelegate<S> {
@@ -211,6 +212,7 @@ impl<S: TableSource> TableDelegate<S> {
             sort: None,
             query: String::new(),
             order: Vec::new(),
+            locked: None,
         };
         delegate.reorder(cx);
         delegate
@@ -247,6 +249,13 @@ impl<S: TableSource> TableDelegate<S> {
 
     pub fn source_mut(&mut self) -> &mut S {
         &mut self.source
+    }
+
+    /// Lets the listener hide and show columns from a right-click on the head. The `locked` keys
+    /// never appear in that menu. A change emits `TableEvent::LayoutChanged` for the owner to save.
+    pub fn with_column_menu(mut self, locked: &'static [&'static str]) -> Self {
+        self.locked = Some(locked);
+        self
     }
 
     pub fn with_sort(mut self, field: S::Field, direction: Sort, cx: &App) -> Self {
@@ -435,6 +444,18 @@ impl<S: TableSource> TableDelegate<S> {
             .collect()
     }
 
+    /// The toggles the head's column menu offers, which is none unless the owner opted in
+    /// with `with_column_menu`.
+    fn choices(&self, cx: &App) -> Vec<Toggle> {
+        let Some(locked) = self.locked else {
+            return Vec::new();
+        };
+        self.toggles(cx)
+            .into_iter()
+            .filter(|toggle| !locked.contains(&toggle.key))
+            .collect()
+    }
+
     pub fn cycle(&mut self, column: &str, cx: &App) {
         let next = match self.sorting() {
             Some(current) if current.column == column => match current.order {
@@ -606,6 +627,7 @@ pub struct TableState<S: TableSource> {
     context_menu: Option<(Vec<usize>, Point<Pixels>)>,
     moving: Option<(usize, usize)>,
     sizing: Option<Sizing>,
+    column_menu: Option<Point<Pixels>>,
 }
 
 impl<S: TableSource> EventEmitter<TableEvent> for TableState<S> {}
@@ -627,6 +649,7 @@ impl<S: TableSource> TableState<S> {
             context_menu: None,
             moving: None,
             sizing: None,
+            column_menu: None,
         }
     }
 
@@ -896,6 +919,35 @@ impl<S: TableSource> TableState<S> {
         cx.notify();
     }
 
+    fn toggle_column(&mut self, key: &str, cx: &mut Context<Self>) {
+        let mut layout = self.delegate.layout.clone();
+        layout.toggle(key);
+        self.delegate.set_layout(layout, cx);
+        cx.emit(TableEvent::LayoutChanged);
+        cx.notify();
+    }
+
+    fn column_menu(&self, at: Point<Pixels>, cx: &mut Context<Self>) -> Popup {
+        let items: Vec<MenuItem> = self
+            .delegate
+            .choices(cx)
+            .into_iter()
+            .map(|toggle| {
+                let key = toggle.key;
+                MenuItem::new(key, toggle.label)
+                    .selected(toggle.visible)
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_column(key, cx)))
+            })
+            .collect();
+
+        Popup::new(at, Menu::new("table-columns").items(items))
+            .sticky()
+            .on_close(cx.listener(|this, _, _, cx| {
+                this.column_menu = None;
+                cx.notify();
+            }))
+    }
+
     fn finish_column_drag(&mut self, cx: &mut Context<Self>) {
         self.sizing = None;
         let Some((from, to)) = self.moving.take() else {
@@ -971,6 +1023,19 @@ impl<S: TableSource> TableState<S> {
             .border_b_1()
             .border_color(theme.table_row_border)
             .text_color(theme.table_head_foreground)
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    if this.delegate.choices(cx).is_empty() {
+                        return;
+                    }
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    this.context_menu = None;
+                    this.column_menu = Some(event.position);
+                    cx.notify();
+                }),
+            )
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseUpEvent, _, cx| this.finish_column_drag(cx)),
@@ -984,6 +1049,8 @@ impl<S: TableSource> TableState<S> {
                     let dragged = self.moving.is_some_and(|(from, _)| from == ix);
                     div()
                         .id(("head", ix))
+                        .role(gpui::accesskit::Role::ColumnHeader)
+                        .aria_label(header.clone())
                         .relative()
                         .flex()
                         .flex_none()
@@ -1092,6 +1159,11 @@ impl<S: TableSource> TableState<S> {
 
                 div()
                     .id(("row", display))
+                    .role(gpui::accesskit::Role::Row)
+                    .aria_selected(selected)
+                    .aria_row_index(display)
+                    .aria_position_in_set(display + 1)
+                    .aria_size_of_set(count)
                     .group(ROW_GROUP)
                     .absolute()
                     .top(head + row_height * display as f32)
@@ -1149,6 +1221,7 @@ impl<S: TableSource> TableState<S> {
                                 window.focus(&this.focus.clone(), cx);
                                 window.prevent_default();
                                 cx.stop_propagation();
+                                this.column_menu = None;
                                 this.context_menu = Some((rows, event.position));
                                 cx.notify();
                             }
@@ -1286,6 +1359,7 @@ impl<S: TableSource> Render for TableState<S> {
             true => pinned,
             false => pinned + head,
         };
+        let column_menu = self.column_menu.map(|at| self.column_menu(at, cx));
         let context_menu = self.context_menu.clone().and_then(|(rows, position)| {
             let visible = self.delegate.visible();
             self.delegate
@@ -1361,6 +1435,7 @@ impl<S: TableSource> Render for TableState<S> {
                     .child(self.header(head, top, cx)),
             )
             .when_some(context_menu, |this, menu| this.child(menu))
+            .when_some(column_menu, |this, menu| this.child(menu))
     }
 }
 

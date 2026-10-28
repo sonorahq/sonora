@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, MouseButton,
@@ -387,10 +388,16 @@ impl SearchView {
         }
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the row reports its seat in the list, so position and total ride along"
+    )]
     fn row(
         &self,
         hit: &Hit,
         place: usize,
+        index: usize,
+        total: usize,
         compact: bool,
         chosen: bool,
         me: &WeakEntity<Self>,
@@ -451,6 +458,13 @@ impl SearchView {
         .when_some(hit.pin(), Pinnable::pin)
         .when_some(HitMenu::of(hit), |card, target| card.menu(menu(target, me)))
         .chosen(chosen)
+        // The keyboard cursor stays on the container, so the chosen card claims
+        // the active descendant while every card reports its seat in the list.
+        .aria_position_in_set(index + 1)
+        .aria_size_of_set(total)
+        .when(chosen, |card| {
+            card.aria_selected(true).aria_active_descendant()
+        })
         .into_any_element()
     }
 
@@ -615,6 +629,7 @@ impl SearchView {
 
     fn shell(
         &self,
+        id: &'static str,
         title: SharedString,
         body: AnyElement,
         gutter: Pixels,
@@ -627,20 +642,31 @@ impl SearchView {
             .min_w_0()
             .min_h_0()
             .gap_1()
-            .child(div().pl(gutter).child(eyebrow(title, cx).pb_1()))
+            .child(
+                div()
+                    .id(id)
+                    .role(Role::Heading)
+                    .aria_label(title.clone())
+                    .pl(gutter)
+                    .child(eyebrow(title, cx).pb_1()),
+            )
             .child(body)
             .into_any_element()
     }
 
     fn column(&self, kind: Kind, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let (title, only) = match kind {
-            Kind::Song => (t!("search-songs"), SONGS),
-            Kind::Artist => (t!("search-artists"), ARTISTS),
-            Kind::Album | Kind::Playlist => (t!("search-albums-playlists"), RELEASES),
+        let (id, title, only) = match kind {
+            Kind::Song => ("search-songs-heading", t!("search-songs"), SONGS),
+            Kind::Artist => ("search-artists-heading", t!("search-artists"), ARTISTS),
+            Kind::Album | Kind::Playlist => (
+                "search-releases-heading",
+                t!("search-albums-playlists"),
+                RELEASES,
+            ),
         };
-        let body = self.deck(only, RAIL, None, window, cx);
+        let body = self.deck(only, RAIL, None, title.clone(), window, cx);
 
-        self.shell(title, body, RAIL, cx)
+        self.shell(id, title, body, RAIL, cx)
     }
 
     fn browse(&self, gutter: Pixels, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -656,7 +682,14 @@ impl SearchView {
             .flex_1()
             .min_h_0()
             .gap_3()
-            .child(div().px(gutter).child(eyebrow(t!("search-browse"), cx)))
+            .child(div().px(gutter).child({
+                let label = t!("search-browse");
+                div()
+                    .id("search-browse-heading")
+                    .role(Role::Heading)
+                    .aria_label(label.clone())
+                    .child(eyebrow(label, cx))
+            }))
             .child(
                 Scroller::new("search-browse", &self.browsing)
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
@@ -676,7 +709,14 @@ impl SearchView {
             .child(eyebrow(t!("search-results"), cx).pb_1())
             .into_any_element();
 
-        self.deck(&Kind::ALL, gutter, Some(lead), window, cx)
+        self.deck(
+            &Kind::ALL,
+            gutter,
+            Some(lead),
+            t!("search-results"),
+            window,
+            cx,
+        )
     }
 
     fn seats(&self, only: &[Kind], cx: &App) -> Vec<(usize, usize)> {
@@ -701,6 +741,7 @@ impl SearchView {
         only: &[Kind],
         gutter: Pixels,
         lead: Option<AnyElement>,
+        label: SharedString,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -712,7 +753,13 @@ impl SearchView {
         };
         let seats = self.seats(only, cx);
         if seats.is_empty() {
-            let empty = vacant(t!("search-no-matches"), cx).flex_none();
+            let title = t!("search-no-matches");
+            let empty = div()
+                .id(SharedString::from(format!("{id}-empty")))
+                .role(Role::Status)
+                .aria_label(title.clone())
+                .flex_none()
+                .child(vacant(title, cx));
             return match lead {
                 Some(lead) => div()
                     .flex()
@@ -758,6 +805,8 @@ impl SearchView {
                 this.row(
                     hit,
                     place,
+                    index,
+                    seats.len(),
                     compact,
                     this.cursor == Some((column, index)),
                     &view.downgrade(),
@@ -766,6 +815,9 @@ impl SearchView {
             });
 
         div()
+            .id(SharedString::from(format!("{id}-results")))
+            .role(Role::ListBox)
+            .aria_label(label)
             .flex_1()
             .min_h_0()
             .child(

@@ -141,6 +141,10 @@ impl RenderOnce for Modal {
         let scroller = bar(&id, cx);
         scroller.read(cx).sync();
         let body_id = SharedString::from(format!("modal-body-{id:?}"));
+        // The panel carries its own node named for the title, since nothing
+        // else in the frame has both an id and a role.
+        let name = title.clone();
+        let about = detail.clone();
 
         // The window is the modal's frame, not the pane that raised it: anchored to window
         // coordinates and deferred, so a page with chrome floating over it cannot cover the
@@ -155,7 +159,7 @@ impl RenderOnce for Modal {
             .items_center()
             .justify_center()
             .child(
-                Shield::new(id)
+                Shield::new(id.clone())
                     .absolute()
                     .inset_0()
                     .bg(theme.background.opacity(BACKDROP))
@@ -169,6 +173,10 @@ impl RenderOnce for Modal {
             )
             .child({
                 let mut panel = base
+                    .id((id, "panel"))
+                    .role(gpui::accesskit::Role::Dialog)
+                    .aria_label(name)
+                    .when_some(about, |this, detail| this.aria_description(detail))
                     .relative()
                     .occlude()
                     .w(theme.metrics.cover * WIDTH)
@@ -286,8 +294,8 @@ impl RenderOnce for Modal {
     }
 }
 
-/// The dialog's corner radius for a theme radius: `ROUNDING` times it, capped at what the Rounded
-/// setting gives. Toasts share it, so both large surfaces round alike.
-pub(crate) fn corners(radius: Pixels) -> Pixels {
+/// The corner radius of a large floating surface for a theme radius: `ROUNDING` times it, capped
+/// at what the Rounded setting gives. Dialogs, toasts and notices share it, so they round alike.
+pub fn corners(radius: Pixels) -> Pixels {
     (radius * ROUNDING).min(Rounding::Rounded.radius() * ROUNDING)
 }

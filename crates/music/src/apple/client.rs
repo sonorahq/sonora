@@ -486,6 +486,29 @@ impl AppleClient {
             .collect())
     }
 
+    /// A bounded shelf in Apple's addition order. Albums without a playable catalog copy
+    /// are omitted, as they are in the rest of the library.
+    async fn recently_added(&self) -> Result<Vec<GenreItem>> {
+        let body = self
+            .get(
+                "/me/library/recently-added",
+                &[("limit", "10"), ("include", "catalog"), ALBUM_ARTISTS],
+            )
+            .await?;
+        let answered: wire::Answer = wire::answer(&body);
+        Ok(answered
+            .data
+            .iter()
+            .filter_map(|row| match row.kind.as_str() {
+                Some("library-albums") => wire::library_album(row).map(GenreItem::Album),
+                Some("library-playlists") => {
+                    wire::library_playlist(row, OWNER).map(GenreItem::Playlist)
+                }
+                _ => None,
+            })
+            .collect())
+    }
+
     /// Walks a paged listing and reads every row with `read`. The rows come from
     /// [`listing`](Self::listing), so two walks of one listing close together cost one fetch.
     async fn walk<T, F>(
@@ -1839,10 +1862,22 @@ impl MusicApi for AppleClient {
         }
         // Apple's own recently played group is a cached ranking that lags real plays, so the live
         // list leads Quick picks and the group only stands in when that list cannot be read.
-        let (containers, songs) = futures::join!(
+        let (containers, songs, added) = futures::join!(
             self.recent_items(),
-            <Self as MusicApi>::recently_played(self)
+            <Self as MusicApi>::recently_played(self),
+            self.recently_added()
         );
+        match added {
+            Ok(items) if !items.is_empty() => sections.insert(
+                0,
+                GenreSection {
+                    title: "home-recently-added".to_owned(),
+                    items,
+                },
+            ),
+            Ok(_) => {}
+            Err(error) => log::warn!("apple: cannot load recently added: {error:#}"),
+        }
         let containers = match containers {
             Ok(live) if !live.is_empty() => live,
             Ok(_) => recents,

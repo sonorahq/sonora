@@ -2,6 +2,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyView, App, Bounds, ClickEvent, Context, Entity, FocusHandle, FontWeight, KeyDownEvent,
@@ -15,8 +16,8 @@ use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
 use ui::{
     ActiveTheme as _, Artwork, Button, ExplicitBadge, InlineLink, InlineLinks, Motion,
-    Motioned as _, Popup, Room, Scrollbar, Scrubber, ScrubberState, Springs, TabBar, Text,
-    Visualizer, clock, glass, snapped,
+    Motioned as _, Popup, Room, Scrollbar, Scrubber, ScrubberState, Springs, TabBar, Tails as _,
+    Text, Visualizer, clock, glass, snapped,
 };
 
 use crate::chrome::{Aside, TitleBarOptions};
@@ -81,7 +82,6 @@ const SPRING_STALL: Duration = Duration::from_millis(64);
 
 pub struct FullscreenView {
     playback: Entity<Playback>,
-    queue: Entity<Queue>,
     cover: Entity<Cover>,
     settings: Entity<AppSettings>,
     aside: Entity<Aside>,
@@ -137,7 +137,6 @@ impl FullscreenView {
 
         Self {
             playback,
-            queue,
             cover,
             settings,
             aside,
@@ -641,6 +640,7 @@ impl FullscreenView {
                                     .id("strip-title")
                                     .min_w_0()
                                     .truncate()
+                                    .tails()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .when_some(album, |this, album| {
                                         this.cursor_pointer()
@@ -781,7 +781,7 @@ impl FullscreenView {
                         this.over_transport = *hovering;
                         cx.notify();
                     }))
-                    .child(transport(&self.playback, &self.queue, true, cx))
+                    .child(transport(&self.playback, true, cx))
                     .child(
                         div()
                             .absolute()
@@ -911,6 +911,10 @@ impl FullscreenView {
                             .when(frosted, Button::frosted)
                             .small()
                             .icon(volume_icon(level))
+                            .tooltip_above(match level <= 0.001 {
+                                true => "player-unmute",
+                                false => "player-mute",
+                            })
                             .tint(match self.volume_open() {
                                 true => theme.foreground,
                                 false => theme.muted_foreground,
@@ -1187,6 +1191,7 @@ impl Render for FullscreenView {
 
         div()
             .id("fullscreen")
+            .role(Role::Main)
             .key_context(super::shell_context(WORKSPACE_CONTEXT))
             .track_focus(&self.focus)
             .relative()

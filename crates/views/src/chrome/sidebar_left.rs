@@ -5,6 +5,7 @@ use ui::{
     Popup, SNUG, Scroller, Shield, Side, Spot, Tabs, Text, Vacancy, drop_gap, drop_marker,
 };
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, DragMoveEvent, ElementId, Entity, MouseButton, MouseDownEvent,
@@ -322,7 +323,7 @@ impl SidebarLeft {
                         false => rest.get(index - held),
                     };
                     match pin {
-                        Some(pin) => this.pin_row(index, pin.clone(), held, cx),
+                        Some(pin) => this.pin_row(index, pin.clone(), held, count, cx),
                         None => div().into_any_element(),
                     }
                 }))
@@ -368,6 +369,9 @@ impl SidebarLeft {
             .child(
                 div()
                     .id("sidebar-pins-toggle")
+                    .role(Role::Button)
+                    .aria_label(i18n::lookup("nav-pinned", None))
+                    .aria_expanded(open)
                     .flex()
                     .flex_1()
                     .min_w_0()
@@ -463,7 +467,14 @@ impl SidebarLeft {
 
     /// One entry. The first `count` of them are the pins, which carry the drop slots. The rest
     /// is the library underneath, which can be dragged up into the pins but holds no slot.
-    fn pin_row(&self, index: usize, pin: Pin, count: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn pin_row(
+        &self,
+        index: usize,
+        pin: Pin,
+        count: usize,
+        total: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = *cx.theme();
         let accent = theme.sidebar_accent;
         let destination = Destination::from(&pin);
@@ -528,6 +539,9 @@ impl SidebarLeft {
 
         div()
             .id(("pinned-slot", index))
+            .role(Role::ListItem)
+            .aria_position_in_set(index + 1)
+            .aria_size_of_set(total)
             .relative()
             .flex_none()
             .w_full()
@@ -681,6 +695,8 @@ impl Render for SidebarLeft {
                             .size_full()
                             .child(
                                 div()
+                                    .id("sidebar-navigation")
+                                    .role(Role::Navigation)
                                     .flex()
                                     .flex_col()
                                     .gap_1()

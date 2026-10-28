@@ -10,6 +10,7 @@ use crate::shared::confirm::{Confirm, Kind};
 use crate::shared::menus::{ItemMenu, new_playlist_menu};
 use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Entity, FontWeight, MouseButton, Pixels, Point, Render, ScrollHandle,
@@ -25,7 +26,7 @@ use state::{
 use ui::{
     ActiveTheme as _, Button, Card, Deck, FilterChange, LEADING, Mode, Pinnable, Popovers, Popup,
     Scrollbar, Scroller, Sort, SortAxis, TableDelegate, TableEvent, TableSource, TableState, Text,
-    Toggle, Vacancy, Viewport, heading, quantize, runtime, scrolled, snapped, table,
+    Vacancy, Viewport, heading, quantize, runtime, scrolled, snapped, table,
 };
 
 use crate::shared::album_grid::{AlbumGrid, CardGrid};
@@ -256,8 +257,9 @@ impl LibraryView {
             .starrable(shelf)
             .shelved(shelf)
             .table(cx.weak_entity());
-            let mut delegate =
-                TableDelegate::new(source, width, cx).with_sort(TrackField::AddedAt, RECENT, cx);
+            let mut delegate = TableDelegate::new(source, width, cx)
+                .with_column_menu(&PINNED)
+                .with_sort(TrackField::AddedAt, RECENT, cx);
             let (layout, sorting) = stored(Section::Songs, cx);
             delegate.set_layout(layout, cx);
             if let Some(sorting) = sorting {
@@ -269,8 +271,9 @@ impl LibraryView {
             let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(id));
             let menu = ItemMenu::new(playlist_scrollbar, cx);
             let source = AlbumSource::shelved(library.clone(), playback.clone(), menu, shelf);
-            let mut delegate =
-                TableDelegate::new(source, width, cx).with_sort(AlbumField::AddedAt, RECENT, cx);
+            let mut delegate = TableDelegate::new(source, width, cx)
+                .with_column_menu(&PINNED)
+                .with_sort(AlbumField::AddedAt, RECENT, cx);
             let (layout, sorting) = stored(Section::Albums, cx);
             delegate.set_layout(layout, cx);
             if let Some(sorting) = sorting {
@@ -280,11 +283,9 @@ impl LibraryView {
         });
         let playlists = cx.new(|cx| {
             let source = PlaylistSource::shelved(library.clone(), playback.clone(), shelf);
-            let mut delegate = TableDelegate::new(source, width, cx).with_sort(
-                PlaylistField::Modified,
-                RECENT,
-                cx,
-            );
+            let mut delegate = TableDelegate::new(source, width, cx)
+                .with_column_menu(&PINNED)
+                .with_sort(PlaylistField::Modified, RECENT, cx);
             let (layout, sorting) = stored(Section::Playlists, cx);
             delegate.set_layout(layout, cx);
             if let Some(sorting) = sorting {
@@ -294,8 +295,9 @@ impl LibraryView {
         });
         let artists = cx.new(|cx| {
             let source = ArtistSource::shelved(library.clone(), playback.clone(), shelf);
-            let mut delegate =
-                TableDelegate::new(source, width, cx).with_sort(ArtistField::AddedAt, RECENT, cx);
+            let mut delegate = TableDelegate::new(source, width, cx)
+                .with_column_menu(&PINNED)
+                .with_sort(ArtistField::AddedAt, RECENT, cx);
             let (layout, sorting) = stored(Section::Artists, cx);
             delegate.set_layout(layout, cx);
             if let Some(sorting) = sorting {
@@ -474,26 +476,6 @@ impl LibraryView {
 
     fn shape(&self, cx: &App) -> Shape {
         self.library.read(cx).shape(self.shelf)
-    }
-
-    fn column_toggles(&self, cx: &App) -> Vec<Toggle> {
-        self.table(self.section)
-            .toggles(cx)
-            .into_iter()
-            .filter(|toggle| !PINNED.contains(&toggle.key))
-            .collect()
-    }
-
-    fn switch_column(&mut self, key: &str, cx: &mut Context<Self>) {
-        if PINNED.contains(&key) {
-            return;
-        }
-
-        let mut layout = self.table(self.section).layout(cx);
-        layout.toggle(key);
-        self.table(self.section).set_layout(layout, cx);
-        self.persist(self.section, cx);
-        cx.notify();
     }
 
     fn persist(&mut self, section: Section, cx: &mut Context<Self>) {
@@ -995,7 +977,7 @@ impl LibraryView {
 
                                 div()
                                     .px(inset)
-                                    .children(label.map(|label| head(label, cx)))
+                                    .children(label.map(|label| head(*display, label, cx)))
                                     .into_any_element()
                             }
                             DeckRow::Cards(cards) => {
@@ -1273,18 +1255,9 @@ impl Tooled for LibraryView {
     }
 
     fn tools(&self, cx: &App) -> Vec<AnyElement> {
-        let columned = self.me.clone();
         let filtered = self.me.clone();
         let sorted = self.me.clone();
         let viewed = self.me.clone();
-
-        let columns = matches!(self.mode(), Mode::List).then(|| {
-            tools::columns(&self.popovers, self.column_toggles(cx), move |key, cx| {
-                columned
-                    .update(cx, |view, cx| view.switch_column(key, cx))
-                    .ok();
-            })
-        });
 
         let created = self.me.clone();
         let create = (self.section == Section::Playlists).then(|| {
@@ -1303,7 +1276,12 @@ impl Tooled for LibraryView {
 
         let mut tools = Vec::new();
         tools.extend(create);
-        tools.extend(columns);
+        let switchable = !self.section.listing();
+        tools.extend(switchable.then(|| {
+            tools::views(&self.popovers, self.mode(), move |mode, cx| {
+                viewed.update(cx, |view, cx| view.set_mode(mode, cx)).ok();
+            })
+        }));
         // A section keeps its funnel while anything is narrowed, even once the axes have gone
         // with the rows, or an empty result would lock the filter that emptied it in place.
         let table = self.table(self.section);
@@ -1327,12 +1305,6 @@ impl Tooled for LibraryView {
             },
             cx,
         ));
-        let switchable = !self.section.listing();
-        tools.extend(switchable.then(|| {
-            tools::views(&self.popovers, self.mode(), move |mode, cx| {
-                viewed.update(cx, |view, cx| view.set_mode(mode, cx)).ok();
-            })
-        }));
         tools
     }
 }
@@ -1396,8 +1368,11 @@ fn deck_row(rows: &[DeckRow], key: DeckKey) -> Option<usize> {
     })
 }
 
-fn head(label: SharedString, cx: &App) -> AnyElement {
-    heading(label, cx)
+fn head(display: usize, label: SharedString, cx: &App) -> AnyElement {
+    heading(label.clone(), cx)
+        .id(("library-group", display))
+        .role(Role::Heading)
+        .aria_label(label)
         .w_full()
         .pt_2()
         .line_height(relative(LEADING))

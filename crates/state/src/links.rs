@@ -1,10 +1,11 @@
 //! Links handed to the app from outside, by the system or on the command line, opened on the
-//! provider they belong to.
+//! provider they belong to. Sonora's own `sonora:` links offer a theme to install instead.
 
 use gpui::{Context, Entity, EventEmitter, Task};
 use music::link::{self, Linked};
 
-use crate::{Devices, Io, Outcome, Session, SessionState, Toasts};
+use crate::settings::{is_own_link, read_theme_link};
+use crate::{AppSettings, Devices, Io, Outcome, Session, SessionState, ThemeOffer, Toasts};
 
 /// A page a link asked for, for the app to navigate to. It never carries a Jam or a short link.
 pub struct Opened(pub Linked);
@@ -20,31 +21,55 @@ struct Waiting {
 
 /// Opens links to any provider's pages and Jams. A link to a provider other than the current
 /// one switches to it when it has an account stored, and opens once that provider is signed in.
-/// A page comes out as an `Opened` event and a Jam goes to `Devices` to be asked about.
+/// A page comes out as an `Opened` event and a Jam goes to `Devices` to be asked about. A theme
+/// link waits in `theme_offer` until the user installs it or turns it down.
 pub struct Links {
     session: Entity<Session>,
     devices: Entity<Devices>,
+    settings: Entity<AppSettings>,
     waiting: Option<Waiting>,
     following: Option<Task<()>>,
+    theme: Option<ThemeOffer>,
 }
 
 impl EventEmitter<Opened> for Links {}
 
 impl Links {
-    pub fn new(session: Entity<Session>, devices: Entity<Devices>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        session: Entity<Session>,
+        devices: Entity<Devices>,
+        settings: Entity<AppSettings>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.observe(&session, |this, _, cx| this.advance(cx))
             .detach();
         Self {
             session,
             devices,
+            settings,
             waiting: None,
             following: None,
+            theme: None,
         }
     }
 
-    /// Opens `text` when it is a provider's link and says whether it was one. A short link is
-    /// followed first, so what it points at opens a moment later.
+    /// Opens `text` when it is a provider's link or Sonora's own and says whether it was one. A
+    /// short link is followed first, so what it points at opens a moment later. A `sonora:` link
+    /// that does not read as a theme is refused with a toast.
     pub fn open(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
+        if is_own_link(text) {
+            match read_theme_link(text) {
+                Ok(offer) => {
+                    self.theme = Some(offer);
+                    cx.notify();
+                }
+                Err(error) => {
+                    log::warn!("links: cannot read a theme link: {error:#}");
+                    Toasts::show(Outcome::Failed, "toast-theme-link-unreadable", cx);
+                }
+            }
+            return true;
+        }
         let Some((slug, linked)) = self.session.read(cx).read_link(text) else {
             return false;
         };
@@ -128,6 +153,45 @@ impl Links {
                 Toasts::about(Outcome::Info, "toast-link-sign-in", name, cx);
             }
             None => self.waiting = None,
+        }
+    }
+
+    /// The theme a link offered, while the user has not answered it.
+    pub fn theme_offer(&self) -> Option<&ThemeOffer> {
+        self.theme.as_ref()
+    }
+
+    pub fn decline_theme(&mut self, cx: &mut Context<Self>) {
+        if self.theme.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// Installs and selects the offered theme and says whether it worked. A failure is logged
+    /// and shown as a toast.
+    pub fn install_theme(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(offer) = self.theme.take() else {
+            return false;
+        };
+        cx.notify();
+        let installed = self
+            .settings
+            .update(cx, |settings, cx| settings.install_theme(&offer, cx));
+        match installed {
+            Ok(id) => {
+                log::info!("links: installed theme {id}");
+                true
+            }
+            Err(error) => {
+                log::warn!("links: cannot install theme: {error:#}");
+                Toasts::about(
+                    Outcome::Failed,
+                    "toast-theme-install-failed",
+                    offer.variant.title,
+                    cx,
+                );
+                false
+            }
         }
     }
 

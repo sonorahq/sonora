@@ -215,6 +215,11 @@ Root: HKA; Subkey: "Software\Classes\Sonora.ape\DefaultIcon"; ValueType: string;
 Root: HKA; Subkey: "Software\Classes\Sonora.ape\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
 Root: HKA; Subkey: "Software\Classes\Applications\{#AppExeName}\SupportedTypes"; ValueType: string; ValueName: ".ape"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Sonora\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ape"; ValueData: "Sonora.ape"; Flags: uninsdeletevalue
+; sonora, which no other app claims, so Sonora owns the scheme outright
+Root: HKA; Subkey: "Software\Classes\sonora"; ValueType: string; ValueName: ""; ValueData: "URL:Sonora Link"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\sonora"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\sonora\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
+Root: HKA; Subkey: "Software\Classes\sonora\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
 ; spotify
 Root: HKA; Subkey: "Software\Sonora\Capabilities\UrlAssociations"; ValueType: string; ValueName: "spotify"; ValueData: "SonoraSpotify"; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\SonoraSpotify"; ValueType: string; ValueName: ""; ValueData: "Spotify Link"; Flags: uninsdeletekey

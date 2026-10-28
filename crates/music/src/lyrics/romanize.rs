@@ -17,9 +17,22 @@ pub(super) fn apply(lines: &mut [LyricsLine]) {
     }
 }
 
+/// The romanization of unsynced lyrics, converted line by line so its text holds exactly one line
+/// for each line of `text`. A line that needs no romanization is left blank.
 pub(crate) fn plain(text: &str) -> Option<RomanizedText> {
     let system = detect(std::iter::once(text))?;
-    convert(text, system)
+    let lines = text
+        .lines()
+        .map(|line| convert(line, system).map(|romanized| romanized.text))
+        .collect::<Vec<_>>();
+    lines.iter().any(Option::is_some).then(|| RomanizedText {
+        text: lines
+            .into_iter()
+            .map(Option::unwrap_or_default)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        writing_system: system,
+    })
 }
 
 fn detect<'a>(texts: impl Iterator<Item = &'a str>) -> Option<WritingSystem> {

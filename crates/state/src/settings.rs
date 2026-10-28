@@ -9,7 +9,8 @@ mod equalizer;
 mod themes;
 
 pub use self::equalizer::equalizer_profile_label;
-pub use self::themes::{ThemeFamily, ThemeVariant};
+pub use self::themes::{ThemeFamily, ThemeOffer, ThemeVariant};
+pub(crate) use self::themes::{is_own_link, read_link as read_theme_link};
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -40,6 +41,7 @@ use self::equalizer::Profile;
 use crate::equalizer::DeviceRule;
 use crate::pins::PinSort;
 use crate::queue::{Resume, gap_target};
+use crate::updates::{Channel, updates_itself};
 use crate::{Outcome, Repeat, Sonora, Toasts};
 
 /// How Sonora is named on the device list of the provider's apps. `Both` is the app's name with
@@ -413,6 +415,9 @@ struct Values {
     romanization_scripts: RomanizationScripts,
     adaptive_menu: bool,
     check_updates: bool,
+    /// The release channel chosen in settings, by its id. Empty follows the running build's own
+    /// channel, and a copy a package manager installed ignores it.
+    update_channel: String,
     close_to_tray: bool,
     tray_icon: bool,
     stay_awake: bool,
@@ -609,7 +614,8 @@ impl Default for Values {
             fullscreen_lyrics_scale: DEFAULT_LYRICS_SCALE,
             romanization_scripts: RomanizationScripts::default(),
             adaptive_menu: false,
-            check_updates: cfg!(target_os = "windows"),
+            check_updates: cfg!(target_os = "windows") || updates_itself(),
+            update_channel: String::new(),
             close_to_tray: true,
             tray_icon: true,
             stay_awake: true,
@@ -1114,6 +1120,10 @@ impl AppSettings {
         self.values.adaptive_menu
     }
 
+    pub fn update_channel(&self) -> Channel {
+        Channel::from_id(&self.values.update_channel)
+    }
+
     pub fn check_updates(&self) -> bool {
         self.values.check_updates
     }
@@ -1412,6 +1422,57 @@ impl AppSettings {
             .unwrap_or_else(|| inline.clone())
     }
 
+    /// Writes the theme a link offered into the themes folder and selects it, turning the
+    /// adaptive theme off since only the neutral themes wear it. Returns the theme's id.
+    pub fn install_theme(&mut self, offer: &ThemeOffer, cx: &mut Context<Self>) -> Result<String> {
+        let directory = themes_path(&self.path);
+        let id = themes::install(offer, &directory, &self.themes)?;
+        let loaded = themes::load(&directory, &self.themes);
+        anyhow::ensure!(
+            loaded.themes.iter().any(|theme| theme.id == id),
+            "cannot load the installed theme {id}"
+        );
+        self.families = themes::catalog(&loaded.themes);
+        self.themes = loaded.themes;
+        if self.adaptive_theme() {
+            self.set_adaptive_theme(false, cx);
+        }
+        self.set_theme(id.clone(), cx);
+        cx.notify();
+        Ok(id)
+    }
+
+    /// Deletes the user's theme family `id` from the themes folder and says whether it worked.
+    /// A selected theme in it falls back to Dark. A failure is logged and shown as a toast.
+    pub fn delete_theme_family(&mut self, id: &str, cx: &mut Context<Self>) -> bool {
+        let Some(family) = self.families.iter().find(|family| family.id == id).cloned() else {
+            return false;
+        };
+        let directory = themes_path(&self.path);
+        if let Err(error) = themes::remove(&family, &directory) {
+            log::warn!("settings: cannot delete theme {id}: {error:#}");
+            Toasts::about(
+                Outcome::Failed,
+                "toast-theme-delete-failed",
+                family.name,
+                cx,
+            );
+            return false;
+        }
+        log::info!("settings: deleted theme {id}");
+        let loaded = themes::load(&directory, &self.themes);
+        self.families = themes::catalog(&loaded.themes);
+        self.themes = loaded.themes;
+        if family.variant(self.theme()).is_some() {
+            self.set_theme(ThemeKind::Dark.id(), cx);
+        }
+        if self.state.theme_variants.remove(id).is_some() {
+            self.schedule_state_save(cx);
+        }
+        cx.notify();
+        true
+    }
+
     /// Creates and returns the folder that holds custom themes.
     pub fn ensure_themes_directory(&self) -> PathBuf {
         let path = themes_path(&self.path);
@@ -1429,9 +1490,11 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    /// Persists playback's volume without invalidating views that observe preferences.
+    /// Live volume changes are published by `Playback`, not by settings.
     pub fn set_volume(&mut self, volume: f32, cx: &mut Context<Self>) {
         self.state.volume = volume.clamp(0., 1.);
-        self.schedule_state_save(cx);
+        self.save_state_quietly(cx);
     }
 
     pub fn set_normalisation(&mut self, normalisation: bool, cx: &mut Context<Self>) {
@@ -1611,6 +1674,11 @@ impl AppSettings {
 
     pub fn set_adaptive_menu(&mut self, adaptive_menu: bool, cx: &mut Context<Self>) {
         self.values.adaptive_menu = adaptive_menu;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_update_channel(&mut self, channel: Channel, cx: &mut Context<Self>) {
+        self.values.update_channel = channel.id().to_owned();
         self.schedule_save(cx);
     }
 
@@ -2185,7 +2253,7 @@ impl AppSettings {
         self.save_state_quietly(cx);
     }
 
-    /// Debounces a `state.sqlite` write without waking observers, for state no view renders.
+    /// Debounces a `state.sqlite` write without waking settings observers.
     fn save_state_quietly(&mut self, cx: &mut Context<Self>) {
         self.save_state = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SAVE_DELAY).await;
