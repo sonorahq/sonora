@@ -52,10 +52,10 @@ pub use audio::Meter;
 pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
-    Contributor, Credit, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed, Lyrics, LyricsHit,
-    LyricsLane, LyricsLine, LyricsQuery, LyricsWord, PinOutcome, PinTarget, PinTargetKind,
-    Playlist, PlaylistDetail, ReleaseType, RomanizedText, SavedArtist, Track, TrackKey, TrackTags,
-    UserDetail, UserProfile, Voice, WritingSystem,
+    Contributor, Credit, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed, Lyrics,
+    LyricsContributor, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsRole, LyricsWord,
+    PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail, ReleaseType, RomanizedText,
+    SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
 };
 pub use output::{Server as SoundServer, missing_bridge};
 pub use spectrum::{Analyzer, Level, Spectrum, Watch};
@@ -355,6 +355,14 @@ pub trait MusicApi: Send + Sync {
 #[async_trait]
 pub trait LyricsProvider: Send + Sync {
     fn name(&self) -> &'static str;
+    /// Hands over the key the user entered for this source, `None` once it is cleared. Only a
+    /// source that needs a key of the user's own keeps it.
+    fn set_key(&self, _key: Option<&str>) {}
+    /// Whether the source can be asked now. One that needs a key is left out until it has one,
+    /// so it is never recorded as having had nothing.
+    fn ready(&self) -> bool {
+        true
+    }
     async fn search(&self, query: &LyricsQuery) -> Result<Vec<LyricsHit>>;
 }
 

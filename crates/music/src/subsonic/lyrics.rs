@@ -101,6 +101,9 @@ impl LyricsProvider for SubsonicLyrics {
                 album: query.album.clone(),
                 duration: (!query.duration.is_zero()).then_some(query.duration),
                 writers: Vec::new(),
+                origin: None,
+                contributors: Vec::new(),
+                expires: None,
             })
             .collect())
     }
