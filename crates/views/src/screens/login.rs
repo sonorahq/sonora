@@ -7,7 +7,7 @@ use gpui::{
     div, px, svg,
 };
 use i18n::t;
-use music::{AccountChoice, SignIn, SignInPrompt};
+use music::{AccountChoice, Choosing, SignIn, SignInPrompt};
 use state::{Session, SessionState, Sonora, Usage};
 use ui::ActiveTheme as _;
 use ui::{Button, Checkbox, Input, Modal, TabBar, Text};
@@ -356,10 +356,11 @@ impl LoginView {
 
     fn account_modal(
         &self,
+        what: Choosing,
         accounts: Vec<AccountChoice>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        AccountPicker::new(accounts)
+        AccountPicker::new(what, accounts)
             .on_pick(cx.listener(|this, id: &SharedString, _, cx| {
                 this.acted(cx);
                 let id = id.to_string();
@@ -430,7 +431,7 @@ impl Render for LoginView {
         });
         let waiting = match &state {
             SessionState::Authorizing(prompt) => {
-                manual_secret.is_none() && !matches!(prompt, Some(SignInPrompt::Accounts(_)))
+                manual_secret.is_none() && !matches!(prompt, Some(SignInPrompt::Accounts(..)))
             }
             _ => false,
         };
@@ -470,7 +471,7 @@ impl Render for LoginView {
         let status = match &state {
             SessionState::SignedOut => t!("login-signed-out"),
             SessionState::Restoring => t!("login-restoring"),
-            SessionState::Authorizing(Some(SignInPrompt::Accounts(_))) => t!("login-signed-out"),
+            SessionState::Authorizing(Some(SignInPrompt::Accounts(..))) => t!("login-signed-out"),
             SessionState::Authorizing(_) => t!("login-authorizing"),
             SessionState::SignedIn(profile) => t!("login-signed-in", name = &profile.display_name),
             SessionState::Offline(_) | SessionState::Failed(_) => t!("login-signed-out"),
@@ -481,7 +482,7 @@ impl Render for LoginView {
             _ => None,
         };
         let accounts = match &prompt {
-            Some(SignInPrompt::Accounts(accounts)) => Some(accounts.clone()),
+            Some(SignInPrompt::Accounts(what, accounts)) => Some((*what, accounts.clone())),
             _ => None,
         };
         let code = match prompt {
@@ -584,7 +585,10 @@ impl Render for LoginView {
                 this.child(self.credentials_prompt(cx).into_any_element())
             })
             .when_some(accounts, |this, accounts| {
-                this.child(self.account_modal(accounts, cx).into_any_element())
+                this.child(
+                    self.account_modal(accounts.0, accounts.1, cx)
+                        .into_any_element(),
+                )
             })
     }
 }

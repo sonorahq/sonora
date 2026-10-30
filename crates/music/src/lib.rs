@@ -22,6 +22,7 @@ mod models;
 pub mod musixmatch;
 pub mod netease;
 pub mod output;
+pub mod plex;
 pub mod potoken;
 pub mod progress;
 pub mod scrobble;
@@ -792,6 +793,9 @@ pub struct Capabilities {
     /// one. Such a service downloads one track at a time, with no pause until it first refuses.
     /// Zero lets downloads run side by side.
     pub download_gap: Duration,
+    /// A playlist can be made public or private. A service whose playlists have no such setting
+    /// leaves this off, and the menu item that changes it is never shown.
+    pub playlist_visibility: bool,
 }
 
 impl Capabilities {
@@ -808,6 +812,7 @@ impl Capabilities {
         downloads: true,
         qualities: &[],
         download_gap: Duration::ZERO,
+        playlist_visibility: true,
     };
 
     /// Nothing beyond listing and playing.
@@ -821,6 +826,7 @@ impl Capabilities {
         downloads: false,
         qualities: &[],
         download_gap: Duration::ZERO,
+        playlist_visibility: false,
     };
 }
 
@@ -895,11 +901,28 @@ pub struct AccountChoice {
     pub detail: Option<String>,
 }
 
+/// What a `SignInPrompt::Accounts` asks the listener to choose between.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Choosing {
+    /// One of several accounts the sign-in found.
+    Account,
+    /// One of several servers the account can use.
+    Server,
+    /// One of several libraries a server has.
+    Library,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SignInPrompt {
-    Accounts(Vec<AccountChoice>),
-    Code { code: String, url: String },
+    Accounts(Choosing, Vec<AccountChoice>),
+    Code {
+        code: String,
+        url: String,
+    },
     Url(String),
+    /// A page the provider's sign-in finishes on, which the app shows in a browser window. The
+    /// provider notices the end of the sign-in itself, so nothing is handed back.
+    Window(String),
     Secret,
 }
 

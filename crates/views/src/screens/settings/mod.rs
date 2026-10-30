@@ -1306,8 +1306,8 @@ impl Render for SettingsView {
         }
 
         let accounts = match self.session.read(cx).state() {
-            SessionState::Authorizing(Some(SignInPrompt::Accounts(accounts))) => {
-                Some(accounts.clone())
+            SessionState::Authorizing(Some(SignInPrompt::Accounts(what, accounts))) => {
+                Some((*what, accounts.clone()))
             }
             _ => None,
         };
@@ -1379,7 +1379,10 @@ impl Render for SettingsView {
             }
         }))
         .when_some(accounts, |this, accounts| {
-            this.child(self.account_modal(accounts, cx).into_any_element())
+            this.child(
+                self.account_modal(accounts.0, accounts.1, cx)
+                    .into_any_element(),
+            )
         })
         .when_some(code, |this, (code, url)| {
             this.child(self.code_prompt(code, url, cx).into_any_element())

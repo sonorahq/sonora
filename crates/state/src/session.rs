@@ -595,10 +595,23 @@ impl Session {
                 this.update(cx, |this, cx| {
                     if matches!(this.state, SessionState::Authorizing(_)) {
                         let secret = matches!(prompt, SignInPrompt::Secret);
+                        let page = match &prompt {
+                            SignInPrompt::Window(url) => Some(url.clone()),
+                            _ => None,
+                        };
+                        // A page the sign-in finished on has done its part once anything
+                        // else is asked.
+                        if page.is_none() {
+                            this.window = None;
+                            this.window_task = None;
+                        }
                         this.state = SessionState::Authorizing(Some(prompt));
                         cx.notify();
                         if secret && matches!(secret_input, SecretInput::Browser) {
                             this.open_window(cx);
+                        }
+                        if let Some(url) = page {
+                            this.open_page(url, cx);
                         }
                     }
                 })
@@ -720,12 +733,83 @@ impl Session {
         }));
     }
 
+    /// Opens a page the provider's sign-in finishes on. The window has no cookies to wait for:
+    /// the provider sees the sign-in end by itself and that closes it, and closing it first
+    /// cancels the sign-in. Where there is no browser window to open, the page opens in the
+    /// listener's browser and its address is offered to copy.
+    fn open_page(&mut self, url: String, cx: &mut Context<Self>) {
+        if self.window.is_some() {
+            return;
+        }
+        let Some(index) = self.awaiting else {
+            return;
+        };
+        let target = webview::Target {
+            url: url.clone(),
+            landing: url.clone(),
+            domain: url
+                .split_once("://")
+                .map_or(url.as_str(), |(_, rest)| rest)
+                .split(['/', '?', '#'])
+                .next()
+                .unwrap_or_default()
+                .to_owned(),
+            proof: Vec::new(),
+            title: t!(
+                "login-window-title",
+                provider = self.providers[index].name()
+            )
+            .to_string(),
+            agent: None,
+            script: None,
+        };
+        let opened = match webview::supported() {
+            true => webview::Page::open(target),
+            false => Err(anyhow::anyhow!("this system has no browser window")),
+        };
+        match opened {
+            Ok(page) => self.window = Some(page),
+            Err(error) => {
+                log::warn!("session: cannot open the sign-in window: {error:#}");
+                cx.open_url(&url);
+                self.state = SessionState::Authorizing(Some(SignInPrompt::Url(url)));
+                cx.notify();
+                return;
+            }
+        }
+        self.window_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(WINDOW_POLL).await;
+                let open = this.update(cx, |this, cx| {
+                    let Some(page) = this.window.as_mut() else {
+                        return false;
+                    };
+                    match page.poll() {
+                        webview::Poll::Pending => true,
+                        webview::Poll::Closed => {
+                            this.window = None;
+                            this.cancel_sign_in(cx);
+                            false
+                        }
+                        webview::Poll::Cookies(_) => {
+                            this.window = None;
+                            false
+                        }
+                    }
+                });
+                if !open.unwrap_or(false) {
+                    break;
+                }
+            }
+        }));
+    }
+
     pub fn submit_input(&mut self, text: String, cx: &mut Context<Self>) {
         if let Some(input) = &self.input {
             self.window = None;
             input.send(text).ok();
             if let SessionState::Authorizing(Some(
-                SignInPrompt::Secret | SignInPrompt::Accounts(_),
+                SignInPrompt::Secret | SignInPrompt::Accounts(..),
             )) = &self.state
             {
                 self.state = SessionState::Authorizing(None);

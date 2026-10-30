@@ -4,7 +4,7 @@ use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{App, FontWeight, SharedString, Window, div, px};
 use i18n::t;
-use music::AccountChoice;
+use music::{AccountChoice, Choosing};
 use ui::{ActiveTheme as _, Button, Initials, Modal, Text};
 
 const AVATAR: gpui::Pixels = px(32.);
@@ -14,14 +14,16 @@ type Cancel = Rc<dyn Fn(&(), &mut Window, &mut App)>;
 
 #[derive(IntoElement)]
 pub(crate) struct AccountPicker {
+    what: Choosing,
     accounts: Vec<AccountChoice>,
     pick: Option<Pick>,
     cancel: Option<Cancel>,
 }
 
 impl AccountPicker {
-    pub(crate) fn new(accounts: Vec<AccountChoice>) -> Self {
+    pub(crate) fn new(what: Choosing, accounts: Vec<AccountChoice>) -> Self {
         Self {
+            what,
             accounts,
             pick: None,
             cancel: None,
@@ -48,16 +50,25 @@ impl AccountPicker {
 impl RenderOnce for AccountPicker {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Self {
+            what,
             accounts,
             pick,
             cancel,
         } = self;
+        let (title, detail) = match what {
+            Choosing::Account => (t!("login-account-title"), t!("login-account-detail")),
+            Choosing::Server => (
+                t!("login-server-pick-title"),
+                t!("login-server-pick-detail"),
+            ),
+            Choosing::Library => (t!("login-library-title"), t!("login-library-detail")),
+        };
         let theme = *cx.theme();
         let dismissed = cancel.clone();
 
-        Modal::new("account-picker", t!("login-account-title"))
+        Modal::new("account-picker", title)
             .w(px(440.))
-            .detail(t!("login-account-detail"))
+            .detail(detail)
             .child(div().flex().flex_col().gap_2().children({
                 let total = accounts.len();
                 accounts

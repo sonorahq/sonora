@@ -303,9 +303,10 @@ const DEFAULT_STARTUP: &str = "home";
 pub const SYSTEM_FONT: &str = "auto";
 /// Every lyrics source Sonora knows by the name its provider reports, in the order a fresh
 /// install prefers them.
-pub const LYRICS_SOURCES: [&str; 9] = [
+pub const LYRICS_SOURCES: [&str; 10] = [
     LOCAL,
     "Subsonic",
+    "Plex",
     "Spotify",
     "YouTube Music",
     "Apple Music",
@@ -403,6 +404,9 @@ struct Values {
     /// Set once Subsonic has been added to a list saved before it existed, so a user who turns it
     /// off afterwards is not given it back.
     subsonic_lyrics_offered: bool,
+    /// Set once Plex has been added to a list saved before it existed, so a user who turns it
+    /// off afterwards is not given it back.
+    plex_lyrics_offered: bool,
     lyrics_providers: Vec<String>,
     /// Every known lyrics source, the preferred one first. Lyrics of the same kind from two
     /// sources go to the one listed higher.
@@ -601,9 +605,10 @@ impl Default for Values {
             stream_quality: Quality::default().id().to_owned(),
             local_lyrics_offered: false,
             subsonic_lyrics_offered: false,
+            plex_lyrics_offered: false,
             lyrics_provider_priority: lyrics_priority(&[]),
             // Kugou and NetEase, the last two, start switched off.
-            lyrics_providers: LYRICS_SOURCES[..7]
+            lyrics_providers: LYRICS_SOURCES[..8]
                 .iter()
                 .map(|name| name.to_string())
                 .collect(),
@@ -864,7 +869,7 @@ impl AppSettings {
             }
         };
         let parsed = bytes.map(|bytes| (serde_json::from_slice::<Values>(json(&bytes)), bytes));
-        let parsed = parsed.map(|(values, bytes)| (values.map(offer_subsonic_lyrics), bytes));
+        let parsed = parsed.map(|(values, bytes)| (values.map(offer_new_lyrics), bytes));
         let (values, writable, disk, broken) = match parsed {
             Some((Ok(values), bytes)) => (values.settled(), writable, Some(bytes), None),
             Some((Err(_), bytes)) if empty_settings(&bytes) => {
@@ -879,6 +884,7 @@ impl AppSettings {
             None => {
                 let values = Values {
                     subsonic_lyrics_offered: true,
+                    plex_lyrics_offered: true,
                     ..Values::default()
                 };
                 (values.settled(), writable, None, None)
@@ -2521,7 +2527,7 @@ impl AppSettings {
             return SettingsReload::Unchanged;
         }
         let values = match serde_json::from_slice::<Values>(json(&bytes)) {
-            Ok(values) => offer_subsonic_lyrics(values).settled(),
+            Ok(values) => offer_new_lyrics(values).settled(),
             Err(error) => {
                 log::warn!("settings: cannot parse {}: {error}", self.path.display());
                 let newly_broken = self.broken != Some(error.line());
@@ -2603,16 +2609,18 @@ fn empty_settings(bytes: &[u8]) -> bool {
     json(bytes).iter().all(u8::is_ascii_whitespace)
 }
 
-/// A saved provider list replaces the default one, so Subsonic reaches an existing user once.
-fn offer_subsonic_lyrics(mut values: Values) -> Values {
-    if !values.subsonic_lyrics_offered {
-        values.subsonic_lyrics_offered = true;
-        if !values
-            .lyrics_providers
-            .iter()
-            .any(|name| name == "Subsonic")
-        {
-            values.lyrics_providers.push("Subsonic".to_owned());
+/// A saved provider list replaces the default one, so a source added after it was saved reaches an
+/// existing user once.
+fn offer_new_lyrics(mut values: Values) -> Values {
+    for (offered, name) in [
+        (&mut values.subsonic_lyrics_offered, "Subsonic"),
+        (&mut values.plex_lyrics_offered, "Plex"),
+    ] {
+        if !*offered {
+            *offered = true;
+            if !values.lyrics_providers.iter().any(|held| held == name) {
+                values.lyrics_providers.push(name.to_owned());
+            }
         }
     }
     values
@@ -2936,6 +2944,7 @@ mod tests {
             [
                 LOCAL,
                 "Subsonic",
+                "Plex",
                 "Spotify",
                 "YouTube Music",
                 "Apple Music",
@@ -2965,7 +2974,7 @@ mod tests {
     fn lyrics_priority_ignores_unknown_and_duplicate_sources_and_appends_missing_ones() {
         let order = lyrics_priority(&["LrcLib".into(), "unknown".into(), "LrcLib".into()]);
         assert_eq!(order[0], "LrcLib");
-        assert_eq!(order.len(), 9);
+        assert_eq!(order.len(), 10);
         assert!(!order.iter().any(|name| name == "unknown"));
         assert_eq!(order.iter().filter(|name| *name == "LrcLib").count(), 1);
     }

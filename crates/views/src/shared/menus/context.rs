@@ -881,7 +881,12 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
         true => Vec::new(),
         false => set_download_items(Collection::Playlist, Saved::Playlist(playlist.clone()), cx),
     };
-    let visibility = (!imported).then(|| {
+    let visibility_offered = Sonora::global(cx)
+        .session
+        .read(cx)
+        .capabilities()
+        .playlist_visibility;
+    let visibility = (!imported && visibility_offered).then(|| {
         MenuItem::new(
             "playlist-visibility",
             match public {
