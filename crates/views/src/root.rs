@@ -3,8 +3,8 @@ use gpui::{App, Font, FontFallbacks, SharedString, StyleRefinement, font, prelud
 use gpui::{Window, div};
 use input::{
     CloseWindow, MinimizeWindow, NavigateBack, NavigateForward, OpenFilter, OpenSearch,
-    OpenSettings, Refresh, ToggleFullscreen, ToggleLyrics, ToggleQueue, ToggleWindowFullscreen,
-    ZoomWindow,
+    OpenSettings, Refresh, ToggleFullscreen, ToggleLyrics, TogglePowerbar, ToggleQueue,
+    ToggleWindowFullscreen, ZoomWindow,
 };
 use router::{Destination, NavigationEvent, Screen, back, forward, navigate};
 use state::{
@@ -22,6 +22,7 @@ use crate::chrome::{
 use crate::screens::search::SearchView;
 use crate::screens::settings::SettingsHeader;
 use crate::shared::ambient::{self, Ambient};
+use crate::shared::powerbar::Powerbar;
 use crate::shared::tracks::{LIBRARY_COLUMNS, album_columns};
 use crate::shells::Shell;
 use crate::shells::workspace::Workspace;
@@ -211,7 +212,8 @@ impl Root {
 
         let queries = cx.new(|cx| Search::new(session.clone(), search_library, io.clone(), cx));
         let genres = cx.new(|cx| Genres::new(session.clone(), io.clone(), cx));
-        let search = cx.new(|cx| SearchView::new(queries, genres.clone(), playback.clone(), cx));
+        let search =
+            cx.new(|cx| SearchView::new(queries.clone(), genres.clone(), playback.clone(), cx));
 
         let settings = cx.new(|cx| SettingsView::new(session.clone(), playback.clone(), cx));
         let equalizer = Sonora::global(cx).equalizer.clone();
@@ -230,6 +232,7 @@ impl Root {
             Workspace::new(
                 playback.clone(),
                 queue.clone(),
+                queries.clone(),
                 library_view.clone().into(),
                 cx,
             )
@@ -249,7 +252,6 @@ impl Root {
                 .update(cx, |workspace, cx| workspace.toggle_sidebar_right(cx)),
         })
         .detach();
-
         // Re-read the system preference when the window becomes active instead of keeping a
         // long-lived portal listener alive. This picks up changes after the user returns from
         // the desktop accessibility settings.
@@ -1193,6 +1195,9 @@ impl Render for Root {
             .on_action(
                 cx.listener(|this, _: &ToggleLyrics, _, cx| this.show_side(SideTab::Lyrics, cx)),
             )
+            .on_action(cx.listener(|_, _: &TogglePowerbar, window, cx| {
+                Powerbar::toggle(window, cx);
+            }))
             // The ambient background sits behind everything, title bar included.
             .when(ambient, |this| this.child(self.ambient.clone()))
             // The bar only changes when it is told to, so a frame drawn for the lyrics or the
