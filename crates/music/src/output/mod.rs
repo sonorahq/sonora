@@ -14,9 +14,16 @@
 //! On Linux cpal plays through PulseAudio when a server answers, PipeWire's `pipewire-pulse`
 //! included, and ALSA otherwise. A sound server offers its own outputs, and a sound card's own
 //! ALSA device can still be picked to play past it.
+//!
+//! On macOS every device is listed a second time under "Direct to hardware", where playing on it
+//! takes it from every other app with CoreAudio's hog mode, as a sound card's own ALSA device
+//! does on Linux. A direct device can also run at the rate of each track that plays. The hold
+//! belongs to `Hold`, not to a stream, so the stream reopening at a track's rate never lets the
+//! device go.
 
 #[cfg(target_os = "linux")]
 mod output_alsa;
+mod output_hog;
 #[cfg(target_os = "linux")]
 mod output_host;
 mod output_rate;
@@ -25,7 +32,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
 use cpal::traits::{DeviceTrait as _, HostTrait as _};
@@ -35,6 +42,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::watch;
 
 use crate::audio::{self, Chain};
+use output_hog::Hog;
 #[cfg(target_os = "linux")]
 use output_host::host;
 
@@ -50,12 +58,31 @@ const BUFFERS: [u32; 6] = [128, 256, 512, 1024, 2048, 4096];
 /// still runs at the stream's rate, and reads its sink again.
 const DEVICE_POLL: Duration = Duration::from_millis(500);
 
+/// How long a stream that has to reopen waits for the one it replaces to close, which the engines
+/// retire on their own thread. A device opened exclusively, such as a sound card's own, is busy
+/// until then.
+const RELEASE_WAIT: Duration = Duration::from_secs(3);
+
+/// How often `wait_until_released` looks again.
+const RELEASE_POLL: Duration = Duration::from_millis(20);
+
 /// The device stream every output in the process mixes into.
 /// It runs at the rate the device runs at and closes when the last output on it drops.
 static ACTIVE_DEVICE: Mutex<Weak<Device>> = Mutex::new(Weak::new());
 
 /// Mutex that is held while a device is being opened.
 static DEVICE_OPEN: Mutex<()> = Mutex::new(());
+
+/// The device held for direct output, if any. It is its own lock, taken before `DEVICE_SELECTION`
+/// and never inside it, since taking a device from the system can take a moment.
+static HOLD: Mutex<Hold> = Mutex::new(Hold::new());
+
+/// Taken while the hold is being changed, which can take a while, so changes take turns.
+static SYNCING: Mutex<()> = Mutex::new(());
+
+/// What macOS puts before the id of a device that is played on directly, so the same device can
+/// be chosen shared and direct. Nothing else does.
+const DIRECT: &str = "direct:";
 
 /// Which device was chosen in settings, and which devices would not open.
 static DEVICE_SELECTION: Mutex<DeviceSelection> = Mutex::new(DeviceSelection::new());
@@ -89,9 +116,10 @@ pub struct DeviceOption {
     /// default is not a device of its own, as on ALSA, where it is left out of the list.
     pub system: bool,
 
-    /// Whether it is a sound card's own device, opened past the sound server for bit-perfect
-    /// output. Nothing else can play on the card while Sonora holds it, and it does not open
-    /// while the server does.
+    /// Whether it is played on directly, for bit-perfect output: a sound card's own device,
+    /// opened past the sound server, or on macOS a device's second listing, which Sonora takes
+    /// from every other app with hog mode. Nothing else can play on it while Sonora holds it,
+    /// and on Linux it does not open while the server does.
     pub direct: bool,
 
     /// What the sound server says of the sink, for one of its own outputs.
@@ -163,6 +191,33 @@ pub enum Server {
     PulseAudio,
 }
 
+/// The device Sonora holds when a direct device is chosen, and why a hold or a rate went wrong. The
+/// hold is the chosen device's, never the system default's, which can change under it. Only macOS
+/// holds a device.
+struct Hold {
+    /// The chosen device while Sonora has it to itself.
+    hog: Option<Hog>,
+    /// Why the chosen device could not be taken the last time it was tried.
+    taken: Option<String>,
+    /// Why the held device could not be set to a rate the last time it was tried.
+    rate: Option<String>,
+}
+
+impl Hold {
+    const fn new() -> Self {
+        Self {
+            hog: None,
+            taken: None,
+            rate: None,
+        }
+    }
+
+    /// The process's one hold, locked.
+    fn lock() -> MutexGuard<'static, Self> {
+        HOLD.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 /// Which device and rate were chosen in settings, which devices would not open, and whether
 /// anything plays at all. One lock covers them, so a new choice and the failures it clears change
 /// together.
@@ -171,6 +226,10 @@ struct DeviceSelection {
     chosen: Option<String>,
     /// The rate to open a device at when it offers it, or `None` for the rate it runs at.
     rate: Option<u32>,
+    /// Whether a direct device follows the rate of each track.
+    match_rate: bool,
+    /// The rate the playing track asked the direct device for, or `None` before one has.
+    track_rate: Option<u32>,
     /// The buffer to ask a device for, in frames, or `None` for `BUFFER_FRAMES`.
     buffer: Option<u32>,
     /// The devices that would not open, most recent last.
@@ -185,6 +244,8 @@ impl DeviceSelection {
         Self {
             chosen: None,
             rate: None,
+            match_rate: false,
+            track_rate: None,
             buffer: None,
             failed: Vec::new(),
             failing: false,
@@ -202,8 +263,25 @@ impl DeviceSelection {
     /// device is tried afresh.
     fn choose(&mut self, id: Option<String>) {
         self.chosen = id;
+        self.track_rate = None;
         self.failed.clear();
         self.failing = false;
+    }
+
+    /// The chosen device's cpal id, without the marker a macOS device carries when it is played
+    /// on directly.
+    fn chosen_plain(&self) -> Option<&str> {
+        self.chosen.as_deref().map(plain)
+    }
+
+    /// The rate to open a device at when it offers it: the one the playing track plays best at
+    /// while following tracks, otherwise the one chosen in settings, or `None` for the rate a
+    /// device runs at.
+    fn wanted_rate(&self) -> Option<u32> {
+        match self.match_rate {
+            true => self.track_rate.or(self.rate),
+            false => self.rate,
+        }
     }
 
     /// Check if the device with `id` has failed to open.
@@ -217,7 +295,7 @@ impl DeviceSelection {
         let failure = Failure {
             id: id.to_owned(),
             error: format!("{error:#}"),
-            saved: self.chosen.as_deref() == Some(id),
+            saved: self.chosen_plain() == Some(id),
         };
         let changed = self.failed.last() != Some(&failure);
         self.clear_failure(id);
@@ -282,6 +360,10 @@ pub struct DeviceInfo {
     /// The rates `choose_rate` can open the device at, lowest first, the format's among them.
     /// Only that one where the system sets the rate itself.
     pub rates: Vec<u32>,
+
+    /// Whether the device is opened directly: a sound card's own device on Linux, or a device
+    /// Sonora holds on macOS. Only such a device is switched to the rate of each track.
+    pub direct: bool,
 
     /// The buffers `choose_buffer` can open the device with, in frames, lowest first, `buffer`
     /// among them.
@@ -382,7 +464,7 @@ impl Device {
     /// The open stream on `device`, or a new one.
     fn join(device: cpal::Device) -> Result<Arc<Self>> {
         let id = cpal_ident(&device).context("the output device has no id")?;
-        let wanted = DeviceSelection::lock().rate;
+        let wanted = DeviceSelection::lock().wanted_rate();
         let current = ACTIVE_DEVICE
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -395,7 +477,11 @@ impl Device {
             return Ok(open);
         }
 
-        let open = Arc::new(Self::open(device, id.clone())?);
+        // a stream that opens while a direct device is chosen takes it again if it is not held,
+        // which is how a device another app had is retried
+        sync_hold();
+        wait_until_released(&id);
+        let open = Arc::new(Self::open_when_free(&device, &id)?);
         *ACTIVE_DEVICE.lock().unwrap_or_else(PoisonError::into_inner) = Arc::downgrade(&open);
         spawn_watcher(Arc::downgrade(&open));
         DeviceSelection::lock().clear_failure(&id);
@@ -408,10 +494,13 @@ impl Device {
     fn open(device: cpal::Device, id: String) -> Result<Self> {
         let default = device
             .default_output_config()
-            .map_err(|error| anyhow::anyhow!("cannot read the output config: {error}"))?;
+            .map_err(|error| anyhow::Error::new(error).context("cannot read the output config"))?;
         let (wanted, frames) = {
             let selection = DeviceSelection::lock();
-            (selection.rate, selection.buffer.unwrap_or(BUFFER_FRAMES))
+            (
+                selection.wanted_rate(),
+                selection.buffer.unwrap_or(BUFFER_FRAMES),
+            )
         };
         let config = output_rate::config(&device, default, wanted);
         let rates = output_rate::rates(&device, &config);
@@ -432,6 +521,7 @@ impl Device {
                 },
                 buffer,
                 rates,
+                direct: false,
                 buffers,
                 sink: None,
             },
@@ -462,6 +552,21 @@ impl Device {
         }
     }
 
+    /// `open`, tried again for as long as `RELEASE_WAIT` while the device is busy. The stream
+    /// this one replaces can still be closing, which the system reports as the device being
+    /// busy, and it is not a failure of the device.
+    fn open_when_free(device: &cpal::Device, id: &str) -> Result<Self> {
+        let deadline = Instant::now() + RELEASE_WAIT;
+        loop {
+            match Self::open(device.clone(), id.to_owned()) {
+                Err(error) if is_busy(&error) && Instant::now() < deadline => {
+                    thread::sleep(RELEASE_POLL);
+                }
+                opened => return opened,
+            }
+        }
+    }
+
     /// Whether outputs can still join this stream: it has reported no error, and the watcher has
     /// not found it outdated.
     fn live(&self) -> bool {
@@ -478,7 +583,7 @@ impl Device {
         let Ok(device) = resolve_device() else {
             return true;
         };
-        let wanted = DeviceSelection::lock().rate;
+        let wanted = DeviceSelection::lock().wanted_rate();
         cpal_ident(&device).as_deref() != Some(self.info.id.as_str())
             || output_rate::moved(&device, self.info.format.rate, wanted)
     }
@@ -515,12 +620,20 @@ impl Device {
     /// Which device it is and what its stream runs at, with what the sound server last said of
     /// the sink.
     fn info(&self) -> DeviceInfo {
+        let direct = played_directly(&self.info.id);
+        // a device is played on directly once it is chosen, which can be after its stream opened
+        let rates = direct
+            .then(|| held_rates(self.info.format.rate))
+            .flatten()
+            .unwrap_or_else(|| self.info.rates.clone());
         DeviceInfo {
             sink: self
                 .sink
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .clone(),
+            direct,
+            rates,
             ..self.info.clone()
         }
     }
@@ -730,6 +843,21 @@ pub fn devices() -> Vec<DeviceOption> {
         }
         options.extend(output_alsa::direct_devices());
     }
+    // macOS lists every device a second time, to be played on directly, which takes it from
+    // every other app
+    if cfg!(target_os = "macos") {
+        let direct: Vec<DeviceOption> = options
+            .iter()
+            .map(|option| DeviceOption {
+                id: format!("{DIRECT}{}", option.id),
+                direct: true,
+                system: false,
+                sink: None,
+                ..option.clone()
+            })
+            .collect();
+        options.extend(direct);
+    }
     // ALSA can list one card both by name and by number, which come out as one id
     let mut seen = HashSet::new();
     options.retain(|option| seen.insert(option.id.clone()));
@@ -741,7 +869,7 @@ pub fn devices() -> Vec<DeviceOption> {
 /// than a sound card's own once a sound server plays. Asks the system, so call it off the UI
 /// thread.
 pub fn retired(id: &str) -> bool {
-    match id.parse::<cpal::DeviceId>() {
+    match plain(id).parse::<cpal::DeviceId>() {
         Err(_) => true,
         #[cfg(target_os = "linux")]
         Ok(id) => {
@@ -766,6 +894,13 @@ pub fn open(id: Option<&str>) -> Result<Opened> {
             .default_output_device()
             .context("no audio output device")?,
     };
+    if let Some(id) = id.filter(|id| cfg!(target_os = "macos") && is_direct(id)) {
+        // the hold is only tried here and let go again, since the engines have not moved yet
+        // and the device it would take is not the one playing
+        Hog::acquire(plain(id))
+            .context("cannot take the device for direct output")?
+            .context("the device is not connected")?;
+    }
     Ok(Opened {
         _device: Device::open_now(device)?,
     })
@@ -776,18 +911,270 @@ pub fn open(id: Option<&str>) -> Result<Opened> {
 /// Every device is tried afresh.
 pub fn choose_device(id: Option<String>) {
     DeviceSelection::lock().choose(id);
+    sync_hold_in_background();
     announce_device_changes();
+}
+
+/// Whether this system can switch a device to the rate of each track, which is where the rate a
+/// stream opens at reaches the hardware: Linux and macOS. A sound server and Windows set the rate
+/// themselves.
+pub const fn match_rate_supported() -> bool {
+    cfg!(any(target_os = "linux", target_os = "macos"))
+}
+
+/// Turns following each track's sample rate on or off. While it is on and a direct output plays,
+/// the device runs at the rate each track was made at, or the nearest it offers. A shared output
+/// is never switched, since the rate is every other app's too.
+pub fn choose_match_rate(on: bool) {
+    {
+        let mut selection = DeviceSelection::lock();
+        selection.match_rate = on;
+        selection.track_rate = None;
+    }
+    reopen_at_wanted();
+}
+
+/// Whether `id` names a device opened directly, past whatever else would share it. On Linux that
+/// is a sound card's own ALSA device. On macOS it is any device with the direct marker, which
+/// takes the device from other apps with CoreAudio's hog mode.
+pub fn is_direct(id: &str) -> bool {
+    if cfg!(target_os = "macos") {
+        return id.starts_with(DIRECT);
+    }
+    #[cfg(target_os = "linux")]
+    if let Ok(id) = id.parse::<cpal::DeviceId>() {
+        return id.host() == cpal::HostId::Alsa && output_alsa::is_direct(id.id());
+    }
+    false
+}
+
+/// Whether `id` is the direct form of a device that is also listed shared, which devices rules
+/// have no use for, since both play on the same output.
+pub fn is_direct_copy(id: &str) -> bool {
+    cfg!(target_os = "macos") && id.starts_with(DIRECT)
+}
+
+/// `id` without the marker a macOS device carries when it is opened directly, which is the id
+/// cpal knows it by.
+fn plain(id: &str) -> &str {
+    match cfg!(target_os = "macos") {
+        true => id.strip_prefix(DIRECT).unwrap_or(id),
+        false => id,
+    }
+}
+
+/// Why the chosen direct device could not be taken, if it could not the last time it tried. The
+/// device plays on shared. `watch_device_changes` fires when it changes.
+pub fn hold_failure() -> Option<String> {
+    Hold::lock().taken.clone()
+}
+
+/// Why the device could not be switched to a rate, if it could not the last time it tried. The
+/// track is resampled to the rate the device runs at. `watch_device_changes` fires when it changes.
+pub fn rate_failure() -> Option<String> {
+    Hold::lock().rate.clone()
+}
+
+/// Lets the device go, as when the app quits, at the rate chosen in settings if there is one, so it
+/// is not left at a track's rate.
+pub fn release_hold() {
+    let rate = DeviceSelection::lock().rate;
+    let mut hold = Hold::lock();
+    if let Some(hog) = hold.hog.as_mut() {
+        hog.leave_at(rate);
+    }
+    hold.hog = None;
+}
+
+/// Runs `sync_hold` on its own thread, since taking a device can wait on the system.
+fn sync_hold_in_background() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    thread::spawn(sync_hold);
+}
+
+/// Makes what Sonora holds the chosen device when that is a direct one, and nothing otherwise. A
+/// device already held is kept, so this costs nothing when nothing changed. A device that is not
+/// connected is not an error: it is taken once it is. Only macOS holds a device, since on Linux
+/// opening a direct device is what keeps the sound server off it.
+fn sync_hold() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    // taking a device waits on the system, so the hold itself is only locked to swap it, which
+    // keeps what reads it from waiting along
+    let _syncing = SYNCING.lock().unwrap_or_else(PoisonError::into_inner);
+    let (target, rate) = {
+        let selection = DeviceSelection::lock();
+        let target = selection
+            .chosen
+            .as_deref()
+            .filter(|id| is_direct(id))
+            .map(|id| plain(id).to_owned());
+        (target, selection.rate)
+    };
+    let (old, before) = {
+        let mut hold = Hold::lock();
+        if hold.hog.as_ref().map(Hog::id) == target.as_deref() {
+            return;
+        }
+        let before = (hold.hog.is_some(), hold.taken.clone(), hold.rate.clone());
+        hold.taken = None;
+        hold.rate = None;
+        (hold.hog.take(), before)
+    };
+    if let Some(mut old) = old {
+        // dropping it puts the device back at the rate it is left at
+        old.leave_at(rate);
+    }
+
+    let (mut hog, mut taken, mut rate_failure) = (None, None, None);
+    if let Some(id) = target {
+        match Hog::acquire(&id) {
+            Ok(Some(mut held)) => {
+                let wanted = DeviceSelection::lock().wanted_rate();
+                if let Some(wanted) = wanted.filter(|wanted| held.rates().contains(wanted)) {
+                    rate_failure = held
+                        .set_rate(wanted)
+                        .err()
+                        .map(|error| format!("{error:#}"));
+                }
+                hog = Some(held);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                log::warn!("output: cannot take {id} for direct output: {error:#}");
+                taken = Some(format!("{error:#}"));
+            }
+        }
+    }
+    let changed = {
+        let mut hold = Hold::lock();
+        hold.hog = hog;
+        hold.taken = taken;
+        hold.rate = rate_failure;
+        before != (hold.hog.is_some(), hold.taken.clone(), hold.rate.clone())
+    };
+    if changed {
+        announce_device_changes();
+    }
+}
+
+/// The rates the device held offers, with `current` among them, or `None` when no device is held.
+fn held_rates(current: u32) -> Option<Vec<u32>> {
+    let mut rates = Hold::lock()
+        .hog
+        .as_ref()
+        .map(|hog| hog.rates().to_vec())
+        .filter(|rates| !rates.is_empty())?;
+    if !rates.contains(&current) {
+        rates.push(current);
+        rates.sort_unstable();
+    }
+    Some(rates)
+}
+
+/// Whether the device with cpal id `id` is played on directly: it is the chosen one, it is a
+/// direct device, and where that takes a hold, Sonora has it.
+fn played_directly(id: &str) -> bool {
+    let chosen = DeviceSelection::lock().chosen.clone();
+    let direct = chosen
+        .as_deref()
+        .is_some_and(|chosen| is_direct(chosen) && plain(chosen) == id);
+    direct && (!cfg!(target_os = "macos") || Hold::lock().hog.as_ref().map(Hog::id) == Some(id))
+}
+
+/// Waits until the stream open on the device with cpal id `id`, which is about to be replaced, has
+/// closed, for as long as `RELEASE_WAIT`. The engines drop their outputs on it on another thread,
+/// and a device a stream holds exclusively cannot be opened again before they have.
+fn wait_until_released(id: &str) {
+    let deadline = Instant::now() + RELEASE_WAIT;
+    loop {
+        let old = ACTIVE_DEVICE
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .upgrade();
+        match old {
+            Some(old) if old.info.id == id && Instant::now() < deadline => {
+                drop(old);
+                thread::sleep(RELEASE_POLL);
+            }
+            _ => return,
+        }
+    }
+}
+
+/// The stream on a direct device, if one is open, as `Device::info` reads it now.
+fn active_direct() -> Option<DeviceInfo> {
+    let open = ACTIVE_DEVICE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .upgrade()?;
+    Some(open.info()).filter(|info| info.direct)
+}
+
+/// Runs the direct device at the rate a track made at `track` Hz plays best at, when following
+/// the track's rate is on. The stream on it reopens at the new rate. A device that refuses leaves
+/// everything as it was, so the track is resampled to the rate it runs at.
+pub(crate) fn follow_track_rate(track: u32) {
+    let Some(open) = active_direct() else {
+        return;
+    };
+    {
+        let mut selection = DeviceSelection::lock();
+        if !selection.match_rate {
+            return;
+        }
+        let Some(wanted) = output_hog::pick_rate(track, &open.rates) else {
+            return;
+        };
+        selection.track_rate = Some(wanted);
+    }
+    reopen_at_wanted();
 }
 
 /// Opens devices at `rate` from now on where they offer it, or at the rate they run at when
 /// `None`. A stream open at another rate is retired, so every output on it reopens at the new one.
 pub fn choose_rate(rate: Option<u32>) {
     DeviceSelection::lock().rate = rate;
+    reopen_at_wanted();
+}
+
+/// Has the stream on the device run at the rate now wanted: the track's while following tracks,
+/// otherwise the one chosen in settings. A device Sonora holds is set to it, and its stream
+/// follows once the device has. Any other is reopened at it, where it offers it. With no rate
+/// wanted a held device goes back to the rate it had before it was taken.
+fn reopen_at_wanted() {
     let open = ACTIVE_DEVICE
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .upgrade();
-    if let Some(rate) = rate
+    let wanted = DeviceSelection::lock().wanted_rate();
+    let mut hold = Hold::lock();
+    if let Some(hog) = hold.hog.as_mut() {
+        let failure = match wanted {
+            Some(wanted) if hog.rate() != Some(wanted) && hog.rates().contains(&wanted) => {
+                log::info!("output: running {} at {wanted} Hz", hog.id());
+                hog.set_rate(wanted).err()
+            }
+            Some(_) => None,
+            None => hog.restore().err(),
+        }
+        .map(|error| {
+            log::warn!("output: {error:#}");
+            format!("{error:#}")
+        });
+        let changed = failure != hold.rate;
+        hold.rate = failure;
+        drop(hold);
+        if changed {
+            announce_device_changes();
+        }
+        return;
+    }
+    drop(hold);
+    if let Some(rate) = wanted
         && let Some(open) = open
         && rate != open.info.format.rate
         && open.info.rates.contains(&rate)
@@ -883,7 +1270,7 @@ fn resolve_device() -> Result<cpal::Device> {
         selection
             .chosen
             .clone()
-            .filter(|id| !selection.has_failed(id))
+            .filter(|id| !selection.has_failed(plain(id)))
     };
     if let Some(id) = chosen
         && let Some(device) = find_device(&host, &id)
@@ -926,7 +1313,7 @@ pub(crate) fn output_openable() -> bool {
     };
     let chosen_and_failed = cpal_ident(&device).is_some_and(|id| {
         let selection = DeviceSelection::lock();
-        selection.chosen.as_deref() == Some(id.as_str()) && selection.has_failed(&id)
+        selection.chosen_plain() == Some(id.as_str()) && selection.has_failed(&id)
     });
     if chosen_and_failed {
         return false;
@@ -1033,7 +1420,7 @@ fn system_default(host: &cpal::Host) -> Option<String> {
 /// The device saved as `id`, looked up on `host`, or on Linux on the ALSA host for a sound card's
 /// own device. `None` when it is not connected or `id` names nothing here.
 fn find_device(host: &cpal::Host, id: &str) -> Option<cpal::Device> {
-    let id: cpal::DeviceId = id.parse().ok()?;
+    let id: cpal::DeviceId = plain(id).parse().ok()?;
     #[cfg(target_os = "linux")]
     if id.host() == cpal::HostId::Alsa {
         return output_alsa::device(host, id.id());
@@ -1144,7 +1531,7 @@ fn open_stream(
         });
     let mut stream = builder
         .open_stream()
-        .map_err(|error| anyhow::anyhow!("cannot open the audio output: {error}"))?;
+        .map_err(|error| anyhow::Error::new(error).context("cannot open the audio output"))?;
     stream.log_on_drop(false);
     Ok((stream, frames))
 }
@@ -1174,4 +1561,12 @@ fn spawn_watcher(device: Weak<Device>) {
     if let Err(error) = spawned {
         log::warn!("output: cannot watch the output device: {error}");
     }
+}
+
+/// Whether opening a device failed because something else, perhaps a stream of Sonora's own that
+/// is still closing, holds it.
+fn is_busy(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<cpal::Error>()
+        .is_some_and(|error| error.kind() == cpal::ErrorKind::DeviceBusy)
 }

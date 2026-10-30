@@ -429,6 +429,13 @@ impl Paced {
         self.output.rate()
     }
 
+    /// Has a direct output run at the rate a track made at `rate` Hz plays best at, as the track
+    /// starts being heard, when following each track's rate is on. Every packet is resampled to
+    /// the device's rate either way, so a device that refuses, or a shared one, changes nothing.
+    pub fn follow_rate(&self, rate: u32) {
+        output::follow_track_rate(rate);
+    }
+
     /// Waits until there is room for another packet.
     pub fn drain(&mut self) -> Result<(), Gone> {
         while self.full() {

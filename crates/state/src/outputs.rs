@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use gpui::{App, Context, Entity, Task};
+use gpui::{App, Context, Entity, Subscription, Task};
 use music::output::{self, DeviceInfo, DeviceOption, Failure, Opened, OutputId, Sink};
 
 use crate::{AppSettings, Io, Outcome, Playback, Toasts, join};
@@ -46,6 +46,14 @@ pub struct Outputs {
     handover: Option<(Opened, Task<()>)>,
     listing: Option<Task<()>>,
     _watch: Task<()>,
+    /// Why the chosen device could not be taken for direct output, the last time it tried. It is
+    /// toasted when it first appears.
+    hold_failure: Option<String>,
+    /// Why the device could not be switched to a rate, the last time it tried. It is toasted when
+    /// it first appears.
+    rate_failure: Option<String>,
+    /// Lets the device go when the app quits, so it is not left at a track's rate.
+    _quit: Subscription,
 }
 
 impl Outputs {
@@ -60,6 +68,7 @@ impl Outputs {
         output::choose_device(selected.clone());
         output::choose_rate(settings.read(cx).output_rate());
         output::choose_buffer(settings.read(cx).output_buffer());
+        output::choose_match_rate(settings.read(cx).output_match_rate());
 
         let mut changes = output::watch_device_changes();
         let watch = cx.spawn(async move |this, cx| {
@@ -67,6 +76,7 @@ impl Outputs {
                 let updated = this.update(cx, |this, cx| {
                     this.read_device();
                     this.failure = output::latest_device_failure();
+                    this.read_direct(cx);
                     this.failing = output::failing();
                     this.forget_broken(cx);
                     this.refresh(cx);
@@ -76,6 +86,10 @@ impl Outputs {
                     return;
                 }
             }
+        });
+        let quit = cx.on_app_quit(|_, _| {
+            output::release_hold();
+            std::future::ready(())
         });
 
         let mut outputs = Self {
@@ -93,6 +107,9 @@ impl Outputs {
             holding: None,
             handover: None,
             listing: None,
+            hold_failure: output::hold_failure(),
+            rate_failure: output::rate_failure(),
+            _quit: quit,
             _watch: watch,
         };
         outputs.refresh(cx);
@@ -154,6 +171,67 @@ impl Outputs {
         if self.active.is_some() {
             self.known.clone_from(&self.active);
         }
+    }
+
+    /// Reads why the chosen device could not be taken, or switched to a rate, again. A failure
+    /// that is new is toasted once, since playback goes on without it.
+    fn read_direct(&mut self, cx: &mut Context<Self>) {
+        let taken = output::hold_failure();
+        if taken != self.hold_failure {
+            if let Some(error) = taken.clone() {
+                log::warn!("playback: cannot play directly on the device: {error}");
+                Toasts::with_detail(
+                    Outcome::Failed,
+                    "toast-output-direct-failed",
+                    None,
+                    error,
+                    cx,
+                );
+            }
+            self.hold_failure = taken;
+        }
+        let rate = output::rate_failure();
+        if rate != self.rate_failure {
+            if let Some(error) = rate.clone() {
+                log::warn!("playback: cannot switch the sample rate: {error}");
+                Toasts::with_detail(Outcome::Failed, "toast-output-rate-failed", None, error, cx);
+            }
+            self.rate_failure = rate;
+        }
+    }
+
+    /// Whether this system can follow each track's sample rate, which is for the settings page to
+    /// show.
+    pub fn match_rate_supported(&self) -> bool {
+        output::match_rate_supported()
+    }
+
+    /// Whether following each track's sample rate is turned on in settings.
+    pub fn match_rate(&self, cx: &App) -> bool {
+        self.match_rate_supported() && self.settings.read(cx).output_match_rate()
+    }
+
+    /// Whether the device chosen is played on directly, which is the only kind whose rate can be
+    /// switched.
+    pub fn direct_chosen(&self) -> bool {
+        self.chosen().is_some_and(output::is_direct)
+    }
+
+    /// Whether the rate follows each track right now: it is turned on, and the stream open is on
+    /// a direct device.
+    pub fn following(&self, cx: &App) -> bool {
+        self.match_rate(cx) && self.current().is_some_and(|device| device.direct)
+    }
+
+    /// Turns following each track's sample rate on or off, and saves it. The engines reopen,
+    /// paused or not, so the track playing is heard at once at the rate it was made at.
+    pub fn set_match_rate(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.settings
+            .update(cx, |settings, cx| settings.set_output_match_rate(on, cx));
+        output::choose_match_rate(on);
+        self.playback
+            .update(cx, |playback, cx| playback.restart_outputs(cx));
+        cx.notify();
     }
 
     /// Why nothing plays, when the device to play on would not open and nothing took its place.

@@ -17,6 +17,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Import an M3U or M3U8 playlist from the button or right-click menu on your local Playlists
   page, and export a local playlist from its right-click menu. Songs outside your library are
   left out, and an export saved beside your music lists it by relative path.
+- Direct to hardware on macOS. Every output device is also listed under it, and picking one takes
+  the device for Sonora alone, as a sound card's own device does on Linux.
+- Match sample rate, in the audio settings, for Direct to hardware outputs on Linux and macOS. The
+  device switches to each track's own sample rate, so nothing converts the sound on the way to
+  your DAC.
 
 ### Changed
 

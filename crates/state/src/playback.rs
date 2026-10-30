@@ -2487,8 +2487,8 @@ impl Playback {
     /// Rebuilds every running engine on the audio device it should play on now, as when the
     /// device is chosen in settings.
     pub(crate) fn restart_outputs(&mut self, cx: &mut Context<Self>) {
-        self.restart_output(false, cx);
-        self.restart_output(true, cx);
+        self.restart_output(false, None, cx);
+        self.restart_output(true, None, cx);
     }
 
     /// Rebuilds the local or the streaming engine, if it is running, on the audio device it
@@ -2496,7 +2496,12 @@ impl Playback {
     /// playing if it was and held paused there if it was not; the other one, or one with nothing
     /// loaded, comes back empty, so its stream still reopens at the device's new rate. A failed
     /// track is left as it is.
-    fn restart_output(&mut self, local: bool, cx: &mut Context<Self>) {
+    fn restart_output(
+        &mut self,
+        local: bool,
+        heard: Option<(String, Duration)>,
+        cx: &mut Context<Self>,
+    ) {
         let running = match local {
             true => self.local_engine.is_some(),
             false => self.engine.is_some(),
@@ -2515,7 +2520,14 @@ impl Playback {
             .track
             .clone()
             .filter(|track| track.id.is_some() && local == self.local_active());
-        let at = self.live_position();
+        // what the output had played beats the clock, which kept running while the device
+        // switched and would put the reload past the start of a track that just began
+        let at = heard
+            .filter(|(id, _)| {
+                current.as_ref().and_then(|track| track.id.as_deref()) == Some(id.as_str())
+            })
+            .map(|(_, at)| at)
+            .unwrap_or_else(|| self.live_position());
         let playing = match self.state {
             PlaybackState::Playing => Some(true),
             PlaybackState::Loading => Some(self.intent == Intent::Play),
@@ -2654,8 +2666,8 @@ impl Playback {
     fn on_backend_event(&mut self, event: BackendEvent, local: bool, cx: &mut Context<Self>) {
         // an engine whose output has to reopen is rebuilt whether it plays the current track
         // or sits idle, since a dead engine would take the next track and play nothing
-        if let BackendEvent::OutputChanged = event {
-            self.restart_output(local, cx);
+        if let BackendEvent::OutputChanged { heard } = event {
+            self.restart_output(local, heard, cx);
             return;
         }
         // kept for whichever track it names, since a queued track reports before it plays
@@ -2691,7 +2703,7 @@ impl Playback {
         }
         match event {
             // rebuilt or kept before the filters above
-            BackendEvent::OutputChanged | BackendEvent::Signal { .. } => {}
+            BackendEvent::OutputChanged { .. } | BackendEvent::Signal { .. } => {}
             BackendEvent::Unavailable { .. }
             | BackendEvent::Throttled { .. }
             | BackendEvent::Refused

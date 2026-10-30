@@ -67,6 +67,10 @@ alsa.workspace = true
 cpal = { workspace = true, features = ["pulseaudio"] }
 pulseaudio.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-audio.workspace = true
+objc2-core-foundation.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 

@@ -303,7 +303,11 @@ impl EqualizerView {
             .into(),
             id: output.id,
         });
-        let devices = outputs.devices().iter().flat_map(device_outputs);
+        let devices = outputs
+            .devices()
+            .iter()
+            .filter(|device| !output::is_direct_copy(&device.id))
+            .flat_map(device_outputs);
         let ruled = self
             .settings
             .read(cx)
