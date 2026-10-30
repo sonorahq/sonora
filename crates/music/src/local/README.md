@@ -69,8 +69,8 @@ these that has lyrics:
 3. An ID3v2 `SYLT` frame (MP3 only), with millisecond stamps. A frame typed as chords, events or
    trivia is skipped. A newline at either end of an entry breaks the line, so a frame timed by
    syllable keeps its words for karaoke.
-4. The lyrics tag (`USLT`, Vorbis `LYRICS`, …): timed when it parses as LRC, plain text when it
-   doesn't.
+4. The lyrics tag (`USLT`, Vorbis `LYRICS`, …): a TTML document in it is read like a `.ttml` file,
+   other text is timed when it parses as LRC, plain text when it doesn't.
 
 - It competes in the ranking with the other providers. Its trust wins most ties against a sheet of
   the same kind, never against a better kind (timed over plain, word by word over timed).

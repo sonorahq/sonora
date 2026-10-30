@@ -14,7 +14,7 @@ use lofty::tag::items::Timestamp;
 use lofty::tag::{ItemValue, Tag, TagItem};
 
 use crate::engine::Loudness;
-use crate::lyrics::lrc;
+use crate::lyrics::{lrc, ttml};
 use crate::{Encoding, Lyrics, LyricsLine, LyricsWord, TrackTags, Voice};
 
 use super::wire;
@@ -106,7 +106,8 @@ pub fn loudness(tagged: &TaggedFile) -> Option<Loudness> {
     })
 }
 
-/// A timed `SYLT` frame wins over the lyrics text, which is timed only when it parses as LRC.
+/// A timed `SYLT` frame wins over the lyrics text. That text is read as TTML when it is a whole
+/// TTML document, as Apple Music's lyrics are, and is otherwise timed only when it parses as LRC.
 pub fn lyrics(path: &Path) -> Result<Option<Lyrics>> {
     if let Some(lines) = synchronized(path) {
         return Ok(Some(Lyrics::Synced {
@@ -118,6 +119,9 @@ pub fn lyrics(path: &Path) -> Result<Option<Lyrics>> {
     if text.is_empty() {
         return Ok(None);
     }
+    if let Some(lyrics) = ttml_lyrics(path, text) {
+        return Ok(Some(lyrics));
+    }
     let lines = lrc::parse(text);
     Ok(Some(match lines.is_empty() {
         true => Lyrics::plain(text),
@@ -125,6 +129,27 @@ pub fn lyrics(path: &Path) -> Result<Option<Lyrics>> {
             lines: lines.into(),
         },
     }))
+}
+
+/// Lyrics text that is a TTML document, decoded, word by word when its spans carry times. One
+/// that cannot be parsed or holds no line is logged and left to be read as LRC or plain text.
+fn ttml_lyrics(path: &Path, text: &str) -> Option<Lyrics> {
+    if !text.starts_with("<tt") && !text.starts_with("<?xml") {
+        return None;
+    }
+    let sheet = ttml::parse(text)
+        .inspect_err(|error| {
+            log::warn!(
+                "lyrics: cannot read the TTML in {}: {error:#}",
+                path.display()
+            );
+        })
+        .ok()?;
+    if sheet.lyrics.is_empty() {
+        log::warn!("lyrics: the TTML in {} holds no line", path.display());
+        return None;
+    }
+    Some(sheet.lyrics)
 }
 
 /// Only millisecond stamps are read: MPEG frame stamps would need the stream's frame length.
