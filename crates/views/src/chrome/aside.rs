@@ -877,6 +877,18 @@ impl Aside {
                             },
                         )
                         .child(
+                            Button::new("shuffle-queue")
+                                .ghost()
+                                .small()
+                                .label(t!("queue-shuffle"))
+                                .tint(theme.muted_foreground)
+                                .disabled(sections.upcoming < 2)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.queue
+                                        .update(cx, |queue, cx| queue.shuffle_upcoming(cx));
+                                })),
+                        )
+                        .child(
                             Button::new("reset-queue")
                                 .ghost()
                                 .small()
