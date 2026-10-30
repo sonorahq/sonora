@@ -33,6 +33,8 @@ const SETUP: Duration = Duration::from_secs(5);
 /// Where the kernel lists every GPU with a link to the driver bound to it. One of the sysfs
 /// subtrees a Flatpak sandbox shares, unlike `/sys/module` or `/proc/driver`.
 const DRM: &str = "/sys/class/drm";
+/// The first WebKitGTK release affected by runaway DMA-BUF allocations during sign-in.
+const RUNAWAY_DMABUF: (c_uint, c_uint) = (2, 54);
 
 /// Firefox on Linux. WebKitGTK's own agent claims Safari on X11, a browser that does not exist,
 /// and Google answers a browser it cannot place with "this browser may not be secure". A scripted
@@ -102,6 +104,9 @@ macro_rules! symbols {
 }
 
 symbols! {
+    webkit_get_major_version: unsafe extern "C" fn() -> c_uint,
+    webkit_get_minor_version: unsafe extern "C" fn() -> c_uint,
+    webkit_get_micro_version: unsafe extern "C" fn() -> c_uint,
     gdk_set_allowed_backends: unsafe extern "C" fn(*const c_char),
     gdk_display_get_default: unsafe extern "C" fn() -> Ptr,
     g_type_name_from_instance: unsafe extern "C" fn(Ptr) -> *const c_char,
@@ -598,17 +603,24 @@ fn gtk(api: &'static Api) -> &'static Host {
 /// Initialises GTK, then alternates between parking and running a main loop for as long as there
 /// are windows. Never returns unless GTK itself refuses to start.
 fn run(api: &'static Api, host: &'static Host) {
+    let (major, minor, micro) = unsafe {
+        (
+            (api.webkit_get_major_version)(),
+            (api.webkit_get_minor_version)(),
+            (api.webkit_get_micro_version)(),
+        )
+    };
+    log::debug!("webview: webkitgtk {major}.{minor}.{micro}");
     // GDK opens its own connection to whichever server it finds, Wayland first and X11 through
     // XWayland otherwise, so the sign-in window never depends on an XWayland being present. A
     // GDK_BACKEND in the environment outranks this list, which is fine: either name works.
     unsafe { (api.gdk_set_allowed_backends)(c"wayland,x11".as_ptr()) };
-    // WebKit's DMA-BUF renderer hands the compositor buffers the NVIDIA driver allocates, and
-    // the compositor answers with a protocol error that takes the whole process down. WebKit
-    // upstream declined to detect the driver itself (bug 262607), so every embedder does. Shared
-    // memory is slower and only ever paints a sign-in page. A value the user exported wins.
+    // A value the user exported wins over the renderer workaround.
     // SAFETY: nothing else in the process reads this variable, and no other thread is in GTK yet.
-    if nvidia() && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-        log::debug!("webview: nvidia driver loaded, disabling the dmabuf renderer");
+    if let Some(why) = shared_memory_only(api)
+        && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
+    {
+        log::debug!("webview: {why}, disabling the dmabuf renderer");
         unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
     }
     // gtk_init would otherwise move the whole process onto the user's locale.
@@ -728,6 +740,21 @@ unsafe fn read(api: &'static Api, list: *mut Node) -> Vec<Cookie> {
         node = unsafe { (*node).next };
     }
     cookies
+}
+
+/// Avoids NVIDIA compositor errors and the runaway allocations reported with WebKitGTK 2.54.
+/// Use shared-memory rendering until a fixed WebKitGTK release is known.
+fn shared_memory_only(api: &Api) -> Option<&'static str> {
+    if nvidia() {
+        return Some("nvidia driver loaded");
+    }
+    let version = unsafe {
+        (
+            (api.webkit_get_major_version)(),
+            (api.webkit_get_minor_version)(),
+        )
+    };
+    (version >= RUNAWAY_DMABUF).then_some("webkitgtk 2.54 or newer")
 }
 
 /// Whether any GPU is bound to the NVIDIA driver, proprietary or open. Nouveau binds under its
