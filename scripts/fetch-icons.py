@@ -21,6 +21,7 @@ PACKS = {
 MAP = {
     "arrow-right-left": (None, "transfer-horizontal-linear", "arrow-left-right-line"),
     "arrow-up-down": ("sort", "sort-linear", "arrow-up-down-line"),
+    "ban": ("prohibition", "forbidden-circle-linear", "forbid-line"),
     "blend": ("color-filter", None, "color-filter-line"),
     "check": ("check", None, "check-line"),
     "chevron-down": ("nav-arrow-down", "alt-arrow-down-linear", "arrow-down-s-line"),

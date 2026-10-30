@@ -80,6 +80,15 @@ const SCHEMA: &str = "
         value TEXT NOT NULL,
         added_at INTEGER NOT NULL,
         PRIMARY KEY (provider, kind, set_id)
+    );
+    CREATE TABLE IF NOT EXISTS blocked (
+        provider TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        artists TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        PRIMARY KEY (provider, kind, item_id)
     );";
 
 #[derive(Clone)]
