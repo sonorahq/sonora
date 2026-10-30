@@ -51,6 +51,16 @@ pub enum Sort {
     Descending,
 }
 
+impl Sort {
+    /// The opposite order, which a second click on the same column sorts in.
+    pub const fn reversed(self) -> Self {
+        match self {
+            Self::Ascending => Self::Descending,
+            Self::Descending => Self::Ascending,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Sorting {
     pub column: String,
@@ -65,6 +75,8 @@ pub struct ColumnSpec<F: 'static> {
     pub width: Width,
     pub anchored: bool,
     pub sortable: bool,
+    /// The order the first click sorts this column in; a date reads best newest first.
+    pub first: Sort,
     pub rank: u8,
 }
 
@@ -82,6 +94,7 @@ impl<F: Copy + 'static> ColumnSpec<F> {
             width: Width::Fill(1.),
             anchored: false,
             sortable: true,
+            first: Sort::Ascending,
             rank: rank::ESSENTIAL,
         }
     }
@@ -590,6 +603,7 @@ mod tests {
             width: Width::Fixed(px(44.)),
             anchored: true,
             sortable: false,
+            first: Sort::Ascending,
             rank: rank::ESSENTIAL,
         },
         ColumnSpec {
@@ -600,6 +614,7 @@ mod tests {
             width: Width::Thumb,
             anchored: true,
             sortable: false,
+            first: Sort::Ascending,
             rank: rank::ESSENTIAL,
         },
         ColumnSpec {
@@ -610,6 +625,7 @@ mod tests {
             width: Width::Fill(0.5),
             anchored: false,
             sortable: true,
+            first: Sort::Ascending,
             rank: rank::ESSENTIAL,
         },
         ColumnSpec {
@@ -620,6 +636,7 @@ mod tests {
             width: Width::Fill(0.5),
             anchored: false,
             sortable: true,
+            first: Sort::Ascending,
             rank: rank::SPARE,
         },
         ColumnSpec {
@@ -630,6 +647,7 @@ mod tests {
             width: Width::Fixed(px(112.)),
             anchored: false,
             sortable: true,
+            first: Sort::Ascending,
             rank: rank::NICE,
         },
         ColumnSpec {
@@ -640,6 +658,7 @@ mod tests {
             width: Width::Fixed(px(72.)),
             anchored: false,
             sortable: true,
+            first: Sort::Ascending,
             rank: rank::USEFUL,
         },
     ];

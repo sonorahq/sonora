@@ -99,6 +99,13 @@ pub trait TableSource: 'static {
     fn populated(&self, _field: Self::Field, _cx: &App) -> bool {
         true
     }
+
+    /// Whether the rows can be sorted by a field. By default a field sorts when it has something
+    /// to show. A source that can order rows by something it does not show says so here, and
+    /// the field is offered in the Sort menu with no column.
+    fn sorts_by(&self, field: Self::Field, cx: &App) -> bool {
+        self.populated(field, cx)
+    }
     fn cell(&self, cell: Cell<Self::Field>, cx: &mut App) -> AnyElement;
 
     fn picking(&self) -> bool {
@@ -465,13 +472,20 @@ impl<S: TableSource> TableDelegate<S> {
             .collect()
     }
 
+    /// Steps a column through its first order, the reverse, then unsorted.
     pub fn cycle(&mut self, column: &str, cx: &App) {
+        let first = self
+            .source
+            .columns()
+            .iter()
+            .find(|spec| spec.key == column)
+            .map_or(Sort::Ascending, |spec| spec.first);
         let next = match self.sorting() {
-            Some(current) if current.column == column => match current.order {
-                Sort::Ascending => Some(Sort::Descending),
-                Sort::Descending => None,
+            Some(current) if current.column == column => match current.order == first {
+                true => Some(first.reversed()),
+                false => None,
             },
-            _ => Some(Sort::Ascending),
+            _ => Some(first),
         };
         self.set_sorting(
             next.map(|order| Sorting {
@@ -482,14 +496,14 @@ impl<S: TableSource> TableDelegate<S> {
         );
     }
 
-    /// The columns the rows can be sorted by. A column the source has nothing for is left out,
-    /// as it is from the table.
+    /// The columns the rows can be sorted by. A column the source cannot sort by is left out,
+    /// and one it sorts by without showing is offered all the same.
     pub fn sortables(&self, cx: &App) -> Vec<SortAxis> {
         let active = self.sorting();
         self.source
             .columns()
             .iter()
-            .filter(|spec| spec.sortable && self.source.populated(spec.field, cx))
+            .filter(|spec| spec.sortable && self.source.sorts_by(spec.field, cx))
             .map(|spec| SortAxis {
                 key: spec.key,
                 label: spec.label(),

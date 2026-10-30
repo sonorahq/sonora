@@ -20,8 +20,8 @@ use async_trait::async_trait;
 use storage::{Cache, Database};
 
 use crate::{
-    Capabilities, Catalog, InputSource, MusicApi, MusicProvider, PlaybackFactory, PromptSink,
-    ProviderSession, Shape, SignIn, Track, UserProfile,
+    Arrival, Capabilities, Catalog, InputSource, MusicApi, MusicProvider, PlaybackFactory,
+    PromptSink, ProviderSession, Shape, SignIn, Track, UserProfile,
 };
 
 pub struct LocalProvider {
@@ -64,7 +64,8 @@ impl LocalProvider {
             shape: Shape::Catalog(Catalog::Fixed),
             authenticated: false,
             // Files on disk: favorites are kept here, but nothing suggests a station and
-            // nothing counts a play.
+            // nothing counts a play. A song's date is its file's, which says nothing about when
+            // it went into a playlist, but a playlist only ever grows at its end.
             capabilities: Capabilities {
                 follow_artists: true,
                 radio: false,
@@ -76,6 +77,8 @@ impl LocalProvider {
                 downloads: false,
                 qualities: &[],
                 download_gap: Duration::ZERO,
+                song_arrival: None,
+                playlist_arrival: Some(Arrival::OldestFirst),
             },
         })
     }
