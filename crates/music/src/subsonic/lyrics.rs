@@ -3,12 +3,12 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use opensubsonic::data::StructuredLyrics;
+use opensubsonic::data::{Cue, CueLine, StructuredLyrics};
 
 use crate::lyrics::lrc;
 use crate::subsonic::auth::{self, Credentials};
 use crate::subsonic::{NAME, SubsonicClient};
-use crate::{Lyrics, LyricsHit, LyricsLine, LyricsProvider, LyricsQuery, Voice};
+use crate::{Lyrics, LyricsHit, LyricsLine, LyricsProvider, LyricsQuery, LyricsWord, Voice};
 
 const SLUG: &str = "subsonic";
 
@@ -128,21 +128,59 @@ fn structured(entries: Vec<StructuredLyrics>) -> Vec<Lyrics> {
 fn sheet(entry: StructuredLyrics) -> Option<Lyrics> {
     let offset = entry.offset.unwrap_or(0.);
     if entry.synced {
-        let mut lines: Vec<LyricsLine> = entry
-            .line
-            .iter()
-            .filter_map(|line| {
-                Some(LyricsLine {
-                    start: shifted(line.start?, offset),
-                    end: None,
-                    text: line.value.trim().to_owned(),
-                    romanized: None,
-                    words: None,
-                    secondary: Vec::new(),
-                    voice: Voice::Lead,
+        let mut lines: Vec<LyricsLine>;
+        let cue_lines: Option<&Vec<CueLine>> = entry.cue_line.as_ref();
+
+        if cue_lines.is_some_and(|v| !v.is_empty()) {
+            let agents = entry.agents.as_ref();
+            let agents_exists: bool = agents.is_some_and(|a| !a.is_empty());
+
+            lines = cue_lines?
+                .iter()
+                .filter_map(|cue| {
+                    let voice: Voice;
+                    if agents_exists && cue.agent_id.is_some() {
+                        let agent = agents?
+                            .iter()
+                            .find(|&agent| cue.agent_id.to_owned().unwrap() == agent.id);
+
+                        voice = if agent?.role == "main" {
+                            Voice::Lead
+                        } else {
+                            Voice::Counter
+                        };
+                    } else {
+                        voice = Voice::Lead;
+                    }
+
+                    Some(LyricsLine {
+                        start: shifted(cue.start?, offset),
+                        end: cue.end.map(|value| shifted(value, offset)),
+                        text: cue.value.clone()?.trim().to_owned(),
+                        romanized: None,
+                        words: cues(&cue.cue, offset),
+                        secondary: Vec::new(),
+                        voice,
+                    })
                 })
-            })
-            .collect();
+                .collect();
+        } else {
+            lines = entry
+                .line
+                .iter()
+                .filter_map(|line| {
+                    Some(LyricsLine {
+                        start: shifted(line.start?, offset),
+                        end: None,
+                        text: line.value.trim().to_owned(),
+                        romanized: None,
+                        words: None,
+                        secondary: Vec::new(),
+                        voice: Voice::Lead,
+                    })
+                })
+                .collect();
+        }
         lrc::normalize(&mut lines);
         if !lines.is_empty() {
             return Some(Lyrics::Synced {
@@ -172,4 +210,22 @@ fn legacy_sheet(text: &str) -> Option<Lyrics> {
         }),
         true => (!text.trim().is_empty()).then(|| Lyrics::plain(text)),
     }
+}
+
+fn cues(cues: &[Cue], offset: f64) -> Option<Vec<LyricsWord>> {
+    if cues.is_empty() {
+        return None;
+    }
+
+    Some(
+        cues.iter()
+            .filter_map(|m| {
+                Some(LyricsWord {
+                    start: shifted(m.start?, offset),
+                    end: shifted(m.end?, offset),
+                    text: m.value.clone()?,
+                })
+            })
+            .collect(),
+    )
 }
