@@ -1155,6 +1155,21 @@ impl Playback {
             self.begin(tracks, 0, origin, cx);
             return None;
         }
+        // in a Jam a song the listener queues names them, as it does for everyone else
+        let you = match placement {
+            QueuePlacement::Last => None,
+            _ => self
+                .devices
+                .as_ref()
+                .and_then(WeakEntity::upgrade)
+                .and_then(|devices| devices.read(cx).you()),
+        };
+        let tracks = tracks.into_iter().map(|mut track| {
+            if you.is_some() {
+                track.added_by = you.clone();
+            }
+            track
+        });
         self.queue
             .update(cx, |queue, cx| queue.insert(tracks, origin, placement, cx));
         Some(placement)

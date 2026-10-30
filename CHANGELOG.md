@@ -15,6 +15,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The tray menu and taskbar buttons follow the song of the Jam or device you are listening to.
 - Quick picks on Home no longer shows your account name above its title.
 - The lyrics source you rank higher now wins whenever it has synced lyrics, even when a source
   below it has them word by word.
@@ -27,6 +28,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The translucent player bar no longer looks much darker than the rest of a see-through window.
 - Covers saved for the system media controls no longer fill Sonora's cache folder without limit,
   and playlist mosaics no longer leave old copies behind.
+- Leaving a Jam you joined works again.
+- Songs you queue in a Jam show your name as the one who added them.
+- A Jam's queue is no longer cleared when a song starts playing.
 
 ## [0.45.0] - 2026-10-27
 
