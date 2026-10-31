@@ -67,6 +67,8 @@ impl PlayerBar {
         let library = Sonora::global(cx).library.clone();
         let settings = Sonora::global(cx).settings.clone();
         let devices = Sonora::global(cx).devices.clone();
+        let sponsorblock = Sonora::global(cx).sponsorblock.clone();
+        cx.observe(&sponsorblock, |_, _, cx| cx.notify()).detach();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         cx.observe(&devices, |_, _, cx| cx.notify()).detach();
         cx.observe(&queue, |_, _, cx| cx.notify()).detach();
@@ -561,6 +563,10 @@ impl Render for PlayerBar {
                         .name(t!("song-position"))
                         .value(clock(elapsed))
                         .colors(theme.progress_bar, empty, theme.foreground)
+                        .ranges(
+                            Sonora::global(cx).sponsorblock.read(cx).ranges(cx),
+                            theme.foreground.opacity(0.4),
+                        )
                         .enabled(seekable)
                         .when_some(seek_bubble, |this, (at, text)| this.bubble(at, text))
                         .on_move(cx.listener(|this, fraction: &f32, _, cx| {

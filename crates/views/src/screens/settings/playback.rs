@@ -34,6 +34,9 @@ impl SettingsView {
     pub(super) fn playback_groups(&self, cx: &App) -> Vec<Group> {
         let capabilities = self.session.read(cx).capabilities();
         let mut playing = vec![Slot::Normalisation, Slot::Gapless];
+        if self.session.read(cx).provider_slug() == Some("youtube") {
+            playing.push(Slot::SponsorBlock);
+        }
         playing.extend([Slot::Sleep, Slot::StayAwake]);
         let mut groups = vec![Group::new("settings-group-playing", "icons/play.svg").rows(playing)];
         // one level is nothing to choose between, so it is stated in a row rather than offered
@@ -94,6 +97,20 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.playback
                         .update(cx, |playback, cx| playback.set_gapless(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+
+    pub(super) fn sponsorblock_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).sponsorblock();
+        self.row(
+            t!("settings-sponsorblock"),
+            Switch::new("sponsorblock", on)
+                .name(t!("settings-sponsorblock"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.set_sponsorblock(!on, cx));
                 }))
                 .into_any_element(),
         )

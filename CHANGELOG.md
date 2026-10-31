@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Skip sponsors, self-promotion and non-music sections on YouTube Music with SponsorBlock, with sections marked on the seek bar.
+
 ## [0.46.0] - 2026-10-31
 
 ### Added
