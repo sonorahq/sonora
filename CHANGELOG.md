@@ -18,6 +18,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   page, and export a local playlist from its right-click menu. Songs outside your library are
   left out, and an export saved beside your music lists it by relative path.
 - `sonora watch` prints what plays on every change, one line of JSON each, for status bars.
+- Yandex Music: sign in with a token, then browse, search, like, edit your playlists, start a
+  station from a song and play in lossless where your plan allows it.
 
 ### Changed
 
