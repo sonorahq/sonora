@@ -646,12 +646,14 @@ impl SidebarLeft {
         .into_any_element()
     }
 
-    /// Whether `target` takes the dragged `song`: a playlist the listener may edit, on the same
-    /// shelf as the song, since a provider adds only its own tracks.
+    /// Whether `target` takes the dragged `song`: a playlist the listener may edit, on the shelf
+    /// the song's playlists live on, since a provider adds only its own tracks. While no account
+    /// is signed in that is the local shelf, which keeps a copy of a streaming song.
     fn accepts(&self, song: &Pin, target: &Pin, cx: &App) -> bool {
+        let shelf = self.session.read(cx).playlist_shelf(Shelf::of(&song.id));
         song.kind == PinKind::Song
             && target.kind == PinKind::Playlist
-            && Shelf::of(&song.id) == Shelf::of(&target.id)
+            && shelf == Shelf::of(&target.id)
             && self.library.read(cx).is_editable(&target.id)
     }
 

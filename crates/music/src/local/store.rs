@@ -1,10 +1,11 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use rusqlite::{Connection, OptionalExtension as _, params};
 use storage::Database;
 
-use crate::LOCAL_PLAYLIST_PREFIX;
+use crate::{LOCAL_PLAYLIST_PREFIX, Track};
 
 pub struct Stored {
     pub id: String,
@@ -187,7 +188,62 @@ impl Store {
         connection
             .execute("DELETE FROM playlists WHERE id = ?", params![id])
             .context("cannot delete a local playlist")?;
+        connection
+            .execute(
+                "DELETE FROM kept_tracks
+                 WHERE track_id NOT IN (SELECT track_id FROM playlist_tracks)",
+                [],
+            )
+            .context("cannot forget the tracks of a local playlist")?;
         Ok(())
+    }
+
+    /// Keeps a copy of tracks from a streaming provider, so a local playlist that holds them
+    /// can list them without asking that provider. A copy kept already is replaced.
+    pub fn keep(&self, tracks: &[Track]) -> Result<()> {
+        let mut connection = self.open()?;
+        let transaction = connection
+            .transaction()
+            .context("cannot keep tracks for a local playlist")?;
+        for track in tracks {
+            let Some(id) = &track.id else {
+                continue;
+            };
+            let copy = serde_json::to_string(track).context("cannot encode a kept track")?;
+            transaction
+                .execute(
+                    "INSERT OR REPLACE INTO kept_tracks (track_id, track) VALUES (?, ?)",
+                    params![id, copy],
+                )
+                .context("cannot keep a track for a local playlist")?;
+        }
+        transaction
+            .commit()
+            .context("cannot keep tracks for a local playlist")
+    }
+
+    /// The copies `keep` made of the tracks among `track_ids`, by id. An id with no copy is
+    /// left out.
+    pub fn kept(&self, track_ids: &[&str]) -> Result<HashMap<String, Track>> {
+        if track_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let connection = self.open()?;
+        let mut query = connection
+            .prepare("SELECT track FROM kept_tracks WHERE track_id = ?")
+            .context("cannot read kept tracks")?;
+        let mut kept = HashMap::new();
+        for id in track_ids {
+            let copy = query
+                .query_row(params![id], |row| row.get::<_, String>(0))
+                .optional()
+                .context("cannot read a kept track")?;
+            if let Some(copy) = copy {
+                let track = serde_json::from_str(&copy).context("cannot decode a kept track")?;
+                kept.insert((*id).to_owned(), track);
+            }
+        }
+        Ok(kept)
     }
 
     /// Records `cover` as the playlist's own picture, or forgets it when `None`. Answers the

@@ -39,12 +39,17 @@ impl LocalProvider {
         }
     }
 
+    /// Scans `paths` into a session. With no folders there is nothing to scan, and the session
+    /// only keeps playlists, which is where they live while no account is signed in.
     async fn scan_paths(&self, paths: Vec<PathBuf>) -> Result<ProviderSession> {
         let cache_dir = self.cache_dir.clone();
         let index = self.index.clone();
-        let scanned = tokio::task::spawn_blocking(move || scan::scan(&paths, &cache_dir, &index))
-            .await
-            .context("local scan task panicked")?;
+        let scanned = match paths.is_empty() {
+            true => scan::Scanned::default(),
+            false => tokio::task::spawn_blocking(move || scan::scan(&paths, &cache_dir, &index))
+                .await
+                .context("local scan task panicked")?,
+        };
 
         let api: Arc<dyn MusicApi> = Arc::new(client::LocalClient::new(
             scanned,

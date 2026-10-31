@@ -171,10 +171,12 @@ impl ItemMenu {
     }
 
     /// The Add to playlist submenu for `addition`: a New playlist entry, then the playlists on
-    /// `shelf` the listener can add to. A playlist that already holds every named track is
-    /// checked, and `many` says whether one track or a run of them is being added. An album is
-    /// never checked, since its tracks are only read once it is added.
+    /// `shelf` the listener can add to, which are the local ones while no account is signed
+    /// in. A playlist that already holds every named track is checked, and `many` says whether
+    /// one track or a run of them is being added. An album is never checked, since its tracks
+    /// are only read once it is added.
     fn playlists(&self, addition: Addition, shelf: Shelf, many: bool, cx: &App) -> Menu {
+        let shelf = Sonora::global(cx).session.read(cx).playlist_shelf(shelf);
         let library = Sonora::global(cx).library.clone();
         let playlists: Vec<Playlist> = library
             .read(cx)

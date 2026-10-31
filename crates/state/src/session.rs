@@ -224,6 +224,25 @@ impl Session {
         }
     }
 
+    /// Whether an account is signed in or on its way: restoring, authorizing or kept offline
+    /// all count, so nothing aimed at the account lands elsewhere while it settles. A guest
+    /// session and a signed-out one have none.
+    pub fn has_account(&self) -> bool {
+        match &self.state {
+            SessionState::SignedIn(_) => self.authenticated,
+            SessionState::SignedOut | SessionState::Failed(_) => false,
+            SessionState::Restoring | SessionState::Authorizing(_) | SessionState::Offline(_) => {
+                true
+            }
+        }
+    }
+
+    /// The shelf a playlist aimed at `shelf` lives on: the local one while there is no
+    /// account, since a guest or signed-out provider keeps no playlists.
+    pub fn playlist_shelf(&self, shelf: Shelf) -> Shelf {
+        shelf.for_playlists(self.has_account())
+    }
+
     /// What a shelf's library is made of. The local shelf is always a fixed catalog.
     pub fn shape_of(&self, shelf: Shelf) -> Shape {
         match shelf {
@@ -970,10 +989,9 @@ impl Session {
         cx.emit(SessionEvent::SignedOut);
     }
 
+    /// Opens the local library at launch. With no folders it still opens, empty, since the
+    /// playlists kept while no account is signed in live there.
     fn restore_local(&mut self, cx: &mut Context<Self>) {
-        if self.local_folders.is_empty() {
-            return;
-        }
         self.rescan_local(false, cx);
     }
 
@@ -1085,14 +1103,14 @@ impl Session {
             self.local_task = None;
             cx.notify();
             cx.emit(SessionEvent::LocalChanged);
-            return;
         }
 
+        // With no folders the library opens empty without a scan, keeping only its playlists.
         let provider = self.local_provider.clone();
         let chosen = folders.clone();
         let io = self.io.clone();
         let counting = self.scan_asked;
-        self.scanning = true;
+        self.scanning = !folders.is_empty();
         cx.notify();
         self.local_task = Some(cx.spawn(async move |this, cx| {
             let prompt: PromptSink = Arc::new(|_| {});

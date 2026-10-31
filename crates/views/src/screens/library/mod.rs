@@ -495,10 +495,21 @@ impl LibraryView {
 
     /// Whether the shelf has no folder to list. A scan in flight is not that: a folder is only
     /// recorded once its scan lands, so the setup screen would otherwise cover the whole of the
-    /// first import, which is the longest one there is.
+    /// first import, which is the longest one there is. The playlists tab needs no folder while
+    /// no account is signed in or it lists any, since the guest's playlists live there.
     fn unconfigured(&self, cx: &App) -> bool {
+        let session = Sonora::global(cx).session.read(cx);
+        let playlists = self.section == Section::Playlists
+            && (!session.has_account()
+                || !self
+                    .library
+                    .read(cx)
+                    .state(self.shelf)
+                    .playlists()
+                    .is_empty());
         self.shelf.local()
-            && Sonora::global(cx).session.read(cx).local_paths().is_empty()
+            && !playlists
+            && session.local_paths().is_empty()
             && Scan::global(cx).read(cx).progress().is_none()
     }
 

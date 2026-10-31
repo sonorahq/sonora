@@ -49,6 +49,10 @@ const SCHEMA: &str = "
     );
     CREATE INDEX IF NOT EXISTS playlist_tracks_order
         ON playlist_tracks (playlist_id, position);
+    CREATE TABLE IF NOT EXISTS kept_tracks (
+        track_id TEXT PRIMARY KEY,
+        track TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS playlist_covers (
         playlist_id TEXT PRIMARY KEY,
         path TEXT NOT NULL

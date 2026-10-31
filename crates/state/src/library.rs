@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use futures::{StreamExt as _, TryStreamExt as _, stream};
 use gpui::{App, Context, Entity, SharedString, Task};
 use music::{
     Album, Catalog, ImportedPlaylist, MediaKind, MusicApi, Page, Pages, Playlist, SavedArtist,
@@ -25,6 +26,8 @@ const FATAL: [LibraryPart; 3] = [
 const FATAL_LOCAL: [LibraryPart; 2] = [LibraryPart::Tracks, LibraryPart::Albums];
 /// How often the pins are read again from a provider that does not say when they change.
 const PIN_POLL: Duration = Duration::from_secs(60);
+/// How many streaming songs are read at a time when a local playlist keeps a copy of them.
+const KEPT_READS: usize = 8;
 
 /// Lets a few playlists have their contents or mosaic covers read at a time. A library asks for
 /// all of its playlists at once. Each read holds every track of its playlist until it is cut down,
@@ -50,6 +53,15 @@ impl Shelf {
 
     pub fn local(self) -> bool {
         self == Self::Local
+    }
+
+    /// The shelf a playlist aimed at this one lives on. With no account signed in the
+    /// streaming provider keeps no playlists, so they go to the local shelf instead.
+    pub fn for_playlists(self, account: bool) -> Self {
+        match account {
+            true => self,
+            false => Self::Local,
+        }
     }
 
     /// What a log line calls the shelf.
@@ -278,6 +290,53 @@ impl Addition {
                 .filter_map(|track| track.id)
                 .collect()),
         }
+    }
+
+    /// The same for a playlist on `target`, with `streaming` set when `target` is the local
+    /// shelf. A local playlist cannot ask a streaming provider for a song later, so every
+    /// streaming song is read from `streaming` now and `target` keeps a copy of it.
+    async fn gather(
+        self,
+        target: &Arc<dyn MusicApi>,
+        streaming: Option<&Arc<dyn MusicApi>>,
+    ) -> anyhow::Result<Vec<String>> {
+        let Some(streaming) = streaming else {
+            return self.resolve(target).await;
+        };
+        let (ids, kept) = match self {
+            Self::Album(id) if music::is_local_id(&id) => {
+                return Self::Album(id).resolve(target).await;
+            }
+            Self::Album(id) => {
+                let tracks = streaming.album_tracks(&id).await?;
+                let ids = tracks.iter().filter_map(|track| track.id.clone()).collect();
+                (ids, tracks)
+            }
+            Self::Tracks(ids) => {
+                let foreign: Vec<String> = ids
+                    .iter()
+                    .filter(|id| !music::is_local_id(id))
+                    .cloned()
+                    .collect();
+                let kept = stream::iter(foreign)
+                    .map(|id| {
+                        let streaming = streaming.clone();
+                        async move {
+                            let mut track = streaming.track(&id).await?;
+                            track.id = Some(id);
+                            anyhow::Ok(track)
+                        }
+                    })
+                    .buffered(KEPT_READS)
+                    .try_collect::<Vec<_>>()
+                    .await?;
+                (ids, kept)
+            }
+        };
+        if !kept.is_empty() {
+            target.keep_tracks(&kept).await?;
+        }
+        Ok(ids)
     }
 }
 
@@ -1863,6 +1922,8 @@ impl Library {
         shelf: Shelf,
         cx: &mut Context<Self>,
     ) {
+        let shelf = self.session.read(cx).playlist_shelf(shelf);
+        let streaming = self.streaming_for(shelf, cx);
         self.mutate_playlist(
             PlaylistMutation {
                 action: "create playlist",
@@ -1873,7 +1934,7 @@ impl Library {
                 shelf,
             },
             move |client| async move {
-                let tracks = addition.resolve(&client).await?;
+                let tracks = addition.gather(&client, streaming.as_ref()).await?;
                 let id = client.create_playlist(&name).await?;
                 client.add_tracks_to_playlist(&id, &tracks).await?;
                 let fetched = client.playlist(&id).await.map(|detail| detail.playlist);
@@ -2113,6 +2174,7 @@ impl Library {
             .playlist(&playlist_id)
             .map(|playlist| playlist.name.clone());
         let target = Some(Target::Playlist(SharedString::from(playlist_id.clone())));
+        let streaming = self.streaming_for(Shelf::of(&playlist_id), cx);
         self.mutate_playlist(
             PlaylistMutation {
                 action: "add track to playlist",
@@ -2123,7 +2185,7 @@ impl Library {
                 invalidated: vec![playlist_id.clone()],
             },
             move |client| async move {
-                let mut track_ids = addition.resolve(&client).await?;
+                let mut track_ids = addition.gather(&client, streaming.as_ref()).await?;
                 track_ids.retain(|id| !known.contains(id));
                 client
                     .add_tracks_to_playlist(&playlist_id, &track_ids)
@@ -2912,6 +2974,15 @@ impl Library {
         }));
     }
 
+    /// The streaming client a change to a playlist on `shelf` reads songs from, which only a
+    /// local playlist needs, since one can hold streaming songs while no account is signed in.
+    fn streaming_for(&self, shelf: Shelf, cx: &App) -> Option<Arc<dyn MusicApi>> {
+        match shelf {
+            Shelf::Local => self.session.read(cx).client_of(Shelf::Streaming),
+            Shelf::Streaming => None,
+        }
+    }
+
     fn insert_playlist(&mut self, playlist: Playlist, cx: &mut Context<Self>) {
         let Some(playlists) = self.playlists_mut(&playlist.id) else {
             return;
@@ -3349,4 +3420,21 @@ where
         }
     }
     Ok(done)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_guest_playlist_lands_on_the_local_shelf() {
+        assert_eq!(Shelf::Streaming.for_playlists(false), Shelf::Local);
+        assert_eq!(Shelf::Local.for_playlists(false), Shelf::Local);
+    }
+
+    #[test]
+    fn a_signed_in_playlist_stays_where_it_was_aimed() {
+        assert_eq!(Shelf::Streaming.for_playlists(true), Shelf::Streaming);
+        assert_eq!(Shelf::Local.for_playlists(true), Shelf::Local);
+    }
 }

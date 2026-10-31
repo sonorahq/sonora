@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Make playlists and add songs to them without signing in to an account. They are kept on this
+  computer and show on your local Playlists page.
+
 ## [0.46.0] - 2026-10-31
 
 ### Added

@@ -72,15 +72,27 @@ impl LocalClient {
         }
     }
 
+    /// The tracks behind playlist ids, in order. A file is read from the scan and a streaming
+    /// track from the copy the store kept of it; one found in neither is left out.
     fn listed(&self, ids: &[String]) -> Vec<Track> {
+        let foreign: Vec<&str> = ids
+            .iter()
+            .map(String::as_str)
+            .filter(|id| !crate::is_local_id(id))
+            .collect();
+        let mut kept = self.store.kept(&foreign).unwrap_or_else(|error| {
+            log::warn!("local: cannot read the streaming tracks of a playlist: {error:#}");
+            HashMap::new()
+        });
         let scanned = self.scanned.read().unwrap();
         ids.iter()
-            .filter_map(|id| {
-                scanned
+            .filter_map(|id| match crate::is_local_id(id) {
+                true => scanned
                     .tracks
                     .iter()
                     .find(|track| track.id.as_deref() == Some(id.as_str()))
-                    .cloned()
+                    .cloned(),
+                false => kept.remove(id),
             })
             .collect()
     }
@@ -427,6 +439,10 @@ impl MusicApi for LocalClient {
 
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
         self.store.add(playlist_id, track_id)
+    }
+
+    async fn keep_tracks(&self, tracks: &[Track]) -> Result<()> {
+        self.store.keep(tracks)
     }
 
     async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
@@ -852,6 +868,77 @@ mod tests {
         assert!(ids.contains(&"local:0"));
         assert!(ids.contains(&"local:1"));
         assert!(ids.contains(&"local:2"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A client over `tracks`, with its own database and cache in a fresh temporary folder.
+    fn client_in(tracks: Vec<Track>) -> (LocalClient, Database, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("sonora-test-{}", fastrand::u64(..)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Database::at(dir.join("state.sqlite"));
+        let index = Index::new(storage::Cache::at(dir.join("cache.sqlite")));
+        let scanned = Scanned {
+            tracks,
+            ..Scanned::default()
+        };
+        (LocalClient::new(scanned, db.clone(), index), db, dir)
+    }
+
+    #[tokio::test]
+    async fn guest_playlist_keeps_streaming_songs_without_a_folder() {
+        let (client, db, dir) = client_in(Vec::new());
+        let song = test_track("youtube-video-1", "Streamed", "Artist", "Album");
+
+        let id = client.create_playlist("Guest mix").await.unwrap();
+        client
+            .keep_tracks(std::slice::from_ref(&song))
+            .await
+            .unwrap();
+        client
+            .add_tracks_to_playlist(&id, &["youtube-video-1".to_owned()])
+            .await
+            .unwrap();
+
+        let listed = client.playlists().await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "Guest mix");
+        assert_eq!(listed[0].track_count, 1);
+        assert_eq!(client.playlist(&id).await.unwrap().tracks, vec![song]);
+
+        client.rename_playlist(&id, "Renamed").await.unwrap();
+        assert_eq!(client.playlists().await.unwrap()[0].name, "Renamed");
+
+        client.delete_playlist(&id).await.unwrap();
+        assert!(client.playlists().await.unwrap().is_empty());
+        let kept: i64 = db
+            .open()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM kept_tracks", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(kept, 0, "a deleted playlist leaves no copies behind");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn local_playlist_lists_files_and_skips_unknown_ids() {
+        let file = test_track("local:/music/a.flac", "File", "Artist", "Album");
+        let (client, _db, dir) = client_in(vec![file.clone()]);
+
+        let id = client.create_playlist("Files").await.unwrap();
+        client
+            .add_tracks_to_playlist(
+                &id,
+                &[
+                    "local:/music/a.flac".to_owned(),
+                    "youtube-unkept".to_owned(),
+                ],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(client.playlist(&id).await.unwrap().tracks, vec![file]);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

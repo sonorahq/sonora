@@ -135,7 +135,7 @@ impl Home {
 
     fn client(&self, cx: &App) -> Option<Arc<dyn MusicApi>> {
         let session = self.session.read(cx);
-        if session.guest() && session.local_client().is_some() {
+        if session.guest() && !session.local_paths().is_empty() {
             session.local_client()
         } else {
             session.client()

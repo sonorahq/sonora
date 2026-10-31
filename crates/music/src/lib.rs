@@ -263,6 +263,12 @@ pub trait MusicApi: Send + Sync {
         }
         Ok(())
     }
+    /// Keeps a copy of another provider's tracks, so this provider's playlists can hold them.
+    /// Only the local provider does, for the playlists a listener keeps while no account is
+    /// signed in. Call it before adding the tracks by id.
+    async fn keep_tracks(&self, _tracks: &[Track]) -> Result<()> {
+        anyhow::bail!("this provider cannot hold another provider's tracks")
+    }
     async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()>;
 
     /// Reads the M3U or M3U8 playlist at `path` into a new playlist named after the file, for a
