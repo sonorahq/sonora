@@ -35,7 +35,10 @@ impl SettingsView {
         let capabilities = self.session.read(cx).capabilities();
         let mut playing = vec![Slot::Normalisation, Slot::Gapless];
         playing.extend([Slot::Sleep, Slot::StayAwake]);
-        let mut groups = vec![Group::new("settings-group-playing", "icons/play.svg").rows(playing)];
+        let mut groups = vec![
+            Group::new("settings-group-playing", "icons/play.svg").rows(playing),
+            Group::new("settings-group-blocked", "icons/octagon-x.svg").rows([Slot::Blocklist]),
+        ];
         // one level is nothing to choose between, so it is stated in a row rather than offered
         match capabilities.qualities.len() {
             0 => {}

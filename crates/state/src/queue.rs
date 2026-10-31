@@ -292,6 +292,14 @@ fn sift<T>(
     before != tally(past, current, upcoming, source)
 }
 
+/// Drops every entry `blocked` catches from `upcoming`. Each entry keeps its own kind, so the
+/// hand-queued run and the suggestions stay what they were. Says whether anything went.
+fn unblocked<T>(upcoming: &mut VecDeque<T>, blocked: impl Fn(&T) -> bool) -> bool {
+    let before = upcoming.len();
+    upcoming.retain(|item| !blocked(item));
+    before != upcoming.len()
+}
+
 fn scramble(upcoming: &mut VecDeque<Entry>, source: &[Entry], current: Option<&Entry>) {
     let mut entries = unknown(upcoming, source);
     entries.extend(
@@ -503,7 +511,10 @@ impl Queue {
         self.upcoming.append(&mut suggested);
     }
 
+    /// Settles every change: blocked tracks leave what is still to play, the history is
+    /// capped, and the queue is saved and redrawn.
     fn changed(&mut self, cx: &mut Context<Self>) {
+        self.drop_blocked(cx);
         trim(&mut self.past, PAST_LIMIT);
         self.sections = QueueSections::new(
             self.past.len(),
@@ -591,6 +602,23 @@ impl Queue {
             |entry| local(&entry.track),
         );
         if suggested || sifted {
+            self.changed(cx);
+        }
+    }
+
+    /// Takes every blocked track out of what is still to play. The current track and the
+    /// history stay, so the caller decides whether to skip what is playing.
+    fn drop_blocked(&mut self, cx: &App) -> bool {
+        let blocklist = self.settings.read(cx).blocklist();
+        if blocklist.is_empty() {
+            return false;
+        }
+        unblocked(&mut self.upcoming, |entry| blocklist.blocks(&entry.track))
+    }
+
+    /// Applies a blocklist that just grew to what is queued.
+    pub fn sift_blocked(&mut self, cx: &mut Context<Self>) {
+        if self.drop_blocked(cx) {
             self.changed(cx);
         }
     }
@@ -1207,7 +1235,11 @@ impl Queue {
     }
 
     pub fn previous(&mut self, cx: &mut Context<Self>) -> Option<Track> {
-        let index = self.past.iter().rposition(|entry| entry.track.playable)?;
+        let blocklist = self.settings.read(cx).blocklist();
+        let index = self
+            .past
+            .iter()
+            .rposition(|entry| entry.track.playable && !blocklist.blocks(&entry.track))?;
         self.select(QueuePosition::Past(index), cx)
     }
 
@@ -1332,10 +1364,12 @@ mod tests {
 
     use music::{ArtistRef, Track};
 
+    use super::QueueKind;
     use super::{
         Entry, gap_target, hydrate, in_order, local, move_item, record, restore, scramble,
-        select_past, select_upcoming, sift, stub, trim,
+        select_past, select_upcoming, sift, stub, trim, unblocked,
     };
+    use crate::{Blocked, Blocklist};
 
     fn track(id: &str) -> Track {
         Track {
@@ -1690,6 +1724,52 @@ mod tests {
         assert_eq!(past, [1]);
         assert_eq!(current, Some(2));
         assert_eq!(upcoming, [3]);
+    }
+
+    fn by(id: &str, artist: &str, kind: QueueKind) -> Entry {
+        let mut track = track(id);
+        track.artists = artist.to_owned();
+        track.artist_refs = vec![ArtistRef {
+            name: artist.to_owned(),
+            id: Some(format!("{artist}-id")),
+        }];
+        Entry {
+            track: Rc::new(track),
+            kind,
+            ..entry(id)
+        }
+    }
+
+    #[test]
+    fn blocking_drops_matching_tracks_from_every_run() {
+        let mut upcoming: VecDeque<Entry> = [
+            by("m1", "Liked", QueueKind::Queued),
+            by("m2", "Disliked", QueueKind::Queued),
+            by("s1", "Disliked", QueueKind::Context),
+            by("s2", "Liked", QueueKind::Context),
+            by("r1", "Liked", QueueKind::Suggested),
+            by("r2", "Liked", QueueKind::Suggested),
+        ]
+        .into();
+        let mut blocklist = Blocklist::default();
+        blocklist.add(Blocked::artist(Some("Disliked-id".into()), "Disliked"));
+        blocklist.add(Blocked::song(&upcoming[4].track).unwrap());
+
+        assert!(unblocked(&mut upcoming, |entry| blocklist.blocks(&entry.track)));
+        assert_eq!(ids(&upcoming), ["m1", "s2", "r2"]);
+        let kinds: Vec<QueueKind> = upcoming.iter().map(|entry| entry.kind).collect();
+        assert_eq!(
+            kinds,
+            [QueueKind::Queued, QueueKind::Context, QueueKind::Suggested]
+        );
+    }
+
+    #[test]
+    fn an_unblocked_queue_is_left_as_it_was() {
+        let mut upcoming: VecDeque<Entry> = listing(4).into();
+
+        assert!(!unblocked(&mut upcoming, |_| false));
+        assert_eq!(upcoming.len(), 4);
     }
 
     #[test]

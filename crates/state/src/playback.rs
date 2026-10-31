@@ -61,8 +61,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::devices::collection_of;
 use crate::{
-    AppSettings, Devices, Elsewhere, Equalizer, Io, Network, Outcome, Session, SessionEvent,
-    SessionState, Sonora, Target, Toast, Toasts,
+    AppSettings, Blocked, Devices, Elsewhere, Equalizer, Io, Network, Outcome, Session,
+    SessionEvent, SessionState, Sonora, Target, Toast, Toasts,
 };
 
 const POSITION_INTERVAL: Duration = Duration::from_millis(500);
@@ -1451,6 +1451,50 @@ impl Playback {
         self.next(cx);
     }
 
+    /// Blocks a song or artist: it joins the blocklist, leaves the queue, and is skipped when it
+    /// is what plays. The toast's Undo takes it off the list again, but what left the queue
+    /// stays out.
+    pub fn block(&mut self, blocked: Blocked, cx: &mut Context<Self>) {
+        let added = self
+            .settings
+            .update(cx, |settings, cx| settings.block(blocked.clone(), cx));
+        if !added {
+            return;
+        }
+        self.queue.update(cx, |queue, cx| queue.sift_blocked(cx));
+        let playing = self.track.as_ref().or(self.queue.read(cx).current());
+        if playing.is_some_and(|track| blocked.blocks(track)) {
+            match self.queue.read(cx).has_next() {
+                true => self.next(cx),
+                false => self.pause(cx),
+            }
+        }
+
+        let key = match blocked.is_artist() {
+            true => "toast-blocked-artist",
+            false => "toast-blocked-song",
+        };
+        let name = blocked.name().to_owned();
+        let playback = cx.entity().downgrade();
+        let toast = Toast::new(Outcome::Done, key).name(name).undo(move |cx| {
+            playback
+                .update(cx, |playback, cx| playback.unblock(&blocked, cx))
+                .ok();
+        });
+        Toasts::post(toast, cx);
+    }
+
+    /// Takes a song or artist off the blocklist, so it can be queued and played again.
+    pub fn unblock(&mut self, blocked: &Blocked, cx: &mut Context<Self>) {
+        self.settings
+            .update(cx, |settings, cx| settings.unblock(blocked, cx));
+    }
+
+    /// Whether the listener blocked the track or one of its artists.
+    fn blocked(&self, track: &Track, cx: &App) -> bool {
+        self.settings.read(cx).blocklist().blocks(track)
+    }
+
     /// Notes a skip and says whether it is part of a burst, which loads only once the skipping
     /// stops.
     fn burst(&mut self) -> Start {
@@ -1800,8 +1844,9 @@ impl Playback {
         self.load_after(&track, start, cx);
     }
 
-    /// The next playable track the queue has, dropping the ones that are not. Reaching the
-    /// suggestions means radio has taken over from the station the queue was playing.
+    /// The next playable track the queue has, passing over the ones that are not or that the
+    /// listener blocked. Reaching the suggestions means radio has taken over from the station
+    /// the queue was playing.
     fn playable_next(&mut self, cx: &mut Context<Self>) -> Option<Track> {
         loop {
             let suggested = self.queue.read(cx).next_is_suggested();
@@ -1809,14 +1854,14 @@ impl Playback {
             if suggested {
                 self.leave_station();
             }
-            if track.playable {
+            if track.playable && !self.blocked(&track, cx) {
                 return Some(track);
             }
         }
     }
 
     fn follow_after(&mut self, track: Track, start: Start, cx: &mut Context<Self>) {
-        let track = match track.playable {
+        let track = match track.playable && !self.blocked(&track, cx) {
             true => Some(track),
             false => self.playable_next(cx),
         };

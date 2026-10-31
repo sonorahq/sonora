@@ -38,6 +38,7 @@ use ui::{
 };
 
 use self::equalizer::Profile;
+use crate::blocklist::{Blocked, Blocklist};
 use crate::equalizer::DeviceRule;
 use crate::pins::PinSort;
 use crate::queue::{Resume, gap_target};
@@ -434,6 +435,9 @@ struct Values {
     /// Missing system requirements the user asked never to hear about again.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     silenced_requirements: Vec<String>,
+    /// Songs and artists the listener blocked, which the queue drops and playback skips.
+    #[serde(skip_serializing_if = "Blocklist::is_empty")]
+    blocked: Blocklist,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     scrobbling: BTreeMap<String, Account>,
     appearance: Appearance,
@@ -627,6 +631,7 @@ impl Default for Values {
             local_folders: Vec::new(),
             hidden_nav: Vec::new(),
             silenced_requirements: Vec::new(),
+            blocked: Blocklist::default(),
             scrobbling: BTreeMap::new(),
             appearance: Appearance::default(),
         }
@@ -2035,6 +2040,28 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    pub fn blocklist(&self) -> &Blocklist {
+        &self.values.blocked
+    }
+
+    /// Adds a song or artist to the blocklist. Says whether it was not blocked already.
+    pub fn block(&mut self, blocked: Blocked, cx: &mut Context<Self>) -> bool {
+        if !self.values.blocked.add(blocked) {
+            return false;
+        }
+        self.schedule_save(cx);
+        true
+    }
+
+    /// Takes a song or artist off the blocklist. Says whether it was on it.
+    pub fn unblock(&mut self, blocked: &Blocked, cx: &mut Context<Self>) -> bool {
+        if !self.values.blocked.remove(blocked) {
+            return false;
+        }
+        self.schedule_save(cx);
+        true
+    }
+
     pub fn set_startup(&mut self, screen: impl Into<String>, cx: &mut Context<Self>) {
         let screen = screen.into();
         if self.values.startup == screen {
@@ -3195,6 +3222,39 @@ mod tests {
         drop(store);
         fs::remove_file(path).expect("test database is removed");
         fs::remove_dir(root).expect("test directory is removed");
+    }
+
+    #[test]
+    fn the_blocklist_survives_a_reload_of_the_settings_file() {
+        let root = scratch("blocklist");
+        let path = root.join("settings.json");
+        let mut values = Values::default();
+        let song = Blocked::Song {
+            id: "song".to_owned(),
+            name: "Song".to_owned(),
+            artists: "Someone".to_owned(),
+        };
+        let artist = Blocked::artist(Some("artist".to_owned()), "Someone");
+        values.blocked.add(song.clone());
+        values.blocked.add(artist.clone());
+        fs::create_dir_all(&root).expect("test directory is created");
+        fs::write(&path, serde_json::to_vec_pretty(&values).unwrap()).expect("settings save");
+
+        let store = StateStore::new(Database::at(root.join("state.sqlite")));
+        let loaded = AppSettings::load_from(path.clone(), store);
+
+        assert_eq!(loaded.blocklist().entries(), [song, artist]);
+        drop(loaded);
+        fs::remove_dir_all(root).expect("test directory is removed");
+    }
+
+    #[test]
+    fn an_empty_blocklist_is_left_out_of_the_settings_file() {
+        let json = serde_json::to_string(&Values::default()).unwrap();
+
+        assert!(!json.contains("\"blocked\""));
+        let values: Values = serde_json::from_str("{}").unwrap();
+        assert!(values.blocked.is_empty());
     }
 
     fn ids(pinned: &[Held]) -> Vec<&str> {

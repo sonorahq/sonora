@@ -4,7 +4,7 @@ use i18n::t;
 use music::{Album, GenreItem, MediaKind, Playlist, SavedArtist, Track};
 use router::{Destination, navigate};
 use state::{
-    Addition, Collection, Detail, History, Library, Origin, Outcome, Playback, Progress,
+    Addition, Blocked, Collection, Detail, History, Library, Origin, Outcome, Playback, Progress,
     QueuePlacement, Shelf, Sonora, Toasts,
 };
 use ui::{Menu, MenuItem, MenuSearch, Pin, PinKind, Scrollbar, SubmenuState};
@@ -514,6 +514,10 @@ impl ItemMenu {
                     .map(|pin| pin_action(&pin, cx))
                     .into_iter()
                     .collect(),
+                match many {
+                    true => Vec::new(),
+                    false => track_block_items(track, cx),
+                },
                 trailing.into_iter().collect(),
             ],
         )
@@ -794,6 +798,8 @@ pub(crate) fn artist_menu(
     let copied = artist_id.clone();
     let queued_from = played.clone();
     let playing = playback.clone();
+    let blocking = playback.clone();
+    let blocked = Blocked::artist(Some(artist.id.clone()), artist.name.clone());
 
     let open = match opened_here {
         true => Vec::new(),
@@ -832,8 +838,69 @@ pub(crate) fn artist_menu(
                 .map(|pin| pin_action(&pin, cx))
                 .into_iter()
                 .collect(),
+            vec![block_item(
+                "block-artist",
+                ("menu-block-artist", "menu-unblock-artist"),
+                blocked,
+                blocking,
+                cx,
+            )],
         ],
     )
+}
+
+/// The entries that block a single track's song, and its artist when it credits just one.
+/// A track with no id offers no song entry, since nothing could match it later.
+fn track_block_items(track: &Track, cx: &App) -> Vec<MenuItem> {
+    let playback = Sonora::global(cx).playback.clone();
+    let song = Blocked::song(track).map(|blocked| {
+        block_item(
+            "block-song",
+            ("menu-block-song", "menu-unblock-song"),
+            blocked,
+            playback.clone(),
+            cx,
+        )
+    });
+    let artist = match track.artist_refs.as_slice() {
+        [only] => Some(block_item(
+            "block-track-artist",
+            ("menu-block-artist", "menu-unblock-artist"),
+            Blocked::artist(only.id.clone(), only.name.clone()),
+            playback,
+            cx,
+        )),
+        _ => None,
+    };
+    song.into_iter().chain(artist).collect()
+}
+
+/// An entry that blocks `blocked`, or takes it off the blocklist when it is on it already.
+/// `keys` names the two labels, the block one first.
+fn block_item(
+    id: &'static str,
+    keys: (&'static str, &'static str),
+    blocked: Blocked,
+    playback: Entity<Playback>,
+    cx: &App,
+) -> MenuItem {
+    let held = Sonora::global(cx)
+        .settings
+        .read(cx)
+        .blocklist()
+        .holds(&blocked);
+    let (key, icon) = match held {
+        true => (keys.1, "icons/undo-2.svg"),
+        false => (keys.0, "icons/octagon-x.svg"),
+    };
+    MenuItem::new(id, i18n::lookup(key, None))
+        .icon(icon)
+        .on_click(move |_, _, cx| {
+            playback.update(cx, |playback, cx| match held {
+                true => playback.unblock(&blocked, cx),
+                false => playback.block(blocked.clone(), cx),
+            });
+        })
 }
 
 fn artist_library_item(artist: SavedArtist, cx: &App) -> Option<MenuItem> {
