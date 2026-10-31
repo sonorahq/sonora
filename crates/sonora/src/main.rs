@@ -267,6 +267,14 @@ fn follow(items: &[String], cx: &mut App) {
             false => paths.push(cli::item::local_path(item)),
         }
     }
+    if !paths.is_empty()
+        && Sonora::global(cx)
+            .settings
+            .read(cx)
+            .fullscreen_on_file_open()
+    {
+        router::navigate(Destination::Fullscreen, cx);
+    }
     if !paths.is_empty() {
         let playback = Sonora::global(cx).playback.clone();
         playback.update(cx, |playback, cx| playback.open_paths(paths, cx));

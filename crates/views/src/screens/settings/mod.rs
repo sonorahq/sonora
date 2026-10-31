@@ -101,6 +101,7 @@ enum Slot {
     OfflineMode,
     Sleep,
     StayAwake,
+    FullscreenOnFileOpen,
     StreamQuality,
     StreamFormat,
     StreamBitrate,
@@ -834,6 +835,10 @@ impl SettingsView {
             ),
             Slot::Sleep => (t!("settings-sleep"), t!("settings-sleep-detail")),
             Slot::StayAwake => (t!("settings-stay-awake"), t!("settings-stay-awake-detail")),
+            Slot::FullscreenOnFileOpen => (
+                t!("settings-fullscreen-on-file-open"),
+                t!("settings-fullscreen-on-file-open-detail"),
+            ),
             Slot::Widevine => (t!("settings-widevine"), self.widevine_detail(cx)),
             Slot::OutputDevice => (
                 t!("settings-output-device"),
@@ -997,6 +1002,7 @@ impl SettingsView {
             Slot::StreamBitrate => self.stream_bitrate_row(cx),
             Slot::Sleep => self.sleep_row(cx),
             Slot::StayAwake => self.stay_awake_row(cx),
+            Slot::FullscreenOnFileOpen => self.fullscreen_on_file_open_row(cx),
             Slot::OutputDevice => self.output_device_row(),
             Slot::OutputFailure => self.output_failure_row(cx),
             Slot::SampleRate => self.sample_rate_row(cx),
