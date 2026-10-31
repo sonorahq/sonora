@@ -19,8 +19,9 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora play <file\|link>...` | Play now; the rest of the queue carries on after |
 | `sonora play -s <query> [-t TYPE]` | Find the best hit of a search and play it now |
 | `sonora next` / `prev` | Skip to the next track, or go back to the previous one |
-| `sonora seek <0-100>` | Jump to a point of the current track, in percent |
+| `sonora seek <0-100\|TIME\|±STEP>` | Jump to a percent of the current track, a time such as `1:30`, or a step such as `+10` |
 | `sonora current` | Print what plays now as JSON, or `null` when nothing is loaded |
+| `sonora watch [--position]` | Print what plays again on every change, one line of JSON each, until stopped |
 | `sonora volume [N\|+N\|-N]` | Print the volume, set it from 0 to 100, or step it |
 | `sonora shuffle [on\|off\|toggle]` | Print shuffle, or switch it |
 | `sonora repeat [off\|all\|one]` | Print repeat, or set it |
@@ -51,6 +52,17 @@ given. `play` puts them right after the current track and skips to them, as `pla
   `sonora provider`.
 - Everything is fetched before anything is queued. When one item fails, nothing is queued and the
   command says which item it was.
+
+### Seeking
+
+`seek` takes a bare number as a percent, as it always has, a time as `1:30` or `1:02:03`, and a
+step from where the track plays as `+10`, `-10` or `-1:30`, in seconds. A step stays inside the
+track, so `-10` near the start goes back to it. Bound to keys, as in Hyprland:
+
+```
+bind = SUPER, right, exec, sonora seek +10
+bind = SUPER, left, exec, sonora seek -10
+```
 
 ### Searching
 
@@ -101,11 +113,32 @@ sonora search daft punk --json | jq -r '.[0].link'
   "position": 75,
   "volume": 80,
   "shuffle": false,
-  "repeat": "off"
+  "repeat": "off",
+  "provider": "spotify",
+  "liked": true,
+  "origin": { "kind": "album", "id": "…", "name": "Discovery" }
 }
 ```
 
 `state` is `playing`, `paused`, `loading` or `idle`. Times are whole seconds, the volume a percent.
+`provider` is the slug `sonora providers` lists, `local` for a file. `origin` is what the track was
+queued from, `null` when it was queued on its own; its `kind` is `album`, `playlist`, `artist`,
+`radio`, `liked` or `local`.
+
+### Watching
+
+`watch` prints what plays as `current` does, then again on every change of the track, the state,
+the volume, shuffle or repeat, one line of JSON each, for a status bar to follow without asking
+every second. `--position` also prints a line every second while a track plays, for a clock.
+
+```sh
+sonora watch | jq --unbuffered -r '.track.title // ""'
+sonora watch --position > nowplaying.json    # read by a stream overlay
+```
+
+A line is `null` while nothing is loaded. It runs until stopped, and ends with code 0 when Sonora
+quits. With nothing reading its lines any more, as after `| head -1`, it ends at its next line, as
+`tail -f` does, so within a second with `--position` and at the next change without.
 
 ### Exit codes
 
@@ -157,12 +190,14 @@ A Flatpak Sonora is reached from inside its sandbox, so run commands through it:
 
 ### Protocol
 
-One line of JSON each way: the request, then the reply.
+One line of JSON each way: the request, then the reply. A watch is the one exception: its reply
+comes again on every change, on the same connection, until the command line hangs up.
 
 ```
 → {"v":1,"body":{"playback":"next"}}
 → {"v":1,"body":{"playback":{"volume":{"by":5}}}}
 → {"v":1,"body":{"queue":{"add":[{"search":{"text":"one more time","kind":"song"}}]}}}
+→ {"v":1,"body":{"watch":{"position":false}}}
 ← {"v":1,"body":"done"}
 ← {"v":1,"body":{"value":{"volume":80}}}
 ← {"v":1,"body":{"failed":{"no-account":"Deezer"}}}
@@ -209,5 +244,3 @@ The crate knows nothing of GPUI or of the app's state, so it can be built and re
 - **Messages through Fluent.** Errors, table headers, statuses and `--help` are in English in
   the code for now. They move to `assets/i18n/en-US/main.ftl`, in the language the running
   Sonora uses or, for `--help` with none running, the system's.
-- **`sonora watch`.** One line of JSON on every change of what plays, for status bars to follow
-  without asking every second, and for a stream overlay to read from a file.

@@ -29,6 +29,8 @@ use gpui::{
 use state::Sonora;
 use ui::{ActiveTheme as _, CoverPalette, Theme};
 
+use crate::shared::adaptive;
+
 /// How many blobs make up the field.
 pub(crate) const BLOBS: usize = 5;
 /// The widest blur, in device pixels, the renderer still runs at full resolution. It picks
@@ -163,16 +165,12 @@ impl Ambient {
         }));
     }
 
-    /// The theme with the tint this field is painted from: the theme itself behind the window,
-    /// and the sampled cover in a frame.
-    fn tinted(&self, theme: Theme) -> Theme {
+    /// The theme this field is painted from: the app's own behind the window, and in a frame
+    /// the one fullscreen would wear for the sampled cover. A preview draws over it with the same.
+    pub(crate) fn theme(&self, cx: &App) -> Theme {
         match &self.framed {
-            None => theme,
-            Some(sampled) => Theme {
-                tint: sampled.palette.primary,
-                tint_secondary: sampled.palette.secondary,
-                ..theme
-            },
+            None => *cx.theme(),
+            Some(sampled) => adaptive::stage(sampled.palette, cx),
         }
     }
 
@@ -262,7 +260,7 @@ impl Ambient {
 
 impl Render for Ambient {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = *cx.theme();
+        let theme = self.theme(cx);
         // Without motion the field is a still gradient: no frame requests, so
         // fullscreen stops redrawing once settled. Either the system preference
         // or the setting of its own is enough to stop it.
@@ -280,7 +278,7 @@ impl Render for Ambient {
             }
             false => 0.,
         };
-        let colors = self.wash(Self::colors(&self.tinted(theme)), animates);
+        let colors = self.wash(Self::colors(&theme), animates);
         // The field stands in for the page rather than sitting on it, so it carries the
         // window's own opacity and `Root` paints no background beneath it. One opacity thins
         // every layer at once; a quad still adds to what it covers, which is why the blobs

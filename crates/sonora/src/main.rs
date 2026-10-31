@@ -68,7 +68,7 @@ fn main() -> ExitCode {
         Ok(CommandType::Launch(items)) => items,
         Ok(CommandType::Local(local)) => return cli::local(local),
         Ok(CommandType::Remote(request, format)) => {
-            return match single::connect() {
+            return match single::connect(request.streams()) {
                 Ok(mut stream) => cli::run(&mut stream, &request, format),
                 Err(_) => cli::not_running(),
             };
@@ -212,8 +212,11 @@ fn main() -> ExitCode {
         // Commands skip the open batching, since nothing arrives in bursts there.
         let control = Sonora::global(cx).control.clone();
         cx.spawn(async move |cx| {
-            while let Some((request, reply)) = commands.recv().await {
-                control.update(cx, |control, cx| control.answer(request, reply, cx));
+            while let Some(asked) = commands.recv().await {
+                control.update(cx, |control, cx| match asked {
+                    single::Asked::Once(request, reply) => control.answer(request, reply, cx),
+                    single::Asked::Watch(watch, sink) => control.watch(watch, sink, cx),
+                });
             }
         })
         .detach();

@@ -12,7 +12,7 @@ use clap_complete::Shell;
 
 use crate::commands::{
     CommandType, Format, Item, Kind, Level, Local, PlaybackCommand, ProviderCommand, QueueCommand,
-    Repeat, Request, SearchQuery, Switch,
+    Repeat, Request, SearchQuery, Switch, Time, Watch,
 };
 use crate::item;
 
@@ -73,13 +73,22 @@ enum Sub {
     /// Go back to the previous track.
     #[command(alias = "previous")]
     Prev,
-    /// Jump to a point of the current track, in percent.
+    /// Jump to a point of the current track: `50` percent, `1:30` in, or `+10`/`-10` seconds away.
     Seek {
-        #[arg(value_parser = clap::value_parser!(u8).range(0..=100))]
-        percent: u8,
+        /// A percent from 0 to 100, a time as `1:30` or `1:02:03`, or a step such as `+10` or
+        /// `-1:30`.
+        #[arg(allow_hyphen_values = true, value_parser = point)]
+        point: PlaybackCommand,
     },
     /// Print the current track as JSON.
     Current,
+    /// Print the current track as JSON again every time it changes, one line each, until
+    /// stopped.
+    Watch {
+        /// Also print a line every second while a track plays, for a clock.
+        #[arg(long)]
+        position: bool,
+    },
     /// Print the volume, or set it: `50`, `+5`, `-5`.
     Volume {
         /// A level from 0 to 100, or a step from the current one.
@@ -267,8 +276,9 @@ fn into_command(args: Args, line: &mut Command) -> Result<CommandType, clap::Err
         Sub::Toggle => play(PlaybackCommand::Toggle),
         Sub::Next => play(PlaybackCommand::Next),
         Sub::Prev => play(PlaybackCommand::Previous),
-        Sub::Seek { percent } => play(PlaybackCommand::Seek(percent)),
+        Sub::Seek { point } => play(point),
         Sub::Current => play(PlaybackCommand::CurrentTrack),
+        Sub::Watch { position } => Request::Watch(Watch { position }),
         Sub::Volume { level } => play(PlaybackCommand::Volume(level)),
         Sub::Shuffle { switch } => play(PlaybackCommand::Shuffle(switch.map(Switch::from))),
         Sub::Repeat { repeat } => play(PlaybackCommand::Repeat(repeat.map(Repeat::from))),
@@ -345,6 +355,57 @@ fn level(text: &str) -> Result<Level, String> {
             .map(Level::To)
             .ok_or_else(|| format!("{value} is not between 0 and 100")),
     }
+}
+
+/// A point to seek to as typed: a bare number is a percent, `1:30` or `1:02:03` a time, and a
+/// signed number or time such as `+10` or `-1:30` a step from where the track plays.
+fn point(text: &str) -> Result<PlaybackCommand, String> {
+    let refused =
+        || format!("'{text}' is not a percent, a time such as 1:30 or a step such as +10");
+    let step = text.strip_prefix(['+', '-']);
+    let body = step.unwrap_or(text);
+    if body.is_empty() || !body.chars().all(|c| c.is_ascii_digit() || c == ':') {
+        return Err(refused());
+    }
+    let timed = body.contains(':');
+    let seconds = match timed {
+        true => clock(body),
+        false => body.parse().ok(),
+    }
+    .ok_or_else(refused)?;
+    if step.is_some() {
+        let seconds = i64::try_from(seconds).map_err(|_| refused())?;
+        let step = match text.starts_with('-') {
+            true => -seconds,
+            false => seconds,
+        };
+        return Ok(PlaybackCommand::SeekTime(Time::By(step)));
+    }
+    match timed {
+        true => Ok(PlaybackCommand::SeekTime(Time::To(seconds))),
+        false => u8::try_from(seconds)
+            .ok()
+            .filter(|percent| *percent <= 100)
+            .map(PlaybackCommand::Seek)
+            .ok_or_else(|| format!("{seconds} is not between 0 and 100; write a time as 1:30")),
+    }
+}
+
+/// Whole seconds from `1:30` or `1:02:03`, or `None` when the text is not such a time. Every
+/// part past the first is two digits under 60.
+fn clock(text: &str) -> Option<u64> {
+    let mut parts = text.split(':');
+    let mut seconds: u64 = parts.next()?.parse().ok()?;
+    let mut count = 1;
+    for part in parts {
+        count += 1;
+        let value: u64 = part
+            .parse()
+            .ok()
+            .filter(|value| part.len() == 2 && *value < 60)?;
+        seconds = seconds.checked_mul(60)?.checked_add(value)?;
+    }
+    (count <= 3).then_some(seconds)
 }
 
 /// An item to queue as typed: an address goes as it is, a path has to name a file here.

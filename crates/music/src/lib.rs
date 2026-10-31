@@ -376,6 +376,12 @@ pub trait MusicApi: Send + Sync {
     async fn genre(&self, _genre_id: &str) -> Result<GenreDetail> {
         Ok(GenreDetail::default())
     }
+
+    /// A picture for a genre that `genres` listed without one, found with as few requests as
+    /// the provider allows. Defaults to none, for a provider whose genres come with covers.
+    async fn genre_cover(&self, _genre_id: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
 }
 
 #[async_trait]

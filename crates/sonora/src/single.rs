@@ -2,11 +2,11 @@ use std::io::{self, BufRead as _, BufReader, ErrorKind, Read, Write};
 use std::thread;
 use std::time::Duration;
 
-use cli::commands::Request;
+use cli::commands::{Request, Watch};
 use cli::wire::{self, Failure, Reply};
 use interprocess::local_socket::traits::{ListenerExt as _, Stream as _};
 use interprocess::local_socket::{ListenerOptions, Name, Stream};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::oneshot;
 
 const SOCKET: &str = match cfg!(debug_assertions) {
@@ -20,8 +20,14 @@ const PATIENCE: Duration = Duration::from_secs(5);
 /// queue is fetched before the answer, which can take a while on a slow network.
 const ANSWER: Duration = Duration::from_secs(60);
 
-/// A command from the command line and where its reply goes.
-pub type Asked = (Request, oneshot::Sender<Reply>);
+/// A command from the command line and where its answer goes.
+pub enum Asked {
+    /// A command answered once.
+    Once(Request, oneshot::Sender<Reply>),
+    /// `sonora watch`, answered again on every change until the command line hangs up and the
+    /// receiver goes with it.
+    Watch(Watch, UnboundedSender<Reply>),
+}
 
 pub enum Instance {
     First,
@@ -93,10 +99,15 @@ pub fn claim(
     Instance::First
 }
 
-/// The running Sonora's instance socket, for a command line that talks to it.
-pub fn connect() -> io::Result<Stream> {
+/// The running Sonora's instance socket, for a command line that talks to it. One whose answer
+/// `streams` waits for each reply as long as it takes, since a watch is quiet until something
+/// changes.
+pub fn connect(streams: bool) -> io::Result<Stream> {
     let stream = Stream::connect(name()?)?;
-    stream.set_recv_timeout(Some(ANSWER))?;
+    stream.set_recv_timeout(match streams {
+        true => None,
+        false => Some(ANSWER),
+    })?;
     Ok(stream)
 }
 
@@ -117,9 +128,10 @@ fn serve(
     };
     if command {
         let reply = match wire::receive::<Request>(&mut reader) {
+            Ok(Request::Watch(watch)) => return follow(&connection, watch, commands),
             Ok(request) => {
                 let (reply, answered) = oneshot::channel();
-                if commands.send((request, reply)).is_err() {
+                if commands.send(Asked::Once(request, reply)).is_err() {
                     return;
                 }
                 match answered.blocking_recv() {
@@ -150,6 +162,22 @@ fn serve(
         .map(str::to_owned)
         .collect();
     sender.send(items).ok();
+}
+
+/// Keeps a `sonora watch` connection open, writing each reply the app sends until the command
+/// line hangs up. A write that fails ends it, which drops the receiver, so the app stops
+/// sending to it.
+fn follow(connection: &Stream, watch: Watch, commands: &UnboundedSender<Asked>) {
+    let (sink, mut replies) = mpsc::unbounded_channel();
+    if commands.send(Asked::Watch(watch, sink)).is_err() {
+        return;
+    }
+    while let Some(reply) = replies.blocking_recv() {
+        if let Err(error) = wire::send(&mut &*connection, &reply) {
+            log::debug!("single: a watch ended: {error}");
+            return;
+        }
+    }
 }
 
 fn hand_over(name: Name<'_>, args: &[String]) -> bool {

@@ -1,23 +1,31 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use cli::commands::{
     self, Item, Kind, Level, PlaybackCommand, ProviderCommand, QueueCommand, Request, SearchQuery,
-    Switch,
+    Switch, Time, Watch,
 };
 use cli::wire::{self, Current, Failure, Reply, State, Value};
 use futures::future;
 use gpui::{App, Context, Entity, Subscription, Task};
 use music::link::Linked;
 use music::{Album, MediaKind, MusicApi, MusicProvider, Playlist, Track};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::search::{self, Catalog};
 use crate::{
     Hit, Io, Library, Origin, Playback, PlaybackState, QueuePlacement, Repeat, Session,
-    SessionState, Shelf, Sonora, join, noted,
+    SessionState, Shelf, Sonora, Whence, join, noted,
 };
+
+/// What `sonora current` calls the provider of a local file, the slug `sonora providers` gives it.
+const LOCAL: &str = "local";
+
+/// How often a watch looks again on its own, for the position it reports and for a change made
+/// somewhere that does not go through `Playback`, such as the volume of a steered device.
+const WATCH_TICK: Duration = Duration::from_secs(1);
 
 /// What the three searches of a query answered: songs, albums and playlists.
 type Found = (
@@ -38,7 +46,21 @@ pub struct Control {
     issued: u64,
     /// A provider switch waiting for the session to settle before it answers.
     switching: Option<Switching>,
+    /// Command lines following what plays, as `sonora watch`.
+    watchers: Vec<Watcher>,
+    /// What keeps the watchers told, held only while there are any.
+    watching: Option<(Subscription, Task<()>)>,
     _session: Subscription,
+}
+
+/// A `sonora watch` and what it was last told.
+struct Watcher {
+    sink: mpsc::UnboundedSender<Reply>,
+    /// Whether a new position alone is worth a line.
+    position: bool,
+    /// The state last sent, with the position left out unless `position`; `None` before the
+    /// first line.
+    told: Option<Option<Current>>,
 }
 
 /// A switch to the provider `slug`, answered once the session lands somewhere.
@@ -90,7 +112,63 @@ impl Control {
             pending: HashMap::new(),
             issued: 0,
             switching: None,
+            watchers: Vec::new(),
+            watching: None,
             _session,
+        }
+    }
+
+    /// Follows what plays for a `sonora watch`: what plays now at once, then again on every
+    /// change, until the command line hangs up and `sink` closes.
+    pub fn watch(
+        &mut self,
+        watch: Watch,
+        sink: mpsc::UnboundedSender<Reply>,
+        cx: &mut Context<Self>,
+    ) {
+        self.watchers.push(Watcher {
+            sink,
+            position: watch.position,
+            told: None,
+        });
+        if self.watching.is_none() {
+            let observed = cx.observe(&self.playback, |this, _, cx| this.tell(cx));
+            let ticking = cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(WATCH_TICK).await;
+                    if this.update(cx, |this, cx| this.tell(cx)).is_err() {
+                        break;
+                    }
+                }
+            });
+            self.watching = Some((observed, ticking));
+        }
+        self.tell(cx);
+    }
+
+    /// Sends what plays to every watcher it changed for since its last line, and lets go of the
+    /// ones that hung up. With none left, nothing follows playback any more.
+    fn tell(&mut self, cx: &mut Context<Self>) {
+        let now = current(self.playback.read(cx), cx);
+        self.watchers.retain_mut(|watcher| {
+            let seen = match watcher.position {
+                true => now.clone(),
+                false => now.clone().map(|current| Current {
+                    position: 0,
+                    ..current
+                }),
+            };
+            if watcher.told.as_ref() == Some(&seen) {
+                return !watcher.sink.is_closed();
+            }
+            watcher.told = Some(seen);
+            watcher
+                .sink
+                .send(Reply::Value(Value::Current(now.clone())))
+                .is_ok()
+        });
+        if self.watchers.is_empty() {
+            self.watching = None;
         }
     }
 
@@ -109,6 +187,8 @@ impl Control {
             Request::Queue(command) => return self.queue(command, reply, cx),
             Request::Provider(command) => return self.provider(command, reply, cx),
             Request::Search(query) => return self.search(query, reply, cx),
+            // a watch is answered as a stream, by `watch`, and never reaches here
+            Request::Watch(_) => Reply::Failed(Failure::Malformed),
         };
         reply.send(answer).ok();
     }
@@ -448,6 +528,10 @@ fn play(playback: &mut Playback, command: PlaybackCommand, cx: &mut Context<Play
         PlaybackCommand::Next => playback.next(cx),
         PlaybackCommand::Previous => playback.previous(cx),
         PlaybackCommand::Seek(percent) => playback.seek_fraction(f32::from(percent) / 100., cx),
+        PlaybackCommand::SeekTime(time) => {
+            let target = moment(playback, time, cx);
+            playback.seek(target, cx);
+        }
         PlaybackCommand::CurrentTrack => {
             return Reply::Value(Value::Current(current(playback, cx)));
         }
@@ -540,6 +624,31 @@ fn settled_on(session: &Session, slug: &str) -> bool {
         )
 }
 
+/// Where a seek in time lands: the time asked for, or a step from where the track plays now,
+/// held inside the track on the steered device when there is one.
+fn moment(playback: &Playback, time: Time, cx: &App) -> Duration {
+    let (now, length) = match playback.steered(cx) {
+        Some(steered) => (steered.state.live_position(), steered.state.duration),
+        None => (
+            playback.live_position(),
+            playback
+                .track()
+                .map_or(Duration::ZERO, |track| track.duration),
+        ),
+    };
+    let target = match time {
+        Time::To(at) => Duration::from_secs(at),
+        Time::By(step) => match step < 0 {
+            true => now.saturating_sub(Duration::from_secs(step.unsigned_abs())),
+            false => now.saturating_add(Duration::from_secs(step.unsigned_abs())),
+        },
+    };
+    match length.is_zero() {
+        true => target,
+        false => target.min(length),
+    }
+}
+
 /// What plays now, on the steered device when there is one, or `None` when nothing is loaded.
 fn current(playback: &Playback, cx: &App) -> Option<Current> {
     let track = playback.shown_track(cx)?;
@@ -561,6 +670,12 @@ fn current(playback: &Playback, cx: &App) -> Option<Current> {
             (state, playback.live_position())
         }
     };
+    let sonora = Sonora::global(cx);
+    let id = track.id.as_deref();
+    let provider = match id.is_some_and(|id| Shelf::of(id).local()) {
+        true => Some(LOCAL.to_owned()),
+        false => sonora.session.read(cx).provider_slug().map(str::to_owned),
+    };
     Some(Current {
         state,
         track: wire_track(&track),
@@ -568,7 +683,26 @@ fn current(playback: &Playback, cx: &App) -> Option<Current> {
         volume: percent(playback.shown_volume(cx)),
         shuffle: playback.shown_shuffle(cx),
         repeat: wire_repeat(playback.shown_repeat(cx)),
+        provider,
+        liked: id.is_some_and(|id| sonora.library.read(cx).saved(id)),
+        origin: playback.origin(cx).map(wire_origin),
     })
+}
+
+fn wire_origin(origin: &Origin) -> wire::Origin {
+    let kind = match origin.whence {
+        Whence::Album => wire::OriginKind::Album,
+        Whence::Playlist => wire::OriginKind::Playlist,
+        Whence::Artist => wire::OriginKind::Artist,
+        Whence::Radio => wire::OriginKind::Radio,
+        Whence::Saved => wire::OriginKind::Liked,
+        Whence::Local => wire::OriginKind::Local,
+    };
+    wire::Origin {
+        kind,
+        id: origin.id.clone(),
+        name: origin.name.as_ref().map(ToString::to_string),
+    }
 }
 
 fn wire_track(track: &Track) -> wire::Track {

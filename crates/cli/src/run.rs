@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::process::ExitCode;
 
 use crate::args;
@@ -23,6 +23,9 @@ pub fn local(local: Local) -> ExitCode {
 
 /// Sends `request` over `stream`, prints the reply in `format` and gives the code to exit with.
 pub fn run<S: Read + Write>(stream: &mut S, request: &Request, format: Format) -> ExitCode {
+    if request.streams() {
+        return follow(stream, request);
+    }
     // TODO: the messages here come from Fluent once render lands
     match wire::exchange(stream, request) {
         Ok(Reply::Done) => ExitCode::SUCCESS,
@@ -47,6 +50,39 @@ pub fn run<S: Read + Write>(stream: &mut S, request: &Request, format: Format) -
         Err(error) => {
             eprintln!("sonora: {error}");
             ExitCode::from(FAILED)
+        }
+    }
+}
+
+/// Sends a request answered by a stream, `sonora watch`, and prints each reply as one line of
+/// JSON as it arrives, whatever the format, since a line per change is what a script reads.
+/// It ends when Sonora closes the stream, by quitting, or at the first line written after
+/// nothing reads them any more, as when they go into `head`.
+fn follow<S: Read + Write>(stream: &mut S, request: &Request) -> ExitCode {
+    if let Err(error) = wire::send(stream, request) {
+        eprintln!("sonora: {error}");
+        return ExitCode::from(FAILED);
+    }
+    let mut reader = BufReader::new(stream);
+    let mut out = io::stdout().lock();
+    loop {
+        match wire::receive::<Reply>(&mut reader) {
+            Ok(Reply::Value(value)) => {
+                let written = writeln!(out, "{}", json(&value)).and_then(|()| out.flush());
+                if written.is_err() {
+                    return ExitCode::SUCCESS;
+                }
+            }
+            Ok(Reply::Done) => {}
+            Ok(Reply::Failed(failure)) => {
+                eprintln!("sonora: {}", describe(&failure));
+                return ExitCode::from(FAILED);
+            }
+            Err(wire::Error::Closed) => return ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("sonora: {error}");
+                return ExitCode::from(FAILED);
+            }
         }
     }
 }

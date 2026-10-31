@@ -41,6 +41,24 @@ pub enum Request {
     Provider(ProviderCommand),
     /// A search on the current provider. Stands for `sonora search <query>`
     Search(SearchQuery),
+    /// What plays, sent again every time it changes, until the command line hangs up. Stands
+    /// for `sonora watch`
+    Watch(Watch),
+}
+
+impl Request {
+    /// Whether the answer is a stream of replies rather than one, so the command line waits
+    /// for as long as it takes rather than giving up on a slow answer.
+    pub fn streams(&self) -> bool {
+        matches!(self, Self::Watch(_))
+    }
+}
+
+/// How `sonora watch` follows what plays.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Watch {
+    /// Also a line every second while a track plays, for a clock. Stands for `--position`
+    pub position: bool,
 }
 
 /// What to search for on the current provider, and how much of it to answer.
@@ -78,6 +96,9 @@ pub enum PlaybackCommand {
     Previous,
     /// Puts current playback's slider on provided procentage (0% is start, 100% is end of the track). Stands for `sonora seek N`, where N is in [0, 100]
     Seek(u8),
+    /// Moves the current track to a time or by a step from where it is, in whole seconds and
+    /// held inside the track. Stands for `sonora seek 1:30`, `sonora seek +10` or `sonora seek -10`
+    SeekTime(Time),
     /// Returns current track's information. Stands for `sonora current`
     CurrentTrack,
     /// Returns or sets volume in order to `Switch`. Stands for `sonora volume < +/-N|N >`
@@ -133,6 +154,15 @@ pub enum Item {
 pub enum Level {
     To(u8),
     By(i8),
+}
+
+/// A point in a track for `seek` to move to: whole seconds from its start, or a signed step
+/// from where it plays now.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Time {
+    To(u64),
+    By(i64),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

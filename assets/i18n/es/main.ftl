@@ -155,8 +155,11 @@ menu-play-tracks-last = { $count ->
     [one] Reproducir { $count } pista al final
    *[other] Reproducir { $count } pistas al final
 }
-menu-song-radio = Ir a la radio de la canción
-menu-go-to-album = Ir al álbum
+menu-go-to = Ir a
+menu-artist = Artista
+menu-album = Álbum
+menu-radio = Radio
+menu-details = Detalles
 menu-go-to-artist = Ir al artista
 menu-view-details = Ver detalles
 menu-copy-link = Copiar enlace
@@ -430,6 +433,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Selección rápida
 home-quick-picks-empty = Marca algunas canciones como favoritas y aparecerán aquí
 home-recently-added = Añadidos recientemente
+home-recently-played = Reproducidos recientemente
 home-playlists = Listas de reproducción
 home-favorite-albums = Álbumes favoritos
 home-artists = Artistas
@@ -438,6 +442,9 @@ home-collection-albums = Álbumes de tu colección
 # search page
 search-placeholder = ¿Qué quieres escuchar?
 search-browse = Explorar todo
+search-submit = Buscar
+search-recent = Búsquedas recientes
+search-forget = Quitar del historial
 genre-empty = Todavía no hay nada que mostrar aquí
 search-best-match = Mejor coincidencia
 search-no-matches = Sin coincidencias

@@ -169,8 +169,11 @@ menu-play-tracks-last = { $count ->
     [few] Přehrát { $count } skladby jako poslední
    *[other] Přehrát { $count } skladeb jako poslední
 }
-menu-song-radio = Přejít na rádio skladby
-menu-go-to-album = Přejít na album
+menu-go-to = Přejít na
+menu-artist = Interpret
+menu-album = Album
+menu-radio = Rádio
+menu-details = Podrobnosti
 menu-go-to-artist = Přejít na interpreta
 menu-view-details = Zobrazit podrobnosti
 menu-copy-link = Kopírovat odkaz
@@ -457,6 +460,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Rychlý výběr
 home-quick-picks-empty = Označ pár skladeb jako oblíbené a objeví se tady
 home-recently-added = Nedávno přidané
+home-recently-played = Nedávno přehrávané
 home-playlists = Playlisty
 home-favorite-albums = Oblíbená alba
 home-artists = Interpreti
@@ -465,6 +469,9 @@ home-collection-albums = Alba z tvé knihovny
 # search page
 search-placeholder = Co chceš poslouchat?
 search-browse = Procházet vše
+search-submit = Hledat
+search-recent = Nedávná hledání
+search-forget = Odebrat z historie
 genre-empty = Tady zatím nic není
 search-best-match = Nejlepší shoda
 search-no-matches = Žádné výsledky

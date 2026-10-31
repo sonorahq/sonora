@@ -131,8 +131,11 @@ menu-play-last = 最後に再生
 menu-play-tracks-last = { $count ->
    *[other] { $count }曲を最後に再生
 }
-menu-song-radio = 曲のラジオを開く
-menu-go-to-album = アルバムを表示
+menu-go-to = 移動
+menu-artist = アーティスト
+menu-album = アルバム
+menu-radio = ラジオ
+menu-details = 詳細
 menu-go-to-artist = アーティストを表示
 menu-view-details = 詳細を表示
 menu-copy-link = リンクをコピー
@@ -385,6 +388,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = クイックピック
 home-quick-picks-empty = 何曲かお気に入りに追加するとここに表示されます
 home-recently-added = 最近追加した項目
+home-recently-played = 最近再生した項目
 home-playlists = プレイリスト
 home-favorite-albums = お気に入りのアルバム
 home-artists = アーティスト
@@ -393,6 +397,9 @@ home-collection-albums = コレクションのアルバム
 # search page
 search-placeholder = 何を聴きたいですか？
 search-browse = すべてのジャンル
+search-submit = 検索
+search-recent = 最近の検索
+search-forget = 履歴から削除
 genre-empty = ここにはまだ何もありません
 search-best-match = ベストマッチ
 search-no-matches = 一致する項目がありません

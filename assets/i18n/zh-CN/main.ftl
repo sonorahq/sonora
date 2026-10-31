@@ -155,8 +155,11 @@ menu-play-tracks-last = { $count ->
     [one] 最后播放 { $count } 首歌曲
    *[other] 最后播放 { $count } 首歌曲
 }
-menu-song-radio = 前往歌曲电台
-menu-go-to-album = 前往专辑
+menu-go-to = 前往
+menu-artist = 歌手
+menu-album = 专辑
+menu-radio = 电台
+menu-details = 详情
 menu-go-to-artist = 前往歌手
 menu-view-details = 查看详情
 menu-copy-link = 复制链接
@@ -430,6 +433,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = 快速推荐
 home-quick-picks-empty = 收藏几首歌后，它们会显示在这里
 home-recently-added = 最近添加
+home-recently-played = 最近播放
 home-playlists = 播放列表
 home-favorite-albums = 收藏的专辑
 home-artists = 歌手
@@ -438,6 +442,9 @@ home-collection-albums = 你音乐库中的专辑
 # search page
 search-placeholder = 你想听什么？
 search-browse = 浏览全部
+search-submit = 搜索
+search-recent = 最近搜索
+search-forget = 从历史记录中移除
 genre-empty = 这里暂时没有可显示的内容
 search-best-match = 最佳匹配
 search-no-matches = 无匹配结果

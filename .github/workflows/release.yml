@@ -411,6 +411,10 @@ jobs:
             --desktop-file desktop/sonora.desktop \
             --icon-file assets/linux/sonora.svg
 
+          # appimagetool makes the image's own icon only from a PNG or XPM in the top level of the
+          # AppDir, and linuxdeploy puts the SVG there.
+          cp assets/linux/icons/hicolor/256x256/apps/sonora.png AppDir/sonora.png
+
           # The Vulkan loader has to be the host's: it is what finds the host's ICD, and a loader
           # this old paired with a current driver is how an AppImage stops starting.
           rm -f AppDir/usr/lib/libvulkan.so.1*

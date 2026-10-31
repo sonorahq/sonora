@@ -38,6 +38,9 @@ const SECTION: &str = "artist";
 const RELEASE_ROWS: usize = 2;
 const LISTED: usize = 5;
 const LISTED_MAX: usize = 10;
+/// The width of the `border_1` around the popular table, which pushes its rows and head below
+/// the box the page measures the scroll from.
+const TABLE_BORDER: Pixels = px(1.);
 
 struct ArtistTracks {
     detail: Entity<ArtistDetail>,
@@ -990,7 +993,8 @@ impl Render for ArtistView {
         }
         if self.mode == Mode::List {
             self.table.claim(cx);
-            let viewport = page::viewport(&scroll, inset, window);
+            let mut viewport = page::viewport(&scroll, inset, window);
+            viewport.top = (viewport.top - TABLE_BORDER).max(Pixels::ZERO);
             self.table
                 .update(cx, |table, _| table.set_viewport(viewport));
         }

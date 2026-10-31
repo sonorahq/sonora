@@ -8,34 +8,75 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Subsonic lyrics provider can now read OpenSubsonic's enhanced cueLine data for per-word/syllable lyrics.
+
+### Changed
+
+- A song's right-click menu groups Artist, Album, Radio and Details under one Go to submenu.
+
+### Fixed
+
+- The header of an album, playlist or artist page no longer jumps when it finishes loading.
+- The column header of an artist's popular songs no longer leaves a thin gap above it while scrolling.
+
+## [0.46.0] - 2026-10-31
+
+### Added
 
 - Control Sonora from a terminal or a script: `sonora toggle`, `next`, `current`, `search`,
   `play -s <song>` and more, listed by `sonora --help`.
+- `sonora seek` takes a time such as `1:30`, or a step such as `+10` or `-10`, besides a percent.
 - Drop a song onto a playlist you own or collaborate on in the sidebar to add it to that playlist.
 - Hold Shift while dropping a song onto a sidebar playlist to move it out of its playlist or your
   favorites.
 - Import an M3U or M3U8 playlist from the button or right-click menu on your local Playlists
   page, and export a local playlist from its right-click menu. Songs outside your library are
   left out, and an export saved beside your music lists it by relative path.
-- Subsonic lyrics provider can now read OpenSubsonic cueLine data.
+- `sonora watch` prints what plays on every change, one line of JSON each, for status bars.
+- `sonora current` also says which provider plays, whether the song is liked and what it plays from.
+- Typing in Search suggests songs, artists, albums and playlists under the field, and Enter or
+  the new Search button opens the full results.
+- Search keeps your recent searches and lists them when you click the empty field or press Down.
+  Hover one and press its cross to remove it.
+- Categories in Search show a cover on Apple Music, YouTube Music and Subsonic servers too.
+- Install a theme from sonorahq.org/themes together with all its variants, such as light and dark.
+- Change or remove the cover of a playlist you own from its new edit dialog, on Spotify, YouTube
+  Music, Deezer, Tidal, Navidrome 0.61 or later and local files.
+- Deezer's Home shows every section the Deezer web player shows, and its mixes, flows and
+  channels open in Sonora.
 
 ### Changed
 
+- Escape in a text field takes the cursor out of it. In Search the first Escape closes the
+  suggestions and the second leaves the field.
+- Best match is no longer repeated in the lists below it, and the arrow keys stop on it.
+- Search results fade out under the search field as they scroll instead of being cut off.
 - Quick picks on Home no longer shows your account name above its title.
+- Apple Music's Home leads with Recently played again, and Recently added sits below the
+  playlists Apple made for you.
 - The lyrics source you rank higher now wins whenever it has synced lyrics, even when a source
   below it has them word by word.
+- Notices, such as the one about a missing audio output, line their text and buttons up beside
+  the icon, with the close button in the corner.
 
 ### Fixed
 
 - Screen readers now read setting labels and their values, the streaming services list, track rows,
   lyrics, the queue, page headings and empty pages, and say which option is chosen, expanded or
   playing. Every switch, dropdown, slider and window button has a name.
-- The translucent player bar no longer looks much darker than the rest of a see-through window.
+- The translucent player bar and table headers no longer look much darker than the rest of a
+  see-through window.
+- Saving a Deezer album to your favorites, or removing it, no longer fails.
+- Toasts show above an open dialog instead of behind it.
+- Fullscreen lyrics over the ambient background stay readable with a theme from your themes
+  folder, whose colours no longer apply there.
 - Covers saved for the system media controls no longer fill Sonora's cache folder without limit,
   and playlist mosaics no longer leave old copies behind.
 - Fullscreen shows Spotify covers at their original resolution, up to 2000 pixels, instead of
   300 pixels, and no longer waits on a blurry thumbnail while the cover loads.
 - System media controls, Discord and album pages show Spotify covers at 640 pixels instead of 300.
+- Lyrics that mark thousandths of a second with a colon, such as `[00:01:050]`, stay on time
+  instead of running almost half a second late.
 
 ## [0.45.0] - 2026-10-27
 
@@ -2403,7 +2444,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.45.0...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.46.0...HEAD
+[0.46.0]: https://github.com/sonorahq/sonora/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/sonorahq/sonora/compare/v0.44.2...v0.45.0
 [0.44.2]: https://github.com/sonorahq/sonora/compare/v0.44.1...v0.44.2
 [0.44.1]: https://github.com/sonorahq/sonora/compare/v0.44.0...v0.44.1
