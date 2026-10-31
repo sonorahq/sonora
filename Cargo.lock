@@ -4379,6 +4379,7 @@ dependencies = [
 name = "music"
 version = "0.45.0"
 dependencies = [
+ "aes",
  "alsa",
  "anyhow",
  "ardftsrc",
@@ -4388,6 +4389,7 @@ dependencies = [
  "bytes",
  "cbc",
  "cpal",
+ "ctr",
  "deunicode",
  "dirs",
  "env_logger",

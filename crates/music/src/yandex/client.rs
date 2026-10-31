@@ -7,17 +7,20 @@
 //! `yandex-music-api`, since Yandex documents none of them.
 
 use std::collections::{HashMap, HashSet};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use futures::StreamExt as _;
 use serde_json::{Value, json};
 
-use crate::yandex::wire;
+use crate::yandex::{decrypt, wire};
 use crate::{
-    Album, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef, CoverSize, MediaKind,
-    MusicApi, Playlist, PlaylistDetail, SavedArtist, SignInFailure, SignInProblem, Throttled,
-    Track, UserProfile, distinct_covers, escape,
+    Album, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef, CoverSize, Encoding,
+    MediaKind, MusicApi, Offer, Playlist, PlaylistDetail, Quality, SavedArtist, SignInFailure,
+    SignInProblem, Throttled, Track, UserProfile, distinct_covers, escape,
 };
 
 pub(crate) const API: &str = "https://api.music.yandex.net";
@@ -34,6 +37,54 @@ const LOOKUPS_AT_ONCE: usize = 4;
 const DISCOGRAPHY: u32 = 200;
 /// How many results a search asks for.
 const SEARCH_PAGE: u32 = 30;
+
+/// The key `get-file-info` asks its query to be signed with, the Android app's own.
+const SIGN_KEY: &[u8] = b"p93jhgh689SBReK6ghtw62";
+/// Every codec a file may come in, plain containers first. Yandex picks one for the level.
+const CODECS: [&str; 7] = [
+    "flac",
+    "aac",
+    "he-aac",
+    "mp3",
+    "flac-mp4",
+    "aac-mp4",
+    "he-aac-mp4",
+];
+/// Files come encrypted; asking for them in the clear gets the lossless ones refused.
+const TRANSPORT: &str = "encraw";
+
+/// The levels Yandex serves, best first: lossless, `nq` and `lq`.
+pub(crate) const QUALITIES: &[Offer] = &[
+    Offer {
+        quality: Quality::Lossless,
+        encoding: Encoding::Flac {
+            depth: 24,
+            rate: 48_000,
+        },
+        up_to: true,
+    },
+    Offer {
+        quality: Quality::High,
+        encoding: Encoding::Aac { kbps: 256 },
+        up_to: true,
+    },
+    Offer {
+        quality: Quality::Low,
+        encoding: Encoding::Aac { kbps: 64 },
+        up_to: true,
+    },
+];
+
+/// A track's file as it starts to arrive, with what decrypts it and what it is.
+pub struct Opened {
+    pub response: reqwest::Response,
+    /// The hex key the file is encrypted with, or `None` for a file sent in the clear.
+    pub key: Option<String>,
+    /// The codec `get-file-info` names, such as `flac` or `aac-mp4`.
+    pub codec: Option<String>,
+    /// The bitrate in kilobits a second, zero for a lossless file.
+    pub bitrate: Option<u64>,
+}
 
 #[derive(Clone)]
 pub struct YandexClient {
@@ -251,6 +302,88 @@ impl YandexClient {
             .await?;
         Ok(wire::tracks(wire::list(&similar, "similarTracks")))
     }
+
+    /// What `get-file-info` calls `quality`, the level a file is asked for at.
+    pub(crate) fn served(quality: Quality) -> &'static str {
+        match quality.within(QUALITIES) {
+            Quality::HiRes | Quality::Lossless => "lossless",
+            Quality::High | Quality::Normal => "nq",
+            Quality::Low => "lq",
+        }
+    }
+
+    /// Asks where a track's file is at `quality` and starts downloading it.
+    pub async fn open_stream(&self, track_id: &str, quality: Quality) -> Result<Opened> {
+        let served = Self::served(quality);
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .to_string();
+        let sign = sign(&ts, track_id, served);
+        let path = format!(
+            "/get-file-info?ts={ts}&trackId={}&quality={served}&codecs={}&transports={TRANSPORT}&sign={}",
+            escape::component(track_id),
+            escape::component(&CODECS.join(",")),
+            escape::component(&sign),
+        );
+        let info = self
+            .get(&path)
+            .await
+            .with_context(|| format!("cannot find the file of {track_id}"))?;
+        let info = &info["downloadInfo"];
+        let url = wire::text(info, &["url"])
+            .or_else(|| {
+                wire::list(info, "urls")
+                    .first()
+                    .and_then(|url| url.as_str())
+            })
+            .with_context(|| format!("yandex named no file for {track_id}"))?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("cannot reach the yandex storage")?
+            .error_for_status()
+            .context("the yandex storage refused the file")?;
+        let key = wire::text(info, &["key"])
+            .filter(|_| wire::text(info, &["transport"]) != Some("raw"))
+            .map(str::to_owned);
+        Ok(Opened {
+            response,
+            key,
+            codec: wire::text(info, &["codec"]).map(str::to_owned),
+            bitrate: wire::number(info, &["bitrate"]),
+        })
+    }
+}
+
+/// The `get-file-info` signature: an HMAC-SHA256 of the query's values run together, in
+/// base64 with its last character dropped, as the Android app sends it.
+fn sign(ts: &str, track_id: &str, quality: &str) -> String {
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, SIGN_KEY);
+    let message = format!("{ts}{track_id}{quality}{}{TRANSPORT}", CODECS.concat());
+    let mut sign = STANDARD.encode(ring::hmac::sign(&key, message.as_bytes()));
+    sign.pop();
+    sign
+}
+
+/// What a codec `get-file-info` names is, at its bitrate in kilobits a second. FLAC is left
+/// for the decoder to tell, since nothing here says its depth or its rate.
+pub(crate) fn encoding(codec: Option<&str>, kbps: Option<u64>) -> Option<Encoding> {
+    let kbps = kbps.unwrap_or_default() as u32;
+    Some(match codec? {
+        "flac" | "flac-mp4" => return None,
+        "aac" | "he-aac" | "aac-mp4" | "he-aac-mp4" => Encoding::Aac { kbps },
+        "mp3" => Encoding::Mp3 { kbps },
+        _ => Encoding::Other,
+    })
+}
+
+/// The key for an encrypted file, read from the hex `get-file-info` names it by.
+pub(crate) fn file_key(hex: Option<&str>) -> Result<Option<decrypt::Key>> {
+    hex.map(decrypt::key).transpose()
 }
 
 /// Reads an answer: its `result` when it has one, or the reason it was refused.

@@ -23,6 +23,7 @@ views = { path = "crates/views" }
 webview = { path = "crates/webview" }
 widevine = { path = "crates/widevine" }
 
+aes = "0.8"
 alsa = "0.11"
 anyhow = "1.0"
 ardftsrc = "0.4.4"
@@ -34,6 +35,7 @@ cbc = "0.1"
 cc = "1"
 clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "derive"] }
 clap_complete = "4.5"
+ctr = "0.9"
 flate2 = "1"
 cpal = "0.18"
 dirs = "6.0"
