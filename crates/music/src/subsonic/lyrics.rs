@@ -138,20 +138,19 @@ fn sheet(entry: StructuredLyrics) -> Option<Lyrics> {
             lines = cue_lines?
                 .iter()
                 .filter_map(|cue| {
-                    let voice: Voice;
-                    if agents_exists && cue.agent_id.is_some() {
+                    let voice: Voice = if agents_exists && cue.agent_id.is_some() {
                         let agent = agents?
                             .iter()
                             .find(|&agent| cue.agent_id.to_owned().unwrap() == agent.id);
 
-                        voice = if agent?.role == "main" {
+                        if agent?.role == "main" {
                             Voice::Lead
                         } else {
                             Voice::Counter
-                        };
+                        }
                     } else {
-                        voice = Voice::Lead;
-                    }
+                        Voice::Lead
+                    };
 
                     Some(LyricsLine {
                         start: shifted(cue.start?, offset),
