@@ -46,6 +46,10 @@ pub const INPUT_CONTEXT: &str = "Input";
 
 const CARET: Pixels = px(2.);
 const CARET_LINES: f32 = 1.25;
+/// The characters DirectWrite starts a new line at.
+const LINE_BREAKS: [char; 7] = [
+    '\n', '\u{b}', '\u{c}', '\r', '\u{85}', '\u{2028}', '\u{2029}',
+];
 /// Whether the platform has an X11 or Wayland primary selection, which GPUI exposes only on
 /// Linux and FreeBSD.
 const PRIMARY_SELECTION: bool = cfg!(any(target_os = "linux", target_os = "freebsd"));
@@ -88,10 +92,10 @@ fn primary_paste() -> bool {
     PRIMARY_SELECTION && PRIMARY_PASTE.load(Ordering::Relaxed)
 }
 
-/// `text` on one line: every line break, `\r\n`, `\r` or `\n`, becomes one space. A field
-/// holds one line, and Windows copies `\r\n`.
+/// `text` on one line: every line break becomes one space, `\r\n` included. A field holds one
+/// line, and GPUI on Windows draws nothing for a line with more than four line breaks.
 pub fn single_line(text: &str) -> String {
-    text.replace("\r\n", " ").replace(['\r', '\n'], " ")
+    text.replace("\r\n", " ").replace(LINE_BREAKS, " ")
 }
 
 fn clamp_offset(text: &str, offset: usize) -> usize {
@@ -923,6 +927,16 @@ mod tests {
     use super::*;
 
     const MULTI: &str = "héllo wörld";
+
+    #[test]
+    fn flattens_every_line_break() {
+        assert_eq!(single_line("a\r\nb\rc\nd"), "a b c d");
+        assert_eq!(single_line("a\r\n\r\nb"), "a  b");
+        assert_eq!(
+            single_line("a\u{2028}b\u{85}c\u{b}d\u{c}e\u{2029}f"),
+            "a b c d e f"
+        );
+    }
 
     #[test]
     fn clamps_past_the_end() {
