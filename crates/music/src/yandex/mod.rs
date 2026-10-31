@@ -4,6 +4,7 @@
 mod auth;
 mod client;
 mod decrypt;
+mod links;
 mod playback;
 mod wire;
 
@@ -89,6 +90,10 @@ impl MusicProvider for YandexProvider {
 
     fn slug(&self) -> &'static str {
         "yandex"
+    }
+
+    fn link(&self, link: &str) -> Option<crate::link::Linked> {
+        links::read(link)
     }
 
     fn reach(&self) -> Option<String> {
