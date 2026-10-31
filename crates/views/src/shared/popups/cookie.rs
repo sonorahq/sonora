@@ -60,12 +60,28 @@ const DEEZER: Guide = Guide {
     note: "login-cookie-named-note",
 };
 
+/// Yandex signs in with an OAuth token rather than a cookie, read from the address its own
+/// sign-in page ends on.
+const YANDEX: Guide = Guide {
+    url: music::yandex::TOKEN_PAGE,
+    title: "login-token-title",
+    hint: "login-token-hint",
+    steps: [
+        "login-token-yandex-step-1",
+        "login-token-yandex-step-2",
+        "login-token-yandex-step-3",
+        "login-token-yandex-step-4",
+    ],
+    note: "login-token-yandex-note",
+};
+
 /// The guide for a provider slug. YouTube's is the fallback: pasting a whole request header
 /// needs no cookie name, so its wording fits any header paste.
 fn guide(slug: &str) -> &'static Guide {
     match slug {
         "apple" => &APPLE,
         "deezer" => &DEEZER,
+        "yandex" => &YANDEX,
         _ => &YOUTUBE,
     }
 }
@@ -104,6 +120,14 @@ impl CookiePrompt {
     /// manual sign-in starts so it follows the language like every other hint.
     pub(crate) fn hint(slug: &str) -> &'static str {
         guide(slug).hint
+    }
+
+    /// The label key of the button that starts a manual paste, which names what is pasted.
+    pub(crate) fn manual(slug: &str) -> &'static str {
+        match slug {
+            "yandex" => "login-connect-token",
+            _ => "login-connect-cookies",
+        }
     }
 
     pub(crate) fn on_submit(

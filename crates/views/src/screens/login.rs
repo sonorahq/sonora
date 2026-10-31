@@ -186,7 +186,7 @@ impl LoginView {
                 }
                 options.push(LoginOption {
                     id: format!("sign-in-{slug}-cookies-manual").into(),
-                    label: t!("login-connect-cookies"),
+                    label: i18n::lookup(CookiePrompt::manual(slug), None),
                     action: LoginAction::Cookies(provider),
                     primary: false,
                 });

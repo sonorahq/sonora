@@ -804,7 +804,7 @@ impl SettingsView {
         if manual {
             buttons.push(
                 Button::new(SharedString::from(format!("connect-{slug}-cookies-manual")))
-                    .label(t!("login-connect-cookies"))
+                    .label(i18n::lookup(CookiePrompt::manual(slug), None))
                     .secondary()
                     .disabled(pending)
                     .on_click(cx.listener(move |this, _, _, cx| {
