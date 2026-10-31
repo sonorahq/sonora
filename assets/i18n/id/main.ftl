@@ -438,6 +438,9 @@ home-collection-albums = Album dari koleksi Anda
 # search page
 search-placeholder = Apa yang ingin Anda dengarkan?
 search-browse = Jelajahi semua
+search-submit = Cari
+search-recent = Pencarian terbaru
+search-forget = Hapus dari riwayat
 genre-empty = Belum ada yang bisa ditampilkan di sini
 search-best-match = Hasil teratas
 search-no-matches = Tidak ada hasil yang cocok

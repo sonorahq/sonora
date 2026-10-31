@@ -465,6 +465,9 @@ home-collection-albums = Alba z tvé knihovny
 # search page
 search-placeholder = Co chceš poslouchat?
 search-browse = Procházet vše
+search-submit = Hledat
+search-recent = Nedávná hledání
+search-forget = Odebrat z historie
 genre-empty = Tady zatím nic není
 search-best-match = Nejlepší shoda
 search-no-matches = Žádné výsledky

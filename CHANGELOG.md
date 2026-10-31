@@ -19,9 +19,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   page, and export a local playlist from its right-click menu. Songs outside your library are
   left out, and an export saved beside your music lists it by relative path.
 - `sonora watch` prints what plays on every change, one line of JSON each, for status bars.
+- Typing in Search suggests songs, artists, albums and playlists under the field, and Enter or
+  the new Search button opens the full results.
+- Search keeps your recent searches and lists them when you click the empty field or press Down.
+  Hover one and press its cross to remove it.
+- Categories in Search show a cover on Apple Music, YouTube Music and Subsonic servers too.
 
 ### Changed
 
+- Escape in a text field takes the cursor out of it. In Search the first Escape closes the
+  suggestions and the second leaves the field.
+- Best match is no longer repeated in the lists below it, and the arrow keys stop on it.
+- Search results fade out under the search field as they scroll instead of being cut off.
 - Quick picks on Home no longer shows your account name above its title.
 - The lyrics source you rank higher now wins whenever it has synced lyrics, even when a source
   below it has them word by word.

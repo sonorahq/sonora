@@ -438,6 +438,9 @@ home-collection-albums = Alben aus deiner Sammlung
 # search page
 search-placeholder = Was möchtest du hören?
 search-browse = Alles durchsuchen
+search-submit = Suchen
+search-recent = Letzte Suchen
+search-forget = Aus dem Verlauf entfernen
 genre-empty = Hier gibt es noch nichts zu sehen
 search-best-match = Beste Übereinstimmung
 search-no-matches = Keine Treffer

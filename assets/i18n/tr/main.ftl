@@ -418,6 +418,9 @@ home-collection-albums = Koleksiyonundaki albümler
 # search page
 search-placeholder = Ne dinlemek istersin?
 search-browse = Tümüne göz at
+search-submit = Ara
+search-recent = Son aramalar
+search-forget = Geçmişten kaldır
 genre-empty = Burada henüz gösterilecek bir şey yok
 search-best-match = En iyi eşleşme
 search-no-matches = Eşleşme yok

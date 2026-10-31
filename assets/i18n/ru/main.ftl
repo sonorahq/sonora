@@ -461,6 +461,9 @@ home-collection-albums = Альбомы из вашей коллекции
 # search page
 search-placeholder = Что хотите послушать?
 search-browse = Всё подряд
+search-submit = Найти
+search-recent = Недавние запросы
+search-forget = Удалить из истории
 genre-empty = Здесь пока пусто
 search-best-match = Лучшее совпадение
 search-no-matches = Ничего не найдено

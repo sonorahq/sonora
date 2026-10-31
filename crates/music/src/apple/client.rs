@@ -1937,6 +1937,19 @@ impl MusicApi for AppleClient {
         })
     }
 
+    /// The cover of the genre's top album, which Apple's genre list leaves out.
+    async fn genre_cover(&self, genre_id: &str) -> Result<Option<String>> {
+        let query = [("types", "albums"), ("limit", "1"), ("genre", genre_id)];
+        let body = self.get(&self.catalog("/charts"), &query).await?;
+        let answered: wire::Answer<wire::Charts> = wire::answer(&body);
+        Ok(answered
+            .results
+            .albums
+            .iter()
+            .flat_map(wire::Relation::rows)
+            .find_map(|row| wire::album(row)?.cover))
+    }
+
     /// The station a track seeds, as a queue's worth of tracks.
     ///
     /// Asked again for the same track, this carries on through the station it already built

@@ -442,6 +442,9 @@ home-collection-albums = Albums de votre collection
 # search page
 search-placeholder = Que voulez-vous écouter ?
 search-browse = Tout parcourir
+search-submit = Rechercher
+search-recent = Recherches récentes
+search-forget = Retirer de l'historique
 genre-empty = Rien à afficher ici pour l'instant
 search-best-match = Meilleur résultat
 search-no-matches = Aucun résultat

@@ -2,10 +2,15 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{Context, Entity, Task};
-use music::{Genre, GenreDetail, GenreItem, GenreSection};
+use music::{Genre, GenreDetail, GenreSection, MusicApi};
 use tokio::task::AbortHandle;
 
 use crate::{Io, Session, SessionEvent, join};
+
+/// How many bare genres get a picture fetched for them, which covers the first screens of tiles.
+const DRESSED: usize = 48;
+/// How many of those pictures are asked for at once.
+const AT_ONCE: usize = 4;
 
 pub struct Genres {
     genres: Rc<Vec<Genre>>,
@@ -14,6 +19,8 @@ pub struct Genres {
     session: Entity<Session>,
     io: Io,
     task: Option<Task<()>>,
+    /// Fetches the pictures of genres the provider listed without one.
+    dressing: Option<Task<()>>,
 }
 
 impl Genres {
@@ -22,6 +29,7 @@ impl Genres {
             SessionEvent::SignedIn => this.load(cx),
             SessionEvent::SignedOut => {
                 this.task = None;
+                this.dressing = None;
                 this.genres = Rc::new(Vec::new());
                 this.loading = false;
                 this.error = None;
@@ -38,6 +46,7 @@ impl Genres {
             session,
             io,
             task: None,
+            dressing: None,
         }
     }
 
@@ -90,17 +99,60 @@ impl Genres {
 
         let io = self.io.clone();
         self.task = Some(cx.spawn(async move |this, cx| {
-            let loaded = join(io.spawn(async move { client.genres().await })).await;
+            let lister = client.clone();
+            let loaded = join(io.spawn(async move { lister.genres().await })).await;
 
             this.update(cx, |this, cx| {
                 this.loading = false;
                 match crate::settled(loaded, cx) {
-                    Ok(genres) => this.genres = Rc::new(genres),
+                    Ok(genres) => {
+                        this.genres = Rc::new(genres);
+                        this.dress(client, cx);
+                    }
                     Err(reason) => this.error = Some(reason),
                 }
                 cx.notify();
             })
             .ok();
+        }));
+    }
+
+    /// Fetches pictures for the first genres the provider listed without one, a few at a time,
+    /// and puts each on its tile as it lands. A genre whose picture cannot be found keeps the
+    /// placeholder.
+    fn dress(&mut self, client: Arc<dyn MusicApi>, cx: &mut Context<Self>) {
+        let bare: Vec<String> = self
+            .genres
+            .iter()
+            .filter(|genre| genre.cover.is_none())
+            .take(DRESSED)
+            .map(|genre| genre.id.clone())
+            .collect();
+        if bare.is_empty() {
+            return;
+        }
+
+        let io = self.io.clone();
+        self.dressing = Some(cx.spawn(async move |this, cx| {
+            for batch in bare.chunks(AT_ONCE) {
+                let asked = batch.iter().map(|id| {
+                    let client = client.clone();
+                    let id = id.clone();
+                    join(io.spawn(async move { client.genre_cover(&id).await }))
+                });
+                let found = futures::future::join_all(asked).await;
+                let kept = this.update(cx, |this, cx| {
+                    for (id, cover) in batch.iter().zip(found) {
+                        match cover {
+                            Ok(cover) => this.adopt(id, cover, cx),
+                            Err(error) => log::debug!("genres: no picture for {id}: {error:#}"),
+                        }
+                    }
+                });
+                if kept.is_err() {
+                    return;
+                }
+            }
         }));
     }
 }
@@ -246,7 +298,7 @@ impl GenreDetails {
     }
 
     fn adopt(&mut self, id: &str, detail: Arc<GenreDetail>, cx: &mut Context<Self>) {
-        let cover = pictured(&detail);
+        let cover = detail.cover();
         self.genres
             .update(cx, |genres, cx| match detail.sections.is_empty() {
                 true => genres.forget(id, cx),
@@ -267,19 +319,4 @@ impl GenreDetails {
         self.loading = false;
         self.error = None;
     }
-}
-
-fn pictured(detail: &GenreDetail) -> Option<String> {
-    let items = || detail.sections.iter().flat_map(|section| &section.items);
-    let album = items().find_map(|item| match item {
-        GenreItem::Album(album) => album.cover.clone(),
-        _ => None,
-    });
-
-    album.or_else(|| {
-        items().find_map(|item| match item {
-            GenreItem::Playlist(playlist) => playlist.cover.clone(),
-            _ => None,
-        })
-    })
 }

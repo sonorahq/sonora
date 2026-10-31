@@ -438,6 +438,9 @@ home-collection-albums = 你音乐库中的专辑
 # search page
 search-placeholder = 你想听什么？
 search-browse = 浏览全部
+search-submit = 搜索
+search-recent = 最近搜索
+search-forget = 从历史记录中移除
 genre-empty = 这里暂时没有可显示的内容
 search-best-match = 最佳匹配
 search-no-matches = 无匹配结果

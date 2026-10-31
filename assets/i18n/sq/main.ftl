@@ -438,6 +438,9 @@ home-collection-albums = Albume nga koleksioni yt
 # search page
 search-placeholder = Çfarë do të dëgjosh?
 search-browse = Shfleto të gjitha
+search-submit = Kërko
+search-recent = Kërkimet e fundit
+search-forget = Hiqe nga historiku
 genre-empty = Ende asgjë për të shfaqur këtu
 search-best-match = Përputhja më e mirë
 search-no-matches = Asnjë përputhje

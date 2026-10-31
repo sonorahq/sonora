@@ -454,6 +454,9 @@ home-collection-albums = Albums from your collection
 # search page
 search-placeholder = What do you want to listen to?
 search-browse = Browse all
+search-submit = Search
+search-recent = Recent searches
+search-forget = Remove from history
 genre-empty = Nothing to show here yet
 search-best-match = Best match
 search-no-matches = No matches

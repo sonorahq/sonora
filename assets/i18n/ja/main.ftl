@@ -393,6 +393,9 @@ home-collection-albums = コレクションのアルバム
 # search page
 search-placeholder = 何を聴きたいですか？
 search-browse = すべてのジャンル
+search-submit = 検索
+search-recent = 最近の検索
+search-forget = 履歴から削除
 genre-empty = ここにはまだ何もありません
 search-best-match = ベストマッチ
 search-no-matches = 一致する項目がありません

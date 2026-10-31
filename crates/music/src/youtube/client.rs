@@ -425,6 +425,11 @@ impl MusicApi for YouTubeClient {
     async fn genre(&self, genre_id: &str) -> Result<GenreDetail> {
         genres::genre(&self.api, genre_id).await
     }
+
+    /// The first cover on the category's own page, since the category buttons carry only a colour.
+    async fn genre_cover(&self, genre_id: &str) -> Result<Option<String>> {
+        Ok(genres::genre(&self.api, genre_id).await?.cover())
+    }
 }
 
 fn collect_thumbnails(node: &serde_json::Value) -> Vec<ytmusic::Thumbnail> {
