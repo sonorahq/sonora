@@ -524,6 +524,7 @@ mod tests {
             Ok(Artist {
                 name: format!("{}:{id}", self.label),
                 cover_large: None,
+                banner: None,
                 biography: None,
                 monthly_listeners: None,
                 top_tracks: Vec::new(),

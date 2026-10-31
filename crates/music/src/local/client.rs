@@ -236,6 +236,7 @@ impl MusicApi for LocalClient {
         Ok(Artist {
             name: artist.name,
             cover_large: artist.cover,
+            banner: None,
             biography: None,
             monthly_listeners: None,
             top_tracks: scanned
