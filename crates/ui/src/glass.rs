@@ -14,6 +14,9 @@ const POPOVER_FILL: f32 = 0.82;
 /// read over whatever scrolls by.
 const BAR_FILL: f32 = 0.86;
 const BAR_BLUR: Pixels = px(18.);
+/// The bar's fill on a see-through window. The page wash already sits under the bar, so the thick
+/// fill would stack on it and leave the bar far darker than the window around it.
+const CLEAR_BAR_FILL: f32 = 0.3;
 
 /// Whether a surface that only frosts for the look of it should frost at all. A backdrop blur
 /// is the priciest thing the renderer does per frame, so the setting turns those off and each
@@ -58,10 +61,16 @@ pub fn popover_surface<E: Styled>(element: E, cx: &App) -> E {
 
 /// Styles chrome that stays over scrolling content, the player bar and a table's head: a thick
 /// popover fill over a wide blur. The caller asks `blurring` first, since without the blur the
-/// thin fill would leave the text on the bare page.
+/// thin fill would leave the text on the bare page. A see-through window gets a thinner fill so
+/// the bar lets the desktop through about as much as the page does.
 pub fn bar_surface<E: Styled>(element: E, cx: &App) -> E {
+    let theme = cx.theme();
+    let fill = match theme.transparent {
+        true => CLEAR_BAR_FILL,
+        false => BAR_FILL,
+    };
     element
-        .bg(cx.theme().popover.opacity(BAR_FILL))
+        .bg(theme.popover.opacity(fill))
         .backdrop_blur(BAR_BLUR)
 }
 

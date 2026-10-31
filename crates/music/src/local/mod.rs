@@ -2,6 +2,7 @@ mod client;
 mod id3;
 mod index;
 mod lyrics;
+mod m3u;
 mod playback;
 mod scan;
 mod store;
@@ -70,6 +71,7 @@ impl LocalProvider {
                 playcounts: false,
                 pins: false,
                 transcode: false,
+                playlist_covers: true,
                 keeps: false,
                 downloads: false,
                 qualities: &[],

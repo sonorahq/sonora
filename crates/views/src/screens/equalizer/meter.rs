@@ -1,3 +1,4 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Context, Entity, FontWeight, Render, SharedString, Window, div, svg};
 use i18n::t;
@@ -144,6 +145,9 @@ impl OutputMeter {
         Some(
             div()
                 .id("equalizer-signal-status")
+                .role(Role::Label)
+                .aria_value(text.clone())
+                .aria_description(tip.clone())
                 .ml_auto()
                 .min_w_0()
                 .flex_shrink(STATUS_SHRINK)
@@ -199,15 +203,17 @@ impl Render for OutputMeter {
                         .text_color(theme.danger),
                 )
                 .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(theme.danger)
-                        .child(match warning.db < SLIGHT_OVERLOAD {
+                    ui::spoken(
+                        "equalizer-overload",
+                        match warning.db < SLIGHT_OVERLOAD {
                             true => t!("equalizer-overload-slight"),
                             false => t!("equalizer-overload", db = figure(warning.db, 1)),
-                        }),
+                        },
+                    )
+                    .min_w_0()
+                    .truncate()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme.danger),
                 )
                 .when(warning.fixable, |this| {
                     this.child(

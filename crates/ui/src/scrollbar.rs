@@ -598,7 +598,14 @@ impl Render for Scrollbar {
         let marker = theme.metrics.control;
 
         div()
-            .id("scrollbar")
+            // The entity id keeps every bar distinct, since ids alone would
+            // collide the moment two bars share a parent.
+            .id(("scrollbar", cx.entity_id()))
+            .role(gpui::accesskit::Role::ScrollBar)
+            .aria_orientation(gpui::accesskit::Orientation::Vertical)
+            .aria_numeric_value(f64::from(progress))
+            .aria_min_numeric_value(0.)
+            .aria_max_numeric_value(1.)
             .occlude()
             .absolute()
             .top(self.track_inset + self.track_top)
@@ -629,7 +636,7 @@ impl Render for Scrollbar {
             )
             .child(
                 div()
-                    .id("scrollbar-thumb")
+                    .id(("scrollbar-thumb", cx.entity_id()))
                     .absolute()
                     .top(travel * progress)
                     .right(THUMB_INSET + REACH)

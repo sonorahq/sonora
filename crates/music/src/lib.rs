@@ -5,6 +5,7 @@ mod audio;
 pub mod binimum;
 mod calendar;
 pub mod connect;
+pub mod cover;
 pub mod credentials;
 pub mod deezer;
 pub mod drm;
@@ -53,13 +54,13 @@ pub use audio::Meter;
 pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
-    Contributor, Credit, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed, Lyrics, LyricsHit,
-    LyricsLane, LyricsLine, LyricsQuery, LyricsWord, PinOutcome, PinTarget, PinTargetKind,
-    Playlist, PlaylistDetail, ReleaseType, RomanizedText, SavedArtist, Track, TrackKey, TrackTags,
-    UserDetail, UserProfile, Voice, WritingSystem,
+    Contributor, CoverSize, Credit, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
+    ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsWord,
+    PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail, ReleaseType, RomanizedText,
+    SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
 };
 pub use output::{Server as SoundServer, missing_bridge};
-pub use spectrum::{Analyzer, Level, Spectrum, Watch};
+pub use spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
 pub use sponsorblock::{SkipSegment, SponsorBlock};
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";
@@ -116,7 +117,13 @@ pub trait MusicApi: Send + Sync {
 
     /// The provider's device network, for a provider that has one. Spotify Connect is the
     /// only one so far.
-    fn connect(&self) -> Option<Arc<dyn connect::Connect>> {
+    fn connect(&self) -> Option<Arc<connect::Connect>> {
+        None
+    }
+
+    /// A cover url this provider handed out, at `size`. It is worked out from the url alone,
+    /// so `None` means the provider cannot tell and the caller loads the album instead.
+    fn cover_at(&self, _cover: &str, _size: CoverSize) -> Option<String> {
         None
     }
 
@@ -240,6 +247,13 @@ pub trait MusicApi: Send + Sync {
         anyhow::bail!("this provider has no library apart from its favorites")
     }
     async fn set_playlist_public(&self, playlist_id: &str, public: bool) -> Result<()>;
+
+    /// Replaces a playlist's cover with `image`, the bytes of a picture in any format
+    /// [`cover::square_jpeg`] reads, or puts the provider's own cover back when it is `None`.
+    /// Only a provider whose capabilities list `playlist_covers` answers.
+    async fn set_playlist_cover(&self, _playlist_id: &str, _image: Option<&[u8]>) -> Result<()> {
+        anyhow::bail!("this provider cannot change a playlist's cover")
+    }
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()>;
 
     /// Adds tracks to the end of a playlist in order, and a track named twice goes in twice. A
@@ -252,6 +266,18 @@ pub trait MusicApi: Send + Sync {
         Ok(())
     }
     async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()>;
+
+    /// Reads the M3U or M3U8 playlist at `path` into a new playlist named after the file, for a
+    /// provider whose tracks are files. Entries naming a file outside the library are left out
+    /// and counted.
+    async fn import_playlist(&self, _path: &Path) -> Result<ImportedPlaylist> {
+        anyhow::bail!("this provider cannot import playlist files")
+    }
+
+    /// Writes a playlist to `path` as M3U8, for a provider whose tracks are files.
+    async fn export_playlist(&self, _playlist_id: &str, _path: &Path) -> Result<()> {
+        anyhow::bail!("this provider cannot export playlist files")
+    }
     async fn saved_albums(&self) -> Result<Vec<Album>>;
 
     /// Every album the provider has. Only a `Shape::Catalog` provider answers.
@@ -351,6 +377,12 @@ pub trait MusicApi: Send + Sync {
 
     async fn genre(&self, _genre_id: &str) -> Result<GenreDetail> {
         Ok(GenreDetail::default())
+    }
+
+    /// A picture for a genre that `genres` listed without one, found with as few requests as
+    /// the provider allows. Defaults to none, for a provider whose genres come with covers.
+    async fn genre_cover(&self, _genre_id: &str) -> Result<Option<String>> {
+        Ok(None)
     }
 }
 
@@ -764,6 +796,9 @@ pub struct Capabilities {
     pub pins: bool,
     /// The server converts tracks on request, as [`Transcode`] asks.
     pub transcode: bool,
+    /// The listener can give an owned playlist a cover of their own through
+    /// `set_playlist_cover`, and take it off again.
+    pub playlist_covers: bool,
     /// Played tracks can be kept in the [`vault`], so playing one again downloads nothing.
     pub keeps: bool,
     /// Tracks can be downloaded. Whether a download then plays with no network is up to the
@@ -781,13 +816,14 @@ pub struct Capabilities {
 impl Capabilities {
     /// What a full streaming service offers. Pins of the provider's own are not among them,
     /// since only Spotify and Apple Music keep any. Converting on request is not either, since
-    /// only Subsonic does it.
+    /// only Subsonic does it. Playlist covers are left for each provider to turn on.
     pub const ALL: Self = Self {
         follow_artists: true,
         radio: true,
         playcounts: true,
         pins: false,
         transcode: false,
+        playlist_covers: false,
         keeps: true,
         downloads: true,
         qualities: &[],
@@ -801,6 +837,7 @@ impl Capabilities {
         playcounts: false,
         pins: false,
         transcode: false,
+        playlist_covers: false,
         keeps: false,
         downloads: false,
         qualities: &[],

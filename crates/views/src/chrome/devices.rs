@@ -1,5 +1,5 @@
 use gpui::prelude::*;
-use gpui::{App, ClickEvent, Context, Entity, Window, div};
+use gpui::{App, ClickEvent, Context, Entity, SharedString, Window, div};
 use i18n::t;
 use music::connect::{Command, DeviceKind};
 use state::{Devices, Sonora};
@@ -47,19 +47,22 @@ impl Render for DevicePicker {
                     move |_, _, cx| devices.read(cx).transfer_here()
                 }),
         ];
-        for (at, device) in state.devices().iter().enumerate() {
+        for device in state.devices() {
             let id = device.id.clone();
             let playing = elsewhere
                 .as_ref()
                 .is_some_and(|elsewhere| elsewhere.device.id == device.id);
             items.push(
-                MenuItem::new(("device", at), device.name.clone())
-                    .icon(icon(device.kind))
-                    .selected(playing)
-                    .on_click({
-                        let devices = devices.clone();
-                        move |_, _, cx| devices.read(cx).transfer(&id)
-                    }),
+                MenuItem::new(
+                    SharedString::from(format!("device-{}", device.id)),
+                    device.name.clone(),
+                )
+                .icon(icon(device.kind))
+                .selected(playing)
+                .on_click({
+                    let devices = devices.clone();
+                    move |_, _, cx| devices.read(cx).transfer(&id)
+                }),
             );
         }
 
@@ -72,7 +75,7 @@ impl Render for DevicePicker {
                     devices.read(cx).control(&id, command.clone())
                 }
             };
-            let (toggle, label, glyph) = match elsewhere.playing {
+            let (toggle, label, glyph) = match elsewhere.state.playing {
                 true => (Command::Pause, t!("devices-pause"), "icons/pause.svg"),
                 false => (Command::Play, t!("devices-resume"), "icons/play.svg"),
             };

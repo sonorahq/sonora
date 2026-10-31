@@ -26,6 +26,7 @@ gethostname.workspace = true
 deunicode.workspace = true
 dirs.workspace = true
 http.workspace = true
+image.workspace = true
 jiff.workspace = true
 librespot-core.workspace = true
 librespot-playback.workspace = true
@@ -65,6 +66,9 @@ alsa.workspace = true
 # distro with libpipewire 0.3.53 or newer.
 cpal = { workspace = true, features = ["pulseaudio"] }
 pulseaudio.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true

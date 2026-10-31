@@ -26,6 +26,14 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
+			<string>Sonora link</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>sonora</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
 			<string>Spotify link</string>
 			<key>CFBundleURLSchemes</key>
 			<array>

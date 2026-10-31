@@ -103,6 +103,7 @@ menu-add-tracks-to-playlist = { $count ->
    *[other] Tambahkan { $count } lagu ke playlist
 }
 menu-new-playlist = Playlist baru
+menu-import-playlist = Impor playlist…
 menu-edit-tags = Edit tag
 menu-no-playlists = Tidak ada playlist
 menu-search-playlists = Cari playlist
@@ -164,8 +165,9 @@ menu-copy = Salin
 menu-paste = Tempel
 menu-select-all = Pilih semua
 menu-remove-from-queue = Hapus dari antrean
-menu-rename-playlist = Ganti nama playlist
+menu-edit-playlist = Edit playlist
 menu-delete-playlist = Hapus playlist
+menu-export-playlist = Ekspor playlist…
 menu-add-playlist-to-library = Simpan ke Koleksi
 menu-remove-playlist-from-library = Hapus dari Koleksi
 menu-library-add = Tambahkan ke Koleksi
@@ -185,7 +187,12 @@ menu-play-artist = Putar artis
 # playlist editor
 playlist-name-placeholder = Nama playlist
 playlist-create-title = Buat playlist
-playlist-rename-title = Ganti nama playlist
+playlist-edit-title = Edit playlist
+playlist-cover-choose = Pilih gambar
+playlist-cover-remove = Hapus sampul
+playlist-cover-unopenable = Sonora tidak bisa membuka file ini
+playlist-cover-too-large = Gambar ini lebih besar dari 40 MB
+playlist-cover-not-a-picture = File ini bukan gambar JPEG, PNG, atau WebP
 playlist-delete-title = Hapus playlist
 playlist-delete-confirm = Hapus “{ $name }”? Tindakan ini tidak dapat dibatalkan.
 playlist-again-title = Tambahkan lagi?
@@ -310,7 +317,6 @@ view-list = Daftar
 view-cards = Kisi
 
 # toolbar
-tool-columns = Kolom
 tool-sort = Urutkan
 tool-filters = Filter
 
@@ -424,6 +430,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Pilihan cepat
 home-quick-picks-empty = Sukai beberapa lagu dan rekomendasinya akan muncul di sini
 home-recently-added = Baru ditambahkan
+home-recently-played = Baru diputar
 home-playlists = Playlist
 home-favorite-albums = Album favorit
 home-artists = Artis
@@ -432,6 +439,9 @@ home-collection-albums = Album dari koleksi Anda
 # search page
 search-placeholder = Apa yang ingin Anda dengarkan?
 search-browse = Jelajahi semua
+search-submit = Cari
+search-recent = Pencarian terbaru
+search-forget = Hapus dari riwayat
 genre-empty = Belum ada yang bisa ditampilkan di sini
 search-best-match = Hasil teratas
 search-no-matches = Tidak ada hasil yang cocok
@@ -974,7 +984,6 @@ settings-romanized-lyrics = Lirik romanisasi
 settings-romanized-lyrics-detail = Tampilkan panduan pelafalan latin untuk sistem aksara tertentu
 settings-romanization-writing-systems = Sistem aksara
 settings-lyrics-priority = Prioritas sumber
-settings-lyrics-priority-detail = Di antara lirik sejenis, Sonora menampilkan sumber yang lebih atas
 settings-lyrics-providers-detail = Pilih layanan yang dicari untuk lirik
 settings-lyrics-providers-selected = { $count ->
     [one] { $count } dipilih
@@ -1075,6 +1084,9 @@ saver-fps = { $fps } FPS
 
 toast-playlist-created = Playlist berhasil dibuat
 toast-playlist-renamed = Nama playlist berhasil diubah
+toast-playlist-updated = Playlist diperbarui
+toast-playlist-cover-changed = Sampul playlist diganti
+toast-playlist-cover-removed = Sampul playlist dihapus
 toast-playlist-deleted = Playlist berhasil dihapus
 toast-local-delete-failed = Beberapa file lagu tidak dapat dihapus
 toast-playlist-added = Playlist ditambahkan ke koleksi Anda
@@ -1086,6 +1098,14 @@ toast-track-removed-unnamed = Dihapus dari playlist
 toast-playlist-failed = Perubahan tidak dapat disimpan
 toast-playlist-busy = Perubahan lain masih diproses
 toast-playlist-signed-out = Masuk akun untuk mengubah playlist
+toast-playlist-imported = { $name } berhasil diimpor
+toast-playlist-imported-partly = { $name } berhasil diimpor tanpa { $count ->
+        [one] satu lagu
+       *[other] { $count } lagu
+    } yang tidak ada di koleksi Anda
+toast-playlist-import-empty = Tidak ada lagu dari { $name } yang ada di koleksi Anda
+toast-playlist-exported = Playlist berhasil diekspor
+toast-file-dialog-failed = Dialog file tidak dapat dibuka
 toast-queued-track = { $name } ditambahkan ke antrean
 toast-next-track = { $name } akan diputar berikutnya
 toast-last-track = { $name } akan diputar terakhir
@@ -1113,7 +1133,9 @@ toast-open-failed = { $name } tidak dapat dibuka
 toast-open-unsupported = { $name } bukan file audio yang dapat diputar Sonora
 toast-open-all-failed = { $count } file tidak dapat dibuka
 toast-open-some-failed = Beberapa file tidak dapat dibuka
-toast-keys-refused = Spotify tidak memberikan izin kunci pemutaran untuk akun ini
+toast-keys-error = Kunci putar gagal
+toast-keys-refused = Spotify mungkin gagal
+toast-why = Kenapa?
 toast-sign-in-to-play = { $name } hanya dapat diputar untuk pendengar yang sudah masuk akun
 toast-restore-failed = { $name } gagal masuk kembali, jadi Sonora berjalan tanpanya
 toast-track-unplayable = { $name } tidak dapat diputar

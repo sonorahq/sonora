@@ -1,7 +1,8 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Div, ElementId, Entity, EntityId, Pixels, Point, ScrollHandle,
-    ScrollWheelEvent, SharedString, WeakEntity, Window, div, point, px,
+    ScrollWheelEvent, SharedString, Stateful, WeakEntity, Window, div, point, px,
 };
 use std::rc::Rc;
 
@@ -153,12 +154,18 @@ impl Shelves {
         cx: &App,
     ) -> AnyElement {
         let lanes = lanes(width);
+        let total = section.items.len().min(lanes * ROWS);
         let cards = section
             .items
             .iter()
-            .take(lanes * ROWS)
+            .take(total)
             .enumerate()
-            .map(|(index, item)| self.card(place * 100 + index, item, None, cx))
+            .map(|(index, item)| {
+                self.card(place * 100 + index, item, None, cx)
+                    .aria_position_in_set(index + 1)
+                    .aria_size_of_set(total)
+                    .into_any_element()
+            })
             .collect();
 
         div()
@@ -170,7 +177,11 @@ impl Shelves {
                     .flex()
                     .items_end()
                     .h(head(window, cx))
-                    .child(heading(i18n::translate(&section.title), cx)),
+                    .child(shelf_heading(
+                        self.tag("heading", place),
+                        i18n::translate(&section.title),
+                        cx,
+                    )),
             )
             .child(spread(cards, lanes))
             .into_any_element()
@@ -207,7 +218,11 @@ impl Shelves {
                     .justify_between()
                     .gap_4()
                     .h(head(window, cx))
-                    .child(heading(i18n::translate(&section.title), cx))
+                    .child(shelf_heading(
+                        self.tag("heading", place),
+                        i18n::translate(&section.title),
+                        cx,
+                    ))
                     .when(crowded, |this| {
                         this.child(self.arrows(place, &handle, &glide, me))
                     }),
@@ -239,14 +254,19 @@ impl Shelves {
                                 let Some(view) = drawn.upgrade() else {
                                     return div().into_any_element();
                                 };
-                                let Some(item) =
-                                    feed.get(place).and_then(|section| section.items.get(index))
+                                let Some(items) = feed.get(place).map(|section| &section.items)
                                 else {
+                                    return div().into_any_element();
+                                };
+                                let Some(item) = items.get(index) else {
                                     return div().into_any_element();
                                 };
 
                                 view.read(cx)
                                     .card(place * 100 + index, item, Some(card), cx)
+                                    .aria_position_in_set(index + 1)
+                                    .aria_size_of_set(items.len())
+                                    .into_any_element()
                             }),
                     ),
             )
@@ -308,10 +328,9 @@ impl Shelves {
             })
     }
 
-    fn card(&self, id: usize, item: &GenreItem, tile: Option<Pixels>, cx: &App) -> AnyElement {
+    fn card(&self, id: usize, item: &GenreItem, tile: Option<Pixels>, cx: &App) -> Card {
         cards::item_card(slot("item", id), item, &self.playback, cx)
             .map(|card| dressed(card, tile, cx))
-            .into_any_element()
     }
 }
 
@@ -320,10 +339,8 @@ pub(crate) fn plate(
     genre: &music::Genre,
     tile: Option<Pixels>,
     cx: &App,
-) -> AnyElement {
-    cards::genre_card(id, genre)
-        .map(|card| dressed(card, tile, cx))
-        .into_any_element()
+) -> Card {
+    cards::genre_card(id, genre).map(|card| dressed(card, tile, cx))
 }
 
 pub(crate) fn grid(
@@ -342,8 +359,11 @@ pub(crate) fn grid(
         .gap(LANE_GAP)
         .draw(move |place, _, cx| {
             let first = place * lanes;
-            let cells = (first..(first + lanes).min(genres.len()))
-                .map(|index| plate((id, index), &genres[index], None, cx));
+            let cells = (first..(first + lanes).min(genres.len())).map(|index| {
+                plate((id, index), &genres[index], None, cx)
+                    .aria_position_in_set(index + 1)
+                    .aria_size_of_set(genres.len())
+            });
 
             div()
                 .flex()
@@ -355,7 +375,8 @@ pub(crate) fn grid(
         .into_any_element()
 }
 
-fn lanes(width: Pixels) -> usize {
+/// How many columns a grid of genre plates `width` wide lays out.
+pub(crate) fn lanes(width: Pixels) -> usize {
     ((width / PLATE).floor().max(1.) as usize).min(LANES)
 }
 
@@ -473,7 +494,11 @@ impl Rail {
                     .justify_between()
                     .gap_4()
                     .h(head(window, cx))
-                    .child(heading(title, cx))
+                    .child(shelf_heading(
+                        SharedString::from(format!("{tag}-heading-{place}")),
+                        title,
+                        cx,
+                    ))
                     .children(arrows),
             )
             .children(tabs)
@@ -521,7 +546,11 @@ impl Rail {
                     .flex()
                     .items_end()
                     .h(head(window, cx))
-                    .child(heading(title, cx)),
+                    .child(shelf_heading(
+                        SharedString::from(format!("rail-pending-heading-{title}")),
+                        title,
+                        cx,
+                    )),
             )
             .child(
                 div()
@@ -628,4 +657,14 @@ fn slot(kind: &'static str, place: usize) -> ElementId {
 /// trackpad scrolls the rail itself and a vertical notch belongs to the page.
 fn sideways(event: &ScrollWheelEvent) -> bool {
     !event.delta.precise() && event.delta.pixel_delta(px(1.)).x != Pixels::ZERO
+}
+
+/// A shelf or rail title as a level two heading, so screen readers can jump from one shelf to
+/// the next. `id` has to be unique on the page.
+fn shelf_heading(id: impl Into<ElementId>, title: SharedString, cx: &App) -> Stateful<Div> {
+    heading(title.clone(), cx)
+        .id(id)
+        .role(Role::Heading)
+        .aria_level(2)
+        .aria_label(title)
 }

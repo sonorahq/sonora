@@ -2,17 +2,25 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
-use http::Method;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use bytes::Bytes;
+use http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
+use http::{HeaderMap, HeaderValue, Method, Request};
+use librespot_core::spclient::CLIENT_TOKEN;
 use librespot_core::{Session, SpotifyId};
 use librespot_protocol::playlist4_external::{
     Add, ChangeInfo, CreateListReply, Delta, Item, ItemAttributes, ItemAttributesPartialState,
-    ListAttributes, ListAttributesPartialState, ListChanges, Op, Rem, SelectedListContent,
-    SourceInfo, UpdateItemAttributes, UpdateListAttributes, op::Kind, source_info::Client,
+    ListAttributeKind, ListAttributes, ListAttributesPartialState, ListChanges, Op, Rem,
+    SelectedListContent, SourceInfo, UpdateItemAttributes, UpdateListAttributes, op::Kind,
+    source_info::Client,
 };
 use protobuf::{Message as _, MessageField};
+use serde::Deserialize;
 use tokio::task::JoinSet;
 
-use crate::spotify::pace::paced;
+use crate::cover::{self, CoverLimits};
+use crate::spotify::pace::{self, paced};
 use crate::spotify::{collection, profiles, wire};
 use crate::{Contributor, GenreItem, GenreSection, Playlist, PlaylistDetail, Track, escape};
 
@@ -21,6 +29,24 @@ const PLAYLIST_PREFIX: &str = "spotify:playlist:";
 const ROOTLIST_LIMIT: usize = 10000;
 const COVER_SLACK: usize = 4;
 const MODIFIED_LIMIT: usize = 300;
+/// Where the Spotify clients upload a playlist picture before they attach it.
+const IMAGE_UPLOAD: &str = "https://image-upload.spotify.com/v4/playlist";
+/// Spotify shows a playlist cover at 640 pixels at most, and its public API caps one at 256 KB.
+const COVER_LIMITS: CoverLimits = CoverLimits {
+    side: 640,
+    bytes: 256 * 1024,
+};
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Uploaded {
+    upload_token: String,
+}
+
+#[derive(Deserialize)]
+struct Registered {
+    picture: String,
+}
 
 pub async fn create(session: &Session, name: &str) -> Result<String> {
     let body = changes(None, rename_op(name));
@@ -60,6 +86,81 @@ pub async fn rename(session: &Session, playlist_id: &str, name: &str) -> Result<
         .await
         .context("cannot rename the playlist")?;
     Ok(())
+}
+
+/// Uploads `image` and makes it the playlist's picture, as the Spotify clients do, or takes the
+/// picture off when it is `None` so Spotify shows its mosaic again.
+pub async fn set_cover(session: &Session, playlist_id: &str, image: Option<&[u8]>) -> Result<()> {
+    let op = match image {
+        Some(image) => {
+            let jpeg = cover::square_jpeg(image, COVER_LIMITS)?;
+            let token = upload_image(session, jpeg)
+                .await
+                .context("cannot upload the cover")?;
+            let picture = register_image(session, playlist_id, &token)
+                .await
+                .context("cannot register the cover")?;
+            picture_op(picture)
+        }
+        None => no_picture_op(),
+    };
+    edit(session, playlist_id, &changes(None, op))
+        .await
+        .context("cannot change the playlist cover")?;
+    Ok(())
+}
+
+/// Sends a JPEG to Spotify's image upload host and answers the token that names it.
+async fn upload_image(session: &Session, jpeg: Vec<u8>) -> Result<String> {
+    let token = session
+        .login5()
+        .auth_token()
+        .await
+        .context("cannot obtain Spotify access token")?;
+    let client_token = session
+        .spclient()
+        .client_token()
+        .await
+        .context("cannot obtain Spotify client token")?;
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(IMAGE_UPLOAD)
+        .header(ACCEPT, "application/json")
+        .header(CONTENT_TYPE, "image/jpeg")
+        .header(
+            AUTHORIZATION,
+            format!("{} {}", token.token_type, token.access_token),
+        )
+        .header(CLIENT_TOKEN, client_token)
+        .body(Bytes::from(jpeg))
+        .context("cannot build the upload request")?;
+    let reply = pace::send(session, request).await?;
+    let uploaded: Uploaded =
+        serde_json::from_slice(&reply).context("cannot decode the upload reply")?;
+    Ok(uploaded.upload_token)
+}
+
+/// Turns an upload token into the picture id a playlist attribute holds.
+async fn register_image(session: &Session, playlist_id: &str, token: &str) -> Result<Vec<u8>> {
+    let endpoint = format!(
+        "/playlist/v2/playlist/{}/register-image",
+        escape::component(playlist_id)
+    );
+    let body = serde_json::to_vec(&serde_json::json!({ "uploadToken": token }))?;
+    let mut headers = HeaderMap::new();
+    headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    let reply = paced(|| {
+        session
+            .spclient()
+            .request(&Method::POST, &endpoint, Some(headers.clone()), Some(&body))
+    })
+    .await?;
+    let registered: Registered =
+        serde_json::from_slice(&reply).context("cannot decode the registered picture")?;
+    STANDARD
+        .decode(registered.picture)
+        .context("cannot decode the picture id")
 }
 
 pub async fn delete(session: &Session, playlist_id: &str) -> Result<()> {
@@ -456,6 +557,24 @@ fn delete_op() -> Op {
     let mut values = ListAttributes::new();
     values.set_deleted_by_owner(true);
     list_attributes_op(values)
+}
+
+fn picture_op(picture: Vec<u8>) -> Op {
+    let mut values = ListAttributes::new();
+    values.set_picture(picture);
+    list_attributes_op(values)
+}
+
+/// Clears the picture attribute. An empty picture is not the same thing, so the kind goes in
+/// `no_value` instead.
+fn no_picture_op() -> Op {
+    let mut op = list_attributes_op(ListAttributes::new());
+    if let Some(update) = op.update_list_attributes.as_mut()
+        && let Some(state) = update.new_attributes.as_mut()
+    {
+        state.no_value.push(ListAttributeKind::LIST_PICTURE.into());
+    }
+    op
 }
 
 fn list_attributes_op(values: ListAttributes) -> Op {

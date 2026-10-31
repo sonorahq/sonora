@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{AnyView, App, Context, Entity, FocusHandle, Pixels, Render, StyleRefinement};
 use gpui::{Window, deferred, div};
@@ -20,6 +21,10 @@ use crate::shared::playlist_editor::PlaylistEditor;
 use crate::shared::tag_editor::TagEditor;
 use crate::shared::widevine::WidevinePrompt;
 use crate::shells::Shell;
+
+/// The paint layer toasts take. Dialogs paint at 0 and menus at 1, so a toast shows over an
+/// open dialog and a menu opened after it still shows over the toast.
+const TOAST_LAYER: usize = 1;
 
 pub(crate) struct Workspace {
     sidebar: Entity<SidebarLeft>,
@@ -268,6 +273,8 @@ impl Render for Workspace {
         };
 
         div()
+            .id("workspace")
+            .role(Role::Main)
             .relative()
             .flex()
             .flex_col()
@@ -386,7 +393,9 @@ impl Render for Workspace {
                             .clone()
                             .cached(StyleRefinement::default().w_full().h(bar_height)),
                     )
-                    .child(self.toasts.clone()),
+                    // Deferred above the dialogs, which are deferred too, so a toast raised
+                    // while one is open shows over it and its backdrop.
+                    .child(deferred(self.toasts.clone()).with_priority(TOAST_LAYER)),
             )
             // deferred so the cards sit above the sidebars' resize grips, and ahead of the
             // dialogs so those still cover them

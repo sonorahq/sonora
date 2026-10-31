@@ -1,7 +1,8 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    App, Div, FontWeight, Interactivity, Pixels, SharedString, StyleRefinement, Window, div, px,
-    svg,
+    App, Div, ElementId, FontWeight, Interactivity, Pixels, SharedString, StyleRefinement, Window,
+    div, px, svg,
 };
 
 use crate::metrics::Text;
@@ -18,6 +19,8 @@ pub struct Notice {
     icon: SharedString,
     failed: bool,
     centered: bool,
+    /// The id under which the notice reaches screen readers, which it does only once given one.
+    spoken: Option<ElementId>,
 }
 
 impl Notice {
@@ -29,6 +32,7 @@ impl Notice {
             icon: SharedString::from("icons/circle-alert.svg"),
             failed: false,
             centered: false,
+            spoken: None,
         }
     }
 
@@ -44,6 +48,13 @@ impl Notice {
 
     pub fn icon(mut self, path: impl Into<SharedString>) -> Self {
         self.icon = path.into();
+        self
+    }
+
+    /// Exposes the notice to screen readers as a group named by its title and described by its
+    /// message, under the element id `id`. Without it both are drawn but never read.
+    pub fn spoken(mut self, id: impl Into<ElementId>) -> Self {
+        self.spoken = Some(id.into());
         self
     }
 }
@@ -69,6 +80,7 @@ impl RenderOnce for Notice {
             icon,
             failed,
             centered,
+            spoken,
         } = self;
 
         let theme = *cx.theme();
@@ -94,7 +106,7 @@ impl RenderOnce for Notice {
                     .text_size(theme.text(Text::Body))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme.foreground)
-                    .child(title),
+                    .child(title.clone()),
             );
 
         let mut notice = base
@@ -111,9 +123,21 @@ impl RenderOnce for Notice {
             .text_size(theme.text(Text::Small))
             .when(centered, |this| this.items_center().text_center())
             .child(head)
-            .child(div().text_color(theme.muted_foreground).child(message));
+            .child(
+                div()
+                    .text_color(theme.muted_foreground)
+                    .child(message.clone()),
+            );
 
         notice.style().refine(&overrides);
-        notice
+        match spoken {
+            Some(id) => notice
+                .id(id)
+                .role(Role::Group)
+                .aria_label(title)
+                .aria_description(message)
+                .into_any_element(),
+            None => notice.into_any_element(),
+        }
     }
 }

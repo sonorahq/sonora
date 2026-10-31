@@ -6,8 +6,8 @@ use gpui::prelude::*;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use gpui::{
-    AnyElement, App, ClipboardItem, Context, Div, Entity, FocusHandle, Hsla, Pixels, Point, Render,
-    SharedString, Window, div, px, rgb, svg,
+    AnyElement, App, ClipboardItem, Context, Div, ElementId, Entity, FocusHandle, Hsla, Pixels,
+    Point, Render, SharedString, Window, div, px, rgb, svg,
 };
 use i18n::t;
 use music::connect::{Jam, JamMember};
@@ -443,15 +443,16 @@ impl Render for JamPeople {
                         .items_center()
                         .gap_2()
                         .when(member.host, |this| {
-                            this.child(badge(t!("devices-jam-host"), theme))
+                            this.child(badge(("jam-host", index), t!("devices-jam-host"), theme))
                         })
                         .when(member.you, |this| {
-                            this.child(badge(t!("devices-jam-you"), theme))
+                            this.child(badge(("jam-you", index), t!("devices-jam-you"), theme))
                         })
                         .when(removable, |this| {
                             this.child(
                                 Button::new(("jam-remove", index))
                                     .small()
+                                    .name(t!("devices-jam-remove-member", name = name(member)))
                                     .label(t!("devices-jam-remove"))
                                     .on_click(move |_, _, cx| {
                                         cx.stop_propagation();
@@ -488,7 +489,9 @@ pub(crate) fn copy_link(link: &str, cx: &mut App) {
 
 /// The name of the person who owns `jam`, when the provider gave one.
 pub(crate) fn host_name(jam: &Jam) -> Option<&str> {
-    jam.host()
+    jam.members
+        .iter()
+        .find(|member| member.host)
         .map(|host| host.name.as_str())
         .filter(|name| !name.is_empty())
 }
@@ -612,9 +615,9 @@ pub(crate) fn faces(
         })
 }
 
-/// A small tag beside a member's name.
-fn badge(label: SharedString, theme: Theme) -> impl IntoElement {
-    div()
+/// A small tag beside a member's name, which screen readers reach under `id`.
+fn badge(id: impl Into<ElementId>, label: SharedString, theme: Theme) -> impl IntoElement {
+    ui::spoken(id, label)
         .flex_none()
         .px_2()
         .py_0p5()
@@ -622,5 +625,4 @@ fn badge(label: SharedString, theme: Theme) -> impl IntoElement {
         .bg(theme.muted)
         .text_size(theme.text(Text::Tiny))
         .text_color(theme.muted_foreground)
-        .child(label)
 }

@@ -95,10 +95,11 @@ pub struct YouTubeProvider {
 
 impl YouTubeProvider {
     pub fn new() -> Self {
-        let cache = credentials::dir("youtube");
+        let account = credentials::dir("youtube");
+        let cache = credentials::root().join("youtube");
         Self {
-            credentials: cache.join(credentials::FILE),
-            cookies: cache.join("cookies.json"),
+            credentials: account.join(credentials::FILE),
+            cookies: account.join("cookies.json"),
             resolved: cache.join("resolved.json"),
             player: cache.join("player.json"),
         }
@@ -155,6 +156,7 @@ impl YouTubeProvider {
             authenticated: true,
             capabilities: Capabilities {
                 playcounts: false,
+                playlist_covers: true,
                 qualities: playback::QUALITIES,
                 ..Capabilities::ALL
             },

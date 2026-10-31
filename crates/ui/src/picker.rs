@@ -19,6 +19,8 @@ pub struct Picker {
     key: &'static str,
     group: Popovers,
     face: Face,
+    /// What a screen reader calls the trigger, read before the current choice.
+    name: Option<SharedString>,
     /// A small element drawn before the current choice on the trigger.
     leading: Option<AnyElement>,
     tooltip: Option<&'static str>,
@@ -48,6 +50,7 @@ impl Picker {
             key,
             group: group.clone(),
             face: Face::Label(current.into()),
+            name: None,
             leading: None,
             tooltip: None,
             above: false,
@@ -79,6 +82,13 @@ impl Picker {
             face: Face::Plain(label.into()),
             ..Self::new(key, group, "")
         }
+    }
+
+    /// Names the trigger for screen readers after the setting it changes, so the current choice
+    /// is read as its description rather than as its name.
+    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
+        self
     }
 
     /// Draws `leading` before the current choice on the trigger, as the menu's items may draw
@@ -180,6 +190,7 @@ impl RenderOnce for Picker {
             key,
             group,
             face,
+            name,
             leading,
             tooltip,
             above,
@@ -216,6 +227,7 @@ impl RenderOnce for Picker {
         };
         let button = button
             .when(small, Button::small)
+            .when_some(name.clone(), Button::name)
             .when_some(leading, Button::leading)
             .when_some(tooltip, |button, key| match above {
                 true => button.tooltip_above(key),
@@ -239,11 +251,11 @@ impl RenderOnce for Picker {
                 None => menu,
             }
         });
-        let menu = menu.items(items).top(drop).when_else(
-            left,
-            |menu| menu.left_0(),
-            |menu| menu.right_0(),
-        );
+        let menu = menu
+            .items(items)
+            .top(drop)
+            .when_some(name, Menu::name)
+            .when_else(left, |menu| menu.left_0(), |menu| menu.right_0());
 
         let mut popover = Popover::new(key, group)
             .button(button)

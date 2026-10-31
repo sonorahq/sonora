@@ -6,6 +6,8 @@ use gpui::{
 
 use std::time::Duration;
 
+use i18n::t;
+
 use crate::glide::Glide;
 use crate::motion::{ease_out_cubic, paced};
 use crate::theme::ActiveTheme as _;
@@ -211,8 +213,14 @@ fn arrow(
                 .size(CHEVRON)
                 .text_color(theme.foreground),
         )
+        // a hidden arrow takes no clicks, so only one that is showing reaches screen readers
         .when(wanted, |this| {
-            this.cursor_pointer()
+            this.role(gpui::accesskit::Role::Button)
+                .aria_label(match forward {
+                    true => t!("rail-forward"),
+                    false => t!("rail-back"),
+                })
+                .cursor_pointer()
                 .occlude()
                 .hover(move |style| style.bg(hover))
                 .on_click(move |_, window, _| {

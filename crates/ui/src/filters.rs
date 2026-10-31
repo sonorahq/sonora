@@ -7,6 +7,8 @@ use gpui::{
     Render, SharedString, Stateful, StyleRefinement, Window, canvas, div, px, relative,
 };
 
+use i18n::t;
+
 use crate::Sort;
 use crate::theme::ActiveTheme as _;
 use crate::time::clock;
@@ -14,6 +16,9 @@ use crate::time::clock;
 const TRACK: f32 = 0.5;
 const THUMB: f32 = 1.5;
 const HIT: f32 = 2.;
+/// How far one screen reader step moves a handle of a range without stops, as a share of its
+/// length.
+const STEP: f32 = 0.05;
 
 type ChangeFn = Box<dyn Fn(&(f32, f32), &mut Window, &mut App) + 'static>;
 
@@ -196,6 +201,11 @@ pub struct RangeScrubber {
     filled: Hsla,
     empty: Hsla,
     thumb: Hsla,
+    /// What a screen reader calls the pair of handles, read as focus enters them.
+    name: Option<SharedString>,
+    /// How a screen reader reads where the low and the high handle stand, in place of bare
+    /// fractions.
+    values: Option<(SharedString, SharedString)>,
     on_change: Option<ChangeFn>,
 }
 
@@ -211,6 +221,8 @@ impl RangeScrubber {
             filled: gpui::white(),
             empty: gpui::black(),
             thumb: gpui::white(),
+            name: None,
+            values: None,
             on_change: None,
         }
     }
@@ -224,6 +236,19 @@ impl RangeScrubber {
         self.filled = filled;
         self.empty = empty;
         self.thumb = thumb;
+        self
+    }
+
+    /// Names the pair of handles for screen readers after what they narrow, such as the year.
+    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Where the low and the high handle stand as a screen reader should read them, such as
+    /// two years, in place of the bare fractions.
+    pub fn values(mut self, low: impl Into<SharedString>, high: impl Into<SharedString>) -> Self {
+        self.values = Some((low.into(), high.into()));
         self
     }
 
@@ -259,6 +284,8 @@ impl RenderOnce for RangeScrubber {
             filled,
             empty,
             thumb,
+            name,
+            values,
             on_change,
         } = self;
         let overrides = std::mem::take(base.style());
@@ -307,7 +334,44 @@ impl RenderOnce for RangeScrubber {
             }
         };
 
+        let (low_value, high_value) = match values {
+            Some((low, high)) => (Some(low), Some(high)),
+            None => (None, None),
+        };
+        // Each handle is a slider of its own, which a screen reader steps from stop to stop.
+        let knob = |which: Handle, spoken: Option<SharedString>| {
+            let (share, side, name) = match which {
+                Handle::Low => (value.0, "low", t!("range-from")),
+                Handle::High => (value.1, "high", t!("range-to")),
+            };
+            handle(share, line, pin, thumb)
+                .id((ElementId::Name(id.clone()), side))
+                .role(gpui::accesskit::Role::Slider)
+                .aria_label(name)
+                .aria_numeric_value(f64::from(share))
+                .aria_min_numeric_value(0.)
+                .aria_max_numeric_value(1.)
+                .when_some(spoken, |this, spoken| this.aria_value(spoken))
+                .when_some(on_change.clone(), |this, on_change| {
+                    let (rise, fall) = (on_change.clone(), on_change);
+                    let (above, below) = (stops.clone(), stops.clone());
+                    this.on_a11y_action(gpui::accesskit::Action::Increment, move |_, window, cx| {
+                        let share = stepped(share, &above, true);
+                        rise(&clamped_against_other(value, which, share), window, cx)
+                    })
+                    .on_a11y_action(
+                        gpui::accesskit::Action::Decrement,
+                        move |_, window, cx| {
+                            let share = stepped(share, &below, false);
+                            fall(&clamped_against_other(value, which, share), window, cx)
+                        },
+                    )
+                })
+        };
+
         let mut scrubber = base
+            .role(gpui::accesskit::Role::Group)
+            .when_some(name, |this, name| this.aria_label(name))
             .flex()
             .items_center()
             .w_full()
@@ -341,8 +405,8 @@ impl RenderOnce for RangeScrubber {
                                     .right(relative(1. - value.1.max(value.0)))
                                     .bg(filled),
                             )
-                            .child(handle(value.0, line, pin, thumb))
-                            .child(handle(value.1, line, pin, thumb)),
+                            .child(knob(Handle::Low, low_value))
+                            .child(knob(Handle::High, high_value)),
                     )
                     .child(
                         canvas(move |b, _, _| bounds.set(b), |_, _, _, _| {})
@@ -356,7 +420,7 @@ impl RenderOnce for RangeScrubber {
 }
 
 /// A range handle centred on `share` of the rail it sits in.
-fn handle(share: f32, line: Pixels, pin: Pixels, thumb: Hsla) -> impl IntoElement {
+fn handle(share: f32, line: Pixels, pin: Pixels, thumb: Hsla) -> Div {
     div()
         .absolute()
         .top((line - pin) / 2.)
@@ -373,6 +437,30 @@ fn snap(share: f32, stops: &[f32]) -> f32 {
         .copied()
         .min_by(|a, b| (a - share).abs().total_cmp(&(b - share).abs()))
         .unwrap_or(share)
+}
+
+/// Where a handle at `share` lands after one screen reader step up or down: the next stop that
+/// way when the range has stops, or `STEP` further along it when it has none.
+fn stepped(share: f32, stops: &[f32], up: bool) -> f32 {
+    if stops.is_empty() {
+        let moved = match up {
+            true => share + STEP,
+            false => share - STEP,
+        };
+        return moved.clamp(0., 1.);
+    }
+    let next = match up {
+        true => stops
+            .iter()
+            .copied()
+            .find(|stop| *stop > share + f32::EPSILON),
+        false => stops
+            .iter()
+            .rev()
+            .copied()
+            .find(|stop| *stop < share - f32::EPSILON),
+    };
+    next.unwrap_or(share)
 }
 
 fn clamped_against_other(value: (f32, f32), handle: Handle, share: f32) -> (f32, f32) {

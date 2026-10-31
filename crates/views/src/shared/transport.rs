@@ -1,9 +1,10 @@
 use std::time::Duration;
 
+use gpui::accesskit::Toggled;
 use gpui::prelude::*;
 use gpui::{App, Entity, SharedString, div};
 use i18n::t;
-use state::{Playback, Queue, Repeat, Sonora, Steered};
+use state::{Elsewhere, Playback, Repeat, Sonora};
 use ui::{ActiveTheme as _, Button};
 
 use crate::shared::ambient;
@@ -12,7 +13,7 @@ pub(crate) const NOTCH: f32 = 0.05;
 const STEP: f32 = 0.004;
 
 /// The other device playback is on, which the player shows instead of this app's own.
-pub(crate) fn steered(cx: &App) -> Option<Steered> {
+pub(crate) fn steered(cx: &App) -> Option<Elsewhere> {
     Sonora::global(cx).devices.read(cx).steered()
 }
 
@@ -73,12 +74,7 @@ pub(crate) fn like(track: Option<&music::Track>, playback: &Entity<Playback>, cx
 /// `big` is only true in fullscreen, where these buttons float over the ambient
 /// background and so blur their hover fills. Without that background, and on
 /// the flat player bar, the blur would show nothing.
-pub(crate) fn transport(
-    playback: &Entity<Playback>,
-    queue: &Entity<Queue>,
-    big: bool,
-    cx: &App,
-) -> impl IntoElement {
+pub(crate) fn transport(playback: &Entity<Playback>, big: bool, cx: &App) -> impl IntoElement {
     let frosted = big && ambient::shown(cx);
 
     div()
@@ -88,7 +84,7 @@ pub(crate) fn transport(
         .child(shuffle(playback, frosted, cx))
         .child(previous(playback, frosted, cx))
         .child(toggle(playback, big, frosted, cx))
-        .child(next(playback, queue, frosted, cx))
+        .child(next(playback, frosted, cx))
         .child(repeat(playback, frosted, cx))
 }
 
@@ -97,7 +93,7 @@ pub(crate) fn toggle(playback: &Entity<Playback>, big: bool, frosted: bool, cx: 
     let steered = steered(cx);
     let playing = steered
         .as_ref()
-        .map_or_else(|| held.wants_playing(), |steered| steered.playing);
+        .map_or_else(|| held.wants_playing(), |remote| remote.state.playing);
     let idle = held.track().is_none() && steered.is_none();
     let playback = playback.clone();
 
@@ -129,6 +125,7 @@ fn shuffle(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
         .small()
         .icon("icons/shuffle.svg")
         .indicator(on)
+        .aria_toggled(Toggled::from(on))
         .tooltip_above("player-shuffle")
         .tint(match on {
             true => theme.primary,
@@ -168,7 +165,8 @@ fn repeat(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
 }
 
 fn previous(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
-    let enabled = steered(cx).is_some() || playback.read(cx).has_previous(cx);
+    let queue = playback.read(cx).shown_queue(cx);
+    let enabled = !queue.editable() || queue.sections.current || queue.sections.past > 0;
     let playback = playback.clone();
 
     Button::new("previous")
@@ -183,8 +181,9 @@ fn previous(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
         })
 }
 
-fn next(playback: &Entity<Playback>, queue: &Entity<Queue>, frosted: bool, cx: &App) -> Button {
-    let enabled = steered(cx).is_some() || queue.read(cx).has_next();
+fn next(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
+    let queue = playback.read(cx).shown_queue(cx);
+    let enabled = !queue.editable() || queue.sections.upcoming > 0;
     let playback = playback.clone();
 
     Button::new("next")

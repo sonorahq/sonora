@@ -1,7 +1,8 @@
 use std::time::{Duration, Instant};
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{App, Context, Entity, EventEmitter, Pixels, Render, Task, Window};
+use gpui::{App, Context, Entity, EventEmitter, Pixels, Render, Task, Window, div};
 use i18n::t;
 use music::Level;
 use music::equalizer::{
@@ -479,17 +480,35 @@ impl Render for EqualizerGraph {
         let axes = ResponseAxes::new(low as f32..=high as f32, -span..=span)
             .expect("the graph's axes are valid");
 
-        ResponseGraph::new(&self.graph.state, axes)
+        let filters = curve.filters().len();
+
+        // The plot draws on a canvas that screen readers cannot see into, so its box stands in
+        // as one image that says how many filters shape the sound and where the preamp sits.
+        div()
+            .id("equalizer-graph")
+            .role(Role::Image)
+            .aria_label(t!("equalizer-graph"))
+            .aria_description(t!(
+                "equalizer-graph-detail",
+                count = filters,
+                db = figure(preamp, 1)
+            ))
             .size_full()
-            .response(points)
-            .nodes(nodes)
-            .reference(
-                preamp as f32,
-                t!("equalizer-graph-preamp", db = figure(preamp, 1)),
+            .child(
+                ResponseGraph::new(&self.graph.state, axes)
+                    .size_full()
+                    .response(points)
+                    .nodes(nodes)
+                    .reference(
+                        preamp as f32,
+                        t!("equalizer-graph-preamp", db = figure(preamp, 1)),
+                    )
+                    .bypassed(!on)
+                    .reshape(advanced)
+                    .on_edit(
+                        cx.listener(|this, edit: &GraphEdit, _, cx| this.graph_edit(edit, cx)),
+                    ),
             )
-            .bypassed(!on)
-            .reshape(advanced)
-            .on_edit(cx.listener(|this, edit: &GraphEdit, _, cx| this.graph_edit(edit, cx)))
     }
 }
 

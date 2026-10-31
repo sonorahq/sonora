@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Context, Div, MouseUpEvent, SharedString, Window, div, relative};
 use i18n::t;
@@ -8,7 +9,7 @@ use music::{Codec, Encoding, Offer, Quality, Transcode};
 use state::{CdmState, Sleep};
 use ui::{ActiveTheme as _, Button, MenuItem, OptionCard, Picker, Scrubber, Switch, Text};
 
-use super::rows::{grid, segmented};
+use super::rows::{Announced as _, grid, segmented};
 use super::{Group, SettingsView, Slot};
 use crate::shared::confirm::{Confirm, Kind};
 
@@ -77,6 +78,7 @@ impl SettingsView {
         self.row(
             t!("settings-normalisation"),
             Switch::new("normalisation", on)
+                .name(t!("settings-normalisation"))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.playback
                         .update(cx, |playback, cx| playback.set_normalisation(!on, cx));
@@ -91,6 +93,7 @@ impl SettingsView {
         self.row(
             t!("settings-gapless"),
             Switch::new("gapless", on)
+                .name(t!("settings-gapless"))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.playback
                         .update(cx, |playback, cx| playback.set_gapless(!on, cx));
@@ -104,6 +107,7 @@ impl SettingsView {
         self.row(
             t!("settings-sponsorblock"),
             Switch::new("sponsorblock", on)
+                .name(t!("settings-sponsorblock"))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_sponsorblock(!on, cx));
@@ -118,6 +122,7 @@ impl SettingsView {
         self.row(
             t!("settings-keep-tracks"),
             Switch::new("keep-tracks", on)
+                .name(t!("settings-keep-tracks"))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.playback
                         .update(cx, |playback, cx| playback.set_keep_tracks(!on, cx));
@@ -141,35 +146,44 @@ impl SettingsView {
             .items_center()
             .gap_3()
             .child(
-                div()
-                    .flex_none()
-                    .w(theme.metrics.cover * SLEEP_LABEL)
-                    .whitespace_nowrap()
-                    .text_right()
-                    .child(t!("settings-cache-size-value", count = current)),
+                ui::spoken(
+                    "settings-cache-size-value",
+                    t!("settings-cache-size-value", count = current),
+                )
+                .flex_none()
+                .w(theme.metrics.cover * SLEEP_LABEL)
+                .whitespace_nowrap()
+                .text_right(),
             )
             .child(
-                div().w(theme.metrics.cover * SLEEP_WIDTH).child(
-                    Scrubber::new(&self.cache, fraction)
-                        .colors(
-                            theme.progress_bar,
-                            theme.muted_foreground.opacity(0.3),
-                            theme.foreground,
-                        )
-                        .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
-                            let span = (high - low) as f32;
-                            this.pending_cache =
-                                Some(low + (fraction.clamp(0., 1.) * span).round() as u32);
-                            cx.notify();
-                        }))
-                        .on_release(cx.listener(|this, _: &MouseUpEvent, _, cx| {
-                            let Some(gb) = this.pending_cache.take() else {
-                                return;
-                            };
-                            this.playback
-                                .update(cx, |playback, cx| playback.set_cache_gb(gb, cx));
-                        })),
-                ),
+                div()
+                    .id("settings-cache-slider")
+                    .role(Role::Group)
+                    .aria_label(t!("settings-cache-size"))
+                    .w(theme.metrics.cover * SLEEP_WIDTH)
+                    .child(
+                        Scrubber::new(&self.cache, fraction)
+                            .name(t!("settings-cache-size"))
+                            .value(t!("settings-cache-size-value", count = current))
+                            .colors(
+                                theme.progress_bar,
+                                theme.muted_foreground.opacity(0.3),
+                                theme.foreground,
+                            )
+                            .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
+                                let span = (high - low) as f32;
+                                this.pending_cache =
+                                    Some(low + (fraction.clamp(0., 1.) * span).round() as u32);
+                                cx.notify();
+                            }))
+                            .on_release(cx.listener(|this, _: &MouseUpEvent, _, cx| {
+                                let Some(gb) = this.pending_cache.take() else {
+                                    return;
+                                };
+                                this.playback
+                                    .update(cx, |playback, cx| playback.set_cache_gb(gb, cx));
+                            })),
+                    ),
             );
 
         self.row(t!("settings-cache-size"), control.into_any_element())
@@ -189,10 +203,9 @@ impl SettingsView {
 
         self.row(
             i18n::lookup(quality_key(current), None),
-            div()
+            ui::spoken("settings-stream-quality-encoding", encoding)
                 .text_color(theme.muted_foreground)
                 .text_size(theme.text(Text::Label))
-                .child(encoding)
                 .into_any_element(),
         )
     }
@@ -211,6 +224,13 @@ impl SettingsView {
             .children(ladder.into_iter().enumerate().map(|(rank, offer)| {
                 let quality = offer.quality;
                 OptionCard::new(quality.id())
+                    .choice(
+                        i18n::lookup(quality_key(quality), None),
+                        quality == current,
+                        rank,
+                        steps,
+                    )
+                    .aria_description(encoding_label(&offer))
                     .thumb(signal(rank, steps, cx))
                     .label(i18n::lookup(quality_key(quality), None))
                     .detail(encoding_label(&offer))
@@ -242,7 +262,12 @@ impl SettingsView {
             }),
         );
 
-        self.row(t!("settings-stream-format"), formats.into_any_element())
+        self.row(
+            t!("settings-stream-format"),
+            formats
+                .name(t!("settings-stream-format"))
+                .into_any_element(),
+        )
     }
 
     pub(super) fn stream_bitrate_row(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -283,7 +308,12 @@ impl SettingsView {
                 }),
         );
 
-        self.row(t!("settings-stream-bitrate"), picker.into_any_element())
+        self.row(
+            t!("settings-stream-bitrate"),
+            picker
+                .name(t!("settings-stream-bitrate"))
+                .into_any_element(),
+        )
     }
 
     pub(super) fn stay_awake_row(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -292,6 +322,7 @@ impl SettingsView {
         self.row(
             t!("settings-stay-awake"),
             Switch::new("stay-awake", on)
+                .name(t!("settings-stay-awake"))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_stay_awake(!on, cx));
@@ -314,7 +345,7 @@ impl SettingsView {
             .items_center()
             .gap_3()
             .child(
-                div()
+                ui::spoken("settings-sleep-value", sleep_label(current))
                     .flex_none()
                     .w(theme.metrics.cover * SLEEP_LABEL)
                     .whitespace_nowrap()
@@ -322,29 +353,35 @@ impl SettingsView {
                     .text_color(match current {
                         Some(_) => theme.foreground,
                         None => theme.muted_foreground,
-                    })
-                    .child(sleep_label(current)),
+                    }),
             )
             .child(
-                div().w(theme.metrics.cover * SLEEP_WIDTH).child(
-                    Scrubber::new(&self.sleep, sleep_slot(current) as f32 / SLEEP_LAST as f32)
-                        .colors(
-                            theme.progress_bar,
-                            theme.muted_foreground.opacity(0.3),
-                            theme.foreground,
-                        )
-                        .on_move(cx.listener(|this, fraction: &f32, _, cx| {
-                            this.pending_sleep = Some(sleep_at_fraction(*fraction));
-                            cx.notify();
-                        }))
-                        .on_release(cx.listener(|this, _: &MouseUpEvent, _, cx| {
-                            let Some(sleep) = this.pending_sleep.take() else {
-                                return;
-                            };
-                            this.playback
-                                .update(cx, |playback, cx| playback.set_sleep(sleep, cx));
-                        })),
-                ),
+                div()
+                    .id("settings-sleep-slider")
+                    .role(Role::Group)
+                    .aria_label(t!("settings-sleep"))
+                    .w(theme.metrics.cover * SLEEP_WIDTH)
+                    .child(
+                        Scrubber::new(&self.sleep, sleep_slot(current) as f32 / SLEEP_LAST as f32)
+                            .name(t!("settings-sleep"))
+                            .value(sleep_label(current))
+                            .colors(
+                                theme.progress_bar,
+                                theme.muted_foreground.opacity(0.3),
+                                theme.foreground,
+                            )
+                            .on_move(cx.listener(|this, fraction: &f32, _, cx| {
+                                this.pending_sleep = Some(sleep_at_fraction(*fraction));
+                                cx.notify();
+                            }))
+                            .on_release(cx.listener(|this, _: &MouseUpEvent, _, cx| {
+                                let Some(sleep) = this.pending_sleep.take() else {
+                                    return;
+                                };
+                                this.playback
+                                    .update(cx, |playback, cx| playback.set_sleep(sleep, cx));
+                            })),
+                    ),
             );
 
         self.row(t!("settings-sleep"), control.into_any_element())
@@ -375,7 +412,10 @@ impl SettingsView {
             .gap_2()
             .text_color(theme.muted_foreground)
             .text_size(theme.text(Text::Label))
-            .child(i18n::lookup(note, None))
+            .child(ui::spoken(
+                "settings-widevine-note",
+                i18n::lookup(note, None),
+            ))
             .when(offerable, |row| {
                 row.child(
                     Button::new("fetch-widevine")
@@ -411,6 +451,9 @@ impl SettingsView {
             .when(offerable, |row| {
                 row.child(
                     div()
+                        .id("settings-widevine-detail")
+                        .role(Role::Paragraph)
+                        .aria_label(detail.clone())
                         .pb_5()
                         .text_color(theme.muted_foreground)
                         .text_size(theme.text(Text::Label))

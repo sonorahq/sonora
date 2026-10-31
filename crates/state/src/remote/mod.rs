@@ -1,7 +1,7 @@
 use std::ffi::c_void;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, Context, Entity, Global, Task};
@@ -26,6 +26,9 @@ const DISPLAY_NAME: &str = "Sonora";
 /// widget is told the track was seeked.
 const SEEK_SLACK: Duration = Duration::from_secs(2);
 const ARTWORK: &str = "artwork";
+/// How many covers the artwork folder keeps. The widget shows only the current track's, so the
+/// rest just save a download when the listener goes back.
+const KEPT_COVERS: usize = 32;
 
 struct Attached {
     _remote: Entity<Remote>,
@@ -79,7 +82,6 @@ pub fn attach(hwnd: Option<*mut c_void>, cx: &mut App) {
 pub struct Remote {
     controls: Controls,
     playback: Entity<Playback>,
-    queue: Entity<Queue>,
     cover: Entity<Cover>,
     io: Io,
     shown: Option<String>,
@@ -122,7 +124,6 @@ impl Remote {
         Self {
             controls,
             playback,
-            queue,
             cover,
             io,
             shown: None,
@@ -164,12 +165,21 @@ impl Remote {
 
     fn publish(&mut self, cx: &mut Context<Self>) {
         let playback = self.playback.read(cx);
-        let state = playback.state().clone();
-        let at = playback.position();
-        let track = playback.track();
-        let volume = playback.volume();
-        let repeat = playback.repeat();
-        let shuffle = self.queue.read(cx).shuffle();
+        // Desktop media widgets follow the same device the player bar shows. In particular,
+        // Spotify Connect playback can be active on a phone while the local engine is idle.
+        let steered = playback.steered(cx);
+        let state = match steered.as_ref() {
+            Some(steered) => match steered.state.playing {
+                true => PlaybackState::Playing,
+                false => PlaybackState::Paused,
+            },
+            None => playback.state().clone(),
+        };
+        let (at, _) = playback.shown_time(cx);
+        let track = playback.shown_track(cx);
+        let volume = playback.shown_volume(cx);
+        let repeat = playback.shown_repeat(cx);
+        let shuffle = playback.shown_shuffle(cx);
 
         if self.volume != Some(volume) {
             self.volume = Some(volume);
@@ -184,6 +194,7 @@ impl Remote {
             self.controls.set_repeat(repeat);
         }
 
+        let track = track.as_ref();
         let id = track.and_then(|track| track.id.as_deref());
         let cover = track.and_then(|track| self.artwork_url(track, cx));
         let moved = id != self.shown.as_deref();
@@ -197,7 +208,7 @@ impl Remote {
                 // track already on show leaves the published thumbnail up until the file lands
                 (false, true) => {}
                 // anything else is a file already
-                _ => self.controls.describe(track, cover.filter(|_| !remote)),
+                _ => self.controls.describe(track, cover.filter(|_| !remote), cx),
             }
             if let (Some(track), Some(url), true) = (track, cover, remote) {
                 let (track, url) = (track.clone(), url.to_owned());
@@ -213,10 +224,15 @@ impl Remote {
             _ => self.at,
         };
         let jumped = !moved && at.abs_diff(expected) > SEEK_SLACK;
+        let steady = !moved && !jumped && self.reported.as_ref() == Some(&state);
         self.reported = Some(state.clone());
         self.at = at;
         self.stamp = Instant::now();
 
+        // macos runs the clock
+        if cfg!(target_os = "macos") && steady {
+            return;
+        }
         self.controls.set_playback(&state, at);
         if jumped {
             self.controls.seeked(at);
@@ -247,10 +263,10 @@ impl Remote {
                 Ok(path) => path,
                 Err(error) => return log::debug!("remote: cannot fetch the cover: {error:#}"),
             };
-            this.update(cx, |this, _| {
+            this.update(cx, |this, cx| {
                 if this.shown == track.id {
                     let cover = format!("file://{}", path.display());
-                    this.controls.describe(Some(&track), Some(&cover));
+                    this.controls.describe(Some(&track), Some(&cover), cx);
                 }
             })
             .ok();
@@ -279,6 +295,11 @@ async fn artwork(url: &str) -> Result<PathBuf> {
     ] {
         let candidate = dir.join(&key).with_extension(extension(format));
         if candidate.is_file() {
+            std::fs::File::options()
+                .write(true)
+                .open(&candidate)
+                .and_then(|file| file.set_modified(SystemTime::now()))
+                .ok();
             return Ok(candidate);
         }
     }
@@ -297,7 +318,33 @@ async fn artwork(url: &str) -> Result<PathBuf> {
     std::fs::create_dir_all(&dir).context("cannot create the artwork cache")?;
     let path = dir.join(&key).with_extension(extension(format));
     std::fs::write(&path, &bytes).context("cannot store the cover")?;
+    trim(&dir);
     Ok(path)
+}
+
+/// Deletes all but the [`KEPT_COVERS`] most recently used covers in `dir`. A cover the widget
+/// still holds open on Windows fails to delete and goes on a later pass.
+fn trim(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut covers: Vec<_> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let metadata = entry
+                .metadata()
+                .ok()
+                .filter(|metadata| metadata.is_file())?;
+            Some((metadata.modified().ok()?, entry.path()))
+        })
+        .collect();
+    if covers.len() <= KEPT_COVERS {
+        return;
+    }
+    covers.sort_unstable_by_key(|(used, _)| std::cmp::Reverse(*used));
+    for (_, path) in covers.into_iter().skip(KEPT_COVERS) {
+        std::fs::remove_file(path).ok();
+    }
 }
 
 fn extension(format: image::ImageFormat) -> &'static str {

@@ -1,3 +1,4 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, Focusable as _, Pixels, Render, SharedString,
@@ -156,6 +157,11 @@ impl Render for Toolbar {
         };
 
         div()
+            .id("toolbar")
+            .role(Role::Toolbar)
+            .when(self.apply.is_some(), |this| {
+                this.aria_label(i18n::lookup("common-search", None))
+            })
             .flex()
             .flex_1()
             .min_w_0()
@@ -187,6 +193,7 @@ impl Render for Toolbar {
                         })
                         .small()
                         .ghost()
+                        .aria_expanded(self.open)
                         .on_click(cx.listener(|this, _, window, cx| this.toggle(window, cx))),
                 )
             })

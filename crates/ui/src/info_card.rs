@@ -1,6 +1,8 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Div, FontWeight, Interactivity, SharedString, StyleRefinement, Window, div,
+    AnyElement, App, Div, ElementId, FontWeight, Interactivity, SharedString, StyleRefinement,
+    Window, div,
 };
 
 use crate::label::eyebrow;
@@ -10,6 +12,8 @@ use crate::theme::ActiveTheme as _;
 pub struct InfoCard {
     base: Div,
     title: SharedString,
+    /// The id under which the card reaches screen readers, which it does only once given one.
+    spoken: Option<ElementId>,
     children: Vec<AnyElement>,
     borderless: bool,
     stretch: bool,
@@ -23,6 +27,7 @@ impl InfoCard {
         Self {
             base: div(),
             title: title.into(),
+            spoken: None,
             children: Vec::new(),
             borderless: false,
             stretch: false,
@@ -61,6 +66,13 @@ impl InfoCard {
         self.flush = true;
         self
     }
+
+    /// Exposes the card to screen readers as a group named by its title, under the element id
+    /// `id`. Without it the title is drawn but never read.
+    pub fn spoken(mut self, id: impl Into<ElementId>) -> Self {
+        self.spoken = Some(id.into());
+        self
+    }
 }
 
 impl ParentElement for InfoCard {
@@ -86,6 +98,7 @@ impl RenderOnce for InfoCard {
         let Self {
             mut base,
             title,
+            spoken,
             children,
             borderless,
             stretch,
@@ -113,11 +126,18 @@ impl RenderOnce for InfoCard {
                         this.border_1().border_color(theme.border)
                     })
             })
-            .when(!untitled, |this| this.child(eyebrow(title, cx)))
+            .when(!untitled, |this| this.child(eyebrow(title.clone(), cx)))
             .children(children);
 
         card.style().refine(&overrides);
-        card
+        match spoken {
+            Some(id) => card
+                .id(id)
+                .role(Role::Group)
+                .aria_label(title)
+                .into_any_element(),
+            None => card.into_any_element(),
+        }
     }
 }
 
@@ -126,6 +146,9 @@ pub struct Fact {
     base: Div,
     label: SharedString,
     value: SharedString,
+    /// The id under which the label and the value reach screen readers, which they do only once
+    /// given one.
+    spoken: Option<ElementId>,
     striped: bool,
 }
 
@@ -135,12 +158,20 @@ impl Fact {
             base: div(),
             label: label.into(),
             value: value.into(),
+            spoken: None,
             striped: false,
         }
     }
 
     pub fn striped(mut self, striped: bool) -> Self {
         self.striped = striped;
+        self
+    }
+
+    /// Exposes the label and the value to screen readers as two lines of text, under ids derived
+    /// from `id`. Without it both are drawn but never read.
+    pub fn spoken(mut self, id: impl Into<ElementId>) -> Self {
+        self.spoken = Some(id.into());
         self
     }
 }
@@ -163,6 +194,7 @@ impl RenderOnce for Fact {
             mut base,
             label,
             value,
+            spoken,
             striped,
         } = self;
 
@@ -179,23 +211,35 @@ impl RenderOnce for Fact {
             .py(theme.metrics.pad / 2.)
             .rounded(theme.radius)
             .when(striped, |this| this.bg(theme.table_hover.opacity(0.35)))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_color(theme.muted_foreground)
-                    .child(label),
-            )
-            .child(
+            .child(said(
+                div().flex_1().min_w_0().text_color(theme.muted_foreground),
+                spoken.clone().map(|id| ElementId::from((id, "label"))),
+                label,
+            ))
+            .child(said(
                 div()
                     .flex_1()
                     .min_w_0()
                     .text_right()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(value),
-            );
+                    .font_weight(FontWeight::MEDIUM),
+                spoken.map(|id| ElementId::from((id, "value"))),
+                value,
+            ));
 
         fact.style().refine(&overrides);
         fact
+    }
+}
+
+/// Draws `text` in `line`, as a line screen readers reach under `id` when there is one.
+fn said(line: Div, id: Option<ElementId>, text: SharedString) -> AnyElement {
+    match id {
+        Some(id) => line
+            .id(id)
+            .role(Role::Label)
+            .aria_value(text.clone())
+            .child(text)
+            .into_any_element(),
+        None => line.child(text).into_any_element(),
     }
 }

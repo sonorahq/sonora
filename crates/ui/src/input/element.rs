@@ -11,7 +11,7 @@ use crate::button::Button;
 use crate::glass::{blurring, glass};
 use crate::input::{
     CARET, CARET_LINES, Copy, Cut, INPUT_CONTEXT, Input, Paste, SelectAll, clamp_offset,
-    clamp_range, masked_text, primary_paste,
+    clamp_range, masked_text, primary_paste, span,
 };
 use crate::menu::{Menu, MenuItem};
 use crate::popup::Popup;
@@ -176,10 +176,7 @@ impl Element for Text {
             ),
             false => (
                 Some(fill(
-                    Bounds::from_corners(
-                        point(left + line.x_for_index(selected.start), bounds.top()),
-                        point(left + line.x_for_index(selected.end), bounds.bottom()),
-                    ),
+                    span(&line, selected, left, bounds),
                     theme.selection.opacity(0.4),
                 )),
                 None,
@@ -309,6 +306,27 @@ impl Render for Input {
         });
 
         div()
+            // The focus handle doubles as the element id, since every field
+            // owns one and it stays stable for the life of the field.
+            .id(&self.focus_handle)
+            .role(match self.masked {
+                true => gpui::accesskit::Role::PasswordInput,
+                false => gpui::accesskit::Role::TextInput,
+            })
+            .map(|this| match self.name.as_ref() {
+                Some(key) => this
+                    .aria_label(i18n::lookup(key, None))
+                    .when(!self.hint.is_empty(), |this| {
+                        this.aria_placeholder(self.placeholder())
+                    }),
+                None => this.when(!self.hint.is_empty(), |this| {
+                    this.aria_label(self.placeholder())
+                }),
+            })
+            .when_some(
+                (!self.masked && !self.content.is_empty()).then(|| self.content.clone()),
+                |this, value| this.aria_value(value),
+            )
             .flex()
             .flex_1()
             .items_center()

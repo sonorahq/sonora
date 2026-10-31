@@ -84,6 +84,8 @@ After installing (thanks Apple):
 xattr -dr com.apple.quarantine /Applications/Sonora.app
 ```
 
+Or install the [disk image](https://github.com/sonorahq/sonora/releases/latest), which updates itself.
+
 ### Linux
 
 #### Arch
@@ -94,19 +96,13 @@ Install from the AUR with your AUR helper of choice:
 yay -S sonora-bin
 ```
 
-`sonora-bin` installs the prebuilt release binary. `sonora` builds the same version from source
-instead, which takes a while on a Rust and GPUI tree but links against your own system libraries:
+Or:
 
 ```sh
 yay -S sonora
 ```
 
-Either `pipewire-alsa` or `pulseaudio-alsa` is required, matching your sound server. Sonora
-warns you at startup when the one your sound server needs is missing.
-
 #### Flatpak
-
-Add the Sonora repository (updates with `flatpak update`):
 
 ```sh
 flatpak install --user https://sonorahq.github.io/sonora/sonora.flatpakref
@@ -114,8 +110,7 @@ flatpak install --user https://sonorahq.github.io/sonora/sonora.flatpakref
 
 #### AppImage
 
-Download the `x86_64` AppImage from the
-[latest release](https://github.com/sonorahq/sonora/releases/latest), make it executable and run
+Download from the [latest release](https://github.com/sonorahq/sonora/releases/latest), make it executable and run
 it:
 
 ```sh
@@ -123,13 +118,9 @@ chmod +x sonora-*.AppImage
 ./sonora-*.AppImage
 ```
 
-An `aarch64` build is published beside it. The AppImage carries no Vulkan driver and no ALSA
-bridge, so both still come from your system. It does not update itself, but it carries its update
-information, so [AppImageUpdate](https://github.com/AppImageCommunity/AppImageUpdate) or an
-AppImage manager such as [AppManager](https://github.com/kem-a/AppManager) can fetch a new release
-for you.
-
 ### Nix
+
+Add either of those inputs:
 
 ```nix
 inputs.sonora.url = "github:sonorahq/sonora";
@@ -142,25 +133,9 @@ inputs.sonora.packages.${system}.sonora-bin  (prebuilt, x86_64-linux, aarch64-li
 inputs.sonora.packages.${system}.sonora-src  (always built from source)
 ```
 
-The prebuilt package downloads the latest tagged release. `sonora-src` compiles whatever
-revision of the flake you point it at, so pin the input to a tag such as
-`github:sonorahq/sonora/v0.43.0` to build a release. Building from source on macOS needs Xcode
-added to the Nix store, because the shaders compile with Apple's Metal compiler.
+Building from source on macOS needs Xcode added to the Nix store, because the shaders compile with Apple's Metal compiler.
 
-You can set configuration options via the included Home Manager module under `programs.sonora`:
-
-```nix
-{
-  imports = [ inputs.sonora.homeManagerModules.default ];
-  programs.sonora = {
-    enable = true;
-    settings = {
-      provider = "youtube";
-      appearance.theme = "dark";
-    };
-  };
-}
-```
+Configuration with Home Manager is provided by the module under `programs.sonora`.
 
 ### Windows
 
@@ -173,6 +148,16 @@ on Windows on ARM.
 #### Portable
 
 Download the latest `windows-msvc.exe` for your architecture from [Releases](https://github.com/sonorahq/sonora/releases/latest).
+
+### Nightly
+
+[Nightly builds](https://github.com/sonorahq/sonora/releases/tag/nightly) are available.
+
+```sh
+brew install --cask nolight132/tap/sonora-nightly
+yay -S sonora-nightly-bin
+nix run github:sonorahq/sonora/nightly
+```
 
 ## Community
 
@@ -204,21 +189,21 @@ AI-assisted proofreading and translation of human-written text are permitted.
 
 | Language | Translated | Coverage |
 | --- | --- | --- |
-| English (`en-US`) | 1116/1116 | 100% |
-| Deutsch (`de`) | 1114/1116 | 100% |
-| Español (`es`) | 1114/1116 | 100% |
-| Français (`fr`) | 1114/1116 | 100% |
-| Italiano (`it`) | 1114/1116 | 100% |
-| Bahasa Indonesia (`id`) | 1114/1116 | 100% |
-| 日本語 (`ja`) | 1114/1116 | 100% |
-| Русский (`ru`) | 1114/1116 | 100% |
-| Українська (`uk`) | 1114/1116 | 100% |
-| Polski (`pl`) | 1114/1116 | 100% |
-| Čeština (`cs`) | 1114/1116 | 100% |
-| Português (Brasil) (`pt-BR`) | 1114/1116 | 100% |
-| 简体中文 (`zh-CN`) | 1114/1116 | 100% |
-| Türkçe (`tr`) | 1114/1116 | 100% |
-| Shqip (`sq`) | 1114/1116 | 100% |
+| English (`en-US`) | 1185/1185 | 100% |
+| Deutsch (`de`) | 1133/1185 | 96% |
+| Español (`es`) | 1133/1185 | 96% |
+| Français (`fr`) | 1134/1185 | 96% |
+| Italiano (`it`) | 1133/1185 | 96% |
+| Bahasa Indonesia (`id`) | 1133/1185 | 96% |
+| 日本語 (`ja`) | 1133/1185 | 96% |
+| Русский (`ru`) | 1133/1185 | 96% |
+| Українська (`uk`) | 1133/1185 | 96% |
+| Polski (`pl`) | 1133/1185 | 96% |
+| Čeština (`cs`) | 1133/1185 | 96% |
+| Português (Brasil) (`pt-BR`) | 1133/1185 | 96% |
+| 简体中文 (`zh-CN`) | 1133/1185 | 96% |
+| Türkçe (`tr`) | 1133/1185 | 96% |
+| Shqip (`sq`) | 1133/1185 | 96% |
 
 <!-- i18n:end -->
 

@@ -101,6 +101,23 @@ fn clamp_range(text: &str, range: &Range<usize>) -> Range<usize> {
     start..clamp_offset(text, range.end).max(start)
 }
 
+/// The stretch of `bounds` between the carets at `range.start` and `range.end` of a `line` drawn
+/// from `left`. In right-to-left text the caret at the start sits right of the one at the end, so
+/// the two are taken in whichever order they fall.
+fn span(
+    line: &ShapedLine,
+    range: Range<usize>,
+    left: Pixels,
+    bounds: Bounds<Pixels>,
+) -> Bounds<Pixels> {
+    let start = left + line.x_for_index(range.start);
+    let end = left + line.x_for_index(range.end);
+    Bounds::from_corners(
+        point(start.min(end), bounds.top()),
+        point(start.max(end), bounds.bottom()),
+    )
+}
+
 const MASK: &str = "•";
 
 fn mask_map(content: &str) -> Vec<usize> {
@@ -223,6 +240,8 @@ fn offset_to_utf16(text: &str, offset: usize) -> usize {
 pub struct Input {
     focus_handle: FocusHandle,
     hint: SharedString,
+    /// The Fluent key of what a screen reader calls the field, when that differs from its hint.
+    name: Option<SharedString>,
     icon: Option<SharedString>,
     compact: bool,
     tucked: bool,
@@ -251,6 +270,7 @@ impl Input {
         Self {
             focus_handle: cx.focus_handle(),
             hint: hint.into(),
+            name: None,
             icon: None,
             compact: false,
             tucked: false,
@@ -303,6 +323,13 @@ impl Input {
 
     pub fn masked(mut self) -> Self {
         self.masked = true;
+        self
+    }
+
+    /// Names the field for screen readers with the Fluent message `key`, for a field whose hint is
+    /// an example rather than what it asks for. The hint is then read as the placeholder.
+    pub fn name(mut self, key: impl Into<SharedString>) -> Self {
+        self.name = Some(key.into());
         self
     }
 
@@ -401,7 +428,28 @@ impl Input {
         self.replace_text_in_range(None, "", window, cx);
     }
 
+    /// Whether the text reads right to left, going by its first letter that has a direction. The
+    /// arrow keys then move the other way through it, so the caret still goes where they point.
+    fn right_to_left(&self) -> bool {
+        unicode_bidi::get_base_direction(&*self.content) == unicode_bidi::Direction::Rtl
+    }
+
     fn left(&mut self, _: &Left, window: &mut Window, cx: &mut Context<Self>) {
+        match self.right_to_left() {
+            true => self.forward(window, cx),
+            false => self.back(window, cx),
+        }
+    }
+
+    fn right(&mut self, _: &Right, window: &mut Window, cx: &mut Context<Self>) {
+        match self.right_to_left() {
+            true => self.back(window, cx),
+            false => self.forward(window, cx),
+        }
+    }
+
+    /// Moves the caret one character towards the start of the text.
+    fn back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             let prev = previous_boundary(&self.content, self.cursor());
             if prev == self.cursor() {
@@ -414,7 +462,8 @@ impl Input {
         }
     }
 
-    fn right(&mut self, _: &Right, window: &mut Window, cx: &mut Context<Self>) {
+    /// Moves the caret one character towards the end of the text.
+    fn forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             let next = next_boundary(&self.content, self.cursor());
             if next == self.cursor() {
@@ -428,27 +477,49 @@ impl Input {
     }
 
     fn word_left(&mut self, _: &WordLeft, _: &mut Window, cx: &mut Context<Self>) {
-        self.step(previous_word, true, cx);
+        match self.right_to_left() {
+            true => self.step(next_word, false, cx),
+            false => self.step(previous_word, true, cx),
+        }
     }
 
     fn word_right(&mut self, _: &WordRight, _: &mut Window, cx: &mut Context<Self>) {
-        self.step(next_word, false, cx);
+        match self.right_to_left() {
+            true => self.step(previous_word, true, cx),
+            false => self.step(next_word, false, cx),
+        }
     }
 
     fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
-        self.extend(previous_boundary, cx);
+        let motion: Motion = match self.right_to_left() {
+            true => next_boundary,
+            false => previous_boundary,
+        };
+        self.extend(motion, cx);
     }
 
     fn select_right(&mut self, _: &SelectRight, _: &mut Window, cx: &mut Context<Self>) {
-        self.extend(next_boundary, cx);
+        let motion: Motion = match self.right_to_left() {
+            true => previous_boundary,
+            false => next_boundary,
+        };
+        self.extend(motion, cx);
     }
 
     fn select_word_left(&mut self, _: &SelectWordLeft, _: &mut Window, cx: &mut Context<Self>) {
-        self.extend(previous_word, cx);
+        let motion: Motion = match self.right_to_left() {
+            true => next_word,
+            false => previous_word,
+        };
+        self.extend(motion, cx);
     }
 
     fn select_word_right(&mut self, _: &SelectWordRight, _: &mut Window, cx: &mut Context<Self>) {
-        self.extend(next_word, cx);
+        let motion: Motion = match self.right_to_left() {
+            true => previous_word,
+            false => next_word,
+        };
+        self.extend(motion, cx);
     }
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
@@ -816,15 +887,11 @@ impl EntityInputHandler for Input {
             true => mask_map(&self.content)[offset],
             false => offset,
         };
-        Some(Bounds::from_corners(
-            point(
-                bounds.left() + line.x_for_index(at(range.start)),
-                bounds.top(),
-            ),
-            point(
-                bounds.left() + line.x_for_index(at(range.end)),
-                bounds.bottom(),
-            ),
+        Some(span(
+            line,
+            at(range.start)..at(range.end),
+            bounds.left(),
+            bounds,
         ))
     }
 

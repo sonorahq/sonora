@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use gpui::prelude::*;
-use gpui::{Context, Entity, Pixels, Window, div, px};
+use gpui::{Context, Entity, Pixels, SharedString, Window, div, px};
 use i18n::t;
 use music::output::DeviceOption;
 use state::Outputs;
@@ -132,7 +132,7 @@ impl Render for OutputPicker {
         let item = |index: usize, label: String| {
             let device = &devices[index];
             let id = device.id.clone();
-            MenuItem::new(("output-device", index), label)
+            MenuItem::new(SharedString::from(format!("output-device-{id}")), label)
                 .selected(chosen == Some(id.as_str()))
                 .when_some(device.detail.clone(), |item, detail| {
                     item.detail(div().text_color(muted).text_size(small).child(detail))
@@ -191,6 +191,7 @@ impl Render for OutputPicker {
             .scrollbar(self.scrollbar.clone());
         // a device plugged in since the list was read is only found by asking again
         let picker = Picker::new(OUTPUT_DEVICES, &self.popovers, label)
+            .name(t!("settings-output-device"))
             // a long device name is cut short rather than crowding the setting's own label
             .max_w(Picker::WIDE)
             .on_open(cx.listener(|this, _, _, cx| {

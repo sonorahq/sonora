@@ -316,6 +316,10 @@ struct Device {
     /// rodio's handle on the open cpal stream, and the mixer every engine's chain is added to.
     /// Dropping it closes the stream, which happens when the last output lets go of this device.
     stream: MixerDeviceSink,
+
+    /// How many outputs on the stream are playing. The stream is paused while none is, so an
+    /// idle mixer pulls no silence through the chains.
+    playing: Mutex<usize>,
 }
 
 impl Device {
@@ -414,6 +418,7 @@ impl Device {
         let (name, _) = cpal_describe(&device);
         let failed = Arc::new(AtomicBool::new(false));
         let (stream, buffer) = open_stream(device, &id, &config, frames, &failed)?;
+        stream.pause();
         let buffers = buffers(&config, buffer);
         let sink = read_sink(&id);
         Ok(Self {
@@ -435,7 +440,26 @@ impl Device {
             listeners: Mutex::new(Vec::new()),
             sink: Mutex::new(sink),
             stream,
+            playing: Mutex::new(0),
         })
+    }
+
+    /// Counts one more output playing, starting the stream for the first.
+    fn wake(&self) {
+        let mut playing = self.playing.lock().unwrap_or_else(PoisonError::into_inner);
+        if *playing == 0 {
+            self.stream.play();
+        }
+        *playing += 1;
+    }
+
+    /// Counts one output fewer playing, pausing the stream once none is.
+    fn rest(&self) {
+        let mut playing = self.playing.lock().unwrap_or_else(PoisonError::into_inner);
+        *playing = playing.saturating_sub(1);
+        if *playing == 0 {
+            self.stream.pause();
+        }
     }
 
     /// Whether outputs can still join this stream: it has reported no error, and the watcher has
@@ -514,6 +538,47 @@ impl Device {
     }
 }
 
+/// Holds the calling thread in COM's multithreaded apartment until it exits. Every cpal call goes
+/// through `host` first, so a thread joins it before cpal would put it in a single-threaded one.
+///
+/// From a single-threaded apartment WASAPI now and then fails to open the default device just
+/// after the system switches it, with `RPC_E_CHANGED_MODE`. A bare cpal program does not hit that,
+/// so something else in Sonora that uses COM plays a part, but from the multithreaded apartment
+/// the new default opens every time. A thread already in an apartment, such as the UI thread,
+/// stays in it.
+#[cfg(windows)]
+struct Apartment {
+    /// Whether this thread's call initialized COM, so it has to uninitialize it on exit.
+    entered: bool,
+}
+
+#[cfg(windows)]
+impl Apartment {
+    fn enter() {
+        thread_local! {
+            static APARTMENT: Apartment = Apartment {
+                entered: unsafe {
+                    windows::Win32::System::Com::CoInitializeEx(
+                        None,
+                        windows::Win32::System::Com::COINIT_MULTITHREADED,
+                    )
+                }
+                .is_ok(),
+            };
+        }
+        APARTMENT.with(|_| {});
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Apartment {
+    fn drop(&mut self) {
+        if self.entered {
+            unsafe { windows::Win32::System::Com::CoUninitialize() };
+        }
+    }
+}
+
 impl Sample {
     fn of(format: cpal::SampleFormat) -> Self {
         use cpal::SampleFormat::*;
@@ -556,6 +621,8 @@ pub(crate) struct Output {
     /// What every chunk appended to `sink` publishes its format into.
     format: audio::PublishedFormat,
     device: Arc<Device>,
+    /// Whether this output counts as playing on the device.
+    playing: AtomicBool,
 }
 
 impl Output {
@@ -574,11 +641,28 @@ impl Output {
             sink: Arc::new(sink),
             format,
             device,
+            playing: AtomicBool::new(false),
         })
     }
 
     pub fn sink(&self) -> &Arc<rodio::Player> {
         &self.sink
+    }
+
+    /// Plays the sink, starting the shared stream if it was resting.
+    pub fn play(&self) {
+        if !self.playing.swap(true, Ordering::Relaxed) {
+            self.device.wake();
+        }
+        self.sink.play();
+    }
+
+    /// Pauses the sink, and the shared stream once no other output plays.
+    pub fn pause(&self) {
+        self.sink.pause();
+        if self.playing.swap(false, Ordering::Relaxed) {
+            self.device.rest();
+        }
     }
 
     /// Where a chunk appended to `sink` publishes its format, so the chain knows what it plays.
@@ -599,6 +683,14 @@ impl Output {
     /// longer be heard as it should. Every output on the stream sees it.
     pub fn failed(&self) -> bool {
         !self.device.live()
+    }
+}
+
+impl Drop for Output {
+    fn drop(&mut self) {
+        if *self.playing.get_mut() {
+            self.device.rest();
+        }
     }
 }
 
@@ -915,9 +1007,12 @@ fn forget_gone(host: &cpal::Host) {
     }
 }
 
-/// The host Sonora plays through.
+/// The host Sonora plays through. On Windows the calling thread joins COM's multithreaded
+/// apartment first, see `Apartment`.
 #[cfg(not(target_os = "linux"))]
 fn host() -> cpal::Host {
+    #[cfg(windows)]
+    Apartment::enter();
     cpal::default_host()
 }
 

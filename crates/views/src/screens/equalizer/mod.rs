@@ -1,3 +1,4 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Div, Entity, FocusHandle, Focusable as _, Pixels, Render,
@@ -211,7 +212,7 @@ impl EqualizerView {
         let outputs = Sonora::global(cx).outputs.clone();
         let id = cx.entity_id();
         let preamp = cx.new(|cx| {
-            Input::new("", cx)
+            Input::new("equalizer-decibels", cx)
                 .compact()
                 .align_end()
                 .suffix("equalizer-decibels")
@@ -484,6 +485,7 @@ impl EqualizerView {
         ];
 
         TabBar::new("equalizer-mode")
+            .name(t!("equalizer-mode"))
             .flex_none()
             .items(modes)
             .into_any_element()
@@ -574,12 +576,14 @@ impl EqualizerView {
                     .gap_x_2()
                     .gap_y_3()
                     .child(picker)
-                    .child(Switch::new("equalizer-enabled", on).on_click(cx.listener(
-                        move |this, _, _, cx| {
-                            this.equalizer
-                                .update(cx, |equalizer, cx| equalizer.set_enabled(!on, cx))
-                        },
-                    )))
+                    .child(
+                        Switch::new("equalizer-enabled", on)
+                            .name(t!("settings-equalizer"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.equalizer
+                                    .update(cx, |equalizer, cx| equalizer.set_enabled(!on, cx))
+                            })),
+                    )
                     .child(history)
                     .children(manage),
             )
@@ -647,16 +651,26 @@ impl EqualizerView {
             false => figure(gain, 1),
         };
 
-        let slider = div().w(theme.metrics.cover * TONE_SLIDER).child(
-            Scrubber::new(state, ((gain - low) / (high - low)) as f32)
-                .colors(theme.muted, theme.muted, theme.foreground)
-                .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
-                    let gain = tone_gain(*fraction);
-                    let tone = shelf.with(this.equalizer.read(cx).tone(), gain);
-                    this.equalizer
-                        .update(cx, |equalizer, cx| equalizer.glide_tone(tone, cx));
-                })),
-        );
+        let slider = div()
+            .id(match shelf {
+                Shelf::Bass => "equalizer-bass-slider",
+                Shelf::Treble => "equalizer-treble-slider",
+            })
+            .role(Role::Group)
+            .aria_label(title.clone())
+            .w(theme.metrics.cover * TONE_SLIDER)
+            .child(
+                Scrubber::new(state, ((gain - low) / (high - low)) as f32)
+                    .name(title.clone())
+                    .value(t!("equalizer-decibels-value", db = signed.clone()))
+                    .colors(theme.muted, theme.muted, theme.foreground)
+                    .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
+                        let gain = tone_gain(*fraction);
+                        let tone = shelf.with(this.equalizer.read(cx).tone(), gain);
+                        this.equalizer
+                            .update(cx, |equalizer, cx| equalizer.glide_tone(tone, cx));
+                    })),
+            );
         let value = Button::new(reset)
             .small()
             .w(theme.metrics.cover * TONE_VALUE)
@@ -695,6 +709,7 @@ impl EqualizerView {
                 false => t!("equalizer-preamp-manual"),
             },
         )
+        .name(t!("equalizer-preamp"))
         .width(Picker::NARROW)
         .items(
             [
@@ -707,13 +722,19 @@ impl EqualizerView {
                     .on_click(cx.listener(move |this, _, _, cx| this.set_preamp(choice, cx)))
             }),
         );
+        let level = t!("equalizer-decibels-value", db = figure(resolved, 1));
         let value = match auto {
             true => figure_cell(
-                t!("equalizer-decibels-value", db = figure(resolved, 1)),
+                "equalizer-preamp-value",
+                level.clone(),
+                level,
                 theme.metrics.cover * FIELD,
                 cx,
             ),
             false => div()
+                .id("equalizer-preamp-field")
+                .role(Role::Group)
+                .aria_label(t!("equalizer-preamp-level"))
                 .flex_none()
                 .w(theme.metrics.cover * FIELD)
                 .child(self.preamp.clone())
@@ -839,15 +860,25 @@ fn shown(part: &Entity<Part>, cx: &App) -> impl IntoElement + use<> {
 
 /// A group's heading as every settings page draws it, its icon before an uppercase eyebrow, with
 /// `action` at the end of its line when the group has one.
-fn heading(key: &'static str, icon: &'static str, action: Option<AnyElement>, cx: &App) -> Div {
+fn heading(
+    key: &'static str,
+    icon: &'static str,
+    action: Option<AnyElement>,
+    cx: &App,
+) -> gpui::Stateful<Div> {
     let theme = cx.theme();
+    let label = i18n::lookup(key, None);
     div()
+        .id(SharedString::from(key))
+        .role(Role::Heading)
+        .aria_level(2)
+        .aria_label(label.clone())
         .flex()
         .items_center()
         .justify_between()
         .gap_4()
         .mb(theme.metrics.pad)
-        .child(settings::group_heading(i18n::lookup(key, None), Some(icon), cx).mb_0())
+        .child(settings::group_heading(label, Some(icon), cx).mb_0())
         .children(action)
 }
 

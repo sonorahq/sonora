@@ -726,13 +726,11 @@ pub fn stamp_of(stamp: &str) -> Option<Duration> {
             } else {
                 let minutes: u64 = first.parse().ok()?;
                 let seconds: u64 = second.parse().ok()?;
-                let fraction: u64 = third.parse().ok()?;
-                let seconds = seconds as f64
-                    + if fraction >= 100 {
-                        fraction as f64 / 1_000.
-                    } else {
-                        fraction as f64 / 100.
-                    };
+                if third.is_empty() || !third.bytes().all(|digit| digit.is_ascii_digit()) {
+                    return None;
+                }
+                let fraction: f64 = format!("0.{third}").parse().ok()?;
+                let seconds = seconds as f64 + fraction;
                 return Duration::try_from_secs_f64(minutes as f64 * 60. + seconds).ok();
             }
         }
@@ -910,6 +908,15 @@ mod tests {
         assert_eq!(stamp_of("01:02.50"), Some(Duration::from_millis(62_500)));
         assert_eq!(stamp_of("00:09"), Some(Duration::from_secs(9)));
         assert_eq!(stamp_of("bogus"), None);
+    }
+
+    #[test]
+    fn reads_a_colon_fraction_by_its_digits() {
+        assert_eq!(stamp_of("00:01:50"), Some(Duration::from_millis(1_500)));
+        assert_eq!(stamp_of("00:01:050"), Some(Duration::from_millis(1_050)));
+        assert_eq!(stamp_of("00:01:005"), Some(Duration::from_millis(1_005)));
+        assert_eq!(stamp_of("00:01:500"), Some(Duration::from_millis(1_500)));
+        assert_eq!(stamp_of("00:01:5"), Some(Duration::from_millis(1_500)));
     }
 
     #[test]

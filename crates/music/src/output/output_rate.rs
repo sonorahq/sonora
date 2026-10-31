@@ -12,6 +12,11 @@
 //! On Linux a sound server's default config is the rate it runs the device at. A picked rate
 //! opens the stream at that rate, on PulseAudio, `pipewire-pulse` included, and on ALSA alike, and
 //! the server moves the device to it where it allows that rate.
+//!
+//! Every output opens in stereo at most, whatever channels the device has. rodio shifts every
+//! channel over by one when a player starts on an output wider than stereo, so surround setups
+//! heard the left channel from the centre speaker. The system maps stereo onto the speakers
+//! itself: WASAPI and CoreAudio convert the stream, and a sound server mixes it.
 
 use cpal::SupportedStreamConfig;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -25,20 +30,20 @@ use super::output_host;
 #[cfg(target_os = "linux")]
 const RATES: [u32; 7] = [32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000];
 
-/// The config to open `device` in, given `default`, its default one. That is the device's real
-/// rate on macOS and Windows, so `wanted` is not asked for there.
+/// The config to open `device` in, given `default`, its default one, in stereo at most. That is
+/// the device's real rate on macOS and Windows, so `wanted` is not asked for there.
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn config(
-    _device: &cpal::Device,
+    device: &cpal::Device,
     default: SupportedStreamConfig,
     _wanted: Option<u32>,
 ) -> SupportedStreamConfig {
-    default
+    stereo(device, default)
 }
 
 /// The config to open `device` in, given `default`, its default one: the same at `wanted` when
 /// the device offers it in the default's channels and sample format. A sound server is asked for
-/// stereo in float, which it mixes in anyway.
+/// stereo in float, which it mixes in anyway, and a sound card for stereo when it offers it.
 #[cfg(target_os = "linux")]
 pub(crate) fn config(
     device: &cpal::Device,
@@ -47,7 +52,7 @@ pub(crate) fn config(
 ) -> SupportedStreamConfig {
     let default = match output_host::served(device) {
         true => for_server(default),
-        false => default,
+        false => stereo(device, default),
     };
     wanted
         .and_then(|rate| at_rate(device, &default, rate))
@@ -123,6 +128,50 @@ fn for_server(config: SupportedStreamConfig) -> SupportedStreamConfig {
         *config.buffer_size(),
         cpal::SampleFormat::F32,
     )
+}
+
+/// `config` in stereo when it has more channels. WASAPI and CoreAudio take a stereo stream on any
+/// device and map it onto the speakers, so the device is not asked.
+#[cfg(not(target_os = "linux"))]
+fn stereo(_device: &cpal::Device, config: SupportedStreamConfig) -> SupportedStreamConfig {
+    match config.channels() > 2 {
+        true => SupportedStreamConfig::new(
+            2,
+            config.sample_rate(),
+            *config.buffer_size(),
+            config.sample_format(),
+        ),
+        false => config,
+    }
+}
+
+/// `config` in stereo when it has more channels and the sound card offers stereo at its rate and
+/// sample format. A card that only takes all its channels keeps them.
+#[cfg(target_os = "linux")]
+fn stereo(device: &cpal::Device, config: SupportedStreamConfig) -> SupportedStreamConfig {
+    if config.channels() <= 2 {
+        return config;
+    }
+    let offered = device
+        .supported_output_configs()
+        .ok()
+        .and_then(|mut ranges| {
+            ranges.find_map(|range| {
+                (range.channels() == 2 && range.sample_format() == config.sample_format())
+                    .then(|| range.try_with_sample_rate(config.sample_rate()))
+                    .flatten()
+            })
+        });
+    match offered {
+        Some(stereo) => stereo,
+        None => {
+            log::warn!(
+                "output: the card takes only {} channels, so it opens with all of them",
+                config.channels()
+            );
+            config
+        }
+    }
 }
 
 /// `like` at `rate`, if the device offers that rate in its channels and sample format.

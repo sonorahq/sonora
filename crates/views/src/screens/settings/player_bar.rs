@@ -4,7 +4,7 @@ use i18n::t;
 use state::PlayerBarLayout;
 use ui::{ActiveTheme as _, OptionCard, Switch};
 
-use super::rows::grid;
+use super::rows::{Announced as _, grid};
 use super::{Group, Row, SettingsView, Slot};
 
 impl SettingsView {
@@ -24,18 +24,29 @@ impl SettingsView {
         let transparent = self.settings.read(cx).player_bar_translucent();
         let height = cx.theme().metrics.list_row * 1.6;
         grid(PlayerBarLayout::ALL.len() as u16, window, cx)
-            .children(PlayerBarLayout::ALL.map(|layout| {
-                OptionCard::new(layout.id())
-                    .thumb_height(height)
-                    .thumb(sketch(layout, transparent, cx))
-                    .label(i18n::lookup(layout.key(), None))
-                    .selected(layout == chosen)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.settings.update(cx, |settings, cx| {
-                            settings.set_player_bar_layout(layout, cx);
-                        });
-                    }))
-            }))
+            .children(
+                PlayerBarLayout::ALL
+                    .into_iter()
+                    .enumerate()
+                    .map(|(place, layout)| {
+                        OptionCard::new(layout.id())
+                            .choice(
+                                i18n::lookup(layout.key(), None),
+                                layout == chosen,
+                                place,
+                                PlayerBarLayout::ALL.len(),
+                            )
+                            .thumb_height(height)
+                            .thumb(sketch(layout, transparent, height, cx))
+                            .label(i18n::lookup(layout.key(), None))
+                            .selected(layout == chosen)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.settings.update(cx, |settings, cx| {
+                                    settings.set_player_bar_layout(layout, cx);
+                                });
+                            }))
+                    }),
+            )
             .into_any_element()
     }
 
@@ -48,6 +59,7 @@ impl SettingsView {
         Row::new(
             t!("settings-player-bar-transparent"),
             Switch::new("player-bar-transparent", on && blur)
+                .name(t!("settings-player-bar-transparent"))
                 .disabled(!blur)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings.update(cx, |settings, cx| {
@@ -64,66 +76,127 @@ impl SettingsView {
     }
 }
 
-/// A still miniature of a page and its player bar. Coordinates are proportions of the panel,
-/// so each layout keeps its shape when the settings column changes width.
-fn sketch(layout: PlayerBarLayout, transparent: bool, cx: &App) -> Div {
+/// A still miniature of a page and its player bar, `height` tall. The page is placed in
+/// proportions of the thumbnail and the bar in flex rows sized from `height`, so the bar's
+/// pieces stay centred on one line whatever width the settings column gives the card.
+fn sketch(layout: PlayerBarLayout, transparent: bool, height: Pixels, cx: &App) -> Div {
     let theme = *cx.theme();
     let radius = theme.radius * 0.25;
     let ink = theme.foreground.opacity(0.6);
     let muted = theme.muted_foreground.opacity(0.4);
-    let height = match layout {
-        PlayerBarLayout::Classic => 0.44,
-        PlayerBarLayout::Compact => 0.26,
-        PlayerBarLayout::Centered => 0.44,
+    let bar = height
+        * match layout {
+            PlayerBarLayout::Compact => 0.26,
+            PlayerBarLayout::Classic | PlayerBarLayout::Centered => 0.44,
+        };
+    let gap = height * 0.06;
+    let title = height * 0.035;
+    let line = height * 0.025;
+
+    let cover = div()
+        .flex_none()
+        .size(bar * 0.7)
+        .rounded(radius)
+        .bg(theme.primary.opacity(0.6));
+    let details = |centered: bool| {
+        div()
+            .flex()
+            .flex_col()
+            .when(centered, |this| this.items_center())
+            .gap(title)
+            .child(stroke(0.8, title, ink, radius))
+            .child(stroke(0.55, line, muted, radius))
     };
-    let (cover, title, artist, controls, seek, sound) = match layout {
-        PlayerBarLayout::Classic => (
-            [0.04, 0.15, 0.70],
-            [0.18, 0.28, 0.17, 0.08],
-            [0.18, 0.48, 0.12, 0.06],
-            [0.46, 0.20, 0.21, 0.34],
-            [0.41, 0.77, 0.32, 0.05],
-            [0.82, 0.48, 0.13, 0.05],
-        ),
-        PlayerBarLayout::Compact => (
-            [0.04, 0.15, 0.70],
-            [0.13, 0.25, 0.12, 0.10],
-            [0.13, 0.56, 0.09, 0.08],
-            [0.33, 0.26, 0.17, 0.46],
-            [0.55, 0.48, 0.22, 0.08],
-            [0.82, 0.48, 0.13, 0.08],
-        ),
-        PlayerBarLayout::Centered => (
-            [0.04, 0.15, 0.70],
-            [0.40, 0.29, 0.20, 0.08],
-            [0.43, 0.44, 0.14, 0.06],
-            [0.16, 0.36, 0.12, 0.28],
-            [0.38, 0.65, 0.24, 0.05],
-            [0.82, 0.48, 0.13, 0.05],
-        ),
+    let seek = div()
+        .relative()
+        .w_full()
+        .h(line)
+        .rounded(radius)
+        .bg(muted)
+        .child(
+            div()
+                .absolute()
+                .left_0()
+                .top_0()
+                .h_full()
+                .w(relative(0.4))
+                .rounded(radius)
+                .bg(ink),
+        );
+    let sound = |width: f32| {
+        div()
+            .flex()
+            .justify_end()
+            .child(stroke(width, line, muted, radius))
     };
+
     let panel = div()
         .absolute()
         .bottom_0()
         .w_full()
-        .h(relative(height))
+        .h(bar)
+        .flex()
+        .items_center()
+        .gap(gap)
+        .px(gap)
         .border_t_1()
         .border_color(theme.border)
         .map(|panel| match transparent {
             true => ui::popover_surface(panel, cx),
             false => panel.bg(theme.secondary),
-        })
-        .child(artwork(cover, theme.primary.opacity(0.6), radius))
-        .child(tile(title, ink, radius))
-        .child(tile(artist, muted, radius))
-        .child(transport(controls, cx))
-        .child(tile(seek, muted, radius))
-        .child(tile(
-            [seek[0], seek[1], seek[2] * 0.4, seek[3]],
-            ink,
-            radius,
-        ))
-        .child(tile(sound, muted, radius));
+        });
+    let panel = match layout {
+        PlayerBarLayout::Classic => panel
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(gap)
+                    .child(cover)
+                    .child(details(false).flex_1().min_w_0()),
+            )
+            .child(
+                div()
+                    .w(relative(0.3))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(gap * 0.6)
+                    .child(transport(height, cx))
+                    .child(seek),
+            )
+            .child(sound(0.5).flex_1()),
+        PlayerBarLayout::Centered => panel
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(gap)
+                    .child(cover)
+                    .child(transport(height, cx)),
+            )
+            .child(
+                div()
+                    .w(relative(0.3))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(gap * 0.6)
+                    .child(details(true).w_full())
+                    .child(seek),
+            )
+            .child(sound(0.5).flex_1()),
+        PlayerBarLayout::Compact => panel
+            .child(cover)
+            .child(details(false).w(relative(0.14)))
+            .child(transport(height, cx))
+            .child(div().flex_1().child(seek))
+            .child(sound(1.).w(relative(0.12))),
+    };
 
     div()
         .relative()
@@ -140,7 +213,7 @@ fn sketch(layout: PlayerBarLayout, transparent: bool, cx: &App) -> Div {
         .child(panel)
 }
 
-/// One simplified piece of artwork, text or progress in a miniature.
+/// One block of the page behind the bar, placed in proportions of the thumbnail.
 fn tile([left, top, width, height]: [f32; 4], fill: Hsla, radius: Pixels) -> Div {
     div()
         .absolute()
@@ -152,33 +225,23 @@ fn tile([left, top, width, height]: [f32; 4], fill: Hsla, radius: Pixels) -> Div
         .bg(fill)
 }
 
-/// The cover in a miniature. It is square whatever the panel's proportions, so only its left
-/// edge, top edge and height are given.
-fn artwork([left, top, height]: [f32; 3], fill: Hsla, radius: Pixels) -> Div {
+/// A line of text or a level in the bar, `width` of its slot across and `thickness` tall.
+fn stroke(width: f32, thickness: Pixels, fill: Hsla, radius: Pixels) -> Div {
     div()
-        .absolute()
-        .left(relative(left))
-        .top(relative(top))
-        .h(relative(height))
-        .aspect_square()
+        .w(relative(width))
+        .h(thickness)
         .rounded(radius)
         .bg(fill)
 }
 
-/// Muted abstract button marks suggest the controls without reproducing detailed live icons.
-/// They sit close together in the middle of their slot, as the real buttons do.
-fn transport([left, top, width, height]: [f32; 4], cx: &App) -> Div {
+/// Three muted marks that suggest the playback buttons without drawing the live icons.
+fn transport(height: Pixels, cx: &App) -> Div {
     let theme = cx.theme();
-    let mark = theme.metrics.control_small * 0.22;
+    let mark = height * 0.07;
     div()
-        .absolute()
-        .left(relative(left))
-        .top(relative(top))
-        .w(relative(width))
-        .h(relative(height))
+        .flex_none()
         .flex()
         .items_center()
-        .justify_center()
         .gap(mark * 0.8)
         .children((0..3).map(|_| {
             div()

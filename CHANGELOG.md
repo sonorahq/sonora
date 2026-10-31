@@ -9,12 +9,117 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- SponsorBlock in Settings → Playback can skip community-marked sponsors, self-promotion and
-  non-music sections in YouTube Music videos. It starts switched off.
-  Lookups use a video hash prefix for privacy and reuse recent results. Sections with unknown
-  or mismatched recording lengths are left alone.
-  Skipped sections are lightly marked on the player bar and fullscreen seek bars using the
-  current theme's colors.
+- Skip sponsors, self-promotion and non-music sections on YouTube Music with SponsorBlock, with sections marked on the seek bar.
+
+## [0.46.0] - 2026-10-31
+
+### Added
+
+- Control Sonora from a terminal or a script: `sonora toggle`, `next`, `current`, `search`,
+  `play -s <song>` and more, listed by `sonora --help`.
+- `sonora seek` takes a time such as `1:30`, or a step such as `+10` or `-10`, besides a percent.
+- Drop a song onto a playlist you own or collaborate on in the sidebar to add it to that playlist.
+- Hold Shift while dropping a song onto a sidebar playlist to move it out of its playlist or your
+  favorites.
+- Import an M3U or M3U8 playlist from the button or right-click menu on your local Playlists
+  page, and export a local playlist from its right-click menu. Songs outside your library are
+  left out, and an export saved beside your music lists it by relative path.
+- `sonora watch` prints what plays on every change, one line of JSON each, for status bars.
+- `sonora current` also says which provider plays, whether the song is liked and what it plays from.
+- Typing in Search suggests songs, artists, albums and playlists under the field, and Enter or
+  the new Search button opens the full results.
+- Search keeps your recent searches and lists them when you click the empty field or press Down.
+  Hover one and press its cross to remove it.
+- Categories in Search show a cover on Apple Music, YouTube Music and Subsonic servers too.
+- Install a theme from sonorahq.org/themes together with all its variants, such as light and dark.
+- Change or remove the cover of a playlist you own from its new edit dialog, on Spotify, YouTube
+  Music, Deezer, Tidal, Navidrome 0.61 or later and local files.
+- Deezer's Home shows every section the Deezer web player shows, and its mixes, flows and
+  channels open in Sonora.
+
+### Changed
+
+- Escape in a text field takes the cursor out of it. In Search the first Escape closes the
+  suggestions and the second leaves the field.
+- Best match is no longer repeated in the lists below it, and the arrow keys stop on it.
+- Search results fade out under the search field as they scroll instead of being cut off.
+- Quick picks on Home no longer shows your account name above its title.
+- Apple Music's Home leads with Recently played again, and Recently added sits below the
+  playlists Apple made for you.
+- The lyrics source you rank higher now wins whenever it has synced lyrics, even when a source
+  below it has them word by word.
+- Notices, such as the one about a missing audio output, line their text and buttons up beside
+  the icon, with the close button in the corner.
+
+### Fixed
+
+- Screen readers now read setting labels and their values, the streaming services list, track rows,
+  lyrics, the queue, page headings and empty pages, and say which option is chosen, expanded or
+  playing. Every switch, dropdown, slider and window button has a name.
+- The translucent player bar and table headers no longer look much darker than the rest of a
+  see-through window.
+- Saving a Deezer album to your favorites, or removing it, no longer fails.
+- Toasts show above an open dialog instead of behind it.
+- Fullscreen lyrics over the ambient background stay readable with a theme from your themes
+  folder, whose colours no longer apply there.
+- Covers saved for the system media controls no longer fill Sonora's cache folder without limit,
+  and playlist mosaics no longer leave old copies behind.
+- Fullscreen shows Spotify covers at their original resolution, up to 2000 pixels, instead of
+  300 pixels, and no longer waits on a blurry thumbnail while the cover loads.
+- System media controls, Discord and album pages show Spotify covers at 640 pixels instead of 300.
+- Lyrics that mark thousandths of a second with a colon, such as `[00:01:050]`, stay on time
+  instead of running almost half a second late.
+
+## [0.45.0] - 2026-10-27
+
+### Added
+
+- Nightly builds for every platform, plus `sonora-nightly-bin` on the AUR and a Nix flake ref.
+- Choose between stable and nightly updates in Settings when Sonora updates itself.
+- Sonora installed from the disk image or as an AppImage updates itself with one button.
+- `sonora --version` prints the version.
+- Apple Music Home now shows recently added library albums and playlists when available.
+- The song details of a local file now show its release year, genres, label, language and composer
+  from the file's tags.
+- Install themes people share on sonorahq.org/themes with one click. Sonora shows a preview of
+  the theme and asks before it adds it to your themes folder and switches to it.
+- Explore community themes from Settings, Appearance, Theme.
+- Delete a theme you added with the trash button on its card in Settings, Appearance, Theme.
+
+### Changed
+
+- When Spotify refuses to play on your account, a Why? button opens the FAQ explaining it.
+- Right-click a list's column headers to show or hide columns. The Columns button is gone.
+
+### Fixed
+
+- Sonora now works with screen readers such as NVDA: buttons, lists, dialogs and settings
+  announce their names and states instead of staying silent.
+- Arabic, Hebrew and other right-to-left text reads in the right order on Windows.
+- Right-to-left lyrics, descriptions and bios wrap between words and keep their reading order.
+- Arabic and Hebrew lyrics sit against the right edge, and the karaoke highlight sweeps from there.
+- The tails of letters such as ر and ز are no longer cut off at the bottom of titles.
+- Typing Arabic or Hebrew in the search box puts the caret where it belongs.
+- YouTube Music libraries with more than about two dozen playlists or albums now show all of
+  them. A new playlist no longer drops out of Add to playlist after you sign in again.
+- Album covers in the fullscreen player are sharper with YouTube Music, Subsonic, Spotify and
+  Deezer.
+- The layout previews under Settings, Player bar line up the cover, title and controls.
+- Unsynced lyrics are brighter and a little larger, so they are easier to read.
+- Refreshing your local library picks up songs added, moved or deleted since Sonora started.
+- On macOS, fullscreen no longer has a grey bar across the top when the window corners are set to
+  Rounded or Round.
+- Dragging the volume slider uses less CPU and GPU.
+- Romanized unsynced lyrics show each line's romanization under that line.
+- Moving playback to or from another Spotify device keeps the queue, history, shuffle and repeat.
+- Editing the queue from another Spotify device no longer restarts the song.
+- Going back through the queue keeps replayed songs apart from the ones you queued.
+- Spotify library, playlist and pin changes made elsewhere show up without a restart.
+- Song-change notifications on Linux name the song instead of showing a blank label.
+- A song with no lyrics found before is looked up again, so lyrics added to a service since then
+  show up.
+
+## [0.44.2] - 2026-10-25
 
 ### Fixed
 
@@ -26,6 +131,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   not whenever the current song happens to be on it. Pressing Play there starts it.
 - YouTube Music tracks on an album with a numeric title, such as 17, show their real length
   instead of the album title read as seconds.
+- Music sounds right again on 5.1 and 7.1 speakers. The left channel no longer plays from the
+  centre speaker with the front left silent, because Sonora now plays in stereo and lets your
+  system spread it across the speakers.
+- Sign-ins no longer disappear when a cleaner app or the system empties the cache folder.
+  Sonora now keeps them with its other data and moves existing ones there on the next launch.
+- Switching your sound output, such as picking another default device from the Windows taskbar,
+  no longer stops playback until Sonora is restarted.
 
 ## [0.44.1] - 2026-10-22
 
@@ -2324,7 +2436,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.44.1...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.46.0...HEAD
+[0.46.0]: https://github.com/sonorahq/sonora/compare/v0.45.0...v0.46.0
+[0.45.0]: https://github.com/sonorahq/sonora/compare/v0.44.2...v0.45.0
+[0.44.2]: https://github.com/sonorahq/sonora/compare/v0.44.1...v0.44.2
 [0.44.1]: https://github.com/sonorahq/sonora/compare/v0.44.0...v0.44.1
 [0.44.0]: https://github.com/sonorahq/sonora/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/sonorahq/sonora/compare/v0.42.2...v0.43.0

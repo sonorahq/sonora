@@ -9,7 +9,9 @@ use std::rc::Rc;
 use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis, RangeAxis, Unit};
 
 use crate::shared::menus::{ItemMenu, TrackColumns};
+use gpui::accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
+use gpui::prelude::StatefulInteractiveElement as _;
 use gpui::{
     AnyElement, App, Context, Entity, Hsla, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, WeakEntity, div,
@@ -24,7 +26,7 @@ use ui::{
 
 use crate::shared::cells;
 use crate::shared::confirm::{Confirm, Kind};
-use crate::shared::pins::Pinned as _;
+use crate::shared::pins::{Pinned as _, origin_tag};
 
 pub(crate) use columns::{
     HISTORY_COLUMNS, LIBRARY_COLUMNS, TrackField, album_columns, artist_columns, playlist_columns,
@@ -265,6 +267,16 @@ impl TrackSource {
         self.whence.as_ref().and_then(|whence| whence(cx))
     }
 
+    /// The origin tag a song dragged from this table carries, for a move. A song its playlist
+    /// holds more than once stays a copy, since the provider would take out every copy and the
+    /// Undo would bring back one.
+    fn origin_tag(&self, track: &Track, tracks: &[Track], cx: &App) -> Option<String> {
+        let origin = self.whence(cx)?;
+        let once = origin.whence != state::Whence::Playlist
+            || tracks.iter().filter(|other| other.id == track.id).count() == 1;
+        once.then(|| origin_tag(&origin)).flatten()
+    }
+
     pub(crate) fn table(mut self, table: WeakEntity<TableState<TrackSource>>) -> Self {
         self.table = Some(table);
         self
@@ -441,7 +453,7 @@ impl TrackSource {
             cell,
             track.name.clone(),
             color,
-            track.explicit,
+            track.explicit.then(|| t!("song-explicit")),
             None,
             download_mark(cell, track, cx),
             self.liked_button(cell, track, cx),
@@ -678,8 +690,23 @@ impl TableSource for TrackSource {
         self.provider.pending(cx)
     }
 
+    /// The track's title and artists, which is what a screen reader announces for its row.
+    fn name(&self, row: usize, cx: &App) -> Option<SharedString> {
+        let track = self.provider.tracks(cx).get(row)?;
+        Some(match track.artists.is_empty() {
+            true => SharedString::from(track.name.clone()),
+            false => t!(
+                "track-row-name",
+                title = track.name.as_str(),
+                artists = track.artists.as_str()
+            ),
+        })
+    }
+
     fn pin(&self, row: usize, cx: &App) -> Option<Pin> {
-        self.provider.tracks(cx).get(row)?.pin()
+        let tracks = self.provider.tracks(cx);
+        let track = tracks.get(row)?;
+        Some(track.pin()?.origin(self.origin_tag(track, tracks, cx)))
     }
 
     fn cell(&self, cell: Cell<TrackField>, cx: &mut App) -> AnyElement {
@@ -788,13 +815,23 @@ fn download_mark(cell: &Cell<TrackField>, track: &Track, cx: &App) -> Option<Any
             .arrow(theme.muted_foreground)
             .backdrop(theme.muted)
     };
-    let ring = match downloads.track(id)? {
-        Progress::Done => ring(Some(1.)),
-        Progress::Running => ring(downloads.fraction(id)),
+    let (ring, landed) = match downloads.track(id)? {
+        Progress::Done => (ring(Some(1.)), true),
+        Progress::Running => (ring(downloads.fraction(id)), false),
         Progress::Waiting => return None,
-        Progress::Failed => ring(Some(0.)).arrow(theme.danger),
+        Progress::Failed => (ring(Some(0.)).arrow(theme.danger), false),
     };
-    Some(div().flex_none().child(ring).into_any_element())
+    let ring = div().flex_none().child(ring);
+    // Only a landed download keeps a name, since no catalogued string says what a
+    // running or failed one is doing here.
+    Some(match landed {
+        true => ring
+            .id(("downloaded-mark", cell.row))
+            .role(Role::Image)
+            .aria_label(t!("filter-downloaded"))
+            .into_any_element(),
+        false => ring.into_any_element(),
+    })
 }
 
 /// Redraws a track table whenever downloads move, so the marks on its rows keep up.

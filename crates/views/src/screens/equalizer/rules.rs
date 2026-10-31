@@ -1,3 +1,4 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Context, SharedString, div};
 use i18n::t;
@@ -35,6 +36,7 @@ impl EqualizerView {
             .and_then(|output| settings.equalizer_rule_for_output(&output.id))
             .map(|rule| rule.device.clone());
         let rules = settings.equalizer_rules().to_vec();
+        let count = rules.len();
         let rows: Vec<AnyElement> = rules
             .iter()
             .enumerate()
@@ -48,7 +50,7 @@ impl EqualizerView {
                 let playing = governing
                     .as_ref()
                     .is_some_and(|device| device.id() == rule.device.id());
-                self.rule_row(index, rule, playing, connected, cx)
+                self.rule_row(index, count, rule, playing, connected, cx)
             })
             .collect();
 
@@ -56,16 +58,28 @@ impl EqualizerView {
             .flex()
             .flex_col()
             .child(heading("equalizer-rules", ICON, None, cx))
-            .children(rows)
+            .when(!rows.is_empty(), |group| {
+                group.child(
+                    div()
+                        .id("equalizer-rule-list")
+                        .role(Role::List)
+                        .aria_label(t!("equalizer-rules"))
+                        .flex()
+                        .flex_col()
+                        .children(rows),
+                )
+            })
             .child(self.add_rule(offered, cx))
             .into_any_element()
     }
 
     /// One rule: its device, marked when it is playing now or not connected, the sound it
-    /// plays, and a button that removes it.
+    /// plays, and a button that removes it. Screen readers hear it as item `index` of `count`,
+    /// named by its device with the sound and the mark after it.
     fn rule_row(
         &self,
         index: usize,
+        count: usize,
         rule: &DeviceRule,
         playing: bool,
         connected: bool,
@@ -78,6 +92,19 @@ impl EqualizerView {
             (false, true) => None,
         };
         let shape = sound_curve(self.settings.read(cx), &rule.sound).map(|curve| sketch(&curve));
+        let label = device_label(&rule.device);
+        let sound = sound_label(&rule.sound);
+        let about: SharedString = match &marker {
+            Some(marker) => {
+                let separator = t!("equalizer-status-separator");
+                format!("{sound}{separator}{marker}").into()
+            }
+            None => sound.clone(),
+        };
+        let id = SharedString::from(format!(
+            "equalizer-rule-{}",
+            rule.device.id().unwrap_or("other")
+        ));
         let device = rule.device.clone();
         let remove = Button::new(("equalizer-rule-remove", index))
             .small()
@@ -90,6 +117,12 @@ impl EqualizerView {
             }));
 
         div()
+            .id(id)
+            .role(Role::ListItem)
+            .aria_label(label.clone())
+            .aria_description(about)
+            .aria_position_in_set(index + 1)
+            .aria_size_of_set(count)
             .flex()
             .items_center()
             .gap_3()
@@ -102,7 +135,7 @@ impl EqualizerView {
                     .min_w_0()
                     .items_center()
                     .gap_2()
-                    .child(div().min_w_0().truncate().child(device_label(&rule.device)))
+                    .child(div().min_w_0().truncate().child(label))
                     .when_some(marker, |line, marker| {
                         line.child(
                             div()
@@ -124,7 +157,7 @@ impl EqualizerView {
                     .gap_2()
                     .w(theme.metrics.cover * SOUND_COLUMN)
                     .children(shape)
-                    .child(div().min_w_0().truncate().child(sound_label(&rule.sound))),
+                    .child(div().min_w_0().truncate().child(sound)),
             )
             .child(remove)
             .into_any_element()
@@ -178,6 +211,7 @@ impl EqualizerView {
             &self.popovers,
             chosen.map_or_else(|| t!("equalizer-rule-choose-device"), device_label),
         )
+        .name(t!("equalizer-rule-device"))
         .left()
         .width(Picker::WIDE)
         .w(Picker::REGULAR)
@@ -212,6 +246,7 @@ impl EqualizerView {
                 .as_ref()
                 .map_or_else(|| t!("equalizer-rule-choose-sound"), sound_label),
         )
+        .name(t!("equalizer-sound"))
         .when_some(shape, Picker::leading)
         .left()
         .width(Picker::REGULAR)

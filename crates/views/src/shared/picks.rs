@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{App, ClickEvent, Entity, MouseDownEvent, Pixels, SharedString, Window, div};
 use music::{GenreItem, Track};
@@ -224,8 +225,20 @@ impl RenderOnce for Picks {
                             .flex()
                             .flex_col()
                             .gap_0()
-                            .children(self.eyebrow.map(|label| eyebrow(label, cx)))
-                            .child(heading(i18n::lookup(self.title, None), cx)),
+                            .children(self.eyebrow.map(|label| {
+                                eyebrow(label.clone(), cx)
+                                    .id(SharedString::from(format!("{id}-eyebrow")))
+                                    .role(Role::Label)
+                                    .aria_value(label)
+                            }))
+                            .child({
+                                let title = i18n::lookup(self.title, None);
+                                heading(title.clone(), cx)
+                                    .id(SharedString::from(format!("{id}-heading")))
+                                    .role(Role::Heading)
+                                    .aria_level(2)
+                                    .aria_label(title)
+                            }),
                     )
                     .child(
                         div()
@@ -262,7 +275,13 @@ impl RenderOnce for Picks {
                     ),
             )
             .when(barren, |this| {
-                this.child(vacant(i18n::lookup(self.vacancy, None), cx))
+                let vacancy = i18n::lookup(self.vacancy, None);
+                this.child(
+                    vacant(vacancy.clone(), cx)
+                        .id(SharedString::from(format!("{id}-vacancy")))
+                        .role(Role::Label)
+                        .aria_value(vacancy),
+                )
             })
             .when(!barren, |this| {
                 this.child(div().flex().gap_2().p_2().when_else(
@@ -300,6 +319,8 @@ impl RenderOnce for Picks {
                                             &self.playback,
                                             cx,
                                         )
+                                        .aria_position_in_set(place + 1)
+                                        .aria_size_of_set(items.len())
                                         .when_some(context, |card, handler| {
                                             card.menu(move |event, window, cx| {
                                                 handler(place, event, window, cx)

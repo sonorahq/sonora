@@ -40,7 +40,7 @@ impl SettingsView {
             .flex()
             .items_center()
             .gap_3()
-            .child(div().text_color(theme.muted_foreground).child(size(used)))
+            .child(ui::spoken("cache-used", size(used)).text_color(theme.muted_foreground))
             .child(
                 Button::new("clear-cache")
                     .label(t!("settings-cache-clear"))
@@ -61,6 +61,7 @@ impl SettingsView {
         self.row(
             t!("settings-offline-mode"),
             Switch::new("offline-mode", on)
+                .name(t!("settings-offline-mode"))
                 .on_click(move |_, _, cx| {
                     let network = Network::global(cx);
                     network.update(cx, |network, cx| network.set_offline(!on, cx));
@@ -81,7 +82,7 @@ impl SettingsView {
             .flex()
             .items_center()
             .gap_3()
-            .child(div().text_color(theme.muted_foreground).child(size(used)))
+            .child(ui::spoken("downloads-used", size(used)).text_color(theme.muted_foreground))
             .child(
                 Button::new("remove-downloads")
                     .label(t!("settings-downloads-remove"))

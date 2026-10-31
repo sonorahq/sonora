@@ -4,7 +4,9 @@ use std::rc::Rc;
 use router::{Destination, Link, navigate};
 use std::time::Duration;
 use ui::ActiveTheme as _;
+use ui::Tails as _;
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, Bounds, ClickEvent, Context, Entity, MouseButton, MouseDownEvent, MouseMoveEvent,
@@ -44,7 +46,6 @@ const FACES_PAD: f32 = 2.;
 
 pub(crate) struct PlayerBar {
     playback: Entity<Playback>,
-    queue: Entity<Queue>,
     settings: Entity<AppSettings>,
     track_menu: ItemMenu,
     devices: Entity<DevicePicker>,
@@ -81,7 +82,6 @@ impl PlayerBar {
 
         Self {
             playback,
-            queue,
             settings,
             track_menu: ItemMenu::new(playlist_scrollbar, cx),
             devices: picker,
@@ -169,6 +169,9 @@ impl PlayerBar {
         let restore = self.muted.unwrap_or(0.7);
 
         div()
+            .id("player-volume")
+            .role(Role::Group)
+            .aria_label(t!("equalizer-status-volume"))
             .flex()
             .flex_none()
             .items_center()
@@ -200,6 +203,8 @@ impl PlayerBar {
             .child(
                 div().w(width).flex_none().child(
                     Scrubber::new(&self.volume, level)
+                        .name(t!("equalizer-status-volume"))
+                        .value(percent(level))
                         .colors(theme.progress_bar, empty, theme.foreground)
                         .when_some(bubble, |this, (at, text)| this.bubble(at, text))
                         .on_move(cx.listener(|this, fraction: &f32, _, cx| {
@@ -275,8 +280,20 @@ impl PlayerBar {
             .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleFullscreen), cx))
     }
 
-    fn now_playing(&self, room: bool, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
+    fn now_playing(
+        &self,
+        room: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let label = match self.playback.read(cx).shown_track(cx) {
+            Some(track) => SharedString::from(format!("{} — {}", track.name, track.artists)),
+            None => t!("player-nothing-playing"),
+        };
         div()
+            .id("now-playing")
+            .role(Role::Group)
+            .aria_label(label)
             .flex()
             .items_center()
             .gap_3()
@@ -300,12 +317,17 @@ impl PlayerBar {
         let shown = self.playback.read(cx).shown_track(cx);
         let track = shown.as_ref();
         let cover = track.and_then(|track| track.cover.clone());
+        let album = track.map(|track| match track.album.is_empty() {
+            true => t!("song-view-album"),
+            false => SharedString::from(track.album.clone()),
+        });
         div()
             .id("now-playing-artwork")
             .when_some(
                 track.and_then(|track| track.album_id.clone()),
                 |this, album| this.link(Destination::Album(album.into())),
             )
+            .when_some(album, |this, album| this.aria_label(album))
             .when(track.is_some(), |this| {
                 this.on_mouse_down(
                     MouseButton::Right,
@@ -331,9 +353,14 @@ impl PlayerBar {
         let title = match track {
             Some(track) => div()
                 .id("now-playing-track")
-                .when_some(track.album_id.clone(), |this, album_id| {
-                    this.hover(|style| style.underline())
-                        .link(Destination::Album(album_id.into()))
+                .map(|this| match track.album_id.clone() {
+                    Some(album_id) => this
+                        .aria_label(SharedString::from(track.name.clone()))
+                        .hover(|style| style.underline())
+                        .link(Destination::Album(album_id.into())),
+                    None => this
+                        .role(Role::Label)
+                        .aria_value(SharedString::from(track.name.clone())),
                 })
                 .on_mouse_down(
                     MouseButton::Right,
@@ -344,9 +371,12 @@ impl PlayerBar {
                 )
                 .child(SharedString::from(track.name.clone()))
                 .min_w_0()
-                .truncate(),
+                .truncate()
+                .tails(),
             None => div()
                 .id("now-playing-album")
+                .role(Role::Status)
+                .aria_label(t!("player-nothing-playing"))
                 .child(t!("player-nothing-playing"))
                 .min_w_0()
                 .text_color(muted)
@@ -507,9 +537,8 @@ impl Render for PlayerBar {
             .or(self.pending)
             .map(|at| (at, clock(total.mul_f32(at))));
 
-        let clock_label = |value: Duration, align_end: bool| {
-            div()
-                .child(clock(value))
+        let clock_label = |id: &'static str, value: Duration, align_end: bool| {
+            ui::spoken(id, clock(value))
                 .w(clock_width)
                 .flex_none()
                 .whitespace_nowrap()
@@ -520,14 +549,19 @@ impl Render for PlayerBar {
         };
 
         let seek = div()
+            .id("player-seek")
+            .role(Role::Group)
+            .aria_label(t!("song-position"))
             .flex()
             .items_center()
             .gap_2()
             .w_full()
-            .child(clock_label(elapsed, true))
+            .child(clock_label("player-elapsed", elapsed, true))
             .child(
                 div().flex_1().min_w_0().child(
                     Scrubber::new(&self.seek, progress)
+                        .name(t!("song-position"))
+                        .value(clock(elapsed))
                         .colors(theme.progress_bar, empty, theme.foreground)
                         .ranges(
                             Sonora::global(cx).sponsorblock.read(cx).ranges(cx),
@@ -544,7 +578,7 @@ impl Render for PlayerBar {
                         ),
                 ),
             )
-            .child(clock_label(total, false))
+            .child(clock_label("player-duration", total, false))
             .into_any_element();
 
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -553,6 +587,9 @@ impl Render for PlayerBar {
         let radius: Option<Pixels> = None;
 
         let base = div()
+            .id("player-bar")
+            .role(Role::Toolbar)
+            .aria_label(t!("settings-page-player-bar"))
             .flex()
             .w_full()
             .h(height)
@@ -591,7 +628,7 @@ impl Render for PlayerBar {
                         .gap_2()
                         .w_full()
                         .child(self.now_playing(show_track, window, cx))
-                        .child(transport(&self.playback, &self.queue, false, cx)),
+                        .child(transport(&self.playback, false, cx)),
                 )
                 .child(
                     div()
@@ -618,7 +655,7 @@ impl Render for PlayerBar {
                         .items_center()
                         .gap_3()
                         .child(self.artwork(window, cx))
-                        .child(transport(&self.playback, &self.queue, false, cx)),
+                        .child(transport(&self.playback, false, cx)),
                 )
                 .child(
                     div()
@@ -653,7 +690,7 @@ impl Render for PlayerBar {
                     self.now_playing(show_track, window, cx)
                         .max_w(theme.metrics.cover * 1.6),
                 )
-                .child(transport(&self.playback, &self.queue, false, cx))
+                .child(transport(&self.playback, false, cx))
                 .child(div().flex_1().min_w_0().child(seek))
                 .child(self.devices.clone())
                 .children(sides)
@@ -672,7 +709,7 @@ impl Render for PlayerBar {
                         .flex_1()
                         .min_w_0()
                         .max_w(px(SEEK_MAX))
-                        .child(transport(&self.playback, &self.queue, false, cx))
+                        .child(transport(&self.playback, false, cx))
                         .child(seek),
                 )
                 .child(
@@ -729,6 +766,8 @@ impl Render for PlayerBar {
             let anchor = self.faces_at.clone();
             let measured = self.faces_at.clone();
             strip("jam-banner")
+                .role(Role::Status)
+                .aria_label(text.clone())
                 .child(
                     gpui::svg()
                         .path(icons::path("icons/users-round-collaboration.svg"))
@@ -736,10 +775,12 @@ impl Render for PlayerBar {
                         .flex_none()
                         .text_color(theme.foreground),
                 )
-                .child(div().min_w_0().truncate().child(text))
+                .child(div().min_w_0().truncate().child(text.clone()))
                 .child(
                     div()
                         .id("jam-people-open")
+                        .role(Role::Button)
+                        .aria_label(t!("devices-jam-people", count = jam.members.len()))
                         .relative()
                         .flex()
                         .flex_none()
@@ -821,6 +862,11 @@ impl Render for PlayerBar {
             self.playback.read(cx).steered(cx).map(|steered| {
                 let devices = Sonora::global(cx).devices.clone();
                 strip("elsewhere-banner")
+                    .role(Role::Status)
+                    .aria_label(t!(
+                        "devices-elsewhere-banner",
+                        device = steered.device.name.clone()
+                    ))
                     .child(
                         gpui::svg()
                             .path(icons::path("icons/monitor-speaker.svg"))

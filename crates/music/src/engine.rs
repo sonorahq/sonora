@@ -664,7 +664,17 @@ async fn engine_loop<F: Fetch>(
                 }
             }
             join = joined.recv() => {
-                let Some(join) = join else { break };
+                // The audio thread has ended. One that lost its output tells `gone` before it
+                // returns, but `select!` picks among ready branches at random and can see the
+                // closed `joined` first. Without reading `gone` here the engine would end
+                // without telling the state to rebuild it, and playback would stay silent.
+                let Some(join) = join else {
+                    if gone.try_recv().is_ok() {
+                        events.send(PlaybackEvent::OutputChanged).ok();
+                        return;
+                    }
+                    break;
+                };
                 let before = current.clone();
                 settle(&mut current, join);
                 if current != before {
@@ -946,10 +956,14 @@ fn audio_loop<F: Fetch>(
     let mut paced = match Paced::open(cue.clone(), chain, changed.clone()) {
         Ok(paced) => paced,
         Err(error) => {
-            // Nothing can be decoded without an output, so this thread is done. The engine is
-            // told once a device is back, and the one that replaces it opens on that.
+            // Nothing can be decoded without an output, so the thread only holds its channels
+            // until the engine is dropped. Returning would close `joins` and end the engine, and
+            // the watch below ends with the engine before its first try, so playback would stay
+            // silent. A device that would not open once usually opens on the watch's next try.
             log::error!("playback: cannot open audio output: {error:#}");
-            return watch_for_output(changed);
+            watch_for_output(changed);
+            while jobs.recv().is_ok() {}
+            return;
         }
     };
 

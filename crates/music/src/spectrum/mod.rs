@@ -3,7 +3,7 @@
 //! enough to draw behind its response. `feed` carries a stage's samples to either.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use rustfft::FftPlanner;
@@ -69,6 +69,17 @@ pub struct Spectrum {
     right: Lane,
     /// Whether the taps hear the track before the user's volume rather than after it.
     absolute: Arc<AtomicBool>,
+    /// How many `Listening` guards are held. The taps send nothing while there are none.
+    listeners: Arc<AtomicUsize>,
+}
+
+/// Keeps the taps feeding the analyzer while held. Dropping the last one stops them.
+pub struct Listening(Arc<AtomicUsize>);
+
+impl Drop for Listening {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 impl Spectrum {
@@ -77,7 +88,14 @@ impl Spectrum {
             left: Lane::new(),
             right: Lane::new(),
             absolute: Arc::new(AtomicBool::new(false)),
+            listeners: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// Has the taps feed the analyzer for as long as the returned guard is held.
+    pub fn listen(&self) -> Listening {
+        self.listeners.fetch_add(1, Ordering::Relaxed);
+        Listening(self.listeners.clone())
     }
 
     /// Makes every tap on this spectrum hear the track before the user's volume, so the levels
@@ -120,6 +138,8 @@ impl Spectrum {
         Tap {
             feed,
             absolute: self.absolute.clone(),
+            listeners: self.listeners.clone(),
+            on: false,
         }
     }
 }
@@ -135,6 +155,9 @@ impl Default for Spectrum {
 pub struct Tap {
     feed: Feed,
     absolute: Arc<AtomicBool>,
+    listeners: Arc<AtomicUsize>,
+    /// Whether the frame under way is sent, read once at its first sample.
+    on: bool,
 }
 
 impl Tap {
@@ -151,7 +174,12 @@ impl Tap {
 
     /// Takes one sample, `channel` being its place in its frame.
     pub fn push(&mut self, channel: u16, sample: f32) {
-        self.feed.push(channel, sample);
+        if channel == 0 {
+            self.on = self.listeners.load(Ordering::Relaxed) > 0;
+        }
+        if self.on {
+            self.feed.push(channel, sample);
+        }
     }
 }
 

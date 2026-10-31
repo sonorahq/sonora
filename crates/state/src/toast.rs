@@ -32,14 +32,16 @@ pub enum Target {
     PlaybackSettings,
 }
 
-/// A button on a toast. Pressing it runs the handler, opens the target if there is one, and
-/// then dismisses the toast.
+/// A button on a toast. Pressing it runs the handler, opens the target or the link if there is
+/// one, and then dismisses the toast.
 #[derive(Clone)]
 pub struct ToastAction {
     /// The Fluent key of the button's label.
     pub key: SharedString,
     /// The page the button opens after the handler has run.
     pub target: Option<Target>,
+    /// The web page the button opens in the browser after the handler has run.
+    pub url: Option<SharedString>,
     run: Run,
 }
 
@@ -48,6 +50,7 @@ impl ToastAction {
         Self {
             key: key.into(),
             target: None,
+            url: None,
             run: Rc::new(run),
         }
     }
@@ -166,6 +169,14 @@ impl Toast {
     pub fn open(mut self, key: impl Into<SharedString>, target: Target) -> Self {
         let mut action = ToastAction::new(key, |_| {});
         action.target = Some(target);
+        self.action = Some(action);
+        self
+    }
+
+    /// Adds a button that opens `url` in the browser.
+    pub fn visit(mut self, key: impl Into<SharedString>, url: impl Into<SharedString>) -> Self {
+        let mut action = ToastAction::new(key, |_| {});
+        action.url = Some(url.into());
         self.action = Some(action);
         self
     }

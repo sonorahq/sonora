@@ -30,6 +30,24 @@ body:
     validations:
       required: true
 
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      description: Where the music you were playing or browsing comes from. Pick every one that shows the problem.
+      multiple: true
+      options:
+        - Apple Music
+        - Spotify
+        - YouTube Music
+        - Deezer
+        - Tidal
+        - Subsonic or Navidrome
+        - Local files
+        - Not tied to a provider
+    validations:
+      required: true
+
   - type: input
     id: version
     attributes:

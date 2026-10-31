@@ -8,6 +8,6 @@ Exec=sonora %U
 Terminal=false
 Categories=AudioVideo;Audio;Player;
 Keywords=music;spotify;audio;player;
-MimeType=x-scheme-handler/spotify;x-scheme-handler/deezer;x-scheme-handler/tidal;audio/mpeg;audio/flac;audio/mp4;audio/aac;audio/ogg;audio/opus;audio/x-wav;audio/x-aiff;audio/webm;audio/x-matroska;audio/x-wavpack;audio/x-ape;
+MimeType=x-scheme-handler/sonora;x-scheme-handler/spotify;x-scheme-handler/deezer;x-scheme-handler/tidal;audio/mpeg;audio/flac;audio/mp4;audio/aac;audio/ogg;audio/opus;audio/x-wav;audio/x-aiff;audio/webm;audio/x-matroska;audio/x-wavpack;audio/x-ape;
 StartupWMClass=sonora
 StartupNotify=true

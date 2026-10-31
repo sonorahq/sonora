@@ -9,26 +9,25 @@ use librespot_core::Session;
 use librespot_protocol::playlist4_external::SelectedListContent as RootList;
 use protobuf::Message as _;
 
-use crate::spotify::connect::Connection;
 use crate::spotify::{
     albums, artists, collection, collection2, pathfinder, playlists, profiles, radio, search, wire,
 };
 use crate::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Genre, GenreDetail,
-    GenreItem, GenreSection, HomeFeed, Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist, Track,
-    UserDetail, UserProfile,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, CoverSize, Genre,
+    GenreDetail, GenreItem, GenreSection, HomeFeed, Playlist, PlaylistDetail, SUGGESTIONS,
+    SavedArtist, Track, UserDetail, UserProfile,
 };
 
 const MADE_FOR_YOU: &str = "0JQ5DAt0tbjZptfcdMSKl3";
 
 pub struct LibrespotClient {
     session: Session,
-    connect: Arc<Connection>,
+    connect: Arc<Connect>,
 }
 
 impl LibrespotClient {
     pub fn new(session: Session) -> Self {
-        let connect = Arc::new(Connection::new(session.clone()));
+        let connect = Arc::new(crate::spotify::connect::open(session.clone()));
         Self { session, connect }
     }
 
@@ -43,8 +42,12 @@ impl MusicApi for LibrespotClient {
         !self.session.is_invalid()
     }
 
-    fn connect(&self) -> Option<Arc<dyn Connect>> {
+    fn connect(&self) -> Option<Arc<Connect>> {
         Some(self.connect.clone())
+    }
+
+    fn cover_at(&self, cover: &str, size: CoverSize) -> Option<String> {
+        wire::cover_at(cover, size)
     }
 
     fn share_url(&self, kind: MediaKind, id: &str) -> Option<String> {
@@ -241,6 +244,10 @@ impl MusicApi for LibrespotClient {
 
     async fn set_playlist_public(&self, playlist_id: &str, public: bool) -> Result<()> {
         playlists::set_public(&self.session, playlist_id, public).await
+    }
+
+    async fn set_playlist_cover(&self, playlist_id: &str, image: Option<&[u8]>) -> Result<()> {
+        playlists::set_cover(&self.session, playlist_id, image).await
     }
 
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {

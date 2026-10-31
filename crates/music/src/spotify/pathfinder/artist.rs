@@ -200,7 +200,13 @@ fn overview(data: Data, artist_id: &str) -> Result<Overview> {
 
     Ok(Overview {
         name: artist.profile.name,
-        cover_large: cover(&artist.visuals.avatar.sources, true),
+        cover_large: artist
+            .visuals
+            .avatar
+            .sources
+            .iter()
+            .max_by_key(|image| image.height)
+            .map(|image| image.url.clone()),
         biography: artist
             .profile
             .biography
@@ -305,7 +311,7 @@ mod tests {
         let overview = overview(data, "artist").unwrap();
 
         assert_eq!(overview.name, "Artist");
-        assert_eq!(overview.cover_large.as_deref(), Some("header"));
+        assert_eq!(overview.cover_large.as_deref(), Some("large"));
         assert_eq!(overview.biography.as_deref(), Some("About"));
         assert_eq!(overview.monthly_listeners, Some(1_900_430));
         assert_eq!(

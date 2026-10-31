@@ -21,6 +21,8 @@ pub struct Checkbox {
     checked: bool,
     disabled: bool,
     label: Option<SharedString>,
+    /// What a screen reader calls the checkbox in place of its label.
+    name: Option<SharedString>,
     on_click: Option<Click>,
 }
 
@@ -35,12 +37,20 @@ impl Checkbox {
             checked,
             disabled: false,
             label: None,
+            name: None,
             on_click: None,
         }
     }
 
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    /// Names the checkbox for screen readers in place of its label, for one whose label sits
+    /// elsewhere in the row or that has none.
+    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
         self
     }
 
@@ -78,6 +88,7 @@ impl RenderOnce for Checkbox {
             checked,
             disabled,
             label,
+            name,
             on_click,
         } = self;
         let theme = *cx.theme();
@@ -140,6 +151,11 @@ impl RenderOnce for Checkbox {
         };
 
         let mut checkbox = base
+            .role(gpui::accesskit::Role::CheckBox)
+            .aria_toggled(gpui::accesskit::Toggled::from(checked))
+            .when_some(name.or_else(|| label.clone()), |this, name| {
+                this.aria_label(name)
+            })
             .flex()
             .items_center()
             .gap(px(GAP))

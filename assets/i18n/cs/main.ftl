@@ -104,6 +104,7 @@ menu-add-tracks-to-playlist = { $count ->
    *[other] Přidat { $count } skladeb do playlistu
 }
 menu-new-playlist = Nový playlist
+menu-import-playlist = Importovat playlist…
 menu-edit-tags = Upravit tagy
 menu-no-playlists = Žádné playlisty
 menu-search-playlists = Hledat playlist
@@ -178,8 +179,9 @@ menu-copy = Kopírovat
 menu-paste = Vložit
 menu-select-all = Vybrat vše
 menu-remove-from-queue = Odebrat z fronty
-menu-rename-playlist = Přejmenovat playlist
+menu-edit-playlist = Upravit playlist
 menu-delete-playlist = Smazat playlist
+menu-export-playlist = Exportovat playlist…
 menu-add-playlist-to-library = Přidat do knihovny
 menu-remove-playlist-from-library = Odebrat z knihovny
 menu-library-add = Přidat do knihovny
@@ -201,7 +203,12 @@ menu-play-artist = Přehrát interpreta
 # playlist editor
 playlist-name-placeholder = Název playlistu
 playlist-create-title = Vytvořit playlist
-playlist-rename-title = Přejmenovat playlist
+playlist-edit-title = Upravit playlist
+playlist-cover-choose = Vybrat obrázek
+playlist-cover-remove = Odebrat obal
+playlist-cover-unopenable = Sonora tento soubor nedokáže otevřít
+playlist-cover-too-large = Tento obrázek je větší než 40 MB
+playlist-cover-not-a-picture = Tento soubor není obrázek JPEG, PNG ani WebP
 playlist-delete-title = Smazat playlist
 playlist-delete-confirm = Smazat „{ $name }“? Tuto akci nelze vzít zpět.
 playlist-again-title = Přidat znovu?
@@ -333,7 +340,6 @@ view-list = Seznam
 view-cards = Mřížka
 
 # toolbar
-tool-columns = Sloupce
 tool-sort = Řazení
 tool-filters = Filtry
 
@@ -451,6 +457,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Rychlý výběr
 home-quick-picks-empty = Označ pár skladeb jako oblíbené a objeví se tady
 home-recently-added = Nedávno přidané
+home-recently-played = Nedávno přehrávané
 home-playlists = Playlisty
 home-favorite-albums = Oblíbená alba
 home-artists = Interpreti
@@ -459,6 +466,9 @@ home-collection-albums = Alba z tvé knihovny
 # search page
 search-placeholder = Co chceš poslouchat?
 search-browse = Procházet vše
+search-submit = Hledat
+search-recent = Nedávná hledání
+search-forget = Odebrat z historie
 genre-empty = Tady zatím nic není
 search-best-match = Nejlepší shoda
 search-no-matches = Žádné výsledky
@@ -1007,7 +1017,6 @@ settings-romanized-lyrics = Romanizované texty
 settings-romanized-lyrics-detail = Zobrazuje místně vytvořenou výslovnost pro vybrané písmové systémy
 settings-romanization-writing-systems = Písmové systémy
 settings-lyrics-priority = Priorita poskytovatelů
-settings-lyrics-priority-detail = Mezi texty stejného druhu Sonora zobrazí ten ze zdroje výš v seznamu
 settings-lyrics-providers-detail = Vyber služby, ve kterých se mají hledat texty písní
 settings-lyrics-providers-selected = { $count ->
     [one] Vybrán { $count } poskytovatel
@@ -1109,6 +1118,9 @@ saver-fps = { $fps } FPS
 
 toast-playlist-created = Playlist vytvořen
 toast-playlist-renamed = Playlist přejmenován
+toast-playlist-updated = Playlist upraven
+toast-playlist-cover-changed = Obal playlistu změněn
+toast-playlist-cover-removed = Obal playlistu odebrán
 toast-playlist-deleted = Playlist smazán
 toast-local-delete-failed = Některé soubory skladeb se nepodařilo smazat
 toast-playlist-added = Playlist přidán do tvé knihovny
@@ -1120,6 +1132,14 @@ toast-track-removed-unnamed = Odebráno z playlistu
 toast-playlist-failed = Tuto změnu se nepodařilo uložit
 toast-playlist-busy = Jiná změna ještě probíhá
 toast-playlist-signed-out = Pro změnu playlistů se přihlas
+toast-playlist-imported = Importováno: { $name }
+toast-playlist-imported-partly = Importováno: { $name }, bez { $count ->
+        [one] jedné skladby, která není
+       *[other] { $count } skladeb, které nejsou
+    } v tvé knihovně
+toast-playlist-import-empty = Žádná skladba z { $name } není v tvé knihovně
+toast-playlist-exported = Playlist exportován
+toast-file-dialog-failed = Dialog pro výběr souboru se nepodařilo otevřít
 toast-queued-track = Do fronty přidáno: { $name }
 toast-next-track = { $name } se přehraje jako další
 toast-last-track = { $name } se přehraje jako poslední
@@ -1167,7 +1187,9 @@ toast-open-all-failed = { $count ->
    *[other] { $count } souborů se nepodařilo otevřít
 }
 toast-open-some-failed = Některé soubory se nepodařilo otevřít
-toast-keys-refused = Spotify tomuto účtu neuděluje klíče pro přehrávání
+toast-keys-error = Chyba klíče pro přehrávání
+toast-keys-refused = Spotify tu nemusí fungovat
+toast-why = Proč?
 toast-sign-in-to-play = { $name } lze streamovat jen po přihlášení
 toast-restore-failed = Službu { $name } se nepodařilo znovu přihlásit, a tak Sonora pokračovala bez ní
 toast-track-unplayable = { $name } se nepodařilo přehrát

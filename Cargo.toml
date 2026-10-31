@@ -3,13 +3,14 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.44.1"
+version = "0.46.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/sonorahq/sonora"
 
 [workspace.dependencies]
 embed = { path = "crates/embed" }
+cli = { path = "crates/cli" }
 i18n = { path = "crates/i18n" }
 icons = { path = "crates/icons" }
 music = { path = "crates/music" }
@@ -31,6 +32,8 @@ blowfish = "0.9"
 bytes = "1"
 cbc = "0.1"
 cc = "1"
+clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "derive"] }
+clap_complete = "4.5"
 flate2 = "1"
 cpal = "0.18"
 dirs = "6.0"
@@ -41,8 +44,8 @@ fastrand = "2.5"
 futures = "0.3"
 gethostname = "1.1"
 fluent-bundle = "0.16"
-gpui = { git = "https://github.com/sonorahq/gpui", rev = "7eea897d4765f59dc9dac1ca468a91e84bb518a6" }
-gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "7eea897d4765f59dc9dac1ca468a91e84bb518a6", features = [
+gpui = { git = "https://github.com/sonorahq/gpui", rev = "5fc4ef6cd82dc1e5bfe8cb756d81a1cb3c6ca8ef" }
+gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "5fc4ef6cd82dc1e5bfe8cb756d81a1cb3c6ca8ef", features = [
   "font-kit",
   "wayland",
   "x11",
@@ -144,7 +147,7 @@ raw-window-handle = "0.6"
 resvg = { version = "0.46", default-features = false }
 ring = "0.17"
 roxmltree = "0.21"
-rodio = { version = "0.22", default-features = false, features = ["playback"] }
+rodio = { version = "0.22", default-features = false, features = ["playback", "experimental"] }
 rtrb = "0.3"
 rusqlite = { version = "0.32" }
 # Pinned exactly: a young crate, and the decoder every HE-AAC stream goes through.
@@ -162,8 +165,9 @@ symphonia = { version = "0.5.5", default-features = false, features = ["aac", "m
 tempfile = "3.27"
 tray-icon = { version = "0.24", default-features = false }
 unic-langid = { version = "0.9", features = ["macros"] }
+unicode-bidi = "0.3"
 unicode-segmentation = "1.12"
-ytmusic = { git = "https://github.com/sonorahq/ytmusic-rs", rev = "8553a96" }
+ytmusic = { git = "https://github.com/sonorahq/ytmusic-rs", rev = "d47b3ae" }
 
 librespot-core = { version = "0.8.0", default-features = false, features = [
   "rustls-tls-native-roots",

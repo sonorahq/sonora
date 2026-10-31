@@ -21,15 +21,18 @@ pub(in crate::screens::settings) fn preview(
     window: &mut Window,
     cx: &mut Context<SettingsView>,
 ) -> Option<AnyElement> {
-    let theme = *cx.theme();
     let width = Layout::of(window, cx).width;
     let height = (width * ASPECT).round();
     let sample = view.previews.playing_or_picked(cx);
     let cover = sample.large_cover(cx);
-    let settings = view.settings.read(cx);
-    let ambient = settings.ambient();
+    let ambient = view.settings.read(cx).ambient();
 
     let field = ambient.then(|| view.previews.ambient(cover.clone(), cx));
+    // over the field the miniature wears what fullscreen would, not the theme around it
+    let theme = match &field {
+        Some(field) => field.read(cx).theme(cx),
+        None => *cx.theme(),
+    };
     let side = (height * COVER).round();
 
     Some(
@@ -40,6 +43,7 @@ pub(in crate::screens::settings) fn preview(
                 .h(height)
                 .overflow_hidden()
                 .bg(theme.background)
+                .text_color(theme.foreground)
                 .children(field)
                 .child(
                     div()

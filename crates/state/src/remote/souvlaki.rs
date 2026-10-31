@@ -43,7 +43,7 @@ impl Controls {
         Ok(Self { controls })
     }
 
-    pub fn describe(&mut self, track: Option<&Track>, cover: Option<&str>) {
+    pub fn describe(&mut self, track: Option<&Track>, cover: Option<&str>, _cx: &App) {
         let metadata = match track {
             Some(track) => MediaMetadata {
                 title: Some(&track.name),

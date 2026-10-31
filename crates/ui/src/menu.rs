@@ -14,6 +14,7 @@ use crate::Artwork;
 use crate::form::Submit;
 use crate::glass::{GLASS_BLUR, blurring, popover_fill};
 use crate::input::Input;
+use crate::label::Tails as _;
 use crate::metrics::snapped;
 use crate::motion::{Fading as _, Rising as _};
 use crate::scrollbar::Scrollbar;
@@ -516,6 +517,8 @@ impl MenuItem {
 pub struct Menu {
     base: Stateful<Div>,
     items: Vec<MenuItem>,
+    /// What a screen reader calls the menu, read as focus enters it.
+    name: Option<SharedString>,
     dismiss: Option<Close>,
     action: Option<Action>,
     priority: usize,
@@ -535,6 +538,7 @@ impl Menu {
         Self {
             base: div().id(id),
             items: Vec::new(),
+            name: None,
             dismiss: None,
             action: None,
             priority: 1,
@@ -556,6 +560,12 @@ impl Menu {
 
     pub fn items(mut self, items: impl IntoIterator<Item = MenuItem>) -> Self {
         self.items.extend(items);
+        self
+    }
+
+    /// Names the menu for screen readers, usually after the button or setting that opens it.
+    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
         self
     }
 
@@ -654,6 +664,7 @@ impl RenderOnce for Menu {
         let Self {
             mut base,
             items,
+            name,
             dismiss,
             action,
             priority,
@@ -734,6 +745,19 @@ impl RenderOnce for Menu {
             scrollbar: scrollbar.clone(),
         });
         let row_searches = searches.clone();
+        // Separators and custom content are not choices, so a screen reader counts only the
+        // items around them when it says how far down the menu it is.
+        let mut choices = 0;
+        let positions: Vec<Option<usize>> = items
+            .iter()
+            .map(|item| match item.separator || item.content.is_some() {
+                true => None,
+                false => {
+                    choices += 1;
+                    Some(choices)
+                }
+            })
+            .collect();
         let rows = items.into_iter().enumerate().map(move |(place, item)| {
             let MenuItem {
                 id,
@@ -774,6 +798,7 @@ impl RenderOnce for Menu {
             let press_action = action.clone();
             let press = press.map(|press| releasing(press, &row_searches));
             let submenu_state = submenu.as_ref().map(|submenu| submenu.state.clone());
+            let expanded = submenu.as_ref().map(|submenu| submenu.state.is_open());
             let has_artwork = artwork.is_some();
             let leading = leading.filter(|_| !has_artwork && icon.is_none());
             let detailed = detail.is_some();
@@ -792,6 +817,17 @@ impl RenderOnce for Menu {
                 .px_3()
                 .when_else(detailed, |this| this.py_2(), |this| this.py_1())
                 .rounded(tucked)
+                .role(gpui::accesskit::Role::MenuItem)
+                .aria_label(label.clone())
+                .when_some(positions[place], |this, position| {
+                    this.aria_position_in_set(position)
+                        .aria_size_of_set(choices)
+                })
+                .when(selected, |this| this.aria_selected(true))
+                .when(checked, |this| {
+                    this.aria_toggled(gpui::accesskit::Toggled::True)
+                })
+                .when_some(expanded, |this, open| this.aria_expanded(open))
                 .when_else(
                     disabled,
                     |this| this.text_color(theme.muted_foreground).cursor_default(),
@@ -841,6 +877,7 @@ impl RenderOnce for Menu {
                                 .child(
                                     div()
                                         .truncate()
+                                        .tails()
                                         .when_some(face, |this, family| {
                                             this.font(gpui::font(family))
                                         })
@@ -862,6 +899,9 @@ impl RenderOnce for Menu {
                     this.on_hover(move |hovered, window, cx| {
                         state.near(Near::Item, *hovered, window.window_handle(), cx)
                     })
+                })
+                .when_some(tooltip.clone(), |this, key| {
+                    this.aria_description(i18n::lookup(&key, None))
                 })
                 .when_some(tooltip, |this, key| this.tip(key, Perch::Follow))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -1069,6 +1109,8 @@ impl RenderOnce for Menu {
                 }
             })
             .id("menu-panel")
+            .role(gpui::accesskit::Role::Menu)
+            .when_some(name, |this, name| this.aria_label(name))
             .flex()
             .flex_col()
             .p_1()

@@ -1,6 +1,7 @@
 use std::ops::Range;
 use std::rc::Rc;
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     App, ClickEvent, Entity, FontStyle, HighlightStyle, Pixels, SharedString, StyledText, Window,
@@ -62,9 +63,20 @@ impl AboutArtist {
 impl RenderOnce for AboutArtist {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = *cx.theme();
+        let pressable = self.on_open.is_some();
+        let name = self.name.clone();
+        let about = blurb(self.biography);
 
         div()
             .id(self.id)
+            // The card opens the artist only when it has somewhere to open, so it
+            // reads as a button only then and as a named group otherwise.
+            .role(match pressable {
+                true => Role::Button,
+                false => Role::Group,
+            })
+            .aria_label(name)
+            .aria_description(about.clone())
             .flex()
             .items_center()
             .gap_5()
@@ -94,7 +106,7 @@ impl RenderOnce for AboutArtist {
                             .line_clamp(LINES)
                             .text_ellipsis()
                             .text_color(theme.muted_foreground)
-                            .child(blurb(self.biography)),
+                            .child(about),
                     ),
             )
     }
@@ -131,19 +143,28 @@ pub(crate) fn about_modal(
                                 .child(bio_text(&biography)),
                         )
                         .child(
-                            div().absolute().inset_0().child(
-                                Scroller::new("artist-about-bio", bar)
-                                    .when(overflows, |this| this.pb(tail))
-                                    .when(overflows && effects(), |this| {
-                                        this.fade_edges(px(0.), FADE)
-                                    })
-                                    .child(bio_text(&biography)),
-                            ),
+                            div()
+                                .id("artist-about-bio-text")
+                                .role(Role::Paragraph)
+                                .aria_label(rich(&biography).0)
+                                .absolute()
+                                .inset_0()
+                                .child(
+                                    Scroller::new("artist-about-bio", bar)
+                                        .when(overflows, |this| this.pb(tail))
+                                        .when(overflows && effects(), |this| {
+                                            this.fade_edges(px(0.), FADE)
+                                        })
+                                        .child(bio_text(&biography)),
+                                ),
                         ),
                 )
             }
             None => modal.child(
                 div()
+                    .id("artist-about-bio-text")
+                    .role(Role::Paragraph)
+                    .aria_label(t!("artist-about-fallback"))
                     .text_color(theme.muted_foreground)
                     .child(t!("artist-about-fallback")),
             ),

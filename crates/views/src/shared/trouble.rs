@@ -29,6 +29,7 @@ pub(crate) fn trouble(failure: Failure, centered: bool) -> AnyElement {
     };
 
     Notice::new(title, message)
+        .spoken("trouble-notice")
         .failed()
         .when(offline, |notice| notice.icon("icons/wifi-off.svg"))
         .when(centered, Notice::centered)
@@ -57,6 +58,7 @@ pub(crate) fn lost(
     if Network::offline(cx) {
         return offline();
     }
+    let id: ElementId = id.into();
     let vacancy = match reason.filter(|reason| !music::trouble::offline(reason)) {
         None => Vacancy::new(t!("trouble-offline"))
             .detail(t!("trouble-offline-detail"))
@@ -66,7 +68,7 @@ pub(crate) fn lost(
             .icon("icons/circle-alert.svg"),
     };
 
-    vacancy.action(
+    vacancy.spoken((id.clone(), "caption")).action(
         Button::new(id)
             .label(t!("trouble-retry"))
             .icon("icons/refresh-cw.svg")
@@ -78,6 +80,7 @@ pub(crate) fn lost(
 /// The page-filling state for offline mode, with a button that turns it off.
 pub(crate) fn offline() -> Vacancy {
     Vacancy::new(t!("offline-title"))
+        .spoken("offline-caption")
         .icon("icons/wifi-off.svg")
         .action(
             Button::new("go-online")

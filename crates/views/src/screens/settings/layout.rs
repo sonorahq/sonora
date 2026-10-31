@@ -3,6 +3,7 @@
 //! under it. The header measures itself and every page starts below what it measured, so the
 //! header, the pages and the equalizer all work the places out here from the same numbers.
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{App, Div, Entity, Global, Pixels, SharedString, Window, div, px};
 use router::{Destination, SettingsPage};
@@ -125,13 +126,20 @@ pub(crate) fn section_title(page: SettingsPage, cx: &App) -> Div {
     headline(i18n::lookup(page.key(), None), cx)
 }
 
-/// A page's large title, standing as tall as a field.
+/// A page's large title, standing as tall as a field, and the top heading screen readers find on
+/// the page.
 fn headline(label: SharedString, cx: &App) -> Div {
     div()
         .flex()
         .items_center()
         .h(cx.theme().metrics.field)
-        .child(heading(label, cx))
+        .child(
+            heading(label.clone(), cx)
+                .id(SharedString::from(format!("settings-title-{label}")))
+                .role(Role::Heading)
+                .aria_level(1)
+                .aria_label(label),
+        )
 }
 
 /// Lays a settings page out in its column, centred in the content area: the title, then `body`,

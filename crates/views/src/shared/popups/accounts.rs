@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{App, FontWeight, SharedString, Window, div, px};
 use i18n::t;
@@ -57,16 +58,23 @@ impl RenderOnce for AccountPicker {
         Modal::new("account-picker", t!("login-account-title"))
             .w(px(440.))
             .detail(t!("login-account-detail"))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .children(accounts.into_iter().map(|account| {
+            .child(div().flex().flex_col().gap_2().children({
+                let total = accounts.len();
+                accounts
+                    .into_iter()
+                    .enumerate()
+                    .map(move |(place, account)| {
                         let pick = pick.clone();
                         let id = SharedString::from(account.id);
                         div()
                             .id(SharedString::from(format!("account-{id}")))
+                            .role(Role::Button)
+                            .aria_label(SharedString::from(account.name.clone()))
+                            .when_some(account.detail.clone(), |this, detail| {
+                                this.aria_description(SharedString::from(detail))
+                            })
+                            .aria_position_in_set(place + 1)
+                            .aria_size_of_set(total)
                             .flex()
                             .items_center()
                             .gap_3()
@@ -104,8 +112,8 @@ impl RenderOnce for AccountPicker {
                                     pick(&id, window, cx);
                                 }
                             })
-                    })),
-            )
+                    })
+            }))
             .action(
                 Button::new("cancel-account")
                     .ghost()

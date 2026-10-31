@@ -5,10 +5,9 @@ use gpui::{Context, Entity, Task};
 use rusqlite::params;
 use storage::Database;
 
-use crate::{Io, Session, SessionEvent, join};
+use crate::{Io, Session, SessionEvent, VERSION, join};
 
 const ENDPOINT: &str = "https://sonora-stats.nolight.dev/install";
-const RUNNING: &str = env!("CARGO_PKG_VERSION");
 const AGENT: &str = concat!(
     "sonora/",
     env!("CARGO_PKG_VERSION"),
@@ -205,7 +204,7 @@ async fn send(http: &reqwest::Client) -> Result<()> {
     http.post(ENDPOINT)
         .header(reqwest::header::USER_AGENT, AGENT)
         .timeout(PATIENCE)
-        .json(&serde_json::json!({ "version": RUNNING, "os": std::env::consts::OS }))
+        .json(&serde_json::json!({ "version": VERSION, "os": std::env::consts::OS }))
         .send()
         .await
         .context("cannot reach the usage endpoint")?

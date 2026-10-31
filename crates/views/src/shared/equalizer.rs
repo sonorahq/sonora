@@ -71,6 +71,7 @@ pub(crate) fn sound_picker(
     );
 
     Picker::new(key, popovers, current)
+        .name(t!("equalizer-sound"))
         .leading(face)
         .scroll_after(height)
         .items(custom_item)

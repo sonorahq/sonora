@@ -103,6 +103,7 @@ menu-add-tracks-to-playlist = { $count ->
    *[other] Aggiungi { $count } brani alla playlist
 }
 menu-new-playlist = Nuova playlist
+menu-import-playlist = Importa playlist…
 menu-edit-tags = Modifica tag
 menu-no-playlists = Nessuna playlist
 menu-search-playlists = Cerca una playlist
@@ -164,8 +165,9 @@ menu-copy = Copia
 menu-paste = Incolla
 menu-select-all = Seleziona tutto
 menu-remove-from-queue = Rimuovi dalla coda
-menu-rename-playlist = Rinomina playlist
+menu-edit-playlist = Modifica playlist
 menu-delete-playlist = Elimina playlist
+menu-export-playlist = Esporta playlist…
 menu-add-playlist-to-library = Aggiungi alla Libreria
 menu-remove-playlist-from-library = Rimuovi dalla Libreria
 menu-library-add = Aggiungi alla Libreria
@@ -185,7 +187,12 @@ menu-play-artist = Riproduci artista
 # playlist editor
 playlist-name-placeholder = Nome playlist
 playlist-create-title = Crea playlist
-playlist-rename-title = Rinomina playlist
+playlist-edit-title = Modifica playlist
+playlist-cover-choose = Scegli immagine
+playlist-cover-remove = Rimuovi copertina
+playlist-cover-unopenable = Sonora non riesce ad aprire questo file
+playlist-cover-too-large = Quest'immagine supera i 40 MB
+playlist-cover-not-a-picture = Questo file non è un'immagine JPEG, PNG o WebP
 playlist-delete-title = Elimina playlist
 playlist-delete-confirm = Eliminare “{ $name }”? Questa operazione non può essere annullata.
 playlist-again-title = Aggiungere di nuovo?
@@ -310,7 +317,6 @@ view-list = Elenco
 view-cards = Griglia
 
 # toolbar
-tool-columns = Colonne
 tool-sort = Ordina
 tool-filters = Filtri
 
@@ -425,6 +431,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Scelte rapide
 home-quick-picks-empty = Metti Mi piace a qualche brano e apparirà qui
 home-recently-added = Aggiunti di recente
+home-recently-played = Ascoltati di recente
 home-playlists = Playlist
 home-favorite-albums = Album preferiti
 home-artists = Artisti
@@ -433,6 +440,9 @@ home-collection-albums = Album dalla tua collezione
 # search page
 search-placeholder = Cosa vuoi ascoltare?
 search-browse = Sfoglia tutto
+search-submit = Cerca
+search-recent = Ricerche recenti
+search-forget = Rimuovi dalla cronologia
 genre-empty = Nulla da mostrare qui
 search-best-match = Miglior risultato
 search-no-matches = Nessun risultato
@@ -975,7 +985,6 @@ settings-romanized-lyrics = Testo romanizzato
 settings-romanized-lyrics-detail = Mostra la pronuncia generata localmente per i sistemi di scrittura selezionati
 settings-romanization-writing-systems = Sistemi di scrittura
 settings-lyrics-priority = Priorità dei servizi
-settings-lyrics-priority-detail = Tra testi dello stesso tipo, Sonora mostra la fonte più in alto
 settings-lyrics-providers-detail = Scegli in quali servizi cercare i testi
 settings-lyrics-providers-selected = { $count ->
     [one] { $count } selezionato
@@ -1076,6 +1085,9 @@ saver-fps = { $fps } FPS
 
 toast-playlist-created = Playlist creata
 toast-playlist-renamed = Playlist rinominata
+toast-playlist-updated = Playlist aggiornata
+toast-playlist-cover-changed = Copertina della playlist cambiata
+toast-playlist-cover-removed = Copertina della playlist rimossa
 toast-playlist-deleted = Playlist eliminata
 toast-local-delete-failed = Impossibile eliminare alcuni file dei brani
 toast-playlist-added = Playlist aggiunta alla tua libreria
@@ -1087,6 +1099,14 @@ toast-track-removed-unnamed = Rimosso dalla playlist
 toast-playlist-failed = Impossibile salvare la modifica
 toast-playlist-busy = Un'altra modifica è ancora in corso
 toast-playlist-signed-out = Accedi per modificare le playlist
+toast-playlist-imported = Importazione di { $name } completata
+toast-playlist-imported-partly = Importazione di { $name } completata, senza { $count ->
+        [one] un brano assente
+       *[other] { $count } brani assenti
+    } dalla tua libreria
+toast-playlist-import-empty = Nessun brano di { $name } è nella tua libreria
+toast-playlist-exported = Playlist esportata
+toast-file-dialog-failed = Impossibile aprire la finestra di selezione file
 toast-queued-track = { $name } aggiunto alla coda
 toast-next-track = { $name } verrà riprodotto per prossimo
 toast-last-track = { $name } verrà riprodotto per ultimo
@@ -1114,7 +1134,9 @@ toast-open-failed = Impossibile aprire { $name }
 toast-open-unsupported = { $name } non è un file audio che Sonora può riprodurre
 toast-open-all-failed = Impossibile aprire { $count } file
 toast-open-some-failed = Impossibile aprire alcuni file
-toast-keys-refused = Spotify non concede chiavi di riproduzione a questo account
+toast-keys-error = Errore di chiave
+toast-keys-refused = Spotify forse non va
+toast-why = Perché?
 toast-sign-in-to-play = { $name } trasmette solo agli ascoltatori connessi
 toast-restore-failed = Impossibile riaccedere a { $name }, quindi Sonora ha continuato senza
 toast-track-unplayable = Impossibile riprodurre { $name }

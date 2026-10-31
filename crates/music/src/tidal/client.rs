@@ -11,11 +11,15 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use futures::stream::{self, StreamExt as _};
+use md5::{Digest as _, Md5};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
+use crate::cover::{self, CoverLimits};
 use crate::engine::Loudness;
 use crate::tidal::auth::{self, Credentials, Lane};
 use crate::tidal::manifest::Manifest;
@@ -94,6 +98,14 @@ const SIMILAR_RELEASES: usize = 2;
 /// How many times a playlist write is run while it finds the playlist stale, and how much
 /// longer each wait between runs is, so a write that followed the last within moments finds
 /// Tidal caught up. Three runs wait three seconds at most.
+/// What Tidal's own apps upload as a picture: a square JPEG of at most 1280 pixels.
+const COVER_LIMITS: CoverLimits = CoverLimits {
+    side: 1280,
+    bytes: 4 * 1024 * 1024,
+};
+/// How many times an uploaded artwork is looked at while Tidal processes it.
+const ARTWORK_POLLS: u32 = 25;
+const ARTWORK_POLL: Duration = Duration::from_millis(800);
 const EDIT_ATTEMPTS: u32 = 3;
 const EDIT_SETTLE: Duration = Duration::from_secs(1);
 /// How many tracks one write adds to a playlist, so a long addition goes in a few pieces
@@ -516,6 +528,97 @@ impl TidalClient {
                 done => return done,
             }
         }
+    }
+
+    /// Uploads a JPEG as an artwork and answers its id once Tidal has processed it. The file
+    /// goes to the storage link Tidal hands out, with no token, and Tidal checks it by its MD5.
+    async fn upload_artwork(&self, jpeg: Vec<u8>) -> Result<String> {
+        let digest = Md5::digest(&jpeg);
+        let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+        let created: Value = self
+            .call(
+                Method::POST,
+                &format!("{OPENAPI}/artworks"),
+                &[],
+                Payload::Json(&json!({
+                    "data": {
+                        "type": "artworks",
+                        "attributes": {
+                            "mediaType": "IMAGE",
+                            "sourceFile": { "md5Hash": hex, "size": jpeg.len() },
+                        },
+                    },
+                })),
+                None,
+            )
+            .await
+            .context("cannot create the artwork")?
+            .json()
+            .await
+            .context("cannot read the created artwork")?;
+        let id = created
+            .pointer("/data/id")
+            .and_then(Value::as_str)
+            .context("the created artwork has no id")?
+            .to_owned();
+        let link = created
+            .pointer("/data/attributes/sourceFile/uploadLink")
+            .context("the created artwork has no upload link")?;
+        let href = link["href"]
+            .as_str()
+            .context("the upload link has no address")?;
+        let method = link
+            .pointer("/meta/method")
+            .and_then(Value::as_str)
+            .and_then(|method| method.parse().ok())
+            .unwrap_or(Method::PUT);
+        let mut upload = self
+            .inner
+            .http
+            .request(method, href)
+            .header(reqwest::header::CONTENT_TYPE, "image/jpeg");
+        let signed = link.pointer("/meta/headers").and_then(Value::as_object);
+        if !signed.is_some_and(|headers| headers.contains_key("content-md5")) {
+            upload = upload.header("Content-MD5", STANDARD.encode(digest));
+        }
+        // The body sets its own length, and a second one would break the signature.
+        for (name, value) in signed.into_iter().flatten() {
+            if let Some(value) = value.as_str()
+                && !name.eq_ignore_ascii_case("content-length")
+            {
+                upload = upload.header(name.as_str(), value);
+            }
+        }
+        let sent = upload
+            .body(jpeg)
+            .send()
+            .await
+            .context("cannot upload the artwork")?;
+        let status = sent.status();
+        if !status.is_success() {
+            let body = sent.text().await.unwrap_or_default();
+            bail!("tidal's storage refused the artwork with {status}: {body}");
+        }
+
+        for _ in 0..ARTWORK_POLLS {
+            let artwork = self
+                .read(
+                    OPENAPI,
+                    &format!("/artworks/{}", escape::component(&id)),
+                    &[],
+                )
+                .await?;
+            let state = artwork
+                .pointer("/data/attributes/sourceFile/status/technicalFileStatus")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            match state {
+                "OK" => return Ok(id),
+                "ERROR" | "DELETED" => bail!("tidal could not process the artwork: {state}"),
+                _ => tokio::time::sleep(ARTWORK_POLL).await,
+            }
+        }
+        bail!("tidal took too long to process the artwork")
     }
 
     /// Takes every copy of a track out of a playlist, naming each by the id of its row rather
@@ -1228,6 +1331,32 @@ impl MusicApi for TidalClient {
         )
         .await
         .context("cannot change the playlist's visibility")?;
+        Ok(())
+    }
+
+    /// Points the playlist's cover art at a freshly uploaded artwork, or at none, which Tidal
+    /// takes as going back to its own cover.
+    async fn set_playlist_cover(&self, playlist_id: &str, image: Option<&[u8]>) -> Result<()> {
+        let data = match image {
+            Some(image) => {
+                let jpeg = cover::square_jpeg(image, COVER_LIMITS)?;
+                let artwork = self.upload_artwork(jpeg).await?;
+                json!([{ "type": "artworks", "id": artwork }])
+            }
+            None => json!([]),
+        };
+        self.call(
+            Method::PATCH,
+            &format!(
+                "{OPENAPI}/playlists/{}/relationships/coverArt",
+                escape::component(playlist_id)
+            ),
+            &[],
+            Payload::Json(&json!({ "data": data })),
+            None,
+        )
+        .await
+        .context("cannot change the playlist's cover")?;
         Ok(())
     }
 

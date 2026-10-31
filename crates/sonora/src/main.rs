@@ -2,6 +2,7 @@
 
 mod actions;
 mod assets;
+mod console;
 mod dock;
 #[cfg(target_os = "macos")]
 mod gestures;
@@ -14,10 +15,11 @@ mod thumbbar;
 mod tray;
 
 use std::path::PathBuf;
-use std::process::exit;
+use std::process::{ExitCode, exit};
 use std::sync::Arc;
 use std::time::Duration;
 
+use cli::commands::CommandType;
 use gpui::{
     App, AppContext as _, Bounds, Pixels, QuitMode, Size, TitlebarOptions, WindowBounds,
     WindowOptions, px, size,
@@ -38,7 +40,7 @@ const FIRST_SIZE: Size<Pixels> = size(px(920.), px(640.));
 /// they land as one batch instead of racing each other into the engine one at a time.
 const OPEN_COALESCE: Duration = Duration::from_millis(250);
 
-fn main() {
+fn main() -> ExitCode {
     memory::tune();
     if let Some(code) = webview::probed() {
         exit(code);
@@ -51,18 +53,35 @@ fn main() {
             log::error!("widevine: the cdm host failed: {error:#}");
             exit(1);
         }
-        return;
+        return ExitCode::SUCCESS;
     }
+    // A command for the running Sonora is sent and answered here, without a log file, a
+    // runtime or a window. Older macOS adds a `-psn_` argument to a Finder launch.
+    let args = std::env::args_os()
+        .filter(|arg| !arg.to_string_lossy().starts_with("-psn_"))
+        .collect();
+    let command = cli::parse(args, state::VERSION);
+    if !matches!(command, Ok(CommandType::Launch(_))) {
+        console::attach();
+    }
+    let args = match command {
+        Ok(CommandType::Launch(items)) => items,
+        Ok(CommandType::Local(local)) => return cli::local(local),
+        Ok(CommandType::Remote(request, format)) => {
+            return match single::connect(request.streams()) {
+                Ok(mut stream) => cli::run(&mut stream, &request, format),
+                Err(_) => cli::not_running(),
+            };
+        }
+        Err(refusal) => return refusal.exit(),
+    };
     logging::init();
 
-    let args: Vec<String> = std::env::args()
-        .skip(1)
-        .filter(|arg| !arg.starts_with('-'))
-        .collect();
     let (sender, mut links) = tokio::sync::mpsc::unbounded_channel::<Vec<String>>();
-    match single::claim(&args, sender.clone()) {
+    let (asked, mut commands) = tokio::sync::mpsc::unbounded_channel::<single::Asked>();
+    match single::claim(&args, sender.clone(), asked) {
         single::Instance::First => {}
-        single::Instance::Running => return,
+        single::Instance::Running => return ExitCode::SUCCESS,
         single::Instance::Failed => exit(1),
     }
     // Two rustls backends are compiled in: librespot, oauth2 and ytmusic still ask for ring,
@@ -76,7 +95,7 @@ fn main() {
         Ok(io) => io,
         Err(error) => {
             eprintln!("sonora: cannot start runtime: {error:#}");
-            return;
+            return ExitCode::FAILURE;
         }
     };
 
@@ -190,6 +209,18 @@ fn main() {
             sender.send(args.clone()).ok();
         }
 
+        // Commands skip the open batching, since nothing arrives in bursts there.
+        let control = Sonora::global(cx).control.clone();
+        cx.spawn(async move |cx| {
+            while let Some(asked) = commands.recv().await {
+                control.update(cx, |control, cx| match asked {
+                    single::Asked::Once(request, reply) => control.answer(request, reply, cx),
+                    single::Asked::Watch(watch, sink) => control.watch(watch, sink, cx),
+                });
+            }
+        })
+        .detach();
+
         cx.spawn(async move |cx| {
             let mut pending: Vec<String> = Vec::new();
             loop {
@@ -217,6 +248,7 @@ fn main() {
 
         cx.activate(true);
     });
+    ExitCode::SUCCESS
 }
 
 /// Opens what a launch or a hand-off passed: a provider's link opens on that provider, and
@@ -230,21 +262,15 @@ fn follow(items: &[String], cx: &mut App) {
         if links.update(cx, |links, cx| links.open(item, cx)) {
             continue;
         }
-        match is_address(item) {
+        match cli::item::is_address(item) {
             true => Toasts::show(Outcome::Failed, "toast-link-unreadable", cx),
-            false => paths.extend(local_path_from_arg(item)),
+            false => paths.push(cli::item::local_path(item)),
         }
     }
     if !paths.is_empty() {
         let playback = Sonora::global(cx).playback.clone();
         playback.update(cx, |playback, cx| playback.open_paths(paths, cx));
     }
-}
-
-/// Whether a launch argument is an address rather than a path, so one no provider reads is
-/// never tried as a file.
-fn is_address(item: &str) -> bool {
-    !item.starts_with("file://") && (item.contains("://") || item.starts_with("spotify:"))
 }
 
 /// The page a link opens on, for the kinds of link that open a page.
@@ -257,58 +283,6 @@ fn destination(linked: &Linked) -> Option<Destination> {
         Linked::User(id) => Some(Destination::User(id.clone().into())),
         Linked::Jam(_) | Linked::Short => None,
     }
-}
-
-/// A bare filesystem path, or a `file://` URI decoded back into one — the two shapes an "Open
-/// With" launch or drop hands us across platforms.
-fn local_path_from_arg(arg: &str) -> Option<PathBuf> {
-    match arg.strip_prefix("file://") {
-        Some(rest) => Some(PathBuf::from(file_uri_path(rest))),
-        None => Some(PathBuf::from(arg)),
-    }
-}
-
-/// A `file://` URI body turned into a filesystem path. Windows `file:///C:/…`
-/// keeps a slash in front of the drive, which is not a path the OS will open.
-fn file_uri_path(rest: &str) -> String {
-    let decoded = percent_decode(rest);
-    let path = decoded
-        .strip_prefix("localhost")
-        .or_else(|| decoded.strip_prefix("LOCALHOST"))
-        .unwrap_or(decoded.as_str());
-    #[cfg(windows)]
-    {
-        if let Some(drive) = path.strip_prefix('/')
-            && drive
-                .as_bytes()
-                .first()
-                .is_some_and(u8::is_ascii_alphabetic)
-            && drive.as_bytes().get(1) == Some(&b':')
-        {
-            return drive.to_owned();
-        }
-    }
-    path.to_owned()
-}
-
-fn percent_decode(value: &str) -> String {
-    let bytes = value.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && i + 2 < bytes.len()
-            && let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3])
-            && let Ok(byte) = u8::from_str_radix(hex, 16)
-        {
-            out.push(byte);
-            i += 3;
-        } else {
-            out.push(bytes[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn show_window(cx: &mut App) {
@@ -596,16 +570,4 @@ unsafe extern "system" fn work_area(
 #[cfg(not(target_os = "windows"))]
 fn platform_handle(_window: &gpui::Window) -> Option<*mut std::ffi::c_void> {
     None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_percent_before_a_multibyte_letter_stays_in_the_path() {
-        assert_eq!(percent_decode("%가나"), "%가나");
-        assert_eq!(percent_decode("%a가"), "%a가");
-        assert_eq!(percent_decode("a%20b%EA%B0%80"), "a b가");
-    }
 }

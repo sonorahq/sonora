@@ -1,8 +1,9 @@
 use std::rc::Rc;
 
+use gpui::accesskit::{Role, Toggled};
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Div, ElementId, SharedString, Window, div};
-use ui::{ActiveTheme as _, Button, Room, TabBar};
+use ui::{ActiveTheme as _, Button, OptionCard, Room, TabBar};
 
 use super::SettingsView;
 
@@ -11,6 +12,8 @@ type Pick<T> = Rc<dyn Fn(&T, &mut Window, &mut App)>;
 
 /// One row of a group: the label and optional explanation at the start, the control at the end.
 /// It stands at least one list row tall, with no inset, so labels line up with group headings.
+/// The label and explanation are text in the accessibility tree, but nothing ties them to the
+/// control, so the caller names a switch, picker or segmented control after the row as well.
 #[derive(IntoElement)]
 pub(crate) struct Row {
     title: SharedString,
@@ -66,9 +69,18 @@ impl RenderOnce for Row {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(div().truncate().child(title))
+                    .child(
+                        ui::spoken(
+                            SharedString::from(format!("settings-row-{title}")),
+                            title.clone(),
+                        )
+                        .truncate(),
+                    )
                     .children(detail.map(|detail| {
                         div()
+                            .id(SharedString::from(format!("settings-row-detail-{title}")))
+                            .role(Role::Paragraph)
+                            .aria_label(detail.clone())
                             .text_size(theme.text(ui::Text::Small))
                             .text_color(theme.muted_foreground)
                             .child(detail)
@@ -96,6 +108,22 @@ impl SettingsView {
             .into_any_element()
     }
 }
+
+/// What an option card says to screen readers. The card draws its name but puts nothing in the
+/// accessibility tree by itself, so each settings page announces its cards through this.
+pub(super) trait Announced: StatefulInteractiveElement + Sized {
+    /// Announces the card as the radio button at `place` among `count` options, named `name`
+    /// and checked while `chosen`.
+    fn choice(self, name: SharedString, chosen: bool, place: usize, count: usize) -> Self {
+        self.role(Role::RadioButton)
+            .aria_label(name)
+            .aria_toggled(Toggled::from(chosen))
+            .aria_position_in_set(place + 1)
+            .aria_size_of_set(count)
+    }
+}
+
+impl Announced for OptionCard {}
 
 /// A choice between a few options as one segmented control, each option a segment with its
 /// label and the `chosen` one lit. `pick` hears the option a click lands on.

@@ -71,6 +71,7 @@ pub(crate) async fn build(
         canvas
             .save_with_format(&path, ImageFormat::Png)
             .context("cannot write the mosaic")?;
+        forget_older(&path);
 
         Ok(located(&path))
     })
@@ -120,6 +121,26 @@ async fn fetch(http: &Arc<dyn HttpClient>, url: &str) -> Result<Vec<u8>> {
         .context("cannot read a cover")?;
 
     Ok(bytes)
+}
+
+/// Removes the mosaics older stamps left for the playlist whose current mosaic is `kept`. A
+/// sanitised id holds no `-`, so the text before the last one names the playlist.
+fn forget_older(kept: &Path) {
+    let playlist = |path: &Path| {
+        let name = path.file_name()?.to_str()?;
+        Some(name.rsplit_once('-')?.0.to_owned())
+    };
+    let (Some(folder), Some(id)) = (kept.parent(), playlist(kept)) else {
+        return;
+    };
+    let Ok(entries) = fs::read_dir(folder) else {
+        return;
+    };
+    for path in entries.flatten().map(|entry| entry.path()) {
+        if path != kept && playlist(&path).as_deref() == Some(id.as_str()) {
+            fs::remove_file(path).ok();
+        }
+    }
 }
 
 #[cfg(test)]

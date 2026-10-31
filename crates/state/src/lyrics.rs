@@ -4,11 +4,11 @@ use std::time::Duration;
 
 use gpui::{Context, Entity, Task};
 use music::lyrics::LOCAL;
-use music::{Lyrics as Sheet, LyricsHit, LyricsProvider, LyricsQuery, Track, TrackKey};
+use music::{LyricsHit, LyricsProvider, LyricsQuery, Track, TrackKey};
 use tokio::task::JoinSet;
 
 use crate::sheets::{Sheets, Unsaved};
-use crate::{AppSettings, Io, Playback, Queue, Session, join};
+use crate::{AppSettings, Io, Playback, Queue, QueuePosition, Session, join};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LyricsState {
@@ -45,7 +45,6 @@ pub struct Lyrics {
     /// up again, from what is held, so the source now ranked first is the one shown.
     priority: Vec<String>,
     playback: Entity<Playback>,
-    queue: Entity<Queue>,
     session: Entity<Session>,
     settings: Entity<AppSettings>,
     io: Io,
@@ -67,8 +66,11 @@ impl Lyrics {
         io: Io,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.observe(&playback, |this, _, cx| this.follow(cx))
-            .detach();
+        cx.observe(&playback, |this, _, cx| {
+            this.follow(cx);
+            this.prefetch(cx);
+        })
+        .detach();
         cx.observe(&queue, |this, _, cx| this.prefetch(cx)).detach();
         cx.observe(&settings, |this, settings, cx| {
             let settings = settings.read(cx);
@@ -108,7 +110,6 @@ impl Lyrics {
             enabled_providers,
             priority,
             playback,
-            queue,
             session,
             settings,
             io,
@@ -155,9 +156,7 @@ impl Lyrics {
             return None;
         };
         let playback = self.playback.read(cx);
-        let position = playback
-            .steered(cx)
-            .map_or_else(|| playback.position(), |steered| steered.position);
+        let position = playback.shown_time(cx).0;
         music::lyrics::active(lines, position)
     }
 
@@ -250,7 +249,8 @@ impl Lyrics {
     }
 
     /// One key per track. The stored answer covers every service that has replied, whichever
-    /// are enabled now, and the selection is applied when it is shown.
+    /// are enabled now, and the selection is applied when it is shown. Services that replied
+    /// empty are asked again while the stored answer holds nothing usable.
     fn key(&self, id: &str, cx: &Context<Self>) -> String {
         match self.session.read(cx).slug_for(id) {
             Some(slug) => format!("{slug}:{id}:lyrics"),
@@ -337,7 +337,8 @@ impl Lyrics {
         if self.task.is_some() {
             return;
         }
-        let Some(track) = self.queue.read(cx).upcoming().next() else {
+        let queue = self.playback.read(cx).shown_queue(cx);
+        let Some(track) = queue.track(QueuePosition::Upcoming(0), cx) else {
             return;
         };
         let Some(id) = track.id.as_deref() else {
@@ -346,14 +347,15 @@ impl Lyrics {
         if self.ahead_of.as_deref() == Some(id) || self.recalls(id) {
             return;
         }
-        let (track, id) = (track.clone(), id.to_owned());
+        let id = id.to_owned();
         self.ahead_of = Some(id.clone());
         self.ahead = Some(self.fetch(id, track, cx));
     }
 
     /// Looks a track up: in memory, then in the cache database, then with the providers. Only
-    /// the services that have not answered for this track yet are asked, and a file's own lyrics
-    /// are read again on every play. What the cache holds is shown alongside the new answers.
+    /// the services that have not answered for this track are asked, unless nothing usable is
+    /// stored, and a file's own lyrics are read again on every play. What the cache holds is
+    /// shown alongside the new answers.
     fn fetch(&mut self, id: String, track: Track, cx: &mut Context<Self>) -> Task<()> {
         let settings = self.settings.read(cx);
         let priority = settings.lyrics_provider_priority();
@@ -383,9 +385,13 @@ impl Lyrics {
                 this.update(cx, |this, _| this.hold(id, held)).ok();
             }
             let cached = cached.unwrap_or_default();
+            // Services that replied empty are asked again while nothing usable is stored:
+            // catalogues grow, and the one source that had anything may since have been
+            // switched off, leaving a stored answer with no enabled hits.
+            let stored = cached.hits.iter().any(|hit| enabled.contains(&hit.source));
             let providers: Vec<Arc<dyn LyricsProvider>> = asked
                 .into_iter()
-                .filter(|provider| !cached.covers(provider))
+                .filter(|provider| !stored || !cached.covers(provider))
                 .collect();
             if providers.is_empty() {
                 this.update(cx, |this, cx| {
@@ -415,7 +421,7 @@ impl Lyrics {
             let worker = io.spawn(async move { gather(providers, query, sender).await });
             let mut hits = Vec::new();
             let mut displayed: Option<LyricsHit> = None;
-            let mut shown: Option<u8> = None;
+            let mut synced = false;
 
             while let Some((from, mut found)) = incoming.recv().await {
                 pending.retain(|name| Some(*name) != from);
@@ -424,13 +430,17 @@ impl Lyrics {
                 let Some(best) = ranked.first().cloned() else {
                     continue;
                 };
-                let step = depth(&best.lyrics);
-                if shown.is_none_or(|shown| step >= shown) {
-                    shown = Some(step);
+                if !synced || best.lyrics.synced() {
+                    synced = best.lyrics.synced();
                     displayed = Some(best);
                 }
+                // Full synced lyrics can only lose to a source ranked higher, anything else to
+                // whichever source answers next.
                 let waiting = displayed.as_ref().is_some_and(|displayed| {
-                    let place = rank_in(&priority, displayed.source);
+                    let place = match music::lyrics::fully_synced(&ranking, &displayed.lyrics) {
+                        true => rank_in(&priority, displayed.source),
+                        false => usize::MAX,
+                    };
                     pending.iter().any(|name| rank_in(&priority, name) < place)
                 });
                 let anchor = displayed.clone();
@@ -473,11 +483,10 @@ impl Lyrics {
 
     /// Shows an answer that arrived while others are still being looked for.
     ///
-    /// A word-by-word sheet goes up the moment it turns up. It settles the question unless
-    /// `waiting` says a source the user prefers has not answered yet, which may still replace
-    /// it with a word-by-word sheet of its own. Short of that, the first timed answer is put up
-    /// and nothing replaces it until the search is over, and an untimed one is not shown at all
-    /// while something better could still arrive.
+    /// A synced sheet settles the question the moment it turns up, unless `waiting` says a
+    /// source that could still beat it has not answered yet. Short of that, the first synced
+    /// answer is put up and nothing replaces it until the question settles, and an untimed one
+    /// is not shown at all while something better could still arrive.
     fn paint(
         &mut self,
         ranked: Vec<LyricsHit>,
@@ -488,24 +497,18 @@ impl Lyrics {
         if self.settled {
             return;
         }
-        let kind = self
+        let synced = self
             .prospect(&ranked, displayed)
-            .map(|hit| depth(&hit.lyrics));
-        let worded = kind == Some(WORDED);
-        if !worded && (!self.hits.is_empty() || kind != Some(TIMED)) {
+            .is_some_and(|hit| hit.lyrics.synced());
+        if !synced || (waiting && !self.hits.is_empty()) {
             return;
         }
-        match (worded, waiting) {
-            (true, false) => {
-                log::debug!("lyrics: settling on a word-by-word answer as it arrives");
+        match waiting {
+            false => {
+                log::debug!("lyrics: settling on a synced answer as it arrives");
                 self.settled = true;
             }
-            (true, true) => {
-                log::debug!("lyrics: showing a word-by-word answer while preferred sources look")
-            }
-            (false, _) => {
-                log::debug!("lyrics: showing the first timed answer while the rest arrive")
-            }
+            true => log::debug!("lyrics: showing the first synced answer while the rest arrive"),
         }
         self.apply(ranked, displayed, cx);
     }
@@ -626,18 +629,6 @@ impl Lyrics {
     }
 }
 
-/// What a sheet is worth: word-by-word beats timed, timed beats untimed.
-const WORDED: u8 = 3;
-const TIMED: u8 = 2;
-
-fn depth(lyrics: &Sheet) -> u8 {
-    match (lyrics.worded(), lyrics.synced()) {
-        (true, _) => WORDED,
-        (false, true) => TIMED,
-        (false, false) => 1,
-    }
-}
-
 fn keep_displayed_first(hits: &mut Vec<LyricsHit>, displayed: Option<&LyricsHit>) -> bool {
     let Some(index) =
         displayed.and_then(|displayed| hits.iter().position(|hit| same(hit, displayed)))
@@ -685,8 +676,10 @@ struct Found {
 }
 
 impl Found {
-    /// Whether `provider` has nothing left to say. A file's own lyrics are never covered, since
-    /// they are read again on every play.
+    /// Whether `provider` has nothing left to say. A service that replied is covered, but one
+    /// that replied empty is asked again while the stored answer holds nothing usable from
+    /// an enabled source. A file's own lyrics are never covered, since they are read again
+    /// on every play.
     fn covers(&self, provider: &Arc<dyn LyricsProvider>) -> bool {
         provider.name() != LOCAL && self.answered.contains(&provider.name())
     }

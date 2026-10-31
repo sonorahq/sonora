@@ -1,6 +1,7 @@
 //! The two questions before Google's Widevine module is installed: whether to download it,
 //! then whether its terms are accepted. Both are `state::Drm`'s to ask; this only draws them.
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{Context, Entity, FocusHandle, Render, Window, div};
 use i18n::t;
@@ -120,6 +121,9 @@ impl Render for WidevinePrompt {
                     .when_some(license, |modal, license| {
                         modal.child(
                             div()
+                                .id("widevine-license")
+                                .role(Role::Paragraph)
+                                .aria_label(license.clone())
                                 .p(theme.metrics.pad)
                                 .rounded(theme.radius)
                                 .border_1()
@@ -133,6 +137,9 @@ impl Render for WidevinePrompt {
                     .when_some(note, |modal, note| {
                         modal.child(
                             div()
+                                .id("widevine-note")
+                                .role(Role::Status)
+                                .aria_label(note.clone())
                                 .text_size(small)
                                 .text_color(theme.muted_foreground)
                                 .child(note),

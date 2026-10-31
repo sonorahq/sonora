@@ -11,6 +11,7 @@ bundled-sqlite = ["state/bundled-sqlite"]
 
 [dependencies]
 anyhow.workspace = true
+cli.workspace = true
 dirs.workspace = true
 env_logger.workspace = true
 futures.workspace = true
@@ -66,6 +67,7 @@ windows-sys = { workspace = true, features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",
+  "Win32_System_Console",
   "Win32_System_Threading",
 ] }
 

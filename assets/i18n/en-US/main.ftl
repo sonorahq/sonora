@@ -16,6 +16,13 @@ common-previous = Previous
 common-next = Next
 common-dismiss = Dismiss
 common-clear = Clear
+option-variants = Variants of { $name }
+table-sorted-ascending = Sorted ascending
+table-sorted-descending = Sorted descending
+range-from = From
+range-to = To
+rail-back = Scroll back
+rail-forward = Scroll forward
 number-group = { "," }
 
 # navigation
@@ -74,6 +81,8 @@ app-window = Window
 app-close-window = Close Window
 app-minimize = Minimize
 app-zoom = Zoom
+window-maximize = Maximize
+window-restore = Restore
 
 # tray menu
 tray-show = Show Sonora
@@ -103,6 +112,7 @@ menu-add-tracks-to-playlist = { $count ->
    *[other] Add { $count } tracks to playlist
 }
 menu-new-playlist = New playlist
+menu-import-playlist = Import playlist…
 menu-edit-tags = Edit tags
 menu-no-playlists = No playlists
 menu-search-playlists = Search a playlist
@@ -164,8 +174,9 @@ menu-copy = Copy
 menu-paste = Paste
 menu-select-all = Select all
 menu-remove-from-queue = Remove from queue
-menu-rename-playlist = Rename playlist
+menu-edit-playlist = Edit playlist
 menu-delete-playlist = Delete playlist
+menu-export-playlist = Export playlist…
 menu-add-playlist-to-library = Add to Library
 menu-remove-playlist-from-library = Remove from Library
 menu-library-add = Add to Library
@@ -185,7 +196,12 @@ menu-play-artist = Play artist
 # playlist editor
 playlist-name-placeholder = Playlist name
 playlist-create-title = Create playlist
-playlist-rename-title = Rename playlist
+playlist-edit-title = Edit playlist
+playlist-cover-choose = Choose picture
+playlist-cover-remove = Remove cover
+playlist-cover-unopenable = Sonora can't open this file
+playlist-cover-too-large = This picture is larger than 40 MB
+playlist-cover-not-a-picture = This file is not a JPEG, PNG or WebP picture
 playlist-delete-title = Delete playlist
 playlist-delete-confirm = Delete “{ $name }”? This cannot be undone.
 playlist-again-title = Add it again?
@@ -276,6 +292,11 @@ devices-jam-more = +{ $count }
 devices-jam-host = Host
 devices-jam-you = You
 devices-jam-remove = Remove
+devices-jam-people = { $count ->
+    [one] { $count } person in this Jam
+   *[other] { $count } people in this Jam
+    }
+devices-jam-remove-member = Remove { $name }
 devices-jam-invite-title = Join { $host }'s Jam?
 devices-jam-invite-title-anonymous = Join this Jam?
 devices-jam-invite-detail = { $count ->
@@ -286,6 +307,7 @@ devices-jam-invite-join = Join
 devices-elsewhere-banner = Playing on { $device }
 devices-elsewhere-here = Play here
 fullscreen-artwork = Artwork
+fullscreen-panels = Now playing views
 
 # filters
 filter-history = Filter listening history
@@ -310,7 +332,6 @@ view-list = List
 view-cards = Grid
 
 # toolbar
-tool-columns = Columns
 tool-sort = Sort
 tool-filters = Filters
 
@@ -363,6 +384,7 @@ login-account-title = Choose an account
 login-account-detail = This session is signed in to more than one Google account. Pick the one Sonora should use.
 login-choose-title = Sign in to { $provider }
 login-choose-detail = Choose how to sign in to { $provider }.
+login-providers = Music services
 
 # album and playlist pages
 detail-playlist = Playlist
@@ -424,6 +446,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Quick picks
 home-quick-picks-empty = Like a few songs and they will show up here
 home-recently-added = Recently added
+home-recently-played = Recently played
 home-playlists = Playlists
 home-favorite-albums = Favorite albums
 home-artists = Artists
@@ -432,6 +455,9 @@ home-collection-albums = Albums from your collection
 # search page
 search-placeholder = What do you want to listen to?
 search-browse = Browse all
+search-submit = Search
+search-recent = Recent searches
+search-forget = Remove from history
 genre-empty = Nothing to show here yet
 search-best-match = Best match
 search-no-matches = No matches
@@ -477,6 +503,7 @@ artist-about = About the artist
 artist-about-fallback = Explore the artist's popular songs and releases.
 artist-about-open = Go to artist
 song-copyright = © { $notice }
+track-row-name = { $title } by { $artists }
 
 # song languages
 language-ar = Arabic
@@ -601,6 +628,11 @@ settings-opacity = Opacity
 settings-opacity-detail = Adjust the app background opacity
 settings-opacity-value = { $percent }%
 settings-theme-folder = Open folder
+settings-theme-explore = Explore community themes
+settings-theme-explore-detail = Find themes other people made and install them in one click
+settings-theme-delete = Delete theme
+settings-theme-delete-title = Delete { $name }?
+settings-theme-delete-detail = This removes it from your themes folder. It cannot be undone.
 settings-theme-unavailable = This theme can be applied only when adaptive theme is disabled
 settings-adaptive = Adaptive theme
 settings-adaptive-detail = Tint the palette with the artwork of the playing album
@@ -640,6 +672,8 @@ settings-blur-window-detail = Draw the window over a blurred desktop. Needs an o
 settings-font = Font size
 settings-font-detail = Base text size, everything else scales with it
 settings-font-value = { $size } px
+settings-font-smaller = Smaller text
+settings-font-larger = Larger text
 settings-startup = Start on
 settings-startup-detail = The screen Sonora opens on launch
 settings-startup-no-guest = Unavailable in Guest mode
@@ -766,9 +800,13 @@ settings-output-device-direct = Direct to hardware
 settings-sample-rate = Sample rate
 settings-sample-rate-detail = What the device runs at. Sonora converts every track to it
 settings-sample-rate-value = { $khz } kHz
+settings-sample-rate-lower = Lower sample rate
+settings-sample-rate-higher = Higher sample rate
 settings-sample-rate-change = Change
 settings-buffer = Buffer size
 settings-buffer-detail = How much audio Sonora hands the device at a time
+settings-buffer-smaller = Smaller buffer
+settings-buffer-larger = Larger buffer
 settings-output-idle = Not playing
 settings-output-device-loading = Loading devices…
 settings-output-failed = Device not supported
@@ -781,6 +819,7 @@ settings-signal-khz = { $khz } kHz
 settings-signal-kbps = { $kbps } kbps
 settings-signal-bits = { $depth }-bit
 settings-signal-source-detail = { $rate } · { $quality }
+settings-signal-path = Signal path
 settings-sleep = Sleep timer
 settings-sleep-detail = Lets the music stop on its own after a set time, so it can play you to sleep
 settings-stay-awake = Stay awake while playing
@@ -861,6 +900,8 @@ equalizer-filters = Filters
 equalizer-no-filters = No filters yet. Add one, pick a preset above, or import a profile.
 equalizer-add-filter = Add filter
 equalizer-remove-filter = Remove filter
+equalizer-filter = Filter { $number }
+equalizer-filter-kind = Filter { $number } type
 equalizer-kind-peak = Peak
 equalizer-kind-low-shelf = Low shelf
 equalizer-kind-high-shelf = High shelf
@@ -914,6 +955,19 @@ equalizer-rule-playing = Playing now
 equalizer-rule-disconnected = Not connected
 equalizer-rule-replaces = Replaces its rule
 equalizer-rule-choose-device = Choose a device
+equalizer-mode = Mode
+equalizer-preamp-level = Preamp level
+equalizer-no-gain-spoken = No gain
+equalizer-filter-frequency = Filter { $number } frequency
+equalizer-filter-gain = Filter { $number } gain
+equalizer-filter-width = Filter { $number } width
+equalizer-graph = Frequency response
+equalizer-graph-detail = { $count ->
+    [0] No filters
+    [one] 1 filter
+   *[other] { $count } filters
+    }, preamp at { $db } dB
+equalizer-rule-device = Device
 equalizer-rule-choose-sound = Choose a sound
 equalizer-rule-add = Add rule
 equalizer-rule-remove = Remove rule
@@ -976,7 +1030,7 @@ settings-romanized-lyrics = Romanized lyrics
 settings-romanized-lyrics-detail = Show locally generated pronunciation for selected writing systems
 settings-romanization-writing-systems = Writing systems
 settings-lyrics-priority = Provider priority
-settings-lyrics-priority-detail = Among lyrics of the same kind, Sonora shows the source higher up
+settings-lyrics-priority-detail = Sonora shows synced lyrics from the highest source that has them
 settings-lyrics-providers-detail = Choose which services to search for lyrics
 settings-lyrics-providers-selected = { $count ->
     [one] { $count } selected
@@ -1058,6 +1112,9 @@ theme-system = System
 theme-dark = Dark
 theme-light = Light
 theme-unavailable = { $name } (unavailable)
+theme-install-title = Install { $name }?
+theme-install-detail = This will add it to your themes folder.
+theme-install-confirm = Install
 
 # corners
 corners-square = Square
@@ -1077,6 +1134,9 @@ saver-fps = { $fps } FPS
 
 toast-playlist-created = Playlist created
 toast-playlist-renamed = Playlist renamed
+toast-playlist-updated = Playlist updated
+toast-playlist-cover-changed = Playlist cover changed
+toast-playlist-cover-removed = Playlist cover removed
 toast-playlist-deleted = Playlist deleted
 toast-local-delete-failed = Some track files could not be deleted
 toast-playlist-added = Playlist added to your library
@@ -1084,10 +1144,19 @@ toast-playlist-removed = Playlist removed from your library
 toast-playlist-visibility = Playlist visibility changed
 toast-track-added = Added to { $name }
 toast-track-removed = Removed from { $name }
+toast-track-moved = Moved to { $name }
 toast-track-removed-unnamed = Removed from the playlist
 toast-playlist-failed = That change could not be saved
 toast-playlist-busy = Another change is still running
 toast-playlist-signed-out = Sign in to change playlists
+toast-playlist-imported = Imported { $name }
+toast-playlist-imported-partly = Imported { $name }, leaving out { $count ->
+        [one] one song
+       *[other] { $count } songs
+    } not in your library
+toast-playlist-import-empty = None of the songs in { $name } are in your library
+toast-playlist-exported = Playlist exported
+toast-file-dialog-failed = Could not open the file dialog
 toast-queued-track = { $name } added to the queue
 toast-next-track = { $name } plays next
 toast-last-track = { $name } plays last
@@ -1115,7 +1184,9 @@ toast-open-failed = Could not open { $name }
 toast-open-unsupported = { $name } is not an audio file Sonora can play
 toast-open-all-failed = { $count } files could not be opened
 toast-open-some-failed = Some files could not be opened
-toast-keys-refused = Spotify is not granting this account playback keys
+toast-keys-error = Playback key error
+toast-keys-refused = Spotify may not work here
+toast-why = Why?
 toast-sign-in-to-play = { $name } only streams to a signed-in listener
 toast-restore-failed = { $name } could not sign back in, so Sonora carried on without it
 toast-track-unplayable = { $name } could not be played
@@ -1176,6 +1247,7 @@ lyrics-follow = Follow the song again
 lyrics-source = Lyrics from { $source }
 lyrics-source-local = Lyrics from the local file
 lyrics-writers = Written by { $writers }
+lyrics-instrumental-break = Instrumental break
 
 update-available = Sonora { $version } is out
 update-detail = You are on { $running }. Read what changed, or update now.
@@ -1197,7 +1269,11 @@ requirement-web-engine-title = Browser sign-in is unavailable
 requirement-web-engine = Install webkit2gtk-4.1 to sign in to YouTube Music, Deezer or Apple Music in a browser window. Until then, paste your cookies instead.
 requirement-help = What to install
 settings-check-updates = Check for updates
-settings-check-updates-detail = Ask GitHub once at startup whether a newer version is out. Sonora installs the update itself on Windows only; elsewhere it points you at what changed
+settings-check-updates-detail = Ask GitHub once at startup whether a newer version is out. Sonora installs it itself unless a package manager keeps it up to date, in which case it points you at what changed
+settings-update-channel = Release channel
+settings-update-channel-detail = Stable follows releases. Nightly follows the build of main made every night, which gets changes first and has had less testing
+update-channel-stable = Stable
+update-channel-nightly = Nightly
 settings-log = Log file
 settings-log-detail = What Sonora wrote while running. Attach it to a bug report
 settings-log-open = Open log
@@ -1279,6 +1355,9 @@ toast-undo = Undo
 toast-link-copied = Link copied
 toast-link-sign-in = Sign in to { $name } to open this link
 toast-link-unreadable = That link does not lead anywhere Sonora can open
+toast-theme-link-unreadable = That theme link is damaged or holds something other than a theme
+toast-theme-install-failed = Cannot install { $name }
+toast-theme-delete-failed = Cannot delete { $name }
 toast-code-copied = Code copied
 menu-copy-link-none = This has no link to share
 menu-copy-link-local = Local artists and playlists have no link

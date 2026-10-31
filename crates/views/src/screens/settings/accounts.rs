@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use gpui::accesskit::{Role, Toggled};
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, ClickEvent, Context, ElementId, FontWeight, Hsla, Pixels, SharedString,
@@ -110,26 +111,29 @@ impl SettingsView {
                     .flex_col()
                     .gap_1()
                     .child(match self.session.read(cx).state() {
-                        SessionState::SignedIn(profile) => div()
-                            .child(profile.display_name.clone())
-                            .text_size(theme.text(Text::Large))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .into_any_element(),
+                        SessionState::SignedIn(profile) => {
+                            ui::spoken("settings-profile-name", profile.display_name.clone())
+                                .text_size(theme.text(Text::Large))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .into_any_element()
+                        }
                         _ => Skeleton::new().w(px(140.)).h(px(14.)).into_any_element(),
                     })
                     .child(match self.session.read(cx).state() {
-                        SessionState::SignedIn(profile) => div()
-                            .child(match &provider {
+                        SessionState::SignedIn(profile) => ui::spoken(
+                            "settings-profile-account",
+                            match &provider {
                                 Some(provider) => t!(
                                     "settings-profile-account",
                                     provider = provider,
                                     account = &profile.id
                                 ),
-                                None => profile.id.clone().into(),
-                            })
-                            .text_color(muted)
-                            .text_size(theme.text(Text::Small))
-                            .into_any_element(),
+                                None => SharedString::from(profile.id.clone()),
+                            },
+                        )
+                        .text_color(muted)
+                        .text_size(theme.text(Text::Small))
+                        .into_any_element(),
                         _ => Skeleton::new().w(px(90.)).h(px(10.)).into_any_element(),
                     }),
             )
@@ -188,24 +192,33 @@ impl SettingsView {
                 .on_click(cx.listener(|this, _, _, cx| this.rescan_local_folder(cx)))
         });
 
+        let count = paths.len();
         let items = paths
             .into_iter()
             .enumerate()
-            .map(|(index, path)| Self::local_folder_item(index, path, cx))
+            .map(|(index, path)| Self::local_folder_item((index, count), path, cx))
             .collect::<Vec<_>>();
-        let empty = items.is_empty().then(|| {
+        let list = (!items.is_empty()).then(|| {
             div()
+                .id("local-folders")
+                .role(Role::List)
+                .aria_label(t!("settings-local-folder"))
+                .flex()
+                .flex_col()
+                .children(items)
+        });
+        let empty = list.is_none().then(|| {
+            ui::spoken("local-folders-empty", t!("settings-local-folder-none"))
                 .flex()
                 .items_center()
                 .h(theme.metrics.list_row)
                 .text_color(theme.muted_foreground)
-                .child(t!("settings-local-folder-none"))
         });
 
         div()
             .flex()
             .flex_col()
-            .children(items)
+            .children(list)
             .children(empty)
             .child(
                 div()
@@ -217,22 +230,30 @@ impl SettingsView {
                     .children(rescan)
                     .child(div().flex_1())
                     .children(note.map(|note| {
-                        div()
+                        ui::spoken("local-folders-scan", note)
                             .flex_none()
                             .text_color(theme.muted_foreground)
                             .text_size(theme.text(Text::Label))
-                            .child(note)
                     })),
             )
             .into_any_element()
     }
 
-    /// One watched folder: its path and the button that stops watching it.
-    fn local_folder_item(index: usize, path: String, cx: &mut Context<Self>) -> AnyElement {
+    /// One watched folder, placed by its index and the list's length: its path and the
+    /// button that stops watching it.
+    fn local_folder_item(
+        (index, count): (usize, usize),
+        path: String,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = *cx.theme();
 
         div()
-            .id(("local-folder-item", index))
+            .id(SharedString::from(format!("local-folder-item-{path}")))
+            .role(Role::ListItem)
+            .aria_label(path.clone())
+            .aria_position_in_set(index + 1)
+            .aria_size_of_set(count)
             .flex()
             .items_center()
             .justify_between()
@@ -246,7 +267,7 @@ impl SettingsView {
                     .child(SharedString::from(path.clone())),
             )
             .child(
-                Button::new(("remove-local-folder", index))
+                Button::new(SharedString::from(format!("remove-local-folder-{path}")))
                     .ghost()
                     .icon("icons/trash-2.svg")
                     .size_8()
@@ -351,12 +372,15 @@ impl SettingsView {
     /// small gap between them so each row's fill stands on its own.
     pub(super) fn accounts_rows(&self, cx: &mut Context<Self>) -> AnyElement {
         let pending = self.session.read(cx).is_pending();
+        let providers = self.providers(cx);
+        let guest = self.guest(cx);
+        let count = providers.len() + usize::from(guest.is_some());
         let mut rows = Vec::new();
-        for account in self.providers(cx) {
-            rows.push(self.account_row(account, pending, cx));
+        for (place, account) in providers.into_iter().enumerate() {
+            rows.push(self.account_row(account, pending, (place, count), cx));
         }
-        if let Some(guest) = self.guest(cx) {
-            rows.push(self.guest_row(guest, pending, cx));
+        if let Some(guest) = guest {
+            rows.push(self.guest_row(guest, pending, (count - 1, count), cx));
         }
 
         div()
@@ -367,12 +391,14 @@ impl SettingsView {
             .into_any_element()
     }
 
-    /// A provider's row. Clicking a provider that is signed in but not in use switches to it,
-    /// clicking one signed out starts its sign-in, and one being signed in offers to stop.
+    /// A provider's row at `place`, its index and the length of the list. Clicking a provider
+    /// that is signed in but not in use switches to it, clicking one signed out starts its
+    /// sign-in, and one being signed in offers to stop.
     pub(super) fn account_row(
         &self,
         account: Account,
         pending: bool,
+        place: (usize, usize),
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Account {
@@ -416,6 +442,7 @@ impl SettingsView {
             offer,
             press: press.filter(|_| !pending),
             error,
+            place,
         }
         .into_any_element()
     }
@@ -427,6 +454,7 @@ impl SettingsView {
         &self,
         guest: Guest,
         pending: bool,
+        place: (usize, usize),
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Guest {
@@ -460,6 +488,7 @@ impl SettingsView {
             offer: Offer::Choice { leave },
             press: press.filter(|_| !pending),
             error: None,
+            place,
         }
         .into_any_element()
     }
@@ -540,6 +569,10 @@ impl SettingsView {
     /// prompt a sign-in raised takes the sign-in down with it. Returns false when no dialog
     /// was up.
     pub(super) fn close_dialog(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.deleting_theme.is_some() {
+            self.close_theme_delete(cx);
+            return true;
+        }
         if self.credentials_for.is_some() {
             self.abandon_credentials(cx);
             return true;
@@ -868,7 +901,9 @@ pub(super) enum Offer {
 /// colour. The others are muted and warm to their
 /// colour and a lighter fill under the pointer. The sign out button keeps a slot of its own on
 /// every row, shown on hover and always on the active row, so nothing moves as it comes and
-/// goes. A sign-in error wraps under the name on a line of its own.
+/// goes. A sign-in error wraps under the name on a line of its own. Screen readers hear the
+/// row as one node named after the provider, a radio button for an account to switch to and a
+/// button for one to sign in to, with the status, hint and error as its description.
 #[derive(IntoElement)]
 pub(super) struct ProviderRow {
     id: SharedString,
@@ -880,6 +915,8 @@ pub(super) struct ProviderRow {
     offer: Offer,
     press: Option<Press>,
     error: Option<Failure>,
+    /// The row's index in the list and the list's length.
+    place: (usize, usize),
 }
 
 impl RenderOnce for ProviderRow {
@@ -894,8 +931,23 @@ impl RenderOnce for ProviderRow {
             offer,
             press,
             error,
+            place: (position, count),
         } = self;
         let theme = *cx.theme();
+        let role = match offer {
+            Offer::Choice { .. } => Role::RadioButton,
+            Offer::SignIn => Role::Button,
+            Offer::Cancel(_) => Role::Group,
+        };
+        let hint = matches!(offer, Offer::SignIn).then(|| t!("settings-provider-sign-in"));
+        let description = status
+            .iter()
+            .chain(hint.iter())
+            .cloned()
+            .chain(error.as_ref().map(crate::shared::trouble::short))
+            .map(|part| part.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
         let fade = window.use_keyed_state((ElementId::from(id.clone()), "mark"), cx, |_, _| {
             HoverFade::new(MARK_FADE)
         });
@@ -927,22 +979,29 @@ impl RenderOnce for ProviderRow {
                             })
                             .children(leave.filter(|_| shown)),
                     )
-                    .child(Radio::new(
-                        SharedString::from(format!("{id}-radio")),
-                        active,
-                    ))
+                    .child(Radio::new(SharedString::from(format!("{id}-radio")), active).silent())
                     .into_any_element()
             }
             Offer::SignIn => div()
                 .text_size(theme.text(Text::Label))
                 .text_color(mix(theme.muted_foreground, theme.foreground, hover))
-                .child(t!("settings-provider-sign-in"))
+                .children(hint)
                 .into_any_element(),
             Offer::Cancel(cancel) => cancel,
         };
 
         div()
             .id(id)
+            .role(role)
+            .aria_label(name.clone())
+            .when(role == Role::RadioButton, |this| {
+                this.aria_toggled(Toggled::from(active))
+            })
+            .when(!description.is_empty(), |this| {
+                this.aria_description(description)
+            })
+            .aria_position_in_set(position + 1)
+            .aria_size_of_set(count)
             .flex()
             .flex_col()
             .mx_neg_3()
