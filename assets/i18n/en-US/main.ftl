@@ -169,6 +169,8 @@ menu-go-to-album = Go to album
 menu-go-to-artist = Go to artist
 menu-view-details = View details
 menu-copy-link = Copy link
+menu-block-song = Block song
+menu-block-artist = Block artist
 menu-cut = Cut
 menu-copy = Copy
 menu-paste = Paste
@@ -594,6 +596,7 @@ settings-group-display = Display
 settings-group-sources = Sources
 settings-group-lyrics-order = Priority
 settings-group-playing = Playing
+settings-group-blocked = Blocked
 settings-group-cache = Played tracks
 settings-group-downloads = Downloads
 settings-group-protected = Protected playback
@@ -818,6 +821,10 @@ settings-sleep = Sleep timer
 settings-sleep-detail = Lets the music stop on its own after a set time, so it can play you to sleep
 settings-stay-awake = Stay awake while playing
 settings-stay-awake-detail = Prevent sleep while playing and keep the display on while Now playing is open
+settings-blocked-song = Song
+settings-blocked-song-by = Song by { $artists }
+settings-blocked-artist = Artist
+settings-unblock = Unblock
 settings-sleep-configure = Configure…
 settings-sleep-off = Off
 settings-sleep-end-of-track = End of track
@@ -1229,6 +1236,7 @@ toast-tracks-removed-unnamed = Removed { $count ->
        *[other] { $count } songs
     } from the playlist
 toast-unpinned = Unpinned { $name }
+toast-blocked = Blocked { $name }
 
 # lyrics
 lyrics-title = Lyrics

@@ -56,6 +56,7 @@ enum Intent {
     Pause,
 }
 
+use crate::blocked::{self, Blocked};
 use crate::queue::{Queue, QueuePlacement};
 use serde::{Deserialize, Serialize};
 
@@ -1440,9 +1441,27 @@ impl Playback {
 
     /// Removing tracks from queue
     pub fn remove_from_queue(&mut self, ids: &[String], cx: &mut Context<Self>) {
+        self.remove_matching(
+            |track| track.id.as_ref().is_some_and(|id| ids.contains(id)),
+            cx,
+        );
+    }
+
+    /// Blocks a song or an artist: what it covers leaves the queue, the playing track included,
+    /// and is skipped whenever the queue moves on to it later.
+    pub fn block(&mut self, entry: Blocked, cx: &mut Context<Self>) {
+        let name = entry.name().to_owned();
+        self.settings
+            .update(cx, |settings, cx| settings.block(entry.clone(), cx));
+        self.remove_matching(|track| entry.matches(track), cx);
+        Toasts::about(Outcome::Done, "toast-blocked", name, cx);
+    }
+
+    /// Takes the tracks `matches` picks out of the queue, moving on when the playing one goes.
+    fn remove_matching(&mut self, matches: impl Fn(&Track) -> bool, cx: &mut Context<Self>) {
         let current_removed = self
             .queue
-            .update(cx, |queue, cx| queue.remove_tracks(ids, cx));
+            .update(cx, |queue, cx| queue.remove_matching(matches, cx));
         if !current_removed {
             return;
         }
@@ -1541,12 +1560,13 @@ impl Playback {
         };
 
         let heard = self.queue.read(cx).ids();
+        let blocked = self.settings.read(cx).blocked().to_vec();
         let seed = station.origin.id.clone();
         let token = station.next.clone();
         self.topping = Some(Io::global(cx).load(
             async move {
                 let (mut tracks, next) = client.track_radio(&seed, Some(&token)).await?;
-                unheard(&mut tracks, &heard);
+                unheard(&mut tracks, &heard, &blocked);
                 anyhow::Ok((tracks, next))
             },
             move |this, loaded, cx| {
@@ -1629,13 +1649,14 @@ impl Playback {
         };
 
         let queued = self.queue.read(cx).ids();
+        let blocked = self.settings.read(cx).blocked().to_vec();
         self.seeded = Some(id.clone());
         let title = seed.name.clone();
         let origin = Origin::radio(id.clone()).named(seed.name);
         self.suggest = Some(Io::global(cx).load(
             async move {
                 let (mut tracks, _) = client.track_radio(&id, None).await?;
-                unheard(&mut tracks, &queued);
+                unheard(&mut tracks, &queued, &blocked);
                 tracks.truncate(SIMILAR_LIMIT);
                 anyhow::Ok(tracks)
             },
@@ -1736,7 +1757,10 @@ impl Playback {
             Repeat::All if !self.queue.read(cx).has_next() => {
                 self.fetch = None;
                 if let Some(track) = self.queue.update(cx, |queue, cx| queue.rewind(cx)) {
-                    self.follow_after(track, Start::Segue, cx);
+                    match self.settings.read(cx).blocks(&track) {
+                        true => self.follow_queue(Start::Segue, cx),
+                        false => self.follow_after(track, Start::Segue, cx),
+                    }
                 }
             }
             // The station's next stretch is on its way; playing resumes when it lands.
@@ -1772,10 +1796,11 @@ impl Playback {
 
         let origin = Origin::radio(id.clone()).named(seed.name.clone());
         let heard = self.queue.read(cx).ids();
+        let blocked = self.settings.read(cx).blocked().to_vec();
         self.fetch = Some(Io::global(cx).load(
             async move {
                 let (mut tracks, _) = client.track_radio(&id, None).await?;
-                unheard(&mut tracks, &heard);
+                unheard(&mut tracks, &heard, &blocked);
                 anyhow::Ok(tracks)
             },
             move |this, loaded, cx| match loaded {
@@ -3026,14 +3051,16 @@ impl Playback {
     }
 }
 
-/// Keeps the playable tracks that are not among `heard`, the ids a queue already holds.
-fn unheard(tracks: &mut Vec<Track>, heard: &HashSet<String>) {
+/// Keeps the playable tracks that are not among `heard`, the ids a queue already holds, and
+/// that nothing in `blocked` covers.
+fn unheard(tracks: &mut Vec<Track>, heard: &HashSet<String>, blocked: &[Blocked]) {
     tracks.retain(|track| {
         track.playable
             && track
                 .id
                 .as_ref()
                 .is_some_and(|id| !heard.contains(id.as_str()))
+            && !blocked::blocks(blocked, track)
     });
 }
 
@@ -3122,7 +3149,34 @@ fn retire(engine: Option<Box<dyn Player>>) {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{LiveClock, gain};
+    use std::collections::HashSet;
+
+    use super::{LiveClock, gain, unheard};
+    use crate::Blocked;
+    use crate::blocked::tests::track;
+
+    #[test]
+    fn radio_leaves_out_blocked_songs_and_artists() {
+        let blocked = [
+            Blocked::song(&track("song", &[])).unwrap(),
+            Blocked::artist("b1", "Band"),
+        ];
+        let mut tracks = vec![
+            track("song", &[]),
+            track("feature", &[("Guest", Some("g1")), ("Band", Some("b1"))]),
+            track("heard", &[]),
+            track("fresh", &[("Guest", Some("g1"))]),
+        ];
+        let heard = HashSet::from(["heard".to_owned()]);
+
+        unheard(&mut tracks, &heard, &blocked);
+
+        let left: Vec<_> = tracks
+            .iter()
+            .filter_map(|track| track.id.as_deref())
+            .collect();
+        assert_eq!(left, ["fresh"]);
+    }
 
     #[test]
     fn never_amplifies_past_unity() {

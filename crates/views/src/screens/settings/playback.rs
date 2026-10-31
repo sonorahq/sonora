@@ -6,10 +6,10 @@ use gpui::{AnyElement, App, Context, Div, MouseUpEvent, SharedString, Window, di
 use i18n::t;
 use music::drm::Origin;
 use music::{Codec, Encoding, Offer, Quality, Transcode};
-use state::{CdmState, Sleep};
+use state::{Blocked, CdmState, Sleep};
 use ui::{ActiveTheme as _, Button, MenuItem, OptionCard, Picker, Scrubber, Switch, Text};
 
-use super::rows::{Announced as _, grid, segmented};
+use super::rows::{Announced as _, Row, grid, segmented};
 use super::{Group, SettingsView, Slot};
 use crate::shared::confirm::{Confirm, Kind};
 
@@ -59,8 +59,53 @@ impl SettingsView {
                 Group::new("settings-group-protected", "icons/lock.svg").rows([Slot::Widevine]),
             );
         }
+        let blocked = self.settings.read(cx).blocked().len();
+        if blocked > 0 {
+            groups.push(
+                Group::new("settings-group-blocked", "icons/octagon-x.svg")
+                    .rows((0..blocked).map(Slot::Blocked)),
+            );
+        }
         groups.extend(self.connect_groups(cx));
         groups
+    }
+
+    /// A blocked entry's name and what it is, which its row shows and a search reads.
+    pub(super) fn blocked_meta(
+        &self,
+        index: usize,
+        cx: &App,
+    ) -> Option<(SharedString, SharedString)> {
+        let entry = self.settings.read(cx).blocked().get(index)?;
+        let detail = match entry {
+            Blocked::Song { artists, .. } if !artists.is_empty() => {
+                t!("settings-blocked-song-by", artists = artists.as_str())
+            }
+            Blocked::Song { .. } => t!("settings-blocked-song"),
+            Blocked::Artist { .. } => t!("settings-blocked-artist"),
+        };
+        Some((SharedString::from(entry.name().to_owned()), detail))
+    }
+
+    /// One blocked song or artist, with the button that lets it play again.
+    pub(super) fn blocked_row(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let (title, detail) = self.blocked_meta(index, cx).unwrap_or_default();
+        let entry = self.settings.read(cx).blocked()[index].clone();
+
+        Row::new(
+            title,
+            Button::new(SharedString::from(format!("unblock-{index}")))
+                .label(t!("settings-unblock"))
+                .small()
+                .outline()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.unblock(&entry, cx));
+                }))
+                .into_any_element(),
+        )
+        .detail(detail)
+        .into_any_element()
     }
 
     /// The detail of the Widevine row for its state, which a search reads.

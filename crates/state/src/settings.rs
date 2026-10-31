@@ -28,7 +28,7 @@ use gpui::{
 };
 use music::lyrics::LOCAL;
 use music::scrobble::Account;
-use music::{Codec, Quality, Transcode, WritingSystem};
+use music::{Codec, Quality, Track, Transcode, WritingSystem};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,7 @@ use ui::{
 };
 
 use self::equalizer::Profile;
+use crate::blocked::{self, Blocked};
 use crate::equalizer::DeviceRule;
 use crate::pins::PinSort;
 use crate::queue::{Resume, gap_target};
@@ -432,6 +433,9 @@ struct Values {
     /// Missing system requirements the user asked never to hear about again.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     silenced_requirements: Vec<String>,
+    /// Songs and artists the user never wants to hear, in the order they were blocked.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    blocked: Vec<Blocked>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     scrobbling: BTreeMap<String, Account>,
     appearance: Appearance,
@@ -625,6 +629,7 @@ impl Default for Values {
             local_folders: Vec::new(),
             hidden_nav: Vec::new(),
             silenced_requirements: Vec::new(),
+            blocked: Vec::new(),
             scrobbling: BTreeMap::new(),
             appearance: Appearance::default(),
         }
@@ -2000,6 +2005,31 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    /// Every blocked song and artist, oldest first.
+    pub fn blocked(&self) -> &[Blocked] {
+        &self.values.blocked
+    }
+
+    /// Whether a blocked song or artist covers `track`.
+    pub fn blocks(&self, track: &Track) -> bool {
+        blocked::blocks(&self.values.blocked, track)
+    }
+
+    /// Blocks `entry`, saying whether it was not blocked yet.
+    pub fn block(&mut self, entry: Blocked, cx: &mut Context<Self>) -> bool {
+        let added = blocked::add(&mut self.values.blocked, entry);
+        if added {
+            self.schedule_save(cx);
+        }
+        added
+    }
+
+    pub fn unblock(&mut self, entry: &Blocked, cx: &mut Context<Self>) {
+        if blocked::remove(&mut self.values.blocked, entry) {
+            self.schedule_save(cx);
+        }
+    }
+
     pub fn set_startup(&mut self, screen: impl Into<String>, cx: &mut Context<Self>) {
         let screen = screen.into();
         if self.values.startup == screen {
@@ -3134,6 +3164,49 @@ mod tests {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+
+    #[test]
+    fn blocked_entries_survive_a_restart() {
+        let root = scratch("blocked");
+        fs::create_dir_all(&root).expect("test directory is made");
+        let path = root.join("settings.json");
+        let store = || StateStore::new(Database::at(root.join("state.sqlite")));
+        let song = Blocked::Song {
+            id: "track".to_owned(),
+            name: "Song".to_owned(),
+            artists: "Band".to_owned(),
+        };
+        let artist = Blocked::Artist {
+            id: Some("artist".to_owned()),
+            name: "Band".to_owned(),
+        };
+        let mut values = Values::default();
+        assert!(blocked::add(&mut values.blocked, song.clone()));
+        assert!(blocked::add(&mut values.blocked, artist.clone()));
+        let bytes = serde_json::to_vec_pretty(&values).expect("settings encode");
+        save_settings(&path, &bytes, None).expect("settings save");
+
+        let loaded = AppSettings::load_from(path.clone(), store());
+        assert_eq!(loaded.blocked(), [song.clone(), artist]);
+
+        let mut values = loaded.values.clone();
+        assert!(blocked::remove(&mut values.blocked, &loaded.blocked()[1]));
+        let bytes = serde_json::to_vec_pretty(&values).expect("settings encode");
+        save_settings(&path, &bytes, None).expect("settings save");
+        drop(loaded);
+
+        assert_eq!(AppSettings::load_from(path, store()).blocked(), [song]);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn nothing_is_blocked_by_default_and_an_empty_list_is_not_written() {
+        let values: Values = serde_json::from_str("{}").expect("empty settings use defaults");
+        assert!(values.blocked.is_empty());
+
+        let written = serde_json::to_string(&values).expect("settings encode");
+        assert!(!written.contains("\"blocked\""));
     }
 
     #[test]

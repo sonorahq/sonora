@@ -100,6 +100,7 @@ enum Slot {
     OfflineMode,
     Sleep,
     StayAwake,
+    Blocked(usize),
     StreamQuality,
     StreamFormat,
     StreamBitrate,
@@ -888,6 +889,7 @@ impl SettingsView {
                 t!("settings-discord-buttons-detail"),
             ),
             Slot::Scrobble(index) => self.scrobble_meta(index, cx)?,
+            Slot::Blocked(index) => self.blocked_meta(index, cx)?,
             Slot::Version => (t!("settings-version"), t!("settings-version-detail")),
             Slot::Updates => (
                 t!("settings-check-updates"),
@@ -989,6 +991,10 @@ impl SettingsView {
             Slot::DiscordButtons => self.discord_buttons_row(cx),
             Slot::Scrobble(index) => match index < self.scrobbling.read(cx).rows().len() {
                 true => self.scrobble_row(index, cx),
+                false => div().into_any_element(),
+            },
+            Slot::Blocked(index) => match index < self.settings.read(cx).blocked().len() {
+                true => self.blocked_row(index, cx),
                 false => div().into_any_element(),
             },
             Slot::Version => self.version_row(),

@@ -8,6 +8,7 @@ use music::connect::QueuedTrack;
 use music::{ArtistRef, Track};
 use serde::{Deserialize, Serialize};
 
+use crate::blocked::{self, Blocked};
 use crate::{AppSettings, Origin, Outcome, Session, SessionEvent, Toast, Toasts};
 
 mod view;
@@ -290,6 +291,17 @@ fn sift<T>(
     upcoming.retain(&keep);
     source.retain(&keep);
     before != tally(past, current, upcoming, source)
+}
+
+/// Takes the first entry of `upcoming` that nothing in `blocked` covers, dropping the blocked
+/// ones ahead of it.
+fn next_unblocked(upcoming: &mut VecDeque<Entry>, blocked: &[Blocked]) -> Option<Entry> {
+    while let Some(entry) = upcoming.pop_front() {
+        if !blocked::blocks(blocked, &entry.track) {
+            return Some(entry);
+        }
+    }
+    None
 }
 
 fn scramble(upcoming: &mut VecDeque<Entry>, source: &[Entry], current: Option<&Entry>) {
@@ -750,11 +762,14 @@ impl Queue {
             .collect()
     }
 
-    pub fn remove_tracks(&mut self, ids: &[String], cx: &mut Context<Self>) -> bool {
-        if ids.is_empty() {
-            return false;
-        }
-        let matches = |entry: &Entry| entry.track.id.as_ref().is_some_and(|id| ids.contains(id));
+    /// Takes every track `matches` picks out of the queue and its history, saying whether the
+    /// current one went too.
+    pub fn remove_matching(
+        &mut self,
+        matches: impl Fn(&Track) -> bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let matches = |entry: &Entry| matches(&entry.track);
         let current_removed = self.current.as_ref().is_some_and(matches);
         if sift(
             &mut self.past,
@@ -1184,8 +1199,16 @@ impl Queue {
         self.changed(cx);
     }
 
+    /// Moves on to the next track, dropping the blocked ones on the way.
     pub fn next(&mut self, cx: &mut Context<Self>) -> Option<Track> {
-        let next = self.upcoming.pop_front()?;
+        let ahead = self.upcoming.len();
+        let Some(next) = next_unblocked(&mut self.upcoming, self.settings.read(cx).blocked())
+        else {
+            if ahead > 0 {
+                self.changed(cx);
+            }
+            return None;
+        };
         if let Some(played) = self.current.replace(next) {
             self.past.push(played);
         }
@@ -1333,8 +1356,8 @@ mod tests {
     use music::{ArtistRef, Track};
 
     use super::{
-        Entry, gap_target, hydrate, in_order, local, move_item, record, restore, scramble,
-        select_past, select_upcoming, sift, stub, trim,
+        Blocked, Entry, gap_target, hydrate, in_order, local, move_item, next_unblocked, record,
+        restore, scramble, select_past, select_upcoming, sift, stub, trim,
     };
 
     fn track(id: &str) -> Track {
@@ -1379,6 +1402,56 @@ mod tests {
 
     fn listing(count: usize) -> Vec<Entry> {
         (0..count).map(|index| entry(&index.to_string())).collect()
+    }
+
+    #[test]
+    fn moving_on_drops_blocked_tracks_ahead_of_the_next_one() {
+        let blocked = [
+            Blocked::artist("b1", "Band"),
+            Blocked::song(&track("skip")).unwrap(),
+        ];
+        let by_band = Entry {
+            track: Rc::new(crate::blocked::tests::track("x", &[("Band", Some("b1"))])),
+            ..entry("x")
+        };
+        let mut upcoming: VecDeque<_> = [entry("skip"), by_band, entry("keep"), entry("later")]
+            .into_iter()
+            .collect();
+
+        let next = next_unblocked(&mut upcoming, &blocked).expect("a track is left");
+
+        assert_eq!(next.track.id.as_deref(), Some("keep"));
+        assert_eq!(ids(&upcoming), ["later"]);
+    }
+
+    #[test]
+    fn moving_on_past_only_blocked_tracks_empties_the_queue() {
+        let blocked = [Blocked::song(&track("a")).unwrap()];
+        let mut upcoming: VecDeque<_> = [entry("a"), entry("a")].into_iter().collect();
+
+        assert!(next_unblocked(&mut upcoming, &blocked).is_none());
+        assert!(upcoming.is_empty());
+    }
+
+    #[test]
+    fn sifting_takes_blocked_tracks_out_of_the_whole_queue() {
+        let blocked = Blocked::song(&track("b")).unwrap();
+        let mut past = vec![entry("a"), entry("b")];
+        let mut current = Some(entry("b"));
+        let mut upcoming: VecDeque<_> = [entry("b"), entry("c")].into_iter().collect();
+        let mut source = vec![entry("a"), entry("b"), entry("c")];
+
+        assert!(sift(
+            &mut past,
+            &mut current,
+            &mut upcoming,
+            &mut source,
+            |entry| !blocked.matches(&entry.track),
+        ));
+        assert_eq!(ids(&past.into_iter().collect()), ["a"]);
+        assert!(current.is_none());
+        assert_eq!(ids(&upcoming), ["c"]);
+        assert_eq!(source.len(), 2);
     }
 
     #[test]

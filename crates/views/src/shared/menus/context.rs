@@ -4,7 +4,7 @@ use i18n::t;
 use music::{Album, GenreItem, MediaKind, Playlist, SavedArtist, Track};
 use router::{Destination, navigate};
 use state::{
-    Addition, Collection, Detail, History, Library, Origin, Outcome, Playback, Progress,
+    Addition, Blocked, Collection, Detail, History, Library, Origin, Outcome, Playback, Progress,
     QueuePlacement, Shelf, Sonora, Toasts,
 };
 use ui::{Menu, MenuItem, MenuSearch, Pin, PinKind, Scrollbar, SubmenuState};
@@ -462,6 +462,10 @@ impl ItemMenu {
         };
 
         let pinnable = (!many).then(|| track.pin()).flatten();
+        let block = (!many)
+            .then(|| Blocked::song(track))
+            .flatten()
+            .map(|entry| block_item("block-song", t!("menu-block-song"), entry));
         let edit = (!many && imported).then(|| {
             let track = track.clone();
             MenuItem::new("edit-tags", t!("menu-edit-tags"))
@@ -513,6 +517,7 @@ impl ItemMenu {
                 pinnable
                     .map(|pin| pin_action(&pin, cx))
                     .into_iter()
+                    .chain(block)
                     .collect(),
                 trailing.into_iter().collect(),
             ],
@@ -831,9 +836,24 @@ pub(crate) fn artist_menu(
                 .pin()
                 .map(|pin| pin_action(&pin, cx))
                 .into_iter()
+                .chain([block_item(
+                    "block-artist",
+                    t!("menu-block-artist"),
+                    Blocked::artist(artist.id.clone(), artist.name.clone()),
+                )])
                 .collect(),
         ],
     )
+}
+
+/// Blocks a song or an artist, which takes it out of the queue and skips it from then on.
+fn block_item(id: &'static str, label: SharedString, entry: Blocked) -> MenuItem {
+    MenuItem::new(id, label)
+        .icon("icons/octagon-x.svg")
+        .on_click(move |_, _, cx| {
+            let playback = Sonora::global(cx).playback.clone();
+            playback.update(cx, |playback, cx| playback.block(entry.clone(), cx));
+        })
 }
 
 fn artist_library_item(artist: SavedArtist, cx: &App) -> Option<MenuItem> {
