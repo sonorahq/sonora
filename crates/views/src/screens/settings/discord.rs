@@ -23,6 +23,7 @@ impl SettingsView {
                     .rows([
                         Slot::DiscordName,
                         Slot::DiscordShowPaused,
+                        Slot::DiscordStopWhenPausedOrClosed,
                         Slot::DiscordBadge,
                         Slot::DiscordAnonymous,
                     ])
@@ -90,6 +91,25 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_discord_show_paused(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+
+    pub(super) fn discord_stop_when_paused_or_closed_row(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let on = self.settings.read(cx).discord_stop_when_paused_or_closed();
+
+        self.row(
+            t!("settings-discord-stop-when-paused-or-closed"),
+            Switch::new("discord-stop-when-paused-or-closed", on)
+                .name(t!("settings-discord-stop-when-paused-or-closed"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_discord_stop_when_paused_or_closed(!on, cx)
+                    });
                 }))
                 .into_any_element(),
         )

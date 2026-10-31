@@ -373,6 +373,9 @@ struct Values {
     discord_presence: bool,
     discord_name: DiscordName,
     discord_show_paused: bool,
+    /// Whether the Discord status is taken down while the track is paused or no window is open,
+    /// rather than waiting for playback to stop or for the window to come back.
+    discord_stop_when_paused_or_closed: bool,
     discord_badge: bool,
     discord_without_details: bool,
     discord_hide_on_connect: bool,
@@ -588,6 +591,7 @@ impl Default for Values {
             discord_presence: false,
             discord_name: DiscordName::Sonora,
             discord_show_paused: false,
+            discord_stop_when_paused_or_closed: false,
             discord_badge: false,
             discord_without_details: false,
             discord_hide_on_connect: false,
@@ -989,6 +993,12 @@ impl AppSettings {
     /// Whether the Discord status stays up while the track is paused.
     pub fn discord_show_paused(&self) -> bool {
         self.values.discord_show_paused
+    }
+
+    /// Whether the Discord status is taken down while the track is paused or no window is open, so
+    /// a listener who closed Sonora to the tray stops showing up even though playback goes on.
+    pub fn discord_stop_when_paused_or_closed(&self) -> bool {
+        self.values.discord_stop_when_paused_or_closed
     }
 
     /// Whether the Discord status carries the badge of the provider the track came from.
@@ -1572,6 +1582,15 @@ impl AppSettings {
 
     pub fn set_discord_show_paused(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.values.discord_show_paused = enabled;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_discord_stop_when_paused_or_closed(
+        &mut self,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.values.discord_stop_when_paused_or_closed = enabled;
         self.schedule_save(cx);
     }
 
