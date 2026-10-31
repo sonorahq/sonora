@@ -19,6 +19,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   page, and export a local playlist from its right-click menu. Songs outside your library are
   left out, and an export saved beside your music lists it by relative path.
 - `sonora watch` prints what plays on every change, one line of JSON each, for status bars.
+- `sonora current` also says which provider plays, whether the song is liked and what it plays from.
 
 ### Changed
 

@@ -17,8 +17,11 @@ use tokio::sync::{mpsc, oneshot};
 use crate::search::{self, Catalog};
 use crate::{
     Hit, Io, Library, Origin, Playback, PlaybackState, QueuePlacement, Repeat, Session,
-    SessionState, Shelf, Sonora, join, noted,
+    SessionState, Shelf, Sonora, Whence, join, noted,
 };
+
+/// What `sonora current` calls the provider of a local file, the slug `sonora providers` gives it.
+const LOCAL: &str = "local";
 
 /// How often a watch looks again on its own, for the position it reports and for a change made
 /// somewhere that does not go through `Playback`, such as the volume of a steered device.
@@ -667,6 +670,12 @@ fn current(playback: &Playback, cx: &App) -> Option<Current> {
             (state, playback.live_position())
         }
     };
+    let sonora = Sonora::global(cx);
+    let id = track.id.as_deref();
+    let provider = match id.is_some_and(|id| Shelf::of(id).local()) {
+        true => Some(LOCAL.to_owned()),
+        false => sonora.session.read(cx).provider_slug().map(str::to_owned),
+    };
     Some(Current {
         state,
         track: wire_track(&track),
@@ -674,7 +683,26 @@ fn current(playback: &Playback, cx: &App) -> Option<Current> {
         volume: percent(playback.shown_volume(cx)),
         shuffle: playback.shown_shuffle(cx),
         repeat: wire_repeat(playback.shown_repeat(cx)),
+        provider,
+        liked: id.is_some_and(|id| sonora.library.read(cx).saved(id)),
+        origin: playback.origin(cx).map(wire_origin),
     })
+}
+
+fn wire_origin(origin: &Origin) -> wire::Origin {
+    let kind = match origin.whence {
+        Whence::Album => wire::OriginKind::Album,
+        Whence::Playlist => wire::OriginKind::Playlist,
+        Whence::Artist => wire::OriginKind::Artist,
+        Whence::Radio => wire::OriginKind::Radio,
+        Whence::Saved => wire::OriginKind::Liked,
+        Whence::Local => wire::OriginKind::Local,
+    };
+    wire::Origin {
+        kind,
+        id: origin.id.clone(),
+        name: origin.name.as_ref().map(ToString::to_string),
+    }
 }
 
 fn wire_track(track: &Track) -> wire::Track {

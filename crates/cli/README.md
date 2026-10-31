@@ -113,11 +113,17 @@ sonora search daft punk --json | jq -r '.[0].link'
   "position": 75,
   "volume": 80,
   "shuffle": false,
-  "repeat": "off"
+  "repeat": "off",
+  "provider": "spotify",
+  "liked": true,
+  "origin": { "kind": "album", "id": "…", "name": "Discovery" }
 }
 ```
 
 `state` is `playing`, `paused`, `loading` or `idle`. Times are whole seconds, the volume a percent.
+`provider` is the slug `sonora providers` lists, `local` for a file. `origin` is what the track was
+queued from, `null` when it was queued on its own; its `kind` is `album`, `playlist`, `artist`,
+`radio`, `liked` or `local`.
 
 ### Watching
 
