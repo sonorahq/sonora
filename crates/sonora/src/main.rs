@@ -119,6 +119,7 @@ fn main() -> ExitCode {
             Arc::new(music::apple::AppleProvider::new()),
             Arc::new(music::youtube::YouTubeProvider::new()),
             Arc::new(music::subsonic::SubsonicProvider::new()),
+            Arc::new(music::plex::PlexProvider::new()),
             Arc::new(music::deezer::DeezerProvider::new()),
             Arc::new(music::tidal::TidalProvider::new()),
         ];
@@ -133,6 +134,7 @@ fn main() -> ExitCode {
         let lyrics: Vec<Arc<dyn LyricsProvider>> = vec![
             Arc::new(music::local::LocalLyrics),
             Arc::new(music::subsonic::SubsonicLyrics::new()),
+            Arc::new(music::plex::PlexLyrics::new()),
             Arc::new(music::spotify::SpotifyLyrics::from_env()),
             Arc::new(music::youtube::YouTubeLyrics::new()),
             Arc::new(music::binimum::Binimum::new()),

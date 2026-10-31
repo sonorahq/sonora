@@ -20,6 +20,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Plex is a new provider. Sign in with your Plex account, pick a server and music library if you
+  have more than one, and play, search, rate, make playlists and read lyrics from your own Plex
+  Media Server.
 - Control Sonora from a terminal or a script: `sonora toggle`, `next`, `current`, `search`,
   `play -s <song>` and more, listed by `sonora --help`.
 - `sonora seek` takes a time such as `1:30`, or a step such as `+10` or `-10`, besides a percent.
