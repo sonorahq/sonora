@@ -35,6 +35,7 @@ pub mod tidal;
 mod trim;
 pub mod trouble;
 pub mod vault;
+pub mod yandex;
 pub mod youtube;
 
 use std::collections::HashMap;
