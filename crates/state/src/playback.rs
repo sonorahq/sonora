@@ -1208,10 +1208,8 @@ impl Playback {
         Some(!kept)
     }
 
-    /// Opens paths handed in from the OS (a file-association launch or hand-off). A single file
-    /// plays right away, since picking one is a request to hear it now; several play next,
-    /// right after whatever is already playing, whichever provider it came from — or start right
-    /// away if nothing is.
+    /// Opens paths handed in from the OS (a file-association launch or hand-off). They go after
+    /// the current track in queue in the order they were given, and the first one starts at once.
     pub fn open_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         if paths.is_empty() {
             return;
@@ -1239,16 +1237,16 @@ impl Playback {
                 anyhow::Ok((tracks, unread))
             },
             |this, loaded, cx| match loaded {
-                Ok((mut tracks, unread)) => {
+                Ok((tracks, unread)) => {
                     report_unread(&unread, tracks.is_empty(), cx);
-                    match tracks.len() {
-                        0 => {}
-                        1 => this.locally(cx, |this, cx| {
-                            this.play_next(tracks.remove(0), cx);
-                            this.next(cx);
-                        }),
-                        _ => this.enqueue_tracks(tracks, None, QueuePlacement::Next, cx),
+                    if tracks.is_empty() {
+                        return;
                     }
+                    this.locally(cx, |this, cx| {
+                        if this.place(tracks, None, QueuePlacement::Next, cx).is_some() {
+                            this.next(cx);
+                        }
+                    });
                 }
                 Err(error) => log::warn!("playback: cannot open files: {error:#}"),
             },
