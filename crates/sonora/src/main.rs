@@ -27,7 +27,7 @@ use gpui::{
 use music::LyricsProvider;
 use music::link::Linked;
 use router::{Destination, Screen};
-use state::{Opened, Outcome, Sonora, Toasts};
+use state::{Opened, Outcome, Sonora, Toasts, discord_window_opened};
 use ui::ActiveTheme as _;
 use ui::ThemeKind;
 use views::Root;
@@ -392,6 +392,8 @@ fn open_window(cx: &mut App) {
         },
     )
     .expect("failed to open window");
+    // a window is back, so a Discord status withheld while Sonora sat in the tray returns now
+    discord_window_opened(cx);
 }
 
 // DWM only offers two rounded presets (no arbitrary radius), so the four `Rounding` choices

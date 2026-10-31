@@ -115,6 +115,7 @@ enum Slot {
     Discord,
     DiscordName,
     DiscordShowPaused,
+    DiscordStopWhenPausedOrClosed,
     DiscordBadge,
     DiscordAnonymous,
     DiscordHideOnConnect,
@@ -867,6 +868,10 @@ impl SettingsView {
                 t!("settings-discord-show-paused"),
                 t!("settings-discord-show-paused-detail"),
             ),
+            Slot::DiscordStopWhenPausedOrClosed => (
+                t!("settings-discord-stop-when-paused-or-closed"),
+                t!("settings-discord-stop-when-paused-or-closed-detail"),
+            ),
             Slot::DiscordBadge => (
                 t!("settings-discord-badge"),
                 t!("settings-discord-badge-detail"),
@@ -982,6 +987,7 @@ impl SettingsView {
             Slot::Discord => self.discord_row(cx),
             Slot::DiscordName => self.discord_name_row(cx),
             Slot::DiscordShowPaused => self.discord_show_paused_row(cx),
+            Slot::DiscordStopWhenPausedOrClosed => self.discord_stop_when_paused_or_closed_row(cx),
             Slot::DiscordBadge => self.discord_badge_row(cx),
             Slot::ArtworkForLocal => self.artwork_for_local_files_row(cx),
             Slot::DiscordAnonymous => self.discord_anonymous_row(cx),

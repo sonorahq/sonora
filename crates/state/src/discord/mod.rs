@@ -28,10 +28,20 @@ const MUSIC: &str = "Music";
 const SONORA_URL: &str = "https://sonorahq.org";
 
 struct Attached {
-    _discord: Entity<Discord>,
+    discord: Entity<Discord>,
 }
 
 impl Global for Attached {}
+
+/// Publishes again once a window is open, so a status taken down while Sonora sat in the tray
+/// comes back without waiting for the next change in playback.
+pub fn discord_window_opened(cx: &mut App) {
+    let Some(attached) = cx.try_global::<Attached>() else {
+        return;
+    };
+    let discord = attached.discord.clone();
+    discord.update(cx, |discord, cx| discord.publish(cx));
+}
 
 pub(crate) fn attach(
     playback: Entity<Playback>,
@@ -43,7 +53,7 @@ pub(crate) fn attach(
     cx: &mut App,
 ) {
     let discord = cx.new(|cx| Discord::new(playback, settings, session, cover, devices, io, cx));
-    cx.set_global(Attached { _discord: discord });
+    cx.set_global(Attached { discord });
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -160,6 +170,17 @@ impl Discord {
         cx.observe(&devices, |this, _, cx| this.publish(cx))
             .detach();
 
+        // Sonora keeps playing with no window open, so the presence has to hear about the last
+        // window closing rather than wait for playback to change.
+        let this = cx.weak_entity();
+        cx.on_window_closed(move |cx, _| {
+            if !cx.windows().is_empty() {
+                return;
+            }
+            this.update(cx, |this, cx| this.publish(cx)).ok();
+        })
+        .detach();
+
         Self {
             playback,
             settings,
@@ -233,7 +254,12 @@ impl Discord {
 
         let since = self.timing.listening_since();
         let settings = self.settings.read(cx);
-        if !settings.discord_presence() || !playing && !settings.discord_show_paused() {
+        // Listening with the window closed still counts as listening, so a listener who wanted the
+        // status gone while paused or while Sonora sat in the tray gets it taken down here, and the
+        // worker sends nothing until one of those comes back.
+        let stopped =
+            settings.discord_stop_when_paused_or_closed() && (!playing || cx.windows().is_empty());
+        if !settings.discord_presence() || stopped || !playing && !settings.discord_show_paused() {
             return Shown::Off;
         }
         let devices = self.devices.read(cx);

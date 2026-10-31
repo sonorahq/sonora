@@ -11,6 +11,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - An artist page shows the artist's banner behind its header, sharp at the top and blurring into
   the page under the name. Artists without a banner get a soft wash of their photo's colours.
+- A new Discord setting takes the status down while the track is paused or Sonora's window is
+  closed, so it stops showing when Sonora sits in the tray.
 
 ### Changed
 

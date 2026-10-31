@@ -48,6 +48,7 @@ pub use control::Control;
 pub use cover::Cover;
 pub use detail::{Collection, Detail, Header};
 pub use devices::Devices;
+pub use discord::discord_window_opened;
 pub use downloads::{Downloads, DownloadsChanged, Progress, downloaded};
 pub use drm::{CdmState, Drm};
 pub use equalizer::{DeviceRule, Equalizer, RuleDevice, Sound};
