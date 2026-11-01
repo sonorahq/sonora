@@ -18,7 +18,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Local songs read word-by-word lyrics from a `.ttml` file beside them or from TTML in their
   lyrics tag.
 - The Now playing preview in Appearance settings draws the visualizer style you pick.
-- Drag the playing song from the player bar onto a playlist or the pins, even when it plays from no list of yours.
+- Drag the playing song from the player bar onto a playlist, Pinned or the queue.
 
 ### Changed
 
