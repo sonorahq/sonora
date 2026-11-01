@@ -69,6 +69,8 @@ pub struct Toast {
     pub name: Option<SharedString>,
     /// How many things the message is about, passed as `$count` so Fluent can pick a plural.
     pub count: Option<usize>,
+    /// Extra text arguments for Fluent selectors and message values.
+    pub args: Vec<(SharedString, SharedString)>,
     /// A line of its own below the text, such as the error behind a failure. Not translated.
     pub detail: Option<SharedString>,
     /// The Fluent key of a line below the text that explains it. `detail` takes the line when
@@ -103,6 +105,7 @@ impl Toast {
             key: key.into(),
             name: None,
             count: None,
+            args: Vec::new(),
             detail: None,
             note: None,
             target: None,
@@ -123,6 +126,12 @@ impl Toast {
     /// Fills the message's `$name` and shows it in bold.
     pub fn name(mut self, name: impl Into<SharedString>) -> Self {
         self.name = Some(name.into());
+        self
+    }
+
+    /// Adds a text argument, such as the state used by a Fluent selector.
+    pub fn arg(mut self, key: impl Into<SharedString>, value: impl Into<SharedString>) -> Self {
+        self.args.push((key.into(), value.into()));
         self
     }
 

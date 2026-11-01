@@ -6,7 +6,7 @@ use gpui::{AnyElement, App, Context, Div, MouseUpEvent, SharedString, Window, di
 use i18n::t;
 use music::drm::Origin;
 use music::{Codec, Encoding, Offer, Quality, Transcode};
-use state::{CdmState, Sleep};
+use state::{CdmState, Sleep, Sonora, StarRatings};
 use ui::{ActiveTheme as _, Button, MenuItem, OptionCard, Picker, Scrubber, Switch, Text};
 
 use super::rows::{Announced as _, grid, segmented};
@@ -60,6 +60,13 @@ impl SettingsView {
             );
         }
         groups.extend(self.sessions_groups(cx));
+        if Sonora::global(cx).ratings.read(cx).supported(cx) {
+            let mut ratings = vec![Slot::StarRatings];
+            if self.settings.read(cx).star_ratings().enabled {
+                ratings.extend([Slot::HalfRatings, Slot::RatingAutoLike]);
+            }
+            groups.push(Group::new("settings-star-ratings", "icons/star-filled.svg").rows(ratings));
+        }
         groups.extend(self.connect_groups(cx));
         groups
     }
@@ -98,6 +105,64 @@ impl SettingsView {
                 }))
                 .into_any_element(),
         )
+    }
+
+    /// The star ratings switch, or the half-star switch when `halves` is set.
+    pub(super) fn star_ratings_row(&self, halves: bool, cx: &mut Context<Self>) -> AnyElement {
+        let ratings = self.settings.read(cx).star_ratings();
+        let (key, on) = match halves {
+            true => ("settings-half-ratings", ratings.half_ratings),
+            false => ("settings-star-ratings", ratings.enabled),
+        };
+        self.row(
+            i18n::lookup(key, None),
+            Switch::new(key, on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_star_ratings(
+                            |ratings| match halves {
+                                true => ratings.half_ratings = !on,
+                                false => ratings.enabled = !on,
+                            },
+                            cx,
+                        )
+                    });
+                }))
+                .into_any_element(),
+        )
+    }
+
+    /// The auto-like threshold picker.
+    pub(super) fn rating_auto_like_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let StarRatings {
+            auto_like: chosen,
+            half_ratings: halves,
+            ..
+        } = self.settings.read(cx).star_ratings();
+        let label = |value| match value {
+            Some(value) => t!("ratings-threshold", rating = f64::from(value) / 2.),
+            None => t!("common-off"),
+        };
+        let picker = Picker::new("rating-auto-like", &self.popovers, label(chosen))
+            .width(Picker::NARROW)
+            .items(
+                (0..=10u8)
+                    .filter(move |value| halves || value.is_multiple_of(2))
+                    .map(|value| {
+                        let threshold = (value > 0).then_some(value);
+                        MenuItem::new(format!("rating-threshold-{value}"), label(threshold))
+                            .selected(chosen == threshold)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.settings.update(cx, |settings, cx| {
+                                    settings.set_star_ratings(
+                                        |ratings| ratings.auto_like = threshold,
+                                        cx,
+                                    )
+                                });
+                            }))
+                    }),
+            );
+        self.row(t!("settings-rating-auto-like"), picker.into_any_element())
     }
 
     pub(super) fn keep_tracks_row(&self, cx: &mut Context<Self>) -> AnyElement {

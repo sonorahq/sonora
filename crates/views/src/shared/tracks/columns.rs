@@ -16,8 +16,19 @@ pub(crate) enum TrackField {
     PlayedAt,
     Plays,
     Duration,
+    Rating,
 }
 
+const RATING: ColumnSpec<TrackField> = ColumnSpec {
+    field: TrackField::Rating,
+    key: "rating",
+    header: "column-rating",
+    width: Width::Fixed(RATING_WIDTH),
+    rank: USEFUL,
+    ..COLUMN
+};
+
+const RATING_WIDTH: Pixels = px(220.);
 const LENGTH: Pixels = px(84.);
 const CREDITED: Pixels = px(144.);
 const CONTRIBUTOR: Pixels = px(168.);
@@ -129,17 +140,29 @@ const ALBUM_DURATION: ColumnSpec<TrackField> = ColumnSpec {
     ..DURATION
 };
 
-pub(crate) const LIBRARY_COLUMNS: &[ColumnSpec<TrackField>] =
-    &[INDEX, COVER, TITLE, ARTISTS, ALBUM, ADDED_AT, DURATION];
+// `RATING` holds each row's heart and stars.
+pub(crate) const LIBRARY_COLUMNS: &[ColumnSpec<TrackField>] = &[
+    INDEX, COVER, TITLE, ARTISTS, ALBUM, RATING, ADDED_AT, DURATION,
+];
 
-pub(crate) const PLAYLIST_COLUMNS_SHARED: &[ColumnSpec<TrackField>] =
-    &[INDEX, COVER, TITLE, ARTISTS, ALBUM, CREDITED_AT, DURATION];
+const PLAYLIST_COLUMNS_SHARED: &[ColumnSpec<TrackField>] = &[
+    INDEX,
+    COVER,
+    TITLE,
+    ARTISTS,
+    ALBUM,
+    RATING,
+    CREDITED_AT,
+    DURATION,
+];
 
-pub(crate) const PLAYLIST_COLUMNS_BLEND: &[ColumnSpec<TrackField>] =
-    &[INDEX, COVER, TITLE, ARTISTS, ALBUM, ADDED_BY, DURATION];
+const PLAYLIST_COLUMNS_BLEND: &[ColumnSpec<TrackField>] = &[
+    INDEX, COVER, TITLE, ARTISTS, ALBUM, RATING, ADDED_BY, DURATION,
+];
 
-pub(crate) const HISTORY_COLUMNS: &[ColumnSpec<TrackField>] =
-    &[INDEX, COVER, TITLE, ARTISTS, ALBUM, PLAYED_AT, DURATION];
+pub(crate) const HISTORY_COLUMNS: &[ColumnSpec<TrackField>] = &[
+    INDEX, COVER, TITLE, ARTISTS, ALBUM, RATING, PLAYED_AT, DURATION,
+];
 
 pub(crate) const ARTIST_COLUMNS: &[ColumnSpec<TrackField>] = &[
     INDEX,
@@ -147,6 +170,7 @@ pub(crate) const ARTIST_COLUMNS: &[ColumnSpec<TrackField>] = &[
     TITLE,
     ARTISTS.ranked(SPARE),
     ALBUM.ranked(HANDY),
+    RATING,
     PLAYS,
     DURATION,
 ];
@@ -157,6 +181,7 @@ pub(crate) const ARTIST_COLUMNS_LEAN: &[ColumnSpec<TrackField>] = &[
     TITLE,
     ARTISTS.ranked(SPARE),
     ALBUM.ranked(HANDY),
+    RATING,
     DURATION,
 ];
 
@@ -164,12 +189,13 @@ pub(crate) const ALBUM_COLUMNS: &[ColumnSpec<TrackField>] = &[
     INDEX,
     ALBUM_TITLE,
     ALBUM_ARTISTS,
+    RATING,
     ALBUM_PLAYCOUNT,
     ALBUM_DURATION,
 ];
 
 pub(crate) const ALBUM_COLUMNS_LEAN: &[ColumnSpec<TrackField>] =
-    &[INDEX, ALBUM_TITLE, ALBUM_ARTISTS, ALBUM_DURATION];
+    &[INDEX, ALBUM_TITLE, ALBUM_ARTISTS, RATING, ALBUM_DURATION];
 
 pub(crate) fn playlist_columns(blend: bool, shared: bool) -> &'static [ColumnSpec<TrackField>] {
     match (blend, shared) {
