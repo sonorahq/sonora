@@ -655,7 +655,6 @@ impl Drop for Device {
 /// One engine's player on the shared device stream. Dropping it ends the player's source in the
 /// mixer, and the stream closes once no output is left on it.
 pub(crate) struct Output {
-    chain: Chain,
     sink: Arc<rodio::Player>,
     /// What every chunk appended to `sink` publishes its format into.
     format: audio::PublishedFormat,
@@ -676,7 +675,6 @@ impl Output {
         let integer = matches!(device.info.format.sample, Sample::Integer(_));
         device.add(chain.apply(source, format.clone(), integer));
         Ok(Self {
-            chain,
             sink: Arc::new(sink),
             format,
             device,
@@ -712,10 +710,6 @@ impl Output {
     /// The rate the device runs at, which every packet is resampled to before it is heard.
     pub fn rate(&self) -> u32 {
         self.device.info.format.rate
-    }
-
-    pub fn set_volume(&self, gain: f32) {
-        self.chain.volume.set(gain);
     }
 
     /// Whether the stream reported an error or has to reopen, so what this output holds can no

@@ -1415,3 +1415,9 @@ response-graph-readout = { $frequency } · { $direction ->
         [down] -{ $gain }
        *[flat] { $gain }
     } dB
+
+settings-fade-in = Resume fade-in
+settings-fade-in-detail = Raise the volume when resuming with cubic-bezier(0, 1.03, 0.53, 0.39). Set to 0 ms to resume immediately.
+settings-fade-ms = { $ms } ms
+settings-fade-off = Off
+settings-fade-in-duration = Resume fade duration

@@ -172,12 +172,23 @@ pub fn start<F: Fetch>(
     let (events, event_rx) = unbounded_channel();
     let spectrum = Spectrum::new();
     let engine_spectrum = spectrum.clone();
+    let volume = Volume::new(config.gain);
+    let engine_volume = volume.clone();
     let name = fetch.name();
     let shelf = fetch.shelf().cloned();
     let offline = fetch.plays_offline();
     let spawned = std::thread::Builder::new()
         .name(format!("{name}-playback"))
-        .spawn(move || run(Arc::new(fetch), config, command_rx, events, engine_spectrum));
+        .spawn(move || {
+            run(
+                Arc::new(fetch),
+                config,
+                command_rx,
+                events,
+                engine_spectrum,
+                engine_volume,
+            )
+        });
     if let Err(error) = spawned {
         log::error!("playback: cannot spawn the {name} engine thread: {error}");
     }
@@ -185,6 +196,7 @@ pub fn start<F: Fetch>(
         Box::new(Handle {
             commands,
             spectrum,
+            volume,
             shelf,
             offline,
         }),
@@ -206,7 +218,6 @@ enum Command {
     Play,
     Pause,
     Seek(Duration),
-    Gain(f32),
     /// Fetch a whole track into the downloads without playing it, and say how that went.
     Download {
         id: String,
@@ -237,10 +248,11 @@ enum Job<F: Fetch> {
     Pause,
     /// Move within the track being decoded. The bytes are already arriving, so this is local.
     Seek(Duration),
-    Gain(f32),
 }
 
 struct Handle {
+    /// Gain changes reach the output directly, even while decoding waits on the queue.
+    volume: Volume,
     commands: UnboundedSender<Command>,
     spectrum: Spectrum,
     /// Where the provider keeps tracks, which says what is downloaded without asking the
@@ -295,7 +307,11 @@ impl Player for Handle {
     }
 
     fn set_gain(&self, gain: f32) {
-        self.commands.send(Command::Gain(gain)).ok();
+        self.volume.set(gain);
+    }
+
+    fn set_initial_gain(&self, gain: f32) {
+        self.volume.reset(gain);
     }
 
     fn spectrum(&self) -> Option<Spectrum> {
@@ -383,6 +399,7 @@ fn run<F: Fetch>(
     commands: UnboundedReceiver<Command>,
     events: UnboundedSender<PlaybackEvent>,
     spectrum: Spectrum,
+    volume: Volume,
 ) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -394,7 +411,9 @@ fn run<F: Fetch>(
             return;
         }
     };
-    runtime.block_on(engine_loop(fetch, config, commands, events, spectrum));
+    runtime.block_on(engine_loop(
+        fetch, config, commands, events, spectrum, volume,
+    ));
 }
 
 async fn engine_loop<F: Fetch>(
@@ -403,11 +422,12 @@ async fn engine_loop<F: Fetch>(
     mut commands: UnboundedReceiver<Command>,
     events: UnboundedSender<PlaybackEvent>,
     spectrum: Spectrum,
+    volume: Volume,
 ) {
     let (cue, mut written) = Cue::new();
     let (changed, mut gone) = unbounded_channel();
     let chain = Chain {
-        volume: Volume::new(config.gain),
+        volume,
         equalizer: config.equalizer.clone(),
         spectrum,
         meter: config.meter.clone(),
@@ -592,9 +612,6 @@ async fn engine_loop<F: Fetch>(
                             at: position,
                         });
                         jobs.send(Job::Seek(position)).ok();
-                    }
-                    Command::Gain(level) => {
-                        jobs.send(Job::Gain(level)).ok();
                     }
                     Command::Download { id, progress, done } => {
                         let fetch = fetch.clone();
@@ -1171,7 +1188,6 @@ fn audio_loop<F: Fetch>(
                     heard = current.as_ref().map(|held| held.mark(paced.rate()));
                     cue.arm();
                 }
-                Job::Gain(level) => paced.set_volume(level),
             }
             continue;
         }

@@ -294,7 +294,10 @@ pub fn ease_in_out_expo(progress: f32) -> f32 {
     cubic_bezier(progress.clamp(0., 1.), 0.87, 0., 0.13, 1.)
 }
 
-fn cubic_bezier(progress: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
+/// Evaluates a CSS cubic Bezier timing function by solving its time axis first.
+/// Control-point x coordinates must lie in 0..=1. The y result may exceed that range.
+pub fn cubic_bezier(progress: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
+    let progress = progress.clamp(0., 1.);
     if progress == 0. || progress == 1. {
         return progress;
     }
@@ -315,6 +318,18 @@ fn cubic_bezier(progress: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
             break;
         }
         parameter = (parameter - (axis(parameter, x1, x2) - progress) / gradient).clamp(0., 1.);
+    }
+    // A flat time-axis tangent can leave Newton's method short of its root near silence.
+    if (axis(parameter, x1, x2) - progress).abs() > 1e-7 * slope(parameter).abs() {
+        let mut low = 0.;
+        let mut high = 1.;
+        for _ in 0..24 {
+            parameter = (low + high) / 2.;
+            match axis(parameter, x1, x2) < progress {
+                true => low = parameter,
+                false => high = parameter,
+            }
+        }
     }
     axis(parameter, y1, y2)
 }

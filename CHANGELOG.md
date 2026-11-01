@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Set a resume fade-in duration in playback settings.
+
 - An artist page shows the artist's banner behind its header, sharp at the top and blurring into
   the page under the name. Artists without a banner get a soft wash of their photo's colours.
 - Local songs read word-by-word lyrics from a `.ttml` file beside them or from TTML in their
