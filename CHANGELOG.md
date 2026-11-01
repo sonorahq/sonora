@@ -18,6 +18,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Local songs read word-by-word lyrics from a `.ttml` file beside them or from TTML in their
   lyrics tag.
 - The Now playing preview in Appearance settings draws the visualizer style you pick.
+- While anything downloads, the title bar shows how many songs are left, with a cross that cancels
+  every download. Click it to see those songs under the album, playlist or pick that started
+  them, and cancel any one download on its own.
 
 ### Changed
 
@@ -27,11 +30,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The tray menu and taskbar buttons follow the song of the Jam or device you are listening to.
 - A song's right-click menu groups Artist, Album, Radio and Details under one Go to submenu.
 - Sorting by Date added puts the songs you added most recently first.
+- When a service signs you out, the toast says your session was invalidated and stays up with a Sign in button that opens the Providers settings.
+- Starting a download shows a short toast instead of one that follows its progress.
+- A long playlist starts downloading as soon as its first songs are listed.
+- After Spotify refuses a burst of downloads, Sonora checks back every fifteen seconds without
+  fetching a song first, and carries on as soon as Spotify allows it, so a big playlist finishes
+  sooner.
 - Shuffle mixes the songs you queued by hand in with the rest, so turning it off and on again
   reshuffles the whole queue.
 
 ### Fixed
 
+- A song the service will not serve is skipped, so its album or playlist still finishes downloading
+  and can be removed.
+- The download mark on a song finishes filling and fades out smoothly again when the song lands.
 - The header of an album, playlist or artist page no longer jumps when it finishes loading.
 - The column header of an artist's popular songs no longer leaves a thin gap above it while scrolling.
 - Resuming after a pause no longer plays a blip of the old position first after a seek or a reload.
@@ -40,6 +52,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   arrives once they start playing.
 - Dragging the volume slider no longer stutters or spikes CPU and GPU use.
 - Leaving a Jam you joined works again.
+- Screen readers read the Discord status preview in settings: its text, buttons and service badge.
 - Songs you queue in a Jam show your name as the one who added them.
 - A Jam's queue is no longer cleared when a song starts playing.
 
