@@ -55,6 +55,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Screen readers read the Discord status preview in settings: its text, buttons and service badge.
 - Songs you queue in a Jam show your name as the one who added them.
 - A Jam's queue is no longer cleared when a song starts playing.
+- Music no longer crackles when you open an app or a browser tab while it plays.
 
 ## [0.46.0] - 2026-10-31
 
