@@ -59,11 +59,18 @@ impl Controls {
         }
     }
 
-    pub fn set_playback(&mut self, state: &PlaybackState, at: Duration) {
+    pub fn set_playback(
+        &mut self,
+        state: &PlaybackState,
+        at: Duration,
+        wants_playing: bool,
+        _is_seeking: bool,
+    ) {
         let progress = Some(MediaPosition(at));
         let playback = match state {
-            PlaybackState::Playing | PlaybackState::Loading => MediaPlayback::Playing { progress },
-            PlaybackState::Paused => MediaPlayback::Paused { progress },
+            PlaybackState::Playing => MediaPlayback::Playing { progress },
+            PlaybackState::Loading if wants_playing => MediaPlayback::Playing { progress },
+            PlaybackState::Loading | PlaybackState::Paused => MediaPlayback::Paused { progress },
             PlaybackState::Idle | PlaybackState::Failed(_) => MediaPlayback::Stopped,
         };
         if let Err(error) = self.controls.set_playback(playback) {
@@ -78,12 +85,23 @@ impl Controls {
     pub fn set_shuffle(&mut self, _on: bool) {}
 
     pub fn set_repeat(&mut self, _repeat: Repeat) {}
+
+    pub fn set_capabilities(
+        &mut self,
+        _can_play: bool,
+        _can_pause: bool,
+        _can_seek: bool,
+        _can_go_next: bool,
+        _can_go_previous: bool,
+    ) {
+    }
 }
 
 fn command(event: MediaControlEvent) -> Option<Command> {
     Some(match event {
         MediaControlEvent::Play => Command::Play,
-        MediaControlEvent::Pause | MediaControlEvent::Stop => Command::Pause,
+        MediaControlEvent::Pause => Command::Pause,
+        MediaControlEvent::Stop => Command::Stop,
         MediaControlEvent::Toggle => Command::Toggle,
         MediaControlEvent::Next => Command::Next,
         MediaControlEvent::Previous => Command::Previous,

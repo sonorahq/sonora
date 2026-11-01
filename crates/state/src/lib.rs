@@ -73,7 +73,8 @@ pub use outputs::Outputs;
 pub use overload::OutputLevel;
 pub use pins::{PinSort, Pins};
 pub use playback::{
-    Origin, Playback, PlaybackState, PositionTick, Sleep, Unreachable, VOLUME_STEP, Whence,
+    Origin, Playback, PlaybackEvent, PlaybackState, PositionTick, Sleep, Unreachable, VOLUME_STEP,
+    Whence,
 };
 pub use profile::Profile;
 pub use queue::{

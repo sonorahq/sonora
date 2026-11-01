@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- On Linux and FreeBSD, the MPRIS media controls now dynamically enable and disable next, previous and pause buttons to match the queue, smoothly report live track position without jumps, and support bringing Sonora to the front.
+
 ### Fixed
 
 - The account menu no longer lists YouTube Music when you are signed in elsewhere and only used guest mode before. Guest mode shows there under its own name while you use it.
