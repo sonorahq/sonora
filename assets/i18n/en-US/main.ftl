@@ -754,6 +754,8 @@ settings-discord-hide-on-connect-detail = Leave the status to Spotify's own whil
 settings-discord-buttons = Buttons
 settings-discord-buttons-detail = Links under the status for your friends to open, one to the track on its service and one to Sonora
 settings-discord-buttons-pick = Choose buttons
+# what screen readers call the preview of the Discord status
+settings-discord-preview = Discord status preview
 settings-discord-preview-listening = Listening to { $name }
 settings-discord-preview-music = Music
 settings-discord-preview-elapsed = { $time } elapsed

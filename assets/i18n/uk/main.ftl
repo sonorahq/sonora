@@ -740,6 +740,7 @@ settings-discord-hide-on-connect-detail = Залишає статус самом
 settings-discord-buttons = Кнопки
 settings-discord-buttons-detail = Посилання під статусом, які можуть відкрити друзі: на трек у його сервісі й на Sonora
 settings-discord-buttons-pick = Обрати кнопки
+settings-discord-preview = Попередній перегляд статусу Discord
 settings-discord-preview-listening = Слухає { $name }
 settings-discord-preview-music = Музика
 settings-discord-preview-elapsed = Минуло { $time }

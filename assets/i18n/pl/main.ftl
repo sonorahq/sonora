@@ -740,6 +740,7 @@ settings-discord-hide-on-connect-detail = Zostaw status samemu Spotify, gdy Sono
 settings-discord-buttons = Przyciski
 settings-discord-buttons-detail = Odnośniki pod statusem, które znajomi mogą otworzyć: do utworu w jego serwisie i do Sonory
 settings-discord-buttons-pick = Wybierz przyciski
+settings-discord-preview = Podgląd statusu Discord
 settings-discord-preview-listening = Słucha { $name }
 settings-discord-preview-music = Muzyka
 settings-discord-preview-elapsed = upłynęło { $time }

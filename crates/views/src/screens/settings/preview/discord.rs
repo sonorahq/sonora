@@ -1,10 +1,12 @@
 //! A replica of the activity card Discord shows in a profile for the status Sonora sets, in
 //! Discord's own dark theme, sizes and type. It follows every setting on the page and draws the
-//! status the way `state::discord` would send it for a track from listening history.
+//! status the way `state::discord` would send it for a track from listening history. Screen
+//! readers hear it as a named group of its text lines, buttons and provider badge.
 
 use std::cell::Cell;
 use std::time::{Duration, Instant};
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, Context, Div, FontWeight, Hsla, Pixels, SharedString, Window, div, px, relative,
@@ -181,7 +183,10 @@ pub(in crate::screens::settings) fn preview(
         true => None,
         false => sample.large_cover(cx),
     };
-    let badge = badge.then_some(provider).flatten().map(|(slug, _, _)| slug);
+    let badge = badge
+        .then_some(provider)
+        .flatten()
+        .map(|(slug, name, _)| (slug, name));
     let mut buttons = Vec::new();
     if provider_button
         && !hidden
@@ -203,6 +208,9 @@ pub(in crate::screens::settings) fn preview(
         ),
     };
     let card = div()
+        .id("discord-preview")
+        .role(Role::Group)
+        .aria_label(t!("settings-discord-preview"))
         .w(CARD_WIDTH)
         .p(CARD_PAD)
         .flex()
@@ -212,11 +220,13 @@ pub(in crate::screens::settings) fn preview(
         .bg(rgb(CARD))
         .font_family(FONT)
         .child(
-            div()
-                .text_size(HEADER_SIZE)
-                .text_color(rgb(HEADER))
-                .truncate()
-                .child(t!("settings-discord-preview-listening", name = &listening)),
+            ui::spoken(
+                "discord-preview-header",
+                t!("settings-discord-preview-listening", name = &listening),
+            )
+            .text_size(HEADER_SIZE)
+            .text_color(rgb(HEADER))
+            .truncate(),
         )
         .child(
             div()
@@ -231,6 +241,8 @@ pub(in crate::screens::settings) fn preview(
                 buttons.into_iter().enumerate().map(|(index, label)| {
                     div()
                         .id(("discord-preview-button", index))
+                        .role(Role::Button)
+                        .aria_label(label.clone())
                         .h(BUTTON_HEIGHT)
                         .w_full()
                         .flex()
@@ -263,8 +275,9 @@ pub(in crate::screens::settings) fn preview(
 }
 
 /// The large image with the provider's badge at its bottom right, or Sonora's application
-/// icon when the status carries no art, as Discord falls back to it.
-fn image(art: Option<String>, badge: Option<&'static str>, cx: &gpui::App) -> Div {
+/// icon when the status carries no art, as Discord falls back to it. The badge, given as the
+/// provider's slug and name, reads to screen readers as an image named after the provider.
+fn image(art: Option<String>, badge: Option<(&'static str, &'static str)>, cx: &gpui::App) -> Div {
     let picture = match art {
         Some(url) => Artwork::new(Some(url))
             .size(ART)
@@ -291,11 +304,14 @@ fn image(art: Option<String>, badge: Option<&'static str>, cx: &gpui::App) -> Di
         .flex_none()
         .size(ART)
         .child(picture)
-        .when_some(badge, |this, slug| {
+        .when_some(badge, |this, (slug, name)| {
             let brand: Hsla = provider_brand(slug, cx);
             let outer = BADGE_SIZE + BADGE_RING * 2.;
             this.child(
                 div()
+                    .id("discord-preview-badge")
+                    .role(Role::Image)
+                    .aria_label(name)
                     .absolute()
                     .right(-BADGE_OVERHANG)
                     .bottom(-BADGE_OVERHANG)
@@ -329,13 +345,12 @@ fn details(
     album: Option<SharedString>,
     timing: Timing,
 ) -> Div {
-    let time = |value: Duration| {
-        div()
+    let time = |id: &'static str, value: Duration| {
+        ui::spoken(id, elapsed_clock(value))
             .flex_none()
             .text_size(TIME_SIZE)
             .text_color(rgb(MUTED))
             .font_features(tabular())
-            .child(elapsed_clock(value))
     };
 
     div()
@@ -344,26 +359,23 @@ fn details(
         .flex()
         .flex_col()
         .child(
-            div()
+            ui::spoken("discord-preview-title", title)
                 .text_size(TITLE_SIZE)
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(TITLE))
-                .truncate()
-                .child(title),
+                .truncate(),
         )
         .children(artist.map(|artist| {
-            div()
+            ui::spoken("discord-preview-artist", artist)
                 .text_size(TEXT_SIZE)
                 .text_color(rgb(TEXT))
                 .truncate()
-                .child(artist)
         }))
         .children(album.map(|album| {
-            div()
+            ui::spoken("discord-preview-album", album)
                 .text_size(TEXT_SIZE)
                 .text_color(rgb(TEXT))
                 .truncate()
-                .child(album)
         }))
         .map(|this| match timing {
             Timing::Bar { elapsed, total } => this.child(
@@ -372,7 +384,7 @@ fn details(
                     .flex()
                     .items_center()
                     .gap(BAR_GAP)
-                    .child(time(elapsed))
+                    .child(time("discord-preview-elapsed", elapsed))
                     .child(
                         div()
                             .flex_1()
@@ -387,18 +399,20 @@ fn details(
                                     .bg(rgb(BAR_FILL)),
                             ),
                     )
-                    .child(time(total)),
+                    .child(time("discord-preview-total", total)),
             ),
             Timing::Elapsed(elapsed) => this.child(
-                div()
-                    .mt_1()
-                    .text_size(TIME_SIZE)
-                    .text_color(rgb(MUTED))
-                    .font_features(tabular())
-                    .child(t!(
+                ui::spoken(
+                    "discord-preview-elapsed",
+                    t!(
                         "settings-discord-preview-elapsed",
                         time = elapsed_clock(elapsed)
-                    )),
+                    ),
+                )
+                .mt_1()
+                .text_size(TIME_SIZE)
+                .text_color(rgb(MUTED))
+                .font_features(tabular()),
             ),
             Timing::Still => this,
         })

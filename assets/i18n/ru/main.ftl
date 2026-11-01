@@ -763,6 +763,7 @@ settings-discord-hide-on-connect-detail = Оставлять статус сам
 settings-discord-buttons = Кнопки
 settings-discord-buttons-detail = Ссылки под статусом, которые могут открыть ваши друзья: одна на трек в его сервисе, другая на Sonora
 settings-discord-buttons-pick = Выбрать кнопки
+settings-discord-preview = Предпросмотр статуса Discord
 settings-discord-preview-listening = Слушает { $name }
 settings-discord-preview-music = Музыка
 settings-discord-preview-elapsed = Прошло { $time }
