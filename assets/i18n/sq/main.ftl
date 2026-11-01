@@ -155,8 +155,11 @@ menu-play-tracks-last = { $count ->
     [one] Luaj { $count } këngë të fundit
    *[other] Luaj { $count } këngë të fundit
 }
-menu-song-radio = Shko te radio e këngës
-menu-go-to-album = Shko te albumi
+menu-go-to = Shko te
+menu-artist = Artisti
+menu-album = Albumi
+menu-radio = Radio
+menu-details = Detajet
 menu-go-to-artist = Shko te artisti
 menu-view-details = Shiko detajet
 menu-copy-link = Kopjo lidhjen

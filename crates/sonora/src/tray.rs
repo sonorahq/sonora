@@ -151,6 +151,11 @@ impl Tray {
             .detach();
         let queue = Sonora::global(cx).queue.clone();
         cx.observe(&queue, |this, _, cx| this.publish(cx)).detach();
+        // the track of a device that is steered, a jam's host included, changes here and not in
+        // `Playback`
+        let devices = Sonora::global(cx).devices.clone();
+        cx.observe(&devices, |this, _, cx| this.publish(cx))
+            .detach();
         // only `place` here: settings notifies on every window move, and rebuilding `Shown`
         // allocates the caption and clones the cover each time
         let settings = Sonora::global(cx).settings.clone();
@@ -220,8 +225,8 @@ impl Tray {
         let cover = Sonora::global(cx)
             .playback
             .read(cx)
-            .track()
-            .and_then(|track| track.cover.clone());
+            .shown_track(cx)
+            .and_then(|track| track.cover);
         if cover == self.cover {
             return;
         }
@@ -254,8 +259,8 @@ impl Tray {
 /// Opens the song page of whatever is playing. A track without an id is not an error: the caption
 /// row is only enabled when there is one.
 fn open(cx: &mut App) {
-    let playing = Sonora::global(cx).playback.read(cx).track();
-    let Some(id) = playing.and_then(|track| track.id.clone()) else {
+    let playing = Sonora::global(cx).playback.read(cx).shown_track(cx);
+    let Some(id) = playing.and_then(|track| track.id) else {
         return;
     };
     router::navigate(Destination::Song(id.into()), cx);
@@ -305,11 +310,15 @@ async fn fetch(http: &Arc<dyn HttpClient>, url: &str) -> Result<Vec<u8>> {
 
 fn shown(artwork: Option<Arc<Art>>, cx: &App) -> Shown {
     let playback = Sonora::global(cx).playback.read(cx);
-    let playing = matches!(
-        playback.state(),
-        PlaybackState::Playing | PlaybackState::Loading
-    );
-    let caption = match playback.track() {
+    let playing = match playback.steered(cx) {
+        Some(remote) => remote.state.playing,
+        None => matches!(
+            playback.state(),
+            PlaybackState::Playing | PlaybackState::Loading
+        ),
+    };
+    let track = playback.shown_track(cx);
+    let caption = match &track {
         Some(track) => {
             let full = match track.artists.is_empty() {
                 true => track.name.clone(),
@@ -319,7 +328,7 @@ fn shown(artwork: Option<Arc<Art>>, cx: &App) -> Shown {
         }
         None => t!("player-nothing-playing").to_string(),
     };
-    let song = playback.track().is_some_and(|track| track.id.is_some());
+    let song = track.is_some_and(|track| track.id.is_some());
     let shuffle_on = Sonora::global(cx).queue.read(cx).shuffle();
     let repeat_on = playback.repeat() != Repeat::Off;
     Shown {

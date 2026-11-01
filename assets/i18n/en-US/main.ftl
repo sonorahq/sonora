@@ -164,8 +164,11 @@ menu-play-tracks-last = { $count ->
     [one] Play { $count } track last
    *[other] Play { $count } tracks last
 }
-menu-song-radio = Go to song radio
-menu-go-to-album = Go to album
+menu-go-to = Go to
+menu-artist = Artist
+menu-album = Album
+menu-radio = Radio
+menu-details = Details
 menu-go-to-artist = Go to artist
 menu-view-details = View details
 menu-copy-link = Copy link

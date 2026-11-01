@@ -131,8 +131,11 @@ menu-play-last = En son çal
 menu-play-tracks-last = { $count ->
    *[other] { $count } parçayı en son çal
 }
-menu-song-radio = Şarkı radyosuna git
-menu-go-to-album = Albüme git
+menu-go-to = Git
+menu-artist = Sanatçı
+menu-album = Albüm
+menu-radio = Radyo
+menu-details = Ayrıntılar
 menu-go-to-artist = Sanatçıya git
 menu-view-details = Ayrıntıları gör
 menu-copy-link = Bağlantıyı kopyala

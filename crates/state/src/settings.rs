@@ -1427,14 +1427,20 @@ impl AppSettings {
             .unwrap_or_else(|| inline.clone())
     }
 
-    /// Writes the theme a link offered into the themes folder and selects it, turning the
-    /// adaptive theme off since only the neutral themes wear it. Returns the theme's id.
+    /// Writes the theme or family a link offered into the themes folder and selects it the way
+    /// choosing its card does, turning the adaptive theme off since only the neutral themes wear
+    /// it. Returns the family's id.
     pub fn install_theme(&mut self, offer: &ThemeOffer, cx: &mut Context<Self>) -> Result<String> {
         let directory = themes_path(&self.path);
         let id = themes::install(offer, &directory, &self.themes)?;
         let loaded = themes::load(&directory, &self.themes);
+        let count = loaded
+            .themes
+            .iter()
+            .filter(|theme| theme.family == id)
+            .count();
         anyhow::ensure!(
-            loaded.themes.iter().any(|theme| theme.id == id),
+            count >= offer.family.variants.len(),
             "cannot load the installed theme {id}"
         );
         self.families = themes::catalog(&loaded.themes);
@@ -1442,7 +1448,7 @@ impl AppSettings {
         if self.adaptive_theme() {
             self.set_adaptive_theme(false, cx);
         }
-        self.set_theme(id.clone(), cx);
+        self.set_theme_family(&id, cx);
         cx.notify();
         Ok(id)
     }

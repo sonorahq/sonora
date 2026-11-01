@@ -165,8 +165,11 @@ menu-play-tracks-last = { $count ->
     [few] Воспроизвести { $count } трека в конце
    *[other] Воспроизвести { $count } треков в конце
 }
-menu-song-radio = Радио по треку
-menu-go-to-album = Перейти к альбому
+menu-go-to = Перейти
+menu-artist = Исполнитель
+menu-album = Альбом
+menu-radio = Радио
+menu-details = Подробнее
 menu-go-to-artist = Перейти к исполнителю
 menu-view-details = Подробнее
 menu-copy-link = Копировать ссылку

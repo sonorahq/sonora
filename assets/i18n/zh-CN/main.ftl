@@ -155,8 +155,11 @@ menu-play-tracks-last = { $count ->
     [one] 最后播放 { $count } 首歌曲
    *[other] 最后播放 { $count } 首歌曲
 }
-menu-song-radio = 前往歌曲电台
-menu-go-to-album = 前往专辑
+menu-go-to = 前往
+menu-artist = 歌手
+menu-album = 专辑
+menu-radio = 电台
+menu-details = 详情
 menu-go-to-artist = 前往歌手
 menu-view-details = 查看详情
 menu-copy-link = 复制链接

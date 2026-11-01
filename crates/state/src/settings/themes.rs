@@ -6,9 +6,11 @@
 //! one. A user file with the id of a bundled one takes its place.
 //!
 //! A theme link carries a whole theme file in the link itself, so installing one never fetches
-//! anything. Sonora checks it as strictly as a file in the folder and writes a clean copy rebuilt
-//! from what it parsed.
+//! anything. A link may instead carry a family, an object with the folder's name in `family` and
+//! its files by name in `variants`, which installs as a folder. Sonora checks every file as
+//! strictly as one in the folder and writes clean copies rebuilt from what it parsed.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -24,10 +26,12 @@ include!(concat!(env!("OUT_DIR"), "/themes.rs"));
 const FORMAT_VERSION: u32 = 1;
 /// The scheme every link meant for Sonora itself uses.
 const SCHEME: &str = "sonora:";
-/// What a theme link starts with. The theme file follows as unpadded base64url.
+/// What a theme link starts with. The theme file or family follows as unpadded base64url.
 const THEME_LINK: &str = "sonora://theme/";
 /// The longest theme link read. A full theme file encodes to about 2 KiB.
 const LINK_LIMIT: usize = 16 * 1024;
+/// How many variants a linked family may have.
+const VARIANT_LIMIT: usize = 8;
 /// How many characters a linked theme's name or author may have.
 const LABEL_LIMIT: usize = 64;
 /// How many bytes of a theme's name its file name keeps.
@@ -134,13 +138,26 @@ impl ThemeFamily {
     }
 }
 
-/// A theme a link offered, checked and waiting for the user to install it or turn it down.
+/// A theme a link offered, checked and waiting for the user to install it or turn it down. A
+/// single theme is a family of one.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThemeOffer {
-    /// The theme as it would load. Its id is a placeholder until it is installed.
-    pub variant: ThemeVariant,
-    /// The file to write, rebuilt from the parsed fields rather than copied from the link.
-    file: Vec<u8>,
+    /// The family as it would load, named the way the Appearance page names it. Its ids are the
+    /// ones the link asks for, and installing may add a number to them.
+    pub family: ThemeFamily,
+    /// The file to write for each variant in the same order, rebuilt from the parsed fields
+    /// rather than copied from the link.
+    files: Vec<Vec<u8>>,
+}
+
+impl ThemeOffer {
+    /// Whether the offer installs as a folder rather than a loose file.
+    fn folder(&self) -> bool {
+        self.family
+            .variants
+            .iter()
+            .any(|variant| variant.id.contains('/'))
+    }
 }
 
 /// A scan of the user's themes folder and whether transient I/O failures merit another scan.
@@ -353,6 +370,94 @@ pub fn read_link(text: &str) -> Result<ThemeOffer> {
     let bytes = URL_SAFE_NO_PAD
         .decode(payload)
         .context("cannot decode the theme link")?;
+    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+    let value: serde_json::Value =
+        serde_json::from_slice(bytes).context("cannot parse the theme link")?;
+
+    let (mut family, files) = match value.get("variants") {
+        Some(_) => read_family(&value)?,
+        None => {
+            let (variant, file) = clean(&value)?;
+            let id = slug(&variant.title);
+            let variant = ThemeVariant {
+                id: id.clone(),
+                family: id.clone(),
+                ..variant
+            };
+            let family = ThemeFamily {
+                id,
+                name: String::new(),
+                variants: vec![variant],
+                bundled: false,
+            };
+            (family, vec![file])
+        }
+    };
+    name(&mut family);
+    Ok(ThemeOffer { family, files })
+}
+
+/// Reads the family object of a theme link into the family and its files, the variants sorted
+/// by file name the way the themes folder lists them. The folder and file names have to be what
+/// `slug` makes of them, so a link never names anything on disk Sonora would not name itself.
+fn read_family(value: &serde_json::Value) -> Result<(ThemeFamily, Vec<Vec<u8>>)> {
+    let object = value
+        .as_object()
+        .context("theme link must contain an object")?;
+    for field in object.keys() {
+        anyhow::ensure!(
+            matches!(field.as_str(), "family" | "variants"),
+            "unknown theme family field `{field}`"
+        );
+    }
+    let id = object
+        .get("family")
+        .and_then(serde_json::Value::as_str)
+        .context("family must be a string")?;
+    anyhow::ensure!(
+        slug(id) == id && !reserved(id),
+        "family `{id}` is not a usable folder name"
+    );
+    let variants = object
+        .get("variants")
+        .and_then(serde_json::Value::as_object)
+        .context("variants must contain an object")?;
+    anyhow::ensure!(
+        (2..=VARIANT_LIMIT).contains(&variants.len()),
+        "a theme family has 2 to {VARIANT_LIMIT} variants, not {}",
+        variants.len()
+    );
+
+    let mut entries = variants.iter().collect::<Vec<_>>();
+    entries.sort_by_key(|(stem, _)| format!("{stem}.json"));
+    let mut family = ThemeFamily {
+        id: id.to_owned(),
+        name: String::new(),
+        variants: Vec::new(),
+        bundled: false,
+    };
+    let mut files = Vec::new();
+    for (stem, value) in entries {
+        anyhow::ensure!(
+            slug(stem) == *stem,
+            "variant `{stem}` is not a usable file name"
+        );
+        let (variant, file) = clean(value)?;
+        family.variants.push(ThemeVariant {
+            id: format!("{id}/{stem}"),
+            family: id.to_owned(),
+            ..variant
+        });
+        files.push(file);
+    }
+    Ok((family, files))
+}
+
+/// Checks one theme file a link carries and rebuilds it from the fields that parsed. A name or
+/// author with control or direction characters is refused, since both are shown as they are.
+/// The variant comes back without ids.
+fn clean(value: &serde_json::Value) -> Result<(ThemeVariant, Vec<u8>)> {
+    let bytes = serde_json::to_vec(value).context("cannot encode the theme")?;
     let variant = parse(&bytes, "theme link", "")?;
     for (field, value) in [("name", &variant.title), ("author", &variant.author)] {
         anyhow::ensure!(
@@ -365,7 +470,6 @@ pub fn read_link(text: &str) -> Result<ThemeOffer> {
         );
     }
 
-    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
     let colors = value
         .get("theme")
         .and_then(serde_json::Value::as_object)
@@ -382,28 +486,23 @@ pub fn read_link(text: &str) -> Result<ThemeOffer> {
     }))
     .context("cannot encode the theme")?;
     let variant = parse(&file, "theme link", "")?;
-    let id = slug(&variant.title);
-    Ok(ThemeOffer {
-        variant: ThemeVariant {
-            family: id.clone(),
-            id,
-            ..variant
-        },
-        file,
-    })
+    Ok((variant, file))
 }
 
-/// Writes `offer` into `directory` as a loose theme file and returns its id. The id comes from
-/// the theme's name. It replaces an installed theme only when that one has the same name and
-/// author, and otherwise takes the first numbered name that no bundled theme, reserved id or
-/// existing file or folder holds.
+/// Writes `offer` into `directory` and returns the id of the family it became. A single theme
+/// becomes a loose file and a family a folder, under the id the offer asks for. It replaces an
+/// installed family only when that one has the same name and authors, and then deletes the
+/// variants the offer no longer has. Otherwise it takes the first numbered id that no bundled
+/// theme, reserved id or existing file or folder holds.
 pub(super) fn install(
     offer: &ThemeOffer,
     directory: &Path,
     installed: &[ThemeVariant],
 ) -> Result<String> {
     fs::create_dir_all(directory).context("cannot create the themes folder")?;
-    let base = slug(&offer.variant.title);
+    let base = &offer.family.id;
+    let folder = offer.folder();
+    let taken = |path: &Path| fs::symlink_metadata(path).is_ok();
     for attempt in 1..=NAME_ATTEMPTS {
         let id = match attempt {
             1 => base.clone(),
@@ -412,22 +511,76 @@ pub(super) fn install(
         let bundled = BUNDLED_THEMES
             .iter()
             .any(|theme| theme.id == id || theme.family == id);
-        if bundled || reserved(&id) || fs::symlink_metadata(directory.join(&id)).is_ok() {
+        let (path, other) = match folder {
+            true => (directory.join(&id), directory.join(format!("{id}.json"))),
+            false => (directory.join(format!("{id}.json")), directory.join(&id)),
+        };
+        if bundled || reserved(&id) || taken(&other) {
             continue;
         }
-        let path = directory.join(format!("{id}.json"));
-        let same = installed.iter().any(|theme| {
-            theme.id == id
-                && theme.title == offer.variant.title
-                && theme.author == offer.variant.author
-        });
-        if fs::symlink_metadata(&path).is_ok() && !same {
+        let earlier = installed
+            .iter()
+            .filter(|theme| theme.family == id)
+            .cloned()
+            .collect::<Vec<_>>();
+        if taken(&path) && !same(&id, earlier.clone(), &offer.family) {
             continue;
         }
-        write(directory, &path, &offer.file)?;
+
+        if !folder {
+            write(directory, &path, &offer.files[0])?;
+            return Ok(id);
+        }
+        fs::create_dir_all(&path).with_context(|| format!("cannot create {}", path.display()))?;
+        let stems = offer
+            .family
+            .variants
+            .iter()
+            .map(|variant| stem(&variant.id))
+            .collect::<Vec<_>>();
+        for (stem, file) in stems.iter().zip(&offer.files) {
+            write(&path, &path.join(format!("{stem}.json")), file)?;
+        }
+        for variant in earlier
+            .iter()
+            .filter(|variant| !stems.contains(&stem(&variant.id)))
+        {
+            let stale = directory.join(format!("{}.json", variant.id));
+            if let Err(error) = fs::remove_file(&stale) {
+                log::warn!("settings: cannot delete {}: {error}", stale.display());
+            }
+        }
         return Ok(id);
     }
     anyhow::bail!("cannot find a free name for theme {base}")
+}
+
+/// Whether `earlier`, the installed variants of family `id`, are an older copy of `offer`: the
+/// same family name from the same authors.
+fn same(id: &str, earlier: Vec<ThemeVariant>, offer: &ThemeFamily) -> bool {
+    if earlier.is_empty() {
+        return false;
+    }
+    let mut family = ThemeFamily {
+        id: id.to_owned(),
+        name: String::new(),
+        variants: earlier,
+        bundled: false,
+    };
+    name(&mut family);
+    let authors = |family: &ThemeFamily| {
+        family
+            .variants
+            .iter()
+            .map(|variant| variant.author.clone())
+            .collect::<BTreeSet<_>>()
+    };
+    family.name == offer.name && authors(&family) == authors(offer)
+}
+
+/// The file name of variant `id` inside its folder, or the whole id for a loose file.
+fn stem(id: &str) -> &str {
+    id.rsplit_once('/').map_or(id, |(_, stem)| stem)
 }
 
 /// Deletes every file of the user's `family` from `directory`, then its folder once nothing else

@@ -402,6 +402,7 @@ impl MusicApi for SubsonicClient {
         Ok(Artist {
             name,
             cover_large,
+            banner: None,
             biography,
             monthly_listeners: None,
             top_tracks,

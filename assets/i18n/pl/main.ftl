@@ -165,8 +165,11 @@ menu-play-tracks-last = { $count ->
     [few] Odtwórz { $count } utwory na końcu
    *[other] Odtwórz { $count } utworów na końcu
 }
-menu-song-radio = Radio utworu
-menu-go-to-album = Przejdź do albumu
+menu-go-to = Przejdź do
+menu-artist = Wykonawca
+menu-album = Album
+menu-radio = Radio
+menu-details = Szczegóły
 menu-go-to-artist = Przejdź do wykonawcy
 menu-view-details = Szczegóły
 menu-copy-link = Kopiuj link

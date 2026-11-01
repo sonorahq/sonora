@@ -74,11 +74,16 @@ impl Previews {
         })
         .detach();
 
+        // the previews over the field take their colours from the cover it samples, so they
+        // redraw once that lands
+        let ambient = cx.new(Ambient::framed);
+        cx.observe(&ambient, |_, _, cx| cx.notify()).detach();
+
         Self {
             lyrics: lyrics::LyricsPreview::new(cx),
             sound: sound::SoundPreview::new(cx),
             discord: discord::DiscordPreview::new(cx),
-            ambient: cx.new(Ambient::framed),
+            ambient,
             seed: Cell::new(random()),
             picked: RefCell::new(None),
         }

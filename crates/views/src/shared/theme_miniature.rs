@@ -9,6 +9,8 @@ use ui::Theme;
 pub(crate) const CARD: Pixels = px(150.);
 /// How tall a theme card's picture stands, its border included.
 pub(crate) const THUMB: Pixels = px(96.);
+/// How many variants of a family a miniature shows side by side at most.
+pub(crate) const SLICES: usize = 4;
 /// How thick the card's border is, which the miniature sits inside.
 const EDGE: Pixels = px(1.);
 /// The miniature window inside the card's border, in whole pixels.

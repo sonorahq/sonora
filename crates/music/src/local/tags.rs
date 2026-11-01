@@ -14,7 +14,7 @@ use lofty::tag::items::Timestamp;
 use lofty::tag::{ItemValue, Tag, TagItem};
 
 use crate::engine::Loudness;
-use crate::lyrics::lrc;
+use crate::lyrics::{lrc, ttml};
 use crate::{Encoding, Lyrics, LyricsLine, LyricsWord, TrackTags, Voice};
 
 use super::wire;
@@ -106,7 +106,7 @@ pub fn loudness(tagged: &TaggedFile) -> Option<Loudness> {
     })
 }
 
-/// A timed `SYLT` frame wins over the lyrics text, which is timed only when it parses as LRC.
+/// A timed `SYLT` frame wins over the lyrics text, which is timed when it parses as TTML or LRC.
 pub fn lyrics(path: &Path) -> Result<Option<Lyrics>> {
     if let Some(lines) = synchronized(path) {
         return Ok(Some(Lyrics::Synced {
@@ -118,6 +118,9 @@ pub fn lyrics(path: &Path) -> Result<Option<Lyrics>> {
     if text.is_empty() {
         return Ok(None);
     }
+    if let Some(lyrics) = ttml_lyrics(path, text) {
+        return Ok(Some(lyrics));
+    }
     let lines = lrc::parse(text);
     Ok(Some(match lines.is_empty() {
         true => Lyrics::plain(text),
@@ -125,6 +128,34 @@ pub fn lyrics(path: &Path) -> Result<Option<Lyrics>> {
             lines: lines.into(),
         },
     }))
+}
+
+/// Decodes text that looks like a TTML document, as Apple Music downloaders store in the tags and
+/// beside the track. A document that does not parse or holds no line is logged and gives `None`.
+pub(super) fn ttml_lyrics(origin: &Path, text: &str) -> Option<Lyrics> {
+    let text = text.trim_start_matches('\u{feff}').trim_start();
+    if !text.starts_with("<tt") && !text.starts_with("<?xml") {
+        return None;
+    }
+    let lyrics = match ttml::parse(text) {
+        Ok(sheet) => sheet.lyrics,
+        Err(error) => {
+            log::warn!(
+                "lyrics: cannot decode the TTML of {}: {error:#}",
+                origin.display()
+            );
+            return None;
+        }
+    };
+    let empty = match &lyrics {
+        Lyrics::Plain { text, .. } => text.trim().is_empty(),
+        Lyrics::Synced { lines } => lines.is_empty(),
+    };
+    if empty {
+        log::warn!("lyrics: the TTML of {} holds no line", origin.display());
+        return None;
+    }
+    Some(lyrics)
 }
 
 /// Only millisecond stamps are read: MPEG frame stamps would need the stream's frame length.
