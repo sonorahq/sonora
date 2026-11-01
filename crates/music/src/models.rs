@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
@@ -538,6 +538,31 @@ pub struct LyricsHit {
     pub album: Option<String>,
     pub duration: Option<Duration>,
     pub writers: Vec<String>,
+    /// The catalogue that answered on `source`'s behalf, when the source relays others.
+    pub origin: Option<String>,
+    /// The people who made a community sheet, credited beside the source whenever it shows.
+    pub contributors: Vec<LyricsContributor>,
+    /// When the hit must leave the cache, for catalogues that cap how long it may be kept.
+    pub expires: Option<SystemTime>,
+}
+
+/// Someone credited for a community lyrics sheet, linked to their page when the catalogue
+/// gives one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LyricsContributor {
+    pub role: LyricsRole,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+/// What a contributor did for a community sheet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LyricsRole {
+    /// Timed the sheet.
+    Maker,
+    /// Submitted it to the catalogue.
+    Uploader,
 }
 
 /// Something the provider keeps sidebar pins for, with whether it is pinned now. The uri is

@@ -1029,6 +1029,7 @@ settings-lyrics-provider-musixmatch = Musixmatch
 settings-lyrics-provider-lrclib = LRCLIB
 settings-lyrics-provider-kugou = Kugou
 settings-lyrics-provider-netease = NetEase
+settings-lyrics-provider-spicy = Spicy Lyrics
 settings-romanization-japanese = Pismo japońskie
 settings-romanization-chinese = Pismo chińskie
 settings-romanization-korean = Pismo koreańskie

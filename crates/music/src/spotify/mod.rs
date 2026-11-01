@@ -18,6 +18,7 @@ mod profiles;
 mod radio;
 mod search;
 mod sink;
+mod spicy;
 mod wire;
 
 use std::sync::Arc;
@@ -34,6 +35,7 @@ use crate::{
 pub use auth::AuthConfig;
 pub use client::LibrespotClient;
 pub use lyrics::SpotifyLyrics;
+pub use spicy::SpicyLyrics;
 
 pub struct SpotifyProvider {
     config: AuthConfig,

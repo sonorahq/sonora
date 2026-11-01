@@ -307,7 +307,7 @@ const DEFAULT_STARTUP: &str = "home";
 pub const SYSTEM_FONT: &str = "auto";
 /// Every lyrics source Sonora knows by the name its provider reports, in the order a fresh
 /// install prefers them.
-pub const LYRICS_SOURCES: [&str; 9] = [
+pub const LYRICS_SOURCES: [&str; 10] = [
     LOCAL,
     "Subsonic",
     "Spotify",
@@ -317,6 +317,7 @@ pub const LYRICS_SOURCES: [&str; 9] = [
     "LrcLib",
     "Kugou",
     "NetEase",
+    "Spicy Lyrics",
 ];
 
 /// A pin together with the provider it belongs to. The pin is flattened so the stored JSON
@@ -417,6 +418,8 @@ struct Values {
     /// Every known lyrics source, the preferred one first. Lyrics of the same kind from two
     /// sources go to the one listed higher.
     lyrics_provider_priority: Vec<String>,
+    /// Keys the user entered for lyrics sources that need one of their own, by source name.
+    lyrics_keys: BTreeMap<String, String>,
     karaoke_lyrics: bool,
     blur_lyrics: bool,
     romanized_lyrics: bool,
@@ -615,11 +618,13 @@ impl Default for Values {
             local_lyrics_offered: false,
             subsonic_lyrics_offered: false,
             lyrics_provider_priority: lyrics_priority(&[]),
-            // Kugou and NetEase, the last two, start switched off.
+            // Kugou, NetEase and Spicy Lyrics, the last three, start switched off. Spicy Lyrics
+            // needs a developer key of the user's own, so it waits to be asked for.
             lyrics_providers: LYRICS_SOURCES[..7]
                 .iter()
                 .map(|name| name.to_string())
                 .collect(),
+            lyrics_keys: BTreeMap::new(),
             karaoke_lyrics: true,
             blur_lyrics: true,
             romanized_lyrics: true,
@@ -1117,6 +1122,19 @@ impl AppSettings {
             .lyrics_providers
             .iter()
             .any(|name| name == provider)
+    }
+
+    /// Every key the user entered for a lyrics source, by source name.
+    pub fn lyrics_keys(&self) -> &BTreeMap<String, String> {
+        &self.values.lyrics_keys
+    }
+
+    /// The key the user entered for `provider`, empty when there is none.
+    pub fn lyrics_key(&self, provider: &str) -> &str {
+        self.values
+            .lyrics_keys
+            .get(provider)
+            .map_or("", String::as_str)
     }
 
     pub fn karaoke_lyrics(&self) -> bool {
@@ -1677,6 +1695,22 @@ impl AppSettings {
 
     pub fn set_quality(&mut self, quality: Quality, cx: &mut Context<Self>) {
         self.values.stream_quality = quality.id().to_owned();
+        self.schedule_save(cx);
+    }
+
+    /// Keeps `key` for `provider`, or forgets it when it is blank.
+    pub fn set_lyrics_key(&mut self, provider: &str, key: &str, cx: &mut Context<Self>) {
+        let key = key.trim();
+        if self.lyrics_key(provider) == key {
+            return;
+        }
+        match key.is_empty() {
+            true => self.values.lyrics_keys.remove(provider),
+            false => self
+                .values
+                .lyrics_keys
+                .insert(provider.to_owned(), key.to_owned()),
+        };
         self.schedule_save(cx);
     }
 
@@ -3027,7 +3061,8 @@ mod tests {
                 "Musixmatch",
                 "LrcLib",
                 "Kugou",
-                "NetEase"
+                "NetEase",
+                "Spicy Lyrics"
             ]
             .map(str::to_owned)
         );
@@ -3050,7 +3085,7 @@ mod tests {
     fn lyrics_priority_ignores_unknown_and_duplicate_sources_and_appends_missing_ones() {
         let order = lyrics_priority(&["LrcLib".into(), "unknown".into(), "LrcLib".into()]);
         assert_eq!(order[0], "LrcLib");
-        assert_eq!(order.len(), 9);
+        assert_eq!(order.len(), 10);
         assert!(!order.iter().any(|name| name == "unknown"));
         assert_eq!(order.iter().filter(|name| *name == "LrcLib").count(), 1);
     }

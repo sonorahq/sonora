@@ -993,6 +993,7 @@ settings-lyrics-provider-musixmatch = Musixmatch
 settings-lyrics-provider-lrclib = LRCLIB
 settings-lyrics-provider-kugou = 酷狗音乐
 settings-lyrics-provider-netease = 网易云音乐
+settings-lyrics-provider-spicy = Spicy Lyrics
 settings-romanization-japanese = 日语
 settings-romanization-chinese = 中文
 settings-romanization-korean = 韩语
