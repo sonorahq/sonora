@@ -34,16 +34,11 @@ const MENU_GAP: Pixels = px(4.);
 
 type Click = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
-/// What the name of an option that comes in variants does when it is clicked.
-enum Variants {
-    /// Opens `menu` under the name, as the popover `key` of `group`.
-    Menu {
-        key: &'static str,
-        group: Popovers,
-        menu: Box<Menu>,
-    },
-    /// Runs the handler, for a card whose menu another card holds for now.
-    Ask(Click),
+/// The menu opened from an option's name.
+struct Variants {
+    key: SharedString,
+    group: Popovers,
+    menu: Box<Menu>,
 }
 
 /// One option of a visual choice: a thumbnail that shows what the option looks like, its name
@@ -57,6 +52,7 @@ pub struct OptionCard {
     thumb: Option<AnyElement>,
     label: Option<SharedString>,
     detail: Option<SharedString>,
+    controls: Option<AnyElement>,
     variants: Option<Variants>,
     height: Option<Pixels>,
     selected: bool,
@@ -78,6 +74,7 @@ impl OptionCard {
             thumb: None,
             label: None,
             detail: None,
+            controls: None,
             variants: None,
             height: None,
             selected: false,
@@ -106,25 +103,26 @@ impl OptionCard {
         self
     }
 
-    /// Puts a chevron after the name and makes the name open `menu` under it as the popover
-    /// `key` of `group`, for an option that comes in variants. The name keeps its look and its
-    /// line, and a click on it does not choose the card.
-    pub fn variant_menu(mut self, key: &'static str, group: &Popovers, menu: Menu) -> Self {
-        self.variants = Some(Variants::Menu {
-            key,
-            group: group.clone(),
-            menu: Box::new(menu),
-        });
+    /// Adds controls below the name, such as separate light and dark variant pickers.
+    pub fn controls(mut self, controls: impl IntoElement) -> Self {
+        self.controls = Some(controls.into_any_element());
         self
     }
 
-    /// Puts the same chevron after the name and runs `handler` on a click on it, for a card
-    /// whose variant menu another card holds while it is drawn.
-    pub fn on_variants(
+    /// Puts a chevron after the name and makes the name open `menu` under it as the popover
+    /// `key` of `group`, for an option that comes in variants. The name keeps its look and its
+    /// line, and a click on it does not choose the card.
+    pub fn variant_menu(
         mut self,
-        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+        key: impl Into<SharedString>,
+        group: &Popovers,
+        menu: Menu,
     ) -> Self {
-        self.variants = Some(Variants::Ask(Box::new(handler)));
+        self.variants = Some(Variants {
+            key: key.into(),
+            group: group.clone(),
+            menu: Box::new(menu),
+        });
         self
     }
 
@@ -200,6 +198,7 @@ impl RenderOnce for OptionCard {
             thumb,
             label,
             detail,
+            controls,
             variants,
             height,
             selected,
@@ -329,6 +328,7 @@ impl RenderOnce for OptionCard {
                     .flex_col()
                     .items_center()
                     .gap_0p5()
+                    .when(label.is_none() && detail.is_none(), |this| this.hidden())
                     .when(disabled, |this| this.opacity(FADED))
                     .max_w_full()
                     .when_some(label, |this, label| {
@@ -357,22 +357,12 @@ impl RenderOnce for OptionCard {
                         this.child(match variants {
                             None => line.into_any_element(),
                             Some(_) if disabled => line.into_any_element(),
-                            Some(Variants::Menu { key, group, menu }) => Popover::new(key, group)
+                            Some(Variants { key, group, menu }) => Popover::new(key, group)
                                 .max_w_full()
                                 .face(line)
                                 .when_some(variants_name, Popover::name)
                                 .menu((*menu).top(relative(1.)).mt(MENU_GAP).left_0())
                                 .commands()
-                                .into_any_element(),
-                            Some(Variants::Ask(handler)) => div()
-                                .id((id.clone(), "variants"))
-                                .role(gpui::accesskit::Role::Button)
-                                .when_some(variants_name, |this, name| this.aria_label(name))
-                                .max_w_full()
-                                .cursor_pointer()
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .on_click(move |event, window, cx| handler(event, window, cx))
-                                .child(line)
                                 .into_any_element(),
                         })
                     })
@@ -387,6 +377,7 @@ impl RenderOnce for OptionCard {
                         )
                     }),
             )
+            .children(controls)
             .when(interactive, |this| {
                 this.when_some(on_click, |this, handler| {
                     this.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

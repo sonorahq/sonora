@@ -7,9 +7,7 @@ use gpui::prelude::*;
 use gpui::{Context, Entity, FocusHandle, Pixels, Render, Window, div, px};
 use i18n::t;
 use state::{Links, Sonora};
-use ui::{
-    ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Look, Modal, Submit, Text, Theme, ThemeKind,
-};
+use ui::{ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Modal, Submit, Text};
 
 use crate::shared::theme_miniature::{SLICES, framed, sliced};
 
@@ -47,21 +45,7 @@ impl ThemeInvite {
     /// Installs the theme and fades the window into it, the way choosing a card does.
     fn install(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.release(window, cx);
-        if !self.links.update(cx, |links, cx| links.install_theme(cx)) {
-            return;
-        }
-        let (look, overrides) = {
-            let settings = Sonora::global(cx).settings.read(cx);
-            (settings.look(), settings.theme_overrides())
-        };
-        Theme::fade(
-            Look {
-                kind: ThemeKind::Dark,
-                ..look
-            },
-            &overrides,
-            cx,
-        );
+        self.links.update(cx, |links, cx| links.install_theme(cx));
     }
 
     fn release(&mut self, window: &mut Window, cx: &mut Context<Self>) {
