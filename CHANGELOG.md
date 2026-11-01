@@ -27,6 +27,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The tray menu and taskbar buttons follow the song of the Jam or device you are listening to.
 - A song's right-click menu groups Artist, Album, Radio and Details under one Go to submenu.
 - Sorting by Date added puts the songs you added most recently first.
+- When a service signs you out, the toast says your session was invalidated and stays up with a Sign in button that opens the Providers settings.
 
 ### Fixed
 
