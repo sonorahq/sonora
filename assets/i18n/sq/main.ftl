@@ -1269,19 +1269,6 @@ toast-offline-mode = Je jashtë linje. Kalo në linjë për ta transmetuar kët�
 offline-title = Je jashtë linje.
 offline-go-online = Kalo në linjë
 toast-download-failed = Këngët për shkarkim nuk mund të listoheshin.
-toast-downloading = Duke shkarkuar { $name }
-toast-downloading-songs = { $count ->
-    [one] Duke shkarkuar { $count } këngë
-   *[other] Duke shkarkuar { $count } këngë
-}
-toast-downloaded = U shkarkua { $name }
-toast-downloaded-songs = { $count ->
-    [one] U shkarkua { $count } këngë
-   *[other] U shkarkuan { $count } këngë
-}
-toast-download-set-failed = Disa këngë të { $name } nuk mund të shkarkoheshin
-toast-download-song-failed = { $name } nuk mund të shkarkohej
-toast-download-songs-failed = Disa nga këngët nuk mund të shkarkoheshin
 toast-percent = { $percent }%
 toast-download-cancelled = Shkarkimi i { $name } u anulua
 toast-downloads-cancelled = { $count ->

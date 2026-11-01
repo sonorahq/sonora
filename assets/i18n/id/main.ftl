@@ -1269,19 +1269,6 @@ toast-offline-mode = Anda sedang offline. Kembali online untuk memutar lagu ini.
 offline-title = Anda sedang offline.
 offline-go-online = Kembali online
 toast-download-failed = Daftar lagu untuk diunduh tidak dapat dimuat.
-toast-downloading = Mengunduh { $name }
-toast-downloading-songs = { $count ->
-    [one] Mengunduh { $count } lagu
-   *[other] Mengunduh { $count } lagu
-}
-toast-downloaded = { $name } diunduh
-toast-downloaded-songs = { $count ->
-    [one] { $count } lagu diunduh
-   *[other] { $count } lagu diunduh
-}
-toast-download-set-failed = Beberapa lagu dari { $name } tidak dapat diunduh
-toast-download-song-failed = { $name } tidak dapat diunduh
-toast-download-songs-failed = Beberapa lagu tidak dapat diunduh
 toast-percent = { $percent }%
 toast-download-cancelled = Unduhan { $name } dibatalkan
 toast-downloads-cancelled = { $count ->

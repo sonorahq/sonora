@@ -1244,17 +1244,6 @@ toast-offline-mode = Çevrimdışısın. Bu şarkıyı internetten çalmak için
 offline-title = Çevrimdışısın.
 offline-go-online = Çevrimiçi ol
 toast-download-failed = İndirilecek parçalar listelenemedi.
-toast-downloading = { $name } indiriliyor
-toast-downloading-songs = { $count ->
-   *[other] { $count } parça indiriliyor
-}
-toast-downloaded = { $name } indirildi
-toast-downloaded-songs = { $count ->
-   *[other] { $count } parça indirildi
-}
-toast-download-set-failed = { $name } içindeki bazı parçalar indirilemedi
-toast-download-song-failed = { $name } indirilemedi
-toast-download-songs-failed = Parçaların bazıları indirilemedi
 toast-percent = { $percent }%
 toast-download-cancelled = { $name } indirmesi iptal edildi
 toast-downloads-cancelled = { $count ->

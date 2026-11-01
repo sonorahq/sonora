@@ -1313,21 +1313,6 @@ toast-offline-mode = Ви офлайн. Перейдіть в онлайн, що
 offline-title = Ви офлайн.
 offline-go-online = Перейти в онлайн
 toast-download-failed = Не вдалося отримати список треків для завантаження.
-toast-downloading = Завантажуємо { $name }
-toast-downloading-songs = { $count ->
-    [one] Завантажуємо { $count } трек
-    [few] Завантажуємо { $count } треки
-   *[other] Завантажуємо { $count } треків
-}
-toast-downloaded = { $name } завантажено
-toast-downloaded-songs = { $count ->
-    [one] Завантажено { $count } трек
-    [few] Завантажено { $count } треки
-   *[other] Завантажено { $count } треків
-}
-toast-download-set-failed = Не вдалося завантажити деякі треки з { $name }
-toast-download-song-failed = Не вдалося завантажити { $name }
-toast-download-songs-failed = Не вдалося завантажити деякі треки
 toast-percent = { $percent }%
 toast-download-cancelled = Завантаження { $name } скасовано
 toast-downloads-cancelled = { $count ->

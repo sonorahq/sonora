@@ -1269,19 +1269,6 @@ toast-offline-mode = Você está offline. Fique online para ouvir esta música.
 offline-title = Você está offline.
 offline-go-online = Ficar online
 toast-download-failed = Não foi possível listar as faixas para baixar.
-toast-downloading = Baixando { $name }
-toast-downloading-songs = { $count ->
-    [one] Baixando { $count } faixa
-   *[other] Baixando { $count } faixas
-}
-toast-downloaded = { $name } baixado
-toast-downloaded-songs = { $count ->
-    [one] { $count } faixa baixada
-   *[other] { $count } faixas baixadas
-}
-toast-download-set-failed = Algumas faixas de { $name } não puderam ser baixadas
-toast-download-song-failed = Não foi possível baixar { $name }
-toast-download-songs-failed = Algumas faixas não puderam ser baixadas
 toast-percent = { $percent }%
 toast-download-cancelled = Download de { $name } cancelado
 toast-downloads-cancelled = { $count ->

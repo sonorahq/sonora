@@ -68,6 +68,11 @@ pub(crate) async fn download(
         return Ok(());
     }
     let uri = track_uri(id)?;
+    if let Err(error) = key_ready(session, &uri).await
+        && refused_for_now(&error)
+    {
+        return Err(failure(error, id));
+    }
     let fetched = match offline::download(session, uri.clone(), bitrate).await {
         Ok(fetched) => fetched,
         Err(error) if error.kind == ErrorKind::Unavailable && !refused_for_now(&error) => {
@@ -90,6 +95,30 @@ pub(crate) async fn download(
     tokio::task::spawn_blocking(move || shelf.pin(&id, facts, &fetched.file))
         .await
         .context("the download stopped")?
+}
+
+/// Asks for one of the track's audio keys while the session is held to a pause, so a track that
+/// would be refused costs a packet and not a whole file fetched first. Free while the session is
+/// not throttled, and any failure but a refusal is left for the download itself to hit.
+async fn key_ready(session: &Session, uri: &SpotifyUri) -> Result<(), librespot_core::Error> {
+    if !session.audio_key().is_throttled() {
+        return Ok(());
+    }
+    let Ok(track) = SpotifyId::try_from(uri) else {
+        return Ok(());
+    };
+    let metadata = session.spclient().get_track_metadata(uri).await?;
+    let Ok(message) = TrackMessage::parse_from_bytes(&metadata) else {
+        return Ok(());
+    };
+    let Some(file) = message.file.iter().find(|file| !file.file_id().is_empty()) else {
+        return Ok(());
+    };
+    session
+        .audio_key()
+        .request(track, FileId::from(file.file_id()))
+        .await
+        .map(|_| ())
 }
 
 /// Fetches a track Spotify relinked for this market through the first of its alternatives that

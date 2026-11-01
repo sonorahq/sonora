@@ -1207,17 +1207,6 @@ toast-offline-mode = オフラインです。この曲をストリーミング�
 offline-title = オフラインです。
 offline-go-online = オンラインにする
 toast-download-failed = ダウンロードする曲の一覧を取得できませんでした。
-toast-downloading = { $name } をダウンロード中
-toast-downloading-songs = { $count ->
-   *[other] { $count }曲をダウンロード中
-}
-toast-downloaded = { $name } をダウンロードしました
-toast-downloaded-songs = { $count ->
-   *[other] { $count }曲をダウンロードしました
-}
-toast-download-set-failed = { $name } の一部の曲をダウンロードできませんでした
-toast-download-song-failed = { $name } をダウンロードできませんでした
-toast-download-songs-failed = 一部の曲をダウンロードできませんでした
 toast-percent = { $percent }%
 toast-download-cancelled = { $name } のダウンロードをキャンセルしました
 toast-downloads-cancelled = { $count ->
