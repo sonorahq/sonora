@@ -41,6 +41,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - A song the service will not serve is skipped, so its album or playlist still finishes downloading
   and can be removed.
+- The download mark on a song finishes filling and fades out smoothly again when the song lands.
 - The header of an album, playlist or artist page no longer jumps when it finishes loading.
 - The column header of an artist's popular songs no longer leaves a thin gap above it while scrolling.
 - Resuming after a pause no longer plays a blip of the old position first after a seek or a reload.
