@@ -18,8 +18,14 @@ env:
   SCCACHE_GHA_ENABLED: "true"
 
 jobs:
+  # A release branch only moves the version and the changelog over code main already checked,
+  # and release.yml builds its merge for the tag, so neither its pull request nor its merge runs
+  # here.
   check:
     name: fmt, clippy and tests
+    if: >-
+      !startsWith(github.head_ref, 'release/') &&
+      !contains(github.event.head_commit.message, 'from sonorahq/release/')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -62,7 +68,9 @@ jobs:
   # cost of a release build. A tag still builds every target for real through release.yml.
   platforms:
     name: clippy on ${{ matrix.target }}
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    if: >-
+      (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
+      !startsWith(github.head_ref, 'release/')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -95,7 +103,9 @@ jobs:
 
   build:
     name: ${{ matrix.target }}
-    if: github.event_name != 'pull_request'
+    if: >-
+      github.event_name != 'pull_request' &&
+      !contains(github.event.head_commit.message, 'from sonorahq/release/')
     runs-on: ${{ matrix.os }}
     env:
       SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}

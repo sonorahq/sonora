@@ -79,6 +79,7 @@ async fn overview_artist(session: &Session, overview: pathfinder::Overview) -> R
     Ok(Artist {
         name: overview.name,
         cover_large: overview.cover_large,
+        banner: overview.banner,
         biography: overview
             .biography
             .map(|biography| plain_text(&biography))
@@ -298,6 +299,7 @@ fn artist_from(artist: &ArtistMessage, top_tracks: Vec<Track>, albums: Vec<Album
     Artist {
         name: profile.name,
         cover_large: profile.cover_large,
+        banner: None,
         biography: profile.biography,
         monthly_listeners: None,
         top_tracks,

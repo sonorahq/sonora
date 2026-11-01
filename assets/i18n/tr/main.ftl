@@ -131,8 +131,11 @@ menu-play-last = En son çal
 menu-play-tracks-last = { $count ->
    *[other] { $count } parçayı en son çal
 }
-menu-song-radio = Şarkı radyosuna git
-menu-go-to-album = Albüme git
+menu-go-to = Git
+menu-artist = Sanatçı
+menu-album = Albüm
+menu-radio = Radyo
+menu-details = Ayrıntılar
 menu-go-to-artist = Sanatçıya git
 menu-view-details = Ayrıntıları gör
 menu-copy-link = Bağlantıyı kopyala
@@ -239,10 +242,7 @@ player-previous = Önceki parça
 player-next = Sonraki parça
 player-fullscreen = Tam ekran
 player-fullscreen-leave = Tam ekrandan çık
-player-devices = Cihazlar
 devices-this-computer = Bu bilgisayar
-devices-pause = Duraklat
-devices-resume = Sürdür
 devices-jam-join = Jam'e katıl…
 devices-jam-join-title = Jam'e katıl
 devices-jam-join-detail = Bir arkadaşının paylaştığı bağlantıyı yapıştır
@@ -250,15 +250,12 @@ devices-jam-paste = Yapıştır
 devices-jam-link-hint = Jam bağlantısı
 devices-jam-start = Jam başlat
 devices-jam-copy = Jam bağlantısını kopyala
-devices-jam-code = QR kodu
 devices-jam-code-menu = QR kodunu göster
 devices-jam-code-title = { $host } ile Jam'e katılmak için tara
 devices-jam-code-title-anonymous = Jam'e katılmak için tara
 devices-jam-code-close = Kapat
 devices-jam-leave = Jam'den ayrıl
 devices-jam-end = Jam'i bitir
-devices-jam-banner = { $host } ile Jam'de
-devices-jam-banner-anonymous = Jam'de
 devices-jam-more = +{ $count }
 devices-jam-host = Ev sahibi
 devices-jam-you = Sen
@@ -269,8 +266,6 @@ devices-jam-invite-detail = { $count ->
    *[other] Bu Jam'de zaten { $count } kişi var.
 }
 devices-jam-invite-join = Katıl
-devices-elsewhere-banner = { $device } üzerinde çalıyor
-devices-elsewhere-here = Burada çal
 fullscreen-artwork = Kapak
 
 # filters
@@ -410,6 +405,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Hızlı seçimler
 home-quick-picks-empty = Birkaç şarkı beğen, burada görünsünler
 home-recently-added = Son eklenenler
+home-recently-played = Son çalınanlar
 home-playlists = Çalma listeleri
 home-favorite-albums = Favori albümler
 home-artists = Sanatçılar
@@ -418,6 +414,9 @@ home-collection-albums = Koleksiyonundaki albümler
 # search page
 search-placeholder = Ne dinlemek istersin?
 search-browse = Tümüne göz at
+search-submit = Ara
+search-recent = Son aramalar
+search-forget = Geçmişten kaldır
 genre-empty = Burada henüz gösterilecek bir şey yok
 search-best-match = En iyi eşleşme
 search-no-matches = Eşleşme yok

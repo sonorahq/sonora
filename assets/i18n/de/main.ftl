@@ -155,8 +155,11 @@ menu-play-tracks-last = { $count ->
     [one] { $count } Track als Letztes spielen
    *[other] { $count } Tracks als Letztes spielen
 }
-menu-song-radio = Song-Radio öffnen
-menu-go-to-album = Zum Album
+menu-go-to = Gehe zu
+menu-artist = Künstler
+menu-album = Album
+menu-radio = Radio
+menu-details = Details
 menu-go-to-artist = Zum Künstler
 menu-view-details = Details anzeigen
 menu-copy-link = Link kopieren
@@ -259,10 +262,7 @@ player-previous = Vorheriger Titel
 player-next = Nächster Titel
 player-fullscreen = Vollbild
 player-fullscreen-leave = Vollbild verlassen
-player-devices = Geräte
 devices-this-computer = Dieser Computer
-devices-pause = Pause
-devices-resume = Fortsetzen
 devices-jam-join = Einer Jam beitreten…
 devices-jam-join-title = Einer Jam beitreten
 devices-jam-join-detail = Füge den Link ein, den dir jemand geschickt hat
@@ -270,15 +270,12 @@ devices-jam-paste = Einfügen
 devices-jam-link-hint = Jam-Link
 devices-jam-start = Jam starten
 devices-jam-copy = Jam-Link kopieren
-devices-jam-code = QR-Code
 devices-jam-code-menu = QR-Code anzeigen
 devices-jam-code-title = Scannen, um der Jam von { $host } beizutreten
 devices-jam-code-title-anonymous = Scannen, um der Jam beizutreten
 devices-jam-code-close = Schließen
 devices-jam-leave = Jam verlassen
 devices-jam-end = Jam beenden
-devices-jam-banner = In der Jam von { $host }
-devices-jam-banner-anonymous = In einer Jam
 devices-jam-more = +{ $count }
 devices-jam-host = Host
 devices-jam-you = Du
@@ -290,8 +287,6 @@ devices-jam-invite-detail = { $count ->
    *[other] { $count } Personen sind schon in dieser Jam.
 }
 devices-jam-invite-join = Beitreten
-devices-elsewhere-banner = Wird auf { $device } abgespielt
-devices-elsewhere-here = Hier abspielen
 fullscreen-artwork = Cover
 
 # filters
@@ -430,6 +425,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Schnellauswahl
 home-quick-picks-empty = Markiere ein paar Songs als Favoriten, dann erscheinen sie hier
 home-recently-added = Kürzlich hinzugefügt
+home-recently-played = Kürzlich gespielt
 home-playlists = Playlists
 home-favorite-albums = Lieblingsalben
 home-artists = Künstler
@@ -438,6 +434,9 @@ home-collection-albums = Alben aus deiner Sammlung
 # search page
 search-placeholder = Was möchtest du hören?
 search-browse = Alles durchsuchen
+search-submit = Suchen
+search-recent = Letzte Suchen
+search-forget = Aus dem Verlauf entfernen
 genre-empty = Hier gibt es noch nichts zu sehen
 search-best-match = Beste Übereinstimmung
 search-no-matches = Keine Treffer

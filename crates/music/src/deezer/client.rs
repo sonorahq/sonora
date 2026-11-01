@@ -18,9 +18,9 @@ use crate::cover::{self, CoverLimits};
 use crate::deezer::{decrypt, wire};
 use crate::engine::Loudness;
 use crate::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, ArtistRef, Encoding, HomeFeed,
-    MediaKind, MusicApi, Offer, Playlist, PlaylistDetail, Quality, SUGGESTIONS, SavedArtist, Track,
-    UserProfile, distinct_covers, escape,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, ArtistRef, Encoding, Genre,
+    GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Offer, Playlist,
+    PlaylistDetail, Quality, SUGGESTIONS, SavedArtist, Track, UserProfile, distinct_covers, escape,
 };
 
 const GATEWAY: &str = "https://www.deezer.com/ajax/gw-light.php";
@@ -85,6 +85,39 @@ const PORTRAIT_LIMIT: usize = 24;
 const SIMILAR_ARTISTS: usize = 6;
 const SIMILAR_RELEASES: usize = 2;
 
+/// The page `page.get` lists every channel on, sorted into categories, genres and podcasts.
+const EXPLORE: &str = "channels/explore";
+
+/// The card kinds Sonora draws, which `page.get` is told it may answer for each layout. A
+/// layout or kind left out here never comes back, and a page told nothing answers no sections.
+const CARDS: [&str; 7] = [
+    "album",
+    "artist",
+    "channel",
+    "flow",
+    "playlist",
+    "smarttracklist",
+    "track",
+];
+/// The layouts that may hold cards of any kind.
+const GRIDS: [&str; 9] = [
+    "grid",
+    "grid-preview-one",
+    "grid-preview-two",
+    "horizontal-grid",
+    "item-highlight",
+    "large-card",
+    "long-card-horizontal-grid",
+    "slideshow",
+    "small-horizontal-grid",
+];
+/// The layouts that only list tracks.
+const LISTS: [&str; 2] = ["horizontal-list", "list"];
+
+/// How many times a Flow is asked for tracks when its page opens. Each answer holds about a
+/// dozen, drawn afresh every time.
+const FLOW_ROUNDS: usize = 4;
+
 /// The public api allows fifty calls per five seconds from one address, so calls leave one
 /// at a time this far apart. A call above the limit waits for its slot instead of being
 /// refused.
@@ -143,6 +176,9 @@ struct Inner {
     /// Artist portraits already looked up, so a search that ranks the same artists on
     /// every keystroke does not spend the quota on them again.
     portraits: Mutex<HashMap<String, String>>,
+    /// The Flow cards a page has shown, by playlist id. No call describes a Flow on its own, so
+    /// its page takes the name and picture from here.
+    flows: Mutex<HashMap<String, Playlist>>,
 }
 
 /// A track's audio as it starts to arrive, with the key that decrypts it and what the gateway
@@ -207,6 +243,7 @@ impl DeezerClient {
                 secret: OnceLock::new(),
                 slot: Mutex::new(Instant::now()),
                 portraits: Mutex::new(HashMap::new()),
+                flows: Mutex::new(HashMap::new()),
             }),
         };
         Ok(client)
@@ -571,6 +608,116 @@ impl DeezerClient {
             .collect())
     }
 
+    /// One page of the web player's own layout, such as `home` or `channels/metal`, as
+    /// `page.get` answers it with the cards Sonora draws.
+    async fn page(&self, page: &str) -> Result<Value> {
+        let mut support = serde_json::Map::new();
+        for layout in GRIDS {
+            support.insert(layout.to_owned(), json!(CARDS));
+        }
+        for layout in LISTS {
+            support.insert(layout.to_owned(), json!(["track"]));
+        }
+        support.insert("filterable-grid".to_owned(), json!(["flow"]));
+        self.gw(
+            "page.get",
+            json!({ "PAGE": page, "VERSION": "2.5", "SUPPORT": support, "LANG": "en" }),
+        )
+        .await
+        .with_context(|| format!("cannot load the deezer page {page}"))
+    }
+
+    /// A page's title and the shelves on it. The Flow cards among them are remembered, so a
+    /// Flow's own page can name it.
+    async fn shelves(&self, page: &str) -> Result<(String, Vec<GenreSection>)> {
+        let results = self.page(page).await?;
+        let title = wire::text(&results, &["title"])
+            .unwrap_or_default()
+            .to_owned();
+        let user_id = self.user_id().await;
+        let sections = wire::sections(&results, &user_id, &title);
+        let mut flows = lock(&self.inner.flows);
+        for item in sections.iter().flat_map(|section| &section.items) {
+            if let GenreItem::Playlist(playlist) = item
+                && playlist.id.starts_with(wire::FLOW)
+            {
+                flows.insert(playlist.id.clone(), playlist.clone());
+            }
+        }
+        drop(flows);
+        Ok((title, sections))
+    }
+
+    /// A smart tracklist with its tracks, such as a daily mix or the weekly discovery.
+    async fn smart_tracklist(&self, smart_id: &str) -> Result<PlaylistDetail> {
+        let results = self
+            .gw(
+                "deezer.pageSmartTracklist",
+                json!({ "SMARTTRACKLIST_ID": smart_id, "start": 0, "nb": LIBRARY_PAGE }),
+            )
+            .await
+            .with_context(|| format!("cannot load the smart tracklist {smart_id}"))?;
+        let tracks = results
+            .get("SONGS")
+            .map(wire::track_list)
+            .unwrap_or_default();
+        let mut playlist = wire::smart_tracklist(&results["DATA"])
+            .with_context(|| format!("cannot read the smart tracklist {smart_id}"))?;
+        playlist.track_count = tracks.len() as u32;
+        if playlist.cover.is_none() {
+            playlist.cover = tracks.iter().find_map(|track| track.cover.clone());
+        }
+        Ok(PlaylistDetail {
+            playlist,
+            tracks,
+            continuation: None,
+        })
+    }
+
+    /// A stretch of the Flow with config `config`. Deezer deals a Flow out a dozen tracks at a
+    /// time and never the same way twice, so it is asked `FLOW_ROUNDS` times at once and the
+    /// tracks dealt more than once are kept once. It fails only when every round does.
+    async fn flow(&self, config: &str) -> Result<PlaylistDetail> {
+        let user_id = self.user_id().await;
+        let body = json!({ "user_id": user_id, "config_id": config });
+        let rounds = futures::future::join_all(
+            (0..FLOW_ROUNDS).map(|_| self.gw("radio.getUserRadio", body.clone())),
+        )
+        .await;
+        let mut seen = HashSet::new();
+        let mut tracks = Vec::new();
+        let mut failure = None;
+        for round in rounds {
+            match round {
+                Ok(results) => tracks.extend(
+                    wire::track_list(&results)
+                        .into_iter()
+                        .filter(|track| seen.insert(track.id.clone())),
+                ),
+                Err(error) => failure = Some(error),
+            }
+        }
+        if let (true, Some(error)) = (tracks.is_empty(), failure) {
+            return Err(error.context(format!("cannot load the flow {config}")));
+        }
+        let id = format!("{}{config}", wire::FLOW);
+        let known = lock(&self.inner.flows).get(&id).cloned();
+        let mut playlist = match known {
+            Some(playlist) => playlist,
+            None => wire::flow(&json!({ "id": config }))
+                .with_context(|| format!("cannot read the flow {config}"))?,
+        };
+        playlist.track_count = tracks.len() as u32;
+        if playlist.cover.is_none() {
+            playlist.cover = tracks.iter().find_map(|track| track.cover.clone());
+        }
+        Ok(PlaylistDetail {
+            playlist,
+            tracks,
+            continuation: None,
+        })
+    }
+
     /// The full gateway record of one track: metadata plus the `TRACK_TOKEN` playback needs.
     /// A region-locked track comes with a `FALLBACK` record of another release of the same
     /// song, and that one is what plays.
@@ -678,7 +825,11 @@ impl DeezerClient {
 
 #[async_trait]
 impl MusicApi for DeezerClient {
+    /// No link for a smart tracklist or a Flow, since Deezer makes each for one listener.
     fn share_url(&self, kind: MediaKind, id: &str) -> Option<String> {
+        if id.starts_with(wire::SMART) || id.starts_with(wire::FLOW) {
+            return None;
+        }
         let kind = match kind {
             MediaKind::Track => "track",
             MediaKind::Album => "album",
@@ -719,6 +870,7 @@ impl MusicApi for DeezerClient {
                 .or_else(|| detail.get("picture_big"))
                 .and_then(Value::as_str)
                 .map(str::to_owned),
+            banner: None,
             biography: None,
             monthly_listeners: wire::number(&detail, &["nb_fan"]),
             top_tracks: top.map(|page| wire::track_list(&page)).unwrap_or_default(),
@@ -1053,7 +1205,14 @@ impl MusicApi for DeezerClient {
         })
     }
 
+    /// A playlist, or a smart tracklist or Flow wearing a playlist's id.
     async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail> {
+        if let Some(smart_id) = playlist_id.strip_prefix(wire::SMART) {
+            return self.smart_tracklist(smart_id).await;
+        }
+        if let Some(config) = playlist_id.strip_prefix(wire::FLOW) {
+            return self.flow(config).await;
+        }
         // the gateway, not the public api: only it can see the user's private playlists
         let results = self
             .gw(
@@ -1164,8 +1323,31 @@ impl MusicApi for DeezerClient {
             .collect())
     }
 
+    /// The web player's home page, shelf for shelf.
     async fn home(&self) -> Result<HomeFeed> {
-        Ok(HomeFeed::default())
+        let (_, sections) = self.shelves("home").await?;
+        Ok(HomeFeed {
+            sections,
+            ..HomeFeed::default()
+        })
+    }
+
+    async fn genres(&self) -> Result<Vec<Genre>> {
+        let page = self.page(EXPLORE).await?;
+        let mut seen = HashSet::new();
+        Ok(wire::explore(&page)
+            .into_iter()
+            .filter(|genre| seen.insert(genre.id.clone()))
+            .collect())
+    }
+
+    /// A channel page, whose id is the path `page.get` opens it by.
+    async fn genre(&self, genre_id: &str) -> Result<GenreDetail> {
+        if !genre_id.starts_with("channels/") {
+            bail!("{genre_id} is not a deezer channel");
+        }
+        let (name, sections) = self.shelves(genre_id).await?;
+        Ok(GenreDetail { name, sections })
     }
 }
 

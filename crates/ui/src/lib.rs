@@ -6,6 +6,7 @@ mod checkbox;
 mod controls;
 mod deck;
 mod drag;
+mod dropdown;
 mod explicit;
 mod filters;
 mod form;
@@ -26,6 +27,7 @@ mod modal;
 pub mod motion;
 mod notice;
 mod option_card;
+mod otp;
 mod palette;
 mod panel;
 mod picker;
@@ -70,6 +72,7 @@ pub use controls::WindowControls;
 pub use controls::WindowFrame;
 pub use deck::Deck;
 pub use drag::{Edge, Ghost, drop_gap, drop_into, drop_marker, grip};
+pub use dropdown::Dropdown;
 pub use explicit::ExplicitBadge;
 pub use filters::{
     Filter, FilterChange, FlagAxis, RangeAxis, RangeScrubber, RangeState, SortAxis, Unit,
@@ -106,6 +109,7 @@ pub use motion::{
 };
 pub use notice::Notice;
 pub use option_card::OptionCard;
+pub use otp::{OtpInput, OtpSlots};
 pub use palette::{CoverPalette, palette, tint};
 pub use panel::{Panel, Side};
 pub use picker::Picker;

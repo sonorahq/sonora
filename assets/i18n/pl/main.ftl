@@ -165,8 +165,11 @@ menu-play-tracks-last = { $count ->
     [few] Odtwórz { $count } utwory na końcu
    *[other] Odtwórz { $count } utworów na końcu
 }
-menu-song-radio = Radio utworu
-menu-go-to-album = Przejdź do albumu
+menu-go-to = Przejdź do
+menu-artist = Wykonawca
+menu-album = Album
+menu-radio = Radio
+menu-details = Szczegóły
 menu-go-to-artist = Przejdź do wykonawcy
 menu-view-details = Szczegóły
 menu-copy-link = Kopiuj link
@@ -277,10 +280,7 @@ player-previous = Poprzedni utwór
 player-next = Następny utwór
 player-fullscreen = Pełny ekran
 player-fullscreen-leave = Wyjdź z trybu pełnoekranowego
-player-devices = Urządzenia
 devices-this-computer = Ten komputer
-devices-pause = Wstrzymaj
-devices-resume = Wznów
 devices-jam-join = Dołącz do Jamu…
 devices-jam-join-title = Dołącz do Jamu
 devices-jam-join-detail = Wklej link udostępniony przez znajomego
@@ -288,15 +288,12 @@ devices-jam-paste = Wklej
 devices-jam-link-hint = Link do Jamu
 devices-jam-start = Rozpocznij Jam
 devices-jam-copy = Kopiuj link do Jamu
-devices-jam-code = Kod QR
 devices-jam-code-menu = Pokaż kod QR
 devices-jam-code-title = Zeskanuj, aby dołączyć do Jamu użytkownika { $host }
 devices-jam-code-title-anonymous = Zeskanuj, aby dołączyć do Jamu
 devices-jam-code-close = Zamknij
 devices-jam-leave = Opuść Jam
 devices-jam-end = Zakończ Jam
-devices-jam-banner = W Jamie użytkownika { $host }
-devices-jam-banner-anonymous = W Jamie
 devices-jam-more = +{ $count }
 devices-jam-host = Gospodarz
 devices-jam-you = Ty
@@ -309,8 +306,6 @@ devices-jam-invite-detail = { $count ->
    *[other] { $count } osób jest już w tym Jamie.
 }
 devices-jam-invite-join = Dołącz
-devices-elsewhere-banner = Odtwarzanie na: { $device }
-devices-elsewhere-here = Odtwarzaj tutaj
 fullscreen-artwork = Okładka
 
 # filters
@@ -453,6 +448,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Szybki wybór
 home-quick-picks-empty = Polub kilka utworów, a pojawią się tutaj
 home-recently-added = Ostatnio dodane
+home-recently-played = Ostatnio odtwarzane
 home-playlists = Playlisty
 home-favorite-albums = Ulubione albumy
 home-artists = Wykonawcy
@@ -461,6 +457,9 @@ home-collection-albums = Albumy z Twojej kolekcji
 # search page
 search-placeholder = Czego chcesz posłuchać?
 search-browse = Przeglądaj
+search-submit = Szukaj
+search-recent = Ostatnie wyszukiwania
+search-forget = Usuń z historii
 genre-empty = Nie ma tu jeszcze nic
 search-best-match = Najlepszy wynik
 search-no-matches = Brak wyników

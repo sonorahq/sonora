@@ -462,6 +462,7 @@ impl MusicApi for YandexClient {
         Ok(Artist {
             name: own.name.clone(),
             cover_large: wire::portrait(artist, wire::LARGE),
+            banner: None,
             biography: wire::text(&artist["description"], &["text"]).map(str::to_owned),
             monthly_listeners: wire::number(&brief["stats"], &["lastMonthListeners"]),
             top_tracks: wire::tracks(wire::list(&brief, "popularTracks")),

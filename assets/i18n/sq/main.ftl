@@ -155,8 +155,11 @@ menu-play-tracks-last = { $count ->
     [one] Luaj { $count } këngë të fundit
    *[other] Luaj { $count } këngë të fundit
 }
-menu-song-radio = Shko te radio e këngës
-menu-go-to-album = Shko te albumi
+menu-go-to = Shko te
+menu-artist = Artisti
+menu-album = Albumi
+menu-radio = Radio
+menu-details = Detajet
 menu-go-to-artist = Shko te artisti
 menu-view-details = Shiko detajet
 menu-copy-link = Kopjo lidhjen
@@ -259,10 +262,7 @@ player-previous = Kënga e mëparshme
 player-next = Kënga e radhës
 player-fullscreen = Ekran i plotë
 player-fullscreen-leave = Dil nga ekrani i plotë
-player-devices = Pajisjet
 devices-this-computer = Ky kompjuter
-devices-pause = Pauzë
-devices-resume = Vazhdo
 devices-jam-join = Bashkohu në një Jam…
 devices-jam-join-title = Bashkohu në një Jam
 devices-jam-join-detail = Ngjit lidhjen që të ndau një mik
@@ -270,15 +270,12 @@ devices-jam-paste = Ngjit
 devices-jam-link-hint = Lidhja e Jam-it
 devices-jam-start = Nis një Jam
 devices-jam-copy = Kopjo lidhjen e Jam-it
-devices-jam-code = Kodi QR
 devices-jam-code-menu = Shfaq kodin QR
 devices-jam-code-title = Skano për t'u bashkuar në Jam-in e { $host }
 devices-jam-code-title-anonymous = Skano për t'u bashkuar në Jam
 devices-jam-code-close = Mbyll
 devices-jam-leave = Largohu nga Jam-i
 devices-jam-end = Përfundo Jam-in
-devices-jam-banner = Në Jam-in e { $host }
-devices-jam-banner-anonymous = Në një Jam
 devices-jam-more = +{ $count }
 devices-jam-host = Organizatori
 devices-jam-you = Ti
@@ -290,8 +287,6 @@ devices-jam-invite-detail = { $count ->
    *[other] { $count } persona janë tashmë në këtë Jam.
 }
 devices-jam-invite-join = Bashkohu
-devices-elsewhere-banner = Duke luajtur në { $device }
-devices-elsewhere-here = Luaj këtu
 fullscreen-artwork = Kopertina
 
 # filters
@@ -430,6 +425,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Zgjedhje të shpejta
 home-quick-picks-empty = Pëlqe disa këngë dhe ato do të shfaqen këtu
 home-recently-added = Shtuar së fundi
+home-recently-played = Luajtur së fundi
 home-playlists = Lista luajtjeje
 home-favorite-albums = Albumet e preferuara
 home-artists = Artistë
@@ -438,6 +434,9 @@ home-collection-albums = Albume nga koleksioni yt
 # search page
 search-placeholder = Çfarë do të dëgjosh?
 search-browse = Shfleto të gjitha
+search-submit = Kërko
+search-recent = Kërkimet e fundit
+search-forget = Hiqe nga historiku
 genre-empty = Ende asgjë për të shfaqur këtu
 search-best-match = Përputhja më e mirë
 search-no-matches = Asnjë përputhje

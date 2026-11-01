@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.45.0"
+version = "0.46.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/sonorahq/sonora"
@@ -192,6 +192,10 @@ tokio = { version = "1.53", features = [
   "macros",
   "sync",
   "time",
+] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = [
+  "connect",
+  "rustls-tls-native-roots",
 ] }
 time = { version = "0.3.55", features = ["parsing"] }
 

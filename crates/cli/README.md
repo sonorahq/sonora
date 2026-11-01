@@ -19,7 +19,7 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora play <file\|link>...` | Play now; the rest of the queue carries on after |
 | `sonora play -s <query> [-t TYPE]` | Find the best hit of a search and play it now |
 | `sonora next` / `prev` | Skip to the next track, or go back to the previous one |
-| `sonora seek <0-100>` | Jump to a point of the current track, in percent |
+| `sonora seek <0-100\|TIME\|±STEP>` | Jump to a percent of the current track, a time such as `1:30`, or a step such as `+10` |
 | `sonora current` | Print what plays now as JSON, or `null` when nothing is loaded |
 | `sonora watch [--position]` | Print what plays again on every change, one line of JSON each, until stopped |
 | `sonora volume [N\|+N\|-N]` | Print the volume, set it from 0 to 100, or step it |
@@ -52,6 +52,17 @@ given. `play` puts them right after the current track and skips to them, as `pla
   `sonora provider`.
 - Everything is fetched before anything is queued. When one item fails, nothing is queued and the
   command says which item it was.
+
+### Seeking
+
+`seek` takes a bare number as a percent, as it always has, a time as `1:30` or `1:02:03`, and a
+step from where the track plays as `+10`, `-10` or `-1:30`, in seconds. A step stays inside the
+track, so `-10` near the start goes back to it. Bound to keys, as in Hyprland:
+
+```
+bind = SUPER, right, exec, sonora seek +10
+bind = SUPER, left, exec, sonora seek -10
+```
 
 ### Searching
 
@@ -102,11 +113,17 @@ sonora search daft punk --json | jq -r '.[0].link'
   "position": 75,
   "volume": 80,
   "shuffle": false,
-  "repeat": "off"
+  "repeat": "off",
+  "provider": "spotify",
+  "liked": true,
+  "origin": { "kind": "album", "id": "…", "name": "Discovery" }
 }
 ```
 
 `state` is `playing`, `paused`, `loading` or `idle`. Times are whole seconds, the volume a percent.
+`provider` is the slug `sonora providers` lists, `local` for a file. `origin` is what the track was
+queued from, `null` when it was queued on its own; its `kind` is `album`, `playlist`, `artist`,
+`radio`, `liked` or `local`.
 
 ### Watching
 

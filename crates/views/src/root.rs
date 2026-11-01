@@ -3,8 +3,8 @@ use gpui::{App, Font, FontFallbacks, SharedString, StyleRefinement, font, prelud
 use gpui::{Window, div};
 use input::{
     CloseWindow, MinimizeWindow, NavigateBack, NavigateForward, OpenFilter, OpenSearch,
-    OpenSettings, Refresh, ToggleFullscreen, ToggleLyrics, ToggleQueue, ToggleWindowFullscreen,
-    ZoomWindow,
+    OpenSettings, Refresh, ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue,
+    ToggleWindowFullscreen, ZoomWindow,
 };
 use router::{Destination, NavigationEvent, Screen, back, forward, navigate};
 use state::{
@@ -14,7 +14,10 @@ use state::{
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ui::WindowFrame;
-use ui::{ActiveTheme as _, Dismiss, Entrance, Look, Stillness, Theme, ThemeKind, clear_listing};
+use ui::{
+    ActiveTheme as _, Dismiss, Entrance, INPUT_CONTEXT, Look, Stillness, Theme, ThemeKind,
+    clear_listing,
+};
 
 use crate::chrome::{
     Busy, JamInvite, ThemeInvite, TitleBar, TitleBarEvent, TitleBarOptions, Toolbar, Tooled,
@@ -207,11 +210,20 @@ impl Root {
         let history = Sonora::global(cx).history.clone();
         let history = cx.new(|cx| HistoryView::new(history, playback.clone(), window, cx));
 
-        let search_library = library.clone();
-
-        let queries = cx.new(|cx| Search::new(session.clone(), search_library, io.clone(), cx));
+        let queries = cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
+        let suggestions =
+            cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
         let genres = cx.new(|cx| Genres::new(session.clone(), io.clone(), cx));
-        let search = cx.new(|cx| SearchView::new(queries, genres.clone(), playback.clone(), cx));
+        let search = cx.new(|cx| {
+            SearchView::new(
+                queries,
+                suggestions,
+                genres.clone(),
+                playback.clone(),
+                window,
+                cx,
+            )
+        });
 
         let settings = cx.new(|cx| SettingsView::new(session.clone(), playback.clone(), cx));
         let equalizer = Sonora::global(cx).equalizer.clone();
@@ -478,6 +490,13 @@ impl Root {
             .update(cx, |workspace, cx| workspace.show_side(tab, cx));
     }
 
+    /// Opens the right sidebar on `tab`, leaving it be when it already shows there.
+    fn reveal_side(&self, tab: SideTab, cx: &mut Context<Self>) {
+        self.shells
+            .workspace
+            .update(cx, |workspace, cx| workspace.reveal_side(tab, cx));
+    }
+
     /// Tells the adaptive theme and the wake lock whether fullscreen is up. The ambient
     /// background is painted out of the cover's hues, so fullscreen samples the cover even with
     /// the adaptive theme off, and leaving drops the tint again.
@@ -517,9 +536,27 @@ impl Root {
         }
     }
 
-    /// Escape that nothing on the page took: it leaves fullscreen, and on a settings page it
-    /// closes an open menu or dialog, then clears the search. It never leaves settings.
-    fn dismiss(&mut self, cx: &mut Context<Self>) {
+    /// Escape that nothing on the page took. A focused text field lets go of the keyboard first,
+    /// on any screen. Otherwise it leaves fullscreen, and on a settings page it closes an open
+    /// menu or dialog, then clears the search. It never leaves settings.
+    fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let typing = window
+            .context_stack()
+            .iter()
+            .any(|context| context.contains(INPUT_CONTEXT));
+        if typing {
+            match self.view {
+                RootView::Workspace => self
+                    .shells
+                    .workspace
+                    .update(cx, |workspace, cx| workspace.focus(window, cx)),
+                RootView::Fullscreen => self
+                    .shells
+                    .fullscreen
+                    .update(cx, |fullscreen, cx| fullscreen.focus(window, cx)),
+            }
+            return;
+        }
         if let RootView::Fullscreen = self.view {
             back(cx);
             return;
@@ -1186,12 +1223,15 @@ impl Render for Root {
             .on_action(|_: &MinimizeWindow, window, _| window.minimize_window())
             .on_action(|_: &ZoomWindow, window, _| window.zoom_window())
             .on_action(|_: &ToggleWindowFullscreen, window, _| window.toggle_fullscreen())
-            .on_action(cx.listener(|this, _: &Dismiss, _, cx| this.dismiss(cx)))
+            .on_action(cx.listener(|this, _: &Dismiss, window, cx| this.dismiss(window, cx)))
             .on_action(
                 cx.listener(|this, _: &ToggleQueue, _, cx| this.show_side(SideTab::Queue, cx)),
             )
             .on_action(
                 cx.listener(|this, _: &ToggleLyrics, _, cx| this.show_side(SideTab::Lyrics, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &ShowMembers, _, cx| this.reveal_side(SideTab::Members, cx)),
             )
             // The ambient background sits behind everything, title bar included.
             .when(ambient, |this| this.child(self.ambient.clone()))

@@ -155,8 +155,11 @@ menu-play-tracks-last = { $count ->
     [one] 最后播放 { $count } 首歌曲
    *[other] 最后播放 { $count } 首歌曲
 }
-menu-song-radio = 前往歌曲电台
-menu-go-to-album = 前往专辑
+menu-go-to = 前往
+menu-artist = 歌手
+menu-album = 专辑
+menu-radio = 电台
+menu-details = 详情
 menu-go-to-artist = 前往歌手
 menu-view-details = 查看详情
 menu-copy-link = 复制链接
@@ -259,10 +262,7 @@ player-previous = 上一首
 player-next = 下一首
 player-fullscreen = 全屏
 player-fullscreen-leave = 退出全屏
-player-devices = 设备
 devices-this-computer = 此电脑
-devices-pause = 暂停
-devices-resume = 继续播放
 devices-jam-join = 加入 Jam…
 devices-jam-join-title = 加入 Jam
 devices-jam-join-detail = 粘贴好友分享给你的链接
@@ -270,15 +270,12 @@ devices-jam-paste = 粘贴
 devices-jam-link-hint = Jam 链接
 devices-jam-start = 发起 Jam
 devices-jam-copy = 复制 Jam 链接
-devices-jam-code = 二维码
 devices-jam-code-menu = 显示二维码
 devices-jam-code-title = 扫码加入 { $host } 的 Jam
 devices-jam-code-title-anonymous = 扫码加入 Jam
 devices-jam-code-close = 关闭
 devices-jam-leave = 退出 Jam
 devices-jam-end = 结束 Jam
-devices-jam-banner = 正在 { $host } 的 Jam 中
-devices-jam-banner-anonymous = 正在 Jam 中
 devices-jam-more = +{ $count }
 devices-jam-host = 主持人
 devices-jam-you = 你
@@ -290,8 +287,6 @@ devices-jam-invite-detail = { $count ->
    *[other] 已有 { $count } 人在此 Jam 中。
 }
 devices-jam-invite-join = 加入
-devices-elsewhere-banner = 正在 { $device } 上播放
-devices-elsewhere-here = 在此播放
 fullscreen-artwork = 封面
 
 # filters
@@ -430,6 +425,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = 快速推荐
 home-quick-picks-empty = 收藏几首歌后，它们会显示在这里
 home-recently-added = 最近添加
+home-recently-played = 最近播放
 home-playlists = 播放列表
 home-favorite-albums = 收藏的专辑
 home-artists = 歌手
@@ -438,6 +434,9 @@ home-collection-albums = 你音乐库中的专辑
 # search page
 search-placeholder = 你想听什么？
 search-browse = 浏览全部
+search-submit = 搜索
+search-recent = 最近搜索
+search-forget = 从历史记录中移除
 genre-empty = 这里暂时没有可显示的内容
 search-best-match = 最佳匹配
 search-no-matches = 无匹配结果

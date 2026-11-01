@@ -312,6 +312,7 @@ fn open_window(cx: &mut App) {
         equalizer: _,
         library,
         links: _,
+        listening: _,
         history: _,
         lyrics: _,
         network: _,

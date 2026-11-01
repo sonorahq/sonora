@@ -49,9 +49,6 @@ pub struct ToastStack {
     measured: Rc<RefCell<HashMap<usize, Pixels>>>,
     hovered: bool,
     swipe: Option<Swipe>,
-    /// How tall the strip over the player bar stands. The stack clips at the strip's top, so a
-    /// toast slides out from under the strip rather than across it.
-    strip: Pixels,
 }
 
 /// One toast on screen, kept after the toast is dismissed for as long as it takes to leave.
@@ -103,15 +100,6 @@ impl ToastStack {
             measured: Rc::new(RefCell::new(HashMap::new())),
             hovered: false,
             swipe: None,
-            strip: Pixels::ZERO,
-        }
-    }
-
-    /// Takes the height of the strip over the player bar, which the stack hangs above.
-    pub(crate) fn set_strip(&mut self, strip: Pixels, cx: &mut Context<Self>) {
-        if self.strip != strip {
-            self.strip = strip;
-            cx.notify();
         }
     }
 
@@ -529,12 +517,11 @@ impl Render for ToastStack {
             .map(|slot| self.card(slot, now, cx))
             .collect();
 
-        // The stack hangs from the top of the player bar, or of the strip over it, and clips
-        // there, so a toast entering or leaving slides out from under them rather than across.
+        // The stack hangs from the top of the player bar and clips there, so a toast entering or
+        // leaving slides out from under it rather than across.
         div()
             .absolute()
             .bottom(relative(1.))
-            .mb(self.strip)
             .left_0()
             .right_0()
             .h(window.viewport_size().height)

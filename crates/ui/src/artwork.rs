@@ -43,6 +43,9 @@ const MAX_SAMPLE_EDGE: u32 = 4096;
 const EDGE_STEP: u32 = 64;
 /// The edge a cover is decoded at when only its palette is wanted.
 const PALETTE_EDGE: u32 = 128;
+/// Set on a decode edge when the image keeps its own aspect and is scaled to that width, for
+/// banners that a square crop would cut down. A wide decode never stands in for a square one.
+const WIDE: u32 = 1 << 31;
 const GRACE: Duration = Duration::from_secs(5);
 const KEEP_ITEMS: usize = 96;
 const IDLE: Duration = Duration::from_secs(120);
@@ -283,9 +286,20 @@ fn animated_frames<'a>(
 /// Crops a decoded cover to its centre square, scales it down to `edge` and swaps it to
 /// BGRA. The scaling happens in the decoder's own pixel format, so an RGB JPEG only grows
 /// a fourth channel at the size it is drawn. An image no bigger than `edge`, or any image
-/// when `edge` is zero, keeps its size.
+/// when `edge` is zero, keeps its size. An edge flagged `WIDE` keeps the whole image and
+/// scales its width down to the rest of the edge.
 fn artwork_frame(image: DynamicImage, edge: u32) -> RgbaImage {
     let (width, height) = (image.width(), image.height());
+    if edge & WIDE != 0 {
+        let wide = edge & !WIDE;
+        let image = match width <= wide {
+            true => image,
+            false => image.resize(wide, u32::MAX, imageops::FilterType::Triangle),
+        };
+        let mut image = image.into_rgba8();
+        bgra(&mut image);
+        return image;
+    }
     let side = width.min(height);
     let image = match edge == 0 || side <= edge {
         true => image,
@@ -691,7 +705,7 @@ impl ArtworkCache {
         match soft {
             true => self.soft.contains_key(&key),
             false => self.items.iter().any(|((held, size), cached)| {
-                held == resource && *size >= edge / 2 && cached.value.is_ok()
+                held == resource && near(*size, edge) && cached.value.is_ok()
             }),
         }
     }
@@ -704,7 +718,7 @@ impl ArtworkCache {
             .items
             .iter_mut()
             .filter(|((held, size), cached)| {
-                held == resource && *size >= edge / 2 && cached.value.is_ok()
+                held == resource && near(*size, edge) && cached.value.is_ok()
             })
             .max_by_key(|((_, size), _)| *size)?;
         cached.used = Instant::now();
@@ -742,6 +756,12 @@ fn blurred(image: &RenderImage) -> Option<Arc<RenderImage>> {
 fn sample_edge(size: Pixels, window: &Window) -> u32 {
     let physical = ((size / px(1.)) * window.scale_factor()).ceil().max(1.) as u32;
     physical.next_multiple_of(EDGE_STEP).min(MAX_SAMPLE_EDGE)
+}
+
+/// Whether a decode at `held` may stand in for one at `edge`: the same shape, square or wide,
+/// at no less than half the size.
+fn near(held: u32, edge: u32) -> bool {
+    held & WIDE == edge & WIDE && held & !WIDE >= (edge & !WIDE) / 2
 }
 
 pub(crate) fn resource(url: impl Into<SharedString>) -> Resource {
@@ -920,6 +940,8 @@ impl RenderOnce for Avatar {
 pub struct Artwork {
     url: Option<SharedString>,
     size: Pixels,
+    /// The height of a wide image, which is `size` wide. None keeps the square.
+    tall: Option<Pixels>,
     circle: bool,
     radius: Option<Pixels>,
     fallback: SharedString,
@@ -935,6 +957,7 @@ impl Artwork {
         Self {
             url: url.map(Into::into),
             size: px(28.),
+            tall: None,
             circle: false,
             radius: None,
             soft: false,
@@ -952,6 +975,13 @@ impl Artwork {
 
     pub fn id(mut self, id: impl Into<ElementId>) -> Self {
         self.interactivity.element_id = Some(id.into());
+        self
+    }
+
+    /// Draws the image `size` wide and `height` tall, keeping its own aspect and covering the
+    /// box instead of cropping it to a square first. Meant for banners.
+    pub fn wide(mut self, height: Pixels) -> Self {
+        self.tall = Some(height);
         self
     }
 
@@ -1005,6 +1035,7 @@ impl RenderOnce for Artwork {
         let Self {
             url,
             size,
+            tall,
             circle,
             radius,
             fallback,
@@ -1020,6 +1051,8 @@ impl RenderOnce for Artwork {
             false => muted.opacity(0.5),
         };
         let size = snapped(size, window);
+        let wide = tall.is_some();
+        let tall = tall.map_or(size, |tall| snapped(tall, window));
         let rounded = match (circle, radius) {
             (true, _) => size / 2.,
             (false, Some(radius)) => radius,
@@ -1028,8 +1061,10 @@ impl RenderOnce for Artwork {
         let placeholder = {
             let fallback = fallback.clone();
             move || match overlay {
-                true => div().size(size).into_any_element(),
-                false => blank(size, rounded, muted, glyph, fallback.clone()).into_any_element(),
+                true => div().w(size).h(tall).into_any_element(),
+                false => {
+                    blank(size, tall, rounded, muted, glyph, fallback.clone()).into_any_element()
+                }
             }
         };
 
@@ -1037,10 +1072,13 @@ impl RenderOnce for Artwork {
             Some(url) => {
                 let cache = ArtworkCache::entity(cx);
                 let resource = resource(url);
-                let edge = sample_edge(size, window);
+                let edge = match wide {
+                    true => sample_edge(size, window) | WIDE,
+                    false => sample_edge(size, window),
+                };
                 if PREFETCHING.get() {
                     cache.update(cx, |cache, cx| cache.load_at(&resource, edge, window, cx));
-                    return div().size(size).into_any_element();
+                    return div().w(size).h(tall).into_any_element();
                 }
                 // Drawn at once rather than after `img`'s loading delay, and under the cover,
                 // so a cover that lands mid-pulse simply covers it.
@@ -1074,21 +1112,24 @@ impl RenderOnce for Artwork {
                 refined(
                     div()
                         .relative()
-                        .size(size)
+                        .w(size)
+                        .h(tall)
                         .when(waiting, |this| {
                             this.child(
                                 Skeleton::new()
                                     .absolute()
                                     .top_0()
                                     .left_0()
-                                    .size(size)
+                                    .w(size)
+                                    .h(tall)
                                     .rounded(rounded),
                             )
                         })
                         .child(
                             img(source)
                                 .image_cache(&cache)
-                                .size(size)
+                                .w(size)
+                                .h(tall)
                                 .object_fit(ObjectFit::Cover)
                                 .rounded(rounded)
                                 .with_fallback(placeholder),
@@ -1097,8 +1138,11 @@ impl RenderOnce for Artwork {
                 )
                 .into_any_element()
             }
-            None => refined(blank(size, rounded, muted, glyph, fallback), interactivity)
-                .into_any_element(),
+            None => refined(
+                blank(size, tall, rounded, muted, glyph, fallback),
+                interactivity,
+            )
+            .into_any_element(),
         }
     }
 }
@@ -1111,9 +1155,17 @@ fn refined<T: Styled + InteractiveElement>(mut element: T, mut caller: Interacti
     element
 }
 
-fn blank(size: Pixels, rounded: Pixels, muted: Hsla, glyph: Hsla, fallback: SharedString) -> Div {
+fn blank(
+    size: Pixels,
+    tall: Pixels,
+    rounded: Pixels,
+    muted: Hsla,
+    glyph: Hsla,
+    fallback: SharedString,
+) -> Div {
     div()
-        .size(size)
+        .w(size)
+        .h(tall)
         .rounded(rounded)
         .bg(muted.opacity(0.12))
         .flex()
@@ -1122,7 +1174,7 @@ fn blank(size: Pixels, rounded: Pixels, muted: Hsla, glyph: Hsla, fallback: Shar
         .child(
             svg()
                 .path(icons::path(fallback))
-                .size(size * 0.46)
+                .size(size.min(tall) * 0.46)
                 .text_color(glyph),
         )
 }

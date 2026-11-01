@@ -402,6 +402,7 @@ impl MusicApi for SubsonicClient {
         Ok(Artist {
             name,
             cover_large,
+            banner: None,
             biography,
             monthly_listeners: None,
             top_tracks,
@@ -1017,6 +1018,26 @@ impl MusicApi for SubsonicClient {
                 }],
             },
         })
+    }
+
+    /// The cover of one album filed under the genre, since Subsonic genres have no picture.
+    async fn genre_cover(&self, genre_id: &str) -> Result<Option<String>> {
+        let albums = self
+            .client
+            .get_album_list2(
+                AlbumListType::ByGenre,
+                Some(1),
+                None,
+                None,
+                None,
+                Some(genre_id),
+                None,
+            )
+            .await
+            .with_context(|| format!("cannot load the genre {genre_id}"))?;
+        Ok(albums
+            .into_iter()
+            .find_map(|album| self.convert_album(album).cover))
     }
 }
 

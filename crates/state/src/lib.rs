@@ -13,6 +13,7 @@ mod history;
 mod home;
 mod library;
 mod links;
+mod listening;
 mod logging;
 mod lyrics;
 mod mosaic;
@@ -59,6 +60,7 @@ pub use library::{
     Shelf, cover_problem,
 };
 pub use links::{Links, Opened};
+pub use listening::{CODE_LENGTH as SESSION_CODE_LENGTH, Listening, Member as RoomMember, Room};
 pub use logging::log_file;
 pub use lyrics::{Lyrics, LyricsState};
 pub use music::connect::{Elsewhere, Repeat};
@@ -212,6 +214,7 @@ pub struct Sonora {
     pub equalizer: Entity<Equalizer>,
     pub library: Entity<Library>,
     pub links: Entity<Links>,
+    pub listening: Entity<Listening>,
     pub history: Entity<History>,
     pub lyrics: Entity<Lyrics>,
     pub network: Entity<Network>,
@@ -367,6 +370,16 @@ pub fn init(
             cx,
         )
     });
+    let listening = cx.new(|cx| {
+        Listening::new(
+            playback.clone(),
+            queue.clone(),
+            session.clone(),
+            settings.clone(),
+            io.clone(),
+            cx,
+        )
+    });
     let links = cx.new(|cx| Links::new(session.clone(), devices.clone(), settings.clone(), cx));
     let control = cx.new(|cx| Control::new(session.clone(), playback.clone(), library.clone(), cx));
     discord::attach(
@@ -389,6 +402,7 @@ pub fn init(
         equalizer,
         library,
         links,
+        listening,
         history,
         lyrics,
         network,

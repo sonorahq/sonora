@@ -155,8 +155,11 @@ menu-play-tracks-last = { $count ->
     [one] Tocar { $count } faixa por último
    *[other] Tocar { $count } faixas por último
 }
-menu-song-radio = Ir para a rádio da música
-menu-go-to-album = Ir para o álbum
+menu-go-to = Ir para
+menu-artist = Artista
+menu-album = Álbum
+menu-radio = Rádio
+menu-details = Detalhes
 menu-go-to-artist = Ir para o artista
 menu-view-details = Ver detalhes
 menu-copy-link = Copiar link
@@ -259,10 +262,7 @@ player-previous = Faixa anterior
 player-next = Próxima faixa
 player-fullscreen = Tela cheia
 player-fullscreen-leave = Sair da tela cheia
-player-devices = Dispositivos
 devices-this-computer = Este computador
-devices-pause = Pausar
-devices-resume = Retomar
 devices-jam-join = Entrar em uma Jam…
 devices-jam-join-title = Entrar em uma Jam
 devices-jam-join-detail = Cole o link que um amigo compartilhou com você
@@ -270,15 +270,12 @@ devices-jam-paste = Colar
 devices-jam-link-hint = Link da Jam
 devices-jam-start = Iniciar uma Jam
 devices-jam-copy = Copiar link da Jam
-devices-jam-code = Código QR
 devices-jam-code-menu = Mostrar código QR
 devices-jam-code-title = Escaneie para entrar na Jam de { $host }
 devices-jam-code-title-anonymous = Escaneie para entrar na Jam
 devices-jam-code-close = Fechar
 devices-jam-leave = Sair da Jam
 devices-jam-end = Encerrar Jam
-devices-jam-banner = Na Jam de { $host }
-devices-jam-banner-anonymous = Em uma Jam
 devices-jam-more = +{ $count }
 devices-jam-host = Anfitrião
 devices-jam-you = Você
@@ -290,8 +287,6 @@ devices-jam-invite-detail = { $count ->
    *[other] { $count } pessoas já estão nesta Jam.
 }
 devices-jam-invite-join = Entrar
-devices-elsewhere-banner = Tocando em { $device }
-devices-elsewhere-here = Tocar aqui
 fullscreen-artwork = Capa
 
 # filters
@@ -430,6 +425,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Escolhas rápidas
 home-quick-picks-empty = Curta algumas músicas e elas aparecerão aqui
 home-recently-added = Adicionados recentemente
+home-recently-played = Tocados recentemente
 home-playlists = Playlists
 home-favorite-albums = Álbuns favoritos
 home-artists = Artistas
@@ -438,6 +434,9 @@ home-collection-albums = Álbuns da sua coleção
 # search page
 search-placeholder = O que você quer ouvir?
 search-browse = Explorar tudo
+search-submit = Buscar
+search-recent = Buscas recentes
+search-forget = Remover do histórico
 genre-empty = Nada para mostrar aqui ainda
 search-best-match = Melhor resultado
 search-no-matches = Nenhum resultado

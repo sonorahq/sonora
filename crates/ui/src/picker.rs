@@ -26,6 +26,8 @@ pub struct Picker {
     tooltip: Option<&'static str>,
     above: bool,
     tint: Option<Hsla>,
+    /// The colour of the status dot over the trigger's icon, `None` for no dot.
+    status: Option<Hsla>,
     selected: bool,
     small: bool,
     width: Pixels,
@@ -55,6 +57,7 @@ impl Picker {
             tooltip: None,
             above: false,
             tint: None,
+            status: None,
             selected: false,
             small: true,
             width: Self::REGULAR,
@@ -111,6 +114,12 @@ impl Picker {
 
     pub fn tint(mut self, tint: Hsla) -> Self {
         self.tint = Some(tint);
+        self
+    }
+
+    /// Marks the trigger with a dot of `color` over its icon's top left corner.
+    pub fn status(mut self, color: Hsla) -> Self {
+        self.status = Some(color);
         self
     }
 
@@ -195,6 +204,7 @@ impl RenderOnce for Picker {
             tooltip,
             above,
             tint,
+            status,
             selected,
             small,
             width,
@@ -234,6 +244,7 @@ impl RenderOnce for Picker {
                 false => button.tooltip(key),
             })
             .when_some(tint, Button::tint)
+            .when_some(status, Button::status)
             .disabled(disabled);
 
         let menu = menu.unwrap_or_else(|| {

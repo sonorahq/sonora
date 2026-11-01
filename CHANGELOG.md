@@ -9,8 +9,47 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Listen together on any streaming service with Sonora Session: start one from the Sessions button in the player bar, share its six-digit code, and everyone who joins hears the same song in step.
+- `sonora session` starts, joins or leaves a Sonora Session from the command line.
+- A Members panel, opened from the Sessions menu, lists who is in your Sonora Session or Spotify Jam and lets the host remove someone. An accent dot on the Sessions button shows one is under way, and while another Spotify device plays the button wears that device's icon.
+- Hide the Sessions button, or run Sessions through a server of your own, from the Playback settings. Save keeps a server only once it answers, and a toast says how it went while the field turns red until a save goes through.
+- An artist page shows the artist's banner behind its header, sharp at the top and blurring into
+  the page under the name. Artists without a banner get a soft wash of their photo's colours.
+- Local songs read word-by-word lyrics from a `.ttml` file beside them or from TTML in their
+  lyrics tag.
+- The Now playing preview in Appearance settings draws the visualizer style you pick.
+- Yandex Music: sign in with a token, then browse, search, like, edit your playlists, start a
+  station from a song and play in lossless where your plan allows it.
+
+### Changed
+
+- The devices button in the player bar is now the Sessions button. It shows for every streaming service and sits evenly beside the lyrics and queue buttons.
+- Spotify Jam controls sit together under a Spotify Jams submenu of the Sessions button, and the strip above the player bar is gone.
+- A text field scrolls to keep the caret in sight, so long text is cut off on the side you are not typing.
+- The tray menu and taskbar buttons follow the song of the Jam or device you are listening to.
+- A song's right-click menu groups Artist, Album, Radio and Details under one Go to submenu.
+- Sorting by Date added puts the songs you added most recently first.
+
+### Fixed
+
+- The header of an album, playlist or artist page no longer jumps when it finishes loading.
+- The column header of an artist's popular songs no longer leaves a thin gap above it while scrolling.
+- Resuming after a pause no longer plays a blip of the old position first after a seek or a reload.
+- A `spotify://track/…` link opens that song, as `spotify:track:…` links already did.
+- The system media controls show the length of every song, not 0 for songs whose length only
+  arrives once they start playing.
+- Dragging the volume slider no longer stutters or spikes CPU and GPU use.
+- Leaving a Jam you joined works again.
+- Songs you queue in a Jam show your name as the one who added them.
+- A Jam's queue is no longer cleared when a song starts playing.
+
+## [0.46.0] - 2026-10-31
+
+### Added
+
 - Control Sonora from a terminal or a script: `sonora toggle`, `next`, `current`, `search`,
   `play -s <song>` and more, listed by `sonora --help`.
+- `sonora seek` takes a time such as `1:30`, or a step such as `+10` or `-10`, besides a percent.
 - Drop a song onto a playlist you own or collaborate on in the sidebar to add it to that playlist.
 - Hold Shift while dropping a song onto a sidebar playlist to move it out of its playlist or your
   favorites.
@@ -18,21 +57,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   page, and export a local playlist from its right-click menu. Songs outside your library are
   left out, and an export saved beside your music lists it by relative path.
 - `sonora watch` prints what plays on every change, one line of JSON each, for status bars.
-- Yandex Music: sign in with a token, then browse, search, like, edit your playlists, start a
-  station from a song and play in lossless where your plan allows it.
+- `sonora current` also says which provider plays, whether the song is liked and what it plays from.
+- Typing in Search suggests songs, artists, albums and playlists under the field, and Enter or
+  the new Search button opens the full results.
+- Search keeps your recent searches and lists them when you click the empty field or press Down.
+  Hover one and press its cross to remove it.
+- Categories in Search show a cover on Apple Music, YouTube Music and Subsonic servers too.
+- Install a theme from sonorahq.org/themes together with all its variants, such as light and dark.
+- Change or remove the cover of a playlist you own from its new edit dialog, on Spotify, YouTube
+  Music, Deezer, Tidal, Navidrome 0.61 or later and local files.
+- Deezer's Home shows every section the Deezer web player shows, and its mixes, flows and
+  channels open in Sonora.
 
 ### Changed
 
+- Escape in a text field takes the cursor out of it. In Search the first Escape closes the
+  suggestions and the second leaves the field.
+- Best match is no longer repeated in the lists below it, and the arrow keys stop on it.
+- Search results fade out under the search field as they scroll instead of being cut off.
 - Quick picks on Home no longer shows your account name above its title.
+- Apple Music's Home leads with Recently played again, and Recently added sits below the
+  playlists Apple made for you.
 - The lyrics source you rank higher now wins whenever it has synced lyrics, even when a source
   below it has them word by word.
+- Notices, such as the one about a missing audio output, line their text and buttons up beside
+  the icon, with the close button in the corner.
 
 ### Fixed
 
 - Screen readers now read setting labels and their values, the streaming services list, track rows,
   lyrics, the queue, page headings and empty pages, and say which option is chosen, expanded or
   playing. Every switch, dropdown, slider and window button has a name.
-- The translucent player bar no longer looks much darker than the rest of a see-through window.
+- The translucent player bar and table headers no longer look much darker than the rest of a
+  see-through window.
+- Saving a Deezer album to your favorites, or removing it, no longer fails.
+- Toasts show above an open dialog instead of behind it.
+- Fullscreen lyrics over the ambient background stay readable with a theme from your themes
+  folder, whose colours no longer apply there.
 - Covers saved for the system media controls no longer fill Sonora's cache folder without limit,
   and playlist mosaics no longer leave old copies behind.
 - Fullscreen shows Spotify covers at their original resolution, up to 2000 pixels, instead of
@@ -2407,7 +2468,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.45.0...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.46.0...HEAD
+[0.46.0]: https://github.com/sonorahq/sonora/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/sonorahq/sonora/compare/v0.44.2...v0.45.0
 [0.44.2]: https://github.com/sonorahq/sonora/compare/v0.44.1...v0.44.2
 [0.44.1]: https://github.com/sonorahq/sonora/compare/v0.44.0...v0.44.1

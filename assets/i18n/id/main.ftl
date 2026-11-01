@@ -155,8 +155,11 @@ menu-play-tracks-last = { $count ->
     [one] Putar { $count } lagu terakhir
    *[other] Putar { $count } lagu terakhir
 }
-menu-song-radio = Buka radio lagu
-menu-go-to-album = Buka album
+menu-go-to = Buka
+menu-artist = Artis
+menu-album = Album
+menu-radio = Radio
+menu-details = Detail
 menu-go-to-artist = Buka artis
 menu-view-details = Lihat detail
 menu-copy-link = Salin tautan
@@ -259,10 +262,7 @@ player-previous = Lagu sebelumnya
 player-next = Lagu berikutnya
 player-fullscreen = Layar penuh
 player-fullscreen-leave = Keluar dari layar penuh
-player-devices = Perangkat
 devices-this-computer = Komputer ini
-devices-pause = Jeda
-devices-resume = Lanjutkan
 devices-jam-join = Gabung Jam…
 devices-jam-join-title = Gabung Jam
 devices-jam-join-detail = Tempel tautan yang dibagikan teman Anda
@@ -270,15 +270,12 @@ devices-jam-paste = Tempel
 devices-jam-link-hint = Tautan Jam
 devices-jam-start = Mulai Jam
 devices-jam-copy = Salin tautan Jam
-devices-jam-code = Kode QR
 devices-jam-code-menu = Tampilkan kode QR
 devices-jam-code-title = Pindai untuk gabung Jam { $host }
 devices-jam-code-title-anonymous = Pindai untuk gabung Jam
 devices-jam-code-close = Tutup
 devices-jam-leave = Keluar dari Jam
 devices-jam-end = Akhiri Jam
-devices-jam-banner = Di Jam { $host }
-devices-jam-banner-anonymous = Di dalam Jam
 devices-jam-more = +{ $count }
 devices-jam-host = Host
 devices-jam-you = Anda
@@ -290,8 +287,6 @@ devices-jam-invite-detail = { $count ->
    *[other] { $count } orang sudah ada di Jam ini.
 }
 devices-jam-invite-join = Gabung
-devices-elsewhere-banner = Diputar di { $device }
-devices-elsewhere-here = Putar di sini
 fullscreen-artwork = Sampul
 
 # filters
@@ -430,6 +425,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Pilihan cepat
 home-quick-picks-empty = Sukai beberapa lagu dan rekomendasinya akan muncul di sini
 home-recently-added = Baru ditambahkan
+home-recently-played = Baru diputar
 home-playlists = Playlist
 home-favorite-albums = Album favorit
 home-artists = Artis
@@ -438,6 +434,9 @@ home-collection-albums = Album dari koleksi Anda
 # search page
 search-placeholder = Apa yang ingin Anda dengarkan?
 search-browse = Jelajahi semua
+search-submit = Cari
+search-recent = Pencarian terbaru
+search-forget = Hapus dari riwayat
 genre-empty = Belum ada yang bisa ditampilkan di sini
 search-best-match = Hasil teratas
 search-no-matches = Tidak ada hasil yang cocok

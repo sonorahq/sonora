@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use cli::commands::{
     self, Item, Kind, Level, PlaybackCommand, ProviderCommand, QueueCommand, Request, SearchQuery,
-    Switch, Watch,
+    SessionCommand, Switch, Time, Watch,
 };
-use cli::wire::{self, Current, Failure, Reply, State, Value};
+use cli::wire::{self, Current, Failure, Reply, SessionInfo, State, Value};
 use futures::future;
 use gpui::{App, Context, Entity, Subscription, Task};
 use music::link::Linked;
@@ -17,8 +17,11 @@ use tokio::sync::{mpsc, oneshot};
 use crate::search::{self, Catalog};
 use crate::{
     Hit, Io, Library, Origin, Playback, PlaybackState, QueuePlacement, Repeat, Session,
-    SessionState, Shelf, Sonora, join, noted,
+    SessionState, Shelf, Sonora, Whence, join, noted,
 };
+
+/// What `sonora current` calls the provider of a local file, the slug `sonora providers` gives it.
+const LOCAL: &str = "local";
 
 /// How often a watch looks again on its own, for the position it reports and for a change made
 /// somewhere that does not go through `Playback`, such as the volume of a steered device.
@@ -184,6 +187,7 @@ impl Control {
             Request::Queue(command) => return self.queue(command, reply, cx),
             Request::Provider(command) => return self.provider(command, reply, cx),
             Request::Search(query) => return self.search(query, reply, cx),
+            Request::Session(command) => session(command, cx),
             // a watch is answered as a stream, by `watch`, and never reaches here
             Request::Watch(_) => Reply::Failed(Failure::Malformed),
         };
@@ -517,6 +521,41 @@ impl Control {
     }
 }
 
+/// Starts, joins or leaves a Sonora Session, or says which one Sonora is in. A start or join
+/// answers before the server does, so `sonora session` tells whether it went through.
+fn session(command: SessionCommand, cx: &mut App) -> Reply {
+    let listening = Sonora::global(cx).listening.clone();
+    match command {
+        SessionCommand::Status => {
+            let listening = listening.read(cx);
+            let info = listening.room().map(|room| SessionInfo {
+                code: room.code.clone(),
+                provider: room.provider.clone(),
+                hosting: room.hosting(),
+                members: room
+                    .host()
+                    .into_iter()
+                    .chain(room.members.iter().filter(|member| !member.host))
+                    .map(|member| member.name.clone())
+                    .collect(),
+            });
+            return Reply::Value(Value::Session(info));
+        }
+        SessionCommand::Start if !listening.read(cx).available(cx) => {
+            return Reply::Failed(Failure::SignedOut);
+        }
+        SessionCommand::Start => listening.update(cx, |listening, cx| listening.start(cx)),
+        SessionCommand::Join(Some(code)) => {
+            listening.update(cx, |listening, cx| listening.join(&code, cx))
+        }
+        SessionCommand::Join(None) => {
+            listening.update(cx, |listening, cx| listening.show_join(true, cx))
+        }
+        SessionCommand::Leave => listening.update(cx, |listening, cx| listening.leave(cx)),
+    }
+    Reply::Done
+}
+
 fn play(playback: &mut Playback, command: PlaybackCommand, cx: &mut Context<Playback>) -> Reply {
     match command {
         PlaybackCommand::Play => playback.resume(cx),
@@ -525,6 +564,10 @@ fn play(playback: &mut Playback, command: PlaybackCommand, cx: &mut Context<Play
         PlaybackCommand::Next => playback.next(cx),
         PlaybackCommand::Previous => playback.previous(cx),
         PlaybackCommand::Seek(percent) => playback.seek_fraction(f32::from(percent) / 100., cx),
+        PlaybackCommand::SeekTime(time) => {
+            let target = moment(playback, time, cx);
+            playback.seek(target, cx);
+        }
         PlaybackCommand::CurrentTrack => {
             return Reply::Value(Value::Current(current(playback, cx)));
         }
@@ -617,6 +660,31 @@ fn settled_on(session: &Session, slug: &str) -> bool {
         )
 }
 
+/// Where a seek in time lands: the time asked for, or a step from where the track plays now,
+/// held inside the track on the steered device when there is one.
+fn moment(playback: &Playback, time: Time, cx: &App) -> Duration {
+    let (now, length) = match playback.steered(cx) {
+        Some(steered) => (steered.state.live_position(), steered.state.duration),
+        None => (
+            playback.live_position(),
+            playback
+                .track()
+                .map_or(Duration::ZERO, |track| track.duration),
+        ),
+    };
+    let target = match time {
+        Time::To(at) => Duration::from_secs(at),
+        Time::By(step) => match step < 0 {
+            true => now.saturating_sub(Duration::from_secs(step.unsigned_abs())),
+            false => now.saturating_add(Duration::from_secs(step.unsigned_abs())),
+        },
+    };
+    match length.is_zero() {
+        true => target,
+        false => target.min(length),
+    }
+}
+
 /// What plays now, on the steered device when there is one, or `None` when nothing is loaded.
 fn current(playback: &Playback, cx: &App) -> Option<Current> {
     let track = playback.shown_track(cx)?;
@@ -638,6 +706,12 @@ fn current(playback: &Playback, cx: &App) -> Option<Current> {
             (state, playback.live_position())
         }
     };
+    let sonora = Sonora::global(cx);
+    let id = track.id.as_deref();
+    let provider = match id.is_some_and(|id| Shelf::of(id).local()) {
+        true => Some(LOCAL.to_owned()),
+        false => sonora.session.read(cx).provider_slug().map(str::to_owned),
+    };
     Some(Current {
         state,
         track: wire_track(&track),
@@ -645,7 +719,26 @@ fn current(playback: &Playback, cx: &App) -> Option<Current> {
         volume: percent(playback.shown_volume(cx)),
         shuffle: playback.shown_shuffle(cx),
         repeat: wire_repeat(playback.shown_repeat(cx)),
+        provider,
+        liked: id.is_some_and(|id| sonora.library.read(cx).saved(id)),
+        origin: playback.origin(cx).map(wire_origin),
     })
+}
+
+fn wire_origin(origin: &Origin) -> wire::Origin {
+    let kind = match origin.whence {
+        Whence::Album => wire::OriginKind::Album,
+        Whence::Playlist => wire::OriginKind::Playlist,
+        Whence::Artist => wire::OriginKind::Artist,
+        Whence::Radio => wire::OriginKind::Radio,
+        Whence::Saved => wire::OriginKind::Liked,
+        Whence::Local => wire::OriginKind::Local,
+    };
+    wire::Origin {
+        kind,
+        id: origin.id.clone(),
+        name: origin.name.as_ref().map(ToString::to_string),
+    }
 }
 
 fn wire_track(track: &Track) -> wire::Track {

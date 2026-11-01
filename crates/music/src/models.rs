@@ -241,6 +241,24 @@ pub struct GenreDetail {
     pub sections: Vec<GenreSection>,
 }
 
+impl GenreDetail {
+    /// The picture a tile for this genre wears: the first album cover on the page, else the
+    /// first playlist cover.
+    pub fn cover(&self) -> Option<String> {
+        let items = || self.sections.iter().flat_map(|section| &section.items);
+        let album = items().find_map(|item| match item {
+            GenreItem::Album(album) => album.cover.clone(),
+            _ => None,
+        });
+        album.or_else(|| {
+            items().find_map(|item| match item {
+                GenreItem::Playlist(playlist) => playlist.cover.clone(),
+                _ => None,
+            })
+        })
+    }
+}
+
 /// What reading a playlist file into the library came to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportedPlaylist {
@@ -299,6 +317,9 @@ pub struct SavedArtist {
 pub struct Artist {
     pub name: String,
     pub cover_large: Option<String>,
+    /// A wide picture for the top of the artist page, when the provider keeps one apart from
+    /// the portrait in `cover_large`.
+    pub banner: Option<String>,
     pub biography: Option<String>,
     pub monthly_listeners: Option<u64>,
     pub top_tracks: Vec<Track>,
