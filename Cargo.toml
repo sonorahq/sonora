@@ -99,6 +99,7 @@ ksni = { version = "0.3", default-features = false, features = [
 ] }
 zbus = { version = "6", default-features = false, features = [
     "proxy",
+    "service",
     "tokio",
 ] }
 libc = "0.2"
@@ -106,7 +107,6 @@ lofty = "0.25"
 log = "0.4"
 md-5 = "0.11"
 moka = { version = "0.12", features = ["future", "sync"] }
-mpris-server = "0.11"
 notify = "8.2"
 oauth2 = "5.0"
 open = "5.4"
