@@ -18,6 +18,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Local songs read word-by-word lyrics from a `.ttml` file beside them or from TTML in their
   lyrics tag.
 - The Now playing preview in Appearance settings draws the visualizer style you pick.
+- Yandex Music: sign in with a token, then browse, search, like, edit your playlists, start a
+  station from a song and play in lossless where your plan allows it.
 
 ### Changed
 

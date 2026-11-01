@@ -22,6 +22,10 @@ their source is available from the upstream repositories linked below and from
 Where a dependency offers a choice of licenses, Sonora relies on the permissive
 option: Apache-2.0 for `self_cell`, MPL-2.0 for `priority-queue`.
 
+The Yandex Music client in `crates/music/src/yandex` follows the endpoints and the
+request signing of yandex-music-rs (<https://github.com/vyfor/yandex-music-rs>),
+Copyright (c) 2024 vyfor, under the MIT License whose text is below.
+
 Each section lists the crates covered by that license and the copyright notices
 they carry, followed by one copy of the license text.
 
