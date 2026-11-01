@@ -23,8 +23,8 @@ struct Text {
 
 struct Painted {
     line: Option<ShapedLine>,
-    /// Where the line starts, which is the bounds' start unless the text keeps to the end or
-    /// scrolled.
+    /// Where the line starts: the bounds' start, moved right to keep to the end, moved left to
+    /// scroll.
     origin: Point<Pixels>,
     scroll: Pixels,
     caret: Option<PaintQuad>,
@@ -164,8 +164,7 @@ impl Element for Text {
                 .scroll
                 .max(at_caret - room)
                 .min(at_caret)
-                .min(line.width - room)
-                .max(Pixels::ZERO),
+                .min(line.width - room),
             false => Pixels::ZERO,
         };
         let left = match input.end {
@@ -179,7 +178,7 @@ impl Element for Text {
                 Some(fill(
                     Bounds::new(
                         point(
-                            left + line.x_for_index(cursor),
+                            left + at_caret,
                             bounds.top() + (bounds.size.height - font_size * CARET_LINES) / 2.,
                         ),
                         size(CARET, font_size * CARET_LINES),
@@ -227,7 +226,7 @@ impl Element for Text {
             return;
         };
         let origin = painted.origin;
-        // scrolled text runs past the field's start, which must not draw over its padding
+        // clip to the bounds: scrolled text starts left of the field and must not cover its padding
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             if focused && let Some(selection) = painted.selection.take() {
                 window.paint_quad(selection);

@@ -891,7 +891,7 @@ impl EntityInputHandler for Input {
             false => offset,
         };
         // the text starts where it was last painted, left of the field when it scrolled
-        let left = self.last_bounds.map_or(bounds.left(), |last| last.left());
+        let left = self.last_bounds?.left();
         Some(span(line, at(range.start)..at(range.end), left, bounds))
     }
 
