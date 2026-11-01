@@ -20,6 +20,7 @@ pub(crate) struct Row {
     detail: Option<SharedString>,
     control: AnyElement,
     disabled: bool,
+    yielding: bool,
 }
 
 impl Row {
@@ -29,7 +30,15 @@ impl Row {
             detail: None,
             control,
             disabled: false,
+            yielding: false,
         }
+    }
+
+    /// Lets the control give up width before the label does, for a text field that still works
+    /// narrowed while a cut label says nothing.
+    pub(crate) fn yielding(mut self) -> Self {
+        self.yielding = true;
+        self
     }
 
     /// Adds a muted explanation below the label, wrapping within the space beside the control.
@@ -52,6 +61,7 @@ impl RenderOnce for Row {
             detail,
             control,
             disabled,
+            yielding,
         } = self;
         let theme = *cx.theme();
 
@@ -64,8 +74,10 @@ impl RenderOnce for Row {
             .when(disabled, |this| this.text_color(theme.muted_foreground))
             .child(
                 div()
-                    .flex_1()
-                    .min_w_0()
+                    .map(|this| match yielding {
+                        true => this.flex_none(),
+                        false => this.flex_1().min_w_0(),
+                    })
                     .flex()
                     .flex_col()
                     .gap_1()
@@ -86,7 +98,14 @@ impl RenderOnce for Row {
                             .child(detail)
                     })),
             )
-            .child(div().flex_none().child(control))
+            .child(
+                div()
+                    .map(|this| match yielding {
+                        true => this.flex_1().min_w_0().flex().justify_end(),
+                        false => this.flex_none(),
+                    })
+                    .child(control),
+            )
     }
 }
 
@@ -94,6 +113,11 @@ impl SettingsView {
     /// A plain row: the label and the control.
     pub(super) fn row(&self, title: SharedString, control: AnyElement) -> AnyElement {
         Row::new(title, control).into_any_element()
+    }
+
+    /// A row whose control narrows before its label is cut, for a text field.
+    pub(super) fn yielding_row(&self, title: SharedString, control: AnyElement) -> AnyElement {
+        Row::new(title, control).yielding().into_any_element()
     }
 
     /// A row whose choice is drawn as option cards: the label on a row of its own, then the

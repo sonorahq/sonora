@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use cli::commands::{
     self, Item, Kind, Level, PlaybackCommand, ProviderCommand, QueueCommand, Request, SearchQuery,
-    Switch, Time, Watch,
+    SessionCommand, Switch, Time, Watch,
 };
-use cli::wire::{self, Current, Failure, Reply, State, Value};
+use cli::wire::{self, Current, Failure, Reply, SessionInfo, State, Value};
 use futures::future;
 use gpui::{App, Context, Entity, Subscription, Task};
 use music::link::Linked;
@@ -187,6 +187,7 @@ impl Control {
             Request::Queue(command) => return self.queue(command, reply, cx),
             Request::Provider(command) => return self.provider(command, reply, cx),
             Request::Search(query) => return self.search(query, reply, cx),
+            Request::Session(command) => session(command, cx),
             // a watch is answered as a stream, by `watch`, and never reaches here
             Request::Watch(_) => Reply::Failed(Failure::Malformed),
         };
@@ -518,6 +519,41 @@ impl Control {
             Place::Queue(placement) => playback.enqueue_tracks(tracks, origin, placement, cx),
         });
     }
+}
+
+/// Starts, joins or leaves a Sonora Session, or says which one Sonora is in. A start or join
+/// answers before the server does, so `sonora session` tells whether it went through.
+fn session(command: SessionCommand, cx: &mut App) -> Reply {
+    let listening = Sonora::global(cx).listening.clone();
+    match command {
+        SessionCommand::Status => {
+            let listening = listening.read(cx);
+            let info = listening.room().map(|room| SessionInfo {
+                code: room.code.clone(),
+                provider: room.provider.clone(),
+                hosting: room.hosting(),
+                members: room
+                    .host()
+                    .into_iter()
+                    .chain(room.members.iter().filter(|member| !member.host))
+                    .map(|member| member.name.clone())
+                    .collect(),
+            });
+            return Reply::Value(Value::Session(info));
+        }
+        SessionCommand::Start if !listening.read(cx).available(cx) => {
+            return Reply::Failed(Failure::SignedOut);
+        }
+        SessionCommand::Start => listening.update(cx, |listening, cx| listening.start(cx)),
+        SessionCommand::Join(Some(code)) => {
+            listening.update(cx, |listening, cx| listening.join(&code, cx))
+        }
+        SessionCommand::Join(None) => {
+            listening.update(cx, |listening, cx| listening.show_join(true, cx))
+        }
+        SessionCommand::Leave => listening.update(cx, |listening, cx| listening.leave(cx)),
+    }
+    Reply::Done
 }
 
 fn play(playback: &mut Playback, command: PlaybackCommand, cx: &mut Context<Playback>) -> Reply {

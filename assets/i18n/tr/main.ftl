@@ -242,10 +242,7 @@ player-previous = Önceki parça
 player-next = Sonraki parça
 player-fullscreen = Tam ekran
 player-fullscreen-leave = Tam ekrandan çık
-player-devices = Cihazlar
 devices-this-computer = Bu bilgisayar
-devices-pause = Duraklat
-devices-resume = Sürdür
 devices-jam-join = Jam'e katıl…
 devices-jam-join-title = Jam'e katıl
 devices-jam-join-detail = Bir arkadaşının paylaştığı bağlantıyı yapıştır
@@ -253,15 +250,12 @@ devices-jam-paste = Yapıştır
 devices-jam-link-hint = Jam bağlantısı
 devices-jam-start = Jam başlat
 devices-jam-copy = Jam bağlantısını kopyala
-devices-jam-code = QR kodu
 devices-jam-code-menu = QR kodunu göster
 devices-jam-code-title = { $host } ile Jam'e katılmak için tara
 devices-jam-code-title-anonymous = Jam'e katılmak için tara
 devices-jam-code-close = Kapat
 devices-jam-leave = Jam'den ayrıl
 devices-jam-end = Jam'i bitir
-devices-jam-banner = { $host } ile Jam'de
-devices-jam-banner-anonymous = Jam'de
 devices-jam-more = +{ $count }
 devices-jam-host = Ev sahibi
 devices-jam-you = Sen
@@ -272,8 +266,6 @@ devices-jam-invite-detail = { $count ->
    *[other] Bu Jam'de zaten { $count } kişi var.
 }
 devices-jam-invite-join = Katıl
-devices-elsewhere-banner = { $device } üzerinde çalıyor
-devices-elsewhere-here = Burada çal
 fullscreen-artwork = Kapak
 
 # filters

@@ -7451,6 +7451,7 @@ dependencies = [
  "storage",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
  "ui",
  "webview",
  "windows-sys 0.61.2",

@@ -262,10 +262,7 @@ player-previous = Brano precedente
 player-next = Brano successivo
 player-fullscreen = Schermo intero
 player-fullscreen-leave = Esci dallo schermo intero
-player-devices = Dispositivi
 devices-this-computer = Questo computer
-devices-pause = Pausa
-devices-resume = Riprendi
 devices-jam-join = Unisciti a una Jam…
 devices-jam-join-title = Unisciti a una Jam
 devices-jam-join-detail = Incolla il link che ti ha condiviso un amico
@@ -273,15 +270,12 @@ devices-jam-paste = Incolla
 devices-jam-link-hint = Link della Jam
 devices-jam-start = Avvia una Jam
 devices-jam-copy = Copia link della Jam
-devices-jam-code = Codice QR
 devices-jam-code-menu = Mostra codice QR
 devices-jam-code-title = Scansiona per unirti alla Jam di { $host }
 devices-jam-code-title-anonymous = Scansiona per unirti alla Jam
 devices-jam-code-close = Chiudi
 devices-jam-leave = Esci dalla Jam
 devices-jam-end = Termina Jam
-devices-jam-banner = Nella Jam di { $host }
-devices-jam-banner-anonymous = In una Jam
 devices-jam-more = +{ $count }
 devices-jam-host = Host
 devices-jam-you = Tu
@@ -293,8 +287,6 @@ devices-jam-invite-detail = { $count ->
    *[other] { $count } persone sono già in questa Jam.
 }
 devices-jam-invite-join = Unisciti
-devices-elsewhere-banner = In riproduzione su { $device }
-devices-elsewhere-here = Riproduci qui
 fullscreen-artwork = Copertina
 
 # filters

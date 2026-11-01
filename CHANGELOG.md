@@ -9,18 +9,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Listen together on any streaming service with Sonora Session: start one from the Sessions button in the player bar, share its six-digit code, and everyone who joins hears the same song in step.
+- `sonora session` starts, joins or leaves a Sonora Session from the command line.
+- A Members panel, opened from the Sessions menu, lists who is in your Sonora Session or Spotify Jam and lets the host remove someone. An accent dot on the Sessions button shows one is under way, and while another Spotify device plays the button wears that device's icon.
+- Hide the Sessions button, or run Sessions through a server of your own, from the Playback settings. Save keeps a server only once it answers, and a toast says how it went while the field turns red until a save goes through.
 - An artist page shows the artist's banner behind its header, sharp at the top and blurring into
   the page under the name. Artists without a banner get a soft wash of their photo's colours.
-- Subsonic lyrics provider can now read OpenSubsonic's enhanced cueLine data for per-word/syllable lyrics.
+- Local songs read word-by-word lyrics from a `.ttml` file beside them or from TTML in their
+  lyrics tag.
+- Subsonic lyrics provider can now read OpenSubsonic's enhanced cueLine data for karaoke lyrics.
 
 ### Changed
 
+- The devices button in the player bar is now the Sessions button. It shows for every streaming service and sits evenly beside the lyrics and queue buttons.
+- Spotify Jam controls sit together under a Spotify Jams submenu of the Sessions button, and the strip above the player bar is gone.
+- A text field scrolls to keep the caret in sight, so long text is cut off on the side you are not typing.
+- The tray menu and taskbar buttons follow the song of the Jam or device you are listening to.
 - A song's right-click menu groups Artist, Album, Radio and Details under one Go to submenu.
+- Sorting by Date added puts the songs you added most recently first.
 
 ### Fixed
 
 - The header of an album, playlist or artist page no longer jumps when it finishes loading.
 - The column header of an artist's popular songs no longer leaves a thin gap above it while scrolling.
+- Resuming after a pause no longer plays a blip of the old position first after a seek or a reload.
+- A `spotify://track/…` link opens that song, as `spotify:track:…` links already did.
+- The system media controls show the length of every song, not 0 for songs whose length only
+  arrives once they start playing.
+- Dragging the volume slider no longer stutters or spikes CPU and GPU use.
+- Leaving a Jam you joined works again.
+- Songs you queue in a Jam show your name as the one who added them.
+- A Jam's queue is no longer cleared when a song starts playing.
 
 ## [0.46.0] - 2026-10-31
 

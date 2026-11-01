@@ -12,7 +12,7 @@ use clap_complete::Shell;
 
 use crate::commands::{
     CommandType, Format, Item, Kind, Level, Local, PlaybackCommand, ProviderCommand, QueueCommand,
-    Repeat, Request, SearchQuery, Switch, Time, Watch,
+    Repeat, Request, SearchQuery, SessionCommand, Switch, Time, Watch,
 };
 use crate::item;
 
@@ -143,8 +143,24 @@ enum Sub {
         /// A provider as `sonora providers` lists it, such as `spotify`.
         slug: Option<String>,
     },
+    /// Print the Sonora Session Sonora is in, or start, join or leave one.
+    Session {
+        #[command(subcommand)]
+        action: Option<SessionSub>,
+    },
     /// Print the completion script for a shell.
     Completions { shell: Shell },
+}
+
+/// What `sonora session` does with a Sonora Session.
+#[derive(Subcommand)]
+enum SessionSub {
+    /// Start a session on the current provider and print its code.
+    Start,
+    /// Join the session a friend's six-digit code names, or open the dialog to type it in.
+    Join { code: Option<String> },
+    /// Leave the session, which ends it for everyone when Sonora hosts it.
+    Leave,
 }
 
 /// A search to take the best hit of, in place of files or links.
@@ -293,6 +309,12 @@ fn into_command(args: Args, line: &mut Command) -> Result<CommandType, clap::Err
         }),
         Sub::Providers => Request::Provider(ProviderCommand::List),
         Sub::Provider { slug } => Request::Provider(ProviderCommand::Current(slug)),
+        Sub::Session { action } => Request::Session(match action {
+            None => SessionCommand::Status,
+            Some(SessionSub::Start) => SessionCommand::Start,
+            Some(SessionSub::Join { code }) => SessionCommand::Join(code),
+            Some(SessionSub::Leave) => SessionCommand::Leave,
+        }),
         Sub::Completions { shell } => return Ok(CommandType::Local(Local::Completions(shell))),
     };
     Ok(CommandType::Remote(request, format))

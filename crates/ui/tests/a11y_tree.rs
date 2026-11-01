@@ -39,8 +39,8 @@ use gpui::{
     div,
 };
 use ui::{
-    Button, Card, Checkbox, Input, OptionCard, Radio, RangeScrubber, RangeState, Scrubber,
-    ScrubberState, Theme, Toast,
+    Button, Card, Checkbox, Input, OptionCard, OtpInput, Radio, RangeScrubber, RangeState,
+    Scrubber, ScrubberState, Theme, Toast,
 };
 
 /// Formats what the frame builder would put in the tree for `element`.
@@ -267,6 +267,30 @@ async fn input_names_itself_from_hint(cx: &mut TestAppContext) {
     assert!(
         lines.iter().any(|line| line.contains("name=Some")),
         "input exposes no accessible name for its hint, screen readers announce nothing: {lines:?}"
+    );
+}
+
+#[gpui::test]
+async fn otp_input_reads_as_a_named_field_with_its_code(cx: &mut TestAppContext) {
+    let lines = open_probe(cx, |window, cx| {
+        let field = cx.new(|cx| OtpInput::new(6, "common-search", cx).grouped(3));
+        field.update(cx, |field, cx| {
+            field.set_value("12a3", cx);
+            snapshot("otp", &field.render(window, cx).into_element())
+        })
+    });
+    let lines = rendered(&lines, "otp");
+    assert!(
+        lines.iter().any(|line| line.contains("role=TextInput")),
+        "otp input exposes no Role::TextInput, screen readers skip it: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("name=Some")),
+        "otp input exposes no accessible name, screen readers announce nothing: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("text=Some(\"123\")")),
+        "otp input exposes no value or keeps more than its digits: {lines:?}"
     );
 }
 

@@ -39,6 +39,7 @@ mod player_bar;
 mod preview;
 mod rows;
 mod scrobbling;
+mod sessions;
 mod sound;
 mod storage;
 mod themes;
@@ -112,6 +113,9 @@ enum Slot {
     SpotifyConnect,
     SpotifyConnectName,
     SpotifyConnectCustom,
+    SessionsButton,
+    SessionsOfficial,
+    SessionsServer,
     Discord,
     DiscordName,
     DiscordShowPaused,
@@ -259,6 +263,8 @@ pub struct SettingsView {
     scrobble_second: Entity<Input>,
     /// The field for the custom name Sonora goes by in Spotify's device list.
     connect_name: Entity<Input>,
+    /// The address of the listener's own Sonora Sessions server.
+    sessions_server: Entity<Input>,
     /// The service whose link dialog is open, by slug.
     scrobble_prompt: Option<&'static str>,
     /// The provider whose sign-in choice is up, by slug and name.
@@ -377,6 +383,24 @@ impl SettingsView {
         })
         .detach();
 
+        let sessions_server =
+            cx.new(|cx| Input::new("settings-sessions-server-hint", cx).compact());
+        let typed = settings.read(cx).sessions_server().to_owned();
+        sessions_server.update(cx, |input, cx| input.set_text(typed, cx));
+        // the Save button stands held while the server it saves is checked, and the field wears a
+        // red border from a save that was turned down until one goes through
+        let listening = Sonora::global(cx).listening.clone();
+        cx.observe(&listening, |this: &mut Self, listening, cx| {
+            let rejected = listening.read(cx).rejected();
+            this.sessions_server
+                .update(cx, |input, cx| input.set_invalid(rejected, cx));
+            cx.notify();
+        })
+        .detach();
+        // what is typed is kept only once the Save button finds its server answers
+        cx.observe(&sessions_server, |_, _, cx| cx.notify())
+            .detach();
+
         let popovers = Popovers::default();
         let output_picker = cx.new(|cx| OutputPicker::new(outputs.clone(), popovers.clone(), cx));
         let previews = preview::Previews::new(cx);
@@ -421,6 +445,7 @@ impl SettingsView {
             scrobble_first: cx.new(|cx| Input::new("settings-scrobble-key", cx)),
             scrobble_second: cx.new(|cx| Input::new("settings-scrobble-secret", cx)),
             connect_name,
+            sessions_server,
             scrobble_prompt: None,
             languages,
             typefaces,
@@ -858,6 +883,9 @@ impl SettingsView {
                 t!("settings-spotify-connect-custom"),
                 t!("settings-spotify-connect-custom-detail"),
             ),
+            Slot::SessionsButton => (t!("settings-sessions-button"), SharedString::default()),
+            Slot::SessionsOfficial => (t!("settings-sessions-official"), SharedString::default()),
+            Slot::SessionsServer => (t!("settings-sessions-server"), SharedString::default()),
             Slot::Discord => (t!("settings-discord"), t!("settings-discord-detail")),
             Slot::DiscordName => (
                 t!("settings-discord-name"),
@@ -979,6 +1007,9 @@ impl SettingsView {
             Slot::SpotifyConnect => self.spotify_connect_row(cx),
             Slot::SpotifyConnectName => self.spotify_connect_name_row(cx),
             Slot::SpotifyConnectCustom => self.spotify_connect_custom_row(),
+            Slot::SessionsButton => self.sessions_button_row(cx),
+            Slot::SessionsOfficial => self.sessions_official_row(cx),
+            Slot::SessionsServer => self.sessions_server_row(cx),
             Slot::Discord => self.discord_row(cx),
             Slot::DiscordName => self.discord_name_row(cx),
             Slot::DiscordShowPaused => self.discord_show_paused_row(cx),

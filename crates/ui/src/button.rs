@@ -18,6 +18,9 @@ const FADED: f32 = 0.55;
 /// laying a themed slab over it.
 const TINT_HOVER: f32 = 0.14;
 const TINT_ACTIVE: f32 = 0.24;
+/// The status dot's diameter and its distance from the top left corner, as parts of the pad.
+const STATUS: f32 = 0.75;
+const STATUS_INSET: f32 = 0.4;
 /// How far a small button's label sits from its edge, which text set beside one lines up with.
 pub const SMALL_INSET: Pixels = px(8.);
 
@@ -54,6 +57,8 @@ pub struct Button {
     /// Whether the button stands for one tab of a tab list.
     tab: bool,
     indicator: bool,
+    /// The colour of the status dot over the icon's top left corner, `None` for no dot.
+    status: Option<Hsla>,
     backgroundless: bool,
     hoverless: bool,
     frosted: bool,
@@ -85,6 +90,7 @@ impl Button {
             toggled: None,
             tab: false,
             indicator: false,
+            status: None,
             backgroundless: false,
             hoverless: false,
             frosted: false,
@@ -215,6 +221,13 @@ impl Button {
         self
     }
 
+    /// Paints a dot of `color` over the top left corner of the icon, marking something under way,
+    /// without changing the button's layout or hit area.
+    pub fn status(mut self, color: Hsla) -> Self {
+        self.status = Some(color);
+        self
+    }
+
     pub fn backgroundless(mut self) -> Self {
         self.backgroundless = true;
         self
@@ -309,6 +322,7 @@ impl RenderOnce for Button {
             toggled,
             tab,
             indicator,
+            status,
             backgroundless,
             hoverless,
             frosted,
@@ -515,6 +529,18 @@ impl RenderOnce for Button {
                         .size(diameter)
                         .rounded_full()
                         .bg(foreground),
+                )
+            })
+            .when_some(status, |this, color| {
+                let diameter = theme.metrics.pad * STATUS;
+                this.relative().child(
+                    div()
+                        .absolute()
+                        .top(theme.metrics.pad * STATUS_INSET)
+                        .left(theme.metrics.pad * STATUS_INSET)
+                        .size(diameter)
+                        .rounded_full()
+                        .bg(color),
                 )
             })
             .when(interactive, |this| {

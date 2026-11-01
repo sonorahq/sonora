@@ -280,10 +280,7 @@ player-previous = Poprzedni utwór
 player-next = Następny utwór
 player-fullscreen = Pełny ekran
 player-fullscreen-leave = Wyjdź z trybu pełnoekranowego
-player-devices = Urządzenia
 devices-this-computer = Ten komputer
-devices-pause = Wstrzymaj
-devices-resume = Wznów
 devices-jam-join = Dołącz do Jamu…
 devices-jam-join-title = Dołącz do Jamu
 devices-jam-join-detail = Wklej link udostępniony przez znajomego
@@ -291,15 +288,12 @@ devices-jam-paste = Wklej
 devices-jam-link-hint = Link do Jamu
 devices-jam-start = Rozpocznij Jam
 devices-jam-copy = Kopiuj link do Jamu
-devices-jam-code = Kod QR
 devices-jam-code-menu = Pokaż kod QR
 devices-jam-code-title = Zeskanuj, aby dołączyć do Jamu użytkownika { $host }
 devices-jam-code-title-anonymous = Zeskanuj, aby dołączyć do Jamu
 devices-jam-code-close = Zamknij
 devices-jam-leave = Opuść Jam
 devices-jam-end = Zakończ Jam
-devices-jam-banner = W Jamie użytkownika { $host }
-devices-jam-banner-anonymous = W Jamie
 devices-jam-more = +{ $count }
 devices-jam-host = Gospodarz
 devices-jam-you = Ty
@@ -312,8 +306,6 @@ devices-jam-invite-detail = { $count ->
    *[other] { $count } osób jest już w tym Jamie.
 }
 devices-jam-invite-join = Dołącz
-devices-elsewhere-banner = Odtwarzanie na: { $device }
-devices-elsewhere-here = Odtwarzaj tutaj
 fullscreen-artwork = Okładka
 
 # filters

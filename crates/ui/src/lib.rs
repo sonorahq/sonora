@@ -27,6 +27,7 @@ mod modal;
 pub mod motion;
 mod notice;
 mod option_card;
+mod otp;
 mod palette;
 mod panel;
 mod picker;
@@ -108,6 +109,7 @@ pub use motion::{
 };
 pub use notice::Notice;
 pub use option_card::OptionCard;
+pub use otp::{OtpInput, OtpSlots};
 pub use palette::{CoverPalette, palette, tint};
 pub use panel::{Panel, Side};
 pub use picker::Picker;
