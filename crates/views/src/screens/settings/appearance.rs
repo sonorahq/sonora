@@ -6,8 +6,8 @@ use gpui::{
 use i18n::t;
 use state::SYSTEM_FONT;
 use ui::{
-    ActiveTheme as _, Button, Look, MAX_FONT, MAX_TRANSPARENCY, MIN_FONT, MenuItem, OptionCard,
-    Picker, Rounding, Scrubber, Switch, Theme, ThemeKind,
+    ActiveTheme as _, Button, MAX_FONT, MAX_TRANSPARENCY, MIN_FONT, MenuItem, OptionCard, Picker,
+    Rounding, Scrubber, Switch,
 };
 
 use super::rows::{Announced as _, grid, outward};
@@ -26,31 +26,33 @@ const TYPEFACE_GUESS: usize = 24;
 const TYPEFACE_BATCH: usize = 3;
 
 impl SettingsView {
-    pub(super) fn appearance_groups(&self) -> Vec<Group> {
+    pub(super) fn appearance_groups(&self, cx: &App) -> Vec<Group> {
         vec![
             Group::new("settings-theme", "icons/palette.svg")
+                .cards(Slot::AppearanceMode)
                 .cards(Slot::Theme)
-                .rows([Slot::Adaptive, Slot::CommunityThemes]),
+                .rows([Slot::CommunityThemes]),
+            Group::new("settings-ambient", "icons/blend.svg").rows(
+                self.settings
+                    .read(cx)
+                    .ambient()
+                    .then_some([Slot::AmbientIntensity, Slot::AmbientMotion])
+                    .into_iter()
+                    .flatten(),
+            ),
             Group::new("settings-icons", "icons/layout-grid.svg").cards(Slot::Icons),
             Group::new("settings-corners", "icons/maximize.svg").cards(Slot::Corners),
             Group::new("settings-group-text", "icons/text-select.svg")
                 .rows([Slot::Typeface, Slot::Font]),
             Group::new("settings-group-window", "icons/panel-left-open.svg").rows(
-                [Slot::Opacity]
-                    .into_iter()
+                std::iter::once(Slot::Opacity)
                     .chain(ui::WINDOW_BLUR.then_some(Slot::WindowBlur))
                     .chain([Slot::Blur]),
             ),
         ]
-    }
-
-    /// The look the theme is drawn from now, with the tint the adaptive theme put on it.
-    pub(super) fn look(&self, cx: &Context<Self>) -> Look {
-        Look {
-            tint: cx.theme().tint,
-            tint_secondary: cx.theme().tint_secondary,
-            ..self.settings.read(cx).look()
-        }
+        .into_iter()
+        .filter(|group| !group.rows.is_empty() || !group.cards.is_empty())
+        .collect()
     }
 
     pub(super) fn typeface_entries(&self) -> Vec<SharedString> {
@@ -215,8 +217,7 @@ impl SettingsView {
     }
 
     pub(super) fn blur_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let look = self.look(cx);
-        let overrides = self.settings.read(cx).theme_overrides();
+        let look = self.settings.read(cx).look();
 
         self.row(
             t!("settings-blur"),
@@ -226,7 +227,6 @@ impl SettingsView {
                     let blur = !look.blur;
                     this.settings
                         .update(cx, |settings, cx| settings.set_blur(blur, cx));
-                    Theme::set(Look { blur, ..look }, &overrides, cx);
                     cx.notify();
                 }))
                 .into_any_element(),
@@ -236,8 +236,7 @@ impl SettingsView {
     /// Asks the platform to blur the desktop behind a see-through window. It needs something to
     /// show through, so the switch is off and disabled while the window is opaque.
     pub(super) fn blur_window_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let look = self.look(cx);
-        let overrides = self.settings.read(cx).theme_overrides();
+        let look = self.settings.read(cx).look();
         let opaque = !look.transparent;
 
         self.row(
@@ -249,14 +248,6 @@ impl SettingsView {
                     let blur_window = !look.blur_window;
                     this.settings
                         .update(cx, |settings, cx| settings.set_blur_window(blur_window, cx));
-                    Theme::set(
-                        Look {
-                            blur_window,
-                            ..look
-                        },
-                        &overrides,
-                        cx,
-                    );
                     cx.notify();
                 }))
                 .into_any_element(),
@@ -264,11 +255,9 @@ impl SettingsView {
     }
 
     pub(super) fn font_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let look = self.look(cx);
-        let overrides = self.settings.read(cx).theme_overrides();
+        let look = self.settings.read(cx).look();
 
         let step = move |id: &'static str, label: &'static str, name: &'static str, delta: f32| {
-            let overrides = overrides.clone();
             let wanted = (look.font + delta).clamp(MIN_FONT, MAX_FONT);
 
             Button::new(id)
@@ -280,14 +269,6 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_font_size(wanted, cx));
-                    Theme::set(
-                        Look {
-                            font: wanted,
-                            ..look
-                        },
-                        &overrides,
-                        cx,
-                    );
                     cx.notify();
                 }))
         };
@@ -333,8 +314,7 @@ impl SettingsView {
 
     /// One card per corner rounding, its thumbnail the corner of a surface drawn at that radius.
     pub(super) fn corner_cards(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let look = self.look(cx);
-        let overrides = self.settings.read(cx).theme_overrides();
+        let look = self.settings.read(cx).look();
 
         grid(Rounding::ALL.len() as u16, window, cx)
             .children(
@@ -342,7 +322,6 @@ impl SettingsView {
                     .into_iter()
                     .enumerate()
                     .map(|(place, rounding)| {
-                        let overrides = overrides.clone();
                         OptionCard::new(rounding.id())
                             .choice(
                                 rounding.label(),
@@ -357,7 +336,6 @@ impl SettingsView {
                                 this.settings.update(cx, |settings, cx| {
                                     settings.set_rounding(rounding.id(), cx);
                                 });
-                                Theme::set(Look { rounding, ..look }, &overrides, cx);
                                 cx.notify();
                             }))
                     }),
@@ -366,62 +344,21 @@ impl SettingsView {
     }
 
     pub(super) fn opacity_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = *cx.theme();
-        let look = self.look(cx);
-        let overrides = self.settings.read(cx).theme_overrides();
-        let transparency = match look.transparent {
-            true => look.transparency,
+        let settings = self.settings.read(cx);
+        let transparency = match settings.transparent() {
+            true => settings.transparency(),
             false => 0.,
         };
-        let value = 1. - transparency / MAX_TRANSPARENCY;
-        let percent = ((1. - transparency) * 100.).round() as i64;
-
-        let control = div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(
-                div()
-                    .id("settings-opacity-slider")
-                    .role(Role::Group)
-                    .aria_label(t!("settings-opacity"))
-                    .w(theme.metrics.cover)
-                    .child(
-                        Scrubber::new(&self.opacity, value)
-                            .name(t!("settings-opacity"))
-                            .value(t!("settings-opacity-value", percent = percent))
-                            .colors(theme.progress_bar, theme.muted, theme.foreground)
-                            .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
-                                let transparency = (1. - *fraction) * MAX_TRANSPARENCY;
-                                let transparent = transparency > 0.;
-                                this.settings.update(cx, |settings, cx| {
-                                    settings.set_transparent(transparent, cx);
-                                    settings.set_transparency(transparency, cx);
-                                });
-                                Theme::set(
-                                    Look {
-                                        transparent,
-                                        transparency,
-                                        ..look
-                                    },
-                                    &overrides,
-                                    cx,
-                                );
-                            })),
-                    ),
-            )
-            .child(
-                ui::spoken(
-                    "settings-opacity-value",
-                    t!("settings-opacity-value", percent = percent),
-                )
-                .flex_none()
-                .w(theme.metrics.control * 1.5)
-                .whitespace_nowrap()
-                .text_right(),
-            );
-
-        self.row(t!("settings-opacity"), control.into_any_element())
+        let slider = Scrubber::new(&self.opacity, 1. - transparency / MAX_TRANSPARENCY).on_move(
+            cx.listener(|this, fraction: &f32, _, cx| {
+                let transparency = (1. - *fraction) * MAX_TRANSPARENCY;
+                this.settings.update(cx, |settings, cx| {
+                    settings.set_transparent(transparency > 0., cx);
+                    settings.set_transparency(transparency, cx);
+                });
+            }),
+        );
+        self.percentage_row("settings-opacity", slider, 1. - transparency, cx)
     }
 
     pub(super) fn community_themes_row(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -430,43 +367,71 @@ impl SettingsView {
             .into_any_element()
     }
 
-    pub(super) fn adaptive_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let (on, neutral) = {
-            let settings = self.settings.read(cx);
-            let theme = settings.theme();
-            (
-                settings.adaptive_theme(),
-                [ThemeKind::System, ThemeKind::Dark, ThemeKind::Light]
-                    .into_iter()
-                    .any(|kind| kind.id() == theme),
-            )
-        };
-        let look = self.look(cx);
+    /// Colour strength blends the field into the default light or dark palette.
+    pub(super) fn ambient_intensity_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let value = self.settings.read(cx).ambient_intensity();
+        let slider = Scrubber::new(&self.ambient_intensity, value).on_move(cx.listener(
+            |this, value: &f32, _, cx| {
+                this.settings.update(cx, |settings, cx| {
+                    settings.set_ambient_intensity(*value, cx)
+                });
+            },
+        ));
+        self.percentage_row("settings-ambient-strength", slider, value, cx)
+    }
 
-        self.row(
-            t!("settings-adaptive"),
-            Switch::new("adaptive-theme", on)
-                .name(t!("settings-adaptive"))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    let adaptive = !on;
-                    let reset = adaptive && !neutral;
-                    let kind = match reset {
-                        true => ThemeKind::Dark,
-                        false => look.kind,
-                    };
-                    let overrides = this.settings.update(cx, |settings, cx| {
-                        settings.set_adaptive_theme(adaptive, cx);
-                        if reset {
-                            settings.set_theme(kind.id(), cx);
-                        }
-                        settings.theme_overrides()
-                    });
-                    if reset {
-                        Theme::fade(Look { kind, ..look }, &overrides, cx);
-                    }
-                }))
-                .into_any_element(),
-        )
+    /// Shares the width, accessible label and percentage readout of appearance sliders.
+    fn percentage_row(
+        &self,
+        key: &'static str,
+        slider: Scrubber,
+        value: f32,
+        cx: &App,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let label = i18n::lookup(key, None);
+        let control = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .id(key)
+                    .role(Role::Group)
+                    .aria_label(label.clone())
+                    .w(theme.metrics.cover)
+                    .child(slider.name(label.clone()).colors(
+                        theme.progress_bar,
+                        theme.muted,
+                        theme.foreground,
+                    )),
+            )
+            .child(
+                ui::spoken(
+                    SharedString::from(format!("{key}-value")),
+                    t!(
+                        "settings-opacity-value",
+                        percent = (value * 100.).round() as i64
+                    ),
+                )
+                .flex_none()
+                .w(theme.metrics.control * 1.5)
+                .whitespace_nowrap()
+                .text_right(),
+            );
+        self.row(label, control.into_any_element())
+    }
+
+    /// Motion intensity controls travel distance without changing the animation clock.
+    pub(super) fn ambient_motion_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let value = self.settings.read(cx).ambient_motion();
+        let slider = Scrubber::new(&self.ambient_motion, value).on_move(cx.listener(
+            |this, value: &f32, _, cx| {
+                this.settings
+                    .update(cx, |settings, cx| settings.set_ambient_motion(*value, cx));
+            },
+        ));
+        self.percentage_row("settings-ambient-motion", slider, value, cx)
     }
 }
 

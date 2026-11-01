@@ -30,20 +30,15 @@ pub(crate) fn of_image(image: &RenderImage) -> CoverPalette {
     image.as_bytes(0).map(sampled).unwrap_or_default()
 }
 
-/// The dominant hue of the artwork at `url`, or none for near-greyscale art.
-pub fn tint(url: impl Into<SharedString>, cx: &mut App) -> Task<Option<Hsla>> {
-    let palette = palette(url, cx);
-
-    cx.spawn(async move |_| palette.await.primary)
-}
-
 /// What one artwork extraction names: the hue that leads and, when the art
 /// carries a real second family, the runner-up. Sampled once per cover and
 /// shared by the theme tint and the ambient background, so the two never disagree.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq)]
 pub struct CoverPalette {
     pub primary: Option<Hsla>,
     pub secondary: Option<Hsla>,
+    /// The whole-cover colour, including pale and neutral areas that hue peaks exclude.
+    pub background: Option<Hsla>,
     /// The mean lightness of the art, over every pixel sampled rather than the
     /// coloured ones alone. It is what names a neutral for art with no hue: a
     /// sleeve that is nearly black and one that is nearly white both land here
@@ -99,12 +94,16 @@ fn sampled(pixels: &[u8]) -> CoverPalette {
     let mut bins = [Bin::default(); BINS];
     let mut sampled = 0.;
     let mut lightness = 0.;
+    let mut average = [0.; 3];
 
     for &[blue, green, red, alpha] in pixels.as_chunks::<4>().0.iter().step_by(stride) {
         if alpha < MIN_ALPHA {
             continue;
         }
         sampled += 1.;
+        average[0] += red as f32 / 255.;
+        average[1] += green as f32 / 255.;
+        average[2] += blue as f32 / 255.;
 
         let colour = Hsla::from(Rgba {
             r: red as f32 / 255.,
@@ -129,10 +128,20 @@ fn sampled(pixels: &[u8]) -> CoverPalette {
         false => 0.,
     };
 
+    let background = (sampled > 0.).then(|| {
+        Hsla::from(Rgba {
+            r: average[0] / sampled,
+            g: average[1] / sampled,
+            b: average[2] / sampled,
+            a: 1.,
+        })
+    });
+
     let peak = (0..BINS).max_by(|&a, &b| score(&bins, a).total_cmp(&score(&bins, b)));
     let primary = peak.filter(|&peak| score(&bins, peak) >= (sampled * MIN_SHARE).max(MIN_WEIGHT));
     let Some(peak) = primary else {
         return CoverPalette {
+            background,
             lightness: mean,
             ..Default::default()
         };
@@ -169,6 +178,7 @@ fn sampled(pixels: &[u8]) -> CoverPalette {
     CoverPalette {
         primary,
         secondary,
+        background,
         lightness: mean,
     }
 }
@@ -178,9 +188,121 @@ fn score(bins: &[Bin; BINS], index: usize) -> f32 {
         + (bins[(index + BINS - 1) % BINS].weight + bins[(index + 1) % BINS].weight) * 0.5
 }
 
+/// The resolved field colours, interpolated with the rest of the interface palette.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AmbientPalette {
+    pub colors: [Hsla; 5],
+    pub background: Hsla,
+}
+
+const BLOBS: usize = 5;
+
+impl AmbientPalette {
+    /// Resolves and limits brightness before interpolation to keep fades uniform.
+    pub fn new(theme: &crate::Theme, background: Option<Hsla>) -> Self {
+        let light = theme.background.l >= 0.5;
+        let mut colors = Self::colors(theme, background);
+        if light {
+            for color in &mut colors {
+                color.l = (0.55 + color.l * 0.35).clamp(0.60, 0.83);
+                color.s *= 0.85;
+            }
+        }
+        // Fill the spaces between blobs with the cover's broad colour.
+        let colour = background.unwrap_or_else(|| crate::motion::mix(colors[0], colors[2], 0.5));
+        let background = Hsla {
+            l: match light {
+                true => (0.68 + colour.l * 0.2).clamp(0.68, 0.85),
+                false => (0.17 + colour.l * 0.20).clamp(0.17, 0.32),
+            },
+            a: 1.,
+            ..colour
+        };
+        Self {
+            background: shaded(background, !light),
+            colors: colors.map(|color| shaded(color, !light)),
+        }
+    }
+    /// Resolves the five blob colours from the theme: the cover's leading hue
+    /// carried from a light highlight down to a dark shadow, plus its runner-up
+    /// where the art names one. Art with no colour leaves no tints behind, and
+    /// then the stage is quiet neutrals.
+    fn colors(theme: &crate::Theme, background: Option<Hsla>) -> [Hsla; BLOBS] {
+        let backdrop = background.unwrap_or(theme.background);
+        let neutral = |light: f32| Hsla {
+            h: backdrop.h,
+            s: backdrop.s.min(0.18),
+            l: light,
+            a: 1.,
+        };
+        // A dark theme gets a dark stage; lift the floor a little so the
+        // blobs stay apart from the base.
+        let floor = (0.13 + theme.background.l * 0.8).clamp(0.13, 0.30);
+
+        let Some(tint) = theme.tint else {
+            return [0., 0.025, 0.05, 0.015, 0.04].map(|lift| neutral(floor + lift));
+        };
+        let hue = |colour: Hsla, ceiling| Hsla {
+            s: (colour.s * 1.1).clamp(0.25, 0.85),
+            l: colour.l.clamp(0.32, ceiling),
+            a: 1.,
+            ..colour
+        };
+        let base = hue(tint, 0.62);
+        let second = match theme.tint_secondary {
+            Some(second) => hue(second, 0.60),
+            None => background
+                .map(|colour| Hsla {
+                    l: colour.l.clamp(0.30, 0.58),
+                    a: 1.,
+                    ..colour
+                })
+                .unwrap_or_else(|| neutral(floor + 0.03)),
+        };
+        [
+            base,
+            Hsla {
+                l: (base.l + 0.14).clamp(0.3, 0.62),
+                s: (base.s - 0.08).clamp(0.4, 0.75),
+                ..base
+            },
+            second,
+            Hsla {
+                l: (base.l - 0.13).clamp(0.18, 0.45),
+                s: (base.s + 0.04).clamp(0.45, 0.8),
+                ..base
+            },
+            Hsla {
+                h: (base.h + 0.97).rem_euclid(1.),
+                l: (base.l - 0.16).clamp(0.16, 0.4),
+                s: (base.s - 0.02).clamp(0.4, 0.78),
+                ..base
+            },
+        ]
+    }
+}
+
+/// Caps bright areas of dark palettes while retaining hue and saturation.
+fn shaded(color: Hsla, dark: bool) -> Hsla {
+    let rgba = Rgba::from(color);
+    let luminance =
+        0.2126 * rgba.r.powf(2.2) + 0.7152 * rgba.g.powf(2.2) + 0.0722 * rgba.b.powf(2.2);
+    let kept = match dark && luminance > 0.14 {
+        true => (0.14 / luminance).powf(1. / 2.2),
+        false => 1.,
+    };
+    Hsla::from(Rgba {
+        r: rgba.r * kept,
+        g: rgba.g * kept,
+        b: rgba.b * kept,
+        a: rgba.a,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Theme;
 
     fn image(colours: &[([u8; 3], usize)]) -> Vec<u8> {
         colours
@@ -275,5 +397,53 @@ mod tests {
 
         assert!(palette.primary.is_some());
         assert!(palette.secondary.is_none());
+    }
+
+    fn tinted(hue: f32) -> Theme {
+        let mut theme = Theme::dark();
+        theme.tint = Some(Hsla {
+            h: hue,
+            s: 0.6,
+            l: 0.4,
+            a: 1.,
+        });
+        theme.selection = Hsla {
+            h: hue,
+            s: 0.7,
+            l: 0.44,
+            a: 1.,
+        };
+        theme.tint_secondary = Some(Hsla {
+            h: (hue + 0.5).rem_euclid(1.),
+            s: 0.6,
+            l: 0.4,
+            a: 1.,
+        });
+        theme
+    }
+
+    #[test]
+    fn accent_theme_yields_its_family() {
+        let colors = AmbientPalette::colors(&tinted(0.78), None);
+
+        for (index, color) in colors.iter().enumerate() {
+            // The runner-up sits in slot two; everything else is family.
+            if index == 2 {
+                let gap = (color.h - 0.28).abs().min(1. - (color.h - 0.28).abs());
+                assert!(gap < 0.06, "second hue was {}", color.h);
+                continue;
+            }
+            let gap = (color.h - 0.78).abs().min(1. - (color.h - 0.78).abs());
+            assert!(gap < 0.06, "hue was {}", color.h);
+        }
+        assert!(colors[1].l > colors[0].l, "highlight lifts");
+        assert!(colors[3].l < colors[0].l, "shadow sinks");
+    }
+
+    #[test]
+    fn untinted_theme_yields_neutrals() {
+        let colors = AmbientPalette::colors(&Theme::dark(), None);
+
+        assert!(colors.iter().all(|color| color.s < 0.2));
     }
 }

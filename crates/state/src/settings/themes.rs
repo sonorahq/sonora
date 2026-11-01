@@ -112,6 +112,14 @@ impl ThemeVariant {
         Theme::for_kind(ThemeKind::Dark).with_overrides(&self.overrides)
     }
 
+    /// The appearance that matches this variant's background.
+    pub fn kind(&self) -> ThemeKind {
+        match self.is_light() {
+            true => ThemeKind::Light,
+            false => ThemeKind::Dark,
+        }
+    }
+
     /// Whether the variant has a light background, which is how a family picks the variant that
     /// matches the system appearance.
     pub fn is_light(&self) -> bool {
@@ -135,6 +143,13 @@ pub struct ThemeFamily {
 impl ThemeFamily {
     pub fn variant(&self, id: &str) -> Option<&ThemeVariant> {
         self.variants.iter().find(|variant| variant.id == id)
+    }
+
+    /// Variants eligible for this appearance; System offers both polarities.
+    pub fn variants_for(&self, kind: ThemeKind) -> impl Iterator<Item = &ThemeVariant> + Clone {
+        self.variants.iter().filter(move |variant| {
+            kind == ThemeKind::System || variant.is_light() == (kind == ThemeKind::Light)
+        })
     }
 }
 
@@ -696,7 +711,7 @@ fn utf8_stem(path: &Path) -> Option<&str> {
 
 /// Whether `id` is taken by a built-in theme, which a theme file cannot replace.
 fn reserved(id: &str) -> bool {
-    ThemeKind::ALL.into_iter().any(|kind| kind.id() == id)
+    matches!(id, "default" | "ambient")
 }
 
 /// Names a family after the words all its variant titles share and each variant after the rest

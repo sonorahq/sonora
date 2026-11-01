@@ -17,6 +17,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the page under the name. Artists without a banner get a soft wash of their photo's colours.
 - Local songs read word-by-word lyrics from a `.ttml` file beside them or from TTML in their
   lyrics tag.
+- Drop a song onto a playlist you own or collaborate on in the sidebar to add it to that playlist.
+- Ambient brings artwork colours throughout the app and Now playing, with adjustable strength
+  and motion intensity. Colours fade between songs, including playback on another device.
 
 ### Changed
 
@@ -26,6 +29,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The tray menu and taskbar buttons follow the song of the Jam or device you are listening to.
 - A song's right-click menu groups Artist, Album, Radio and Details under one Go to submenu.
 - Sorting by Date added puts the songs you added most recently first.
+- Quick picks on Home no longer shows your account name above its title.
+- Choose System, Dark or Light appearance separately from your colour theme.
 
 ### Fixed
 
@@ -98,6 +103,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - System media controls, Discord and album pages show Spotify covers at 640 pixels instead of 300.
 - Lyrics that mark thousandths of a second with a colon, such as `[00:01:050]`, stay on time
   instead of running almost half a second late.
+- The sidebars, title bar and player bar now use the same frame border colour.
+- Player-bar layout previews now follow the selected corner shape.
 
 ## [0.45.0] - 2026-10-27
 
