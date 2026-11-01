@@ -1108,7 +1108,7 @@ impl SubsonicClient {
         track_id: &str,
     ) -> Result<opensubsonic::data::LyricsList> {
         self.client
-            .get_lyrics_by_song_id(track_id, None)
+            .get_lyrics_by_song_id(track_id, Some(true))
             .await
             .context("cannot fetch the structured lyrics")
     }
