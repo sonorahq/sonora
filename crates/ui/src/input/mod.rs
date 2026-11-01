@@ -260,6 +260,8 @@ pub struct Input {
     marked_range: Option<Range<usize>>,
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
+    /// How far text wider than the field is moved left, so the caret stays in view.
+    scroll: Pixels,
     selecting: bool,
     selected_word: Option<Range<usize>>,
     context_menu: Option<Point<Pixels>>,
@@ -286,6 +288,7 @@ impl Input {
             marked_range: None,
             last_layout: None,
             last_bounds: None,
+            scroll: Pixels::ZERO,
             selecting: false,
             selected_word: None,
             context_menu: None,
@@ -887,12 +890,9 @@ impl EntityInputHandler for Input {
             true => mask_map(&self.content)[offset],
             false => offset,
         };
-        Some(span(
-            line,
-            at(range.start)..at(range.end),
-            bounds.left(),
-            bounds,
-        ))
+        // the text starts where it was last painted, left of the field when it scrolled
+        let left = self.last_bounds?.left();
+        Some(span(line, at(range.start)..at(range.end), left, bounds))
     }
 
     fn character_index_for_point(
