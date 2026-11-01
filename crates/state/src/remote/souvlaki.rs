@@ -10,7 +10,7 @@ use souvlaki::{
 };
 use tokio::sync::mpsc;
 
-use super::{BUS_NAME, Command, DISPLAY_NAME};
+use super::{BUS_NAME, Capabilities, Command, DISPLAY_NAME};
 use crate::{PlaybackState, Repeat};
 
 const SEEK_STEP: Duration = Duration::from_secs(5);
@@ -43,13 +43,23 @@ impl Controls {
         Ok(Self { controls })
     }
 
-    pub fn describe(&mut self, track: Option<&Track>, cover: Option<&str>, _cx: &App) {
+    pub fn describe(
+        &mut self,
+        track: Option<&Track>,
+        cover: Option<&str>,
+        total: Duration,
+        _cx: &App,
+    ) {
+        let duration = match total.is_zero() {
+            true => track.map(|t| t.duration),
+            false => Some(total),
+        };
         let metadata = match track {
             Some(track) => MediaMetadata {
                 title: Some(&track.name),
                 artist: Some(&track.artists),
                 album: Some(&track.album),
-                duration: Some(track.duration),
+                duration,
                 cover_url: cover,
             },
             None => MediaMetadata::default(),
@@ -59,11 +69,18 @@ impl Controls {
         }
     }
 
-    pub fn set_playback(&mut self, state: &PlaybackState, at: Duration) {
+    pub fn set_playback(
+        &mut self,
+        state: &PlaybackState,
+        at: Duration,
+        wants_playing: bool,
+        _is_seeking: bool,
+    ) {
         let progress = Some(MediaPosition(at));
         let playback = match state {
-            PlaybackState::Playing | PlaybackState::Loading => MediaPlayback::Playing { progress },
-            PlaybackState::Paused => MediaPlayback::Paused { progress },
+            PlaybackState::Playing => MediaPlayback::Playing { progress },
+            PlaybackState::Loading if wants_playing => MediaPlayback::Playing { progress },
+            PlaybackState::Loading | PlaybackState::Paused => MediaPlayback::Paused { progress },
             PlaybackState::Idle | PlaybackState::Failed(_) => MediaPlayback::Stopped,
         };
         if let Err(error) = self.controls.set_playback(playback) {
@@ -78,12 +95,15 @@ impl Controls {
     pub fn set_shuffle(&mut self, _on: bool) {}
 
     pub fn set_repeat(&mut self, _repeat: Repeat) {}
+
+    pub fn set_capabilities(&mut self, _caps: Capabilities) {}
 }
 
 fn command(event: MediaControlEvent) -> Option<Command> {
     Some(match event {
         MediaControlEvent::Play => Command::Play,
-        MediaControlEvent::Pause | MediaControlEvent::Stop => Command::Pause,
+        MediaControlEvent::Pause => Command::Pause,
+        MediaControlEvent::Stop => Command::Stop,
         MediaControlEvent::Toggle => Command::Toggle,
         MediaControlEvent::Next => Command::Next,
         MediaControlEvent::Previous => Command::Previous,

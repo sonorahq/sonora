@@ -8,6 +8,7 @@ use gpui::{App, AppContext as _, Context, Entity, Global, Task};
 use music::Track;
 use tokio::sync::mpsc;
 
+use crate::playback::PlaybackEvent;
 use crate::{Cover, Io, Playback, PlaybackState, Queue, Repeat, Sonora, join};
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -41,10 +42,17 @@ impl Global for Attached {}
 enum Command {
     Play,
     Pause,
+    Stop,
     Toggle,
     Next,
     Previous,
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     Seek(Duration),
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    SetPosition {
+        track_id: zbus::ObjectPath<'static>,
+        at: Duration,
+    },
     Forward(Duration),
     Back(Duration),
     Volume(f64),
@@ -53,6 +61,47 @@ enum Command {
     Shuffle(bool),
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     Repeat(Repeat),
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    Raise,
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    Quit,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Capabilities {
+    pub can_play: bool,
+    pub can_pause: bool,
+    pub can_seek: bool,
+    pub can_go_next: bool,
+    pub can_go_previous: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReportedState {
+    state: PlaybackState,
+    wants_playing: bool,
+    is_seeking: bool,
+}
+
+fn reported_state(playback: &Playback, cx: &App) -> ReportedState {
+    let steered = playback.steered(cx);
+    let state = match steered.as_ref() {
+        Some(steered) => match steered.state.playing {
+            true => PlaybackState::Playing,
+            false => PlaybackState::Paused,
+        },
+        None => playback.state().clone(),
+    };
+    let wants_playing = match steered.as_ref() {
+        Some(steered) => steered.state.playing,
+        None => playback.wants_playing(),
+    };
+    let is_seeking = playback.is_seeking();
+    ReportedState {
+        state,
+        wants_playing,
+        is_seeking,
+    }
 }
 
 /// Publishes what plays to the system media controls and carries their requests back. The
@@ -90,15 +139,16 @@ pub struct Remote {
     /// the stream loads can be republished without dropping the cover already on show.
     art: Option<String>,
     length: Option<Duration>,
-    reported: Option<PlaybackState>,
+    reported: Option<ReportedState>,
     at: Duration,
-    /// When `at` was published, so the next position can be checked against steady playback.
     stamp: Instant,
     volume: Option<f32>,
     shuffle: Option<bool>,
     repeat: Option<Repeat>,
     artwork: Option<Task<()>>,
     _events: Task<()>,
+    pending_seek: bool,
+    capabilities: Option<Capabilities>,
 }
 
 impl Remote {
@@ -124,6 +174,12 @@ impl Remote {
         // the media controls show the position as it moves
         let ticks = playback.read(cx).ticks().clone();
         cx.observe(&ticks, |this, _, cx| this.publish(cx)).detach();
+        cx.subscribe(&playback, |this, _, event, cx| {
+            if let PlaybackEvent::Seeked(at) = event {
+                this.on_seeked(*at, cx);
+            }
+        })
+        .detach();
         cx.observe(&queue, |this, _, cx| this.publish(cx)).detach();
         // the album art resolves after the track it belongs to, so republish when it lands
         cx.observe(&cover, |this, _, cx| this.publish(cx)).detach();
@@ -145,50 +201,132 @@ impl Remote {
             repeat: None,
             artwork: None,
             _events,
+            pending_seek: false,
+            capabilities: None,
         }
     }
 
+    fn on_seeked(&mut self, at: Duration, cx: &mut Context<Self>) {
+        let playback = self.playback.read(cx);
+        let current = reported_state(playback, cx);
+        self.pending_seek =
+            matches!(current.state, PlaybackState::Loading) && current.wants_playing;
+        self.reported = Some(current.clone());
+        self.at = at;
+        self.stamp = Instant::now();
+        self.controls.set_playback(
+            &current.state,
+            at,
+            current.wants_playing,
+            current.is_seeking,
+        );
+        self.controls.seeked(at);
+    }
+
     fn act(&mut self, command: Command, cx: &mut Context<Self>) {
-        self.playback
-            .clone()
-            .update(cx, |playback, cx| match command {
-                Command::Play => playback.resume(cx),
-                Command::Pause => playback.pause(cx),
-                Command::Toggle => playback.toggle_play(cx),
-                Command::Next => playback.next(cx),
-                Command::Previous => playback.previous(cx),
-                Command::Seek(at) => playback.seek(at, cx),
-                Command::Forward(step) => {
-                    shift(playback, playback.position().saturating_add(step), cx)
+        match command {
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            Command::Raise => {
+                for window in cx.windows() {
+                    let _ = window.update(cx, |_, window, _| {
+                        window.activate_window();
+                    });
                 }
-                Command::Back(step) => {
-                    shift(playback, playback.position().saturating_sub(step), cx)
-                }
-                Command::Volume(level) => playback.set_volume(level as f32, cx),
-                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                Command::Repeat(repeat) => playback.set_repeat(repeat, cx),
-                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                Command::Shuffle(on) => playback.set_shuffle(on, cx),
-            });
+                cx.activate(true);
+            }
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            Command::Quit => cx.quit(),
+            command => {
+                self.playback.update(cx, |playback, cx| match command {
+                    Command::Play => playback.resume(cx),
+                    Command::Pause => playback.pause(cx),
+                    Command::Stop => {
+                        if playback.shown_track(cx).is_some() {
+                            playback.pause(cx);
+                            playback.seek(Duration::ZERO, cx);
+                        }
+                    }
+                    Command::Toggle => playback.toggle_play(cx),
+                    Command::Next => playback.next(cx),
+                    Command::Previous => playback.previous(cx),
+                    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+                    Command::Seek(at) => playback.seek(at, cx),
+                    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                    Command::SetPosition { track_id, at } => {
+                        let (_, total) = playback.shown_time(cx);
+                        if !total.is_zero()
+                            && at <= total
+                            && playback
+                                .shown_track(cx)
+                                .is_some_and(|track| mpris::track_id(&track) == track_id)
+                        {
+                            playback.seek(at, cx);
+                        }
+                    }
+                    Command::Forward(step) => {
+                        let (at, total) = playback.seek_origin(cx);
+                        if total.is_zero() {
+                            return;
+                        }
+                        let target = at.saturating_add(step);
+                        let wrap_next = cfg!(any(target_os = "linux", target_os = "freebsd"));
+                        match wrap_next && target > total {
+                            true => playback.next(cx),
+                            false => playback.seek(target.min(total), cx),
+                        }
+                    }
+                    Command::Back(step) => {
+                        let (at, total) = playback.seek_origin(cx);
+                        if total.is_zero() {
+                            return;
+                        }
+                        playback.seek(at.saturating_sub(step), cx);
+                    }
+                    Command::Volume(level) => playback.set_volume(level as f32, cx),
+                    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                    Command::Repeat(repeat) => playback.set_repeat(repeat, cx),
+                    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                    Command::Shuffle(on) => playback.set_shuffle(on, cx),
+                    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                    Command::Raise | Command::Quit => {}
+                });
+            }
+        }
     }
 
     fn publish(&mut self, cx: &mut Context<Self>) {
         let playback = self.playback.read(cx);
-        // Desktop media widgets follow the same device the player bar shows. In particular,
-        // Spotify Connect playback can be active on a phone while the local engine is idle.
+        let current = reported_state(playback, cx);
         let steered = playback.steered(cx);
-        let state = match steered.as_ref() {
-            Some(steered) => match steered.state.playing {
-                true => PlaybackState::Playing,
-                false => PlaybackState::Paused,
-            },
-            None => playback.state().clone(),
+        let (shown, total) = playback.shown_time(cx);
+        let at = match steered.is_some() {
+            true => shown,
+            false => playback.live_position(),
         };
-        let (at, _) = playback.shown_time(cx);
         let track = playback.shown_track(cx);
         let volume = playback.shown_volume(cx);
         let repeat = playback.shown_repeat(cx);
         let shuffle = playback.shown_shuffle(cx);
+
+        let queue_view = playback.shown_queue(cx);
+        let can_play = track.is_some();
+        let can_pause = track.is_some();
+        let can_seek = !total.is_zero();
+        let can_go_next = queue_view.sections.upcoming > 0
+            || (track.is_some() && (repeat == Repeat::All || steered.is_some()));
+        let can_go_previous = (track.is_some() && steered.is_some()) || playback.has_previous(cx);
+
+        let capabilities = Capabilities {
+            can_play,
+            can_pause,
+            can_seek,
+            can_go_next,
+            can_go_previous,
+        };
+        if self.capabilities != Some(capabilities) {
+            self.capabilities = Some(capabilities);
+            self.controls.set_capabilities(capabilities);
+        }
 
         if self.volume != Some(volume) {
             self.volume = Some(volume);
@@ -207,6 +345,9 @@ impl Remote {
         let id = track.and_then(|track| track.id.as_deref());
         let cover = track.and_then(|track| self.artwork_url(track, cx));
         let moved = id != self.shown.as_deref();
+        if moved {
+            self.pending_seek = false;
+        }
         if moved || cover != self.source.as_deref() {
             self.shown = id.map(str::to_owned);
             self.source = cover.map(str::to_owned);
@@ -224,30 +365,51 @@ impl Remote {
                 self.artwork = Some(self.fetch_artwork(track, url, cx));
             }
         }
-        if track.map(|track| track.duration) != self.length {
+        if self.length != Some(total) {
             let art = self.art.take();
             self.describe(track, art.as_deref(), cx);
         }
 
-        if self.reported.as_ref() == Some(&state) && self.at.as_secs() == at.as_secs() {
-            return;
+        if matches!(current.state, PlaybackState::Loading) && current.wants_playing {
+            self.pending_seek = true;
         }
-        let expected = match self.reported {
-            Some(PlaybackState::Playing) => self.at.saturating_add(self.stamp.elapsed()),
+
+        let expected = match self.reported.as_ref() {
+            Some(r) if r.state == PlaybackState::Playing && !r.is_seeking => {
+                self.at.saturating_add(self.stamp.elapsed())
+            }
             _ => self.at,
         };
-        let jumped = !moved && at.abs_diff(expected) > SEEK_SLACK;
-        let steady = !moved && !jumped && self.reported.as_ref() == Some(&state);
-        self.reported = Some(state.clone());
+        let jumped = !moved
+            && !current.is_seeking
+            && self.shown.is_some()
+            && current.state != PlaybackState::Loading
+            && at.abs_diff(expected) > SEEK_SLACK;
+        let resync = !moved && self.pending_seek && current.state == PlaybackState::Playing;
+        if resync {
+            self.pending_seek = false;
+        }
+        let status_changed = self.reported.as_ref() != Some(&current);
+
+        // macos runs the clock
+        if cfg!(target_os = "macos") && !status_changed && !moved && !jumped && !resync {
+            return;
+        }
+
+        if !status_changed && !moved && !jumped && !resync && self.at.as_secs() == at.as_secs() {
+            return;
+        }
+        self.reported = Some(current.clone());
         self.at = at;
         self.stamp = Instant::now();
 
-        // macos runs the clock
-        if cfg!(target_os = "macos") && steady {
-            return;
-        }
-        self.controls.set_playback(&state, at);
-        if jumped {
+        self.controls.set_playback(
+            &current.state,
+            at,
+            current.wants_playing,
+            current.is_seeking,
+        );
+        if jumped || resync {
             self.controls.seeked(at);
         }
     }
@@ -256,9 +418,10 @@ impl Remote {
 impl Remote {
     /// Hands the track to the widget and remembers what it was given.
     fn describe(&mut self, track: Option<&Track>, cover: Option<&str>, cx: &App) {
-        self.controls.describe(track, cover, cx);
+        let total = self.playback.read(cx).shown_time(cx).1;
+        self.controls.describe(track, cover, total, cx);
         self.art = cover.map(str::to_owned);
-        self.length = track.map(|track| track.duration);
+        self.length = Some(total);
     }
 
     /// The cover to publish: the album art `Cover` resolves once it arrives, the thumbnail the
@@ -373,13 +536,4 @@ fn trim(dir: &Path) {
 
 fn extension(format: image::ImageFormat) -> &'static str {
     format.extensions_str().first().copied().unwrap_or("img")
-}
-
-/// Seeks to `target`, held inside the current track.
-fn shift(playback: &mut Playback, target: Duration, cx: &mut Context<Playback>) {
-    let end = playback
-        .track()
-        .map(|track| track.duration)
-        .unwrap_or(target);
-    playback.seek(target.min(end), cx);
 }

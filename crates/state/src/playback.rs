@@ -305,8 +305,8 @@ pub enum PlaybackEvent {
     StartedPlayback,
     EndedPlayback,
     Paused,
-    /// The engine landed a seek, playing or paused.
-    Seeked,
+    /// The position landed by a seek, or applied to an unloaded or remote track.
+    Seeked(Duration),
 }
 
 /// Remembers the level silenced by a temporary mute, without saving it as a volume preference.
@@ -2550,6 +2550,9 @@ impl Playback {
             return;
         };
         self.track = Some(track);
+        self.seek_in_flight = None;
+        self.seek_next = None;
+        self.seek_target = None;
         self.resume_at = Some(Duration::ZERO);
         self.remember(true, cx);
         self.prepare_resume(cx);
@@ -2569,6 +2572,9 @@ impl Playback {
     /// Keeps the current track paused at `at` without asking the engine for it, so play loads
     /// it from there.
     fn hold(&mut self, at: Duration, cx: &mut Context<Self>) {
+        self.seek_in_flight = None;
+        self.seek_next = None;
+        self.seek_target = None;
         self.intent = Intent::Pause;
         self.state = PlaybackState::Paused;
         self.position = at;
@@ -2630,6 +2636,7 @@ impl Playback {
             self.seeks += 1;
         }
         if self.steer(|_| Command::Seek(position), cx) {
+            cx.emit(PlaybackEvent::Seeked(position));
             return;
         }
         if self.resume_at.is_some() {
@@ -2642,6 +2649,7 @@ impl Playback {
             self.position = position;
             self.clock.reset(position, false);
             self.remember(true, cx);
+            cx.emit(PlaybackEvent::Seeked(position));
             cx.notify();
             return;
         }
@@ -2656,7 +2664,7 @@ impl Playback {
         self.position = position;
         self.clock.reset(position, false);
         self.seek_target = Some(position);
-        let playing = self.state == PlaybackState::Playing;
+        let playing = self.state == PlaybackState::Playing && self.intent == Intent::Play;
         let parked = playing && self.seek_in_flight.is_some();
         log::debug!(
             "playback: seek to {position:?} while {:?}{}",
@@ -2673,7 +2681,12 @@ impl Playback {
                 self.stale_positions = 0;
                 self.send_seek(position);
             }
-            (false, _) => self.send_seek(position),
+            (false, _) => {
+                self.seek_in_flight = None;
+                self.seek_next = None;
+                self.send_seek(position);
+                cx.emit(PlaybackEvent::Seeked(position));
+            }
         }
         cx.notify();
     }
@@ -2704,23 +2717,11 @@ impl Playback {
 
     /// Seeks to a share of the track, as the progress bar asks.
     pub fn seek_fraction(&mut self, fraction: f32, cx: &mut Context<Self>) {
-        let seek = |remote: &Elsewhere| {
-            Command::Seek(remote.state.duration.mul_f32(fraction.clamp(0., 1.)))
-        };
-        if self.steer(seek, cx) {
+        let (_, total) = self.shown_time(cx);
+        if total.is_zero() {
             return;
         }
-        let Some(total) = self
-            .track
-            .as_ref()
-            .map(|track| track.duration)
-            .filter(|total| !total.is_zero())
-        else {
-            return;
-        };
-
-        let position = Duration::from_secs_f32(total.as_secs_f32() * fraction.clamp(0., 1.));
-        self.seek(position, cx);
+        self.seek(total.mul_f32(fraction.clamp(0., 1.)), cx);
     }
 
     /// How many seeks the listener asked for since launch.
@@ -2763,6 +2764,10 @@ impl Playback {
             Some(total) if !total.is_zero() => live.min(total),
             _ => live,
         }
+    }
+
+    pub fn is_seeking(&self) -> bool {
+        self.seek_in_flight.is_some() || self.seek_next.is_some()
     }
 
     pub fn track(&self) -> Option<&Track> {
@@ -2869,17 +2874,23 @@ impl Playback {
         self.set_volume(level, cx);
     }
 
-    /// Moves `SEEK_STEP` forward or back through the shown track, stopping at its start and end.
-    /// Seeks the other device while one is steered, and does nothing without a track.
-    pub fn skip(&mut self, forward: bool, cx: &mut Context<Self>) {
+    /// Returns the position to seek from and the total duration for relative seeks.
+    pub fn seek_origin(&self, cx: &App) -> (Duration, Duration) {
         let (shown, total) = self.shown_time(cx);
-        if total.is_zero() {
-            return;
-        }
         let at = match self.steered(cx) {
             Some(_) => shown,
             None => self.seek_target.unwrap_or_else(|| self.live_position()),
         };
+        (at, total)
+    }
+
+    /// Moves `SEEK_STEP` forward or back through the shown track, stopping at its start and end.
+    /// Seeks the other device while one is steered, and does nothing without a track.
+    pub fn skip(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let (at, total) = self.seek_origin(cx);
+        if total.is_zero() {
+            return;
+        }
         self.seek(seek_target(at, total, forward), cx);
     }
 
@@ -3322,6 +3333,7 @@ impl Playback {
         {
             return;
         }
+        let seeking = self.seek_in_flight.is_some();
         match event {
             // A Loading with the current id is the engine restarting the load at a seek
             // target, so a seek queued behind it must survive.
@@ -3337,6 +3349,7 @@ impl Playback {
             _ => {
                 self.seek_in_flight = None;
                 self.seek_next = None;
+                self.seek_target = None;
             }
         }
         match event {
@@ -3377,9 +3390,13 @@ impl Playback {
                 if started {
                     cx.emit(PlaybackEvent::StartedPlayback);
                 }
+                if seeking && self.seek_next.is_none() {
+                    cx.emit(PlaybackEvent::Seeked(at));
+                }
                 self.follow_up_seek(cx);
             }
             BackendEvent::Paused { at, .. } => {
+                let at = self.seek_target.unwrap_or(at);
                 self.intent = Intent::Pause;
                 self.pressed = None;
                 self.state = PlaybackState::Paused;
@@ -3388,14 +3405,20 @@ impl Playback {
                 self.clock.reset(at, false);
                 self.remember(true, cx);
                 cx.emit(PlaybackEvent::Paused);
+                if seeking && self.seek_next.is_none() {
+                    cx.emit(PlaybackEvent::Seeked(at));
+                }
                 self.follow_up_seek(cx);
             }
             BackendEvent::Seeked { at, .. } => {
                 let at = self.landed(at);
+                let corrected = self.position != at;
                 self.position = at;
                 self.clock.reset(at, self.state == PlaybackState::Playing);
                 self.remember(true, cx);
-                cx.emit(PlaybackEvent::Seeked);
+                if (seeking || corrected) && self.seek_next.is_none() {
+                    cx.emit(PlaybackEvent::Seeked(at));
+                }
                 self.follow_up_seek(cx);
             }
             BackendEvent::Position { at, .. } => {
@@ -3409,6 +3432,7 @@ impl Playback {
                     self.seek_in_flight = None;
                     failed = true;
                 }
+                self.seek_target = None;
                 self.position = at;
                 match (self.state == PlaybackState::Playing, failed) {
                     (true, true) => self.clock.reset(at, true),
