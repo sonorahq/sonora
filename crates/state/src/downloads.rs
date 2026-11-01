@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
@@ -9,7 +8,6 @@ use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use storage::Database;
 
-use crate::catalog::CatalogSource;
 use crate::{
     Collection, Io, Network, Outcome, Playback, Reconnected, Session, SessionEvent, SessionState,
     Target, Toast, Toasts, join,
@@ -58,17 +56,30 @@ pub struct Active {
     pub id: String,
     pub cover: Option<String>,
     pub name: SharedString,
-    /// How many of its tracks are in, out of how many can be downloaded.
-    pub done: usize,
-    pub total: usize,
-    /// How much of it is in, from 0 to 1, counting the tracks that are part-way.
+    /// Its tracks still to come, the running ones first and the rest in the order it lists them.
+    pub left: Vec<Pending>,
+}
+
+/// A track still on its way, as the list of running downloads shows it.
+#[derive(Clone, Debug)]
+pub struct Pending {
+    pub id: String,
+    pub name: SharedString,
+    pub artists: SharedString,
+    pub running: bool,
+    /// How much of a running track has arrived, from 0 to 1, when the provider can tell.
+    pub fraction: Option<f32>,
+}
+
+/// Everything still downloading, taken together.
+#[derive(Clone, Copy, Debug)]
+pub struct Remaining {
+    /// How many tracks are still to come, each counted once however many downloads hold it.
+    pub songs: usize,
+    /// How much of all the running downloads is in, from 0 to 1.
     pub share: f32,
-    /// How long the rest of it should take at the pace of the latest downloads.
+    /// How long the rest should take at the pace of the latest downloads.
     pub eta: Option<Duration>,
-    /// Tracks finished per minute lately, when enough have to say.
-    pub per_minute: Option<f32>,
-    /// The tracks running now, with how much of each has arrived when the provider can tell.
-    pub current: Vec<(SharedString, Option<f32>)>,
 }
 
 /// Raised when what a Downloaded filter shows may have changed, which is when a track finished
@@ -109,15 +120,6 @@ struct Entry {
     done: bool,
 }
 
-/// A toast that follows a download the listener asked for until none of its tracks is left to
-/// wait for, then says how it went.
-struct Watched {
-    toast: usize,
-    /// The tracks it counts. One taken off the downloads leaves the count.
-    ids: Vec<String>,
-    about: About,
-}
-
 /// What a download toast names.
 #[derive(Clone)]
 enum About {
@@ -143,41 +145,27 @@ impl About {
         }
     }
 
-    /// The toast for where the download stands: `Loading` while it runs, `Done` once every
-    /// track came in, and anything else once some could not.
-    fn toast(&self, outcome: Outcome) -> Toast {
-        let key = match (self, outcome) {
-            (Self::Set { .. } | Self::Song { .. }, Outcome::Loading) => "toast-downloading",
-            (Self::Set { .. } | Self::Song { .. }, Outcome::Done) => "toast-downloaded",
-            (Self::Set { .. }, _) => "toast-download-set-failed",
-            (Self::Song { .. }, _) => "toast-download-song-failed",
-            (Self::Songs(_), Outcome::Loading) => "toast-downloading-songs",
-            (Self::Songs(_), Outcome::Done) => "toast-downloaded-songs",
-            (Self::Songs(_), _) => "toast-download-songs-failed",
-        };
-        // A failure goes on past the name, so only it wraps rather than lose its end.
-        let toast = match outcome {
-            Outcome::Loading | Outcome::Done => Toast::new(outcome, key).single_line(),
-            _ => Toast::new(outcome, key),
-        };
-        match self {
-            Self::Set { name, target } | Self::Song { name, target } => {
-                toast.name(name.clone()).target(Some(target.clone()))
-            }
-            Self::Songs(count) => toast.count(*count),
-        }
+    /// The toast that says the download started.
+    fn started(&self) -> Toast {
+        self.toast("toast-download-started", "toast-downloads-started")
     }
 
     /// The toast that says the download was cancelled.
     fn cancelled(&self) -> Toast {
+        self.toast("toast-download-cancelled", "toast-downloads-cancelled")
+    }
+
+    /// A one-line toast that names the album, playlist or song with `named`, or counts the songs
+    /// with `counted`.
+    fn toast(&self, named: &'static str, counted: &'static str) -> Toast {
         match self {
             Self::Set { name, target } | Self::Song { name, target } => {
-                Toast::new(Outcome::Plain, "toast-download-cancelled")
+                Toast::new(Outcome::Plain, named)
                     .single_line()
                     .name(name.clone())
                     .target(Some(target.clone()))
             }
-            Self::Songs(count) => Toast::new(Outcome::Plain, "toast-downloads-cancelled")
+            Self::Songs(count) => Toast::new(Outcome::Plain, counted)
                 .single_line()
                 .count(*count),
         }
@@ -239,9 +227,7 @@ pub struct Downloads {
     /// line when the network returns.
     stalled: HashSet<String>,
     /// Fetches the tracks of an album or playlist asked for from a menu, which has none to hand.
-    fetching: HashMap<String, (usize, Task<()>)>,
-    /// The toasts following the downloads the listener asked for.
-    watched: Vec<Watched>,
+    fetching: HashMap<String, Task<()>>,
     restore: Option<Task<()>>,
 }
 
@@ -306,7 +292,6 @@ impl Downloads {
             failed: HashSet::new(),
             stalled: HashSet::new(),
             fetching: HashMap::new(),
-            watched: Vec::new(),
             restore: None,
         }
     }
@@ -334,13 +319,17 @@ impl Downloads {
     }
 
     /// Where a downloaded album or playlist stands, taken from the tracks in it that can be
-    /// downloaded. `None` when it was never downloaded as a whole.
+    /// downloaded. A track that failed is skipped, so the rest still finish the set, and the set
+    /// only fails when every track did. `None` when it was never downloaded as a whole.
     pub fn set(&self, kind: Collection, id: &str) -> Option<Progress> {
         let set = self.sets.get(&(kind, id.to_owned()))?;
-        let states: Vec<Progress> = set
-            .ids()
+        let states: Vec<Progress> = self
+            .counted(set)
             .map(|id| self.track(id).unwrap_or(Progress::Failed))
             .collect();
+        if states.is_empty() && set.ids().next().is_some() {
+            return Some(Progress::Failed);
+        }
         Some(if states.iter().all(|state| *state == Progress::Done) {
             Progress::Done
         } else if states.contains(&Progress::Running) {
@@ -355,7 +344,7 @@ impl Downloads {
     /// How many of a downloaded set's tracks are in, and how many of them can be downloaded.
     pub fn counts(&self, kind: Collection, id: &str) -> Option<(usize, usize)> {
         let set = self.sets.get(&(kind, id.to_owned()))?;
-        let ids = set.ids();
+        let ids = self.counted(set);
         let done = ids.clone().filter(|id| self.has(id)).count();
         Some((done, ids.count()))
     }
@@ -371,79 +360,116 @@ impl Downloads {
         Some((self.finished_at.len() - 1) as f32 / span * 60.)
     }
 
-    /// The albums, playlists and songs still downloading, by name, with how far each has come
-    /// and the tracks of it running now.
+    /// The albums and playlists still downloading by name, then the songs picked one by one, each
+    /// with the tracks of it still to come.
     pub fn active(&self) -> Vec<Active> {
-        let per_minute = self.pace();
         let mut active: Vec<Active> = self
-            .sets
-            .iter()
-            .filter(|((kind, id), _)| {
-                matches!(self.set(*kind, id), Some(Progress::Waiting | Progress::Running))
-            })
-            .map(|((kind, id), set)| {
-                let (name, count, cover, subject) = match &set.head {
-                    Head::Album(album) => (
-                        album.name.clone(),
-                        album.id.clone(),
-                        album.cover.clone(),
-                        Subject::Album,
-                    ),
+            .active_sets()
+            .map(|(_, set)| {
+                let (name, id, cover, subject) = match &set.head {
+                    Head::Album(album) => (&album.name, &album.id, &album.cover, Subject::Album),
                     Head::Playlist(playlist) => (
-                        playlist.name.clone(),
-                        playlist.id.clone(),
-                        playlist.cover.clone(),
+                        &playlist.name,
+                        &playlist.id,
+                        &playlist.cover,
                         Subject::Playlist,
                     ),
                 };
-                let (done, total) = self.counts(*kind, id).unwrap_or_default();
+                let mut left: Vec<Pending> = set
+                    .tracks
+                    .iter()
+                    .filter(|track| downloadable(track))
+                    .filter_map(|track| self.pending(track))
+                    .collect();
+                left.sort_by_key(|pending| !pending.running);
                 Active {
                     subject,
-                    id: count,
-                    cover,
-                    name: name.into(),
-                    done,
-                    total,
-                    share: self.share(*kind, id),
-                    eta: per_minute.map(|rate| {
-                        Duration::from_secs_f32(total.saturating_sub(done) as f32 / rate * 60.)
-                    }),
-                    per_minute,
-                    current: set
-                        .tracks
-                        .iter()
-                        .filter(|track| {
-                            track
-                                .id
-                                .as_deref()
-                                .is_some_and(|id| self.running.contains_key(id))
-                        })
-                        .map(|track| {
-                            let fraction = track.id.as_deref().and_then(|id| self.fraction(id));
-                            (SharedString::from(track.name.clone()), fraction)
-                        })
-                        .collect(),
+                    id: id.clone(),
+                    cover: cover.clone(),
+                    name: name.clone().into(),
+                    left,
                 }
             })
             .collect();
-        active.extend(self.songs.iter().filter_map(|(id, track)| {
-            let waiting = matches!(self.track(id)?, Progress::Waiting | Progress::Running);
-            let arrived = self.fraction(id);
-            waiting.then(|| Active {
-                subject: Subject::Song,
-                id: id.clone(),
-                cover: track.cover.clone(),
-                name: track.name.clone().into(),
-                done: 0,
-                total: 1,
-                share: arrived.unwrap_or(0.),
-                eta: per_minute.map(|rate| Duration::from_secs_f32(60. / rate)),
-                per_minute,
-                current: Vec::new(),
-            })
-        }));
         active.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+        let mut songs: Vec<Active> = self
+            .songs
+            .iter()
+            .filter_map(|(id, track)| {
+                let pending = self.pending(track)?;
+                Some(Active {
+                    subject: Subject::Song,
+                    id: id.clone(),
+                    cover: track.cover.clone(),
+                    name: track.name.clone().into(),
+                    left: vec![pending],
+                })
+            })
+            .collect();
+        songs.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+        active.extend(songs);
         active
+    }
+
+    /// How many tracks are still to come over every running download, how much of them is in
+    /// and how long the rest should take. `None` while nothing is downloading.
+    pub fn remaining(&self) -> Option<Remaining> {
+        let mut ids: Vec<&str> = self
+            .active_sets()
+            .flat_map(|(_, set)| self.counted(set))
+            .collect();
+        ids.extend(
+            self.songs
+                .keys()
+                .map(String::as_str)
+                .filter(|id| self.on_its_way(id)),
+        );
+        ids.sort_unstable();
+        ids.dedup();
+        let songs = ids.iter().filter(|id| self.on_its_way(id)).count();
+        if songs == 0 {
+            return None;
+        }
+        Some(Remaining {
+            songs,
+            share: self.portion(ids.iter().copied()),
+            eta: self
+                .pace()
+                .map(|rate| Duration::from_secs_f32(songs as f32 / rate * 60.)),
+        })
+    }
+
+    /// The ids of the tracks of `set` its progress counts: the ones that can be downloaded,
+    /// leaving out any that failed, such as a song the provider will not serve.
+    fn counted<'a>(&'a self, set: &'a Set) -> impl Iterator<Item = &'a str> + Clone {
+        set.ids().filter(|id| !self.failed.contains(*id))
+    }
+
+    /// The albums and playlists with a track still waiting or running.
+    fn active_sets(&self) -> impl Iterator<Item = (&(Collection, String), &Set)> {
+        self.sets.iter().filter(|((kind, id), _)| {
+            matches!(
+                self.set(*kind, id),
+                Some(Progress::Waiting | Progress::Running)
+            )
+        })
+    }
+
+    /// Whether a track is waiting its turn or running.
+    fn on_its_way(&self, id: &str) -> bool {
+        matches!(self.track(id), Some(Progress::Waiting | Progress::Running))
+    }
+
+    /// A track as the list of running downloads shows it, or `None` once it is in or failed.
+    fn pending(&self, track: &Track) -> Option<Pending> {
+        let id = track.id.as_deref().filter(|id| self.on_its_way(id))?;
+        Some(Pending {
+            id: id.to_owned(),
+            name: track.name.clone().into(),
+            artists: track.artists.clone().into(),
+            running: self.running.contains_key(id),
+            fraction: self.fraction(id),
+        })
     }
 
     /// How much of a downloaded album or playlist is in, from 0 to 1, counting the part of each
@@ -452,7 +478,7 @@ impl Downloads {
         let Some(set) = self.sets.get(&(kind, id.to_owned())) else {
             return 0.;
         };
-        self.portion(set.ids())
+        self.portion(self.counted(set))
     }
 
     /// How much of `ids` is in, from 0 to 1, counting the part of each running track that has
@@ -541,11 +567,10 @@ impl Downloads {
             [] => None,
             tracks => Some(About::Songs(tracks.len())),
         };
-        let ids: Vec<String> = tracks.iter().filter_map(|track| track.id.clone()).collect();
         self.persist(provider, None, tracks);
         self.pump(cx);
         if let Some(about) = about {
-            self.watch(ids, about, None, cx);
+            Toasts::post(about.started(), cx);
         }
         cx.emit(DownloadsChanged);
         cx.notify();
@@ -554,27 +579,31 @@ impl Downloads {
     /// Downloads an album whose tracks are already loaded.
     pub fn download_album(&mut self, detail: AlbumDetail, cx: &mut Context<Self>) {
         let (id, set) = album_set(detail);
-        self.download_set(Collection::Album, id, set, None, cx);
+        Toasts::post(About::of(&set.head).started(), cx);
+        self.download_set(Collection::Album, id, set, cx);
     }
 
     /// Downloads a playlist whose tracks are already loaded.
     pub fn download_playlist(&mut self, detail: PlaylistDetail, cx: &mut Context<Self>) {
         let (id, set) = playlist_set(detail);
-        self.download_set(Collection::Playlist, id, set, None, cx);
+        Toasts::post(About::of(&set.head).started(), cx);
+        self.download_set(Collection::Playlist, id, set, cx);
     }
 
-    /// Downloads an album named from a menu, fetching its tracks first. Its toast is up while
-    /// they are fetched.
+    /// Downloads an album named from a menu, fetching its tracks first.
     pub fn download_album_by_id(&mut self, album: &Album, cx: &mut Context<Self>) {
         let Some(catalog) = self.session.read(cx).catalog(&album.id) else {
             return;
         };
         let id = album.id.clone();
-        let about = About::Set {
-            name: album.name.clone().into(),
-            target: Target::Album(id.clone().into()),
-        };
-        let toast = Toasts::post(running(&about), cx);
+        Toasts::post(
+            About::Set {
+                name: album.name.clone().into(),
+                target: Target::Album(id.clone().into()),
+            }
+            .started(),
+            cx,
+        );
         let request = self.io.spawn({
             let id = id.clone();
             async move { catalog.album(&id).await }
@@ -586,47 +615,78 @@ impl Downloads {
                 match loaded {
                     Ok(detail) => {
                         let (id, set) = album_set((*detail).clone());
-                        this.download_set(Collection::Album, id, set, Some(toast), cx);
+                        this.download_set(Collection::Album, id, set, cx);
                     }
-                    Err(error) => this.failed_to_fetch(&error, Some(toast), cx),
+                    Err(error) => this.failed_to_fetch(&error, cx),
                 }
             })
             .ok();
         });
-        self.fetching.insert(album.id.clone(), (toast, task));
+        self.fetching.insert(album.id.clone(), task);
     }
 
-    /// Downloads a playlist named from a menu, fetching all of its tracks first. Its toast is up
-    /// while they are fetched.
+    /// Downloads a playlist named from a menu or its page. The first page of its tracks starts
+    /// downloading as soon as it arrives, and every later page joins the download as it comes,
+    /// so a long playlist does not wait for all of them.
     pub fn download_playlist_by_id(&mut self, playlist: &Playlist, cx: &mut Context<Self>) {
         let Some(catalog) = self.session.read(cx).catalog(&playlist.id) else {
             return;
         };
         let id = playlist.id.clone();
-        let about = About::Set {
-            name: playlist.name.clone().into(),
-            target: Target::Playlist(id.clone().into()),
-        };
-        let toast = Toasts::post(running(&about), cx);
-        let request = self.io.spawn({
-            let id = id.clone();
-            async move { whole_playlist(&catalog, &id).await }
-        });
+        Toasts::post(
+            About::Set {
+                name: playlist.name.clone().into(),
+                target: Target::Playlist(id.clone().into()),
+            }
+            .started(),
+            cx,
+        );
+        let io = self.io.clone();
         let task = cx.spawn(async move |this, cx| {
-            let loaded = join(request).await;
-            this.update(cx, |this, cx| {
-                this.fetching.remove(&id);
-                match loaded {
+            let first = io.spawn({
+                let (catalog, id) = (catalog.clone(), id.clone());
+                async move { catalog.playlist(&id).await }
+            });
+            let first = join(first).await;
+            let mut next = this
+                .update(cx, |this, cx| match first {
                     Ok(detail) => {
+                        let mut detail = (*detail).clone();
+                        let next = detail.continuation.take();
                         let (id, set) = playlist_set(detail);
-                        this.download_set(Collection::Playlist, id, set, Some(toast), cx);
+                        this.download_set(Collection::Playlist, id, set, cx);
+                        next
                     }
-                    Err(error) => this.failed_to_fetch(&error, Some(toast), cx),
-                }
-            })
-            .ok();
+                    Err(error) => {
+                        this.failed_to_fetch(&error, cx);
+                        None
+                    }
+                })
+                .ok()
+                .flatten();
+            while let Some(continuation) = next {
+                let page = io.spawn({
+                    let catalog = catalog.clone();
+                    async move { catalog.playlist_continuation(&continuation).await }
+                });
+                let page = join(page).await;
+                next = this
+                    .update(cx, |this, cx| match page {
+                        Ok((tracks, more)) => this
+                            .extend_set(Collection::Playlist, &id, tracks, cx)
+                            .then_some(more)
+                            .flatten(),
+                        Err(error) => {
+                            log::warn!("downloads: cannot list more of playlist {id}: {error:#}");
+                            None
+                        }
+                    })
+                    .ok()
+                    .flatten();
+            }
+            this.update(cx, |this, _| this.fetching.remove(&id)).ok();
         });
-        self.fetching.insert(playlist.id.clone(), (toast, task));
+        self.fetching.insert(playlist.id.clone(), task);
     }
 
     /// Removes the downloads of tracks, and takes them out of any downloaded album or playlist
@@ -661,7 +721,6 @@ impl Downloads {
             }
             Ok(())
         });
-        self.report(cx);
         cx.emit(DownloadsChanged);
         cx.notify();
     }
@@ -686,7 +745,6 @@ impl Downloads {
         self.drop_tracks(provider, &gone, cx);
         let id = id.to_owned();
         self.write(move |store| store.forget_set(provider, kind, &id));
-        self.report(cx);
         cx.emit(DownloadsChanged);
         cx.notify();
     }
@@ -702,25 +760,16 @@ impl Downloads {
         }
         self.failed.clear();
         self.stalled.clear();
-        self.close_fetching(cx);
+        self.fetching.clear();
         self.playback
             .update(cx, |playback, cx| playback.remove_downloads(cx));
         self.write(|store| store.forget_everything());
-        self.report(cx);
         cx.emit(DownloadsChanged);
         cx.notify();
     }
 
-    /// Downloads an album or playlist. `toast` is the one already up while its tracks were
-    /// fetched, which goes on to follow the download, or else a new one is put up.
-    fn download_set(
-        &mut self,
-        kind: Collection,
-        id: String,
-        set: Set,
-        toast: Option<usize>,
-        cx: &mut Context<Self>,
-    ) {
+    /// Downloads an album or playlist.
+    fn download_set(&mut self, kind: Collection, id: String, set: Set, cx: &mut Context<Self>) {
         let Some(provider) = self.provider else {
             return;
         };
@@ -733,14 +782,39 @@ impl Downloads {
         for track in &tracks {
             self.enlist(track, false);
         }
-        let ids = tracks.iter().filter_map(|track| track.id.clone()).collect();
-        let about = About::of(&set.head);
         self.sets.insert((kind, id.clone()), set.clone());
         self.persist(provider, Some((kind, id, set)), tracks);
         self.pump(cx);
-        self.watch(ids, about, toast, cx);
         cx.emit(DownloadsChanged);
         cx.notify();
+    }
+
+    /// Adds a later page of tracks to an album or playlist already downloading. Says whether the
+    /// set is still there to take them, since one cancelled meanwhile wants no more pages.
+    fn extend_set(
+        &mut self,
+        kind: Collection,
+        id: &str,
+        tracks: Vec<Track>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(provider) = self.provider else {
+            return false;
+        };
+        let Some(set) = self.sets.get_mut(&(kind, id.to_owned())) else {
+            return false;
+        };
+        set.tracks.extend(tracks.iter().cloned());
+        let set = set.clone();
+        let tracks: Vec<Track> = tracks.into_iter().filter(downloadable).collect();
+        for track in &tracks {
+            self.enlist(track, false);
+        }
+        self.persist(provider, Some((kind, id.to_owned(), set)), tracks);
+        self.pump(cx);
+        cx.emit(DownloadsChanged);
+        cx.notify();
+        true
     }
 
     /// Puts a track on the list and in the line, unless it is there already.
@@ -856,7 +930,6 @@ impl Downloads {
                 cx.background_executor().timer(TICK).await;
                 let going = this
                     .update(cx, |this, cx| {
-                        this.report(cx);
                         cx.notify();
                         let going = !this.running.is_empty();
                         if !going {
@@ -934,7 +1007,6 @@ impl Downloads {
                 }
             }
         }
-        self.report(cx);
         self.pump(cx);
         cx.notify();
     }
@@ -975,67 +1047,11 @@ impl Downloads {
         }));
     }
 
-    /// Says the tracks of an album or playlist could not be listed, on `toast` when one is up.
-    fn failed_to_fetch(
-        &mut self,
-        error: &anyhow::Error,
-        toast: Option<usize>,
-        cx: &mut Context<Self>,
-    ) {
+    /// Says the tracks of an album or playlist could not be listed.
+    fn failed_to_fetch(&mut self, error: &anyhow::Error, cx: &mut Context<Self>) {
         log::warn!("downloads: cannot list the tracks to download: {error:#}");
         crate::noted(error, cx);
-        let failed = Toast::new(Outcome::Failed, "toast-download-failed");
-        match toast {
-            Some(toast) => Toasts::settle(toast, failed, cx),
-            None => {
-                Toasts::post(failed, cx);
-            }
-        }
-    }
-
-    /// Puts up a toast that follows the download of `ids`, or has `toast` follow it when one is
-    /// already up, and brings it up to date at once.
-    fn watch(
-        &mut self,
-        ids: Vec<String>,
-        about: About,
-        toast: Option<usize>,
-        cx: &mut Context<Self>,
-    ) {
-        let toast = match toast {
-            Some(toast) => toast,
-            None => Toasts::post(running(&about), cx),
-        };
-        self.watched.push(Watched { toast, ids, about });
-        self.report(cx);
-    }
-
-    /// Moves every download toast on to where its tracks stand. One with none left to wait for
-    /// says whether all of them came in, and one whose tracks were all removed goes.
-    fn report(&mut self, cx: &mut Context<Self>) {
-        let mut watched = std::mem::take(&mut self.watched);
-        watched.retain_mut(|watch| {
-            watch.ids.retain(|id| self.tracks.contains_key(id));
-            if watch.ids.is_empty() {
-                Toasts::close(watch.toast, cx);
-                return false;
-            }
-            let ids = watch.ids.iter().map(String::as_str);
-            let pending = ids
-                .clone()
-                .any(|id| matches!(self.track(id), Some(Progress::Waiting | Progress::Running)));
-            if pending {
-                Toasts::progress(watch.toast, self.portion(ids), cx);
-                return true;
-            }
-            let outcome = match ids.clone().all(|id| self.has(id)) {
-                true => Outcome::Done,
-                false => Outcome::Failed,
-            };
-            Toasts::settle(watch.toast, watch.about.toast(outcome), cx);
-            false
-        });
-        self.watched = watched;
+        Toasts::post(Toast::new(Outcome::Failed, "toast-download-failed"), cx);
     }
 
     /// Cancels the download of a song the listener stopped from the list of running downloads.
@@ -1061,18 +1077,34 @@ impl Downloads {
             return;
         };
         let about = About::of(&set.head);
-        if let Some((toast, _)) = self.fetching.remove(id) {
-            Toasts::close(toast, cx);
-        }
+        self.fetching.remove(id);
         self.remove_set(kind, id, cx);
         Toasts::post(about.cancelled(), cx);
     }
 
-    /// Takes down the toasts of albums and playlists whose tracks are still being listed, as their
-    /// fetches are dropped.
-    fn close_fetching(&mut self, cx: &mut Context<Self>) {
-        for (_, (toast, _)) in self.fetching.drain() {
-            Toasts::close(toast, cx);
+    /// Cancels every album, playlist and song still downloading, along with the albums and
+    /// playlists whose tracks are still being listed, and puts up one toast with how many tracks
+    /// it stopped.
+    pub fn cancel_all(&mut self, cx: &mut Context<Self>) {
+        let stopped = self.remaining().map_or(0, |remaining| remaining.songs);
+        let sets: Vec<(Collection, String)> =
+            self.active_sets().map(|(key, _)| key.clone()).collect();
+        let songs: Vec<String> = self
+            .songs
+            .keys()
+            .filter(|id| self.on_its_way(id))
+            .cloned()
+            .collect();
+        self.fetching.clear();
+        for (kind, id) in sets {
+            self.remove_set(kind, &id, cx);
+        }
+        for id in &songs {
+            self.songs.remove(id);
+        }
+        self.remove_tracks(&songs, cx);
+        if stopped > 0 {
+            Toasts::post(About::Songs(stopped).cancelled(), cx);
         }
     }
 
@@ -1123,7 +1155,6 @@ impl Downloads {
         self.running.clear();
         self.ticker = None;
         self.requeue();
-        self.report(cx);
         cx.notify();
     }
 
@@ -1193,9 +1224,8 @@ impl Downloads {
         self.wake = None;
         self.failed.clear();
         self.stalled.clear();
-        self.close_fetching(cx);
+        self.fetching.clear();
         self.restore = None;
-        self.report(cx);
         cx.emit(DownloadsChanged);
         cx.notify();
     }
@@ -1226,17 +1256,6 @@ fn downloadable(track: &Track) -> bool {
             .id
             .as_deref()
             .is_some_and(|id| !music::is_local_id(id))
-}
-
-/// A playlist with every page of its tracks, since a download of part of one is no use.
-async fn whole_playlist(catalog: &Arc<CatalogSource>, id: &str) -> Result<PlaylistDetail> {
-    let mut detail = (*catalog.playlist(id).await?).clone();
-    while let Some(next) = detail.continuation.take() {
-        let (tracks, more) = catalog.playlist_continuation(&next).await?;
-        detail.tracks.extend(tracks);
-        detail.continuation = more;
-    }
-    Ok(detail)
 }
 
 /// What was downloaded from one provider, as read back from disk.
@@ -1376,12 +1395,6 @@ fn rest(refusals: u32) -> Duration {
     FIRST_REST
         .saturating_mul(1 << refusals.saturating_sub(1).min(8))
         .min(LONGEST_REST)
-}
-
-/// The toast a download shows while it runs. Dismissing it only hides it; the download goes on
-/// and is cancelled from the list of running downloads.
-fn running(about: &About) -> Toast {
-    about.toast(Outcome::Loading).progress(0.)
 }
 
 fn album_set(detail: AlbumDetail) -> (String, Set) {

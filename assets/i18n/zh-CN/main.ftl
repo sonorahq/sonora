@@ -1269,19 +1269,6 @@ toast-offline-mode = 你处于离线状态。切换为在线即可串流这首�
 offline-title = 你处于离线状态。
 offline-go-online = 切换为在线
 toast-download-failed = 无法列出要下载的歌曲。
-toast-downloading = 正在下载 { $name }
-toast-downloading-songs = { $count ->
-    [one] 正在下载 { $count } 首歌曲
-   *[other] 正在下载 { $count } 首歌曲
-}
-toast-downloaded = 已下载 { $name }
-toast-downloaded-songs = { $count ->
-    [one] 已下载 { $count } 首歌曲
-   *[other] 已下载 { $count } 首歌曲
-}
-toast-download-set-failed = { $name } 中的部分歌曲无法下载
-toast-download-song-failed = { $name } 无法下载
-toast-download-songs-failed = 部分歌曲无法下载
 toast-percent = { $percent }%
 toast-download-cancelled = 已取消下载 { $name }
 toast-downloads-cancelled = { $count ->

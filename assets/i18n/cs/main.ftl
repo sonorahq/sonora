@@ -1331,21 +1331,6 @@ toast-offline-mode = Jsi offline. Pro streamování této skladby přejdi online
 offline-title = Jsi offline.
 offline-go-online = Přejít online
 toast-download-failed = Nepodařilo se zjistit, které skladby stáhnout.
-toast-downloading = Stahuje se { $name }
-toast-downloading-songs = { $count ->
-    [one] Stahuje se { $count } skladba
-    [few] Stahují se { $count } skladby
-   *[other] Stahuje se { $count } skladeb
-}
-toast-downloaded = Staženo: { $name }
-toast-downloaded-songs = { $count ->
-    [one] Stažena { $count } skladba
-    [few] Staženy { $count } skladby
-   *[other] Staženo { $count } skladeb
-}
-toast-download-set-failed = Některé skladby z { $name } se nepodařilo stáhnout
-toast-download-song-failed = { $name } se nepodařilo stáhnout
-toast-download-songs-failed = Některé skladby se nepodařilo stáhnout
 toast-percent = { $percent } %
 toast-download-cancelled = Stahování { $name } zrušeno
 toast-downloads-cancelled = { $count ->

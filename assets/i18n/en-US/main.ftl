@@ -67,9 +67,14 @@ library-local-unconfigured = Configure your local library
 # app menu
 app-refresh = Refresh
 downloads-active = Downloading
-downloads-count = { $done } of { $total } songs
+downloads-left = { $count ->
+    [one] { $count } song left
+   *[other] { $count } songs left
+}
+downloads-eta = About { $minutes } min left
+downloads-songs = Songs
 downloads-cancel = Cancel download
-downloads-count-eta = { $done } of { $total } songs · About { $minutes } min left
+downloads-cancel-all = Cancel all downloads
 app-sign-out = Sign Out
 app-quit = Quit
 app-settings = Settings…
@@ -1376,20 +1381,12 @@ toast-offline-mode = You are offline. Go online to stream this song.
 offline-title = You are offline.
 offline-go-online = Go online
 toast-download-failed = Could not list the tracks to download.
-toast-downloading = Downloading { $name }
-toast-downloading-songs = { $count ->
-    [one] Downloading { $count } track
-   *[other] Downloading { $count } tracks
-}
-toast-downloaded = Downloaded { $name }
-toast-downloaded-songs = { $count ->
-    [one] Downloaded { $count } track
-   *[other] Downloaded { $count } tracks
-}
-toast-download-set-failed = Some tracks of { $name } could not be downloaded
-toast-download-song-failed = { $name } could not be downloaded
-toast-download-songs-failed = Some of the tracks could not be downloaded
 toast-percent = { $percent }%
+toast-download-started = Started downloading { $name }
+toast-downloads-started = { $count ->
+    [one] Started downloading { $count } song
+   *[other] Started downloading { $count } songs
+}
 toast-download-cancelled = Cancelled downloading { $name }
 toast-downloads-cancelled = { $count ->
     [one] Cancelled downloading { $count } track

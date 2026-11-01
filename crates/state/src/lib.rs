@@ -49,7 +49,9 @@ pub use control::Control;
 pub use cover::Cover;
 pub use detail::{Collection, Detail, Header};
 pub use devices::Devices;
-pub use downloads::{Active, Downloads, DownloadsChanged, Progress, Subject, downloaded};
+pub use downloads::{
+    Active, Downloads, DownloadsChanged, Pending, Progress, Remaining, Subject, downloaded,
+};
 pub use drm::{CdmState, Drm};
 pub use equalizer::{DeviceRule, Equalizer, RuleDevice, Sound};
 pub use genre::{GenreDetails, Genres};

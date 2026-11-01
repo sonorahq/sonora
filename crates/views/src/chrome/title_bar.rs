@@ -342,19 +342,19 @@ impl Render for TitleBar {
                     .gap_1()
                     .items_center()
                     .when(navigation, |this| this.child(self.history(window, cx)))
+                    .child(div().flex_1())
+                    .when(navigation, |this| {
+                        this.child(
+                            div()
+                                .flex_none()
+                                .occlude()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .child(self.downloads.clone()),
+                        )
+                    })
                     .children(content)
                     .pr_3(),
             )
-            .when(navigation, |this| {
-                this.child(
-                    div()
-                        .flex_none()
-                        .pr_1()
-                        .occlude()
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .child(self.downloads.clone()),
-                )
-            })
             .when_some(
                 self.options
                     .sidebar_right

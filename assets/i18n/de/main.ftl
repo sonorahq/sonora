@@ -1269,19 +1269,6 @@ toast-offline-mode = Du bist offline. Geh online, um diesen Song zu streamen.
 offline-title = Du bist offline.
 offline-go-online = Online gehen
 toast-download-failed = Die Titel zum Herunterladen konnten nicht aufgelistet werden.
-toast-downloading = { $name } wird heruntergeladen
-toast-downloading-songs = { $count ->
-    [one] { $count } Track wird heruntergeladen
-   *[other] { $count } Tracks werden heruntergeladen
-}
-toast-downloaded = { $name } heruntergeladen
-toast-downloaded-songs = { $count ->
-    [one] { $count } Track heruntergeladen
-   *[other] { $count } Tracks heruntergeladen
-}
-toast-download-set-failed = Einige Titel von { $name } konnten nicht heruntergeladen werden
-toast-download-song-failed = { $name } konnte nicht heruntergeladen werden
-toast-download-songs-failed = Einige Titel konnten nicht heruntergeladen werden
 toast-percent = { $percent } %
 toast-download-cancelled = Download von { $name } abgebrochen
 toast-downloads-cancelled = { $count ->

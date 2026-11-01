@@ -1314,21 +1314,6 @@ toast-offline-mode = Jesteś offline. Przejdź do trybu online, aby streamować 
 offline-title = Jesteś offline.
 offline-go-online = Przejdź do trybu online
 toast-download-failed = Nie udało się ustalić listy utworów do pobrania.
-toast-downloading = Pobieranie { $name }
-toast-downloading-songs = { $count ->
-    [one] Pobieranie { $count } utworu
-    [few] Pobieranie { $count } utworów
-   *[other] Pobieranie { $count } utworów
-}
-toast-downloaded = Pobrano { $name }
-toast-downloaded-songs = { $count ->
-    [one] Pobrano { $count } utwór
-    [few] Pobrano { $count } utwory
-   *[other] Pobrano { $count } utworów
-}
-toast-download-set-failed = Nie udało się pobrać części utworów z { $name }
-toast-download-song-failed = Nie udało się pobrać { $name }
-toast-download-songs-failed = Nie udało się pobrać części utworów
 toast-percent = { $percent }%
 toast-download-cancelled = Anulowano pobieranie { $name }
 toast-downloads-cancelled = { $count ->
