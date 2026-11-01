@@ -29,6 +29,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Switching between the cover, lyrics and queue in fullscreen eases the new tab in the way settings pages do.
 - A song's or album's menu has one Save to entry for Favorites, the Library and your playlists. It reads Saved in once the song is somewhere, and ticks toggle in place without closing the menu, so a checked playlist now takes the song out again.
 - The device picker in the equalizer's device rules lists devices the way the output picker does, with sound card outputs grouped and Direct to hardware devices in their own submenu.
+- On Linux and FreeBSD, the MPRIS media controls now dynamically enable and disable next, previous and pause buttons to match the queue, smoothly report live track position without jumps, and support bringing Sonora to the front.
 
 ### Fixed
 

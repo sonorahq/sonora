@@ -38,7 +38,7 @@ webview.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 ashpd.workspace = true
-mpris-server.workspace = true
+zbus.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

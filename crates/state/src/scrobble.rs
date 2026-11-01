@@ -110,7 +110,7 @@ impl Scrobbling {
         cx.subscribe(&playback, |this, _, event, cx| match event {
             PlaybackEvent::StartedPlayback => this.begin(cx),
             PlaybackEvent::EndedPlayback => this.end(cx),
-            PlaybackEvent::Paused | PlaybackEvent::Seeked => this.moved(cx),
+            PlaybackEvent::Paused | PlaybackEvent::Seeked(..) => this.moved(cx),
         })
         .detach();
         cx.observe(&playback, |this, _, cx| this.tick(cx)).detach();
@@ -261,7 +261,7 @@ impl Scrobbling {
             }
         }
         self.play = played(track, self.started);
-        self.position = playback.position();
+        self.position = playback.live_position();
         self.report(Report::Playing, cx);
         let Some(play) = self.play.clone() else {
             return;
@@ -295,7 +295,7 @@ impl Scrobbling {
             PlaybackState::Playing => Report::Playing,
             _ => Report::Paused,
         };
-        self.position = playback.position();
+        self.position = playback.live_position();
         self.report(report, cx);
     }
 
@@ -318,9 +318,9 @@ impl Scrobbling {
         };
         let playback = self.playback.read(cx);
         if playback.track().and_then(|track| track.id.as_ref()) == self.current.as_ref() {
-            self.position = playback.position();
+            self.position = playback.live_position();
         }
-        if *playback.state() != PlaybackState::Playing || !play.earned(playback.position()) {
+        if *playback.state() != PlaybackState::Playing || !play.earned(playback.live_position()) {
             return;
         }
 

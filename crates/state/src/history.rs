@@ -285,7 +285,7 @@ impl History {
         cx.subscribe(&playback, |this, _, event, cx| match event {
             PlaybackEvent::StartedPlayback => this.record(cx),
             PlaybackEvent::EndedPlayback => this.active = None,
-            PlaybackEvent::Paused | PlaybackEvent::Seeked => {}
+            PlaybackEvent::Paused | PlaybackEvent::Seeked(..) => {}
         })
         .detach();
 
