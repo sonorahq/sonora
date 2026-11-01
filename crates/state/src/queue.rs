@@ -481,16 +481,21 @@ impl Queue {
 
     /// Rebuilds collection order while keeping additions and recommendations out of the source.
     /// Shuffling mixes the hand-queued songs in with the collection, so turning shuffle off and
-    /// on again reshuffles the whole queue. Unshuffling puts them after the collection.
+    /// on again reshuffles the whole queue. Unshuffling queues every song the collection lacks
+    /// by hand again, ahead of the collection.
     fn reorder(&mut self) {
         let shuffle = self.shuffle;
+        let known: HashSet<&str> = self.source.iter().map(|entry| entry.uid.as_str()).collect();
         let mut suggested = VecDeque::new();
         let mut manual = VecDeque::new();
         self.upcoming.retain(|entry| match entry.kind {
-            QueueKind::Context => true,
+            QueueKind::Context if shuffle || known.contains(entry.uid.as_str()) => true,
             QueueKind::Queued if shuffle => true,
-            QueueKind::Queued => {
-                manual.push_back(entry.clone());
+            QueueKind::Context | QueueKind::Queued => {
+                manual.push_back(Entry {
+                    kind: QueueKind::Queued,
+                    ..entry.clone()
+                });
                 false
             }
             QueueKind::Suggested => {
