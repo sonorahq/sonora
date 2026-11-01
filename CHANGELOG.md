@@ -36,6 +36,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - After Spotify refuses a burst of downloads, Sonora checks back every fifteen seconds without
   fetching a song first, and carries on as soon as Spotify allows it, so a big playlist finishes
   sooner.
+- Shuffle mixes the songs you queued by hand in with the rest, so turning it off and on again
+  reshuffles the whole queue.
 
 ### Fixed
 
