@@ -169,6 +169,9 @@ impl ThumbBar {
         let playback = Sonora::global(cx).playback.clone();
         cx.observe(&playback, |this, _, cx| this.publish(cx))
             .detach();
+        let devices = Sonora::global(cx).devices.clone();
+        cx.observe(&devices, |this, _, cx| this.publish(cx))
+            .detach();
         let settings = Sonora::global(cx).settings.clone();
         cx.observe(&settings, |this, _, cx| this.publish(cx))
             .detach();
@@ -545,10 +548,13 @@ fn icon(rgba: &[u8], size: u32) -> Option<HICON> {
 /// Reads what the toolbar should be showing right now.
 fn shown(cx: &App) -> Shown {
     let playback = Sonora::global(cx).playback.read(cx);
-    let playing = matches!(
-        playback.state(),
-        PlaybackState::Playing | PlaybackState::Loading
-    );
+    let playing = match playback.steered(cx) {
+        Some(remote) => remote.state.playing,
+        None => matches!(
+            playback.state(),
+            PlaybackState::Playing | PlaybackState::Loading
+        ),
+    };
     Shown {
         previous: t!("player-previous").to_string(),
         toggle: match playing {
@@ -558,7 +564,7 @@ fn shown(cx: &App) -> Shown {
         .to_string(),
         next: t!("player-next").to_string(),
         playing,
-        idle: playback.track().is_none(),
+        idle: playback.shown_track(cx).is_none(),
         look: look(),
     }
 }

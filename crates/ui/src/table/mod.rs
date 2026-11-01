@@ -465,13 +465,20 @@ impl<S: TableSource> TableDelegate<S> {
             .collect()
     }
 
+    /// Steps a column through its first order, the reverse, then unsorted.
     pub fn cycle(&mut self, column: &str, cx: &App) {
+        let first = self
+            .source
+            .columns()
+            .iter()
+            .find(|spec| spec.key == column)
+            .map_or(Sort::Ascending, |spec| spec.first);
         let next = match self.sorting() {
-            Some(current) if current.column == column => match current.order {
-                Sort::Ascending => Some(Sort::Descending),
-                Sort::Descending => None,
+            Some(current) if current.column == column => match current.order == first {
+                true => Some(first.reversed()),
+                false => None,
             },
-            _ => Some(Sort::Ascending),
+            _ => Some(first),
         };
         self.set_sorting(
             next.map(|order| Sorting {
