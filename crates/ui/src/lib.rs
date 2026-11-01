@@ -88,7 +88,7 @@ pub use input::{
     Backspace, BackspaceToStart, BackspaceWord, Copy, Cut, Delete, DeleteToEnd, DeleteWord,
     Dismiss, End, Home, INPUT_CONTEXT, Input, Left, Paste, Right, SelectAll, SelectEnd, SelectHome,
     SelectLeft, SelectRight, SelectWordLeft, SelectWordRight, ShowCharacterPalette, Space,
-    WordLeft, WordRight, refresh_primary_paste,
+    WordLeft, WordRight, refresh_primary_paste, single_line,
 };
 pub use kbd::Kbd;
 pub use label::{

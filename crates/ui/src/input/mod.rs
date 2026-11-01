@@ -46,6 +46,10 @@ pub const INPUT_CONTEXT: &str = "Input";
 
 const CARET: Pixels = px(2.);
 const CARET_LINES: f32 = 1.25;
+/// The characters DirectWrite starts a new line at.
+const LINE_BREAKS: [char; 7] = [
+    '\n', '\u{b}', '\u{c}', '\r', '\u{85}', '\u{2028}', '\u{2029}',
+];
 /// Whether the platform has an X11 or Wayland primary selection, which GPUI exposes only on
 /// Linux and FreeBSD.
 const PRIMARY_SELECTION: bool = cfg!(any(target_os = "linux", target_os = "freebsd"));
@@ -86,6 +90,12 @@ pub fn refresh_primary_paste(_cx: &mut App) {}
 /// Whether a middle click in a field pastes the primary selection right now.
 fn primary_paste() -> bool {
     PRIMARY_SELECTION && PRIMARY_PASTE.load(Ordering::Relaxed)
+}
+
+/// `text` on one line: every line break becomes one space, `\r\n` included. A field holds one
+/// line, and GPUI on Windows draws nothing for a line with more than four line breaks.
+pub fn single_line(text: &str) -> String {
+    text.replace("\r\n", " ").replace(LINE_BREAKS, " ")
 }
 
 fn clamp_offset(text: &str, offset: usize) -> usize {
@@ -634,10 +644,9 @@ impl Input {
         self.insert_pasted(&pasted, window, cx);
     }
 
-    /// Inserts pasted `text` over the selection, flattening newlines since the field holds one
-    /// line.
+    /// Inserts pasted `text` over the selection, on one line.
     fn insert_pasted(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.replace_text_in_range(None, &text.replace('\n', " "), window, cx);
+        self.replace_text_in_range(None, &single_line(text), window, cx);
     }
 
     fn show_character_palette(
@@ -917,6 +926,16 @@ mod tests {
     use super::*;
 
     const MULTI: &str = "héllo wörld";
+
+    #[test]
+    fn flattens_every_line_break() {
+        assert_eq!(single_line("a\r\nb\rc\nd"), "a b c d");
+        assert_eq!(single_line("a\r\n\r\nb"), "a  b");
+        assert_eq!(
+            single_line("a\u{2028}b\u{85}c\u{b}d\u{c}e\u{2029}f"),
+            "a b c d e f"
+        );
+    }
 
     #[test]
     fn clamps_past_the_end() {
