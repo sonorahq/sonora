@@ -673,6 +673,9 @@ pub trait Player: Send + Sync {
     fn seek(&self, position: Duration);
     fn set_gain(&self, gain: f32);
 
+    /// Sets a paused output's initial gain without ramping from its previous level.
+    fn set_initial_gain(&self, gain: f32);
+
     fn spectrum(&self) -> Option<Spectrum> {
         None
     }

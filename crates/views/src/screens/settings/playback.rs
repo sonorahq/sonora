@@ -34,7 +34,7 @@ impl SettingsView {
     pub(super) fn playback_groups(&self, cx: &App) -> Vec<Group> {
         let capabilities = self.session.read(cx).capabilities();
         let mut playing = vec![Slot::Normalisation, Slot::Gapless];
-        playing.extend([Slot::Sleep, Slot::StayAwake]);
+        playing.extend([Slot::FadeIn, Slot::Sleep, Slot::StayAwake]);
         let mut groups = vec![Group::new("settings-group-playing", "icons/play.svg").rows(playing)];
         // one level is nothing to choose between, so it is stated in a row rather than offered
         match capabilities.qualities.len() {
@@ -312,6 +312,62 @@ impl SettingsView {
                 }))
                 .into_any_element(),
         )
+    }
+
+    /// Sets the fixed Bezier resume fade duration, saving once the slider is released.
+    pub(super) fn resume_fade_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
+        let ms = self
+            .pending_fade_in
+            .unwrap_or_else(|| self.settings.read(cx).fade_in_ms());
+        let name = t!("settings-fade-in");
+        let id = "fade-in";
+        let value = match ms {
+            0 => t!("settings-fade-off"),
+            _ => t!("settings-fade-ms", ms = i64::from(ms)),
+        };
+        let duration_name = t!("settings-fade-in-duration");
+        let timing = div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(
+                ui::spoken((id, 0usize), value.clone())
+                    .w(theme.metrics.cover * SLEEP_LABEL)
+                    .text_right()
+                    .whitespace_nowrap()
+                    .text_color(theme.muted_foreground),
+            )
+            .child(
+                div()
+                    .id((id, 1usize))
+                    .role(Role::Group)
+                    .aria_label(duration_name.clone())
+                    .w(theme.metrics.cover * SLEEP_WIDTH)
+                    .child(
+                        Scrubber::new(&self.fade_in, ms as f32 / 2000.)
+                            .name(duration_name)
+                            .value(value)
+                            .colors(
+                                theme.progress_bar,
+                                theme.muted_foreground.opacity(0.3),
+                                theme.foreground,
+                            )
+                            .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
+                                let ms = (fraction.clamp(0., 1.) * 200.).round() as u32 * 10;
+                                this.pending_fade_in = Some(ms);
+                                cx.notify();
+                            }))
+                            .on_release(cx.listener(move |this, _: &MouseUpEvent, _, cx| {
+                                let pending = this.pending_fade_in.take();
+                                let Some(ms) = pending else { return };
+                                this.settings
+                                    .update(cx, |settings, cx| settings.set_fade_in_ms(ms, cx));
+                                cx.notify();
+                            })),
+                    ),
+            );
+        self.row(name, timing.into_any_element())
     }
 
     /// The sleep timer as a slider in its row with the time it is set to before it: off at the

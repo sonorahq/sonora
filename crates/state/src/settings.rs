@@ -333,6 +333,7 @@ struct Held {
 struct Values {
     normalisation: bool,
     gapless: bool,
+    fade_in_ms: u32,
     /// Whether played tracks are kept, sealed, so playing one again downloads nothing.
     keep_tracks: bool,
     /// How many gigabytes the cache of played tracks may take. Downloads do not count.
@@ -571,6 +572,7 @@ impl Default for Values {
         Self {
             normalisation: false,
             gapless: true,
+            fade_in_ms: 200,
             keep_tracks: true,
             offline_mode: false,
             cache_gb: crate::vault::CACHE_GB,
@@ -944,6 +946,17 @@ impl AppSettings {
 
     pub fn gapless(&self) -> bool {
         self.values.gapless
+    }
+
+    /// The resume fade duration in milliseconds. Zero resumes at full volume immediately.
+    pub fn fade_in_ms(&self) -> u32 {
+        self.values.fade_in_ms.min(2000)
+    }
+
+    /// Saves the resume fade duration within the slider's range.
+    pub fn set_fade_in_ms(&mut self, ms: u32, cx: &mut Context<Self>) {
+        self.values.fade_in_ms = ms.min(2000);
+        self.schedule_save(cx);
     }
 
     pub fn keep_tracks(&self) -> bool {
@@ -2968,6 +2981,16 @@ mod tests {
     use super::*;
     use crate::queue::Stub;
     use ui::PinKind;
+
+    #[test]
+    fn resume_fade_defaults_and_round_trips() {
+        let mut values: Values = serde_json::from_str("{}").unwrap();
+        assert_eq!(values.fade_in_ms, 200);
+        values.fade_in_ms = 690;
+        let restored: Values =
+            serde_json::from_str(&serde_json::to_string(&values).unwrap()).unwrap();
+        assert_eq!(restored.fade_in_ms, 690);
+    }
 
     #[test]
     fn lyrics_priority_defaults_and_round_trips_independently_of_enablement() {

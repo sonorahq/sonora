@@ -342,10 +342,6 @@ impl Paced {
         self.output.pause();
     }
 
-    pub fn set_volume(&self, gain: f32) {
-        self.output.set_volume(gain);
-    }
-
     /// An empty sample buffer with room for `wanted` samples, for the next packet. It is one
     /// that has played out when there is one, so filling the queue in step with the output
     /// allocates nothing.
@@ -571,13 +567,42 @@ mod tests {
         }
     }
 
+    #[test]
+    fn resume_can_start_silent_without_ramping_down_from_the_paused_gain() {
+        let volume = Volume::new(1.);
+        let (player, mut chain, format) = open_with_volume(volume.clone());
+        let (cue, _) = Cue::new();
+        let packet = packet(vec![0.1; 48_000], 2, 48_000).unwrap();
+        player.append(Chunk::new(
+            packet,
+            &format,
+            &cue,
+            &Arc::default(),
+            &Spares::new(),
+        ));
+        chain.by_ref().take(2).for_each(drop);
+        volume.reset(0.);
+        assert_eq!(chain.next(), Some(0.));
+        assert_eq!(chain.next(), Some(0.));
+        volume.set(1.);
+        let first = chain.next().unwrap();
+        assert!(first > 0. && first < 0.01);
+    }
+
     /// A player and the chain its queue plays through, as an output opens them.
     fn open() -> (rodio::Player, impl Iterator<Item = f32>, PublishedFormat) {
+        open_with_volume(Volume::new(0.5))
+    }
+
+    /// Opens an offline chain with a gain control the test can inspect while rendering samples.
+    fn open_with_volume(
+        volume: Volume,
+    ) -> (rodio::Player, impl Iterator<Item = f32>, PublishedFormat) {
         let (player, queue) = rodio::Player::new();
         let format = PublishedFormat::default();
         let writer = EqualizerWriter::new(true, Curve::bands(&[12.; 10]));
         let chain = Chain {
-            volume: Volume::new(0.5),
+            volume,
             equalizer: writer.reader(),
             spectrum: Spectrum::new(),
             meter: Meter::default(),

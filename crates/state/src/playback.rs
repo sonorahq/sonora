@@ -1,3 +1,5 @@
+mod fade;
+
 use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -419,6 +421,11 @@ pub struct Playback {
     queue: Entity<Queue>,
     settings: Entity<AppSettings>,
     level: f32,
+    /// Transient gain multiplier, independent of the saved volume.
+    fade_level: f32,
+    fade: Option<Task<()>>,
+    /// Waits for audible playback before starting a resume fade.
+    fade_pending: bool,
     normalisation: bool,
     gapless: bool,
     transcode: Transcode,
@@ -603,6 +610,9 @@ impl Playback {
             queue,
             settings,
             level,
+            fade_level: 1.,
+            fade: None,
+            fade_pending: false,
             normalisation,
             gapless,
             transcode,
@@ -916,6 +926,7 @@ impl Playback {
         if self.engine_for(&id).is_none() {
             return;
         }
+        self.reset_fade();
         self.silence_other(&id);
         if !matches!(start, Start::Segue | Start::Retry) {
             self.failures = 0;
@@ -1879,6 +1890,7 @@ impl Playback {
         if self.steer(|_| Command::Play, cx) {
             return;
         }
+        let restarting = self.intent == Intent::Pause;
         self.intent = Intent::Play;
         self.pressed = Some(Instant::now());
         if let Some(at) = self.resume_at {
@@ -1896,6 +1908,13 @@ impl Playback {
             log::info!("playback: paused too long to trust the engine, reloading the track");
             return self.reload_and_seek(self.position, cx);
         }
+        if restarting && self.settings.read(cx).fade_in_ms() > 0 {
+            self.fade_level = 0.;
+            if let Some(engine) = self.active_engine() {
+                engine.set_initial_gain(0.);
+            }
+        }
+        self.prepare_fade_in(cx);
         if let Some(engine) = self.active_engine() {
             engine.play();
             cx.notify();
@@ -1910,6 +1929,7 @@ impl Playback {
             return;
         }
         self.load_from(&track, at, Start::Pick, cx);
+        self.prepare_fade_in(cx);
     }
 
     /// Has the engine fetch the restored track and hold it paused at `resume_at`, so the first
@@ -1993,10 +2013,74 @@ impl Playback {
         }
         self.intent = Intent::Pause;
         self.pressed = Some(Instant::now());
+        self.fade_pending = false;
+        self.fade = None;
         if let Some(engine) = self.active_engine() {
             engine.pause();
-            cx.notify();
         }
+        cx.notify();
+    }
+
+    /// Applies the temporary fade without changing the user's volume or writing settings.
+    fn apply_fade(&self) {
+        let level = gain(self.level) * self.fade_level;
+        if let Some(engine) = self.engine.as_ref() {
+            engine.set_gain(level);
+        }
+        if let Some(engine) = self.local_engine.as_ref() {
+            engine.set_gain(level);
+        }
+    }
+
+    /// Cancels a transition before replacing its track or engine.
+    fn reset_fade(&mut self) {
+        self.fade = None;
+        self.fade_pending = false;
+        self.fade_level = 1.;
+        self.apply_fade();
+    }
+
+    /// Reverses an audible fade, or holds a paused engine silent until it reports playing.
+    fn prepare_fade_in(&mut self, cx: &mut Context<Self>) {
+        let ms = self.settings.read(cx).fade_in_ms();
+        if ms == 0 {
+            return self.reset_fade();
+        }
+        if self.state == PlaybackState::Playing {
+            return self.fade_in(ms, cx);
+        }
+        self.fade = None;
+        self.fade_level = 0.;
+        self.fade_pending = true;
+        if let Some(engine) = self.active_engine() {
+            engine.set_initial_gain(0.);
+        }
+    }
+
+    /// Raises gain with the fixed Bezier curve. Dropping the task cancels an earlier resume.
+    fn fade_in(&mut self, ms: u32, cx: &mut Context<Self>) {
+        self.fade = None;
+        let from = self.fade_level;
+        let started = Instant::now();
+        let duration = Duration::from_millis(u64::from(ms));
+        self.fade = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(5))
+                    .await;
+                let progress = match duration.is_zero() {
+                    true => 1.,
+                    false => (started.elapsed().as_secs_f32() / duration.as_secs_f32()).min(1.),
+                };
+                let updated = this.update(cx, |this, _| {
+                    this.fade_level = fade::level(from, progress);
+                    this.apply_fade();
+                });
+                if updated.is_err() || progress >= 1. {
+                    break;
+                }
+            }
+        }));
     }
 
     pub fn toggle_play(&mut self, cx: &mut Context<Self>) {
@@ -2069,6 +2153,7 @@ impl Playback {
     /// Keeps the current track paused at `at` without asking the engine for it, so play loads
     /// it from there.
     fn hold(&mut self, at: Duration, cx: &mut Context<Self>) {
+        self.reset_fade();
         self.intent = Intent::Pause;
         self.state = PlaybackState::Paused;
         self.position = at;
@@ -2260,13 +2345,7 @@ impl Playback {
         self.level = level.clamp(0., 1.);
         self.settings
             .update(cx, |settings, cx| settings.set_volume(self.level, cx));
-        let level = gain(self.level);
-        if let Some(engine) = self.engine.as_ref() {
-            engine.set_gain(level);
-        }
-        if let Some(engine) = self.local_engine.as_ref() {
-            engine.set_gain(level);
-        }
+        self.apply_fade();
         cx.notify();
     }
 
@@ -2516,9 +2595,11 @@ impl Playback {
             .clone()
             .filter(|track| track.id.is_some() && local == self.local_active());
         let at = self.live_position();
+        if current.is_some() {
+            self.reset_fade();
+        }
         let playing = match self.state {
-            PlaybackState::Playing => Some(true),
-            PlaybackState::Loading => Some(self.intent == Intent::Play),
+            PlaybackState::Playing | PlaybackState::Loading => Some(self.intent == Intent::Play),
             PlaybackState::Paused | PlaybackState::Idle => Some(false),
             PlaybackState::Failed(_) => None,
         };
@@ -2562,9 +2643,9 @@ impl Playback {
     /// Moves playback onto a fresh engine, as after a reconnect, and resumes where it was if it
     /// was playing, loading to play, or waiting to.
     fn rebind(&mut self, playback: Arc<dyn PlaybackFactory>, cx: &mut Context<Self>) {
+        self.reset_fade();
         let resume = match self.state {
-            PlaybackState::Playing => true,
-            PlaybackState::Loading => self.intent == Intent::Play,
+            PlaybackState::Playing | PlaybackState::Loading => self.intent == Intent::Play,
             _ => false,
         } || self.awaiting_reconnect;
         self.awaiting_reconnect = false;
@@ -2713,6 +2794,10 @@ impl Playback {
                 self.clock.reset(at, false);
             }
             BackendEvent::Playing { at, .. } => {
+                if self.fade_pending {
+                    self.fade_pending = false;
+                    self.fade_in(self.settings.read(cx).fade_in_ms(), cx);
+                }
                 let at = self.landed(at);
                 let started = self.state != PlaybackState::Playing;
                 self.intent = Intent::Play;
@@ -2729,6 +2814,8 @@ impl Playback {
                 self.follow_up_seek(cx);
             }
             BackendEvent::Paused { at, .. } => {
+                self.fade = None;
+                self.fade_pending = false;
                 self.intent = Intent::Pause;
                 self.pressed = None;
                 self.state = PlaybackState::Paused;
@@ -2780,14 +2867,21 @@ impl Playback {
                 }
             }
             BackendEvent::Ended { .. } => {
+                if self.intent == Intent::Pause
+                    && let Some(engine) = self.active_engine()
+                {
+                    engine.pause();
+                }
+                self.reset_fade();
                 let ended = self.track.take();
                 self.state = PlaybackState::Idle;
                 self.position = Duration::ZERO;
                 self.clock.reset(Duration::ZERO, false);
                 cx.emit(PlaybackEvent::EndedPlayback);
-                match self.sleep == Some(Sleep::EndOfTrack) {
-                    true => self.doze(cx),
-                    false => self.advance(ended, cx),
+                match (self.sleep == Some(Sleep::EndOfTrack), self.intent) {
+                    (true, _) => self.doze(cx),
+                    (false, Intent::Pause) => self.hold_next(cx),
+                    (false, Intent::Play) => self.advance(ended, cx),
                 }
             }
             BackendEvent::Throttled { .. } => self.throttled(cx),
@@ -2865,6 +2959,7 @@ impl Playback {
         self.signals.retain(|(id, _)| music::is_local_id(id));
 
         if !self.local_active() {
+            self.reset_fade();
             self.load = None;
             self.fetch = None;
             self.enqueue = None;
@@ -2897,6 +2992,7 @@ impl Playback {
 
     /// Stops with a reason the UI can show.
     fn failed(&mut self, problem: String, cx: &mut Context<Self>) {
+        self.reset_fade();
         log::error!("playback: {problem}");
         self.state = PlaybackState::Failed(problem);
         cx.notify();
