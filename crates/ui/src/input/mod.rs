@@ -644,8 +644,7 @@ impl Input {
         self.insert_pasted(&pasted, window, cx);
     }
 
-    /// Inserts pasted `text` over the selection, flattening newlines since the field holds one
-    /// line.
+    /// Inserts pasted `text` over the selection, on one line.
     fn insert_pasted(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.replace_text_in_range(None, &single_line(text), window, cx);
     }
