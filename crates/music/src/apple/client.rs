@@ -1542,7 +1542,7 @@ impl MusicApi for AppleClient {
                     ),
                     ("include[songs]", "artists,albums"),
                     ALBUM_ARTISTS,
-                    ("extend", "artistBio"),
+                    ("extend", "artistBio,editorialArtwork"),
                 ],
             )
             .await?;

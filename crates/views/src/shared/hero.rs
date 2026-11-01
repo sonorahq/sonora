@@ -437,16 +437,25 @@ impl RenderOnce for PageHero {
                         .min_w_0()
                         .h(art)
                         .justify_end()
-                        .gap_3()
+                        .gap_2()
                         .line_height(relative(LEADING))
                         .children(self.eyebrow.map(|eyebrow| eyebrow_label(eyebrow, cx)))
                         .child(
-                            Skeleton::new()
-                                .w(TITLE_SKELETON)
-                                .h(theme.text(Text::Display)),
+                            skeleton_line(theme.text(Text::Display)).child(
+                                Skeleton::new()
+                                    .w(TITLE_SKELETON)
+                                    .h(theme.text(Text::Display)),
+                            ),
                         )
-                        .child(Skeleton::new().w(META_SKELETON).h(theme.metrics.pad))
-                        .child(Skeleton::new().w(ACTION_SKELETON).h(theme.metrics.control)),
+                        .child(
+                            skeleton_line(theme.text(Text::Small))
+                                .child(Skeleton::new().w(META_SKELETON).h(theme.metrics.pad)),
+                        )
+                        .child(
+                            div()
+                                .pt_1()
+                                .child(Skeleton::new().w(ACTION_SKELETON).h(theme.metrics.control)),
+                        ),
                 );
         }
 
@@ -541,4 +550,10 @@ fn eyebrow_label(label: SharedString, cx: &App) -> Stateful<Div> {
         .text_color(theme.muted_foreground)
         .font_weight(FontWeight::SEMIBOLD)
         .child(upper(label))
+}
+
+/// A row as tall as one line of text at `size`, so the skeleton bar inside it takes the room of
+/// the text it stands in for and the hero keeps its layout once the page loads.
+fn skeleton_line(size: Pixels) -> Div {
+    div().flex().items_center().h(size * LEADING)
 }

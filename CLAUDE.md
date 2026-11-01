@@ -136,7 +136,7 @@ body. Scopes in use: `views`, `ui`, `music`, `state`, `playback`, `player`, `set
 
 ## Pull requests
 
-One heading, one list, nothing else:
+One heading, one list and, for a visual change, screenshots. Nothing else:
 
 ```markdown
 ## Summary
@@ -146,6 +146,12 @@ One heading, one list, nothing else:
 ```
 
 Bullets are lowercase, imperative, one line each, and describe behaviour rather than files.
+
+A pull request that noticeably changes what the user sees gets screenshots of the result. That
+means a new screen or element, a reworked layout, a theme change, or anything else a reviewer
+would only judge by looking at it. When the change alters something that already exists, show it
+before and after. The images go below the list with no heading. A small spacing nudge or a change
+nobody can see needs none.
 
 ## Changelog
 

@@ -870,6 +870,7 @@ impl MusicApi for DeezerClient {
                 .or_else(|| detail.get("picture_big"))
                 .and_then(Value::as_str)
                 .map(str::to_owned),
+            banner: None,
             biography: None,
             monthly_listeners: wire::number(&detail, &["nb_fan"]),
             top_tracks: top.map(|page| wire::track_list(&page)).unwrap_or_default(),

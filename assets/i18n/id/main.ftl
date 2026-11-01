@@ -155,8 +155,11 @@ menu-play-tracks-last = { $count ->
     [one] Putar { $count } lagu terakhir
    *[other] Putar { $count } lagu terakhir
 }
-menu-song-radio = Buka radio lagu
-menu-go-to-album = Buka album
+menu-go-to = Buka
+menu-artist = Artis
+menu-album = Album
+menu-radio = Radio
+menu-details = Detail
 menu-go-to-artist = Buka artis
 menu-view-details = Lihat detail
 menu-copy-link = Salin tautan

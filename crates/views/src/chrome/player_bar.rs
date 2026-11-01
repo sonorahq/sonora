@@ -210,10 +210,13 @@ impl PlayerBar {
                             this.volume_held = true;
                             this.muted = None;
                             this.playback
-                                .update(cx, |playback, cx| playback.set_volume(level, cx));
+                                .update(cx, |playback, cx| playback.slide_volume(level, cx));
+                            cx.notify();
                         }))
                         .on_release(cx.listener(|this, _: &MouseUpEvent, _, cx| {
                             this.volume_held = false;
+                            this.playback
+                                .update(cx, |playback, cx| playback.end_volume_slide(cx));
                             cx.notify();
                         })),
                 ),

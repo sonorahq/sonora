@@ -317,6 +317,9 @@ pub struct SavedArtist {
 pub struct Artist {
     pub name: String,
     pub cover_large: Option<String>,
+    /// A wide picture for the top of the artist page, when the provider keeps one apart from
+    /// the portrait in `cover_large`.
+    pub banner: Option<String>,
     pub biography: Option<String>,
     pub monthly_listeners: Option<u64>,
     pub top_tracks: Vec<Track>,

@@ -5,7 +5,8 @@ use gpui::accesskit::{Role, Toggled};
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Entity, FontWeight, Pixels, Point, Render, ScrollHandle,
-    ScrollWheelEvent, SharedString, WeakEntity, Window, div, point, px,
+    ScrollWheelEvent, SharedString, WeakEntity, Window, div, linear_color_stop, linear_gradient,
+    point, px, relative,
 };
 
 use crate::chrome::Chrome;
@@ -16,8 +17,9 @@ use state::{AppSettings, ArtistDetail, Origin, Playback, Sonora};
 use ui::ActiveTheme as _;
 use ui::Listing as _;
 use ui::{
-    Button, Card, Deck, MIN_CONTENT, Mode, Pending, Picker, Pin, PinKind, Popovers, Popup,
-    Scrollbar, Scroller, TableDelegate, TableEvent, TableState, Text, scrolled, snapped, table,
+    Artwork, Button, Card, Deck, MIN_CONTENT, Mode, Pending, Picker, Pin, PinKind, Popovers, Popup,
+    Scrollbar, Scroller, TableDelegate, TableEvent, TableState, Text, effects, scrolled, snapped,
+    table,
 };
 
 use crate::chrome::tools;
@@ -38,6 +40,59 @@ const SECTION: &str = "artist";
 const RELEASE_ROWS: usize = 2;
 const LISTED: usize = 5;
 const LISTED_MAX: usize = 10;
+/// The width of the `border_1` around the popular table, which pushes its rows and head below
+/// the box the page measures the scroll from.
+const TABLE_BORDER: Pixels = px(1.);
+/// The least and the most room the banner adds above the hero, as shares of the cover's edge.
+/// In between, the banner box keeps `BANNER_BOX` as its aspect, so a narrow page lifts the
+/// hero less.
+const BANNER_RISE_LEAST: f32 = 0.35;
+const BANNER_RISE_MOST: f32 = 1.;
+const BANNER_BOX: f32 = 2.7;
+/// The room above the hero when only a blurred portrait stands in for the banner. The wash has
+/// no proportions to keep, so it stays this tall at any width.
+const BANNER_RISE_WASH: f32 = 0.6;
+/// The aspect the banner picture is drawn at. Spotify's banners are this wide, and the box is
+/// a little wider still, so the picture loses a strip at its top and bottom but never its sides.
+const BANNER_ASPECT: f32 = 2.33;
+/// How much of what the banner box cannot show is cut off above rather than below. Banners keep
+/// their subject a little above the middle.
+const BANNER_ANCHOR: f32 = 0.35;
+/// The tallest the banner picture grows, as a share of the banner's height. On a page wide enough
+/// to grow it further it keeps this size in the middle, and both its sides fade into a washed out
+/// copy over the room beside it, up to `BANNER_SIDE_FADE` of its width, so faces are never blown
+/// up past the box.
+const BANNER_OVERFLOW: f32 = 1.25;
+const BANNER_SIDE_FADE: f32 = 0.2;
+/// How much wider than the page the banner is drawn, so it still reaches both edges while the
+/// page width it was measured from lags a resize by a frame.
+const BANNER_SLACK: f32 = 0.06;
+/// The blurs the banner steps through on its way down, each with the share of the stretch from
+/// the hero's top to the banner's bottom at which it has fully taken over from the one above.
+/// Everything above the hero stays sharp, wherever the page width puts it, and the blur grows
+/// slowly at first so it has no visible start.
+const BANNER_BLURS: [(f32, Pixels); 7] = [
+    (0.25, px(1.)),
+    (0.375, px(2.5)),
+    (0.5, px(4.5)),
+    (0.625, px(7.5)),
+    (0.75, px(11.5)),
+    (0.875, px(17.)),
+    (1., px(24.)),
+];
+/// How far above its own mark each banner blur starts fading in, as a share of the same
+/// stretch. It is longer than the gap between marks, so each blur is still fading in when the
+/// next starts.
+const BANNER_RAMP: f32 = 0.25;
+/// How much of the page colour lies over the whole banner, so it sits back behind the page.
+const BANNER_DIM: f32 = 0.3;
+/// The shade that deepens toward the banner's bottom on top of `BANNER_DIM`: where it starts, as
+/// a share of the way down to the hero's top, and how much of the page colour it reaches at the
+/// bottom. The banner also fades out from the hero's top and is gone at its bottom.
+const BANNER_SHADE_FROM: f32 = 0.5;
+const BANNER_SHADE: f32 = 0.85;
+/// The blur over a portrait standing in for a missing banner, enough to leave only its colours.
+const BANNER_WASH: Pixels = px(48.);
 
 struct ArtistTracks {
     detail: Entity<ArtistDetail>,
@@ -331,13 +386,115 @@ impl ArtistView {
             .pending(artist.is_none() && self.detail.read(cx).is_loading())
             .pin(pin)
             .cover(cover)
-            .eyebrow(t!("artist-eyebrow"))
             .when_some(listeners, |hero, listeners| {
                 hero.meta(HeroMetaStrip::new().text(listeners))
             })
             .actions(actions)
             .circle()
             .into_any_element()
+    }
+
+    /// The artist's banner behind the hero, `height` tall and bled past the page's `inset` to
+    /// its edges, with the hero's top `hero` below its own. It is dimmed throughout and stays sharp
+    /// above the hero, then blurs, darkens and fades harder until it is gone at its bottom.
+    /// Without a banner the portrait stands in, blurred to a wash of its colours so it does not
+    /// repeat the cover beside it. None when the artist has neither, or has only a portrait
+    /// while blurs are off.
+    fn banner(&self, inset: Pixels, height: Pixels, hero: Pixels, cx: &App) -> Option<AnyElement> {
+        let artist = self.detail.read(cx).artist()?;
+        let (url, wash) = match &artist.banner {
+            Some(banner) => (banner.clone(), None),
+            None if effects() => (artist.cover_large.clone()?, Some(BANNER_WASH)),
+            None => return None,
+        };
+        // The box stretches to the page's edges at once, while the width measured here arrives a
+        // frame later, so a window being resized would show the box's edge past the picture.
+        // Everything is drawn a little wider than the box, centred in it, and the box clips the
+        // rest.
+        let width = (self.width + inset * 2.) * (1. + BANNER_SLACK);
+        let theme = cx.theme();
+        let shade = div()
+            .absolute()
+            .inset_0()
+            .bg(theme.background.opacity(BANNER_DIM))
+            .child(div().absolute().inset_0().bg(linear_gradient(
+                180.,
+                linear_color_stop(
+                    theme.background.opacity(0.),
+                    hero / height * BANNER_SHADE_FROM,
+                ),
+                linear_color_stop(theme.background.opacity(BANNER_SHADE), 1.),
+            )));
+        // Every copy reaches past the box by twice the widest blur, so no blur pulls in the
+        // transparent edge, and they all share one geometry so they line up.
+        let bleed = wash.unwrap_or(BANNER_BLURS[BANNER_BLURS.len() - 1].1) * 2.;
+        let natural = width / BANNER_ASPECT;
+        let tall = match wash {
+            Some(_) => natural,
+            None => natural.min(height * BANNER_OVERFLOW),
+        }
+        .max(height);
+        let across = (tall * BANNER_ASPECT).min(width);
+        // The fade grows from nothing with the room either side, so a page whose width sits near
+        // the point where the picture stops filling it does not flick the fade on and off.
+        let side = bleed + ((width - across) / 2.).min(across * BANNER_SIDE_FADE);
+        let lifted = (tall - height) * BANNER_ANCHOR;
+        // The same picture lies under the banner across the whole box, washed out like a missing
+        // banner's portrait, so a picture narrower than the page has its colours either side.
+        let spread = BANNER_WASH * 2.;
+        let backdrop = Artwork::new(Some(url.clone()))
+            .size(width + spread * 2.)
+            .wide(height + spread * 2.)
+            .overlay()
+            .absolute()
+            .left(relative(0.5))
+            .ml(-(width / 2. + spread))
+            .top(-spread)
+            .blur(BANNER_WASH);
+        let picture = |top: Pixels| {
+            Artwork::new(Some(url.clone()))
+                .size(across + bleed * 2.)
+                .wide(tall + bleed * 2.)
+                .overlay()
+                .absolute()
+                .left(relative(0.5))
+                .ml(-(across / 2. + bleed))
+                .top(-top - lifted - bleed)
+                .fade_sides(side, side)
+        };
+        let below = height - hero;
+        let steps = BANNER_BLURS.iter().map(|&(mark, blur)| {
+            let top = hero + below * (mark - BANNER_RAMP);
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .top(top)
+                .bottom_0()
+                .overflow_hidden()
+                .fade_edges(below * BANNER_RAMP, Pixels::ZERO)
+                .child(picture(top).blur(blur))
+        });
+
+        Some(
+            div()
+                .absolute()
+                .top(-inset)
+                .left(-inset)
+                .right(-inset)
+                .h(height)
+                .overflow_hidden()
+                .fade_edges(Pixels::ZERO, below)
+                .map(|this| match wash {
+                    Some(wash) => this.child(picture(Pixels::ZERO).blur(wash)),
+                    None => this
+                        .when(effects(), |this| this.child(backdrop))
+                        .child(picture(Pixels::ZERO))
+                        .when(effects(), |this| this.children(steps)),
+                })
+                .child(shade)
+                .into_any_element(),
+        )
     }
 
     fn saved_artist(&self, cx: &App) -> Option<SavedArtist> {
@@ -990,7 +1147,8 @@ impl Render for ArtistView {
         }
         if self.mode == Mode::List {
             self.table.claim(cx);
-            let viewport = page::viewport(&scroll, inset, window);
+            let mut viewport = page::viewport(&scroll, inset, window);
+            viewport.top = (viewport.top - TABLE_BORDER).max(Pixels::ZERO);
             self.table
                 .update(cx, |table, _| table.set_viewport(viewport));
         }
@@ -1013,6 +1171,20 @@ impl Render for ArtistView {
         let listed = self.mode == Mode::List;
         let release_padding = self.release_padding;
         let head = self.header(cx);
+        let cover = theme.metrics.cover;
+        let banner_shown = self
+            .detail
+            .read(cx)
+            .artist()
+            .is_some_and(|artist| artist.banner.is_some());
+        let rise = match banner_shown {
+            true => ((self.width + inset * 2.) / BANNER_BOX - inset - cover)
+                .max(cover * BANNER_RISE_LEAST)
+                .min(cover * BANNER_RISE_MOST),
+            false => cover * BANNER_RISE_WASH,
+        };
+        let rise = snapped(rise, window);
+        let banner = self.banner(inset, inset + rise + cover, inset + rise, cx);
         let tracks = match self.mode {
             Mode::Grid => self.popular(cx),
             Mode::List => self.listed(cx),
@@ -1030,33 +1202,37 @@ impl Render for ArtistView {
             weak.update(cx, |_, cx| cx.notify()).ok();
         });
         let rails = self.recommended(window, &notify, cx);
-        let page = Scroller::new("artist-page", &self.scrollbar)
-            .bottom_inset(crate::chrome::Chrome::bottom(cx))
-            .px(inset)
-            .pt(inset)
-            .pb(inset)
-            .on_scroll_wheel(cx.listener(Self::release_scroll))
-            .child(div().child(head).when(listed, |this| {
-                let label = t!("artist-popular");
-                this.child(
-                    div()
-                        .id("artist-popular-heading")
-                        .role(Role::Heading)
-                        .aria_level(2)
-                        .aria_label(label.clone())
-                        .pb_3()
-                        .text_size(theme.text(Text::Title))
-                        .font_weight(FontWeight::BOLD)
-                        .child(label),
-                )
-            }))
-            .child(tracks)
-            .children(grid)
-            .children(rails)
-            .children(about)
-            .when(release_padding > Pixels::ZERO, |this| {
-                this.child(div().h(release_padding).flex_none())
-            });
+        let page =
+            Scroller::new("artist-page", &self.scrollbar)
+                .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                .px(inset)
+                .pt(inset)
+                .pb(inset)
+                .on_scroll_wheel(cx.listener(Self::release_scroll))
+                .child(div().relative().pt(rise).children(banner).child(head).when(
+                    listed,
+                    |this| {
+                        let label = t!("artist-popular");
+                        this.child(
+                            div()
+                                .id("artist-popular-heading")
+                                .role(Role::Heading)
+                                .aria_level(2)
+                                .aria_label(label.clone())
+                                .pb_3()
+                                .text_size(theme.text(Text::Title))
+                                .font_weight(FontWeight::BOLD)
+                                .child(label),
+                        )
+                    },
+                ))
+                .child(tracks)
+                .children(grid)
+                .children(rails)
+                .children(about)
+                .when(release_padding > Pixels::ZERO, |this| {
+                    this.child(div().h(release_padding).flex_none())
+                });
 
         div()
             .relative()

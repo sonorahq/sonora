@@ -169,8 +169,11 @@ menu-play-tracks-last = { $count ->
     [few] Přehrát { $count } skladby jako poslední
    *[other] Přehrát { $count } skladeb jako poslední
 }
-menu-song-radio = Přejít na rádio skladby
-menu-go-to-album = Přejít na album
+menu-go-to = Přejít na
+menu-artist = Interpret
+menu-album = Album
+menu-radio = Rádio
+menu-details = Podrobnosti
 menu-go-to-artist = Přejít na interpreta
 menu-view-details = Zobrazit podrobnosti
 menu-copy-link = Kopírovat odkaz
