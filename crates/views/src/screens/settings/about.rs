@@ -54,12 +54,13 @@ macro_rules! member {
     };
 }
 
-const MEMBERS: [Member; 5] = [
+const MEMBERS: [Member; 6] = [
     member!("nolight132", Role::LeadMaintainer),
     member!("zxsleebu", Role::Maintainer),
     member!("fx-got", Role::Maintainer),
     member!("Makakashan", Role::Contributor),
     member!("imizgun", Role::Contributor),
+    member!("mrkvqv", Role::Contributor),
 ];
 
 impl SettingsView {
