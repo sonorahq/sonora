@@ -1214,12 +1214,25 @@ impl Playback {
         if paths.is_empty() {
             return;
         }
-        self.resolve_paths(paths, cx);
+        self.resolve_paths(paths, None, cx);
+    }
+
+    /// Queues paths dropped on the queue at `gap` upcoming tracks in, or at the end of the queue.
+    pub fn enqueue_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        gap: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        if paths.is_empty() {
+            return;
+        }
+        self.resolve_paths(paths, Some(gap.unwrap_or(usize::MAX)), cx);
     }
 
     /// Reads the files on the tokio runtime and plays what it could read. Files it could not read
     /// are reported on a toast, as a failure when none could be read and as a warning otherwise.
-    fn resolve_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+    fn resolve_paths(&mut self, paths: Vec<PathBuf>, gap: Option<usize>, cx: &mut Context<Self>) {
         let provider = self.session.read(cx).local_provider();
         self.open = Some(Io::global(cx).load(
             async move {
@@ -1236,17 +1249,20 @@ impl Playback {
                 }
                 anyhow::Ok((tracks, unread))
             },
-            |this, loaded, cx| match loaded {
+            move |this, loaded, cx| match loaded {
                 Ok((tracks, unread)) => {
                     report_unread(&unread, tracks.is_empty(), cx);
                     if tracks.is_empty() {
                         return;
                     }
-                    this.locally(cx, |this, cx| {
-                        if this.place(tracks, None, QueuePlacement::Next, cx).is_some() {
-                            this.next(cx);
-                        }
-                    });
+                    match gap {
+                        Some(gap) => this.insert_all(tracks, gap, None, cx),
+                        None => this.locally(cx, |this, cx| {
+                            if this.place(tracks, None, QueuePlacement::Next, cx).is_some() {
+                                this.next(cx);
+                            }
+                        }),
+                    }
                 }
                 Err(error) => log::warn!("playback: cannot open files: {error:#}"),
             },

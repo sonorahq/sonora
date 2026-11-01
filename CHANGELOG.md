@@ -16,6 +16,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   each track's own sample rate on Linux and macOS.
 - Opening a file from a file manager can now switch to the fullscreen player automatically,
   if enabled in Settings > Playback.
+- Sonora supports drag-and-drop from other programs, like file managers, into the queue. The line
+  shows the place in the queue where the files will land, the same one in-app drops use.
 
 ### Changed
 
