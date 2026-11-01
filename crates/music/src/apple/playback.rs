@@ -136,7 +136,7 @@ impl Fetch for Apple {
 
     /// Reports the resolved asset's AAC bitrate, including a fallback to the other flavour.
     fn encoding(&self, loaded: &Loaded) -> Option<Encoding> {
-        Some(Encoding::Aac {
+        (!loaded.media.is_plain()).then_some(Encoding::Aac {
             kbps: match loaded.extended {
                 true => 64,
                 false => 256,
@@ -161,6 +161,9 @@ impl Fetch for Apple {
     /// Builds a decoder over a licensed track and places it at `at`. Only the header is read
     /// here; the rest decrypts as it is pulled.
     ///
+    /// Unencrypted uploaded tracks open directly into a seekable `rodio::Decoder` before the
+    /// fragmented CENC path.
+    ///
     /// The track is handed over as a stream, with neither its length nor a seekable source, and
     /// that is a measured choice rather than an oversight. Told the length, symphonia builds a
     /// sample table when it opens the file, and a fragmented stream with no `sidx` leaves it no
@@ -174,6 +177,30 @@ impl Fetch for Apple {
     /// is read at all.
     fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Self::Source> {
         let media = &loaded.media;
+        if media.is_plain() {
+            let mut builder = rodio::Decoder::builder()
+                .with_data(media.reader())
+                .with_seekable(true);
+            if let Some(total) = media.total() {
+                builder = builder.with_byte_len(total);
+            }
+            let mut decoder = match builder.build() {
+                Ok(decoder) => decoder,
+                Err(error) => {
+                    log::warn!("playback: cannot decode the apple track {id}: {error}");
+                    return None;
+                }
+            };
+            if !at.is_zero()
+                && let Err(error) = decoder.try_seek(at)
+            {
+                log::warn!(
+                    "playback: cannot start the apple track {id} at {}s: {error}",
+                    at.as_secs()
+                );
+            }
+            return Some(Trimmed::new(decoder, Duration::ZERO, None));
+        }
         let opening = Instant::now();
         let entry = (!at.is_zero()).then(|| media.entry(at)).flatten();
         let reader = match entry {

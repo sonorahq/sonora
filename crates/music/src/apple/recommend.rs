@@ -23,32 +23,47 @@ const ALBUM_PAGE: usize = 100;
 const ALBUM_PAGES: usize = 10;
 
 /// Every album of one artist, newest first, and its appears-on view, once a library id has been
-/// turned into the catalog's. The artist page itself holds only the first ten releases of each
-/// view and one edition of each album. A discography that cannot be read leaves those on the
-/// page.
+/// turned into the catalog's. Uploaded albums from the user's library are merged into the
+/// discography. The artist page itself holds only the first ten releases of each view and one
+/// edition of each album. A discography that cannot be read leaves those on the page.
 pub(crate) async fn artist_catalogue(
     client: &AppleClient,
     artist_id: &str,
 ) -> Result<ArtistCatalogue> {
-    let artist_id = client.catalog_artist(artist_id).await?;
-    let path = client.catalog(&format!("/artists/{}", escape::component(&artist_id)));
+    let catalog_id = match AppleClient::is_mine(artist_id) {
+        true => {
+            let Ok(catalog_id) = client.catalog_artist(artist_id).await else {
+                return Ok(ArtistCatalogue::default());
+            };
+            catalog_id
+        }
+        false => client.catalog_artist(artist_id).await?,
+    };
+    let path = client.catalog(&format!("/artists/{}", escape::component(&catalog_id)));
     let (answered, albums) = tokio::join!(
         client.get(&path, &[("views", "appears-on-albums"), ALBUM_ARTISTS]),
-        every_album(client, &artist_id),
+        every_album(client, &catalog_id),
     );
     let body = answered?;
     let answered: wire::Answer = wire::answer(&body);
-    let albums = match albums {
-        Ok(albums) => wire::newest_first(albums),
-        Err(error) => {
-            log::warn!("apple: cannot read the discography of {artist_id}: {error:#}");
-            Vec::new()
-        }
-    };
     let found = answered
         .data
         .first()
         .context("apple music has no such artist")?;
+    let artist_name = found
+        .attributes
+        .as_ref()
+        .and_then(|attributes| attributes.name.as_str())
+        .unwrap_or_default();
+    let albums = match albums {
+        Ok(albums) => albums,
+        Err(error) => {
+            log::warn!("apple: cannot read the discography of {catalog_id}: {error:#}");
+            Vec::new()
+        }
+    };
+    let library_albums = client.artist_library_albums(&catalog_id, artist_name).await;
+    let albums = wire::merge_albums(albums, library_albums);
     Ok(ArtistCatalogue {
         albums,
         appears_on: wire::view(found, "appears-on-albums")
@@ -92,10 +107,16 @@ async fn more_from_artist(
     album_id: &str,
     artist_id: &str,
 ) -> Result<(Vec<Album>, Vec<SavedArtist>)> {
-    let artist_id = &client.catalog_artist(artist_id).await?;
+    let catalog_id = match client.catalog_artist(artist_id).await {
+        Ok(id) => id,
+        Err(_) if AppleClient::is_mine(artist_id) => {
+            return library_more_from_artist(client, album_id, artist_id).await;
+        }
+        Err(error) => return Err(error),
+    };
     let body = client
         .get(
-            &client.catalog(&format!("/artists/{}", escape::component(artist_id))),
+            &client.catalog(&format!("/artists/{}", escape::component(&catalog_id))),
             &[
                 ("views", "full-albums,singles,similar-artists"),
                 ALBUM_ARTISTS,
@@ -119,6 +140,37 @@ async fn more_from_artist(
         .filter_map(wire::similar_artist)
         .collect();
     Ok((more, similar))
+}
+
+/// The library-only releases of an artist that has no catalog equivalent.
+async fn library_more_from_artist(
+    client: &AppleClient,
+    album_id: &str,
+    artist_id: &str,
+) -> Result<(Vec<Album>, Vec<SavedArtist>)> {
+    let body = match client
+        .get(
+            &format!(
+                "/me/library/artists/{}/albums",
+                escape::component(artist_id)
+            ),
+            &[("include", "catalog,artists"), ALBUM_ARTISTS],
+        )
+        .await
+    {
+        Ok(body) => body,
+        Err(error) if error.is::<Missing>() => return Ok((Vec::new(), Vec::new())),
+        Err(error) => {
+            return Err(error).context("cannot read library albums from this artist");
+        }
+    };
+    let outline = wire::outline(&body);
+    let more = outline
+        .read(&wire::library_album)
+        .into_iter()
+        .filter(|album| album.id != album_id)
+        .collect();
+    Ok((more, Vec::new()))
 }
 
 /// A few releases by one similar artist, skipping the page's own album.
