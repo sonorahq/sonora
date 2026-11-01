@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- You can rate Spotify songs with stars from the player, the right-click menu and every song list once you turn on Star ratings in Settings. Ratings are retained when several songs were rated at the same time.
+
 - Listen together on any streaming service with Sonora Session: start one from the Sessions button in the player bar, share its six-digit code, and everyone who joins hears the same song in step.
 - `sonora session` starts, joins or leaves a Sonora Session from the command line.
 - A Members panel, opened from the Sessions menu, lists who is in your Sonora Session or Spotify Jam and lets the host remove someone. An accent dot on the Sessions button shows one is under way, and while another Spotify device plays the button wears that device's icon.
@@ -28,6 +30,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Sorting by Date added puts the songs you added most recently first.
 
 ### Fixed
+
+- Dismissible notifications no longer crash development builds.
 
 - The header of an album, playlist or artist page no longer jumps when it finishes loading.
 - The column header of an artist's popular songs no longer leaves a thin gap above it while scrolling.

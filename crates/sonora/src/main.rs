@@ -320,6 +320,7 @@ fn open_window(cx: &mut App) {
         playback,
         potoken: _,
         queue,
+        ratings: _,
         requirements: _,
         scan: _,
         scrobbling: _,

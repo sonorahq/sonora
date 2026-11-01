@@ -37,7 +37,7 @@ pub mod trouble;
 pub mod vault;
 pub mod youtube;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -109,6 +109,22 @@ pub enum Report {
 
 #[async_trait]
 pub trait MusicApi: Send + Sync {
+    /// Whether this provider can store track ratings.
+    fn supports_ratings(&self) -> bool {
+        false
+    }
+
+    /// Every rated track's rating in half-stars (1 to 10), keyed by track id, and the ids of
+    /// the playlists that hold them.
+    async fn ratings(&self) -> Result<(HashMap<String, u8>, HashSet<String>)> {
+        anyhow::bail!("star ratings are not supported")
+    }
+
+    /// Sets a track's rating in half-stars, or clears it when `rating` is `None`.
+    async fn set_rating(&self, _track_id: &str, _rating: Option<u8>) -> Result<()> {
+        anyhow::bail!("star ratings are not supported")
+    }
+
     fn alive(&self) -> bool {
         true
     }

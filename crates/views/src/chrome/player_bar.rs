@@ -21,7 +21,8 @@ use ui::{
 use crate::chrome::sessions_button::SessionsButton;
 use crate::chrome::{Chrome, SidebarRight};
 use crate::shared::menus::ItemMenu;
-use crate::shared::transport::{NOTCH, fraction, like, moved, percent, transport, volume_icon};
+use crate::shared::rating::rating;
+use crate::shared::transport::{NOTCH, fraction, moved, percent, transport, volume_icon};
 
 const SEEK_MAX: f32 = 560.;
 const VOLUME_WIDTH: f32 = 110.;
@@ -49,6 +50,8 @@ impl PlayerBar {
         let library = Sonora::global(cx).library.clone();
         let settings = Sonora::global(cx).settings.clone();
         let devices = Sonora::global(cx).devices.clone();
+        let ratings = Sonora::global(cx).ratings.clone();
+        cx.observe(&ratings, |_, _, cx| cx.notify()).detach();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         cx.observe(&devices, |_, _, cx| cx.notify()).detach();
         cx.observe(&queue, |_, _, cx| cx.notify()).detach();
@@ -371,7 +374,7 @@ impl PlayerBar {
             .when(explicit, |this| {
                 this.child(div().flex_none().child(ExplicitBadge::new()))
             })
-            .child(like(track, &self.playback, cx));
+            .children(rating("player-ratings", track, Some(&self.playback), false));
         let headline = match centered {
             true => {
                 // Equal clearance on both sides keeps the title itself centered. Actions sit

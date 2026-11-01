@@ -332,6 +332,9 @@ impl ToastStack {
         if let Some(count) = toast.count {
             args.set("count", i18n::Value::value(count));
         }
+        for (key, value) in &toast.args {
+            args.set(key.as_ref(), i18n::Value::value(value.as_ref()));
+        }
         let message = i18n::lookup(&toast.key, Some(&args));
         let swiped = self.swipe.as_ref().filter(|swipe| swipe.id == id);
         let (sway, drop) = match swiped {

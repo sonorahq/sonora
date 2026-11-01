@@ -22,7 +22,8 @@ use ui::{
 
 use crate::chrome::{Aside, TitleBarOptions};
 use crate::shared::menus::ItemMenu;
-use crate::shared::transport::{NOTCH, fraction, like, moved, percent, transport, volume_icon};
+use crate::shared::rating::rating;
+use crate::shared::transport::{NOTCH, fraction, moved, percent, transport, volume_icon};
 use crate::shared::visualizer::VisualizerDrive;
 use crate::shared::{self, ambient};
 use crate::shells::Shell;
@@ -125,6 +126,8 @@ impl FullscreenView {
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         let cover = Sonora::global(cx).cover.clone();
         cx.observe(&cover, |_, _, cx| cx.notify()).detach();
+        let ratings = Sonora::global(cx).ratings.clone();
+        cx.observe(&ratings, |_, _, cx| cx.notify()).detach();
         let library = Sonora::global(cx).library.clone();
         cx.observe(&library, |_, _, cx| cx.notify()).detach();
         let settings = Sonora::global(cx).settings.clone();
@@ -504,7 +507,7 @@ impl FullscreenView {
         // `truncate`, whose `overflow_hidden` would clip the shadow to the line box.
         let effects = shared::effects();
         let shadow = TEXT_SHADOW.map(|blur| TextShadow::new(theme.background).blur(px(blur)));
-        let trailing = |track: Option<&music::Track>, cx: &App| {
+        let trailing = |track: Option<&music::Track>| {
             div()
                 .flex()
                 .flex_none()
@@ -513,13 +516,12 @@ impl FullscreenView {
                 .when(explicit, |this| {
                     this.child(explicit_badge("fullscreen-explicit", track.is_some()))
                 })
-                .child(
-                    div()
-                        .flex()
-                        .flex_none()
-                        .opacity(1. - hide)
-                        .child(like(track, &self.playback, cx).when(frosted, Button::frosted)),
-                )
+                .child(div().flex().flex_none().opacity(1. - hide).children(rating(
+                    "fullscreen-ratings",
+                    track,
+                    Some(&self.playback),
+                    frosted,
+                )))
         };
 
         div()
@@ -557,7 +559,7 @@ impl FullscreenView {
                             .flex_1()
                             .justify_end()
                             .invisible()
-                            .child(trailing(None, cx)),
+                            .child(trailing(None)),
                     )
                     .child(
                         div()
@@ -590,7 +592,7 @@ impl FullscreenView {
                             .when(effects, |this| this.text_shadow(shadow))
                             .child(title),
                     )
-                    .child(div().flex().flex_1().child(trailing(track, cx))),
+                    .child(div().flex().flex_1().child(trailing(track))),
             )
             .when_some(track, |this, track| {
                 this.child(
@@ -696,9 +698,12 @@ impl FullscreenView {
                             .when(explicit, |this| {
                                 this.child(explicit_badge("strip-explicit", true))
                             })
-                            .child(div().flex().flex_none().opacity(1. - hide).child(
-                                like(track, &self.playback, cx).when(frosted, Button::frosted),
-                            )),
+                            .child(div().flex().flex_none().opacity(1. - hide).children(rating(
+                                "fullscreen-dock-ratings",
+                                track,
+                                Some(&self.playback),
+                                frosted,
+                            ))),
                     )
                     .when_some(track, |this, track| {
                         this.child(

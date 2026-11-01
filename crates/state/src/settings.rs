@@ -179,6 +179,27 @@ pub enum SideTab {
     Members,
 }
 
+/// The `star_ratings` object in `settings.json`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StarRatings {
+    /// Whether ratings are shown.
+    pub enabled: bool,
+    pub half_ratings: bool,
+    /// Likes a track rated at or above this many half-stars. `None` turns it off.
+    pub auto_like: Option<u8>,
+}
+
+impl Default for StarRatings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            half_ratings: true,
+            auto_like: Some(8),
+        }
+    }
+}
+
 /// The writing systems lyrics romanization applies to. Only CJK are enabled by default.
 /// A partial object in `settings.json` keeps the defaults for the scripts it leaves out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -342,6 +363,7 @@ struct Values {
     /// Whether the listener put Sonora offline, so it shows and plays only what was downloaded
     /// until they go online again.
     offline_mode: bool,
+    star_ratings: StarRatings,
     equalizer: bool,
     /// The ten band gains an older Sonora saved. Read once to seed the profiles when there are
     /// none, never written back, and read leniently like the keys that replaced it.
@@ -582,6 +604,7 @@ impl Default for Values {
             keep_tracks: true,
             offline_mode: false,
             cache_gb: crate::vault::CACHE_GB,
+            star_ratings: StarRatings::default(),
             equalizer: false,
             equalizer_bands: Vec::new(),
             equalizer_profiles: Vec::new(),
@@ -951,6 +974,19 @@ impl AppSettings {
 
     pub fn normalisation(&self) -> bool {
         self.values.normalisation
+    }
+
+    pub fn star_ratings(&self) -> StarRatings {
+        self.values.star_ratings
+    }
+
+    pub fn set_star_ratings(
+        &mut self,
+        change: impl FnOnce(&mut StarRatings),
+        cx: &mut Context<Self>,
+    ) {
+        change(&mut self.values.star_ratings);
+        self.schedule_save(cx);
     }
 
     pub fn gapless(&self) -> bool {
