@@ -76,9 +76,6 @@ const DOCK_BLUR: Pixels = px(8.);
 const DOCK_BLUR_LEAST: Pixels = px(0.05);
 const REST: Duration = Duration::from_millis(1500);
 const WAKE_DEBOUNCE: Duration = Duration::from_millis(400);
-/// How long the pointer rests on the volume button before the slider opens, so passing over it
-/// on the way to another control leaves it shut.
-const VOLUME_DELAY: Duration = Duration::from_millis(180);
 /// How far the level bubble stands off the volume track, clear of the thumb that is wider than it.
 const VOLUME_BUBBLE_LIFT: Pixels = px(18.);
 /// How far the pointer has to travel, in pixels, before it wakes the controls, so the drift a
@@ -104,9 +101,6 @@ pub struct FullscreenView {
     over_transport: bool,
     over_leave: bool,
     volume_held: bool,
-    /// Whether the pointer has rested on the volume button long enough to open the slider.
-    volume_armed: bool,
-    volume_wait: Option<Task<()>>,
     muted: Option<f32>,
     large: Option<SharedString>,
     full: Option<SharedString>,
@@ -166,8 +160,6 @@ impl FullscreenView {
             over_transport: false,
             over_leave: false,
             volume_held: false,
-            volume_armed: false,
-            volume_wait: None,
             muted: None,
             large: None,
             full: None,
@@ -364,43 +356,8 @@ impl FullscreenView {
         self.hidden.position.clamp(0., 1.)
     }
 
-    /// Whether the volume slider is up. The button alone opens it only once the pointer has
-    /// rested on it for `VOLUME_DELAY`, while the slider itself holds it open at once.
     fn volume_open(&self) -> bool {
-        (self.over_volume && self.volume_armed)
-            || self.over_zone
-            || self.over_panel
-            || self.volume_held
-    }
-
-    /// Records the pointer entering or leaving the volume button. Entering starts the wait
-    /// before the slider opens, and leaving every part of the control forgets it.
-    fn hover_volume(&mut self, hovering: bool, cx: &mut Context<Self>) {
-        self.over_volume = hovering;
-        if hovering && !self.volume_armed && self.volume_wait.is_none() {
-            self.volume_wait = Some(cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(VOLUME_DELAY).await;
-                this.update(cx, |this, cx| {
-                    this.volume_wait = None;
-                    if this.over_volume {
-                        this.volume_armed = true;
-                        cx.notify();
-                    }
-                })
-                .ok();
-            }));
-        }
-        self.settle_volume();
-        cx.notify();
-    }
-
-    /// Disarms the slider once the pointer has left the button, the gap and the panel and no
-    /// drag holds it, so the next visit waits again.
-    fn settle_volume(&mut self) {
-        if !(self.over_volume || self.over_zone || self.over_panel || self.volume_held) {
-            self.volume_armed = false;
-            self.volume_wait = None;
-        }
+        self.over_volume || self.over_zone || self.over_panel || self.volume_held
     }
 
     fn turn_volume(
@@ -1028,7 +985,8 @@ impl FullscreenView {
                 div()
                     .id("fullscreen-volume-hover")
                     .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
-                        this.hover_volume(*hovering, cx);
+                        this.over_volume = *hovering;
+                        cx.notify();
                     }))
                     .child(
                         Button::new("fullscreen-volume")
@@ -1083,7 +1041,6 @@ impl FullscreenView {
                     .on_scroll_wheel(cx.listener(Self::turn_volume))
                     .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
                         this.over_panel = *hovering;
-                        this.settle_volume();
                         cx.notify();
                     }))
                     .child(
@@ -1106,7 +1063,6 @@ impl FullscreenView {
                                 }))
                                 .on_release(cx.listener(|this, _: &MouseUpEvent, _, cx| {
                                     this.volume_held = false;
-                                    this.settle_volume();
                                     this.playback
                                         .update(cx, |playback, cx| playback.end_volume_slide(cx));
                                     cx.notify();
@@ -1129,7 +1085,6 @@ impl FullscreenView {
                         .on_scroll_wheel(cx.listener(Self::turn_volume))
                         .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
                             this.over_zone = *hovering;
-                            this.settle_volume();
                             cx.notify();
                         }))
                         .child(
