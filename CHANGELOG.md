@@ -11,6 +11,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Sign in to SoundCloud and play its music. Your liked tracks and followed artists fill the
   library, and the wider catalogue — tracks, playlists, artists and albums — is there to search.
+- Sign in to SoundCloud through your own SoundCloud app to like tracks, follow artists and edit
+  your playlists.
 
 ### Changed
 

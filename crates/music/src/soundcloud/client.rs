@@ -1,7 +1,8 @@
-//! SoundCloud data access over the internal `api-v2.soundcloud.com`. Sign-in is an
-//! `oauth_token` cookie, sent as an `Authorization: OAuth …` header, and every call carries the
-//! web app's `client_id`, extracted from SoundCloud's own bundle the way Deezer's stream secret
-//! is, with the last known value as a fallback.
+//! SoundCloud data access. Reads go over the internal `api-v2.soundcloud.com`: the listener's
+//! token rides in an `Authorization: OAuth …` header, and every call carries the web app's
+//! `client_id`, extracted from SoundCloud's own bundle the way Deezer's stream secret is, with
+//! the last known value as a fallback. Writes go over the public `api.soundcloud.com`, and only
+//! for a sign-in through a registered app, since the cookie's token reads alone.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -9,10 +10,11 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
-use crate::soundcloud::wire;
+use crate::soundcloud::oauth::{self, App, Grant};
+use crate::soundcloud::{auth, wire};
 use crate::{
     Album, AlbumDetail, Artist, ArtistProfile, ArtistRef, Encoding, GenreItem, GenreSection,
     HomeFeed, MediaKind, MusicApi, Offer, Playlist, PlaylistDetail, Quality, SUGGESTIONS,
@@ -20,6 +22,8 @@ use crate::{
 };
 
 const API: &str = "https://api-v2.soundcloud.com";
+/// The public api, which takes the writes a registered app's grant may make.
+const PUBLIC: &str = "https://api.soundcloud.com";
 /// The page whose script bundle carries the web app's `client_id`.
 const WEB: &str = "https://soundcloud.com";
 
@@ -65,8 +69,17 @@ pub struct SoundCloudClient {
 
 struct Inner {
     http: reqwest::Client,
-    token: String,
+    /// The token every request carries. A registered app's grant is renewed in place before it
+    /// lapses; a cookie's never lapses here and is simply refused once SoundCloud drops it.
+    grant: tokio::sync::Mutex<Grant>,
+    /// The registered app the grant came from, which can renew it and write. None for a
+    /// cookie sign-in.
+    app: Option<App>,
     client_id: String,
+    /// Where reads, writes and token renewals go: the real hosts, or a test's loopback server.
+    api: String,
+    public: String,
+    token_url: String,
     profile: RwLock<UserProfile>,
     /// Artist avatars already looked up, so a search that ranks the same users on every
     /// keystroke does not fetch them again.
@@ -75,7 +88,7 @@ struct Inner {
 
 impl SoundCloudClient {
     /// Builds an http client for the SoundCloud api.
-    fn http() -> Result<reqwest::Client> {
+    pub(crate) fn http() -> Result<reqwest::Client> {
         reqwest::Client::builder()
             .user_agent("Mozilla/5.0 (X11; Linux x86_64; rv:142.0) Gecko/20100101 Firefox/142.0")
             .build()
@@ -83,23 +96,21 @@ impl SoundCloudClient {
     }
 
     /// Signs in with an `oauth_token` cookie: extracts the web app's `client_id` and checks the
-    /// token against `/me`. A refused token answers an empty id.
+    /// token against `/me`. A refused token answers an empty id. The client reads only.
     pub async fn connect(token: &str) -> Result<Self> {
+        Self::sign_in(Grant::lasting(token), None).await
+    }
+
+    /// Signs in with a registered app's grant, which also writes. A grant about to lapse is
+    /// renewed on the first request.
+    pub async fn connect_app(grant: Grant, app: App) -> Result<Self> {
+        Self::sign_in(grant, Some(app)).await
+    }
+
+    async fn sign_in(grant: Grant, app: Option<App>) -> Result<Self> {
         let http = Self::http()?;
         let client_id = client_id(&http).await;
-        let client = Self {
-            inner: Arc::new(Inner {
-                http,
-                token: token.to_owned(),
-                client_id,
-                profile: RwLock::new(UserProfile {
-                    id: String::new(),
-                    display_name: String::new(),
-                    avatar: None,
-                }),
-                portraits: Mutex::new(HashMap::new()),
-            }),
-        };
+        let client = Self::build(http, grant, app, client_id, API, PUBLIC, oauth::TOKEN);
         client.refresh().await?;
         if client.inner.profile.read().await.id.is_empty() {
             bail!("the oauth token was refused; sign in to soundcloud.com again");
@@ -110,11 +121,35 @@ impl SoundCloudClient {
     /// A client for `token` that has not reached SoundCloud. It can recall a downloaded track
     /// and do nothing else until it connects.
     pub fn offline(token: &str) -> Result<Self> {
-        Ok(Self {
+        Ok(Self::build(
+            Self::http()?,
+            Grant::lasting(token),
+            None,
+            FALLBACK_CLIENT_ID.to_owned(),
+            API,
+            PUBLIC,
+            oauth::TOKEN,
+        ))
+    }
+
+    fn build(
+        http: reqwest::Client,
+        grant: Grant,
+        app: Option<App>,
+        client_id: String,
+        api: &str,
+        public: &str,
+        token_url: &str,
+    ) -> Self {
+        Self {
             inner: Arc::new(Inner {
-                http: Self::http()?,
-                token: token.to_owned(),
-                client_id: FALLBACK_CLIENT_ID.to_owned(),
+                http,
+                grant: tokio::sync::Mutex::new(grant),
+                app,
+                client_id,
+                api: api.to_owned(),
+                public: public.to_owned(),
+                token_url: token_url.to_owned(),
                 profile: RwLock::new(UserProfile {
                     id: String::new(),
                     display_name: String::new(),
@@ -122,7 +157,34 @@ impl SoundCloudClient {
                 }),
                 portraits: Mutex::new(HashMap::new()),
             }),
-        })
+        }
+    }
+
+    /// Whether the sign-in can like, follow and edit playlists: only a registered app's can.
+    pub fn writable(&self) -> bool {
+        self.inner.app.is_some()
+    }
+
+    /// The access token to send now. One about to lapse is renewed first when the app can
+    /// renew it, and the renewed grant is kept, so the next start does not sign in again. A
+    /// unit test's client keeps nothing, so a test never touches the real accounts folder.
+    async fn bearer(&self) -> Result<String> {
+        let mut grant = self.inner.grant.lock().await;
+        if let (true, Some(app), Some(refresh)) = (
+            grant.stale(oauth::now()),
+            &self.inner.app,
+            grant.refresh.clone(),
+        ) {
+            let fresh =
+                oauth::refresh(&self.inner.http, &self.inner.token_url, app, &refresh).await?;
+            if !cfg!(test)
+                && let Err(error) = auth::store(&auth::Credentials::from_grant(&fresh))
+            {
+                log::warn!("soundcloud: cannot keep the renewed sign-in: {error:#}");
+            }
+            *grant = fresh;
+        }
+        Ok(grant.access.clone())
     }
 
     /// The http client the api and media requests share, for a media request that wants the
@@ -162,16 +224,18 @@ impl SoundCloudClient {
             false => {
                 let separator = if target.contains('?') { '&' } else { '?' };
                 format!(
-                    "{API}{target}{separator}client_id={}",
+                    "{}{target}{separator}client_id={}",
+                    self.inner.api,
                     escape::component(&self.inner.client_id)
                 )
             }
         };
+        let token = self.bearer().await?;
         let mut request = self
             .inner
             .http
             .request(method.clone(), &url)
-            .header("Authorization", format!("OAuth {}", self.inner.token));
+            .header("Authorization", format!("OAuth {token}"));
         if let Some(body) = body {
             request = request.json(&body);
         }
@@ -334,11 +398,7 @@ impl SoundCloudClient {
             let Some(media_url) = transcoding.get("url").and_then(Value::as_str) else {
                 continue;
             };
-            let url = format!(
-                "{media_url}?client_id={}&track_authorization={}",
-                escape::component(&self.inner.client_id),
-                escape::component(authorization)
-            );
+            let url = transcoding_url(media_url, &self.inner.client_id, authorization);
             match self.stream_url(&url).await {
                 Ok(m3u8) => {
                     log::debug!("soundcloud: {track_id} streams as {preset}");
@@ -362,11 +422,12 @@ impl SoundCloudClient {
 
     /// Resolves one transcoding url to a signed stream url.
     async fn stream_url(&self, url: &str) -> Result<String> {
+        let token = self.bearer().await?;
         let answer: Value = self
             .inner
             .http
             .get(url)
-            .header("Authorization", format!("OAuth {}", self.inner.token))
+            .header("Authorization", format!("OAuth {token}"))
             .send()
             .await
             .context("cannot resolve the soundcloud stream url")?
@@ -380,6 +441,113 @@ impl SoundCloudClient {
             .and_then(Value::as_str)
             .map(str::to_owned)
             .context("the stream answer names no url")
+    }
+
+    /// A write over the public api, as the registered app's grant. A cookie sign-in cannot
+    /// write, which the app shows as not implemented rather than as a failure.
+    async fn write(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Value> {
+        if !self.writable() {
+            return Err(crate::Unsupported.into());
+        }
+        let url = format!("{}{path}", self.inner.public);
+        let token = self.bearer().await?;
+        let mut request = self
+            .inner
+            .http
+            .request(method.clone(), &url)
+            .header("Authorization", format!("OAuth {token}"))
+            .header("Accept", "application/json; charset=utf-8");
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        let response = request
+            .send()
+            .await
+            .with_context(|| format!("cannot reach {url}"))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .context("cannot read the soundcloud answer")?;
+        if status.as_u16() == 429 {
+            return Err(anyhow::Error::new(crate::Throttled)
+                .context(format!("soundcloud is refusing {method} {path} for now")));
+        }
+        if !status.is_success() {
+            let trouble = json_text(&text).unwrap_or_else(|| status.to_string());
+            bail!("soundcloud refused {method} {path}: {trouble}");
+        }
+        Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
+    }
+
+    /// The urn the public api names `id` by, `soundcloud:{kind}:{number}`. An id that already
+    /// is a urn, such as a system playlist's, stays as it is.
+    async fn urn(&self, kind: &str, id: &str) -> Result<String> {
+        if id.starts_with("soundcloud:") {
+            return Ok(id.to_owned());
+        }
+        Ok(format!("soundcloud:{kind}:{}", self.numeric(id).await?))
+    }
+
+    /// Likes or unlikes a track or a playlist. SoundCloud's albums are playlists too.
+    async fn like(&self, kind: &str, id: &str, liked: bool) -> Result<()> {
+        if !self.writable() {
+            return Err(crate::Unsupported.into());
+        }
+        let urn = self.urn(kind, id).await?;
+        let method = match liked {
+            true => reqwest::Method::POST,
+            false => reqwest::Method::DELETE,
+        };
+        self.write(method, &format!("/likes/{kind}/{urn}"), None)
+            .await
+            .map(|_| ())
+    }
+
+    /// Changes one field of a playlist's metadata, such as its title or its sharing.
+    async fn update_playlist(&self, playlist_id: &str, playlist: Value) -> Result<()> {
+        if !self.writable() {
+            return Err(crate::Unsupported.into());
+        }
+        let urn = self.urn("playlists", playlist_id).await?;
+        self.write(
+            reqwest::Method::PUT,
+            &format!("/playlists/{urn}"),
+            Some(json!({ "playlist": playlist })),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// The numeric ids of a playlist's tracks, in order, stubs included. The public api only
+    /// replaces a playlist's tracks whole, so an edit starts from this.
+    async fn track_ids(&self, playlist_id: &str) -> Result<Vec<String>> {
+        let answer = self.playlist_data(playlist_id).await?;
+        Ok(answer
+            .get("tracks")
+            .and_then(Value::as_array)
+            .map(|tracks| {
+                tracks
+                    .iter()
+                    .filter_map(|entry| entry.get("id").and_then(wire::id))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// Replaces a playlist's tracks with `ids`, in that order.
+    async fn set_tracks(&self, playlist_id: &str, ids: &[String]) -> Result<()> {
+        let tracks: Vec<Value> = ids
+            .iter()
+            .map(|id| json!({ "urn": format!("soundcloud:tracks:{id}") }))
+            .collect();
+        self.update_playlist(playlist_id, json!({ "tracks": tracks }))
+            .await
     }
 }
 
@@ -434,6 +602,7 @@ impl MusicApi for SoundCloudClient {
         Ok(Artist {
             name,
             cover_large: wire::image(&detail, &["avatar_url"], 500),
+            banner: None,
             biography: detail
                 .get("description")
                 .and_then(Value::as_str)
@@ -516,8 +685,8 @@ impl MusicApi for SoundCloudClient {
             .collect())
     }
 
-    async fn set_track_saved(&self, _track_id: &str, _saved: bool) -> Result<()> {
-        Err(crate::Unsupported.into())
+    async fn set_track_saved(&self, track_id: &str, saved: bool) -> Result<()> {
+        self.like("tracks", track_id, saved).await
     }
 
     async fn track(&self, track_id: &str) -> Result<Track> {
@@ -543,44 +712,89 @@ impl MusicApi for SoundCloudClient {
             .collect())
     }
 
-    async fn create_playlist(&self, _name: &str) -> Result<String> {
-        Err(crate::Unsupported.into())
+    async fn create_playlist(&self, name: &str) -> Result<String> {
+        let answer = self
+            .write(
+                reqwest::Method::POST,
+                "/playlists",
+                Some(json!({ "playlist": { "title": name, "sharing": "private" } })),
+            )
+            .await
+            .context("cannot create the soundcloud playlist")?;
+        answer
+            .get("id")
+            .and_then(wire::id)
+            .or_else(|| {
+                let urn = wire::text(&answer, &["urn"])?;
+                urn.rsplit(':').next().map(str::to_owned)
+            })
+            .context("soundcloud answered the new playlist with no id")
     }
 
-    async fn rename_playlist(&self, _playlist_id: &str, _name: &str) -> Result<()> {
-        Err(crate::Unsupported.into())
+    async fn rename_playlist(&self, playlist_id: &str, name: &str) -> Result<()> {
+        self.update_playlist(playlist_id, json!({ "title": name }))
+            .await
+            .context("cannot rename the soundcloud playlist")
     }
 
-    async fn delete_playlist(&self, _playlist_id: &str) -> Result<()> {
-        Err(crate::Unsupported.into())
+    async fn delete_playlist(&self, playlist_id: &str) -> Result<()> {
+        if !self.writable() {
+            return Err(crate::Unsupported.into());
+        }
+        let urn = self.urn("playlists", playlist_id).await?;
+        self.write(reqwest::Method::DELETE, &format!("/playlists/{urn}"), None)
+            .await
+            .context("cannot delete the soundcloud playlist")
+            .map(|_| ())
     }
 
-    async fn remove_playlist_from_library(&self, _playlist_id: &str) -> Result<()> {
-        Err(crate::Unsupported.into())
+    async fn remove_playlist_from_library(&self, playlist_id: &str) -> Result<()> {
+        self.like("playlists", playlist_id, false).await
     }
 
-    async fn add_playlist_to_library(&self, _playlist_id: &str) -> Result<()> {
-        Err(crate::Unsupported.into())
+    async fn add_playlist_to_library(&self, playlist_id: &str) -> Result<()> {
+        self.like("playlists", playlist_id, true).await
     }
 
-    async fn set_playlist_public(&self, _playlist_id: &str, _public: bool) -> Result<()> {
-        Err(crate::Unsupported.into())
+    async fn set_playlist_public(&self, playlist_id: &str, public: bool) -> Result<()> {
+        let sharing = match public {
+            true => "public",
+            false => "private",
+        };
+        self.update_playlist(playlist_id, json!({ "sharing": sharing }))
+            .await
+            .context("cannot change who sees the soundcloud playlist")
     }
 
-    async fn add_track_to_playlist(&self, _playlist_id: &str, _track_id: &str) -> Result<()> {
-        Err(crate::Unsupported.into())
+    async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
+        if !self.writable() {
+            return Err(crate::Unsupported.into());
+        }
+        let mut ids = self.track_ids(playlist_id).await?;
+        ids.push(self.numeric(track_id).await?);
+        self.set_tracks(playlist_id, &ids)
+            .await
+            .context("cannot add the track to the soundcloud playlist")
     }
 
-    async fn remove_track_from_playlist(&self, _playlist_id: &str, _track_id: &str) -> Result<()> {
-        Err(crate::Unsupported.into())
+    async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
+        if !self.writable() {
+            return Err(crate::Unsupported.into());
+        }
+        let track = self.numeric(track_id).await?;
+        let mut ids = self.track_ids(playlist_id).await?;
+        ids.retain(|id| *id != track);
+        self.set_tracks(playlist_id, &ids)
+            .await
+            .context("cannot remove the track from the soundcloud playlist")
     }
 
     async fn saved_albums(&self) -> Result<Vec<Album>> {
         Ok(Vec::new())
     }
 
-    async fn set_album_saved(&self, _album_id: &str, _saved: bool) -> Result<()> {
-        Err(crate::Unsupported.into())
+    async fn set_album_saved(&self, album_id: &str, saved: bool) -> Result<()> {
+        self.like("playlists", album_id, saved).await
     }
 
     async fn saved_artists(&self) -> Result<Vec<SavedArtist>> {
@@ -595,8 +809,18 @@ impl MusicApi for SoundCloudClient {
         Ok(items.iter().filter_map(wire::saved_artist).collect())
     }
 
-    async fn set_artist_saved(&self, _artist_id: &str, _saved: bool) -> Result<()> {
-        Err(crate::Unsupported.into())
+    async fn set_artist_saved(&self, artist_id: &str, saved: bool) -> Result<()> {
+        if !self.writable() {
+            return Err(crate::Unsupported.into());
+        }
+        let urn = self.urn("users", artist_id).await?;
+        let method = match saved {
+            true => reqwest::Method::PUT,
+            false => reqwest::Method::DELETE,
+        };
+        self.write(method, &format!("/me/followings/{urn}"), None)
+            .await
+            .map(|_| ())
     }
 
     async fn album(&self, album_id: &str) -> Result<AlbumDetail> {
@@ -834,6 +1058,20 @@ pub(crate) fn served(quality: Quality) -> &'static str {
     presets_from(quality)[0]
 }
 
+/// The transcoding's own url, signed with the web app's `client_id` and the track's
+/// `track_authorization`. Asking it answers the playlist url the audio streams from.
+fn transcoding_url(media_url: &str, client_id: &str, authorization: &str) -> String {
+    let separator = match media_url.contains('?') {
+        true => '&',
+        false => '?',
+    };
+    format!(
+        "{media_url}{separator}client_id={}&track_authorization={}",
+        escape::component(client_id),
+        escape::component(authorization)
+    )
+}
+
 /// The `error_message` a refused answer carries, when it is json.
 fn json_text(text: &str) -> Option<String> {
     let answer: Value = serde_json::from_str(text).ok()?;
@@ -927,4 +1165,318 @@ fn find_bundle(html: &str) -> Option<String> {
         rest = &rest[at + 3..];
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::soundcloud::mock::Mock;
+
+    /// One track the way api-v2 lists it.
+    const TRACK: &str = r#"{
+        "id": 1001,
+        "kind": "track",
+        "title": "Night Drive",
+        "duration": 215000,
+        "streamable": true,
+        "policy": "ALLOW",
+        "artwork_url": "https://i1.sndcdn.com/artworks-abc-large.jpg",
+        "user": {"id": 77, "username": "Lumen"},
+        "playback_count": 12,
+        "media": {"transcodings": [{
+            "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:1001/abc/stream/hls",
+            "preset": "aac_160k",
+            "format": {"protocol": "hls", "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""}
+        }]}
+    }"#;
+
+    /// A client whose every host is `mock`, signed in as user 42. `app` makes it writable.
+    async fn client(mock: &Mock, app: Option<App>) -> SoundCloudClient {
+        let client = SoundCloudClient::build(
+            Mock::http(),
+            Grant::lasting("2-token"),
+            app,
+            "web-client".to_owned(),
+            mock.base(),
+            &mock.url("/public"),
+            &mock.url("/oauth/token"),
+        );
+        client.inner.profile.write().await.id = "42".to_owned();
+        client
+    }
+
+    fn app() -> App {
+        App {
+            client_id: "app-id".to_owned(),
+            secret: "app-secret".to_owned(),
+            redirect_uri: "http://127.0.0.1:8991/soundcloud".to_owned(),
+        }
+    }
+
+    #[tokio::test]
+    async fn lists_liked_tracks_from_a_mocked_response() {
+        let mock = Mock::start(|line| match line.contains("/users/42/track_likes") {
+            true => (
+                200,
+                format!(r#"{{"collection": [{{"created_at": "2026-05-01T00:00:00Z", "track": {TRACK}}}], "next_href": null}}"#),
+            ),
+            false => (404, r#"{"error_message": "not here"}"#.to_owned()),
+        })
+        .await;
+        let tracks = client(&mock, None).await.saved_tracks().await.unwrap();
+
+        assert_eq!(tracks.len(), 1);
+        let track = &tracks[0];
+        assert_eq!(track.id.as_deref(), Some("1001"));
+        assert_eq!(track.name, "Night Drive");
+        assert_eq!(track.artists, "Lumen");
+        assert_eq!(track.duration, Duration::from_millis(215_000));
+        assert!(track.playable);
+        assert_eq!(
+            track.cover.as_deref(),
+            Some("https://i1.sndcdn.com/artworks-abc-t300x300.jpg")
+        );
+
+        let sent = mock.requests();
+        assert!(sent[0].line.contains("client_id=web-client"));
+        assert!(
+            sent[0]
+                .headers
+                .to_ascii_lowercase()
+                .contains("authorization: oauth 2-token")
+        );
+    }
+
+    #[tokio::test]
+    async fn follows_next_href_through_every_page() {
+        // The route only learns the server's address once it is up, so it reads it from here.
+        let base = Arc::new(std::sync::OnceLock::<String>::new());
+        let known = base.clone();
+        let mock = Mock::start(move |line| match line.contains("page=2") {
+            true => (200, format!(r#"{{"collection": [{{"track": {TRACK}}}]}}"#)),
+            false => (
+                200,
+                format!(
+                    r#"{{"collection": [{{"track": {TRACK}}}], "next_href": "{}/users/42/track_likes?page=2"}}"#,
+                    known.get().unwrap()
+                ),
+            ),
+        })
+        .await;
+        base.set(mock.base().to_owned()).unwrap();
+        let tracks = client(&mock, None).await.saved_tracks().await.unwrap();
+
+        assert_eq!(tracks.len(), 2);
+        let lines: Vec<String> = mock.requests().into_iter().map(|sent| sent.line).collect();
+        assert_eq!(lines.len(), 2);
+        assert!(
+            lines[1].starts_with("GET /users/42/track_likes?page=2 "),
+            "{}",
+            lines[1]
+        );
+    }
+
+    #[tokio::test]
+    async fn searches_a_mocked_catalogue() {
+        let mock = Mock::start(|line| match line.starts_with("GET /search/tracks?") {
+            true => (
+                200,
+                format!(r#"{{"collection": [{TRACK}], "total_results": 1}}"#),
+            ),
+            false => (404, String::new()),
+        })
+        .await;
+        let found = client(&mock, None)
+            .await
+            .search("night drive & co")
+            .await
+            .unwrap();
+
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "Night Drive");
+        let line = &mock.requests()[0].line;
+        assert!(
+            line.contains("q=night%20drive%20%26%20co&limit=50&client_id=web-client"),
+            "{line}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_search_names_soundcloud_s_reason() {
+        let mock = Mock::start(|_| {
+            (
+                401,
+                r#"{"errors": [{"error_message": "invalid token"}]}"#.to_owned(),
+            )
+        })
+        .await;
+        let error = client(&mock, None).await.search("x").await.unwrap_err();
+        assert!(format!("{error:#}").contains("invalid token"), "{error:#}");
+    }
+
+    #[test]
+    fn the_stream_url_carries_the_client_id_and_authorization() {
+        let url = transcoding_url(
+            "https://api-v2.soundcloud.com/media/soundcloud:tracks:1001/abc/stream/hls",
+            "web-client",
+            "eyJ.a+b/c=",
+        );
+        assert_eq!(
+            url,
+            "https://api-v2.soundcloud.com/media/soundcloud:tracks:1001/abc/stream/hls\
+             ?client_id=web-client&track_authorization=eyJ.a%2Bb%2Fc%3D"
+        );
+        let signed = transcoding_url("https://example.com/hls?x=1", "id", "auth");
+        assert_eq!(
+            signed,
+            "https://example.com/hls?x=1&client_id=id&track_authorization=auth"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolves_a_transcoding_to_its_playlist() {
+        let mock = Mock::start(|line| match line {
+            line if line.starts_with("GET /tracks?ids=1001") => {
+                let track = TRACK.replace("https://api-v2.soundcloud.com/media", "MEDIA");
+                (
+                    200,
+                    track.replacen('{', r#"{"track_authorization": "auth-1", "#, 1),
+                )
+            }
+            line if line.starts_with("GET /media/") => (
+                200,
+                r#"{"url": "https://cf-hls-media.sndcdn.com/playlist/abc.m3u8?Policy=p"}"#
+                    .to_owned(),
+            ),
+            _ => (404, String::new()),
+        })
+        .await;
+        let base = mock.base().to_owned();
+        // The fixture's transcoding url is pointed back at the mock.
+        let mock_media = format!("{base}/media");
+        let client = client(&mock, None).await;
+        let data = client.track_data("1001").await.unwrap();
+        let media = data["media"]["transcodings"][0]["url"]
+            .as_str()
+            .unwrap()
+            .replace("MEDIA", &mock_media);
+        let url = transcoding_url(&media, "web-client", "auth-1");
+        let m3u8 = client.stream_url(&url).await.unwrap();
+
+        assert_eq!(
+            m3u8,
+            "https://cf-hls-media.sndcdn.com/playlist/abc.m3u8?Policy=p"
+        );
+        let sent = mock.requests();
+        let media_line = &sent.last().unwrap().line;
+        assert!(
+            media_line.starts_with(
+                "GET /media/soundcloud:tracks:1001/abc/stream/hls?client_id=web-client&track_authorization=auth-1 "
+            ),
+            "{media_line}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cookie_sign_in_cannot_write() {
+        let mock = Mock::start(|_| (200, "{}".to_owned())).await;
+        let error = client(&mock, None)
+            .await
+            .set_track_saved("1001", true)
+            .await
+            .unwrap_err();
+        assert!(error.downcast_ref::<crate::Unsupported>().is_some());
+        assert!(mock.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_app_sign_in_likes_and_follows_over_the_public_api() {
+        let mock = Mock::start(|_| (200, r#"{"status": "200 - OK"}"#.to_owned())).await;
+        let client = client(&mock, Some(app())).await;
+        client.set_track_saved("1001", true).await.unwrap();
+        client.set_track_saved("1001", false).await.unwrap();
+        client.set_artist_saved("77", true).await.unwrap();
+        client
+            .add_playlist_to_library("soundcloud:system-playlists:weekly")
+            .await
+            .unwrap();
+
+        let lines: Vec<String> = mock
+            .requests()
+            .into_iter()
+            .map(|sent| sent.line.rsplit_once(' ').unwrap().0.to_owned())
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "POST /public/likes/tracks/soundcloud:tracks:1001",
+                "DELETE /public/likes/tracks/soundcloud:tracks:1001",
+                "PUT /public/me/followings/soundcloud:users:77",
+                "POST /public/likes/playlists/soundcloud:system-playlists:weekly",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn adding_a_track_sends_the_whole_playlist_back() {
+        let mock = Mock::start(|line| match line {
+            line if line.starts_with("GET /playlists/9?") => (
+                200,
+                r#"{"id": 9, "title": "Mix", "tracks": [{"id": 1, "kind": "track"}, {"id": 2, "kind": "track"}]}"#
+                    .to_owned(),
+            ),
+            line if line.starts_with("PUT /public/playlists/soundcloud:playlists:9 ") => {
+                (200, r#"{"id": 9}"#.to_owned())
+            }
+            _ => (404, String::new()),
+        })
+        .await;
+        client(&mock, Some(app()))
+            .await
+            .add_track_to_playlist("9", "1001")
+            .await
+            .unwrap();
+
+        let sent = mock.requests();
+        let body: Value = serde_json::from_str(&sent.last().unwrap().body).unwrap();
+        assert_eq!(
+            body,
+            json!({ "playlist": { "tracks": [
+                { "urn": "soundcloud:tracks:1" },
+                { "urn": "soundcloud:tracks:2" },
+                { "urn": "soundcloud:tracks:1001" },
+            ] } })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_lapsing_grant_is_renewed_before_the_request() {
+        let mock = Mock::start(|line| match line {
+            line if line.starts_with("POST /oauth/token") => (
+                200,
+                r#"{"access_token": "2-renewed", "refresh_token": "r-2", "expires_in": 3600}"#
+                    .to_owned(),
+            ),
+            _ => (200, format!(r#"{{"collection": [{TRACK}]}}"#)),
+        })
+        .await;
+        let client = client(&mock, Some(app())).await;
+        *client.inner.grant.lock().await = Grant {
+            access: "2-old".to_owned(),
+            refresh: Some("r-1".to_owned()),
+            expires_at: Some(oauth::now()),
+        };
+        client.search("x").await.unwrap();
+
+        let sent = mock.requests();
+        assert!(sent[0].line.starts_with("POST /oauth/token"));
+        assert!(sent[0].body.contains("refresh_token=r-1"));
+        assert!(
+            sent[1]
+                .headers
+                .to_ascii_lowercase()
+                .contains("authorization: oauth 2-renewed")
+        );
+        assert_eq!(client.inner.grant.lock().await.access, "2-renewed");
+    }
 }
