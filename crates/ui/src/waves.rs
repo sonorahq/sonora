@@ -3,8 +3,8 @@ use gpui::{App, Hsla, Pixels, Rgba, ShaderInstance, Window};
 
 use crate::shader::Effect;
 
-/// The pace of the morph, two thirds of the one the shader is tuned around.
-const SPEED: f32 = 0.67;
+/// The pace the shader is tuned around.
+const SPEED: f32 = 1.;
 /// How far noise and waves push the field around.
 const SWELL: f32 = 1.;
 /// How far the drifting turn twists the field.
