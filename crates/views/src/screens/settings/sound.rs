@@ -80,7 +80,9 @@ impl SettingsView {
     pub(super) fn sample_rate_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let outputs = self.outputs.read(cx);
         let device = outputs.current();
-        let current = match outputs.following(cx) {
+        // while the rate follows each track there is none to pick
+        let following = outputs.following(cx);
+        let current = match following {
             true => device.map(|device| device.format.rate),
             false => outputs.rate(cx),
         };
@@ -89,8 +91,6 @@ impl SettingsView {
             .unwrap_or_default();
         // while another device is being tried, the open stream is not the one that will play
         let locked = outputs.switching();
-        // while the rate follows each track there is none to pick
-        let following = outputs.following(cx);
         let settings_uri = match rates.len() > 1 || following {
             true => None,
             false => {
@@ -114,7 +114,6 @@ impl SettingsView {
                     cx,
                 )
             });
-        let theme = *cx.theme();
 
         self.row(
             t!("settings-sample-rate"),
@@ -125,13 +124,6 @@ impl SettingsView {
                 .map(|row| match stepper {
                     Some((lower, higher)) => row.child(lower).child(rate).child(higher),
                     None => row.child(rate),
-                })
-                .when(following, |row| {
-                    row.child(
-                        div()
-                            .text_color(theme.muted_foreground)
-                            .child(t!("settings-sample-rate-follows")),
-                    )
                 })
                 .when_some(settings_uri, |row, uri| {
                     row.child(
