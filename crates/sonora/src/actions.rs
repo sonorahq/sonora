@@ -7,7 +7,7 @@ use input::{
 };
 use router::Destination;
 use state::{AppSettings, Equalizer, Shelf, Sonora};
-use ui::{ActiveTheme as _, Copy, Cut, Look, Paste, SelectAll, Theme};
+use ui::{Copy, Cut, Paste, SelectAll};
 
 /// How far one font size shortcut moves the size, the same step as the buttons in Settings.
 const FONT_STEP: f32 = 1.;
@@ -164,25 +164,10 @@ fn edit_equalizer(cx: &mut App, edit: fn(&mut Equalizer, &mut Context<Equalizer>
     }
 }
 
-/// Applies `change` to the saved font size and redraws with it, keeping the cover tint the
-/// theme already wears so a shortcut does not undo the adaptive palette.
+/// Updates the saved font size; the theme observer applies it with the current artwork palette.
 fn change_font_size(
     cx: &mut App,
     change: impl FnOnce(&mut AppSettings, &mut Context<AppSettings>),
 ) {
-    let settings = Sonora::global(cx).settings.clone();
-    settings.update(cx, change);
-    let (tint, tint_secondary) = (cx.theme().tint, cx.theme().tint_secondary);
-    let (look, overrides) = {
-        let settings = settings.read(cx);
-        (
-            Look {
-                tint,
-                tint_secondary,
-                ..settings.look()
-            },
-            settings.theme_overrides(),
-        )
-    };
-    Theme::set(look, &overrides, cx);
+    Sonora::global(cx).settings.clone().update(cx, change);
 }

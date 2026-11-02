@@ -33,6 +33,7 @@ pub struct Waves {
     stage: Hsla,
     time: f32,
     radius: Pixels,
+    light: bool,
 }
 
 impl Waves {
@@ -42,6 +43,7 @@ impl Waves {
             stage: Hsla::black(),
             time: 0.,
             radius: Pixels::ZERO,
+            light: false,
         }
     }
 
@@ -58,6 +60,12 @@ impl Waves {
         self
     }
 
+    /// Keeps a light appearance bright enough for dark text, without the dark stage's ceiling.
+    pub fn light(mut self, light: bool) -> Self {
+        self.light = light;
+        self
+    }
+
     pub fn corner_radius(mut self, radius: Pixels) -> Self {
         self.radius = radius;
         self
@@ -71,11 +79,15 @@ impl RenderOnce for Waves {
             let Rgba { r, g, b, a } = color.into();
             [r, g, b, a]
         };
+        let (vignette, ceiling) = match self.light {
+            true => (0., 0.),
+            false => (VIGNETTE, CEILING),
+        };
         let instance = ShaderInstance::at(self.time)
             .params(0, &[SPEED, SWELL, MORPH, PEAK])
             .params(4, &channels(fifth))
             .params(8, &channels(self.stage))
-            .params(12, &[DENSITY, SOFTNESS, VIGNETTE, CEILING])
+            .params(12, &[DENSITY, SOFTNESS, vignette, ceiling])
             .color(0, first)
             .color(1, second)
             .color(2, third)

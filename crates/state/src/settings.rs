@@ -486,15 +486,14 @@ impl PlayerBarLayout {
     }
 }
 
-/// The `appearance` block of `settings.json`. Fixed choices are stored by id, removed variant
-/// falls back to the default instead of failing the parse.
+/// The `appearance` block of `settings.json`. Fixed choices use IDs and tolerate removed values.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 struct Appearance {
     theme: String,
-    adaptive_theme: bool,
-    ambient: bool,
-    ambient_motion: bool,
+    appearance_mode: String,
+    ambient_intensity: f32,
+    ambient_motion_intensity: f32,
     visualizer: bool,
     visualizer_style: String,
     /// Whether the visualizer draws the track at its own level rather than at the volume.
@@ -503,8 +502,7 @@ struct Appearance {
     player_bar_transparent: bool,
     icons: String,
     rounding: String,
-    /// Whether the app paints its frosted treatments. The key kept its old name, which stood
-    /// for a blurred desktop behind the window, so a stored preference carries over.
+    /// Whether the app paints its frosted treatments.
     blur: bool,
     /// Whether a see-through window asks the platform to blur the desktop behind it.
     blur_window: bool,
@@ -648,6 +646,13 @@ impl Values {
     /// The values as they are used, with whatever a hand edit or an older Sonora left settled.
     fn settled(mut self) -> Self {
         self.settle_equalizer();
+        if let Some(kind) = ThemeKind::ALL
+            .into_iter()
+            .find(|kind| kind.id() == self.appearance.theme)
+        {
+            self.appearance.appearance_mode = kind.id().to_owned();
+            self.appearance.theme = "default".to_owned();
+        }
         self
     }
 }
@@ -791,10 +796,10 @@ impl StateStore {
 impl Default for Appearance {
     fn default() -> Self {
         Self {
-            theme: "dark".to_owned(),
-            adaptive_theme: false,
-            ambient: true,
-            ambient_motion: true,
+            theme: "default".to_owned(),
+            appearance_mode: ThemeKind::Dark.id().to_owned(),
+            ambient_intensity: 0.75,
+            ambient_motion_intensity: 1.,
             visualizer: true,
             visualizer_style: ui::VisualizerStyle::default().id().to_owned(),
             visualizer_absolute: false,
@@ -1245,7 +1250,11 @@ impl AppSettings {
     }
 
     pub fn theme(&self) -> &str {
-        &self.values.appearance.theme
+        let id = &self.values.appearance.theme;
+        self.themes
+            .iter()
+            .find(|variant| variant.id == *id)
+            .map_or(id, |variant| &variant.family)
     }
 
     /// Every theme file, bundled first and then the user's, grouped into families. The built-in
@@ -1254,39 +1263,90 @@ impl AppSettings {
         &self.families
     }
 
-    /// The family and variant of the selected theme, or `None` while a built-in theme is
-    /// selected or the selected file is gone.
-    pub fn theme_variant(&self) -> Option<(&ThemeFamily, &ThemeVariant)> {
-        self.families.iter().find_map(|family| {
-            family
-                .variant(self.theme())
-                .map(|variant| (family, variant))
-        })
+    /// The light/dark policy, independent of the selected colour theme.
+    pub fn appearance_mode(&self) -> ThemeKind {
+        self.themes
+            .iter()
+            .find(|variant| {
+                variant.id == self.values.appearance.theme && variant.id != variant.family
+            })
+            .map_or(
+                ThemeKind::from_id(&self.values.appearance.appearance_mode),
+                ThemeVariant::kind,
+            )
     }
 
-    /// The variant choosing `family` would select: the one last chosen in it, else the first
-    /// whose lightness matches the system appearance, else the first.
-    pub fn family_variant(&self, family: &str, cx: &App) -> Option<&ThemeVariant> {
+    /// The selected colour family, if it is still installed.
+    pub fn theme_family(&self) -> Option<&ThemeFamily> {
+        let theme = self.theme();
+        self.families.iter().find(|family| family.id == theme)
+    }
+
+    /// The currently resolved polarity, including the last reported system appearance.
+    pub fn resolved_appearance(&self) -> ThemeKind {
+        let mode = self.appearance_mode();
+        if mode != ThemeKind::System {
+            return mode;
+        }
+        self.theme_variant()
+            .map_or(self.system_theme(), |(_, variant)| variant.kind())
+    }
+
+    /// The selected family and its variant for the current light/dark appearance.
+    pub fn theme_variant(&self) -> Option<(&ThemeFamily, &ThemeVariant)> {
+        let family = self.theme_family()?;
+        self.variant_for(&family.id, self.appearance_mode())
+            .map(|variant| (family, variant))
+    }
+
+    /// The remembered variant for an appearance. System falls back to the family's first polarity.
+    pub fn variant_for(&self, family: &str, kind: ThemeKind) -> Option<&ThemeVariant> {
         let family = self.families.iter().find(|found| found.id == family)?;
-        let light = ThemeKind::System.resolved(cx) == ThemeKind::Light;
+        let kind = match kind {
+            ThemeKind::System => family
+                .variants_for(self.system_theme())
+                .next()
+                .or(family.variants.first())?
+                .kind(),
+            kind => kind,
+        };
+        let key = format!("{}:{}", family.id, kind.id());
         self.state
             .theme_variants
-            .get(&family.id)
+            .get(&key)
+            .or_else(|| self.state.theme_variants.get(&family.id))
+            .map(String::as_str)
             .and_then(|id| family.variant(id))
-            .or_else(|| {
-                family
-                    .variants
-                    .iter()
-                    .find(|variant| variant.is_light() == light)
-            })
-            .or(family.variants.first())
+            .or_else(|| family.variant(&self.values.appearance.theme))
+            .filter(|variant| variant.kind() == kind)
+            .or_else(|| family.variants_for(kind).next())
     }
 
-    pub fn adaptive_theme(&self) -> bool {
-        self.values.appearance.adaptive_theme
+    /// Ambient is a standalone treatment of the default palette, never an overlay on a theme file.
+    pub fn ambient_strength(&self) -> f32 {
+        match self.theme() == "ambient" {
+            true => {
+                let floor = match self.resolved_appearance() {
+                    ThemeKind::Light => 0.05,
+                    _ => 0.25,
+                };
+                floor + self.ambient_intensity() * (1. - floor)
+            }
+            false => 0.,
+        }
     }
 
-    /// The arrangement of the workspace's playback controls. Unknown saved ids use Classic.
+    /// How strongly artwork colours replace the neutral default palette.
+    pub fn ambient_intensity(&self) -> f32 {
+        self.values.appearance.ambient_intensity.clamp(0., 1.)
+    }
+
+    /// Whether artwork colours fill the whole app behind translucent surfaces.
+    pub fn ambient(&self) -> bool {
+        self.theme() == "ambient"
+    }
+
+    /// The arrangement of the workspace's playback controls.
     pub fn player_bar_layout(&self) -> PlayerBarLayout {
         PlayerBarLayout::from_id(&self.values.appearance.player_bar_layout)
     }
@@ -1303,26 +1363,15 @@ impl AppSettings {
         self.player_bar_transparent() && self.blur()
     }
 
-    /// Whether fullscreen paints the ambient background sampled from the cover.
-    pub fn ambient(&self) -> bool {
-        self.values.appearance.ambient
+    /// How far the ambient colours drift, from still at zero to full travel at one.
+    pub fn ambient_motion(&self) -> f32 {
+        self.values
+            .appearance
+            .ambient_motion_intensity
+            .clamp(0., 1.)
     }
 
-    /// Whether the ambient background drifts. Off leaves it a still gradient, which is what
-    /// the system reduce-motion preference does too.
-    pub fn ambient_motion(&self) -> bool {
-        self.values.appearance.ambient_motion
-    }
-
-    /// Whether the playing cover should colour the theme, given whether fullscreen is up. The
-    /// ambient background is painted out of the tint, so fullscreen tints whatever the adaptive
-    /// theme setting says.
-    pub fn cover_tint(&self, fullscreen: bool) -> bool {
-        self.adaptive_theme() || (fullscreen && self.ambient())
-    }
-
-    /// The visualizer's style, `None` when it is off. The old `visualizer` switch is still the
-    /// off state, so a settings file written before the two were one setting keeps its answer.
+    /// The visualizer's style, including `None` when it is off.
     pub fn visualizer_style(&self) -> ui::VisualizerStyle {
         match self.values.appearance.visualizer {
             true => ui::VisualizerStyle::from_id(&self.values.appearance.visualizer_style),
@@ -1379,7 +1428,7 @@ impl AppSettings {
 
     pub fn look(&self) -> Look {
         Look {
-            kind: ThemeKind::from_id(self.theme()),
+            kind: self.resolved_appearance(),
             rounding: Rounding::from_id(self.rounding()),
             font: self.font_size(),
             transparent: self.transparent(),
@@ -1445,7 +1494,7 @@ impl AppSettings {
             .clamp(0., ui::MAX_TRANSPARENCY)
     }
 
-    /// Combines the selected theme file with legacy overrides from `settings.json`.
+    /// Combines the selected theme file with inline overrides from `settings.json`.
     pub fn theme_overrides(&self) -> ThemeOverrides {
         let inline = &self.values.appearance.theme_overrides;
         self.theme_variant()
@@ -1453,9 +1502,7 @@ impl AppSettings {
             .unwrap_or_else(|| inline.clone())
     }
 
-    /// Writes the theme or family a link offered into the themes folder and selects it the way
-    /// choosing its card does, turning the adaptive theme off since only the neutral themes wear
-    /// it. Returns the family's id.
+    /// Installs and selects the family offered by a theme link. Returns the family's id.
     pub fn install_theme(&mut self, offer: &ThemeOffer, cx: &mut Context<Self>) -> Result<String> {
         let directory = themes_path(&self.path);
         let id = themes::install(offer, &directory, &self.themes)?;
@@ -1471,16 +1518,12 @@ impl AppSettings {
         );
         self.families = themes::catalog(&loaded.themes);
         self.themes = loaded.themes;
-        if self.adaptive_theme() {
-            self.set_adaptive_theme(false, cx);
-        }
-        self.set_theme_family(&id, cx);
-        cx.notify();
+        self.set_theme(id.clone(), cx);
         Ok(id)
     }
 
     /// Deletes the user's theme family `id` from the themes folder and says whether it worked.
-    /// A selected theme in it falls back to Dark. A failure is logged and shown as a toast.
+    /// A selected theme in it falls back to Default. A failure is logged and shown as a toast.
     pub fn delete_theme_family(&mut self, id: &str, cx: &mut Context<Self>) -> bool {
         let Some(family) = self.families.iter().find(|family| family.id == id).cloned() else {
             return false;
@@ -1500,10 +1543,14 @@ impl AppSettings {
         let loaded = themes::load(&directory, &self.themes);
         self.families = themes::catalog(&loaded.themes);
         self.themes = loaded.themes;
-        if family.variant(self.theme()).is_some() {
-            self.set_theme(ThemeKind::Dark.id(), cx);
+        if self.theme() == id || family.variant(self.theme()).is_some() {
+            self.set_theme("default", cx);
         }
-        if self.state.theme_variants.remove(id).is_some() {
+        let remembered = self.state.theme_variants.len();
+        self.state.theme_variants.retain(|key, _| {
+            key != id && key != &format!("{id}:light") && key != &format!("{id}:dark")
+        });
+        if self.state.theme_variants.len() != remembered {
             self.schedule_state_save(cx);
         }
         cx.notify();
@@ -2103,40 +2150,54 @@ impl AppSettings {
         self.schedule_state_save(cx);
     }
 
-    /// Selects a built-in theme by its `ThemeKind` id or a theme file by its variant id, and
-    /// remembers a variant as the one its family opens on next time.
+    /// Selects a palette without changing appearance or the remembered variant of either mode.
     pub fn set_theme(&mut self, theme: impl Into<String>, cx: &mut Context<Self>) {
+        self.values.appearance.appearance_mode = self.appearance_mode().id().to_owned();
         self.values.appearance.theme = theme.into();
-        if let Some(family) = self.theme_variant().map(|(family, _)| family.id.clone())
-            && self.state.theme_variants.get(&family) != Some(&self.values.appearance.theme)
+        self.schedule_save(cx);
+    }
+
+    /// Changes only the appearance policy, retaining the theme and both variant preferences.
+    pub fn set_appearance_mode(&mut self, mode: ThemeKind, cx: &mut Context<Self>) {
+        self.values.appearance.theme = self.theme().to_owned();
+        if mode != ThemeKind::System
+            && self
+                .theme_family()
+                .is_some_and(|family| family.variants_for(mode).next().is_none())
         {
-            let variant = self.values.appearance.theme.clone();
-            self.state.theme_variants.insert(family, variant);
-            self.schedule_state_save(cx);
+            self.set_theme("default", cx);
         }
+        self.values.appearance.appearance_mode = mode.id().to_owned();
         self.schedule_save(cx);
     }
 
-    /// Selects the variant `family_variant` picks for `family`. Returns false and changes
-    /// nothing when there is no such family.
-    pub fn set_theme_family(&mut self, family: &str, cx: &mut Context<Self>) -> bool {
-        let Some(variant) = self
-            .family_variant(family, cx)
-            .map(|variant| variant.id.clone())
+    /// Remembers a family's light or dark variant independently, including under System.
+    pub fn set_theme_variant(&mut self, family: &str, variant: &str, cx: &mut Context<Self>) {
+        let Some(kind) = self
+            .families
+            .iter()
+            .find(|found| found.id == family)
+            .and_then(|family| family.variant(variant))
+            .map(ThemeVariant::kind)
         else {
-            return false;
+            return;
         };
-        self.set_theme(variant, cx);
-        true
+        self.state
+            .theme_variants
+            .insert(format!("{}:{}", family, kind.id()), variant.to_owned());
+        self.schedule_state_save(cx);
+        self.set_theme(family, cx);
     }
 
-    pub fn set_adaptive_theme(&mut self, adaptive: bool, cx: &mut Context<Self>) {
-        self.values.appearance.adaptive_theme = adaptive;
+    /// Adjusts colour and luminance together while retaining a slight tint at the low end.
+    pub fn set_ambient_intensity(&mut self, intensity: f32, cx: &mut Context<Self>) {
+        self.values.appearance.ambient_intensity = intensity.clamp(0., 1.);
         self.schedule_save(cx);
     }
 
-    pub fn set_ambient(&mut self, ambient: bool, cx: &mut Context<Self>) {
-        self.values.appearance.ambient = ambient;
+    /// Adjusts the ambient field's travel, with zero disabling continuous animation.
+    pub fn set_ambient_motion(&mut self, intensity: f32, cx: &mut Context<Self>) {
+        self.values.appearance.ambient_motion_intensity = intensity.clamp(0., 1.);
         self.schedule_save(cx);
     }
 
@@ -2152,13 +2213,6 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
-    pub fn set_ambient_motion(&mut self, motion: bool, cx: &mut Context<Self>) {
-        self.values.appearance.ambient_motion = motion;
-        self.schedule_save(cx);
-    }
-
-    /// Picking a style turns the visualizer on; picking `None` turns it off and leaves the style
-    /// behind it alone, so the old choice comes back with it.
     pub fn set_visualizer_style(&mut self, style: ui::VisualizerStyle, cx: &mut Context<Self>) {
         self.values.appearance.visualizer = style.shown();
         if style.shown() {

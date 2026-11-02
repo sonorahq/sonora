@@ -710,8 +710,6 @@ impl SidebarLeft {
 impl Render for SidebarLeft {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
-        let sidebar_bg = theme.sidebar;
-        let sidebar_border = theme.sidebar_border;
 
         let current = self.trail.read(cx).current();
         self.follow(&current);
@@ -764,8 +762,8 @@ impl Render for SidebarLeft {
                 cx.notify();
             }))
             .when(!self.is_open(), |this| this.hidden())
-            .when(!theme.transparent, |this| this.bg(sidebar_bg))
-            .border_color(sidebar_border)
+            .when(!theme.transparent, |this| this.bg(theme.sidebar))
+            .border_color(theme.border)
             .when(overlaid, |this| {
                 this.occlude().absolute().left_0().top_0().bottom_0()
             })
@@ -874,7 +872,7 @@ fn hint(cx: &App) -> AnyElement {
         .rounded(theme.radius)
         .border_1()
         .border_dashed()
-        .border_color(theme.sidebar_border)
+        .border_color(theme.border)
         .text_size(theme.text(Text::Small))
         .text_color(theme.muted_foreground)
         .text_center()

@@ -7,8 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Drop a song onto a playlist you own or collaborate on in the sidebar to add it to that playlist.
+- Ambient brings artwork colours throughout the app and Now playing, with adjustable strength
+  and motion intensity. Colours fade between songs, including playback on another device.
+
 ### Changed
 
+- Quick picks on Home no longer shows your account name above its title.
+- Choose System, Dark or Light appearance separately from your colour theme.
 - The fullscreen background now folds the cover's colours into one another in slow soft waves instead of drifting blurred spots, and shows a strong second colour from the art.
 - Tooltips open in the same place next to their button or title every time, instead of wherever the pointer stopped.
 - On a narrow album or playlist page, Download, Like and Shuffle move into the More menu instead of running off the edge.
@@ -89,7 +97,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Control Sonora from a terminal or a script: `sonora toggle`, `next`, `current`, `search`,
   `play -s <song>` and more, listed by `sonora --help`.
 - `sonora seek` takes a time such as `1:30`, or a step such as `+10` or `-10`, besides a percent.
-- Drop a song onto a playlist you own or collaborate on in the sidebar to add it to that playlist.
 - Hold Shift while dropping a song onto a sidebar playlist to move it out of its playlist or your
   favorites.
 - Import an M3U or M3U8 playlist from the button or right-click menu on your local Playlists
@@ -114,7 +121,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   suggestions and the second leaves the field.
 - Best match is no longer repeated in the lists below it, and the arrow keys stop on it.
 - Search results fade out under the search field as they scroll instead of being cut off.
-- Quick picks on Home no longer shows your account name above its title.
 - Apple Music's Home leads with Recently played again, and Recently added sits below the
   playlists Apple made for you.
 - The lyrics source you rank higher now wins whenever it has synced lyrics, even when a source
@@ -140,6 +146,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - System media controls, Discord and album pages show Spotify covers at 640 pixels instead of 300.
 - Lyrics that mark thousandths of a second with a colon, such as `[00:01:050]`, stay on time
   instead of running almost half a second late.
+- The sidebars, title bar and player bar now use the same frame border colour.
+- Player-bar layout previews now follow the selected corner shape.
 
 ## [0.45.0] - 2026-10-27
 
