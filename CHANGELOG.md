@@ -13,7 +13,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - On a narrow album or playlist page, Download, Like and Shuffle move into the More menu instead of running off the edge.
 - The Play button at the top of a page reads Play or Pause and keeps its width, so the buttons beside it stay put.
 - Hover a page title cut short by the window to read it in full.
-- In fullscreen, the volume slider opens once you rest on the speaker button, rises in, and shows the level for as long as you point at it.
+- In fullscreen, the volume slider rises in and shows the level for as long as you point at it.
 - Lyrics still to be sung and the artist name in fullscreen take on the colour behind them instead of a flat grey.
 - The highlight on a hovered lyric line ends where its words end.
 - The title and artist in fullscreen carry a lighter shadow.
