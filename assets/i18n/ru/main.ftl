@@ -37,7 +37,6 @@ nav-pinned = Закреплённое
 nav-unpin = Открепить
 nav-pin-hint = Перетащите сюда, чтобы закрепить
 library-liked-songs = Избранное
-library-play-liked-songs = Слушать
 library-no-songs = Пока нет избранного
 library-no-albums = Пока нет сохранённых альбомов
 library-no-playlists = Пока нет плейлистов
@@ -409,8 +408,6 @@ login-choose-detail = Выберите способ входа в { $provider }.
 
 # album and playlist pages
 detail-playlist = Плейлист
-detail-play-album = Слушать альбом
-detail-play-playlist = Слушать плейлист
 
 # play button
 play-pause = Пауза
@@ -424,7 +421,6 @@ artist-monthly-listeners = { $count ->
     [few] { $value } слушателя в месяц
    *[other] { $value } слушателей в месяц
 }
-artist-play = Слушать
 artist-popular = Популярное
 artist-popular-eyebrow = Знакомство с исполнителем
 artist-popular-empty = Пока нечего слушать у этого исполнителя
@@ -504,7 +500,6 @@ kind-playlist = Плейлист
 
 # song page
 song-eyebrow = Трек
-song-play = Слушать трек
 song-view-album = Открыть альбом
 song-loading = Загружаем информацию о треке…
 song-about = О треке

@@ -668,7 +668,6 @@ impl LibraryView {
                     .gap_2()
                     .child(HeroPlayButton::listed(
                         "play-library",
-                        t!("library-play-liked-songs"),
                         self.tracks(),
                         self.playback.clone(),
                     ))

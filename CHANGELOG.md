@@ -10,6 +10,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Tooltips open in the same place next to their button or title every time, instead of wherever the pointer stopped.
+- On a narrow album or playlist page, Download, Like and Shuffle move into the More menu instead of running off the edge.
+- The Play button at the top of a page reads Play or Pause and keeps its width, so the buttons beside it stay put.
+- Hover a page title cut short by the window to read it in full.
 
 ### Fixed
 

@@ -44,7 +44,6 @@ nav-pinned = Pinned
 nav-unpin = Unpin
 nav-pin-hint = Drop here to pin
 library-liked-songs = Favorites
-library-play-liked-songs = Play
 library-no-songs = No favorites yet
 library-no-albums = No saved albums yet
 library-no-playlists = No playlists yet
@@ -414,8 +413,6 @@ login-providers = Music services
 
 # album and playlist pages
 detail-playlist = Playlist
-detail-play-album = Play album
-detail-play-playlist = Play playlist
 
 # play button
 play-pause = Pause
@@ -428,7 +425,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } monthly listener
    *[other] { $value } monthly listeners
 }
-artist-play = Play now
 artist-popular = Popular
 artist-popular-eyebrow = Explore this artist
 artist-popular-empty = Nothing to play from this artist yet
@@ -504,7 +500,6 @@ kind-playlist = Playlist
 
 # song page
 song-eyebrow = Song
-song-play = Play song
 song-view-album = View album
 song-loading = Loading song information…
 song-about = About this song

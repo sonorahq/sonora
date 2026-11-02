@@ -37,7 +37,6 @@ nav-pinned = Të fiksuara
 nav-unpin = Hiq fiksimin
 nav-pin-hint = Lësho këtu për ta fiksuar
 library-liked-songs = Të preferuarat
-library-play-liked-songs = Luaj
 library-no-songs = Ende asnjë e preferuar
 library-no-albums = Ende asnjë album i ruajtur
 library-no-playlists = Ende asnjë listë luajtjeje
@@ -367,8 +366,6 @@ login-choose-detail = Zgjidh se si të hysh te { $provider }.
 
 # album and playlist pages
 detail-playlist = Listë luajtjeje
-detail-play-album = Luaj albumin
-detail-play-playlist = Luaj listën e luajtjes
 
 # play button
 play-pause = Pauzë
@@ -381,7 +378,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } dëgjues mujor
    *[other] { $value } dëgjues mujorë
 }
-artist-play = Luaj tani
 artist-popular = Popullore
 artist-popular-eyebrow = Eksploro këtë artist
 artist-popular-empty = Ende asgjë për të luajtur nga ky artist
@@ -457,7 +453,6 @@ kind-playlist = Listë luajtjeje
 
 # song page
 song-eyebrow = Këngë
-song-play = Luaj këngën
 song-view-album = Shiko albumin
 song-loading = Duke ngarkuar informacionin e këngës…
 song-about = Rreth kësaj kënge

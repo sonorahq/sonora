@@ -123,7 +123,6 @@ impl SongView {
             .gap_3()
             .child(HeroPlayButton::new(
                 "play-song",
-                t!("song-play"),
                 vec![track.clone()],
                 self.playback.clone(),
             ))

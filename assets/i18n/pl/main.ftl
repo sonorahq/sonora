@@ -37,7 +37,6 @@ nav-pinned = Przypięte
 nav-unpin = Odepnij
 nav-pin-hint = Upuść tutaj, aby przypiąć
 library-liked-songs = Ulubione
-library-play-liked-songs = Odtwórz
 library-no-songs = Brak ulubionych
 library-no-albums = Brak zapisanych albumów
 library-no-playlists = Brak playlist
@@ -386,8 +385,6 @@ login-choose-detail = Wybierz sposób logowania do { $provider }.
 
 # album and playlist pages
 detail-playlist = Playlista
-detail-play-album = Odtwórz album
-detail-play-playlist = Odtwórz playlistę
 
 # play button
 play-pause = Wstrzymaj
@@ -401,7 +398,6 @@ artist-monthly-listeners = { $count ->
     [few] { $value } słuchaczy miesięcznie
    *[other] { $value } słuchaczy miesięcznie
 }
-artist-play = Odtwórz
 artist-popular = Popularne
 artist-popular-eyebrow = Poznaj tego wykonawcę
 artist-popular-empty = Nie ma jeszcze czego odtworzyć u tego wykonawcy
@@ -481,7 +477,6 @@ kind-playlist = Playlista
 
 # song page
 song-eyebrow = Utwór
-song-play = Odtwórz utwór
 song-view-album = Zobacz album
 song-loading = Wczytywanie informacji o utworze…
 song-about = O utworze
