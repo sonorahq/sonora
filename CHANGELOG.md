@@ -13,12 +13,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - On a narrow album or playlist page, Download, Like and Shuffle move into the More menu instead of running off the edge.
 - The Play button at the top of a page reads Play or Pause and keeps its width, so the buttons beside it stay put.
 - Hover a page title cut short by the window to read it in full.
+- In fullscreen, the volume slider opens once you rest on the speaker button, rises in, and shows the level for as long as you point at it.
+- Lyrics still to be sung and the artist name in fullscreen take on the colour behind them instead of a flat grey.
+- The highlight on a hovered lyric line ends where its words end.
+- The title and artist in fullscreen carry a lighter shadow.
 
 ### Fixed
 
 - On Windows, playback no longer crackles while you open apps or browser tabs.
 - Sonora no longer downloads every genre page at launch to find their pictures, so it uses far less memory with YouTube Music.
 - Sonora starts faster again, since genres load when you first open Search instead of at launch.
+- In fullscreen, the cover and title no longer jump a pixel at a time as the controls hide and come back.
+- The lyrics scrollbar stays hidden while the lyrics scroll along with the song.
+- The mute button in fullscreen no longer covers the volume slider with a tooltip.
 
 ## [0.47.0] - 2026-11-02
 

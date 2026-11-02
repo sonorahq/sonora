@@ -14,6 +14,8 @@ const TRACK: f32 = 0.5;
 const THUMB: f32 = 1.5;
 const HIT: f32 = 3.;
 const BUBBLE: f32 = 7.;
+/// How far the bubble stands off the track unless `lift` says otherwise.
+const LIFT: Pixels = px(12.);
 /// How far one screen reader step moves the slider, as a share of its length.
 const STEP: f32 = 0.05;
 
@@ -118,7 +120,7 @@ impl Scrubber {
             name: None,
             value: None,
             bubble: None,
-            lift: px(12.),
+            lift: LIFT,
             on_move: None,
             on_release: None,
         }
@@ -132,6 +134,12 @@ impl Scrubber {
     pub fn lift(mut self, lift: Pixels) -> Self {
         self.lift = lift;
         self
+    }
+
+    /// How far a bubble standing `lift` off the track can reach past it, for an owner that
+    /// composites the scrubber inside a layer of its own and has to leave the bubble room in it.
+    pub fn bubble_reach(lift: Pixels, cx: &App) -> Pixels {
+        lift + px((cx.theme().metrics.pad / px(1.) * BUBBLE).round())
     }
 
     pub fn colors(mut self, filled: Hsla, empty: Hsla, thumb: Hsla) -> Self {
