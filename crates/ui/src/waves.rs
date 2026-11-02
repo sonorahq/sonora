@@ -15,7 +15,7 @@ const PEAK: f32 = 0.72;
 /// close as they would on a window that much wider and read as one woven sheet.
 const DENSITY: f32 = 2.2;
 /// How wide the edge of a pool runs against the shader's own, a light blur over the transitions.
-const SOFTNESS: f32 = 1.8;
+const SOFTNESS: f32 = 2.6;
 /// How much darker the corners are than the middle, a light vignette that frames the field.
 const VIGNETTE: f32 = 0.45;
 /// The sRGB luma above which the field is pressed back, so text over a vivid cover stays readable.
