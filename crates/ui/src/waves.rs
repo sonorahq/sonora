@@ -3,21 +3,19 @@ use gpui::{App, Hsla, Pixels, Rgba, ShaderInstance, Window};
 
 use crate::shader::Effect;
 
-/// The drift rate the shader is tuned around.
+/// The pace the shader is tuned around.
 const SPEED: f32 = 1.;
-/// How far the whole field rolls under the ribbons.
+/// How far noise and waves push the field around.
 const SWELL: f32 = 1.;
-/// How far each ribbon of colour curls along its length.
-const BEND: f32 = 1.;
-/// How soft a ribbon's edge is, from 0 for crisp to 1 for a long falloff.
-const EDGE: f32 = 0.55;
+/// How far the drifting turn twists the field.
+const MORPH: f32 = 1.;
 
 static WAVES: Effect = Effect::new("sonora-waves", include_str!("../shaders/waves.wgsl"));
 
-/// Ribbons of colour that drift and bend over a dark stage, for a field that fills a whole
-/// surface. The first, second and third colours are the accents, the fourth and fifth the stage
-/// beneath. It fills its positioned parent, is opaque, and dithers itself so the stage does not
-/// band.
+/// Five colours morphing into one another with no shape that holds, as soft as a heavy blur, for
+/// a field that fills a whole surface. The first four span the gradient and the fifth is the shade
+/// its troughs sink toward. It fills its positioned parent, is opaque, and dithers itself so the
+/// dark gradients do not band.
 #[derive(IntoElement)]
 pub struct Waves {
     colors: [Hsla; 5],
@@ -52,7 +50,7 @@ impl RenderOnce for Waves {
         let [first, second, third, fourth, fifth] = self.colors;
         let Rgba { r, g, b, a } = fifth.into();
         let instance = ShaderInstance::at(self.time)
-            .params(0, &[SPEED, SWELL, BEND, EDGE, r, g, b, a])
+            .params(0, &[SPEED, SWELL, MORPH, 0., r, g, b, a])
             .color(0, first)
             .color(1, second)
             .color(2, third)

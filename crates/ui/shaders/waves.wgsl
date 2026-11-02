@@ -1,86 +1,62 @@
-// Waves: ribbons of colour that drift over a dark stage and bend as they go. Each ribbon is an
-// ellipse whose long axis is curled by a travelling wave, read through a slow swell of the whole
-// plane, so the accents keep a clear edge while they roll and fold into one another.
+// Waves: five colours morphing into one another with no shape that holds. Nothing in the field
+// moves as an object. The plane itself is turned by an angle that drifts with slow noise, pushed
+// around by more noise and rolled by crossed sines, and the colours are read off the result as a
+// wide four corner gradient. Every term is low frequency, so the field stays as soft as a heavy
+// blur, and the accents swell, split and dissolve instead of travelling.
 //
-// It is cheap enough to run over a whole window at the display rate: a few sines per ribbon and
-// no noise lookups. The colours mix with their components squared, which is close to linear light
-// for soft edges, and a dither of one 8 bit step keeps the dark stage from banding.
+// A slow wave of shade runs through it and sinks the troughs toward the fifth colour, and a
+// vignette darkens the edges, which keeps the field dark enough for lyrics to read over it. A
+// dither of one 8 bit step keeps the dark gradients from banding.
 //
-// params[0].x  speed, 1 for the default drift with orbits of half a minute or so
-// params[0].y  swell, how far the whole plane rolls, around 1
-// params[0].z  bend, how far each ribbon curls along its length, around 1
-// params[0].w  edge, how soft a ribbon's edge is, from 0 for crisp to 1 for a long falloff
-// params[1]    the fifth colour, straight alpha sRGB
-// colors[0..3] the first four colours, straight alpha sRGB
-//
-// colors[0] and colors[2] take the two large ribbons, colors[1] the bright one, the fifth colour
-// a dark one that cuts between them, and colors[3] the stage beneath.
+// params[0].x  speed, 1 for the default pace
+// params[0].y  swell, how far the noise and the sines push the plane, around 1
+// params[0].z  morph, how far the drifting turn twists the plane, around 1
+// params[1]    the fifth colour, straight alpha sRGB, which the troughs sink toward
+// colors[0..3] the corners of the gradient, straight alpha sRGB
 
 fn light(rgb: vec3<f32>) -> vec3<f32> {
     return rgb * rgb;
 }
 
-// Where a ribbon's centre stands at time `t`: `base` swung by `reach` on an orbit of angular
-// `rate`, in the centred frame where the shorter side spans one unit.
-fn orbit(base: vec2<f32>, reach: vec2<f32>, rate: f32, phase: f32, t: f32) -> vec2<f32> {
-    let spin = t * rate + phase;
-    return base + reach * vec2<f32>(sin(spin), cos(spin * 0.83 + phase * 0.7));
-}
-
-// How much of the ribbon centred at `at` covers `p`. The ribbon is `span` long and `girth` thick,
-// turned by `angle`, and a wave of `bend` travels along it so it curls rather than sitting
-// straight. The cover is 1 in the core and falls to 0 at the edge over `edge`.
-fn ribbon(
-    p: vec2<f32>,
-    at: vec2<f32>,
-    angle: f32,
-    span: f32,
-    girth: f32,
-    bend: f32,
-    edge: f32,
-    t: f32,
-    phase: f32,
-) -> f32 {
-    var local = rotate(p - at, angle);
-    local.y += bend * girth * 1.4 * sin(local.x / span * 3.0 + t * 0.42 + phase);
-    let d = length(local / vec2<f32>(span, girth));
-    return 1.0 - smoothstep(1.0 - edge, 1.0, d);
-}
-
 fn shade(input: ShaderInput) -> vec4<f32> {
     let t = input.time * input.params[0].x;
     let swell = input.params[0].y;
-    let bend = input.params[0].z;
-    let edge = clamp(input.params[0].w, 0.05, 1.0);
+    let morph = input.params[0].z;
 
     let short = max(min(input.size.x, input.size.y), 1.0);
     let half = input.size / short * 0.5;
     let p = input.position / short - half;
 
-    // Two octaves of crossed sines, each reading the other axis, roll the plane like a slow swell.
-    var q = p;
-    q += swell * 0.20 * vec2<f32>(sin(q.y * 2.1 + t * 0.29), sin(q.x * 1.7 - t * 0.25));
-    q += swell * 0.08 * vec2<f32>(sin(q.y * 4.3 - t * 0.21 + 1.3), sin(q.x * 3.8 + t * 0.17 + 0.7));
+    // The turn drifts with time and with x * y, so each quarter of the plane twists its own way
+    // and the twist keeps changing.
+    let turn = morph * 1.8 * gradient_noise(vec2<f32>(t * 0.045, p.x * p.y * 0.5 + 3.1));
+    var q = rotate(p, turn);
+    q += swell * 0.42 * vec2<f32>(
+        gradient_noise(q * 1.05 + vec2<f32>(0.0, t * 0.06)),
+        gradient_noise(q * 1.05 + vec2<f32>(5.2, -t * 0.05)),
+    );
+    q.x += swell * 0.12 * sin(q.y * 2.2 + t * 0.21);
+    q.y += swell * 0.10 * sin(q.x * 2.9 - t * 0.17);
 
-    let stage_low = light(input.colors[3].rgb);
-    let stage_high = light(input.params[1].rgb);
-    var color = mix(stage_high, stage_low, smoothstep(-0.6, 0.6, q.y)) * 0.55;
+    // A dark stage in the cover's own shadows, leaning from the deep fifth colour at the top to
+    // the fourth at the bottom.
+    var color = mix(light(input.params[1].rgb), light(input.colors[3].rgb), smoothstep(-0.7, 0.7, q.y)) * 0.6;
 
-    let first = ribbon(q, orbit(half * vec2<f32>(-0.50, -0.30), half * vec2<f32>(0.28, 0.22), 0.185, 0.0, t),
-        0.35 + t * 0.045, 0.78, 0.26, bend, edge, t, 0.0);
-    color = mix(color, light(input.colors[0].rgb), first * 0.92);
+    // Three pools of colour, each where its own slow noise runs high. They are thresholds of a
+    // field rather than shapes, so they swell, split and dissolve as the plane morphs.
+    let first = smoothstep(-0.2, 0.4, gradient_noise(q * 0.8 + vec2<f32>(t * 0.05, 1.3)));
+    color = mix(color, light(input.colors[0].rgb) * 1.15, first);
+    let second = smoothstep(-0.1, 0.45, gradient_noise(q * 0.75 + vec2<f32>(7.1, -t * 0.045)));
+    color = mix(color, light(input.colors[2].rgb), second * 0.95);
+    let bright = smoothstep(0.0, 0.5, gradient_noise(q * 1.05 + vec2<f32>(-t * 0.06, 3.7)));
+    color = mix(color, light(input.colors[1].rgb) * 1.3, bright * 0.9);
 
-    let second = ribbon(q, orbit(half * vec2<f32>(0.52, 0.34), half * vec2<f32>(0.24, 0.26), 0.153, 3.4, t),
-        -0.55 - t * 0.038, 0.72, 0.24, bend, edge, t, 2.1);
-    color = mix(color, light(input.colors[2].rgb), second * 0.9);
+    // A slow wave of shade sinks its troughs a little, so the field breathes in depth too.
+    let wave = 0.5 + 0.5 * sin(q.x * 1.6 + q.y * 2.1 + t * 0.27);
+    color *= 0.86 + 0.14 * wave;
 
-    let shadow = ribbon(q, orbit(half * vec2<f32>(0.10, -0.05), half * vec2<f32>(0.30, 0.24), 0.233, 1.7, t),
-        1.2 + t * 0.052, 0.66, 0.16, bend, edge, t, 4.2);
-    color = mix(color, stage_high * 0.6, shadow * 0.75);
-
-    let bright = ribbon(q, orbit(half * vec2<f32>(0.38, -0.46), half * vec2<f32>(0.26, 0.20), 0.262, 5.1, t),
-        -1.0 - t * 0.06, 0.52, 0.15, bend, edge, t, 1.1);
-    color = mix(color, light(input.colors[1].rgb), bright * 0.85);
+    let reach = length(p / half);
+    color *= 0.8 + 0.2 * smoothstep(1.3, 0.3, reach);
 
     return vec4<f32>(dither(sqrt(color), input.frag_coord), 1.0);
 }
