@@ -89,11 +89,12 @@ mod macos {
         32_000., 44_100., 48_000., 88_200., 96_000., 176_400., 192_000., 352_800., 384_000.,
     ];
 
-    /// What `kAudioHardwarePropertyHogMode` reads when no process has the device.
+    /// What `kAudioDevicePropertyHogMode` reads when no process has the device.
     const FREE: i32 = -1;
 
     /// Exclusive access to one output device, held until this is dropped. Dropping it puts the
-    /// device back at the rate it ran at when it was taken, and lets it go.
+    /// device back at the rate it ran at when it was taken, and lets it go if this is the `Hog`
+    /// that took it.
     pub(crate) struct Hog {
         object: AudioObjectID,
         /// cpal's id for the device, which settings store.
@@ -104,6 +105,9 @@ mod macos {
         changed: bool,
         /// The rates the device offers, lowest first.
         rates: Vec<u32>,
+        /// Whether this took the device, rather than finding Sonora already had it. Only the `Hog`
+        /// that took a device lets it go, so a second one for the same device can drop freely.
+        took: bool,
     }
 
     /// A raw range of rates, as CoreAudio lays one out.
@@ -134,7 +138,8 @@ mod macos {
                 log::warn!("output: cannot read the rates of {id}: {error:#}");
                 Vec::new()
             });
-            if owner != pid {
+            let took = owner != pid;
+            if took {
                 set(object, kAudioDevicePropertyHogMode, pid).context("cannot take the device")?;
                 let now: i32 = get(object, kAudioDevicePropertyHogMode)
                     .context("cannot confirm the device was taken")?;
@@ -149,6 +154,7 @@ mod macos {
                 original,
                 changed: false,
                 rates,
+                took,
             }))
         }
 
@@ -216,8 +222,12 @@ mod macos {
             {
                 log::warn!("output: cannot restore the rate of {}: {error:#}", self.id);
             }
+            if !self.took {
+                return;
+            }
             if let Err(error) = set(self.object, kAudioDevicePropertyHogMode, FREE) {
                 log::warn!("output: cannot release {}: {error:#}", self.id);
+                return;
             }
             log::info!("output: released exclusive access to {}", self.id);
         }

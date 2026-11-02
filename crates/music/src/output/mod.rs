@@ -584,7 +584,6 @@ impl Device {
         }
     }
 
-
     /// Pauses a stream nothing plays on once it has played its buffer out.
     fn settle(&self) {
         let mut activity = self.activity();
