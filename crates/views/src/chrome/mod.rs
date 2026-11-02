@@ -1,4 +1,5 @@
 mod aside;
+mod downloads;
 mod jam;
 mod members;
 mod notice;

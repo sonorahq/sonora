@@ -29,9 +29,9 @@ use ui::{
 use unicode_bidi::{BidiClass, Direction};
 
 use crate::chrome::{Chrome, section_label};
-use crate::shared::effects;
 use crate::shared::menus::ItemMenu;
 use crate::shared::pins::Pinned as _;
+use crate::shared::{effects, quiet};
 
 const QUEUE: &str = "queue";
 /// How many text heights across the picture of whoever queued a song is.
@@ -1285,10 +1285,10 @@ impl Aside {
                         || line_has_passed(line, position);
                     let worded = karaoke_effects && line.worded() && line.words.is_some();
                     let shade = |singing: bool| match (singing, line_has_ended) {
-                        (true, _) if worded => theme.muted_foreground,
+                        (true, _) if worded => quiet(&theme),
                         (true, _) => theme.foreground,
-                        (false, true) => theme.muted_foreground.opacity(PAST),
-                        (false, false) => theme.muted_foreground.opacity(AHEAD),
+                        (false, true) => quiet(&theme).opacity(PAST),
+                        (false, false) => quiet(&theme).opacity(AHEAD),
                     };
                     let tint = shade(Some(index) == active_line);
 
@@ -1410,10 +1410,19 @@ impl Aside {
                             false => group.into_any_element(),
                         }
                     });
+                    // The hover tint sits on the content rather than the row, so it ends where
+                    // the words do instead of running the width of the sheet.
                     let content = div()
                         .flex()
                         .flex_col()
                         .gap_1()
+                        .min_w_0()
+                        .px_2()
+                        .py_1()
+                        .rounded(theme.radius)
+                        .when(warmth > 0., |this| {
+                            this.bg(theme.table_hover.opacity(warmth))
+                        })
                         .when(hugs_end(line.voice, sung.mirrored), |this| {
                             this.items_end().text_right()
                         })
@@ -1457,14 +1466,12 @@ impl Aside {
                         .aria_size_of_set(lines.len())
                         .w_full()
                         .max_w(reach)
-                        .px_2()
-                        .py_1()
-                        .when(traded, |this| this.mt_2())
-                        .rounded(theme.radius)
-                        .cursor_pointer()
-                        .when(warmth > 0., |this| {
-                            this.bg(theme.table_hover.opacity(warmth))
+                        .flex()
+                        .when(hugs_end(line.voice, sung.mirrored), |this| {
+                            this.justify_end()
                         })
+                        .when(traded, |this| this.mt_2())
+                        .cursor_pointer()
                         .on_mouse_down(
                             gpui::MouseButton::Left,
                             cx.listener(move |this, _, _, cx| {
@@ -1617,7 +1624,7 @@ impl Aside {
                 .flex()
                 .flex_col()
                 .text_size(theme.text(Text::Small))
-                .text_color(theme.muted_foreground)
+                .text_color(quiet(&theme))
                 .child(ui::spoken("lyrics-credit-source", from))
                 .children(by.map(|by| ui::spoken("lyrics-credit-writers", by)));
             body.push(adrift(note, translation, false, window));
@@ -2017,7 +2024,11 @@ impl Render for Aside {
                                 Scroller::listing("queue-rows", &self.scrollbar)
                                     .bottom_inset(self.bottom(cx))
                                     .when(effects(), |this| {
-                                        this.fade_edges(px(FADE * 0.5), Pixels::ZERO)
+                                        let under = match self.titled {
+                                            true => Pixels::ZERO,
+                                            false => px(FADE * 0.5),
+                                        };
+                                        this.fade_edges(px(FADE * 0.5), under)
                                     })
                                     .child(
                                         self.rows(listing, sections.clone(), cx)
@@ -2114,10 +2125,10 @@ pub(crate) fn verse(
     let ended = line_has_passed(line, position);
     let worded = karaoke && line.worded() && line.words.is_some();
     let tint = match (look.active, ended) {
-        (true, _) if worded => theme.muted_foreground,
+        (true, _) if worded => quiet(&theme),
         (true, _) => theme.foreground,
-        (false, true) => theme.muted_foreground.opacity(PAST),
-        (false, false) => theme.muted_foreground.opacity(AHEAD),
+        (false, true) => quiet(&theme).opacity(PAST),
+        (false, false) => quiet(&theme).opacity(AHEAD),
     };
     let mirrored = right_to_left(&line.text);
     let sung = Sung {
@@ -2414,10 +2425,10 @@ fn secondary_lyrics_lane(
             secondary_karaoke_visible(lane, singing, position) && sung.karaoke && lane.worded();
 
         match (active, passed, karaoke) {
-            (_, _, true) => theme.muted_foreground,
+            (_, _, true) => quiet(theme),
             (true, _, false) => theme.foreground,
-            (false, true, false) => theme.muted_foreground.opacity(PAST),
-            (false, false, false) => theme.muted_foreground.opacity(AHEAD),
+            (false, true, false) => quiet(theme).opacity(PAST),
+            (false, false, false) => quiet(theme).opacity(AHEAD),
         }
     };
     // a lane only shows under the line being sung
@@ -2513,7 +2524,7 @@ fn font_key(font: &str) -> u64 {
 fn romanized_lyrics_lane(text: String, size: Pixels, theme: &ui::Theme) -> Div {
     div()
         .text_size(size)
-        .text_color(theme.muted_foreground)
+        .text_color(quiet(theme))
         .child(SharedString::from(text))
 }
 
@@ -3181,12 +3192,8 @@ fn instrumental_row(progress: f32, past: bool, verse: Pixels, theme: &ui::Theme)
         .children((0..3).map(|index| {
             let note_progress = (progress * 3. - index as f32).clamp(0., 1.);
             let tint = match past {
-                true => theme.muted_foreground.opacity(PAST),
-                false => mix(
-                    theme.muted_foreground.opacity(AHEAD),
-                    theme.primary,
-                    note_progress,
-                ),
+                true => quiet(theme).opacity(PAST),
+                false => mix(quiet(theme).opacity(AHEAD), theme.primary, note_progress),
             };
             div()
                 .size(note_size)

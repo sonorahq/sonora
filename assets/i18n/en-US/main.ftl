@@ -44,7 +44,6 @@ nav-pinned = Pinned
 nav-unpin = Unpin
 nav-pin-hint = Drop here to pin
 library-liked-songs = Favorites
-library-play-liked-songs = Play
 library-no-songs = No favorites yet
 library-no-albums = No saved albums yet
 library-no-playlists = No playlists yet
@@ -66,6 +65,15 @@ library-local-unconfigured = Configure your local library
 
 # app menu
 app-refresh = Refresh
+downloads-active = Downloading
+downloads-left = { $count ->
+    [one] { $count } song left
+   *[other] { $count } songs left
+}
+downloads-eta = About { $minutes } min left
+downloads-songs = Songs
+downloads-cancel = Cancel download
+downloads-cancel-all = Cancel all downloads
 app-sign-out = Sign Out
 app-quit = Quit
 app-settings = Settings…
@@ -405,8 +413,6 @@ login-providers = Music services
 
 # album and playlist pages
 detail-playlist = Playlist
-detail-play-album = Play album
-detail-play-playlist = Play playlist
 
 # play button
 play-pause = Pause
@@ -419,7 +425,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } monthly listener
    *[other] { $value } monthly listeners
 }
-artist-play = Play now
 artist-popular = Popular
 artist-popular-eyebrow = Explore this artist
 artist-popular-empty = Nothing to play from this artist yet
@@ -495,7 +500,6 @@ kind-playlist = Playlist
 
 # song page
 song-eyebrow = Song
-song-play = Play song
 song-view-album = View album
 song-loading = Loading song information…
 song-about = About this song
@@ -754,6 +758,8 @@ settings-discord-hide-on-connect-detail = Leave the status to Spotify's own whil
 settings-discord-buttons = Buttons
 settings-discord-buttons-detail = Links under the status for your friends to open, one to the track on its service and one to Sonora
 settings-discord-buttons-pick = Choose buttons
+# what screen readers call the preview of the Discord status
+settings-discord-preview = Discord status preview
 settings-discord-preview-listening = Listening to { $name }
 settings-discord-preview-music = Music
 settings-discord-preview-elapsed = { $time } elapsed
@@ -1210,6 +1216,8 @@ toast-keys-refused = Spotify may not work here
 toast-why = Why?
 toast-sign-in-to-play = { $name } only streams to a signed-in listener
 toast-restore-failed = { $name } could not sign back in, so Sonora carried on without it
+toast-session-invalidated = Your { $name } session was invalidated
+toast-sign-in = Sign in
 toast-track-unplayable = { $name } could not be played
 toast-playback-stopped = Playback stopped after several tracks in a row could not be played
 toast-widevine-failed = Playback failed
@@ -1368,20 +1376,12 @@ toast-offline-mode = You are offline. Go online to stream this song.
 offline-title = You are offline.
 offline-go-online = Go online
 toast-download-failed = Could not list the tracks to download.
-toast-downloading = Downloading { $name }
-toast-downloading-songs = { $count ->
-    [one] Downloading { $count } track
-   *[other] Downloading { $count } tracks
-}
-toast-downloaded = Downloaded { $name }
-toast-downloaded-songs = { $count ->
-    [one] Downloaded { $count } track
-   *[other] Downloaded { $count } tracks
-}
-toast-download-set-failed = Some tracks of { $name } could not be downloaded
-toast-download-song-failed = { $name } could not be downloaded
-toast-download-songs-failed = Some of the tracks could not be downloaded
 toast-percent = { $percent }%
+toast-download-started = Started downloading { $name }
+toast-downloads-started = { $count ->
+    [one] Started downloading { $count } song
+   *[other] Started downloading { $count } songs
+}
 toast-download-cancelled = Cancelled downloading { $name }
 toast-downloads-cancelled = { $count ->
     [one] Cancelled downloading { $count } track

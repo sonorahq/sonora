@@ -37,7 +37,6 @@ nav-pinned = Disematkan
 nav-unpin = Lepas sematan
 nav-pin-hint = Letakkan di sini untuk menyematkan
 library-liked-songs = Favorit
-library-play-liked-songs = Putar
 library-no-songs = Belum ada lagu favorit
 library-no-albums = Belum ada album tersimpan
 library-no-playlists = Belum ada playlist
@@ -367,8 +366,6 @@ login-choose-detail = Pilih cara masuk ke { $provider }.
 
 # album and playlist pages
 detail-playlist = Playlist
-detail-play-album = Putar album
-detail-play-playlist = Putar playlist
 
 # play button
 play-pause = Jeda
@@ -381,7 +378,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } pendengar bulanan
    *[other] { $value } pendengar bulanan
 }
-artist-play = Putar sekarang
 artist-popular = Populer
 artist-popular-eyebrow = Jelajahi karya artis ini
 artist-popular-empty = Belum ada lagu yang tersedia dari artis ini
@@ -457,7 +453,6 @@ kind-playlist = Playlist
 
 # song page
 song-eyebrow = Lagu
-song-play = Putar lagu
 song-view-album = Lihat album
 song-loading = Memuat informasi lagu…
 song-about = Tentang lagu ini
@@ -1269,19 +1264,6 @@ toast-offline-mode = Anda sedang offline. Kembali online untuk memutar lagu ini.
 offline-title = Anda sedang offline.
 offline-go-online = Kembali online
 toast-download-failed = Daftar lagu untuk diunduh tidak dapat dimuat.
-toast-downloading = Mengunduh { $name }
-toast-downloading-songs = { $count ->
-    [one] Mengunduh { $count } lagu
-   *[other] Mengunduh { $count } lagu
-}
-toast-downloaded = { $name } diunduh
-toast-downloaded-songs = { $count ->
-    [one] { $count } lagu diunduh
-   *[other] { $count } lagu diunduh
-}
-toast-download-set-failed = Beberapa lagu dari { $name } tidak dapat diunduh
-toast-download-song-failed = { $name } tidak dapat diunduh
-toast-download-songs-failed = Beberapa lagu tidak dapat diunduh
 toast-percent = { $percent }%
 toast-download-cancelled = Unduhan { $name } dibatalkan
 toast-downloads-cancelled = { $count ->

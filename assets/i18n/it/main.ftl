@@ -37,7 +37,6 @@ nav-pinned = Fissati
 nav-unpin = Rimuovi
 nav-pin-hint = Trascina qui per fissare
 library-liked-songs = Preferiti
-library-play-liked-songs = Riproduci
 library-no-songs = Ancora nessun preferito
 library-no-albums = Ancora nessun album salvato
 library-no-playlists = Ancora nessuna playlist
@@ -367,8 +366,6 @@ login-choose-detail = Scegli come accedere a { $provider }.
 
 # album and playlist pages
 detail-playlist = Playlist
-detail-play-album = Riproduci album
-detail-play-playlist = Riproduci playlist
 
 # play button
 play-pause = Pausa
@@ -381,7 +378,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } ascoltatore al mese
    *[other] { $value } ascoltatori al mese
 }
-artist-play = Riproduci
 artist-popular = Popolari
 artist-popular-eyebrow = Esplora questo artista
 artist-popular-empty = Ancora nulla da riprodurre di questo artista
@@ -457,7 +453,6 @@ kind-playlist = Playlist
 
 # song page
 song-eyebrow = Brano
-song-play = Riproduci brano
 song-view-album = Mostra album
 song-loading = Caricamento informazioni brano…
 song-about = Informazioni sul brano
@@ -1270,19 +1265,6 @@ toast-offline-mode = Sei offline. Torna online per ascoltare questo brano in str
 offline-title = Sei offline.
 offline-go-online = Torna online
 toast-download-failed = Impossibile elencare i brani da scaricare.
-toast-downloading = Download di { $name }
-toast-downloading-songs = { $count ->
-    [one] Download di { $count } brano
-   *[other] Download di { $count } brani
-}
-toast-downloaded = { $name } scaricato
-toast-downloaded-songs = { $count ->
-    [one] { $count } brano scaricato
-   *[other] { $count } brani scaricati
-}
-toast-download-set-failed = Impossibile scaricare alcuni brani di { $name }
-toast-download-song-failed = Impossibile scaricare { $name }
-toast-download-songs-failed = Impossibile scaricare alcuni brani
 toast-percent = { $percent }%
 toast-download-cancelled = Download di { $name } annullato
 toast-downloads-cancelled = { $count ->

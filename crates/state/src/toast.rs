@@ -30,6 +30,8 @@ pub enum Target {
     Playlist(SharedString),
     /// The Playback tab of settings, where the Widevine module is managed.
     PlaybackSettings,
+    /// The Providers tab of settings, where a provider is signed in again.
+    ProviderSettings,
 }
 
 /// A button on a toast. Pressing it runs the handler, opens the target or the link if there is

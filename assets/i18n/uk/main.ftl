@@ -37,7 +37,6 @@ nav-pinned = Закріплене
 nav-unpin = Відкріпити
 nav-pin-hint = Перетягніть сюди, щоб закріпити
 library-liked-songs = Улюблене
-library-play-liked-songs = Слухати
 library-no-songs = Улюбленого ще немає
 library-no-albums = Поки немає збережених альбомів
 library-no-playlists = Поки немає плейлистів
@@ -386,8 +385,6 @@ login-choose-detail = Виберіть спосіб входу в { $provider }.
 
 # album and playlist pages
 detail-playlist = Плейлист
-detail-play-album = Слухати альбом
-detail-play-playlist = Слухати плейлист
 
 # play button
 play-pause = Пауза
@@ -401,7 +398,6 @@ artist-monthly-listeners = { $count ->
     [few] { $value } слухачі на місяць
    *[other] { $value } слухачів на місяць
 }
-artist-play = Слухати
 artist-popular = Популярне
 artist-popular-eyebrow = Знайомство з виконавцем
 artist-popular-empty = Поки немає чого слухати в цього виконавця
@@ -481,7 +477,6 @@ kind-playlist = Плейлист
 
 # song page
 song-eyebrow = Трек
-song-play = Слухати трек
 song-view-album = Відкрити альбом
 song-loading = Завантажуємо інформацію про трек…
 song-about = Про трек
@@ -740,6 +735,7 @@ settings-discord-hide-on-connect-detail = Залишає статус самом
 settings-discord-buttons = Кнопки
 settings-discord-buttons-detail = Посилання під статусом, які можуть відкрити друзі: на трек у його сервісі й на Sonora
 settings-discord-buttons-pick = Обрати кнопки
+settings-discord-preview = Попередній перегляд статусу Discord
 settings-discord-preview-listening = Слухає { $name }
 settings-discord-preview-music = Музика
 settings-discord-preview-elapsed = Минуло { $time }
@@ -1312,21 +1308,6 @@ toast-offline-mode = Ви офлайн. Перейдіть в онлайн, що
 offline-title = Ви офлайн.
 offline-go-online = Перейти в онлайн
 toast-download-failed = Не вдалося отримати список треків для завантаження.
-toast-downloading = Завантажуємо { $name }
-toast-downloading-songs = { $count ->
-    [one] Завантажуємо { $count } трек
-    [few] Завантажуємо { $count } треки
-   *[other] Завантажуємо { $count } треків
-}
-toast-downloaded = { $name } завантажено
-toast-downloaded-songs = { $count ->
-    [one] Завантажено { $count } трек
-    [few] Завантажено { $count } треки
-   *[other] Завантажено { $count } треків
-}
-toast-download-set-failed = Не вдалося завантажити деякі треки з { $name }
-toast-download-song-failed = Не вдалося завантажити { $name }
-toast-download-songs-failed = Не вдалося завантажити деякі треки
 toast-percent = { $percent }%
 toast-download-cancelled = Завантаження { $name } скасовано
 toast-downloads-cancelled = { $count ->

@@ -37,7 +37,6 @@ nav-pinned = Připnuté
 nav-unpin = Odepnout
 nav-pin-hint = Přetažením sem připneš
 library-liked-songs = Oblíbené
-library-play-liked-songs = Přehrát
 library-no-songs = Zatím nemáš žádné oblíbené
 library-no-albums = Zatím nemáš žádné uložené albumy
 library-no-playlists = Zatím žádné playlisty
@@ -390,8 +389,6 @@ login-choose-detail = Vyber způsob přihlášení k { $provider }.
 
 # album and playlist pages
 detail-playlist = Playlist
-detail-play-album = Přehrát album
-detail-play-playlist = Přehrát playlist
 
 # play button
 play-pause = Pozastavit
@@ -405,7 +402,6 @@ artist-monthly-listeners = { $count ->
     [few] { $value } měsíční posluchači
    *[other] { $value } měsíčních posluchačů
 }
-artist-play = Přehrát nyní
 artist-popular = Populární
 artist-popular-eyebrow = Prozkoumej tohoto interpreta
 artist-popular-empty = Zatím tu není co přehrát
@@ -485,7 +481,6 @@ kind-playlist = Playlist
 
 # song page
 song-eyebrow = Skladba
-song-play = Přehrát skladbu
 song-view-album = Zobrazit album
 song-loading = Načítají se informace o skladbě…
 song-about = O této skladbě
@@ -1331,21 +1326,6 @@ toast-offline-mode = Jsi offline. Pro streamování této skladby přejdi online
 offline-title = Jsi offline.
 offline-go-online = Přejít online
 toast-download-failed = Nepodařilo se zjistit, které skladby stáhnout.
-toast-downloading = Stahuje se { $name }
-toast-downloading-songs = { $count ->
-    [one] Stahuje se { $count } skladba
-    [few] Stahují se { $count } skladby
-   *[other] Stahuje se { $count } skladeb
-}
-toast-downloaded = Staženo: { $name }
-toast-downloaded-songs = { $count ->
-    [one] Stažena { $count } skladba
-    [few] Staženy { $count } skladby
-   *[other] Staženo { $count } skladeb
-}
-toast-download-set-failed = Některé skladby z { $name } se nepodařilo stáhnout
-toast-download-song-failed = { $name } se nepodařilo stáhnout
-toast-download-songs-failed = Některé skladby se nepodařilo stáhnout
 toast-percent = { $percent } %
 toast-download-cancelled = Stahování { $name } zrušeno
 toast-downloads-cancelled = { $count ->

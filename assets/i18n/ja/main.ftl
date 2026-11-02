@@ -37,7 +37,6 @@ nav-pinned = ピン留め
 nav-unpin = ピン留めを解除
 nav-pin-hint = ここにドロップしてピン留め
 library-liked-songs = お気に入り
-library-play-liked-songs = 再生
 library-no-songs = お気に入りはまだありません
 library-no-albums = 保存したアルバムはまだありません
 library-no-playlists = プレイリストはまだありません
@@ -324,8 +323,6 @@ login-choose-detail = { $provider } へのサインイン方法を選んでく�
 
 # album and playlist pages
 detail-playlist = プレイリスト
-detail-play-album = アルバムを再生
-detail-play-playlist = プレイリストを再生
 
 # play button
 play-pause = 一時停止
@@ -337,7 +334,6 @@ artist-eyebrow = アーティスト
 artist-monthly-listeners = { $count ->
    *[other] 月間リスナー { $value }人
 }
-artist-play = 今すぐ再生
 artist-popular = 人気の曲
 artist-popular-eyebrow = このアーティストを知る
 artist-popular-empty = このアーティストにはまだ再生できる曲がありません
@@ -411,7 +407,6 @@ kind-playlist = プレイリスト
 
 # song page
 song-eyebrow = 曲
-song-play = 曲を再生
 song-view-album = アルバムを表示
 song-loading = 曲の情報を読み込んでいます…
 song-about = この曲について
@@ -1207,17 +1202,6 @@ toast-offline-mode = オフラインです。この曲をストリーミング�
 offline-title = オフラインです。
 offline-go-online = オンラインにする
 toast-download-failed = ダウンロードする曲の一覧を取得できませんでした。
-toast-downloading = { $name } をダウンロード中
-toast-downloading-songs = { $count ->
-   *[other] { $count }曲をダウンロード中
-}
-toast-downloaded = { $name } をダウンロードしました
-toast-downloaded-songs = { $count ->
-   *[other] { $count }曲をダウンロードしました
-}
-toast-download-set-failed = { $name } の一部の曲をダウンロードできませんでした
-toast-download-song-failed = { $name } をダウンロードできませんでした
-toast-download-songs-failed = 一部の曲をダウンロードできませんでした
 toast-percent = { $percent }%
 toast-download-cancelled = { $name } のダウンロードをキャンセルしました
 toast-downloads-cancelled = { $count ->

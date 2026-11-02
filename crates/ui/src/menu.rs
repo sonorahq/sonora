@@ -599,6 +599,17 @@ impl Menu {
         self
     }
 
+    /// Puts `items` before the ones already added, with a separator after them when the menu
+    /// held anything.
+    pub fn lead(mut self, items: impl IntoIterator<Item = MenuItem>) -> Self {
+        let mut led: Vec<MenuItem> = items.into_iter().collect();
+        if !led.is_empty() && !self.items.is_empty() {
+            led.push(MenuItem::separator("lead-separator"));
+        }
+        self.items.splice(0..0, led);
+        self
+    }
+
     /// Names the menu for screen readers, usually after the button or setting that opens it.
     pub fn name(mut self, name: impl Into<SharedString>) -> Self {
         self.name = Some(name.into());

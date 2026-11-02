@@ -358,7 +358,6 @@ impl ArtistView {
             .child(
                 HeroPlayButton::new(
                     "play-artist",
-                    t!("artist-play"),
                     self.popular.as_ref().clone(),
                     self.playback.clone(),
                 )

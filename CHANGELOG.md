@@ -9,6 +9,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Drag the playing song from the player bar onto a playlist, Pinned or the queue.
+
+### Changed
+
+- The fullscreen background now folds the cover's colours into one another in slow soft waves instead of drifting blurred spots, and shows a strong second colour from the art.
+- Tooltips open in the same place next to their button or title every time, instead of wherever the pointer stopped.
+- On a narrow album or playlist page, Download, Like and Shuffle move into the More menu instead of running off the edge.
+- The Play button at the top of a page reads Play or Pause and keeps its width, so the buttons beside it stay put.
+- Hover a page title cut short by the window to read it in full.
+- In fullscreen, the volume slider rises in and shows the level for as long as you point at it.
+- Lyrics still to be sung and the artist name in fullscreen take on the colour behind them instead of a flat grey.
+- The highlight on a hovered lyric line ends where its words end.
+- The title and artist in fullscreen carry a lighter shadow.
+
+### Fixed
+
+- On Windows, playback no longer crackles while you open apps or browser tabs.
+- Sonora no longer downloads every genre page at launch to find their pictures, so it uses far less memory with YouTube Music.
+- Sonora starts faster again, since genres load when you first open Search instead of at launch.
+- In fullscreen, the cover and title no longer jump a pixel at a time as the controls hide and come back.
+- The lyrics scrollbar stays hidden while the lyrics scroll along with the song.
+- The mute button in fullscreen no longer covers the volume slider with a tooltip.
+- The visualizer falls all the way to the bottom when you pause or the music goes quiet, instead of holding its last levels.
+
+## [0.47.0] - 2026-11-02
+
+### Added
+
 - Listen together on any streaming service with Sonora Session: start one from the Sessions button in the player bar, share its six-digit code, and everyone who joins hears the same song in step.
 - `sonora session` starts, joins or leaves a Sonora Session from the command line.
 - A Members panel, opened from the Sessions menu, lists who is in your Sonora Session or Spotify Jam and lets the host remove someone. An accent dot on the Sessions button shows one is under way, and while another Spotify device plays the button wears that device's icon.
@@ -18,7 +46,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Local songs read word-by-word lyrics from a `.ttml` file beside them or from TTML in their
   lyrics tag.
 - The Now playing preview in Appearance settings draws the visualizer style you pick.
-- Drag the playing song from the player bar onto a playlist, Pinned or the queue.
+- While anything downloads, the title bar shows how many songs are left, with a cross that cancels
+  every download. Click it to see those songs under the album, playlist or pick that started
+  them, and cancel any one download on its own.
 
 ### Changed
 
@@ -28,9 +58,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The tray menu and taskbar buttons follow the song of the Jam or device you are listening to.
 - A song's right-click menu groups Artist, Album, Radio and Details under one Go to submenu.
 - Sorting by Date added puts the songs you added most recently first.
+- When a service signs you out, the toast says your session was invalidated and stays up with a Sign in button that opens the Providers settings.
+- Starting a download shows a short toast instead of one that follows its progress.
+- A long playlist starts downloading as soon as its first songs are listed.
+- After Spotify refuses a burst of downloads, Sonora checks back every fifteen seconds without
+  fetching a song first, and carries on as soon as Spotify allows it, so a big playlist finishes
+  sooner.
+- Shuffle mixes the songs you queued by hand in with the rest, so turning it off and on again
+  reshuffles the whole queue.
 
 ### Fixed
 
+- A song the service will not serve is skipped, so its album or playlist still finishes downloading
+  and can be removed.
+- The download mark on a song finishes filling and fades out smoothly again when the song lands.
 - The header of an album, playlist or artist page no longer jumps when it finishes loading.
 - The column header of an artist's popular songs no longer leaves a thin gap above it while scrolling.
 - Resuming after a pause no longer plays a blip of the old position first after a seek or a reload.
@@ -39,8 +80,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   arrives once they start playing.
 - Dragging the volume slider no longer stutters or spikes CPU and GPU use.
 - Leaving a Jam you joined works again.
+- Screen readers read the Discord status preview in settings: its text, buttons and service badge.
 - Songs you queue in a Jam show your name as the one who added them.
 - A Jam's queue is no longer cleared when a song starts playing.
+- Music no longer crackles when you open an app or a browser tab while it plays.
 
 ## [0.46.0] - 2026-10-31
 
@@ -2467,7 +2510,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.46.0...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.47.0...HEAD
+[0.47.0]: https://github.com/sonorahq/sonora/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/sonorahq/sonora/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/sonorahq/sonora/compare/v0.44.2...v0.45.0
 [0.44.2]: https://github.com/sonorahq/sonora/compare/v0.44.1...v0.44.2

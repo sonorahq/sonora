@@ -49,7 +49,9 @@ pub use control::Control;
 pub use cover::Cover;
 pub use detail::{Collection, Detail, Header};
 pub use devices::Devices;
-pub use downloads::{Downloads, DownloadsChanged, Progress, downloaded};
+pub use downloads::{
+    Active, Downloads, DownloadsChanged, Pending, Progress, Remaining, Subject, downloaded,
+};
 pub use drm::{CdmState, Drm};
 pub use equalizer::{DeviceRule, Equalizer, RuleDevice, Sound};
 pub use genre::{GenreDetails, Genres};
@@ -176,6 +178,16 @@ impl Io {
 
 pub(crate) async fn join<T>(handle: JoinHandle<Result<T>>) -> Result<T> {
     handle.await?
+}
+
+/// Hands the free pages of the malloc heap back to the kernel after a burst of short-lived
+/// allocations. The app runs on one malloc arena, which otherwise keeps what a burst freed resident.
+/// It locks the heap while it walks it, so call it off the main thread and only once a burst is over.
+pub(crate) fn trim_heap() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    unsafe {
+        libc::malloc_trim(0);
+    }
 }
 
 /// Flattens a failed call's reason and tells `Network` about it, so one screen's failure puts
