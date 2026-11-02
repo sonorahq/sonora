@@ -136,10 +136,10 @@ impl Scrubber {
         self
     }
 
-    /// How far a bubble at the default lift can reach past the track, for an owner that
+    /// How far a bubble standing `lift` off the track can reach past it, for an owner that
     /// composites the scrubber inside a layer of its own and has to leave the bubble room in it.
-    pub fn bubble_reach(cx: &App) -> Pixels {
-        LIFT + px((cx.theme().metrics.pad / px(1.) * BUBBLE).round())
+    pub fn bubble_reach(lift: Pixels, cx: &App) -> Pixels {
+        lift + px((cx.theme().metrics.pad / px(1.) * BUBBLE).round())
     }
 
     pub fn colors(mut self, filled: Hsla, empty: Hsla, thumb: Hsla) -> Self {

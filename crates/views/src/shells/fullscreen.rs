@@ -79,6 +79,8 @@ const WAKE_DEBOUNCE: Duration = Duration::from_millis(400);
 /// How long the pointer rests on the volume button before the slider opens, so passing over it
 /// on the way to another control leaves it shut.
 const VOLUME_DELAY: Duration = Duration::from_millis(180);
+/// How far the level bubble stands off the volume track, clear of the thumb that is wider than it.
+const VOLUME_BUBBLE_LIFT: Pixels = px(18.);
 /// How far the pointer has to travel, in pixels, before it wakes the controls, so the drift a
 /// resting hand gives a trackpad or a sensitive mouse leaves them asleep.
 const WAKE_TRAVEL: f64 = 3.;
@@ -1012,7 +1014,7 @@ impl FullscreenView {
         let empty = theme.muted_foreground.opacity(0.3);
         let restore = self.muted.unwrap_or(0.7);
         let span = theme.metrics.control_small + zone * 2.;
-        let reach = Scrubber::bubble_reach(cx);
+        let reach = Scrubber::bubble_reach(VOLUME_BUBBLE_LIFT, cx);
         // The level shows for as long as the pointer is anywhere over the control, not only on
         // the track, and goes with it.
         let bubble = self.volume_open().then(|| (level, percent(level)));
@@ -1091,6 +1093,7 @@ impl FullscreenView {
                                 .name(t!("equalizer-status-volume"))
                                 .value(percent(level))
                                 .colors(theme.progress_bar, empty, theme.foreground)
+                                .lift(VOLUME_BUBBLE_LIFT)
                                 .when_some(bubble, |this, (at, text)| this.bubble(at, text))
                                 .on_move(cx.listener(|this, fraction: &f32, _, cx| {
                                     let level = *fraction;
