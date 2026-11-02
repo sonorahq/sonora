@@ -1195,13 +1195,15 @@ impl FullscreenView {
     /// width, so the breakpoint that stacks the chrome player bar cannot move it, and nudged
     /// down by `LEAVE_DROP` to sit level with the volume button's glyph. It sinks and
     /// fades with the idle spring rather than with the controls, so a pointer move still brings
-    /// it back when the controls are set to stay hidden.
+    /// it back when the controls are set to stay hidden. The column occludes, so hovering it
+    /// never reaches whatever sits behind it.
     fn leave(&self, idle: f32, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         let frosted = ambient::shown(cx);
 
         div()
             .id("leave-fullscreen-hover")
+            .occlude()
             .absolute()
             .bottom(px(SINK) * -idle - px(LEAVE_DROP))
             .right_5()
