@@ -18,6 +18,7 @@
 //              lie as close as they do on a window that much wider
 // params[3].y  softness, how wide the edge of a pool runs, 1 for the default and more for a
 //              blur over the transitions
+// params[3].z  vignette, how much darker the corners are than the middle, 0 for none
 // colors[0..3] the first four colours, straight alpha sRGB
 
 // How much of the plane the pool keyed by `seed` covers here, from 0 outside it to 1 at its core.
@@ -56,6 +57,12 @@ fn shade(input: ShaderInput) -> vec4<f32> {
     color = mix(color, input.colors[2].rgb, peak * pool(q, 1.0, vec2<f32>(7.1, -3.4), vec2<f32>(-t * 0.045, 0.0), soft));
     color = mix(color, input.colors[3].rgb, peak * pool(q, 1.2, vec2<f32>(-2.6, -6.3), vec2<f32>(0.0, t * 0.04), soft));
     color = mix(color, input.params[1].rgb, peak * pool(q, 1.15, vec2<f32>(9.4, 5.8), vec2<f32>(t * 0.035, -t * 0.03), soft));
+
+    // The vignette reads the distance from the middle before the density packs the plane, so it
+    // keeps to the edges of the surface whatever the waves do. 1 is a corner, so the middle
+    // stays untouched and only the outer reach darkens.
+    let edge = length((input.uv - vec2<f32>(0.5)) * 2.0) * 0.7071;
+    color *= 1.0 - input.params[3].z * smoothstep(0.35, 1.0, edge);
 
     return vec4<f32>(dither(color, input.frag_coord), 1.0);
 }

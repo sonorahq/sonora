@@ -16,6 +16,8 @@ const PEAK: f32 = 0.72;
 const DENSITY: f32 = 1.8;
 /// How wide the edge of a pool runs against the shader's own, a light blur over the transitions.
 const SOFTNESS: f32 = 1.8;
+/// How much darker the corners are than the middle, a light vignette that frames the field.
+const VIGNETTE: f32 = 0.25;
 
 static WAVES: Effect = Effect::new("sonora-waves", include_str!("../shaders/waves.wgsl"));
 
@@ -71,7 +73,7 @@ impl RenderOnce for Waves {
             .params(0, &[SPEED, SWELL, MORPH, PEAK])
             .params(4, &channels(fifth))
             .params(8, &channels(self.stage))
-            .params(12, &[DENSITY, SOFTNESS])
+            .params(12, &[DENSITY, SOFTNESS, VIGNETTE])
             .color(0, first)
             .color(1, second)
             .color(2, third)
