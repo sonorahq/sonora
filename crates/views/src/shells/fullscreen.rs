@@ -69,6 +69,9 @@ const TEXT_SHADOW: [f32; 2] = [2., 8.];
 /// How much of the page colour the title and artist shadows carry. The text reads on the field
 /// without them, so they only hold it where something bright passes behind.
 const TEXT_SHADOW_STRENGTH: f32 = 0.45;
+/// How far the widest text shadow spreads past its glyphs: three of its deviations, as far as the
+/// renderer carries a blur. A gliding layer keeps this much room so it never cuts a shadow off.
+const SHADOW_BLEED: f32 = TEXT_SHADOW[1] * 3.;
 /// How hard the docked controls blur once they are all but hidden. The dock shrinks over them as
 /// they leave, so without it the last frames show the tops of the seek row cut off by its edge.
 const DOCK_BLUR: Pixels = px(8.);
@@ -547,11 +550,14 @@ impl FullscreenView {
             .gap_1()
             .w_full()
             .min_w_0()
-            .map(|this| glide(this, lift, window))
+            .map(|this| glide(this, lift, px(SHADOW_BLEED), window))
             .child(
                 canvas(move |bounds, _, _| meta_bounds.set(bounds), |_, _, _, _| {})
                     .absolute()
-                    .size_full(),
+                    .left_0()
+                    .right_0()
+                    .top(px(SHADOW_BLEED))
+                    .bottom(px(SHADOW_BLEED)),
             )
             .child(
                 // Three-part row with equal flex sides, so the title stays truly centred:
@@ -1310,6 +1316,13 @@ impl Render for FullscreenView {
             false => Pixels::ZERO,
         };
         let lift = settle((far - side) / 2.);
+        // The cover grows past the column's top and the meta sinks past its bottom while the
+        // column glides, so its layer keeps room for both. A split column already fills the
+        // height and has the slack around its content to grow into.
+        let bleed = match split {
+            true => Pixels::ZERO,
+            false => snapped((far - side) / 2., window) + px(COVER_LAYER_PAD + SHADOW_BLEED),
+        };
 
         let style = self.settings.read(cx).visualizer_style();
         let visualizer_on =
@@ -1437,7 +1450,7 @@ impl Render for FullscreenView {
                                     |this| this.flex_1().h_full(),
                                     |this| this.w_full(),
                                 )
-                                .map(|this| glide(this, shift, window))
+                                .map(|this| glide(this, shift, bleed, window))
                                 .child(self.artwork(side, raster_side, cover_scale, cx))
                                 .child(self.meta(hide, lift, window, cx))
                                 .when(split, |this| {
@@ -1487,10 +1500,13 @@ impl Render for FullscreenView {
 
 /// Places `element` `offset` below where layout puts it: the whole device pixels through layout
 /// and the fraction through the compositor, so a slow offset glides rather than stepping a pixel
-/// at a time. An offset that sits on the device grid takes no layer.
-fn glide<E: Styled>(element: E, offset: Pixels, window: &Window) -> E {
+/// at a time. An offset that sits on the device grid takes no layer. The layer clips to the
+/// element's bounds, so `bleed` pads them above and below by as far as the children paint past
+/// them, and matching negative margins give that room back to layout. The padding stays at rest
+/// too, so nothing moves when the layer comes and goes.
+fn glide<E: Styled>(element: E, offset: Pixels, bleed: Pixels, window: &Window) -> E {
     let grid = snapped(offset, window);
-    let element = element.top(grid);
+    let element = element.py(bleed).my(Pixels::ZERO - bleed).top(grid);
     match offset == grid {
         true => element,
         false => element.layer_translate(point(px(0.), offset - grid)),
