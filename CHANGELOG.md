@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-11-02
+
 ### Added
 
 - Listen together on any streaming service with Sonora Session: start one from the Sessions button in the player bar, share its six-digit code, and everyone who joins hears the same song in step.
@@ -2482,7 +2484,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.46.0...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.47.0...HEAD
+[0.47.0]: https://github.com/sonorahq/sonora/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/sonorahq/sonora/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/sonorahq/sonora/compare/v0.44.2...v0.45.0
 [0.44.2]: https://github.com/sonorahq/sonora/compare/v0.44.1...v0.44.2
