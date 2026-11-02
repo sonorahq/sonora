@@ -17,7 +17,7 @@ const DENSITY: f32 = 2.2;
 /// How wide the edge of a pool runs against the shader's own, a light blur over the transitions.
 const SOFTNESS: f32 = 2.6;
 /// How much darker the corners are than the middle, a light vignette that frames the field.
-const VIGNETTE: f32 = 0.45;
+const VIGNETTE: f32 = 0.6;
 /// The sRGB luma above which the field is pressed back, so text over a vivid cover stays readable.
 const CEILING: f32 = 0.18;
 
