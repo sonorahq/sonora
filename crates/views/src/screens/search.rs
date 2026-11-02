@@ -148,7 +148,6 @@ impl SearchView {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe(&genres, |_, _, cx| cx.notify()).detach();
-        genres.update(cx, |genres, cx| genres.load(cx));
         let input = cx.new(|cx| {
             Input::new("search-placeholder", cx)
                 .icon("icons/search.svg")

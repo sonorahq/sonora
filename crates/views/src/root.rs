@@ -933,7 +933,10 @@ impl Root {
                 toolbar = Some(genre.read(cx).toolbar());
                 genre.into()
             }
-            Destination::Search => self.screens.search.clone().into(),
+            Destination::Search => {
+                self.screens.genres.update(cx, |genres, cx| genres.load(cx));
+                self.screens.search.clone().into()
+            }
             Destination::Equalizer => {
                 header = Some(self.screens.settings_header.clone().into());
                 self.screens.equalizer.clone().into()
