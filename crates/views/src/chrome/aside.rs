@@ -1194,46 +1194,50 @@ impl Aside {
                             ),
                             false => 0.,
                         };
-                        let notes = instrumental_row(
+                        // Like a verse, the hover tint sits on the notes so it ends where they do.
+                        let glyphs = instrumental_row(
                             instrumental_progress,
                             instrumental_has_passed,
                             verse,
                             &theme,
                         )
-                        .id(("instrumental", index))
-                        .role(Role::Button)
-                        .aria_label(t!("lyrics-instrumental-break"))
-                        .when(instrumental_line == Some(index), |this| {
-                            this.aria_selected(true)
-                        })
-                        .w_full()
-                        .max_w(reach)
                         .px_2()
                         .rounded(theme.radius)
-                        .cursor_pointer()
                         .when(notes_touch.warmth > 0., |this| {
                             this.bg(theme.table_hover.opacity(notes_touch.warmth))
-                        })
-                        .when(notes_touch.depth > 0., |this| {
-                            this.layer_scale(1. - (1. - PRESSED) * notes_touch.depth)
-                        })
-                        .on_hover(cx.listener(move |this, over: &bool, _, cx| {
-                            this.set_hovered(Warm::Break(index), *over, cx)
-                        }))
-                        .on_mouse_down(
-                            gpui::MouseButton::Left,
-                            cx.listener(move |this, _, _, cx| {
-                                this.press_verse(Warm::Break(index), true, cx)
-                            }),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.seek_verse(notes_row, instrumental_start, cx);
-                        }))
-                        .when(softness > 0., |this| this.opacity(1. - VEIL * softness))
-                        .map(|this| match stepped(blur * softness) {
-                            soft if soft > HAZE_LEAST => this.blur(soft),
-                            _ => this,
                         });
+                        let notes = div()
+                            .id(("instrumental", index))
+                            .role(Role::Button)
+                            .aria_label(t!("lyrics-instrumental-break"))
+                            .when(instrumental_line == Some(index), |this| {
+                                this.aria_selected(true)
+                            })
+                            .w_full()
+                            .max_w(reach)
+                            .flex()
+                            .cursor_pointer()
+                            .child(glyphs)
+                            .when(notes_touch.depth > 0., |this| {
+                                this.layer_scale(1. - (1. - PRESSED) * notes_touch.depth)
+                            })
+                            .on_hover(cx.listener(move |this, over: &bool, _, cx| {
+                                this.set_hovered(Warm::Break(index), *over, cx)
+                            }))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.press_verse(Warm::Break(index), true, cx)
+                                }),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.seek_verse(notes_row, instrumental_start, cx);
+                            }))
+                            .when(softness > 0., |this| this.opacity(1. - VEIL * softness))
+                            .map(|this| match stepped(blur * softness) {
+                                soft if soft > HAZE_LEAST => this.blur(soft),
+                                _ => this,
+                            });
                         rendered.push(adrift(notes, notes_translation, false, window));
                     }
 
