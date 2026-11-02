@@ -64,6 +64,12 @@ impl Adaptive {
         adaptive
     }
 
+    /// The palette the theme is wearing, with how much of the cover each hue covers, which the
+    /// theme itself does not carry.
+    pub fn painted(&self) -> CoverPalette {
+        self.painted
+    }
+
     /// Records whether fullscreen is up and resamples. Leaving fullscreen with the adaptive
     /// theme off drops the tint here, so the rest of the app never keeps a cover's colour.
     /// The swap is instant either way: the whole palette appears or disappears at once, and
