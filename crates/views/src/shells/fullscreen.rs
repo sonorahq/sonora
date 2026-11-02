@@ -9,7 +9,7 @@ use gpui::{
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
     Render, ScrollWheelEvent, SharedString, SpringState, Task, TextShadow,
 };
-use gpui::{Window, canvas, deferred, div, phi, px, relative};
+use gpui::{Window, canvas, deferred, div, phi, point, px, relative};
 use i18n::t;
 use input::{ToggleFullscreen, ToggleWindowFullscreen, WORKSPACE_CONTEXT};
 use router::{Destination, navigate};
@@ -492,7 +492,13 @@ impl FullscreenView {
         cx.notify();
     }
 
-    fn meta(&self, hide: f32, lift: Pixels, cx: &mut Context<Self>) -> impl IntoElement {
+    fn meta(
+        &self,
+        hide: f32,
+        lift: Pixels,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = *cx.theme();
         let frosted = ambient::shown(cx);
         let shown = self.playback.read(cx).shown_track(cx);
@@ -539,7 +545,7 @@ impl FullscreenView {
             .gap_1()
             .w_full()
             .min_w_0()
-            .top(lift)
+            .map(|this| glide(this, lift, window))
             .child(
                 canvas(move |bounds, _, _| meta_bounds.set(bounds), |_, _, _, _| {})
                     .absolute()
@@ -836,10 +842,19 @@ impl FullscreenView {
             )
     }
 
-    fn dock(&self, cap: Pixels, hide: f32, room: Room, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The transport controls under the cover or along the bottom. A dock that `collapses` gives
+    /// its height back to the page as it hides. One beside the cover keeps its footprint and
+    /// only fades, since the column around it settles by `glide` instead of through layout.
+    fn dock(
+        &self,
+        cap: Pixels,
+        hide: f32,
+        collapses: bool,
+        room: Room,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         // The clamp runs from the controls' own height once it is known. From a taller cap the
-        // dock would hold still through the start of the fade and catch up after, and the
-        // column would rock against the cover growing beside it.
+        // dock would hold still through the start of the fade and catch up after.
         let natural = self.dock_natural.get();
         let cap = match natural > Pixels::ZERO {
             true => natural,
@@ -852,11 +867,13 @@ impl FullscreenView {
             .w_full()
             .items_start()
             .justify_center()
-            .when(hide > 0., |this| {
-                this.max_h(cap * (1. - hide))
-                    .overflow_hidden()
-                    .opacity(1. - hide)
+            .map(|this| match collapses {
+                true => this.when(hide > 0., |this| {
+                    this.max_h(cap * (1. - hide)).overflow_hidden()
+                }),
+                false => this.min_h(cap),
             })
+            .when(hide > 0., |this| this.opacity(1. - hide))
             .map(|this| match DOCK_BLUR * hide {
                 blur if blur > DOCK_BLUR_LEAST && hide < 1. && shared::effects() => this.blur(blur),
                 _ => this,
@@ -1252,8 +1269,16 @@ impl Render for FullscreenView {
         let side = snapped(near, window);
         let raster_side = snapped(far, window);
         let cover_scale = presentation_scale(presented_side, raster_side);
-        let lift = (presented_side - side) / 2.;
         let staged = self.panel.is_none() || split;
+        // The column settles by half of what the dock gives up and the meta by half of what the
+        // cover grows, both straight along `hide` to a rest that sits on the device grid, so
+        // neither steps a whole pixel at a time through layout in the slow tail of the spring.
+        let settle = |rest: Pixels| snapped(rest, window) * hide;
+        let shift = match staged {
+            true => settle(self.dock_natural.get() / 2.),
+            false => Pixels::ZERO,
+        };
+        let lift = settle((far - side) / 2.);
 
         let style = self.settings.read(cx).visualizer_style();
         let visualizer_on =
@@ -1381,12 +1406,14 @@ impl Render for FullscreenView {
                                     |this| this.flex_1().h_full(),
                                     |this| this.w_full(),
                                 )
+                                .map(|this| glide(this, shift, window))
                                 .child(self.artwork(side, raster_side, cover_scale, cx))
-                                .child(self.meta(hide, lift, cx))
+                                .child(self.meta(hide, lift, window, cx))
                                 .when(split, |this| {
                                     this.child(self.dock(
                                         theme.metrics.player_bar * DOCK,
                                         hide,
+                                        false,
                                         room,
                                         cx,
                                     ))
@@ -1414,10 +1441,28 @@ impl Render for FullscreenView {
                 this.child(self.strip(hide, window, cx))
             })
             .when(!split, |this| {
-                this.child(self.dock(theme.metrics.player_bar * DOCK_FULL, hide, room, cx))
+                this.child(self.dock(
+                    theme.metrics.player_bar * DOCK_FULL,
+                    hide,
+                    !staged,
+                    room,
+                    cx,
+                ))
             })
             .when(idle < 1., |this| this.child(self.leave(idle, window, cx)))
             .children(self.menu(cx))
+    }
+}
+
+/// Places `element` `offset` below where layout puts it: the whole device pixels through layout
+/// and the fraction through the compositor, so a slow offset glides rather than stepping a pixel
+/// at a time. An offset that sits on the device grid takes no layer.
+fn glide<E: Styled>(element: E, offset: Pixels, window: &Window) -> E {
+    let grid = snapped(offset, window);
+    let element = element.top(grid);
+    match offset == grid {
+        true => element,
+        false => element.layer_translate(point(px(0.), offset - grid)),
     }
 }
 
