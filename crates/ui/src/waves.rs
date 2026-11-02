@@ -18,6 +18,8 @@ const DENSITY: f32 = 2.2;
 const SOFTNESS: f32 = 1.8;
 /// How much darker the corners are than the middle, a light vignette that frames the field.
 const VIGNETTE: f32 = 0.45;
+/// The sRGB luma above which the field is pressed back, so text over a vivid cover stays readable.
+const CEILING: f32 = 0.18;
 
 static WAVES: Effect = Effect::new("sonora-waves", include_str!("../shaders/waves.wgsl"));
 
@@ -73,7 +75,7 @@ impl RenderOnce for Waves {
             .params(0, &[SPEED, SWELL, MORPH, PEAK])
             .params(4, &channels(fifth))
             .params(8, &channels(self.stage))
-            .params(12, &[DENSITY, SOFTNESS, VIGNETTE])
+            .params(12, &[DENSITY, SOFTNESS, VIGNETTE, CEILING])
             .color(0, first)
             .color(1, second)
             .color(2, third)

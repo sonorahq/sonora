@@ -19,6 +19,7 @@
 // params[3].y  softness, how wide the edge of a pool runs, 1 for the default and more for a
 //              blur over the transitions
 // params[3].z  vignette, how much darker the corners are than the middle, 0 for none
+// params[3].w  ceiling, the sRGB luma above which light is pressed back, 0 for none
 // colors[0..3] the first four colours, straight alpha sRGB
 
 // How much of the plane the pool keyed by `seed` covers here, from 0 outside it to 1 at its core.
@@ -63,6 +64,14 @@ fn shade(input: ShaderInput) -> vec4<f32> {
     // stays untouched and only the outer reach darkens.
     let edge = length((input.uv - vec2<f32>(0.5)) * 2.0) * 0.7071;
     color *= 1.0 - input.params[3].z * smoothstep(0.25, 1.0, edge);
+
+    // A soft ceiling: light under it passes untouched and light over it keeps only a third of
+    // the excess, so a vivid cover cannot wash out the text laid over the field.
+    let ceiling = input.params[3].w;
+    let level = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+    if ceiling > 0.0 && level > ceiling {
+        color *= (ceiling + (level - ceiling) * 0.35) / level;
+    }
 
     return vec4<f32>(dither(color, input.frag_coord), 1.0);
 }
