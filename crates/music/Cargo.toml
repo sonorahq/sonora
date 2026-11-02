@@ -68,6 +68,9 @@ cpal = { workspace = true, features = ["pulseaudio"] }
 pulseaudio.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+# cpal 0.18 raises its WASAPI thread to real-time priority only with `realtime`. Without it a busy
+# system starves the stream and playback crackles whatever the buffer.
+cpal = { workspace = true, features = ["realtime"] }
 windows.workspace = true
 
 [dev-dependencies]
