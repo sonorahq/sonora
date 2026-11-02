@@ -52,6 +52,15 @@ pub(crate) fn provider_logo(slug: &str) -> &'static str {
     }
 }
 
+/// The Fluent keys of the title and explanation on provider `slug`'s server sign-in. Subsonic's
+/// text names the servers that speak its API, so a server with an API of its own says its own.
+pub(crate) fn server_prompt(slug: &str) -> (&'static str, &'static str) {
+    match slug {
+        "jellyfin" => ("login-jellyfin-title", "login-jellyfin-detail"),
+        _ => ("login-server-title", "login-server-detail"),
+    }
+}
+
 /// The brand colour of the provider `slug`'s mark. Tidal's mark is plain black or white, so it
 /// takes the foreground, as does any provider without a colour of its own.
 pub(crate) fn provider_brand(slug: &str, cx: &gpui::App) -> gpui::Hsla {

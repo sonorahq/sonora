@@ -12,6 +12,7 @@ pub mod drm;
 pub mod engine;
 pub mod equalizer;
 pub mod escape;
+pub mod jellyfin;
 pub mod kugou;
 pub mod link;
 #[cfg(test)]

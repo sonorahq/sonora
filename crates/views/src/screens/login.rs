@@ -370,9 +370,11 @@ impl LoginView {
     }
 
     fn credentials_prompt(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        Modal::new("server-prompt", t!("login-server-title"))
+        let (title, detail) =
+            crate::shared::server_prompt(self.credentials_for.unwrap_or_default());
+        Modal::new("server-prompt", i18n::lookup(title, None))
             .w(px(560.))
-            .detail(t!("login-server-detail"))
+            .detail(i18n::lookup(detail, None))
             .child(self.server.clone())
             .child(self.username.clone())
             .child(self.password.clone())

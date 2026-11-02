@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Sign in to your own Jellyfin server to browse, search and play its music library.
+
 ### Changed
 
 - The fullscreen background now folds the cover's colours into one another in slow soft waves instead of drifting blurred spots, and shows a strong second colour from the art.
