@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Tooltips open in the same place next to their button or title every time, instead of wherever the pointer stopped.
+
 ### Fixed
 
 - On Windows, playback no longer crackles while you open apps or browser tabs.
