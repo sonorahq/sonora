@@ -11,9 +11,9 @@ const SWELL: f32 = 1.;
 const MORPH: f32 = 1.;
 /// How much of its colour a pool lays over what is under it at its core.
 const PEAK: f32 = 0.72;
-/// How many units of the field fit along the longer side of the surface, close enough that the
-/// waves read as one woven sheet. The count holds whatever the shape of the window.
-const DENSITY: f32 = 3.8;
+/// How many units of the field fit in the geometric mean of the surface's sides, close enough that
+/// the waves read as one woven sheet. The field takes the window's shape instead of being cropped.
+const DENSITY: f32 = 3.0;
 /// How wide the edge of a pool runs against the shader's own, a light blur over the transitions.
 const SOFTNESS: f32 = 2.2;
 /// How much darker the corners are than the middle, a light vignette that frames the field.

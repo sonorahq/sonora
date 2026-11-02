@@ -14,9 +14,10 @@
 // params[0].w  peak, how much of its colour a pool lays down at its core
 // params[1]    the fifth colour, straight alpha sRGB
 // params[2]    the stage the pools lie on, straight alpha sRGB
-// params[3].x  density, how many units of the field fit along the longer side of the surface.
-//              The field covers the surface the way a picture fills a frame, so the same number
-//              of waves runs along the long side whatever its shape and neither side squeezes them
+// params[3].x  density, how many units of the field fit in the geometric mean of the surface's
+//              sides. The field takes the shape of the surface rather than being cut from a
+//              square: a wide one holds more waves across and fewer down, a tall one the other
+//              way, and the waves themselves stay round
 // params[3].y  softness, how wide the edge of a pool runs, 1 for the default and more for a
 //              blur over the transitions
 // params[3].z  vignette, how much darker the corners are than the middle, 0 for none
@@ -38,7 +39,7 @@ fn shade(input: ShaderInput) -> vec4<f32> {
     let density = max(input.params[3].x, 0.1);
     let soft = max(input.params[3].y, 0.1);
 
-    let p = (input.position - input.size * 0.5) / max(max(input.size.x, input.size.y), 1.0) * density;
+    let p = (input.position - input.size * 0.5) / max(sqrt(input.size.x * input.size.y), 1.0) * density;
 
     // The plane twists by an angle read off slow noise across it, about a pivot that sits off the
     // middle and wanders, so no two parts of the surface turn alike and nothing mirrors across the
