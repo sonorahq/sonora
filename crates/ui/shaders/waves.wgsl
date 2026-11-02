@@ -40,10 +40,12 @@ fn shade(input: ShaderInput) -> vec4<f32> {
 
     let p = (input.position - input.size * 0.5) / max(max(input.size.x, input.size.y), 1.0) * density;
 
-    // The turn drifts with time and with x * y, so each quarter of the plane twists its own way
-    // and the twist keeps changing.
-    let turn = morph * 1.2 * gradient_noise(vec2<f32>(t * 0.045, p.x * p.y * 0.5 + 3.1));
-    var q = rotate(p, turn);
+    // The plane twists by an angle read off slow noise across it, about a pivot that sits off the
+    // middle and wanders, so no two parts of the surface turn alike and nothing mirrors across the
+    // centre.
+    let pivot = vec2<f32>(0.23 + 0.3 * sin(t * 0.031), -0.17 + 0.25 * cos(t * 0.023));
+    let turn = morph * 1.2 * gradient_noise(p * 0.55 + vec2<f32>(t * 0.045, 3.1));
+    var q = rotate(p - pivot, turn) + pivot;
     q += swell * 0.26 * vec2<f32>(
         gradient_noise(q * 1.05 + vec2<f32>(0.0, t * 0.06)),
         gradient_noise(q * 1.05 + vec2<f32>(5.2, -t * 0.05)),

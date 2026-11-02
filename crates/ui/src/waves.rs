@@ -13,7 +13,7 @@ const MORPH: f32 = 1.;
 const PEAK: f32 = 0.72;
 /// How many units of the field fit along the longer side of the surface, close enough that the
 /// waves read as one woven sheet. The count holds whatever the shape of the window.
-const DENSITY: f32 = 4.2;
+const DENSITY: f32 = 3.8;
 /// How wide the edge of a pool runs against the shader's own, a light blur over the transitions.
 const SOFTNESS: f32 = 2.2;
 /// How much darker the corners are than the middle, a light vignette that frames the field.
