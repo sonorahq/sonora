@@ -37,7 +37,6 @@ nav-pinned = 已固定
 nav-unpin = 取消固定
 nav-pin-hint = 拖放到此处以固定
 library-liked-songs = 收藏
-library-play-liked-songs = 播放
 library-no-songs = 还没有收藏的歌曲
 library-no-albums = 还没有保存的专辑
 library-no-playlists = 还没有播放列表
@@ -367,8 +366,6 @@ login-choose-detail = 选择登录 { $provider } 的方式。
 
 # album and playlist pages
 detail-playlist = 播放列表
-detail-play-album = 播放专辑
-detail-play-playlist = 播放该列表
 
 # play button
 play-pause = 暂停
@@ -381,7 +378,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } 位每月听众
    *[other] { $value } 位每月听众
 }
-artist-play = 立即播放
 artist-popular = 热门
 artist-popular-eyebrow = 探索这位歌手
 artist-popular-empty = 这位歌手暂无可播放内容
@@ -457,7 +453,6 @@ kind-playlist = 播放列表
 
 # song page
 song-eyebrow = 歌曲
-song-play = 播放歌曲
 song-view-album = 查看专辑
 song-loading = 正在加载歌曲信息…
 song-about = 关于这首歌

@@ -37,7 +37,6 @@ nav-pinned = Sabitlenenler
 nav-unpin = Sabitlemeyi kaldır
 nav-pin-hint = Sabitlemek için buraya bırak
 library-liked-songs = Favoriler
-library-play-liked-songs = Çal
 library-no-songs = Henüz favori yok
 library-no-albums = Henüz kaydedilmiş albüm yok
 library-no-playlists = Henüz çalma listesi yok
@@ -346,8 +345,6 @@ login-choose-detail = { $provider } için oturum açma yolunu seç.
 
 # album and playlist pages
 detail-playlist = Çalma listesi
-detail-play-album = Albümü çal
-detail-play-playlist = Çalma listesini çal
 
 # play button
 play-pause = Duraklat
@@ -360,7 +357,6 @@ artist-monthly-listeners =
     { $count ->
        *[other] { $value } aylık dinleyici
     }
-artist-play = Şimdi çal
 artist-popular = Popüler
 artist-popular-eyebrow = Bu sanatçıyı keşfet
 artist-popular-empty = Bu sanatçıdan çalınacak bir şey henüz yok
@@ -436,7 +432,6 @@ kind-playlist = Çalma listesi
 
 # song page
 song-eyebrow = Şarkı
-song-play = Şarkıyı çal
 song-view-album = Albümü gör
 song-loading = Şarkı bilgileri yükleniyor…
 song-about = Bu şarkı hakkında
