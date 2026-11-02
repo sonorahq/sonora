@@ -1,14 +1,14 @@
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::time::{Duration, Instant};
 
 use gpui::{
-    App, Global, Hsla, Pixels, Rgba, SharedString, Task, WindowAppearance,
-    WindowBackgroundAppearance, px, rgb, rgba,
+    App, Global, Hsla, Pixels, SharedString, WindowAppearance, WindowBackgroundAppearance, px, rgb,
+    rgba,
 };
 use i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::metrics::{Metrics, Rounding, Text};
+use crate::motion::mix;
 use crate::palette::CoverPalette;
 
 pub const MIN_FONT: f32 = 10.;
@@ -17,9 +17,6 @@ pub const MAX_TRANSPARENCY: f32 = 1.;
 pub const BACKDROP_TRANSPARENCY: f32 = 0.15;
 pub const MIN_LYRICS_SCALE: f32 = 0.6;
 pub const MAX_LYRICS_SCALE: f32 = 2.;
-
-const FADE: Duration = Duration::from_millis(320);
-const FRAME: Duration = Duration::from_millis(8);
 
 const SURFACE_TINT: f32 = 0.5;
 const BORDER_TINT: f32 = 0.4;
@@ -399,13 +396,6 @@ pub struct Theme {
 
 impl Global for Theme {}
 
-#[derive(Default)]
-struct Transition {
-    task: Option<Task<()>>,
-}
-
-impl Global for Transition {}
-
 impl Theme {
     pub fn dark() -> Self {
         Self {
@@ -665,6 +655,8 @@ impl Theme {
             foreground,
             border,
             muted,
+            overlay,
+            overlay_foreground,
             muted_foreground,
             secondary,
             secondary_hover,
@@ -780,15 +772,19 @@ impl Theme {
     }
 
     pub fn for_look(look: Look, overrides: &ThemeOverrides) -> Self {
+        let mut theme = Self::for_kind(look.kind);
+        if let Some(tint) = look.tint {
+            theme = theme.tinted(tint);
+        }
+        Self::for_palette(theme, look, overrides)
+    }
+
+    /// Applies the shared font, rounding, overrides and transparency to a resolved palette.
+    pub(crate) fn for_palette(mut theme: Self, look: Look, overrides: &ThemeOverrides) -> Self {
         let base = px(overrides
             .font_size
             .unwrap_or(look.font)
             .clamp(MIN_FONT, MAX_FONT));
-        let mut theme = Self::for_kind(look.kind);
-
-        if let Some(tint) = look.tint {
-            theme = theme.tinted(tint);
-        }
         theme.radius = look.rounding.radius();
         theme = theme.with_overrides(overrides);
         if look.transparent {
@@ -813,40 +809,11 @@ impl Theme {
     }
 
     pub fn set(look: Look, overrides: &ThemeOverrides, cx: &mut App) {
-        cx.default_global::<Transition>().task = None;
-        cx.set_global(Self::for_look(resolve(look, cx), overrides));
-        cx.refresh_windows();
+        crate::appearance::Appearance::new(Self::for_look(resolve(look, cx), overrides)).set(cx);
     }
 
     pub fn fade(look: Look, overrides: &ThemeOverrides, cx: &mut App) {
-        let from = *cx.theme();
-        let to = Self::for_look(resolve(look, cx), overrides);
-
-        cx.default_global::<Transition>().task = None;
-        cx.set_global(from.mixed(&to, 0.));
-        cx.refresh_windows();
-
-        let task = cx.spawn(async move |cx| {
-            let start = Instant::now();
-            loop {
-                cx.background_executor().timer(FRAME).await;
-
-                let delta = start.elapsed().as_secs_f32() / FADE.as_secs_f32();
-                let step = match delta >= 1. {
-                    true => to,
-                    false => from.mixed(&to, ease_out(delta)),
-                };
-                cx.update(|cx| {
-                    cx.set_global(step);
-                    cx.refresh_windows();
-                });
-
-                if delta >= 1. {
-                    break;
-                }
-            }
-        });
-        cx.default_global::<Transition>().task = Some(task);
+        crate::appearance::Appearance::new(Self::for_look(resolve(look, cx), overrides)).fade(cx);
     }
 }
 
@@ -865,22 +832,6 @@ fn veil(color: Hsla, opacity: f32, floor: f32) -> Hsla {
         a: color.a * (opacity + (1. - opacity) * floor),
         ..color
     }
-}
-
-fn mix(from: Hsla, to: Hsla, delta: f32) -> Hsla {
-    let (from, to) = (Rgba::from(from), Rgba::from(to));
-    let channel = |from: f32, to: f32| from + (to - from) * delta;
-
-    Hsla::from(Rgba {
-        r: channel(from.r, to.r),
-        g: channel(from.g, to.g),
-        b: channel(from.b, to.b),
-        a: channel(from.a, to.a),
-    })
-}
-
-fn ease_out(delta: f32) -> f32 {
-    1. - (1. - delta.clamp(0., 1.)).powi(3)
 }
 
 fn wash(base: Hsla, tint: Hsla, strength: f32) -> Hsla {

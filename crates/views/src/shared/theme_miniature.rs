@@ -2,7 +2,7 @@
 //! colours, the picture on a theme card and in the dialog that offers a linked theme.
 
 use gpui::prelude::*;
-use gpui::{Div, Pixels, Size, div, px, size};
+use gpui::{Div, Pixels, Size, div, px, relative, size};
 use ui::Theme;
 
 /// How wide a theme card stands.
@@ -57,6 +57,18 @@ pub(crate) fn framed(scale: f32) -> Size<Pixels> {
 /// miniature's outer corners follow. `scale` multiplies every shape, so a whole number keeps
 /// them on whole pixels, and the card that holds it measures `framed(scale)`.
 pub(crate) fn sliced(palettes: &[Theme], radius: Pixels, scale: f32) -> Div {
+    slices(palettes, radius, scale)
+        .w(px(WIDTH * scale))
+        .h(px(HEIGHT * scale))
+}
+
+/// Fills an appearance card of any width with the same miniature, stretching its proportions.
+pub(crate) fn filling(palettes: &[Theme], radius: Pixels) -> Div {
+    slices(palettes, radius, 1.)
+}
+
+/// Shares the miniature geometry between fixed-size gallery cards and fluid appearance cards.
+fn slices(palettes: &[Theme], radius: Pixels, scale: f32) -> Div {
     let count = palettes.len().max(1);
     let cuts = (1..count).map(|index| {
         let even = WIDTH * index as f32 / count as f32;
@@ -88,40 +100,36 @@ pub(crate) fn sliced(palettes: &[Theme], radius: Pixels, scale: f32) -> Div {
                     true => edge[1] + SEAM_OVERLAP,
                     false => WIDTH,
                 };
-                rect([left, 0., right - left, HEIGHT], scale)
+                rect([left, 0., right - left, HEIGHT])
                     .overflow_hidden()
-                    .child(miniature(palette, outer, mark, scale).left(px(-left * scale)))
+                    .child(
+                        miniature(palette, outer, mark)
+                            .w(relative(WIDTH / (right - left)))
+                            .left(relative(-left / (right - left))),
+                    )
             }),
     )
 }
 
-/// The Sonora window in `palette`'s colours as a few soft, flat shapes, `WIDTH` by `HEIGHT`
-/// pixels times `scale`: the sidebar with three entries, a heading over a row of tiles, the first
+/// The Sonora window in `palette`'s colours, scaled from `WIDTH` by `HEIGHT` reference units:
+/// the sidebar with three entries, a heading over a row of tiles, the first
 /// in the accent, and a floating player with its play button. Nothing is outlined. The window
 /// and the sidebar round the outer corners by `outer`, and `mark` rounds the tiles.
-fn miniature(palette: &Theme, outer: Pixels, mark: Pixels, scale: f32) -> Div {
+fn miniature(palette: &Theme, outer: Pixels, mark: Pixels) -> Div {
     let panel = match palette.sidebar == palette.background {
         true => palette.secondary,
         false => palette.sidebar,
     };
     let bar = |shape: [f32; 4], strength: f32| {
-        rect(shape, scale)
+        rect(shape)
             .rounded_full()
             .bg(palette.foreground.opacity(strength))
     };
 
-    div()
-        .absolute()
-        .top_0()
-        .w(px(WIDTH * scale))
-        .h(px(HEIGHT * scale))
+    rect([0., 0., WIDTH, HEIGHT])
         .rounded(outer)
         .bg(palette.background)
-        .child(
-            rect([0., 0., SIDEBAR, HEIGHT], scale)
-                .rounded_l(outer)
-                .bg(panel),
-        )
+        .child(rect([0., 0., SIDEBAR, HEIGHT]).rounded_l(outer).bg(panel))
         .children(ENTRIES.into_iter().enumerate().map(|(index, entry)| {
             bar(
                 entry,
@@ -137,20 +145,18 @@ fn miniature(palette: &Theme, outer: Pixels, mark: Pixels, scale: f32) -> Div {
                 0 => palette.primary.opacity(ACCENT),
                 _ => palette.muted,
             };
-            rect([left, TILE_TOP, TILE, TILE], scale)
-                .rounded(mark)
-                .bg(fill)
+            rect([left, TILE_TOP, TILE, TILE]).rounded(mark).bg(fill)
         }))
-        .child(rect(PLAYER, scale).rounded_full().bg(panel))
-        .child(rect(PLAY, scale).rounded_full().bg(palette.primary))
+        .child(rect(PLAYER).rounded_full().bg(panel))
+        .child(rect(PLAY).rounded_full().bg(palette.primary))
 }
 
-/// A box in the miniature from its left, top, width and height in pixels, times `scale`.
-fn rect([x, y, width, height]: [f32; 4], scale: f32) -> Div {
+/// A box in the miniature's reference coordinates, scaled by its containing bounds.
+fn rect([x, y, width, height]: [f32; 4]) -> Div {
     div()
         .absolute()
-        .left(px(x * scale))
-        .top(px(y * scale))
-        .w(px(width * scale))
-        .h(px(height * scale))
+        .left(relative(x / WIDTH))
+        .top(relative(y / HEIGHT))
+        .w(relative(width / WIDTH))
+        .h(relative(height / HEIGHT))
 }

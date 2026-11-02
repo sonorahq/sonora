@@ -13,6 +13,8 @@ const POPOVER_FILL: f32 = 0.82;
 /// Both are thicker than a menu's, since a bar sits over the page for good and its text has to
 /// read over whatever scrolls by.
 const BAR_FILL: f32 = 0.86;
+/// Ambient bars retain enough artwork behind the blur to belong to the surrounding field.
+const AMBIENT_BAR_FILL: f32 = 0.4;
 const BAR_BLUR: Pixels = px(18.);
 /// The bar's fill on a see-through window. The page wash already sits under the bar, so the thick
 /// fill would stack on it and leave the bar far darker than the window around it.
@@ -59,18 +61,33 @@ pub fn popover_surface<E: Styled>(element: E, cx: &App) -> E {
     }
 }
 
-/// Styles chrome that stays over scrolling content, the player bar and a table's head: a thick
-/// popover fill over a wide blur. The caller asks `blurring` first, since without the blur the
-/// thin fill would leave the text on the bare page. A see-through window gets a thinner fill so
-/// the bar lets the desktop through about as much as the page does.
-pub fn bar_surface<E: Styled>(element: E, cx: &App) -> E {
+/// The opaque material of a bar: artwork-coloured in Ambient, otherwise the popover palette.
+pub fn bar_fill(cx: &App) -> Hsla {
     let theme = cx.theme();
-    let fill = match theme.transparent {
-        true => CLEAR_BAR_FILL,
-        false => BAR_FILL,
+    match crate::AmbientStyle::get(cx).active() {
+        true => Hsla {
+            a: 1.,
+            ..theme.secondary
+        },
+        false => theme.popover,
+    }
+}
+
+/// Styles bars over scrolling content with a wide blur and a palette-aware fill. Ambient
+/// keeps the colour field visible; other themes use the popover material. The caller asks
+/// `blurring` first, since without the blur the
+/// thin fill would leave the text on the bare page. Transparent windows use a thinner fill.
+pub fn bar_surface<E: Styled>(element: E, cx: &App) -> E {
+    let fill = match (
+        cx.theme().transparent,
+        crate::AmbientStyle::get(cx).active(),
+    ) {
+        (true, _) => CLEAR_BAR_FILL,
+        (false, true) => AMBIENT_BAR_FILL,
+        (false, false) => BAR_FILL,
     };
     element
-        .bg(theme.popover.opacity(fill))
+        .bg(bar_fill(cx).opacity(fill))
         .backdrop_blur(BAR_BLUR)
 }
 

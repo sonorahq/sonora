@@ -155,7 +155,10 @@ impl Render for SidebarRight {
                 this.persist(cx);
                 cx.notify();
             }))
-            .when(!theme.transparent, |this| this.bg(theme.background))
+            .when(
+                !theme.transparent && !ui::AmbientStyle::get(cx).active(),
+                |this| this.bg(theme.background),
+            )
             .border_color(theme.border)
             .child(match self.tab {
                 SideTab::Members => self.members.clone().into_any_element(),
