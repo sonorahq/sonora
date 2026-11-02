@@ -15,9 +15,9 @@ use input::{ToggleFullscreen, ToggleWindowFullscreen, WORKSPACE_CONTEXT};
 use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
 use ui::{
-    ActiveTheme as _, Artwork, Button, ExplicitBadge, InlineLink, InlineLinks, Motion,
-    Motioned as _, Popup, Room, Scrollbar, Scrubber, ScrubberState, Springs, TabBar, Tails as _,
-    Text, Visualizer, clock, glass, snapped,
+    ActiveTheme as _, Artwork, Button, ExplicitBadge, Fading as _, GLASS_BLUR, GLASS_FILL,
+    InlineLink, InlineLinks, Motion, Motioned as _, Popup, Rising as _, Room, Scrollbar, Scrubber,
+    ScrubberState, Springs, TabBar, Tails as _, Text, Visualizer, clock, snapped,
 };
 
 use crate::chrome::{Aside, TitleBarOptions};
@@ -76,6 +76,9 @@ const DOCK_BLUR: Pixels = px(8.);
 const DOCK_BLUR_LEAST: Pixels = px(0.05);
 const REST: Duration = Duration::from_millis(1500);
 const WAKE_DEBOUNCE: Duration = Duration::from_millis(400);
+/// How long the pointer rests on the volume button before the slider opens, so passing over it
+/// on the way to another control leaves it shut.
+const VOLUME_DELAY: Duration = Duration::from_millis(180);
 /// How far the pointer has to travel, in pixels, before it wakes the controls, so the drift a
 /// resting hand gives a trackpad or a sensitive mouse leaves them asleep.
 const WAKE_TRAVEL: f64 = 3.;
@@ -99,6 +102,9 @@ pub struct FullscreenView {
     over_transport: bool,
     over_leave: bool,
     volume_held: bool,
+    /// Whether the pointer has rested on the volume button long enough to open the slider.
+    volume_armed: bool,
+    volume_wait: Option<Task<()>>,
     muted: Option<f32>,
     large: Option<SharedString>,
     full: Option<SharedString>,
@@ -158,6 +164,8 @@ impl FullscreenView {
             over_transport: false,
             over_leave: false,
             volume_held: false,
+            volume_armed: false,
+            volume_wait: None,
             muted: None,
             large: None,
             full: None,
@@ -354,8 +362,43 @@ impl FullscreenView {
         self.hidden.position.clamp(0., 1.)
     }
 
+    /// Whether the volume slider is up. The button alone opens it only once the pointer has
+    /// rested on it for `VOLUME_DELAY`, while the slider itself holds it open at once.
     fn volume_open(&self) -> bool {
-        self.over_volume || self.over_zone || self.over_panel || self.volume_held
+        (self.over_volume && self.volume_armed)
+            || self.over_zone
+            || self.over_panel
+            || self.volume_held
+    }
+
+    /// Records the pointer entering or leaving the volume button. Entering starts the wait
+    /// before the slider opens, and leaving every part of the control forgets it.
+    fn hover_volume(&mut self, hovering: bool, cx: &mut Context<Self>) {
+        self.over_volume = hovering;
+        if hovering && !self.volume_armed && self.volume_wait.is_none() {
+            self.volume_wait = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(VOLUME_DELAY).await;
+                this.update(cx, |this, cx| {
+                    this.volume_wait = None;
+                    if this.over_volume {
+                        this.volume_armed = true;
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }));
+        }
+        self.settle_volume();
+        cx.notify();
+    }
+
+    /// Disarms the slider once the pointer has left the button, the gap and the panel and no
+    /// drag holds it, so the next visit waits again.
+    fn settle_volume(&mut self) {
+        if !(self.over_volume || self.over_zone || self.over_panel || self.volume_held) {
+            self.volume_armed = false;
+            self.volume_wait = None;
+        }
     }
 
     fn turn_volume(
@@ -969,7 +1012,9 @@ impl FullscreenView {
         let empty = theme.muted_foreground.opacity(0.3);
         let restore = self.muted.unwrap_or(0.7);
         let span = theme.metrics.control_small + zone * 2.;
-        let bubble = (self.over_panel || self.volume_held).then(|| (level, percent(level)));
+        // The level shows for as long as the pointer is anywhere over the control, not only on
+        // the track, and goes with it.
+        let bubble = self.volume_open().then(|| (level, percent(level)));
 
         div()
             .relative()
@@ -980,8 +1025,7 @@ impl FullscreenView {
                 div()
                     .id("fullscreen-volume-hover")
                     .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
-                        this.over_volume = *hovering;
-                        cx.notify();
+                        this.hover_volume(*hovering, cx);
                     }))
                     .child(
                         Button::new("fullscreen-volume")
@@ -1012,6 +1056,58 @@ impl FullscreenView {
                     ),
             )
             .when(self.volume_open(), |this| {
+                // The panel rises the way a menu does. A paint filter drops any backdrop
+                // inside it, so the frost is a sibling underneath that fades in on the same
+                // curve rather than arriving only once the rise is over.
+                let panel = div()
+                    .id("fullscreen-volume-panel")
+                    .role(Role::Group)
+                    .aria_label(t!("equalizer-status-volume"))
+                    .occlude()
+                    .flex()
+                    .justify_center()
+                    .p_1()
+                    .py_2()
+                    .rounded(theme.radius)
+                    .border_1()
+                    .border_color(theme.border)
+                    .map(|this| match hazy {
+                        true => this.bg(theme.popover.opacity(GLASS_FILL)),
+                        false => this.bg(theme.popover),
+                    })
+                    .on_scroll_wheel(cx.listener(Self::turn_volume))
+                    .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
+                        this.over_panel = *hovering;
+                        this.settle_volume();
+                        cx.notify();
+                    }))
+                    .child(
+                        div().h(px(VOLUME_RISE)).flex().child(
+                            Scrubber::new(&self.volume, level)
+                                .vertical()
+                                .name(t!("equalizer-status-volume"))
+                                .value(percent(level))
+                                .colors(theme.progress_bar, empty, theme.foreground)
+                                .when_some(bubble, |this, (at, text)| this.bubble(at, text))
+                                .on_move(cx.listener(|this, fraction: &f32, _, cx| {
+                                    let level = *fraction;
+                                    this.volume_held = true;
+                                    this.muted = None;
+                                    this.playback.update(cx, |playback, cx| {
+                                        playback.slide_volume(level, cx)
+                                    });
+                                    cx.notify();
+                                }))
+                                .on_release(cx.listener(|this, _: &MouseUpEvent, _, cx| {
+                                    this.volume_held = false;
+                                    this.settle_volume();
+                                    this.playback
+                                        .update(cx, |playback, cx| playback.end_volume_slide(cx));
+                                    cx.notify();
+                                })),
+                        ),
+                    );
+
                 this.child(deferred(
                     div()
                         .id("fullscreen-volume-zone")
@@ -1027,60 +1123,23 @@ impl FullscreenView {
                         .on_scroll_wheel(cx.listener(Self::turn_volume))
                         .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
                             this.over_zone = *hovering;
+                            this.settle_volume();
                             cx.notify();
                         }))
                         .child(
-                            // Over the ambient field the panel is glass; over flat paint a
-                            // blur shows nothing, so there it keeps the popover fill, and so
-                            // does a run with the blur turned off.
-                            match hazy {
-                                true => glass(div(), cx),
-                                false => div().bg(theme.popover),
-                            }
-                            .id("fullscreen-volume-panel")
-                            .role(Role::Group)
-                            .aria_label(t!("equalizer-status-volume"))
-                            .occlude()
-                            .flex()
-                            .justify_center()
-                            .p_1()
-                            .py_2()
-                            .rounded(theme.radius)
-                            .border_1()
-                            .border_color(theme.border)
-                            .on_scroll_wheel(cx.listener(Self::turn_volume))
-                            .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
-                                this.over_panel = *hovering;
-                                cx.notify();
-                            }))
-                            .child(
-                                div().h(px(VOLUME_RISE)).flex().child(
-                                    Scrubber::new(&self.volume, level)
-                                        .vertical()
-                                        .name(t!("equalizer-status-volume"))
-                                        .value(percent(level))
-                                        .colors(theme.progress_bar, empty, theme.foreground)
-                                        .when_some(bubble, |this, (at, text)| this.bubble(at, text))
-                                        .on_move(cx.listener(|this, fraction: &f32, _, cx| {
-                                            let level = *fraction;
-                                            this.volume_held = true;
-                                            this.muted = None;
-                                            this.playback.update(cx, |playback, cx| {
-                                                playback.slide_volume(level, cx)
-                                            });
-                                            cx.notify();
-                                        }))
-                                        .on_release(cx.listener(
-                                            |this, _: &MouseUpEvent, _, cx| {
-                                                this.volume_held = false;
-                                                this.playback.update(cx, |playback, cx| {
-                                                    playback.end_volume_slide(cx)
-                                                });
-                                                cx.notify();
-                                            },
-                                        )),
-                                ),
-                            ),
+                            div()
+                                .relative()
+                                .when(hazy, |this| {
+                                    this.child(
+                                        div()
+                                            .absolute()
+                                            .inset_0()
+                                            .rounded(theme.radius)
+                                            .backdrop_blur(GLASS_BLUR)
+                                            .fading("fullscreen-volume-frost"),
+                                    )
+                                })
+                                .child(panel.rising("fullscreen-volume-rise")),
                         ),
                 ))
             })
