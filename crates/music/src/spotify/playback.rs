@@ -112,7 +112,7 @@ impl PlaybackEvents for Events {
                 }
                 changed = self.output.recv() => {
                     changed?;
-                    return Some(PlaybackEvent::OutputChanged);
+                    return Some(PlaybackEvent::OutputChanged { heard: None });
                 }
                 Some(event) = self.signals.recv() => return Some(event),
             }

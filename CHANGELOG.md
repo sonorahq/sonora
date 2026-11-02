@@ -10,6 +10,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Drag the playing song from the player bar onto a playlist, Pinned or the queue.
+- Play directly to hardware on macOS. Every output device is listed a second time under Direct
+  to hardware, and picking one there keeps every other app off it.
+- Turn on Match sample rate in the sound settings to have a Direct to hardware device follow
+  each track's own sample rate on Linux and macOS.
 
 ### Changed
 
