@@ -236,7 +236,7 @@ impl Render for Ambient {
             .inset_0()
             .opacity(clarity)
             .child(
-                ui::Waves::new(colors.map(shaded))
+                ui::Waves::new(layered(colors).map(shaded))
                     .stage(shaded(Hsla {
                         a: 1.,
                         ..theme.background
@@ -262,6 +262,14 @@ fn window_radius(window: &Window, cx: &App) -> Option<Pixels> {
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 fn window_radius(_window: &Window, _cx: &App) -> Option<Pixels> {
     None
+}
+
+/// The colours in the order the field lays them down, the runner-up last. Each pool covers the
+/// ones under it, so drawn third it sank beneath the two shadows and a cover's second colour
+/// barely showed.
+fn layered(colors: [Hsla; COLORS]) -> [Hsla; COLORS] {
+    let [base, highlight, second, shadow, deep] = colors;
+    [base, highlight, shadow, deep, second]
 }
 
 /// A colour as the dark overlay leaves it. Black at `SHADE` over an opaque colour is that
