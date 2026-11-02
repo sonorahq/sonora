@@ -62,7 +62,7 @@ fn shade(input: ShaderInput) -> vec4<f32> {
     // keeps to the edges of the surface whatever the waves do. 1 is a corner, so the middle
     // stays untouched and only the outer reach darkens.
     let edge = length((input.uv - vec2<f32>(0.5)) * 2.0) * 0.7071;
-    color *= 1.0 - input.params[3].z * smoothstep(0.35, 1.0, edge);
+    color *= 1.0 - input.params[3].z * smoothstep(0.25, 1.0, edge);
 
     return vec4<f32>(dither(color, input.frag_coord), 1.0);
 }

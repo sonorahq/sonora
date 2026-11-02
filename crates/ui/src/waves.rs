@@ -17,7 +17,7 @@ const DENSITY: f32 = 2.2;
 /// How wide the edge of a pool runs against the shader's own, a light blur over the transitions.
 const SOFTNESS: f32 = 1.8;
 /// How much darker the corners are than the middle, a light vignette that frames the field.
-const VIGNETTE: f32 = 0.25;
+const VIGNETTE: f32 = 0.45;
 
 static WAVES: Effect = Effect::new("sonora-waves", include_str!("../shaders/waves.wgsl"));
 
