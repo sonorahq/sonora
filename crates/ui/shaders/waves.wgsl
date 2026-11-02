@@ -46,11 +46,11 @@ fn shade(input: ShaderInput) -> vec4<f32> {
     // Three pools of colour, each where its own slow noise runs high. They are thresholds of a
     // field rather than shapes, so they swell, split and dissolve as the plane morphs, and each
     // covers well under half the plane so the stage shows between them.
-    let first = smoothstep(-0.02, 0.5, gradient_noise(q * 0.8 + vec2<f32>(t * 0.05, 1.3)));
+    let first = smoothstep(-0.02, 0.5, gradient_noise(q * 1.7 + vec2<f32>(t * 0.05, 1.3)));
     color = mix(color, light(input.colors[0].rgb), first * 0.85);
-    let second = smoothstep(0.04, 0.55, gradient_noise(q * 0.75 + vec2<f32>(7.1, -t * 0.045)));
+    let second = smoothstep(0.04, 0.55, gradient_noise(q * 1.55 + vec2<f32>(7.1, -t * 0.045)));
     color = mix(color, light(input.colors[2].rgb), second * 0.85);
-    let bright = smoothstep(0.18, 0.62, gradient_noise(q * 1.05 + vec2<f32>(-t * 0.06, 3.7)));
+    let bright = smoothstep(0.18, 0.62, gradient_noise(q * 2.1 + vec2<f32>(-t * 0.06, 3.7)));
     color = mix(color, light(input.colors[1].rgb), bright * 0.7);
 
     // A slow wave of shade sinks its troughs a little, so the field breathes in depth too.
