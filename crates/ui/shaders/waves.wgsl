@@ -30,14 +30,14 @@ fn shade(input: ShaderInput) -> vec4<f32> {
 
     // The turn drifts with time and with x * y, so each quarter of the plane twists its own way
     // and the twist keeps changing.
-    let turn = morph * 1.8 * gradient_noise(vec2<f32>(t * 0.045, p.x * p.y * 0.5 + 3.1));
+    let turn = morph * 1.2 * gradient_noise(vec2<f32>(t * 0.045, p.x * p.y * 0.5 + 3.1));
     var q = rotate(p, turn);
-    q += swell * 0.42 * vec2<f32>(
+    q += swell * 0.26 * vec2<f32>(
         gradient_noise(q * 1.05 + vec2<f32>(0.0, t * 0.06)),
         gradient_noise(q * 1.05 + vec2<f32>(5.2, -t * 0.05)),
     );
-    q.x += swell * 0.12 * sin(q.y * 2.2 + t * 0.21);
-    q.y += swell * 0.10 * sin(q.x * 2.9 - t * 0.17);
+    q.x += swell * 0.07 * sin(q.y * 2.2 + t * 0.21);
+    q.y += swell * 0.06 * sin(q.x * 2.9 - t * 0.17);
 
     // A dark stage in the cover's own shadows, leaning from the deep fifth colour at the top to
     // the fourth at the bottom.
@@ -46,11 +46,11 @@ fn shade(input: ShaderInput) -> vec4<f32> {
     // Three pools of colour, each where its own slow noise runs high. They are thresholds of a
     // field rather than shapes, so they swell, split and dissolve as the plane morphs, and each
     // covers well under half the plane so the stage shows between them.
-    let first = smoothstep(-0.02, 0.5, gradient_noise(q * 1.7 + vec2<f32>(t * 0.05, 1.3)));
+    let first = smoothstep(-0.15, 0.55, gradient_noise(q * 1.15 + vec2<f32>(t * 0.05, 1.3)));
     color = mix(color, light(input.colors[0].rgb), first * 0.85);
-    let second = smoothstep(0.04, 0.55, gradient_noise(q * 1.55 + vec2<f32>(7.1, -t * 0.045)));
+    let second = smoothstep(-0.08, 0.6, gradient_noise(q * 1.05 + vec2<f32>(7.1, -t * 0.045)));
     color = mix(color, light(input.colors[2].rgb), second * 0.85);
-    let bright = smoothstep(0.18, 0.62, gradient_noise(q * 2.1 + vec2<f32>(-t * 0.06, 3.7)));
+    let bright = smoothstep(0.08, 0.7, gradient_noise(q * 1.4 + vec2<f32>(-t * 0.06, 3.7)));
     color = mix(color, light(input.colors[1].rgb), bright * 0.7);
 
     // A slow wave of shade sinks its troughs a little, so the field breathes in depth too.
