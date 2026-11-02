@@ -14,17 +14,14 @@
 // params[0].w  peak, how much of its colour a pool lays down at its core
 // params[1]    the fifth colour, straight alpha sRGB
 // params[2]    the stage the pools lie on, straight alpha sRGB
-// params[3].x  density, how many units of the field fit in `SPAN` logical pixels. The waves keep
-//              their size in pixels whatever the shape of the surface, so a wide or tall one
-//              shows more of them rather than squeezing them
+// params[3].x  density, how many units of the field fit in the height of the surface. Sized by
+//              the height, a wide window fills with as many waves as its width holds and a tall
+//              narrow one keeps them as large as its height allows rather than squeezing them
 // params[3].y  softness, how wide the edge of a pool runs, 1 for the default and more for a
 //              blur over the transitions
 // params[3].z  vignette, how much darker the corners are than the middle, 0 for none
 // params[3].w  ceiling, the sRGB luma above which light is pressed back, 0 for none
 // colors[0..3] the first four colours, straight alpha sRGB
-
-// The length in logical pixels that `density` units of the field span.
-const SPAN: f32 = 1000.0;
 
 // How much of the plane the pool keyed by `seed` covers here, from 0 outside it to 1 at its core.
 // `soft` widens the edge around the same middle, which reads as a blur over the transition.
@@ -41,7 +38,7 @@ fn shade(input: ShaderInput) -> vec4<f32> {
     let density = max(input.params[3].x, 0.1);
     let soft = max(input.params[3].y, 0.1);
 
-    let p = (input.position - input.size * 0.5) / SPAN * density;
+    let p = (input.position - input.size * 0.5) / max(input.size.y, 1.0) * density;
 
     // The turn drifts with time and with x * y, so each quarter of the plane twists its own way
     // and the twist keeps changing.
