@@ -42,6 +42,8 @@ const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/201001
 
 const GTK_WINDOW_TOPLEVEL: c_int = 0;
 const GTK_WIN_POS_CENTER: c_int = 1;
+const GTK_WIN_POS_CENTER_ON_PARENT: c_int = 4;
+const TRUE: Bool = 1;
 const G_SOURCE_REMOVE: Bool = 0;
 const G_SOURCE_CONTINUE: Bool = 1;
 /// `WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS`. WebKitGTK alone defaults to `ACCEPT_NO_THIRD_PARTY`;
@@ -113,6 +115,10 @@ symbols! {
     gtk_window_set_title: unsafe extern "C" fn(Ptr, *const c_char),
     gtk_window_set_default_size: unsafe extern "C" fn(Ptr, c_int, c_int),
     gtk_window_set_position: unsafe extern "C" fn(Ptr, c_int),
+    gtk_window_get_title: unsafe extern "C" fn(Ptr) -> *const c_char,
+    gtk_window_set_transient_for: unsafe extern "C" fn(Ptr, Ptr),
+    gtk_window_set_destroy_with_parent: unsafe extern "C" fn(Ptr, Bool),
+    gtk_widget_get_toplevel: unsafe extern "C" fn(Ptr) -> Ptr,
     gtk_widget_set_size_request: unsafe extern "C" fn(Ptr, c_int, c_int),
     gtk_container_add: unsafe extern "C" fn(Ptr, Ptr),
     gtk_widget_show_all: unsafe extern "C" fn(Ptr),
@@ -125,6 +131,7 @@ symbols! {
     webkit_web_context_new_ephemeral: unsafe extern "C" fn() -> Ptr,
     webkit_web_context_get_cookie_manager: unsafe extern "C" fn(Ptr) -> Ptr,
     webkit_web_view_new_with_context: unsafe extern "C" fn(Ptr) -> Ptr,
+    webkit_web_view_new_with_related_view: unsafe extern "C" fn(Ptr) -> Ptr,
     webkit_web_view_get_settings: unsafe extern "C" fn(Ptr) -> Ptr,
     webkit_web_view_get_user_content_manager: unsafe extern "C" fn(Ptr) -> Ptr,
     webkit_user_content_manager_add_script: unsafe extern "C" fn(Ptr, Ptr),
@@ -135,6 +142,7 @@ symbols! {
     webkit_web_view_run_javascript: unsafe extern "C" fn(Ptr, *const c_char, Ptr, Option<Ready>, Ptr),
     webkit_web_view_terminate_web_process: unsafe extern "C" fn(Ptr),
     webkit_settings_set_user_agent: unsafe extern "C" fn(Ptr, *const c_char),
+    webkit_settings_set_javascript_can_open_windows_automatically: unsafe extern "C" fn(Ptr, Bool),
     webkit_cookie_manager_set_accept_policy: unsafe extern "C" fn(Ptr, c_int),
     webkit_cookie_manager_get_cookies: unsafe extern "C" fn(Ptr, *const c_char, Ptr, Ready, Ptr),
     webkit_cookie_manager_get_cookies_finish: unsafe extern "C" fn(Ptr, Ptr, *mut *mut Fault) -> *mut Node,
@@ -440,6 +448,18 @@ impl Live {
         if let Some(source) = &session.target.script {
             inject(api, view, source);
         }
+        // "Continue with Google" and "Continue with Apple" open the provider's consent page in
+        // a popup that reports back to this page through `window.opener`. WebKitGTK opens no
+        // window of its own for that: it asks the embedder through `create`, and a view nobody
+        // answers simply drops the popup. A scripted window has no one to sign in, so it keeps
+        // refusing them.
+        if !session.target.scripted() {
+            let settings = unsafe { (api.webkit_web_view_get_settings)(view) };
+            unsafe {
+                (api.webkit_settings_set_javascript_can_open_windows_automatically)(settings, TRUE)
+            };
+            unsafe { popups(api, view) };
+        }
         // A scripted window is never looked at. GTK only needs it mapped for the user to see it,
         // and WebKit loads a page into an unmapped view all the same, so it stays hidden.
         if !session.target.scripted() {
@@ -675,6 +695,94 @@ fn adopt(api: &'static Api, host: &'static Host) {
             }
         }
     });
+}
+
+/// Lets `view` open popups, through [`create`].
+unsafe fn popups(api: &'static Api, view: Ptr) {
+    let handler = create as unsafe extern "C" fn(Ptr, Ptr, Ptr) -> Ptr;
+    unsafe {
+        (api.g_signal_connect_data)(
+            view,
+            c"create".as_ptr(),
+            std::mem::transmute::<unsafe extern "C" fn(Ptr, Ptr, Ptr) -> Ptr, Callback>(handler),
+            ptr::null_mut(),
+            None,
+            0,
+        )
+    };
+}
+
+/// A page asked for a new window. The popup gets a view related to the page's, which shares
+/// its web context and so its cookies, `window.opener` and settings, in a window of its own
+/// that sits over the sign-in window and is destroyed with it. The window shows once the page
+/// is `ready-to-show` and goes when the page calls `window.close()`.
+unsafe extern "C" fn create(view: Ptr, _action: Ptr, _data: Ptr) -> Ptr {
+    let Some(api) = api() else {
+        return ptr::null_mut();
+    };
+    let popup = unsafe { (api.webkit_web_view_new_with_related_view)(view) };
+    if popup.is_null() {
+        log::warn!("webview: cannot open the page's popup");
+        return ptr::null_mut();
+    }
+    let window = unsafe { (api.gtk_window_new)(GTK_WINDOW_TOPLEVEL) };
+    if window.is_null() {
+        // The view is still floating, and destroying a floating widget releases it.
+        unsafe { (api.gtk_widget_destroy)(popup) };
+        log::warn!("webview: cannot open a window for the page's popup");
+        return ptr::null_mut();
+    }
+    let parent = unsafe { (api.gtk_widget_get_toplevel)(view) };
+    if !parent.is_null() {
+        unsafe { (api.gtk_window_set_transient_for)(window, parent) };
+        unsafe { (api.gtk_window_set_destroy_with_parent)(window, TRUE) };
+        let title = unsafe { (api.gtk_window_get_title)(parent) };
+        if !title.is_null() {
+            unsafe { (api.gtk_window_set_title)(window, title) };
+        }
+    }
+    unsafe { (api.gtk_window_set_default_size)(window, WIDTH, HEIGHT) };
+    unsafe { (api.gtk_window_set_position)(window, GTK_WIN_POS_CENTER_ON_PARENT) };
+    unsafe { (api.gtk_widget_set_size_request)(window, MIN_WIDTH, MIN_HEIGHT) };
+    unsafe { (api.gtk_container_add)(window, popup) };
+
+    let shown = show as unsafe extern "C" fn(Ptr, Ptr);
+    let closed = close as unsafe extern "C" fn(Ptr, Ptr);
+    unsafe {
+        (api.g_signal_connect_data)(
+            popup,
+            c"ready-to-show".as_ptr(),
+            std::mem::transmute::<unsafe extern "C" fn(Ptr, Ptr), Callback>(shown),
+            window,
+            None,
+            0,
+        );
+        (api.g_signal_connect_data)(
+            popup,
+            c"close".as_ptr(),
+            std::mem::transmute::<unsafe extern "C" fn(Ptr, Ptr), Callback>(closed),
+            window,
+            None,
+            0,
+        );
+        // A consent page may open a popup of its own, such as Apple's two-factor prompt.
+        popups(api, popup);
+    }
+    popup
+}
+
+/// The popup's page has its geometry and is ready to be seen.
+unsafe extern "C" fn show(_popup: Ptr, window: Ptr) {
+    if let Some(api) = api() {
+        unsafe { (api.gtk_widget_show_all)(window) };
+    }
+}
+
+/// The popup's page called `window.close()`, which is how a consent page says it is done.
+unsafe extern "C" fn close(_popup: Ptr, window: Ptr) {
+    if let Some(api) = api() {
+        unsafe { (api.gtk_widget_destroy)(window) };
+    }
 }
 
 /// The window is gone, either because the user closed it or because `service` took it down.

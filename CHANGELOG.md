@@ -28,6 +28,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- On Linux, Continue with Google or Apple in a sign-in window opens its popup instead of doing
+  nothing.
 - On Windows, playback no longer crackles while you open apps or browser tabs.
 - Sonora no longer downloads every genre page at launch to find their pictures, so it uses far less memory with YouTube Music.
 - Sonora starts faster again, since genres load when you first open Search instead of at launch.
