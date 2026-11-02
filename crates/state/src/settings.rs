@@ -3124,6 +3124,12 @@ mod tests {
     }
 
     #[test]
+    fn provider_switcher_starts_enabled() {
+        let values: Values = serde_json::from_str("{}").expect("empty settings use defaults");
+        assert!(!values.hidden_nav.contains(&"provider-switcher".to_string()));
+    }
+
+    #[test]
     fn lyrics_start_karaoke_and_romanize_only_cjk() {
         let values: Values = serde_json::from_str("{}").expect("empty settings use defaults");
 
