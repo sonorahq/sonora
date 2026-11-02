@@ -612,7 +612,7 @@ impl FullscreenView {
                                 )
                             }),
                             track.artists.clone(),
-                            theme.muted_foreground,
+                            shared::quiet(&theme),
                         )
                         .text_size(theme.text(Text::Body))
                         .truncate()
@@ -719,7 +719,7 @@ impl FullscreenView {
                                     )
                                 }),
                                 track.artists.clone(),
-                                theme.muted_foreground,
+                                shared::quiet(&theme),
                             )
                             .text_size(theme.text(Text::Small))
                             .truncate()
