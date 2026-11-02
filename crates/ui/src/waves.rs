@@ -5,16 +5,19 @@ use crate::shader::Effect;
 
 /// The drift rate the shader is tuned around.
 const SPEED: f32 = 1.;
-/// How far the swell bends the borders between colours.
-const WARP: f32 = 1.;
-/// How bright the band of light that sweeps across the field is.
-const SHEEN: f32 = 0.18;
+/// How far the whole field rolls under the ribbons.
+const SWELL: f32 = 1.;
+/// How far each ribbon of colour curls along its length.
+const BEND: f32 = 1.;
+/// How soft a ribbon's edge is, from 0 for crisp to 1 for a long falloff.
+const EDGE: f32 = 0.55;
 
 static WAVES: Effect = Effect::new("sonora-waves", include_str!("../shaders/waves.wgsl"));
 
-/// Five colours drifting on slow orbits and folded into one another by waves, for a field that
-/// fills a whole surface. It fills its positioned parent, is opaque, and dithers itself so a wide
-/// dark gradient does not band.
+/// Ribbons of colour that drift and bend over a dark stage, for a field that fills a whole
+/// surface. The first, second and third colours are the accents, the fourth and fifth the stage
+/// beneath. It fills its positioned parent, is opaque, and dithers itself so the stage does not
+/// band.
 #[derive(IntoElement)]
 pub struct Waves {
     colors: [Hsla; 5],
@@ -49,7 +52,7 @@ impl RenderOnce for Waves {
         let [first, second, third, fourth, fifth] = self.colors;
         let Rgba { r, g, b, a } = fifth.into();
         let instance = ShaderInstance::at(self.time)
-            .params(0, &[SPEED, WARP, SHEEN, 0., r, g, b, a])
+            .params(0, &[SPEED, SWELL, BEND, EDGE, r, g, b, a])
             .color(0, first)
             .color(1, second)
             .color(2, third)
