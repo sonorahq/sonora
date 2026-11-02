@@ -11,6 +11,7 @@
 // params[0].x  speed, 1 for the default pace
 // params[0].y  swell, how far the noise and the sines push the plane, around 1
 // params[0].z  morph, how far the drifting turn twists the plane, around 1
+// params[0].w  ceiling, the linear luminance bright light is pressed toward, 0 for none
 // params[1]    the fifth colour, straight alpha sRGB, which the troughs sink toward
 // colors[0..3] the corners of the gradient, straight alpha sRGB
 
@@ -40,23 +41,32 @@ fn shade(input: ShaderInput) -> vec4<f32> {
 
     // A dark stage in the cover's own shadows, leaning from the deep fifth colour at the top to
     // the fourth at the bottom.
-    var color = mix(light(input.params[1].rgb), light(input.colors[3].rgb), smoothstep(-0.7, 0.7, q.y)) * 0.6;
+    var color = mix(light(input.params[1].rgb), light(input.colors[3].rgb), smoothstep(-0.7, 0.7, q.y)) * 0.5;
 
     // Three pools of colour, each where its own slow noise runs high. They are thresholds of a
-    // field rather than shapes, so they swell, split and dissolve as the plane morphs.
-    let first = smoothstep(-0.2, 0.4, gradient_noise(q * 0.8 + vec2<f32>(t * 0.05, 1.3)));
-    color = mix(color, light(input.colors[0].rgb) * 1.15, first);
-    let second = smoothstep(-0.1, 0.45, gradient_noise(q * 0.75 + vec2<f32>(7.1, -t * 0.045)));
-    color = mix(color, light(input.colors[2].rgb), second * 0.95);
-    let bright = smoothstep(0.0, 0.5, gradient_noise(q * 1.05 + vec2<f32>(-t * 0.06, 3.7)));
-    color = mix(color, light(input.colors[1].rgb) * 1.3, bright * 0.9);
+    // field rather than shapes, so they swell, split and dissolve as the plane morphs, and each
+    // covers well under half the plane so the stage shows between them.
+    let first = smoothstep(-0.02, 0.5, gradient_noise(q * 0.8 + vec2<f32>(t * 0.05, 1.3)));
+    color = mix(color, light(input.colors[0].rgb), first * 0.85);
+    let second = smoothstep(0.04, 0.55, gradient_noise(q * 0.75 + vec2<f32>(7.1, -t * 0.045)));
+    color = mix(color, light(input.colors[2].rgb), second * 0.85);
+    let bright = smoothstep(0.18, 0.62, gradient_noise(q * 1.05 + vec2<f32>(-t * 0.06, 3.7)));
+    color = mix(color, light(input.colors[1].rgb), bright * 0.7);
 
     // A slow wave of shade sinks its troughs a little, so the field breathes in depth too.
     let wave = 0.5 + 0.5 * sin(q.x * 1.6 + q.y * 2.1 + t * 0.27);
-    color *= 0.86 + 0.14 * wave;
+    color *= 0.82 + 0.18 * wave;
 
     let reach = length(p / half);
-    color *= 0.8 + 0.2 * smoothstep(1.3, 0.3, reach);
+    color *= 0.75 + 0.25 * smoothstep(1.3, 0.3, reach);
+
+    // A soft ceiling on brightness: dim light passes almost untouched and bright light is
+    // pressed toward `ceiling`, so a vivid cover cannot wash out the text laid over the field.
+    let ceiling = input.params[0].w;
+    if ceiling > 0.0 {
+        let level = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+        color *= 1.0 / (1.0 + level / ceiling);
+    }
 
     return vec4<f32>(dither(sqrt(color), input.frag_coord), 1.0);
 }

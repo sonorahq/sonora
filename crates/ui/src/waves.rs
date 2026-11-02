@@ -9,6 +9,8 @@ const SPEED: f32 = 1.;
 const SWELL: f32 = 1.;
 /// How far the drifting turn twists the field.
 const MORPH: f32 = 1.;
+/// The linear luminance bright light is pressed toward, so text over the field stays readable.
+const CEILING: f32 = 0.07;
 
 static WAVES: Effect = Effect::new("sonora-waves", include_str!("../shaders/waves.wgsl"));
 
@@ -50,7 +52,7 @@ impl RenderOnce for Waves {
         let [first, second, third, fourth, fifth] = self.colors;
         let Rgba { r, g, b, a } = fifth.into();
         let instance = ShaderInstance::at(self.time)
-            .params(0, &[SPEED, SWELL, MORPH, 0., r, g, b, a])
+            .params(0, &[SPEED, SWELL, MORPH, CEILING, r, g, b, a])
             .color(0, first)
             .color(1, second)
             .color(2, third)

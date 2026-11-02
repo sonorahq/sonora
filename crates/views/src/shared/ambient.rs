@@ -136,12 +136,13 @@ impl Ambient {
     }
 
     /// Resolves the five field colours from the theme: the cover's leading hue carried from a
-    /// light highlight down to a dark shadow, plus its runner-up where the art names one. Art
-    /// with no colour leaves no tints behind, and then the stage is quiet neutrals.
+    /// light highlight down to a dark shadow, plus its runner-up or, failing that, a neighbouring
+    /// hue. Art with no colour leaves no tints behind, and then the stage is neutrals spread
+    /// across lightness.
     pub(crate) fn colors(theme: &Theme) -> [Hsla; COLORS] {
-        let neutral = |light: f32| Hsla {
-            h: 0.06,
-            s: 0.12,
+        let neutral = |h: f32, light: f32| Hsla {
+            h,
+            s: 0.08,
             l: light,
             a: 1.,
         };
@@ -149,13 +150,15 @@ impl Ambient {
         // a lighter stage.
         let floor = (0.13 + theme.background.l * 0.8).clamp(0.13, 0.30);
 
+        // Grey art has only lightness to move, so the neutrals spread wide across it and lean
+        // a touch warm and cool, or the field would morph with nothing to show for it.
         let Some(tint) = theme.tint else {
             return [
-                neutral(floor),
-                neutral(floor + 0.025),
-                neutral(floor + 0.05),
-                neutral(floor + 0.015),
-                neutral(floor + 0.04),
+                neutral(0.07, floor + 0.15),
+                neutral(0.08, floor + 0.28),
+                neutral(0.60, floor + 0.11),
+                neutral(0.07, floor - 0.04),
+                neutral(0.62, floor - 0.07),
             ];
         };
         let accent = theme.accent(tint);
@@ -165,6 +168,9 @@ impl Ambient {
             l: (0.40 + (accent.l - 0.45) * 0.5).clamp(0.28, 0.52),
             a: 1.,
         };
+        let turned = |shift: f32| (base.h + shift).rem_euclid(1.);
+        // Art with one hue gets a neighbour of it in place of the runner-up, so the field still
+        // has two colours to fold together.
         let second = match theme.tint_secondary {
             Some(second) => Hsla {
                 h: second.h,
@@ -172,24 +178,30 @@ impl Ambient {
                 l: (0.38 + (second.l - 0.45) * 0.5).clamp(0.28, 0.5),
                 a: 1.,
             },
-            None => neutral(floor + 0.03),
+            None => Hsla {
+                h: turned(-0.05),
+                s: (base.s + 0.06).clamp(0.45, 0.8),
+                l: (base.l - 0.06).clamp(0.24, 0.46),
+                ..base
+            },
         };
         [
             base,
             Hsla {
-                l: (base.l + 0.14).clamp(0.3, 0.62),
+                h: turned(0.03),
+                l: (base.l + 0.16).clamp(0.34, 0.64),
                 s: (base.s - 0.08).clamp(0.4, 0.75),
                 ..base
             },
             second,
             Hsla {
-                l: (base.l - 0.13).clamp(0.18, 0.45),
+                l: (base.l - 0.2).clamp(0.12, 0.3),
                 s: (base.s + 0.04).clamp(0.45, 0.8),
                 ..base
             },
             Hsla {
-                h: (base.h + 0.97).rem_euclid(1.),
-                l: (base.l - 0.16).clamp(0.16, 0.4),
+                h: turned(0.04),
+                l: (base.l - 0.26).clamp(0.08, 0.24),
                 s: (base.s - 0.02).clamp(0.4, 0.78),
                 ..base
             },
