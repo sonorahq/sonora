@@ -170,6 +170,12 @@ impl Glide {
         true
     }
 
+    /// Whether a glide is still under way. It stays true until the spring or ease has landed
+    /// on its target, the creep through the last fraction of a pixel included.
+    pub fn gliding(&self) -> bool {
+        self.drift.borrow().gliding
+    }
+
     pub fn goal(&self, scroll: &impl ScrollPosition) -> Point<Pixels> {
         let drift = self.drift.borrow();
 
