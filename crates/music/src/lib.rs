@@ -625,7 +625,7 @@ pub enum PlaybackEvent {
     Refused,
     Gated,
     /// The audio output was lost or changed, so the engine is gone. `heard` is the track being
-    /// heard and how far into it the output had played, when the engine knew; a restart resumes
+    /// heard and how far into it the output had played, when the engine knew. A restart resumes
     /// there rather than where a clock that kept running during the switch would say.
     OutputChanged {
         heard: Option<(String, Duration)>,

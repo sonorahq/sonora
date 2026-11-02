@@ -1052,9 +1052,9 @@ fn audio_loop<F: Fetch>(
 
         // reported from the sound, so it keeps moving while the last seconds play out
         if playing
-            && let Some(mark) = heard.get()
             && reported_at.elapsed() >= interval
             && !cue.cleared()
+            && let Some(mark) = heard.get()
         {
             reported_at = Instant::now();
             events
