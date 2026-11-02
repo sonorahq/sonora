@@ -183,10 +183,12 @@ impl Ambient {
             l: (0.40 + (accent.l - 0.45) * 0.5).clamp(0.28, 0.52),
             a: 1.,
         };
+        // The runner-up keeps the saturation and depth it has on the cover. It is often a wide
+        // muted backdrop, and lifting that to a vivid tone paints a colour the art never showed.
         let runner = theme.tint_secondary.map(|second| Hsla {
             h: second.h,
-            s: (second.s * 0.9).clamp(0.4, 0.72),
-            l: (0.38 + (second.l - 0.45) * 0.5).clamp(0.28, 0.5),
+            s: (second.s * 0.9).clamp(0.05, 0.72),
+            l: (0.36 + (second.l - 0.45) * 0.6).clamp(0.16, 0.5),
             a: 1.,
         });
 
@@ -208,8 +210,10 @@ impl Ambient {
         // Art with one hue gets a neighbour of it in place of the runner-up, so the field still
         // has two colours to fold together. Where that hue is a splash, the neighbour greys.
         let second = match other {
+            // A hue the art barely shows sinks darker rather than greying, so a splash of red
+            // stays red instead of turning to mud.
             Some(other) => Hsla {
-                s: other.s * (0.5 + 0.5 * ramp(0.03, 0.25, other_share)),
+                l: (other.l - 0.14 * (1. - ramp(0.03, 0.25, other_share))).max(0.12),
                 ..other
             },
             None => Hsla {

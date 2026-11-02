@@ -10,7 +10,7 @@ const SWELL: f32 = 1.;
 /// How far the drifting turn twists the field.
 const MORPH: f32 = 1.;
 /// The linear luminance bright light is pressed toward, so text over the field stays readable.
-const CEILING: f32 = 0.07;
+const CEILING: f32 = 0.045;
 
 static WAVES: Effect = Effect::new("sonora-waves", include_str!("../shaders/waves.wgsl"));
 

@@ -41,7 +41,7 @@ fn shade(input: ShaderInput) -> vec4<f32> {
 
     // A dark stage in the cover's own shadows, leaning from the deep fifth colour at the top to
     // the fourth at the bottom.
-    var color = mix(light(input.params[1].rgb), light(input.colors[3].rgb), smoothstep(-0.7, 0.7, q.y)) * 0.5;
+    var color = mix(light(input.params[1].rgb), light(input.colors[3].rgb), smoothstep(-0.7, 0.7, q.y)) * 0.42;
 
     // Three pools of colour, each where its own slow noise runs high. They are thresholds of a
     // field rather than shapes, so they swell, split and dissolve as the plane morphs, and each
