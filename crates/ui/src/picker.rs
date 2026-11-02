@@ -26,8 +26,12 @@ pub struct Picker {
     tooltip: Option<&'static str>,
     above: bool,
     tint: Option<Hsla>,
+    /// The colour of the status dot over the trigger's icon, `None` for no dot.
+    status: Option<Hsla>,
     selected: bool,
     small: bool,
+    /// Draws a labelled trigger without its outline, like the icon buttons around it.
+    ghost: bool,
     width: Pixels,
     left: bool,
     sticky: bool,
@@ -55,8 +59,10 @@ impl Picker {
             tooltip: None,
             above: false,
             tint: None,
+            status: None,
             selected: false,
             small: true,
+            ghost: false,
             width: Self::REGULAR,
             left: false,
             sticky: false,
@@ -114,8 +120,20 @@ impl Picker {
         self
     }
 
+    /// Marks the trigger with a dot of `color` over its icon's top left corner.
+    pub fn status(mut self, color: Hsla) -> Self {
+        self.status = Some(color);
+        self
+    }
+
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// Drops the outline of a labelled trigger, for one that sits among ghost buttons.
+    pub fn ghost(mut self) -> Self {
+        self.ghost = true;
         self
     }
 
@@ -195,8 +213,10 @@ impl RenderOnce for Picker {
             tooltip,
             above,
             tint,
+            status,
             selected,
             small,
+            ghost,
             width,
             left,
             sticky,
@@ -227,6 +247,7 @@ impl RenderOnce for Picker {
         };
         let button = button
             .when(small, Button::small)
+            .when(ghost, Button::ghost)
             .when_some(name.clone(), Button::name)
             .when_some(leading, Button::leading)
             .when_some(tooltip, |button, key| match above {
@@ -234,6 +255,7 @@ impl RenderOnce for Picker {
                 false => button.tooltip(key),
             })
             .when_some(tint, Button::tint)
+            .when_some(status, Button::status)
             .disabled(disabled);
 
         let menu = menu.unwrap_or_else(|| {

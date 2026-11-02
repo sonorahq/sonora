@@ -3,8 +3,8 @@ use gpui::{App, Font, FontFallbacks, SharedString, StyleRefinement, font, prelud
 use gpui::{Window, div};
 use input::{
     CloseWindow, MinimizeWindow, NavigateBack, NavigateForward, OpenFilter, OpenSearch,
-    OpenSettings, Refresh, ToggleFullscreen, ToggleLyrics, ToggleQueue, ToggleWindowFullscreen,
-    ZoomWindow,
+    OpenSettings, Refresh, ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue,
+    ToggleWindowFullscreen, ZoomWindow,
 };
 use router::{Destination, NavigationEvent, Screen, back, forward, navigate};
 use state::{
@@ -490,6 +490,13 @@ impl Root {
             .update(cx, |workspace, cx| workspace.show_side(tab, cx));
     }
 
+    /// Opens the right sidebar on `tab`, leaving it be when it already shows there.
+    fn reveal_side(&self, tab: SideTab, cx: &mut Context<Self>) {
+        self.shells
+            .workspace
+            .update(cx, |workspace, cx| workspace.reveal_side(tab, cx));
+    }
+
     /// Tells the adaptive theme and the wake lock whether fullscreen is up. The ambient
     /// background is painted out of the cover's hues, so fullscreen samples the cover even with
     /// the adaptive theme off, and leaving drops the tint again.
@@ -926,7 +933,10 @@ impl Root {
                 toolbar = Some(genre.read(cx).toolbar());
                 genre.into()
             }
-            Destination::Search => self.screens.search.clone().into(),
+            Destination::Search => {
+                self.screens.genres.update(cx, |genres, cx| genres.load(cx));
+                self.screens.search.clone().into()
+            }
             Destination::Equalizer => {
                 header = Some(self.screens.settings_header.clone().into());
                 self.screens.equalizer.clone().into()
@@ -1222,6 +1232,9 @@ impl Render for Root {
             )
             .on_action(
                 cx.listener(|this, _: &ToggleLyrics, _, cx| this.show_side(SideTab::Lyrics, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &ShowMembers, _, cx| this.reveal_side(SideTab::Members, cx)),
             )
             // The ambient background sits behind everything, title bar included.
             .when(ambient, |this| this.child(self.ambient.clone()))

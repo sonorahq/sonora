@@ -1,21 +1,20 @@
 //! The Jam as the app shows it: the question before a shared link is joined, the code a phone
-//! scans to join the one the listener started, and the list of people in the one the listener is
-//! in. All of them are `state::Devices`' to answer; this only draws them.
+//! scans to join the one the listener started, and the faces of the people in a Jam or a Sonora
+//! Session. All of it is `state::Devices`' to answer, and this only draws it.
 
 use gpui::prelude::*;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use gpui::{
     AnyElement, App, ClipboardItem, Context, Div, ElementId, Entity, FocusHandle, Hsla, Pixels,
-    Point, Render, SharedString, Window, div, px, rgb, svg,
+    Render, SharedString, Window, div, px, rgb, svg,
 };
 use i18n::t;
 use music::connect::{Jam, JamMember};
-use router::{Destination, navigate};
 use state::{Devices, Outcome, Sonora, Toasts};
 use ui::{
-    ActiveTheme as _, Avatar, Button, Dismiss, FORM_CONTEXT, Input, Menu, MenuItem, Modal, Picker,
-    Popup, Qr, Submit, Text, Theme, snapped,
+    ActiveTheme as _, Avatar, Button, Dismiss, FORM_CONTEXT, Input, Modal, Qr, Submit, Text, Theme,
+    snapped,
 };
 
 /// The side of the Jam's QR code. It does not scale with the theme, since a code has to stay a
@@ -385,102 +384,6 @@ impl Render for JamCode {
     }
 }
 
-/// The list of people in the Jam the listener is in, opened as a popup over the player bar. The
-/// owner gets a button to remove anyone else. It closes by itself once the Jam is over.
-pub(crate) struct JamPeople {
-    devices: Entity<Devices>,
-    /// Where the list ends while it is open.
-    at: Option<Point<Pixels>>,
-}
-
-impl JamPeople {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        let devices = Sonora::global(cx).devices.clone();
-        cx.observe(&devices, |this, devices, cx| {
-            if devices.read(cx).jam().is_none() {
-                this.at = None;
-            }
-            cx.notify();
-        })
-        .detach();
-        Self { devices, at: None }
-    }
-
-    /// Opens the list upward from `at`, a point on the strip or menu that asked for it.
-    pub fn show(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
-        self.at = Some(at);
-        cx.notify();
-    }
-}
-
-impl Render for JamPeople {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(at) = self.at else {
-            return div().absolute().into_any_element();
-        };
-        let Some(jam) = self.devices.read(cx).jam() else {
-            return div().absolute().into_any_element();
-        };
-
-        let theme = *cx.theme();
-        let size = theme.metrics.control_small;
-        let devices = self.devices.clone();
-        let rows = jam.members.iter().enumerate().map(|(index, member)| {
-            let removable = jam.owner && !member.host && !member.you;
-            let id = member.id.clone();
-            let devices = devices.clone();
-            // a profile is opened by the account name, which the id stands in for when missing
-            let profile = [&member.username, &member.id]
-                .into_iter()
-                .find(|id| !id.is_empty())
-                .map(|id| SharedString::from(id.clone()));
-
-            MenuItem::new(("jam-member", index), name(member).to_owned())
-                .leading(face(member, size))
-                .trailing(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .when(member.host, |this| {
-                            this.child(badge(("jam-host", index), t!("devices-jam-host"), theme))
-                        })
-                        .when(member.you, |this| {
-                            this.child(badge(("jam-you", index), t!("devices-jam-you"), theme))
-                        })
-                        .when(removable, |this| {
-                            this.child(
-                                Button::new(("jam-remove", index))
-                                    .small()
-                                    .name(t!("devices-jam-remove-member", name = name(member)))
-                                    .label(t!("devices-jam-remove"))
-                                    .on_click(move |_, _, cx| {
-                                        cx.stop_propagation();
-                                        devices.read(cx).kick(&id)
-                                    }),
-                            )
-                        }),
-                )
-                .when_none(&profile, |this| this.disabled())
-                .when_some(profile, |this, profile| {
-                    this.on_click(cx.listener(move |this, _, _, cx| {
-                        this.at = None;
-                        cx.notify();
-                        navigate(Destination::User(profile.clone()), cx);
-                    }))
-                })
-        });
-
-        Popup::new(at, Menu::new("jam-people").w(Picker::WIDE).items(rows))
-            .above()
-            .on_close(cx.listener(|this, _, _, cx| {
-                this.at = None;
-                cx.notify();
-            }))
-            .into_any_element()
-    }
-}
-
 /// Copies a Jam's link and says so.
 pub(crate) fn copy_link(link: &str, cx: &mut App) {
     cx.write_to_clipboard(ClipboardItem::new_string(link.to_owned()));
@@ -497,7 +400,7 @@ pub(crate) fn host_name(jam: &Jam) -> Option<&str> {
 }
 
 /// What to call `member`: their name, or the id the provider knows them by when it gave none.
-fn name(member: &JamMember) -> &str {
+pub(crate) fn name(member: &JamMember) -> &str {
     match member.name.is_empty() {
         true => &member.id,
         false => &member.name,
@@ -616,7 +519,11 @@ pub(crate) fn faces(
 }
 
 /// A small tag beside a member's name, which screen readers reach under `id`.
-fn badge(id: impl Into<ElementId>, label: SharedString, theme: Theme) -> impl IntoElement {
+pub(crate) fn badge(
+    id: impl Into<ElementId>,
+    label: SharedString,
+    theme: Theme,
+) -> impl IntoElement {
     ui::spoken(id, label)
         .flex_none()
         .px_2()

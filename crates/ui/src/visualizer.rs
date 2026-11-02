@@ -13,7 +13,6 @@ use crate::theme::ActiveTheme as _;
 
 const GAP: f32 = 3.;
 const OPACITY: f32 = 0.32;
-const FLOOR: f32 = 0.03;
 const STROKE: f32 = 2.;
 const CHANNELS: [f32; 2] = [0.62, 1.];
 const GLOW: f32 = 10.;
@@ -235,7 +234,10 @@ fn bars(
                 let start = bounds.origin.x + (width + gap) * index as f32;
                 let left = snapped(start, window);
                 let right = snapped(start + width, window);
-                let top = snapped(floor - max * level.clamp(FLOOR, 1.) / (1. + ride), window);
+                let top = snapped(floor - max * level.clamp(0., 1.) / (1. + ride), window);
+                if top >= floor {
+                    continue;
+                }
                 let bar = Bounds::from_corners(point(left, top), point(right, floor));
                 let cornered = corner.is_some_and(|radius| {
                     left < bounds.origin.x + radius
@@ -308,7 +310,7 @@ fn wave(
         // A band owns a column, not a fence post: its point goes at the middle of the bar the
         // same band draws.
         let step = bounds.size.width / bands.len() as f32;
-        let crest = |band: f32| floor - inset - span * band.clamp(FLOOR, 1.);
+        let crest = |band: f32| floor - inset - span * band.clamp(0., 1.);
         let mut points = Vec::with_capacity(bands.len() + 2);
         points.push(point(bounds.origin.x, crest(bands[0])));
         points.extend(bands.iter().enumerate().map(|(index, band)| {

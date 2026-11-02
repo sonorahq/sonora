@@ -7,8 +7,6 @@ use crate::models::{
 
 /// The longer edge of a large cover, wide enough for the fullscreen player on a 2x display.
 const COVER_LARGE: u32 = 1200;
-/// The longer edge of an artist banner, which spans the whole page.
-const BANNER: u32 = 2160;
 
 pub fn track(source: ytmusic::Track, index: u32) -> Track {
     let artists = source
@@ -154,7 +152,9 @@ pub fn artist(source: ytmusic::Artist) -> Artist {
     Artist {
         name: source.name,
         cover_large: cover_large(&source.thumbnails),
-        banner: banner(&source.thumbnails),
+        // YouTube's header picture is also the artist's portrait, so the page washes the portrait
+        // out behind the hero instead of showing the same picture twice.
+        banner: None,
         biography: source.description,
         monthly_listeners: None,
         top_tracks,
@@ -201,13 +201,6 @@ pub fn cover_large(thumbnails: &[ytmusic::Thumbnail]) -> Option<String> {
     thumbnails
         .last()
         .map(|thumb| resized(&thumb.url, COVER_LARGE))
-}
-
-/// The artist header picture when it is the wide one an immersive header carries. A visual header
-/// only has the square portrait, which makes no banner.
-pub fn banner(thumbnails: &[ytmusic::Thumbnail]) -> Option<String> {
-    let widest = thumbnails.last()?;
-    (widest.width > widest.height).then(|| resized(&widest.url, BANNER))
 }
 
 /// Rewrites the `=w<width>-h<height>` options of a googleusercontent url so its longer edge is

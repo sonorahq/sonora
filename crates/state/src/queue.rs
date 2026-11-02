@@ -480,13 +480,22 @@ impl Queue {
     }
 
     /// Rebuilds collection order while keeping additions and recommendations out of the source.
+    /// Shuffling mixes the hand-queued songs in with the collection, so turning shuffle off and
+    /// on again reshuffles the whole queue. Unshuffling queues every song the collection lacks
+    /// by hand again, ahead of the collection.
     fn reorder(&mut self) {
+        let shuffle = self.shuffle;
+        let known: HashSet<&str> = self.source.iter().map(|entry| entry.uid.as_str()).collect();
         let mut suggested = VecDeque::new();
         let mut manual = VecDeque::new();
         self.upcoming.retain(|entry| match entry.kind {
-            QueueKind::Context => true,
-            QueueKind::Queued => {
-                manual.push_back(entry.clone());
+            QueueKind::Context if shuffle || known.contains(entry.uid.as_str()) => true,
+            QueueKind::Queued if shuffle => true,
+            QueueKind::Context | QueueKind::Queued => {
+                manual.push_back(Entry {
+                    kind: QueueKind::Queued,
+                    ..entry.clone()
+                });
                 false
             }
             QueueKind::Suggested => {
@@ -494,8 +503,13 @@ impl Queue {
                 false
             }
         });
-        match self.shuffle {
-            true => scramble(&mut self.upcoming, &self.source, self.current.as_ref()),
+        match shuffle {
+            true => {
+                scramble(&mut self.upcoming, &self.source, self.current.as_ref());
+                for entry in &mut self.upcoming {
+                    entry.kind = QueueKind::Context;
+                }
+            }
             false => restore(&mut self.upcoming, &self.source, self.current.as_ref()),
         }
         manual.append(&mut self.upcoming);
@@ -978,6 +992,33 @@ impl Queue {
             .map(|entry| &entry.uid)
             .collect();
         self.source.retain(|entry| !queued.contains(&entry.uid));
+        self.suggested += 1;
+        self.changed(cx);
+    }
+
+    /// The upcoming tracks the listener or a collection put there, without the suggestions.
+    pub(crate) fn chosen_upcoming(&self) -> impl Iterator<Item = &Track> {
+        self.upcoming
+            .iter()
+            .filter(|entry| entry.kind != QueueKind::Suggested)
+            .map(|entry| entry.track.as_ref())
+    }
+
+    /// Makes `tracks` what plays after the current track, as a Sonora Session shares it. Local
+    /// files and suggestions are never shared, so the ones here stay after them.
+    pub(crate) fn share_upcoming(&mut self, tracks: Vec<Track>, cx: &mut Context<Self>) {
+        let origin = self.origin().cloned();
+        let kept: Vec<_> = self
+            .upcoming
+            .drain(..)
+            .filter(|entry| {
+                entry.kind == QueueKind::Suggested
+                    || entry.track.id.as_deref().is_some_and(music::is_local_id)
+            })
+            .collect();
+        self.upcoming = tagged(tracks, origin, QueueKind::Context)
+            .chain(kept)
+            .collect();
         self.suggested += 1;
         self.changed(cx);
     }

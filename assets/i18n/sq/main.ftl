@@ -37,7 +37,6 @@ nav-pinned = Të fiksuara
 nav-unpin = Hiq fiksimin
 nav-pin-hint = Lësho këtu për ta fiksuar
 library-liked-songs = Të preferuarat
-library-play-liked-songs = Luaj
 library-no-songs = Ende asnjë e preferuar
 library-no-albums = Ende asnjë album i ruajtur
 library-no-playlists = Ende asnjë listë luajtjeje
@@ -262,10 +261,7 @@ player-previous = Kënga e mëparshme
 player-next = Kënga e radhës
 player-fullscreen = Ekran i plotë
 player-fullscreen-leave = Dil nga ekrani i plotë
-player-devices = Pajisjet
 devices-this-computer = Ky kompjuter
-devices-pause = Pauzë
-devices-resume = Vazhdo
 devices-jam-join = Bashkohu në një Jam…
 devices-jam-join-title = Bashkohu në një Jam
 devices-jam-join-detail = Ngjit lidhjen që të ndau një mik
@@ -273,15 +269,12 @@ devices-jam-paste = Ngjit
 devices-jam-link-hint = Lidhja e Jam-it
 devices-jam-start = Nis një Jam
 devices-jam-copy = Kopjo lidhjen e Jam-it
-devices-jam-code = Kodi QR
 devices-jam-code-menu = Shfaq kodin QR
 devices-jam-code-title = Skano për t'u bashkuar në Jam-in e { $host }
 devices-jam-code-title-anonymous = Skano për t'u bashkuar në Jam
 devices-jam-code-close = Mbyll
 devices-jam-leave = Largohu nga Jam-i
 devices-jam-end = Përfundo Jam-in
-devices-jam-banner = Në Jam-in e { $host }
-devices-jam-banner-anonymous = Në një Jam
 devices-jam-more = +{ $count }
 devices-jam-host = Organizatori
 devices-jam-you = Ti
@@ -293,8 +286,6 @@ devices-jam-invite-detail = { $count ->
    *[other] { $count } persona janë tashmë në këtë Jam.
 }
 devices-jam-invite-join = Bashkohu
-devices-elsewhere-banner = Duke luajtur në { $device }
-devices-elsewhere-here = Luaj këtu
 fullscreen-artwork = Kopertina
 
 # filters
@@ -375,8 +366,6 @@ login-choose-detail = Zgjidh se si të hysh te { $provider }.
 
 # album and playlist pages
 detail-playlist = Listë luajtjeje
-detail-play-album = Luaj albumin
-detail-play-playlist = Luaj listën e luajtjes
 
 # play button
 play-pause = Pauzë
@@ -389,7 +378,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } dëgjues mujor
    *[other] { $value } dëgjues mujorë
 }
-artist-play = Luaj tani
 artist-popular = Popullore
 artist-popular-eyebrow = Eksploro këtë artist
 artist-popular-empty = Ende asgjë për të luajtur nga ky artist
@@ -465,7 +453,6 @@ kind-playlist = Listë luajtjeje
 
 # song page
 song-eyebrow = Këngë
-song-play = Luaj këngën
 song-view-album = Shiko albumin
 song-loading = Duke ngarkuar informacionin e këngës…
 song-about = Rreth kësaj kënge
@@ -1277,19 +1264,6 @@ toast-offline-mode = Je jashtë linje. Kalo në linjë për ta transmetuar kët�
 offline-title = Je jashtë linje.
 offline-go-online = Kalo në linjë
 toast-download-failed = Këngët për shkarkim nuk mund të listoheshin.
-toast-downloading = Duke shkarkuar { $name }
-toast-downloading-songs = { $count ->
-    [one] Duke shkarkuar { $count } këngë
-   *[other] Duke shkarkuar { $count } këngë
-}
-toast-downloaded = U shkarkua { $name }
-toast-downloaded-songs = { $count ->
-    [one] U shkarkua { $count } këngë
-   *[other] U shkarkuan { $count } këngë
-}
-toast-download-set-failed = Disa këngë të { $name } nuk mund të shkarkoheshin
-toast-download-song-failed = { $name } nuk mund të shkarkohej
-toast-download-songs-failed = Disa nga këngët nuk mund të shkarkoheshin
 toast-percent = { $percent }%
 toast-download-cancelled = Shkarkimi i { $name } u anulua
 toast-downloads-cancelled = { $count ->

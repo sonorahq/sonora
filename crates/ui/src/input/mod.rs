@@ -250,6 +250,9 @@ pub struct Input {
     masked: bool,
     /// Whether the text keeps to the field's end rather than its start, as a column of numbers.
     end: bool,
+    /// Whether the field holds something that was turned down, which its border shows in the
+    /// danger colour until it is cleared.
+    invalid: bool,
     /// The Fluent key of the muted unit drawn after the text inside the field.
     suffix: Option<SharedString>,
     /// The keystroke that focuses the field, drawn as keys at its end while it is empty.
@@ -260,6 +263,9 @@ pub struct Input {
     marked_range: Option<Range<usize>>,
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
+    /// How far the text is scrolled left under the field, so the caret stays in sight when the
+    /// text is wider than the field.
+    scroll: Pixels,
     selecting: bool,
     selected_word: Option<Range<usize>>,
     context_menu: Option<Point<Pixels>>,
@@ -278,6 +284,7 @@ impl Input {
             clearable: false,
             masked: false,
             end: false,
+            invalid: false,
             suffix: None,
             shortcut: None,
             content: SharedString::default(),
@@ -286,6 +293,7 @@ impl Input {
             marked_range: None,
             last_layout: None,
             last_bounds: None,
+            scroll: Pixels::ZERO,
             selecting: false,
             selected_word: None,
             context_menu: None,
@@ -368,6 +376,14 @@ impl Input {
     pub fn set_hint(&mut self, hint: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.hint = hint.into();
         cx.notify();
+    }
+
+    /// Marks the field as holding something that was turned down, or clears the mark.
+    pub fn set_invalid(&mut self, invalid: bool, cx: &mut Context<Self>) {
+        if self.invalid != invalid {
+            self.invalid = invalid;
+            cx.notify();
+        }
     }
 
     /// Draws the content as dots, or stops. Offsets stay content offsets either way, so the
@@ -890,7 +906,7 @@ impl EntityInputHandler for Input {
         Some(span(
             line,
             at(range.start)..at(range.end),
-            bounds.left(),
+            bounds.left() - self.scroll,
             bounds,
         ))
     }

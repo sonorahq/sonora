@@ -3,15 +3,15 @@ use std::rc::Rc;
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Div, ElementId, Entity, FontWeight, MouseButton, MouseDownEvent, Pixels,
-    SharedString, Stateful, Window, div, px, relative,
+    AnyElement, App, Div, ElementId, Entity, FontWeight, MouseButton, MouseDownEvent, Pixels, Rems,
+    SharedString, Stateful, Window, div, px, relative, rems,
 };
 use i18n::t;
 use music::{Album, Track};
 use state::{Origin, Playback};
 use ui::{
-    ActiveTheme as _, Artwork, Button, ExplicitBadge, LEADING, Pin, Pinnable as _, Skeleton,
-    TableState, Tails as _, Text, spoken, upper,
+    ActiveTheme as _, Artwork, Button, ExplicitBadge, LEADING, MenuItem, Perch, Pin, Pinnable as _,
+    Skeleton, TableState, Tails as _, Text, Tipped as _, spoken, upper,
 };
 
 use crate::shared::tracks::{self, TrackSource};
@@ -21,6 +21,10 @@ use crate::shared::tracks::{self, TrackSource};
 const TITLE_SKELETON: Pixels = px(240.);
 const META_SKELETON: Pixels = px(180.);
 const ACTION_SKELETON: Pixels = px(96.);
+/// The space between the cover and the text beside it.
+const COVER_GAP: Rems = rems(1.25);
+/// The space between the buttons in a row of hero actions.
+pub(crate) const ACTION_GAP: Rems = rems(0.5);
 
 /// One copyright line, with a © in front unless the provider already led it with © or ℗.
 pub(crate) fn copyright_notice(text: &str) -> SharedString {
@@ -172,7 +176,6 @@ impl Listing {
 #[derive(IntoElement)]
 pub(crate) struct HeroPlayButton {
     id: ElementId,
-    label: SharedString,
     listing: Listing,
     from: Option<Origin>,
     shuffled: bool,
@@ -182,13 +185,11 @@ pub(crate) struct HeroPlayButton {
 impl HeroPlayButton {
     pub(crate) fn new(
         id: impl Into<ElementId>,
-        label: impl Into<SharedString>,
         tracks: Vec<Track>,
         playback: Entity<Playback>,
     ) -> Self {
         Self {
             id: id.into(),
-            label: label.into(),
             listing: Listing::Owned(tracks),
             from: None,
             shuffled: false,
@@ -210,7 +211,7 @@ impl HeroPlayButton {
     ) -> Self {
         Self {
             shuffled: true,
-            ..Self::new(id, SharedString::default(), tracks, playback)
+            ..Self::new(id, tracks, playback)
         }
     }
 
@@ -222,24 +223,54 @@ impl HeroPlayButton {
     ) -> Self {
         Self {
             shuffled: true,
-            ..Self::listed(id, SharedString::default(), table, playback)
+            ..Self::listed(id, table, playback)
         }
     }
 
     pub(crate) fn listed(
         id: impl Into<ElementId>,
-        label: impl Into<SharedString>,
         table: &Entity<TableState<TrackSource>>,
         playback: Entity<Playback>,
     ) -> Self {
         Self {
             id: id.into(),
-            label: label.into(),
             listing: Listing::Listed(table.clone()),
             from: None,
             shuffled: false,
             playback,
         }
+    }
+
+    /// The labels the Play button switches between. They are kept short and its width fits the
+    /// wider of them, so the buttons beside it stay put as playback starts and stops.
+    fn labels() -> [SharedString; 2] {
+        [t!("common-play"), t!("play-pause")]
+    }
+
+    /// How wide the button draws, the same whatever its label says.
+    pub(crate) fn width(&self, window: &Window) -> Pixels {
+        match self.shuffled {
+            true => Button::width(std::iter::empty::<SharedString>(), window),
+            false => Button::width(Self::labels(), window),
+        }
+    }
+
+    /// The shuffle as a menu item, for a hero whose Shuffle button folded into its overflow
+    /// menu.
+    pub(crate) fn shuffle_item(self, cx: &App) -> MenuItem {
+        let disabled = self.listing.first(cx).is_none();
+        let listing = self.listing;
+        let from = self.from;
+        let playback = self.playback;
+
+        MenuItem::new("hero-shuffle", t!("play-shuffle"))
+            .icon("icons/shuffle.svg")
+            .when(disabled, MenuItem::disabled)
+            .on_click(move |_, _, cx| {
+                let queued = listing.queue(cx);
+                let from = from.clone().or_else(|| listing.whence(cx));
+                playback.update(cx, |playback, cx| playback.shuffle_any(queued, from, cx));
+            })
     }
 
     fn shuffle_button(self, cx: &App) -> Button {
@@ -277,10 +308,11 @@ impl RenderOnce for HeroPlayButton {
                     .and_then(|_| playback.control()),
             }
         };
+        let [play, pause] = Self::labels();
+        let reserve = [play.clone(), pause.clone()];
         let (label, icon) = match playing {
-            Some(true) => (t!("play-pause"), "icons/pause.svg"),
-            Some(false) => (t!("play-resume"), "icons/play.svg"),
-            None => (self.label, "icons/play.svg"),
+            Some(true) => (pause, "icons/pause.svg"),
+            Some(false) | None => (play, "icons/play.svg"),
         };
         let disabled = self.listing.first(cx).is_none();
         let listing = self.listing;
@@ -290,6 +322,7 @@ impl RenderOnce for HeroPlayButton {
         div().flex().child(
             Button::new(self.id)
                 .label(label)
+                .reserve(reserve)
                 .icon(icon)
                 .primary()
                 .disabled(disabled)
@@ -343,6 +376,11 @@ impl PageHero {
             pin: None,
             pending: false,
         }
+    }
+
+    /// The width a hero `width` wide leaves beside its cover for the title and the actions.
+    pub(crate) fn room(width: Pixels, window: &Window, cx: &App) -> Pixels {
+        width - cx.theme().metrics.cover - COVER_GAP.to_pixels(window.rem_size())
     }
 
     pub(crate) fn pin(mut self, pin: Option<Pin>) -> Self {
@@ -420,7 +458,7 @@ impl RenderOnce for PageHero {
                 .flex()
                 .flex_none()
                 .items_end()
-                .gap_5()
+                .gap(COVER_GAP)
                 .pb_6()
                 .child(
                     Skeleton::new()
@@ -465,7 +503,7 @@ impl RenderOnce for PageHero {
             .flex()
             .flex_none()
             .items_end()
-            .gap_5()
+            .gap(COVER_GAP)
             .pb_6()
             .child(
                 div()
@@ -512,6 +550,9 @@ impl RenderOnce for PageHero {
                                     .min_w_0()
                                     .truncate()
                                     .tails()
+                                    .when(!self.title.is_empty(), |this| {
+                                        this.tip_label(self.title.clone(), Perch::Below)
+                                    })
                                     .when_some(drag_start, |this, drag_start: Rc<DragStart>| {
                                         this.on_mouse_down(
                                             MouseButton::Right,

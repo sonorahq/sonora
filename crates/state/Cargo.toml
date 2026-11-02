@@ -32,6 +32,7 @@ sha2.workspace = true
 storage.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 ui.workspace = true
 webview.workspace = true
 

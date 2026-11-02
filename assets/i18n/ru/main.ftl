@@ -37,7 +37,6 @@ nav-pinned = Закреплённое
 nav-unpin = Открепить
 nav-pin-hint = Перетащите сюда, чтобы закрепить
 library-liked-songs = Избранное
-library-play-liked-songs = Слушать
 library-no-songs = Пока нет избранного
 library-no-albums = Пока нет сохранённых альбомов
 library-no-playlists = Пока нет плейлистов
@@ -280,10 +279,7 @@ player-previous = Предыдущий трек
 player-next = Следующий трек
 player-fullscreen = Полноэкранный режим
 player-fullscreen-leave = Выйти из полноэкранного режима
-player-devices = Устройства
 devices-this-computer = Этот компьютер
-devices-pause = Пауза
-devices-resume = Продолжить
 devices-jam-join = Присоединиться к Jam…
 devices-jam-join-title = Присоединиться к Jam
 devices-jam-join-detail = Вставьте ссылку, которой поделился друг
@@ -291,15 +287,12 @@ devices-jam-paste = Вставить
 devices-jam-link-hint = Ссылка на Jam
 devices-jam-start = Начать Jam
 devices-jam-copy = Копировать ссылку на Jam
-devices-jam-code = QR-код
 devices-jam-code-menu = Показать QR-код
 devices-jam-code-title = Отсканируйте, чтобы присоединиться к Jam { $host }
 devices-jam-code-title-anonymous = Отсканируйте, чтобы присоединиться к Jam
 devices-jam-code-close = Закрыть
 devices-jam-leave = Покинуть Jam
 devices-jam-end = Завершить Jam
-devices-jam-banner = В Jam { $host }
-devices-jam-banner-anonymous = В Jam
 devices-jam-more = +{ $count }
 devices-jam-host = Организатор
 devices-jam-you = Вы
@@ -312,8 +305,29 @@ devices-jam-invite-detail = { $count ->
    *[other] В этом Jam уже { $count } человек.
 }
 devices-jam-invite-join = Присоединиться
-devices-elsewhere-banner = Играет на { $device }
-devices-elsewhere-here = Играть здесь
+player-sessions = Сессии
+devices-spotify-jams = Spotify Jams
+members-title = Участники
+members-empty = Начните сессию или присоединитесь к ней, чтобы увидеть, кто слушает вместе с вами
+devices-session-start = Начать сессию
+devices-session-join = Присоединиться к сессии…
+devices-session-join-title = Присоединиться к сессии
+devices-session-join-detail = Введите код, которым с вами поделились
+devices-session-join-confirm = Присоединиться
+devices-session-code = Код сессии
+devices-session-code-menu = Показать код сессии
+devices-session-code-title = Код вашей сессии
+devices-session-code-detail = Присоединиться по этому коду может любой, кто вошёл в { $provider }
+devices-session-code-close = Готово
+devices-session-copy = Скопировать код
+devices-session-leave = Покинуть сессию
+devices-session-end = Завершить сессию
+devices-session-reconnecting = Переподключение…
+devices-session-people = { $count ->
+    [one] { $count } человек в этой сессии
+    [few] { $count } человека в этой сессии
+   *[many] { $count } человек в этой сессии
+    }
 fullscreen-artwork = Обложка
 
 # filters
@@ -394,8 +408,6 @@ login-choose-detail = Выберите способ входа в { $provider }.
 
 # album and playlist pages
 detail-playlist = Плейлист
-detail-play-album = Слушать альбом
-detail-play-playlist = Слушать плейлист
 
 # play button
 play-pause = Пауза
@@ -409,7 +421,6 @@ artist-monthly-listeners = { $count ->
     [few] { $value } слушателя в месяц
    *[other] { $value } слушателей в месяц
 }
-artist-play = Слушать
 artist-popular = Популярное
 artist-popular-eyebrow = Знакомство с исполнителем
 artist-popular-empty = Пока нечего слушать у этого исполнителя
@@ -489,7 +500,6 @@ kind-playlist = Плейлист
 
 # song page
 song-eyebrow = Трек
-song-play = Слушать трек
 song-view-album = Открыть альбом
 song-loading = Загружаем информацию о треке…
 song-about = О треке
@@ -748,6 +758,7 @@ settings-discord-hide-on-connect-detail = Оставлять статус сам
 settings-discord-buttons = Кнопки
 settings-discord-buttons-detail = Ссылки под статусом, которые могут открыть ваши друзья: одна на трек в его сервисе, другая на Sonora
 settings-discord-buttons-pick = Выбрать кнопки
+settings-discord-preview = Предпросмотр статуса Discord
 settings-discord-preview-listening = Слушает { $name }
 settings-discord-preview-music = Музыка
 settings-discord-preview-elapsed = Прошло { $time }
@@ -1049,6 +1060,12 @@ settings-group-text = Текст
 settings-group-motion = Анимация
 settings-group-streaming = Стриминг
 settings-group-spotify-connect = Spotify Connect
+settings-group-sessions = Сессии
+settings-sessions-button = Показывать кнопку сессий
+settings-sessions-official = Использовать официальный сервер Sonora Sessions
+settings-sessions-server = Адрес сервера
+settings-sessions-server-hint = wss://sessions.example.com
+settings-sessions-save = Сохранить
 settings-adaptive-menu = Адаптивное контекстное меню
 settings-adaptive-menu-detail = Убирает пункты, которые уже видны в строке, — например альбом или исполнителя
 settings-accounts = Управление аккаунтами
@@ -1324,6 +1341,23 @@ toast-jam-failed = Не удалось начать Jam или присоеди�
 toast-jam-ended = Jam завершён
 toast-jam-left = Вы покинули Jam
 toast-jam-leave-failed = Не удалось завершить или покинуть Jam.
+toast-session-needs-provider = Войдите в стриминговый сервис, чтобы начать сессию.
+toast-session-not-found = Сессии с таким кодом нет.
+toast-session-provider = Эта сессия играет из { $name }. Войдите в { $name }, чтобы присоединиться.
+toast-session-full = В этой сессии нет мест.
+toast-session-rate-limited = Слишком много неверных кодов. Попробуйте через несколько минут.
+toast-session-too-many = Из вашей сети уже запущено максимальное число сессий. Завершите одну, чтобы начать новую.
+toast-session-unreachable = Не удалось связаться с Sonora Session. Попробуйте позже.
+toast-session-failed = Не удалось начать сессию или присоединиться к ней.
+toast-session-lost = Связь с сессией потеряна
+toast-session-ended = Сессия завершена
+toast-session-left = Вы покинули сессию
+toast-session-kicked = Хост удалил вас из сессии
+toast-session-code-copied = Код скопирован
+toast-sessions-server-saved = Сервер сессий сохранён
+toast-sessions-server-empty = Сначала введите адрес вашего сервера
+toast-sessions-server-malformed = Это не похоже на адрес сервера
+toast-sessions-server-silent = По этому адресу не отвечает сервер Sonora Sessions, поэтому он не сохранён
 nav-nothing-pinned = Здесь пусто
 nav-pins-alphabetical = По алфавиту
 nav-pins-kind = По типу
@@ -1341,20 +1375,6 @@ toast-offline-mode = Вы офлайн. Перейдите в онлайн, чт
 offline-title = Вы офлайн.
 offline-go-online = Перейти в онлайн
 toast-download-failed = Не удалось получить список треков для скачивания.
-toast-downloading = Скачивание { $name }
-toast-downloading-songs = { $count ->
-    [one] Скачивание { $count } трека
-   *[other] Скачивание { $count } треков
-}
-toast-downloaded = Скачано: { $name }
-toast-downloaded-songs = { $count ->
-    [one] Скачан { $count } трек
-    [few] Скачано { $count } трека
-   *[other] Скачано { $count } треков
-}
-toast-download-set-failed = Не удалось скачать часть треков из { $name }
-toast-download-song-failed = Не удалось скачать { $name }
-toast-download-songs-failed = Не удалось скачать часть треков
 toast-percent = { $percent }%
 toast-download-cancelled = Отменено скачивание { $name }
 toast-downloads-cancelled = { $count ->

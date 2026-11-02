@@ -44,6 +44,21 @@ pub enum Value {
     Provider(Option<String>),
     /// What a search found, best first.
     Hits(Vec<Hit>),
+    /// The Sonora Session Sonora is in, `None` while it is in none.
+    Session(Option<SessionInfo>),
+}
+
+/// A Sonora Session as `sonora session` prints it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionInfo {
+    /// The six digits friends join with.
+    pub code: String,
+    /// The slug of the provider the session plays from.
+    pub provider: String,
+    /// Whether this Sonora hosts the session.
+    pub hosting: bool,
+    /// Everyone in the session by name, the host first.
+    pub members: Vec<String>,
 }
 
 /// A search hit as `sonora search` lists it.

@@ -140,6 +140,17 @@ fn show(value: &Value) -> String {
                 ]
             }),
         ),
+        Value::Session(None) => String::new(),
+        Value::Session(Some(session)) => format!(
+            "{} on {}{}\n{}",
+            session.code,
+            session.provider,
+            match session.hosting {
+                true => ", hosting",
+                false => "",
+            },
+            session.members.join(", ")
+        ),
     }
 }
 
@@ -153,6 +164,7 @@ fn json(value: &Value) -> String {
         Value::Providers(providers) => serde_json::to_string(providers),
         Value::Provider(slug) => serde_json::to_string(slug),
         Value::Hits(hits) => serde_json::to_string(hits),
+        Value::Session(session) => serde_json::to_string(session),
     };
     printed.unwrap_or_default()
 }
