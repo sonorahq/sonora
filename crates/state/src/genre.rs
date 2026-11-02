@@ -21,8 +21,12 @@ const KEEP_COVERS: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// none.
 type Covers = HashMap<String, Option<String>>;
 
+/// The genres the search page browses. Nothing is fetched until a screen calls `load`, and a
+/// sign-in fetches them again only after that.
 pub struct Genres {
     genres: Rc<Vec<Genre>>,
+    /// Whether a screen has asked for the genres, so a sign-in knows to fetch them.
+    wanted: bool,
     loading: bool,
     error: Option<String>,
     session: Entity<Session>,
@@ -43,7 +47,8 @@ struct Stored {
 impl Genres {
     pub fn new(session: Entity<Session>, io: Io, cx: &mut Context<Self>) -> Self {
         cx.subscribe(&session, |this, _, event, cx| match event {
-            SessionEvent::SignedIn => this.load(cx),
+            SessionEvent::SignedIn if this.wanted => this.load(cx),
+            SessionEvent::SignedIn => {}
             SessionEvent::SignedOut => {
                 this.task = None;
                 this.dressing = None;
@@ -58,6 +63,7 @@ impl Genres {
 
         Self {
             genres: Rc::new(Vec::new()),
+            wanted: false,
             loading: false,
             error: None,
             session,
@@ -103,7 +109,10 @@ impl Genres {
         self.error.as_deref()
     }
 
+    /// Fetches the genres unless they are loaded or loading. Before a sign-in it only marks them
+    /// wanted, and the sign-in fetches them.
     pub fn load(&mut self, cx: &mut Context<Self>) {
+        self.wanted = true;
         if self.loading || !self.genres.is_empty() {
             return;
         }

@@ -18,6 +18,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - On Windows, playback no longer crackles while you open apps or browser tabs.
 - Sonora no longer downloads every genre page at launch to find their pictures, so it uses far less memory with YouTube Music.
+- Sonora starts faster again, since genres load when you first open Search instead of at launch.
 
 ## [0.47.0] - 2026-11-02
 
