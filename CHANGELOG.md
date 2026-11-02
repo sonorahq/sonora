@@ -16,7 +16,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Hover a page title cut short by the window to read it in full.
 - In fullscreen, the volume slider rises in and shows the level for as long as you point at it.
 - Lyrics still to be sung and the artist name in fullscreen take on the colour behind them instead of a flat grey.
-- The highlight on a hovered lyric line ends where its words end.
+- The highlight on a hovered lyric line or instrumental break ends where its words or notes end.
 - The title and artist in fullscreen carry a lighter shadow.
 
 ### Fixed
