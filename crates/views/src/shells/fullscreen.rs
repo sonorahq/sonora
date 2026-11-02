@@ -1033,9 +1033,11 @@ impl FullscreenView {
                             .when(frosted, Button::frosted)
                             .small()
                             .icon(volume_icon(level))
-                            .tooltip_above(match level <= 0.001 {
-                                true => "player-unmute",
-                                false => "player-mute",
+                            // No tooltip: it would sit over the slider rising from the same spot,
+                            // so the button carries its name for screen readers alone.
+                            .name(match level <= 0.001 {
+                                true => t!("player-unmute"),
+                                false => t!("player-mute"),
                             })
                             .tint(match self.volume_open() {
                                 true => theme.foreground,
