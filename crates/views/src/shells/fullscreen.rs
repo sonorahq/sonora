@@ -63,10 +63,12 @@ const VEIL: f32 = 0.34;
 /// and gets by on a pixel; a bar of the visualizer is a hard edge and needs a real radius
 /// before it stops reading through the text over it.
 const VEIL_BLUR: Pixels = px(12.);
-/// The blur of each shadow stacked under the title and the artist line. A single blurred shadow
-/// spreads the glyphs too thin to show, so a tight one gives it a core and wider ones soften its
-/// edge.
-const TEXT_SHADOW: [f32; 3] = [1.5, 4., 10.];
+/// The blur of each shadow stacked under the title and the artist line. A tight one gives the
+/// shadow a core and a wider one softens its edge.
+const TEXT_SHADOW: [f32; 2] = [2., 8.];
+/// How much of the page colour the title and artist shadows carry. The text reads on the field
+/// without them, so they only hold it where something bright passes behind.
+const TEXT_SHADOW_STRENGTH: f32 = 0.45;
 /// How hard the docked controls blur once they are all but hidden. The dock shrinks over them as
 /// they leave, so without it the last frames show the tops of the seek row cut off by its edge.
 const DOCK_BLUR: Pixels = px(8.);
@@ -118,6 +120,9 @@ pub struct FullscreenView {
     visualizer: VisualizerDrive,
     root_bounds: Rc<Cell<Bounds<Pixels>>>,
     meta_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// The height the controls take with nothing clamping them, measured a frame ago. The dock
+    /// shrinks from it while it fades, so the column moves in step with the cover.
+    dock_natural: Rc<Cell<Pixels>>,
 }
 
 impl FullscreenView {
@@ -174,6 +179,7 @@ impl FullscreenView {
             visualizer: VisualizerDrive::default(),
             root_bounds: Rc::new(Cell::new(Bounds::default())),
             meta_bounds: Rc::new(Cell::new(Bounds::default())),
+            dock_natural: Rc::new(Cell::new(Pixels::ZERO)),
         }
     }
 
@@ -503,7 +509,9 @@ impl FullscreenView {
         // peak or bright ambient art passes behind them. The title ellipsizes without
         // `truncate`, whose `overflow_hidden` would clip the shadow to the line box.
         let effects = shared::effects();
-        let shadow = TEXT_SHADOW.map(|blur| TextShadow::new(theme.background).blur(px(blur)));
+        let shadow = TEXT_SHADOW.map(|blur| {
+            TextShadow::new(theme.background.opacity(TEXT_SHADOW_STRENGTH)).blur(px(blur))
+        });
         let trailing = |track: Option<&music::Track>, cx: &App| {
             div()
                 .flex()
@@ -829,10 +837,20 @@ impl FullscreenView {
     }
 
     fn dock(&self, cap: Pixels, hide: f32, room: Room, cx: &mut Context<Self>) -> impl IntoElement {
+        // The clamp runs from the controls' own height once it is known. From a taller cap the
+        // dock would hold still through the start of the fade and catch up after, and the
+        // column would rock against the cover growing beside it.
+        let natural = self.dock_natural.get();
+        let cap = match natural > Pixels::ZERO {
+            true => natural,
+            false => cap,
+        };
+        let measured = self.dock_natural.clone();
         div()
             .flex()
             .flex_none()
             .w_full()
+            .items_start()
             .justify_center()
             .when(hide > 0., |this| {
                 this.max_h(cap * (1. - hide))
@@ -846,10 +864,19 @@ impl FullscreenView {
             .when(hide < 1., |this| {
                 this.child(
                     div()
+                        .relative()
                         .w_full()
                         .flex()
                         .justify_center()
                         .top(px(SINK) * hide)
+                        .child(
+                            canvas(
+                                move |bounds, _, _| measured.set(bounds.size.height),
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .size_full(),
+                        )
                         .child(self.controls(room, cx)),
                 )
             })
