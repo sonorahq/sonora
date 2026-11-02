@@ -30,6 +30,7 @@ const CORNER_REACH: f32 = 0.5;
 /// The state every preview keeps between frames, one field per preview, each owned by its file,
 /// and what they share.
 pub(super) struct Previews {
+    pub(super) now_playing: now_playing::NowPlayingPreview,
     pub(super) lyrics: lyrics::LyricsPreview,
     pub(super) sound: sound::SoundPreview,
     pub(super) discord: discord::DiscordPreview,
@@ -80,6 +81,7 @@ impl Previews {
         cx.observe(&ambient, |_, _, cx| cx.notify()).detach();
 
         Self {
+            now_playing: now_playing::NowPlayingPreview::new(cx),
             lyrics: lyrics::LyricsPreview::new(cx),
             sound: sound::SoundPreview::new(cx),
             discord: discord::DiscordPreview::new(cx),

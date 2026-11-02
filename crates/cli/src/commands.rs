@@ -44,6 +44,8 @@ pub enum Request {
     /// What plays, sent again every time it changes, until the command line hangs up. Stands
     /// for `sonora watch`
     Watch(Watch),
+    /// Commands serving Sonora Session, listening together with other Sonora apps
+    Session(SessionCommand),
 }
 
 impl Request {
@@ -119,6 +121,21 @@ pub enum ProviderCommand {
     /// Returns the current provider's slug, or switches to the one named, which has to have an
     /// account. Stands for `sonora provider [slug]`
     Current(Option<String>),
+}
+
+/// Commands serving Sonora Session
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionCommand {
+    /// Returns the session Sonora is in, if any. Stands for `sonora session`
+    Status,
+    /// Starts a session on the current provider. Stands for `sonora session start`
+    Start,
+    /// Joins the session a six-digit code names, or opens the dialog that takes one when none is
+    /// given. Stands for `sonora session join [code]`
+    Join(Option<String>),
+    /// Leaves the session, ending it when Sonora hosts it. Stands for `sonora session leave`
+    Leave,
 }
 
 /// Commands serving queue manipulation

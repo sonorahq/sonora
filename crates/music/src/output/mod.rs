@@ -39,8 +39,8 @@ use crate::audio::{self, Chain};
 use output_host::host;
 
 /// The buffer asked of the device, in frames, as far as the device allows it, when none is
-/// chosen in settings.
-const BUFFER_FRAMES: u32 = 1024;
+/// chosen in settings. About 43 ms at 48 kHz, so the audio thread rides out a busy system.
+const BUFFER_FRAMES: u32 = 2048;
 
 /// The buffers, in frames, that can be chosen in settings. Below the sound server's quantum the
 /// device underruns, and above it every pause and seek is heard late.

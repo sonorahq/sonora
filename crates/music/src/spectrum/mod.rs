@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex32;
@@ -35,6 +35,14 @@ const IDLE_POLL: Duration = Duration::from_millis(4);
 /// in a row, since paused the tap stays silent for hours. The ring holds far more audio.
 const QUIET_POLL: Duration = Duration::from_millis(50);
 const QUIET_AFTER: u32 = 250;
+/// How long the ring stays empty before the bands start to fall. It is longer than a device's
+/// buffer, so the gaps between its pulls never count.
+const SILENT_AFTER: Duration = Duration::from_millis(250);
+/// How often a band falls by `DECAY` while nothing is heard. One window lasts about this long
+/// at 48 kHz, so a paused track falls as fast as silence would.
+const FALL_STEP: Duration = Duration::from_millis(43);
+/// The level under which a falling band is put down to zero.
+const FALLEN: f32 = 1e-3;
 
 /// The band levels of one channel, published by the analyzer thread and read by the UI.
 #[derive(Clone)]
@@ -198,6 +206,17 @@ impl Side {
             smoothed: [0.; N_BANDS],
         }
     }
+
+    /// Lowers every band one `DECAY` step towards zero, for a stretch with no samples.
+    fn fall(&mut self) {
+        for (band, level) in self.smoothed.iter_mut().enumerate() {
+            *level = match *level * (1. - DECAY) {
+                lower if lower < FALLEN => 0.,
+                lower => lower,
+            };
+            self.lane.set(band, *level);
+        }
+    }
 }
 
 fn hann_window() -> [f32; FFT_SIZE] {
@@ -236,6 +255,10 @@ fn analyze(mut listener: Listener, spectrum: Spectrum) {
     // Held for the life of the analyzer, since `process` allocates a fresh one on every call.
     let mut scratch = vec![Complex32::default(); fft.get_inplace_scratch_len()];
     let mut empty = 0u32;
+    // When the ring last turned empty, and how many falls the bands took since. Nothing arrives
+    // while a track is paused, so without them the last levels would hold.
+    let mut silent: Option<Instant> = None;
+    let mut fallen = 0u128;
 
     loop {
         let Some(heard) = listener.next() else {
@@ -243,6 +266,13 @@ fn analyze(mut listener: Listener, spectrum: Spectrum) {
                 return;
             }
             empty = empty.saturating_add(1);
+            let now = Instant::now();
+            let quiet = now.duration_since(*silent.get_or_insert(now));
+            let due = quiet.saturating_sub(SILENT_AFTER).as_millis() / FALL_STEP.as_millis();
+            while fallen < due {
+                fallen += 1;
+                sides.iter_mut().for_each(Side::fall);
+            }
             std::thread::sleep(match empty > QUIET_AFTER {
                 true => QUIET_POLL,
                 false => IDLE_POLL,
@@ -258,6 +288,8 @@ fn analyze(mut listener: Listener, spectrum: Spectrum) {
             }
         };
         empty = 0;
+        silent = None;
+        fallen = 0;
 
         for (index, side) in sides.iter_mut().enumerate() {
             let mut sum = 0.;

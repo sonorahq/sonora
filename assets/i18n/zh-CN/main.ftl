@@ -37,7 +37,6 @@ nav-pinned = 已固定
 nav-unpin = 取消固定
 nav-pin-hint = 拖放到此处以固定
 library-liked-songs = 收藏
-library-play-liked-songs = 播放
 library-no-songs = 还没有收藏的歌曲
 library-no-albums = 还没有保存的专辑
 library-no-playlists = 还没有播放列表
@@ -262,10 +261,7 @@ player-previous = 上一首
 player-next = 下一首
 player-fullscreen = 全屏
 player-fullscreen-leave = 退出全屏
-player-devices = 设备
 devices-this-computer = 此电脑
-devices-pause = 暂停
-devices-resume = 继续播放
 devices-jam-join = 加入 Jam…
 devices-jam-join-title = 加入 Jam
 devices-jam-join-detail = 粘贴好友分享给你的链接
@@ -273,15 +269,12 @@ devices-jam-paste = 粘贴
 devices-jam-link-hint = Jam 链接
 devices-jam-start = 发起 Jam
 devices-jam-copy = 复制 Jam 链接
-devices-jam-code = 二维码
 devices-jam-code-menu = 显示二维码
 devices-jam-code-title = 扫码加入 { $host } 的 Jam
 devices-jam-code-title-anonymous = 扫码加入 Jam
 devices-jam-code-close = 关闭
 devices-jam-leave = 退出 Jam
 devices-jam-end = 结束 Jam
-devices-jam-banner = 正在 { $host } 的 Jam 中
-devices-jam-banner-anonymous = 正在 Jam 中
 devices-jam-more = +{ $count }
 devices-jam-host = 主持人
 devices-jam-you = 你
@@ -293,8 +286,6 @@ devices-jam-invite-detail = { $count ->
    *[other] 已有 { $count } 人在此 Jam 中。
 }
 devices-jam-invite-join = 加入
-devices-elsewhere-banner = 正在 { $device } 上播放
-devices-elsewhere-here = 在此播放
 fullscreen-artwork = 封面
 
 # filters
@@ -375,8 +366,6 @@ login-choose-detail = 选择登录 { $provider } 的方式。
 
 # album and playlist pages
 detail-playlist = 播放列表
-detail-play-album = 播放专辑
-detail-play-playlist = 播放该列表
 
 # play button
 play-pause = 暂停
@@ -389,7 +378,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } 位每月听众
    *[other] { $value } 位每月听众
 }
-artist-play = 立即播放
 artist-popular = 热门
 artist-popular-eyebrow = 探索这位歌手
 artist-popular-empty = 这位歌手暂无可播放内容
@@ -465,7 +453,6 @@ kind-playlist = 播放列表
 
 # song page
 song-eyebrow = 歌曲
-song-play = 播放歌曲
 song-view-album = 查看专辑
 song-loading = 正在加载歌曲信息…
 song-about = 关于这首歌
@@ -1277,19 +1264,6 @@ toast-offline-mode = 你处于离线状态。切换为在线即可串流这首�
 offline-title = 你处于离线状态。
 offline-go-online = 切换为在线
 toast-download-failed = 无法列出要下载的歌曲。
-toast-downloading = 正在下载 { $name }
-toast-downloading-songs = { $count ->
-    [one] 正在下载 { $count } 首歌曲
-   *[other] 正在下载 { $count } 首歌曲
-}
-toast-downloaded = 已下载 { $name }
-toast-downloaded-songs = { $count ->
-    [one] 已下载 { $count } 首歌曲
-   *[other] 已下载 { $count } 首歌曲
-}
-toast-download-set-failed = { $name } 中的部分歌曲无法下载
-toast-download-song-failed = { $name } 无法下载
-toast-download-songs-failed = 部分歌曲无法下载
 toast-percent = { $percent }%
 toast-download-cancelled = 已取消下载 { $name }
 toast-downloads-cancelled = { $count ->

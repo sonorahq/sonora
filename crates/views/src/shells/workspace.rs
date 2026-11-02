@@ -12,8 +12,8 @@ use ui::{
 };
 
 use crate::chrome::{
-    AppNotice, Chrome, JamCode, JamJoin, PlayerBar, SidebarLeft, SidebarRight, TitleBarOptions,
-    ToastStack,
+    AppNotice, Chrome, JamCode, JamJoin, PlayerBar, SessionCode, SessionJoin, SidebarLeft,
+    SidebarRight, TitleBarOptions, ToastStack,
 };
 use crate::shared::confirm::Confirm;
 use crate::shared::menus::CardMenu;
@@ -29,9 +29,6 @@ const TOAST_LAYER: usize = 1;
 pub(crate) struct Workspace {
     sidebar: Entity<SidebarLeft>,
     player_bar: Entity<PlayerBar>,
-    playback: Entity<Playback>,
-    /// How tall the strip over the player bar stands, which the pages' bottom clearance adds.
-    strip: Pixels,
     settings: Entity<AppSettings>,
     sidebar_right: Entity<SidebarRight>,
     playlist_editor: Entity<PlaylistEditor>,
@@ -41,6 +38,8 @@ pub(crate) struct Workspace {
     widevine: Entity<WidevinePrompt>,
     jam_join: Entity<JamJoin>,
     jam_code: Entity<JamCode>,
+    session_join: Entity<SessionJoin>,
+    session_code: Entity<SessionCode>,
     toasts: Entity<ToastStack>,
     notice: Entity<AppNotice>,
     content: AnyView,
@@ -67,17 +66,10 @@ impl Workspace {
         let player_bar = cx.new(|cx| PlayerBar::new(playback.clone(), queue, cx));
         let settings = Sonora::global(cx).settings.clone();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
-        let devices = Sonora::global(cx).devices.clone();
-        cx.observe(&devices, |this, _, cx| this.restrip(cx))
-            .detach();
-        cx.observe(&playback, |this, _, cx| this.restrip(cx))
-            .detach();
 
         Self {
             sidebar,
             player_bar,
-            playback,
-            strip: Pixels::ZERO,
             settings,
             sidebar_right,
             playlist_editor: PlaylistEditor::entity(cx),
@@ -87,6 +79,8 @@ impl Workspace {
             widevine: cx.new(WidevinePrompt::new),
             jam_join: cx.new(JamJoin::new),
             jam_code: cx.new(JamCode::new),
+            session_join: cx.new(SessionJoin::new),
+            session_code: cx.new(SessionCode::new),
             toasts: cx.new(ToastStack::new),
             notice: cx.new(AppNotice::new),
             content,
@@ -94,18 +88,6 @@ impl Workspace {
             cached: true,
             transition: None,
             focus: cx.focus_handle(),
-        }
-    }
-
-    /// Reads how tall the strip over the player bar stands, and redraws only when that changes,
-    /// since playback notifies on every tick.
-    fn restrip(&mut self, cx: &mut Context<Self>) {
-        let strip = PlayerBar::strip(self.playback.read(cx), cx);
-        if self.strip != strip {
-            self.strip = strip;
-            self.toasts
-                .update(cx, |toasts, cx| toasts.set_strip(strip, cx));
-            cx.notify();
         }
     }
 
@@ -124,6 +106,12 @@ impl Workspace {
     pub fn show_side(&self, tab: SideTab, cx: &mut Context<Self>) {
         self.sidebar_right
             .update(cx, |panel, cx| panel.show(tab, cx));
+    }
+
+    /// Opens the right sidebar on `tab` without closing it when it already shows there.
+    pub fn reveal_side(&self, tab: SideTab, cx: &mut Context<Self>) {
+        self.sidebar_right
+            .update(cx, |panel, cx| panel.reveal(tab, cx));
     }
 
     #[allow(dead_code)]
@@ -216,7 +204,7 @@ impl Render for Workspace {
         let bottom = match underlap {
             true => bar_height,
             false => Pixels::ZERO,
-        } + self.strip;
+        };
         Chrome::set_bottom(bottom, cx);
         // A cached view is laid out from the style given here and its own root
         // style is never consulted, so it can only be cached while it is in the
@@ -407,5 +395,7 @@ impl Render for Workspace {
             .child(self.widevine.clone())
             .child(self.jam_join.clone())
             .child(self.jam_code.clone())
+            .child(self.session_join.clone())
+            .child(self.session_code.clone())
     }
 }

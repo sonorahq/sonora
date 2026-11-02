@@ -515,6 +515,9 @@ pub struct Playback {
     devices: Option<WeakEntity<Devices>>,
     /// Whether the call being carried out is this app's own doing, which never steers.
     local: bool,
+    /// How many seeks the listener asked for, which a Sonora Session watches to share them. Seeks
+    /// made for the session itself, through `locally`, are not counted.
+    seeks: u64,
 }
 
 impl EventEmitter<PlaybackEvent> for Playback {}
@@ -655,6 +658,7 @@ impl Playback {
             open: None,
             devices: None,
             local: false,
+            seeks: 0,
         };
         // Start the local engine at startup so files can play before the first scan.
         if let Some(factory) = playback.session.read(cx).local_playback() {
@@ -2145,6 +2149,9 @@ impl Playback {
     /// audio from it, and a second seek meanwhile waits for the first to land. A restored track
     /// not yet held by the engine only moves its resume point.
     pub fn seek(&mut self, position: Duration, cx: &mut Context<Self>) {
+        if !self.local {
+            self.seeks += 1;
+        }
         if self.steer(|_| Command::Seek(position), cx) {
             return;
         }
@@ -2223,6 +2230,11 @@ impl Playback {
 
         let position = Duration::from_secs_f32(total.as_secs_f32() * fraction.clamp(0., 1.));
         self.seek(position, cx);
+    }
+
+    /// How many seeks the listener asked for since launch.
+    pub fn seeks(&self) -> u64 {
+        self.seeks
     }
 
     pub fn state(&self) -> &PlaybackState {

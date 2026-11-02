@@ -37,7 +37,6 @@ nav-pinned = Épinglés
 nav-unpin = Détacher
 nav-pin-hint = Déposer ici pour épingler
 library-liked-songs = Favoris
-library-play-liked-songs = Lire
 library-no-songs = Aucun favori pour l’instant
 library-no-albums = Aucun album enregistré pour l'instant
 library-no-playlists = Aucune playlist pour l'instant
@@ -265,10 +264,7 @@ player-previous = Titre précédent
 player-next = Titre suivant
 player-fullscreen = Plein écran
 player-fullscreen-leave = Quitter le plein écran
-player-devices = Appareils
 devices-this-computer = Cet ordinateur
-devices-pause = Pause
-devices-resume = Reprendre
 devices-jam-join = Rejoindre une Jam…
 devices-jam-join-title = Rejoindre une Jam
 devices-jam-join-detail = Collez le lien qu'un ami vous a envoyé
@@ -276,15 +272,12 @@ devices-jam-paste = Coller
 devices-jam-link-hint = Lien de la Jam
 devices-jam-start = Lancer une Jam
 devices-jam-copy = Copier le lien de la Jam
-devices-jam-code = Code QR
 devices-jam-code-menu = Afficher le code QR
 devices-jam-code-title = Scannez pour rejoindre la Jam de { $host }
 devices-jam-code-title-anonymous = Scannez pour rejoindre la Jam
 devices-jam-code-close = Fermer
 devices-jam-leave = Quitter la Jam
 devices-jam-end = Terminer la Jam
-devices-jam-banner = Dans la Jam de { $host }
-devices-jam-banner-anonymous = Dans une Jam
 devices-jam-more = +{ $count }
 devices-jam-host = Hôte
 devices-jam-you = Vous
@@ -296,8 +289,6 @@ devices-jam-invite-detail = { $count ->
    *[other] { $count } personnes sont déjà dans cette Jam.
 }
 devices-jam-invite-join = Rejoindre
-devices-elsewhere-banner = Lecture sur { $device }
-devices-elsewhere-here = Lire ici
 fullscreen-artwork = Pochette
 
 # filters
@@ -378,8 +369,6 @@ login-choose-detail = Choisissez comment vous connecter à { $provider }.
 
 # album and playlist pages
 detail-playlist = Playlist
-detail-play-album = Lire l'album
-detail-play-playlist = Lire la playlist
 
 # play button
 play-pause = Pause
@@ -392,7 +381,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } auditeur mensuel
    *[other] { $value } auditeurs mensuels
 }
-artist-play = Lire maintenant
 artist-popular = Populaires
 artist-popular-eyebrow = Découvrir cet artiste
 artist-popular-empty = Rien à écouter de cet artiste pour l'instant
@@ -469,7 +457,6 @@ kind-playlist = Playlist
 
 # song page
 song-eyebrow = Titre
-song-play = Lire le titre
 song-view-album = Voir l'album
 song-loading = Chargement des informations du titre…
 song-about = À propos de ce titre
@@ -1282,19 +1269,6 @@ toast-offline-mode = Vous êtes hors ligne. Passez en ligne pour écouter ce tit
 offline-title = Vous êtes hors ligne.
 offline-go-online = Passer en ligne
 toast-download-failed = Impossible de lister les titres à télécharger.
-toast-downloading = Téléchargement de { $name }
-toast-downloading-songs = { $count ->
-    [one] Téléchargement de { $count } titre
-   *[other] Téléchargement de { $count } titres
-}
-toast-downloaded = { $name } téléchargé
-toast-downloaded-songs = { $count ->
-    [one] { $count } titre téléchargé
-   *[other] { $count } titres téléchargés
-}
-toast-download-set-failed = Certains titres de { $name } n'ont pas pu être téléchargés
-toast-download-song-failed = { $name } n'a pas pu être téléchargé
-toast-download-songs-failed = Certains titres n'ont pas pu être téléchargés
 toast-percent = { $percent } %
 toast-download-cancelled = Téléchargement de { $name } annulé
 toast-downloads-cancelled = { $count ->

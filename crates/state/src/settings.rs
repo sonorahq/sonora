@@ -175,6 +175,8 @@ pub enum SideTab {
     #[default]
     Queue,
     Lyrics,
+    /// The people in the Sonora Session or Spotify Jam the listener is in.
+    Members,
 }
 
 /// The writing systems lyrics romanization applies to. Only CJK are enabled by default.
@@ -370,6 +372,12 @@ struct Values {
     spotify_connect: bool,
     spotify_connect_name: ConnectName,
     spotify_connect_custom_name: String,
+    /// Whether the player bar shows the Sessions button.
+    sessions_button: bool,
+    /// Whether Sonora Sessions go through the official server rather than `sessions_server`.
+    sessions_official: bool,
+    /// The WebSocket address of the Sonora Sessions server to use instead of the official one.
+    sessions_server: String,
     discord_presence: bool,
     discord_name: DiscordName,
     discord_show_paused: bool,
@@ -585,6 +593,9 @@ impl Default for Values {
             spotify_connect: true,
             spotify_connect_name: ConnectName::Both,
             spotify_connect_custom_name: String::new(),
+            sessions_button: true,
+            sessions_official: true,
+            sessions_server: String::new(),
             discord_presence: false,
             discord_name: DiscordName::Sonora,
             discord_show_paused: false,
@@ -974,6 +985,21 @@ impl AppSettings {
     /// The name Sonora goes by in that list when it is `ConnectName::Custom`.
     pub fn spotify_connect_custom_name(&self) -> &str {
         &self.values.spotify_connect_custom_name
+    }
+
+    /// Whether the player bar shows the Sessions button.
+    pub fn sessions_button(&self) -> bool {
+        self.values.sessions_button
+    }
+
+    /// Whether Sonora Sessions go through the official server.
+    pub fn sessions_official(&self) -> bool {
+        self.values.sessions_official
+    }
+
+    /// The address of the server to use instead of the official one, as typed.
+    pub fn sessions_server(&self) -> &str {
+        &self.values.sessions_server
     }
 
     /// Whether the playing track is published to a local Discord client.
@@ -1548,6 +1574,24 @@ impl AppSettings {
             return;
         }
         self.values.spotify_connect_custom_name = name;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_sessions_button(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.values.sessions_button = shown;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_sessions_official(&mut self, official: bool, cx: &mut Context<Self>) {
+        self.values.sessions_official = official;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_sessions_server(&mut self, server: String, cx: &mut Context<Self>) {
+        if self.values.sessions_server == server {
+            return;
+        }
+        self.values.sessions_server = server;
         self.schedule_save(cx);
     }
 

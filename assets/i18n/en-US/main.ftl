@@ -44,7 +44,6 @@ nav-pinned = Pinned
 nav-unpin = Unpin
 nav-pin-hint = Drop here to pin
 library-liked-songs = Favorites
-library-play-liked-songs = Play
 library-no-songs = No favorites yet
 library-no-albums = No saved albums yet
 library-no-playlists = No playlists yet
@@ -66,6 +65,15 @@ library-local-unconfigured = Configure your local library
 
 # app menu
 app-refresh = Refresh
+downloads-active = Downloading
+downloads-left = { $count ->
+    [one] { $count } song left
+   *[other] { $count } songs left
+}
+downloads-eta = About { $minutes } min left
+downloads-songs = Songs
+downloads-cancel = Cancel download
+downloads-cancel-all = Cancel all downloads
 app-sign-out = Sign Out
 app-quit = Quit
 app-settings = Settings…
@@ -271,10 +279,7 @@ player-previous = Previous track
 player-next = Next track
 player-fullscreen = Now playing
 player-fullscreen-leave = Leave Now playing
-player-devices = Devices
 devices-this-computer = This computer
-devices-pause = Pause
-devices-resume = Resume
 devices-jam-join = Join a Jam…
 devices-jam-join-title = Join a Jam
 devices-jam-join-detail = Paste the link a friend shared with you
@@ -282,15 +287,12 @@ devices-jam-paste = Paste
 devices-jam-link-hint = Jam link
 devices-jam-start = Start a Jam
 devices-jam-copy = Copy Jam link
-devices-jam-code = QR code
 devices-jam-code-menu = Show QR code
 devices-jam-code-title = Scan to join { $host }'s Jam
 devices-jam-code-title-anonymous = Scan to join the Jam
 devices-jam-code-close = Close
 devices-jam-leave = Leave Jam
 devices-jam-end = End Jam
-devices-jam-banner = In { $host }'s Jam
-devices-jam-banner-anonymous = In a Jam
 devices-jam-more = +{ $count }
 devices-jam-host = Host
 devices-jam-you = You
@@ -307,8 +309,28 @@ devices-jam-invite-detail = { $count ->
    *[other] { $count } people are already in this Jam.
 }
 devices-jam-invite-join = Join
-devices-elsewhere-banner = Playing on { $device }
-devices-elsewhere-here = Play here
+player-sessions = Sessions
+devices-spotify-jams = Spotify Jams
+members-title = Members
+members-empty = Start or join a Session to see who is listening with you
+devices-session-start = Start a Session
+devices-session-join = Join a Session…
+devices-session-join-title = Join a Session
+devices-session-join-detail = Enter the code a friend shared with you
+devices-session-join-confirm = Join
+devices-session-code = Session code
+devices-session-code-menu = Show Session code
+devices-session-code-title = Your Session code
+devices-session-code-detail = Anyone signed in to { $provider } can join with this code
+devices-session-code-close = Done
+devices-session-copy = Copy code
+devices-session-leave = Leave Session
+devices-session-end = End Session
+devices-session-reconnecting = Reconnecting…
+devices-session-people = { $count ->
+    [one] { $count } person in this Session
+   *[other] { $count } people in this Session
+    }
 fullscreen-artwork = Artwork
 fullscreen-panels = Now playing views
 
@@ -391,8 +413,6 @@ login-providers = Music services
 
 # album and playlist pages
 detail-playlist = Playlist
-detail-play-album = Play album
-detail-play-playlist = Play playlist
 
 # play button
 play-pause = Pause
@@ -405,7 +425,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } monthly listener
    *[other] { $value } monthly listeners
 }
-artist-play = Play now
 artist-popular = Popular
 artist-popular-eyebrow = Explore this artist
 artist-popular-empty = Nothing to play from this artist yet
@@ -481,7 +500,6 @@ kind-playlist = Playlist
 
 # song page
 song-eyebrow = Song
-song-play = Play song
 song-view-album = View album
 song-loading = Loading song information…
 song-about = About this song
@@ -740,6 +758,8 @@ settings-discord-hide-on-connect-detail = Leave the status to Spotify's own whil
 settings-discord-buttons = Buttons
 settings-discord-buttons-detail = Links under the status for your friends to open, one to the track on its service and one to Sonora
 settings-discord-buttons-pick = Choose buttons
+# what screen readers call the preview of the Discord status
+settings-discord-preview = Discord status preview
 settings-discord-preview-listening = Listening to { $name }
 settings-discord-preview-music = Music
 settings-discord-preview-elapsed = { $time } elapsed
@@ -1058,6 +1078,12 @@ settings-group-text = Text
 settings-group-motion = Motion
 settings-group-streaming = Streaming
 settings-group-spotify-connect = Spotify Connect
+settings-group-sessions = Sessions
+settings-sessions-button = Show the Sessions button
+settings-sessions-official = Use the official Sonora Sessions server
+settings-sessions-server = Server address
+settings-sessions-server-hint = wss://sessions.example.com
+settings-sessions-save = Save
 settings-adaptive-menu = Adaptive context menu
 settings-adaptive-menu-detail = Leaves out entries the row already shows, such as the album or the artist
 settings-accounts = Streaming services
@@ -1190,6 +1216,8 @@ toast-keys-refused = Spotify may not work here
 toast-why = Why?
 toast-sign-in-to-play = { $name } only streams to a signed-in listener
 toast-restore-failed = { $name } could not sign back in, so Sonora carried on without it
+toast-session-invalidated = Your { $name } session was invalidated
+toast-sign-in = Sign in
 toast-track-unplayable = { $name } could not be played
 toast-playback-stopped = Playback stopped after several tracks in a row could not be played
 toast-widevine-failed = Playback failed
@@ -1314,6 +1342,23 @@ toast-jam-failed = The Jam could not be started or joined.
 toast-jam-ended = Jam ended
 toast-jam-left = You left the Jam
 toast-jam-leave-failed = The Jam could not be ended or left.
+toast-session-needs-provider = Sign in to a streaming service to start a Session.
+toast-session-not-found = No Session goes by that code.
+toast-session-provider = This Session plays from { $name }. Sign in to { $name } to join it.
+toast-session-full = That Session is full.
+toast-session-rate-limited = Too many wrong codes. Try again in a few minutes.
+toast-session-too-many = Your network already hosts as many Sessions as it may. End one to start another.
+toast-session-unreachable = Could not reach Sonora Session. Try again later.
+toast-session-failed = The Session could not be started or joined.
+toast-session-lost = Lost the connection to the Session
+toast-session-ended = Session ended
+toast-session-left = You left the Session
+toast-session-kicked = The host removed you from the Session
+toast-session-code-copied = Code copied
+toast-sessions-server-saved = Sessions server saved
+toast-sessions-server-empty = Type the address of your server first
+toast-sessions-server-malformed = That does not read as a server address
+toast-sessions-server-silent = No Sonora Sessions server answers at this address, so it was not saved
 nav-nothing-pinned = Nothing here
 nav-pins-alphabetical = Alphabetical
 nav-pins-kind = By type
@@ -1331,20 +1376,12 @@ toast-offline-mode = You are offline. Go online to stream this song.
 offline-title = You are offline.
 offline-go-online = Go online
 toast-download-failed = Could not list the tracks to download.
-toast-downloading = Downloading { $name }
-toast-downloading-songs = { $count ->
-    [one] Downloading { $count } track
-   *[other] Downloading { $count } tracks
-}
-toast-downloaded = Downloaded { $name }
-toast-downloaded-songs = { $count ->
-    [one] Downloaded { $count } track
-   *[other] Downloaded { $count } tracks
-}
-toast-download-set-failed = Some tracks of { $name } could not be downloaded
-toast-download-song-failed = { $name } could not be downloaded
-toast-download-songs-failed = Some of the tracks could not be downloaded
 toast-percent = { $percent }%
+toast-download-started = Started downloading { $name }
+toast-downloads-started = { $count ->
+    [one] Started downloading { $count } song
+   *[other] Started downloading { $count } songs
+}
 toast-download-cancelled = Cancelled downloading { $name }
 toast-downloads-cancelled = { $count ->
     [one] Cancelled downloading { $count } track
