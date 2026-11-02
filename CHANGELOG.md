@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Local libraries no longer list macOS AppleDouble metadata files as songs.
+
 ## [0.47.0] - 2026-11-02
 
 ### Added
