@@ -254,7 +254,7 @@ impl Button {
     }
 
     pub fn tooltip(mut self, key: impl Into<SharedString>) -> Self {
-        self.tooltip = Some((key.into(), Perch::Pointer));
+        self.tooltip = Some((key.into(), Perch::Below));
         self
     }
 

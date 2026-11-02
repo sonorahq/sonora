@@ -163,7 +163,7 @@ impl OutputMeter {
                         .text_color(color),
                 )
                 .child(div().min_w_0().truncate().child(text))
-                .tip_label(tip, Perch::Pointer)
+                .tip_label(tip, Perch::Below)
                 .into_any_element(),
         )
     }

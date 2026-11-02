@@ -428,7 +428,7 @@ impl RenderOnce for Card {
                                     .bg(theme.overlay)
                                     .role(gpui::accesskit::Role::Button)
                                     .aria_label(i18n::lookup(hint, None))
-                                    .tip(hint, Perch::Pointer)
+                                    .tip(hint, Perch::Below)
                                     .child(
                                         svg()
                                             .path(icons::path(glyph))
@@ -483,7 +483,7 @@ impl RenderOnce for Card {
             .when_some(weight, |this, weight| this.font_weight(weight))
             .when(underline, |this| this.hover(|style| style.underline()))
             .when(hint && !title.is_empty(), |this| {
-                this.tip_label(title.clone(), Perch::Pointer)
+                this.tip_label(title.clone(), Perch::Below)
             })
             .text_color(tint.unwrap_or(theme.foreground))
             .when_some(size, |this, size| this.text_size(theme.text(size)))
