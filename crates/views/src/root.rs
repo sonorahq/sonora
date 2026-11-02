@@ -247,6 +247,7 @@ impl Root {
             )
         });
         let fullscreen = cx.new(|cx| FullscreenView::new(playback.clone(), queue.clone(), cx));
+        let ambient = cx.new(Ambient::new);
 
         let title_bar = cx.new(TitleBar::new);
         cx.subscribe(&title_bar, |this, _, event, cx| match event {
@@ -314,7 +315,6 @@ impl Root {
             .detach();
 
         let adaptive = cx.new(|cx| Adaptive::new(playback.clone(), cx));
-        let ambient = cx.new(|cx| Ambient::new(Some(adaptive.clone()), cx));
 
         let mut root = Self {
             session,

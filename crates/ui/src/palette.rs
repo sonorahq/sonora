@@ -20,9 +20,6 @@ const MIN_WEIGHT: f32 = 25.;
 /// and stands apart from the lead.
 const SECONDARY_SHARE: f32 = 0.02;
 const SECONDARY_WEIGHT: f32 = 10.;
-/// A runner-up also counts when it covers this share of the sampled pixels, however muted, so a
-/// wide dull backdrop is named beside a small bright lead.
-const SECONDARY_AREA: f32 = 0.08;
 const SECONDARY_GAP: usize = 3;
 const SECONDARY_HUE: f32 = 0.05;
 
@@ -52,12 +49,6 @@ pub struct CoverPalette {
     /// sleeve that is nearly black and one that is nearly white both land here
     /// with no primary, and only this tells them apart.
     pub lightness: f32,
-    /// How much of the art the primary hue and its neighbours cover, as a share of every
-    /// pixel sampled. A vivid accent can lead on a cover it barely touches, and this tells
-    /// that apart from art the hue floods.
-    pub primary_share: f32,
-    /// The same share for the runner-up, zero when there is none.
-    pub secondary_share: f32,
 }
 
 /// Both hues of the artwork at `url` in a single pass over its pixels. A cover the
@@ -69,8 +60,6 @@ pub fn palette(url: impl Into<SharedString>, cx: &mut App) -> Task<CoverPalette>
 #[derive(Clone, Copy, Default)]
 struct Bin {
     weight: f32,
-    /// How many sampled pixels fell in the bin, whatever their weight.
-    count: f32,
     x: f32,
     y: f32,
     saturation: f32,
@@ -81,7 +70,6 @@ impl Bin {
     fn add(&mut self, color: Hsla, weight: f32) {
         let angle = color.h * TAU;
         self.weight += weight;
-        self.count += 1.;
         self.x += angle.cos() * weight;
         self.y += angle.sin() * weight;
         self.saturation += color.s * weight;
@@ -90,7 +78,6 @@ impl Bin {
 
     fn merge(&mut self, other: &Self) {
         self.weight += other.weight;
-        self.count += other.count;
         self.x += other.x;
         self.y += other.y;
         self.saturation += other.saturation;
@@ -155,24 +142,21 @@ fn sampled(pixels: &[u8]) -> CoverPalette {
     cluster.merge(&bins[(peak + BINS - 1) % BINS]);
     cluster.merge(&bins[(peak + 1) % BINS]);
     let primary = cluster.colour();
-    let primary_share = cluster.count / sampled;
 
     let runner = (0..BINS)
         .filter(|&index| {
             let gap = index.abs_diff(peak).min(BINS - index.abs_diff(peak));
             gap >= SECONDARY_GAP
-                && (score(&bins, index) >= (sampled * SECONDARY_SHARE).max(SECONDARY_WEIGHT)
-                    || area(&bins, index) >= sampled * SECONDARY_AREA)
+                && score(&bins, index) >= (sampled * SECONDARY_SHARE).max(SECONDARY_WEIGHT)
         })
         .max_by(|&a, &b| score(&bins, a).total_cmp(&score(&bins, b)));
-    let runner = runner.map(|index| {
-        let mut cluster = bins[index];
-        cluster.merge(&bins[(index + BINS - 1) % BINS]);
-        cluster.merge(&bins[(index + 1) % BINS]);
-        cluster
-    });
     let secondary = runner
-        .and_then(|cluster| cluster.colour())
+        .and_then(|index| {
+            let mut cluster = bins[index];
+            cluster.merge(&bins[(index + BINS - 1) % BINS]);
+            cluster.merge(&bins[(index + 1) % BINS]);
+            cluster.colour()
+        })
         .filter(|colour| {
             primary.is_some_and(|lead| {
                 (colour.h - lead.h)
@@ -182,23 +166,11 @@ fn sampled(pixels: &[u8]) -> CoverPalette {
             })
         });
 
-    let secondary_share = match (secondary, runner) {
-        (Some(_), Some(runner)) => runner.count / sampled,
-        _ => 0.,
-    };
-
     CoverPalette {
         primary,
         secondary,
         lightness: mean,
-        primary_share,
-        secondary_share,
     }
-}
-
-/// How many sampled pixels fall in a bin and its two neighbours.
-fn area(bins: &[Bin; BINS], index: usize) -> f32 {
-    bins[index].count + bins[(index + BINS - 1) % BINS].count + bins[(index + 1) % BINS].count
 }
 
 fn score(bins: &[Bin; BINS], index: usize) -> f32 {

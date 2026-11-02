@@ -16,11 +16,11 @@
 use std::time::Instant;
 
 use gpui::prelude::*;
-use gpui::{App, Context, Entity, Hsla, Pixels, Render, Rgba, Task, Window, div};
+use gpui::{App, Context, Hsla, Pixels, Render, Rgba, Task, Window, div};
 use state::Sonora;
 use ui::{ActiveTheme as _, CoverPalette, Theme};
 
-use crate::shared::adaptive::{self, Adaptive};
+use crate::shared::adaptive;
 
 /// How many colours make up the field.
 const COLORS: usize = 5;
@@ -40,9 +40,6 @@ pub(crate) struct Ambient {
     painted: Option<[Hsla; COLORS]>,
     /// The palette of the cover a framed field follows, `None` for the one behind the window.
     framed: Option<Sampled>,
-    /// The adaptive theme, whose palette says how much of the cover each hue covers, for the
-    /// field behind the window.
-    adaptive: Option<Entity<Adaptive>>,
 }
 
 /// The palette of the cover a framed field follows, sampled by the field itself.
@@ -54,7 +51,7 @@ struct Sampled {
 }
 
 impl Ambient {
-    pub(crate) fn new(adaptive: Option<Entity<Adaptive>>, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(cx: &mut Context<Self>) -> Self {
         let settings = Sonora::global(cx).settings.clone();
         // Turning the drift back on has no frame of its own to land in: with
         // motion off nothing asks for one.
@@ -66,7 +63,6 @@ impl Ambient {
             stepped: now,
             painted: None,
             framed: None,
-            adaptive,
         }
     }
 
@@ -76,7 +72,7 @@ impl Ambient {
     pub(crate) fn framed(cx: &mut Context<Self>) -> Self {
         Self {
             framed: Some(Sampled::default()),
-            ..Self::new(None, cx)
+            ..Self::new(cx)
         }
     }
 
@@ -109,16 +105,6 @@ impl Ambient {
         }));
     }
 
-    /// The palette of the cover the field shows: the one the theme wears behind the window, the
-    /// sampled one in a frame.
-    fn palette(&self, cx: &App) -> CoverPalette {
-        match (&self.framed, &self.adaptive) {
-            (Some(sampled), _) => sampled.palette,
-            (None, Some(adaptive)) => adaptive.read(cx).painted(),
-            (None, None) => CoverPalette::default(),
-        }
-    }
-
     /// The theme this field is painted from: the app's own behind the window, and in a frame
     /// the one fullscreen would wear for the sampled cover. A preview draws over it with the same.
     pub(crate) fn theme(&self, cx: &App) -> Theme {
@@ -149,31 +135,28 @@ impl Ambient {
         painted
     }
 
-    /// Resolves the five field colours from the theme and the cover's palette: a pool, a light
-    /// highlight, a second pool, and two shades of stage beneath them. The hue that covers more
-    /// of the art takes the stage and the main pool while the theme's lead keeps the highlight,
-    /// and art that colour barely touches gets a stage drained toward grey. Art with no colour
-    /// leaves no tints behind, and then the stage is neutrals spread across lightness.
-    pub(crate) fn colors(theme: &Theme, palette: &CoverPalette) -> [Hsla; COLORS] {
-        let neutral = |h: f32, light: f32| Hsla {
-            h,
-            s: 0.08,
+    /// Resolves the five field colours from the theme: the cover's leading hue
+    /// carried from a light highlight down to a dark shadow, plus its runner-up
+    /// where the art names one. Art with no colour leaves no tints behind, and
+    /// then the stage is quiet neutrals.
+    pub(crate) fn colors(theme: &Theme) -> [Hsla; COLORS] {
+        let neutral = |light: f32| Hsla {
+            h: 0.06,
+            s: 0.12,
             l: light,
             a: 1.,
         };
-        // The floor follows the page colour, so a dark theme gets a dark stage and a light one
-        // a lighter stage.
+        // A dark theme gets a dark stage; lift the floor a little so the
+        // pools stay apart from the stage.
         let floor = (0.13 + theme.background.l * 0.8).clamp(0.13, 0.30);
 
-        // Grey art has only lightness to move, so the neutrals spread wide across it and lean
-        // a touch warm and cool, or the field would morph with nothing to show for it.
         let Some(tint) = theme.tint else {
             return [
-                neutral(0.07, floor + 0.15),
-                neutral(0.08, floor + 0.28),
-                neutral(0.60, floor + 0.11),
-                neutral(0.07, floor - 0.04),
-                neutral(0.62, floor - 0.07),
+                neutral(floor),
+                neutral(floor + 0.025),
+                neutral(floor + 0.05),
+                neutral(floor + 0.015),
+                neutral(floor + 0.04),
             ];
         };
         let accent = theme.accent(tint);
@@ -183,66 +166,33 @@ impl Ambient {
             l: (0.40 + (accent.l - 0.45) * 0.5).clamp(0.28, 0.52),
             a: 1.,
         };
-        // The runner-up keeps the saturation and depth it has on the cover. It is often a wide
-        // muted backdrop, and lifting that to a vivid tone paints a colour the art never showed.
-        let runner = theme.tint_secondary.map(|second| Hsla {
-            h: second.h,
-            s: (second.s * 0.9).clamp(0.05, 0.72),
-            l: (0.36 + (second.l - 0.45) * 0.6).clamp(0.16, 0.5),
-            a: 1.,
-        });
-
-        let (lead_share, runner_share) = (palette.primary_share, palette.secondary_share);
-        let (lead, other, other_share) = match runner {
-            Some(runner) if runner_share > lead_share => (runner, Some(base), lead_share),
-            _ => (base, runner, runner_share),
-        };
-        // A palette sampled before shares were counted has none, and is taken as flooding.
-        let presence = match lead_share + runner_share > 0. {
-            true => ramp(0.06, 0.4, lead_share.max(runner_share)),
-            false => 1.,
-        };
-        let turned = |shift: f32| (lead.h + shift).rem_euclid(1.);
-        let pool = Hsla {
-            s: lead.s * (0.55 + 0.45 * presence),
-            ..lead
-        };
-        // Art with one hue gets a neighbour of it in place of the runner-up, so the field still
-        // has two colours to fold together. Where that hue is a splash, the neighbour greys.
-        let second = match other {
-            // A hue the art barely shows sinks darker rather than greying, so a splash of red
-            // stays red instead of turning to mud.
-            Some(other) => Hsla {
-                l: (other.l - 0.14 * (1. - ramp(0.03, 0.25, other_share))).max(0.12),
-                ..other
+        let second = match theme.tint_secondary {
+            Some(second) => Hsla {
+                h: second.h,
+                s: (second.s * 0.9).clamp(0.4, 0.72),
+                l: (0.38 + (second.l - 0.45) * 0.5).clamp(0.28, 0.5),
+                a: 1.,
             },
-            None => Hsla {
-                h: turned(-0.05),
-                s: ((lead.s + 0.06) * presence).clamp(0.06, 0.8),
-                l: (lead.l - 0.06).clamp(0.24, 0.46),
-                ..lead
-            },
+            None => neutral(floor + 0.03),
         };
-        let stage = (lead.s * (0.15 + 0.85 * presence)).clamp(0.05, 0.8);
         [
-            pool,
+            base,
             Hsla {
-                h: (base.h + 0.03).rem_euclid(1.),
-                l: (base.l + 0.16).clamp(0.34, 0.64),
+                l: (base.l + 0.14).clamp(0.3, 0.62),
                 s: (base.s - 0.08).clamp(0.4, 0.75),
                 ..base
             },
             second,
             Hsla {
-                l: (lead.l - 0.2).clamp(0.12, 0.3),
-                s: stage,
-                ..lead
+                l: (base.l - 0.13).clamp(0.18, 0.45),
+                s: (base.s + 0.04).clamp(0.45, 0.8),
+                ..base
             },
             Hsla {
-                h: turned(0.04),
-                l: (lead.l - 0.26).clamp(0.08, 0.24),
-                s: stage,
-                ..lead
+                h: (base.h + 0.97).rem_euclid(1.),
+                l: (base.l - 0.16).clamp(0.16, 0.4),
+                s: (base.s - 0.02).clamp(0.4, 0.78),
+                ..base
             },
         ]
     }
@@ -266,7 +216,7 @@ impl Render for Ambient {
             }
             false => 0.,
         };
-        let colors = self.wash(Self::colors(&theme, &self.palette(cx)), animates);
+        let colors = self.wash(Self::colors(&theme), animates);
         // The field stands in for the page rather than sitting on it, so it carries the
         // window's own opacity and `Root` paints no background beneath it.
         let clarity = match theme.transparent {
@@ -287,6 +237,10 @@ impl Render for Ambient {
             .opacity(clarity)
             .child(
                 ui::Waves::new(colors.map(shaded))
+                    .stage(shaded(Hsla {
+                        a: 1.,
+                        ..theme.background
+                    }))
                     .time(elapsed)
                     .when_some(radius, ui::Waves::corner_radius),
             )
@@ -340,12 +294,6 @@ fn blend(from: Hsla, to: Hsla, delta: f32) -> Hsla {
     })
 }
 
-/// Where `value` sits between `low` and `high`, eased at both ends, as `smoothstep` does.
-fn ramp(low: f32, high: f32, value: f32) -> f32 {
-    let t = ((value - low) / (high - low)).clamp(0., 1.);
-    t * t * (3. - 2. * t)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,12 +323,7 @@ mod tests {
 
     #[test]
     fn accent_theme_yields_its_family() {
-        let palette = CoverPalette {
-            primary_share: 0.6,
-            secondary_share: 0.3,
-            ..Default::default()
-        };
-        let colors = Ambient::colors(&tinted(0.78), &palette);
+        let colors = Ambient::colors(&tinted(0.78));
 
         for (index, color) in colors.iter().enumerate() {
             // The runner-up sits in slot two; everything else is family.
@@ -398,7 +341,7 @@ mod tests {
 
     #[test]
     fn untinted_theme_yields_neutrals() {
-        let colors = Ambient::colors(&Theme::dark(), &CoverPalette::default());
+        let colors = Ambient::colors(&Theme::dark());
 
         assert!(colors.iter().all(|color| color.s < 0.2));
     }
