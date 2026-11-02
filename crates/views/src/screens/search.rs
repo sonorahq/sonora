@@ -449,12 +449,11 @@ impl SearchView {
             false => t!("search-results"),
         };
         let waiting = offers.is_empty().then(|| {
-            (0..SUGGESTED_WAITING)
-                .map(|at| {
-                    Card::skeleton(("search-offer-waiting", at))
-                        .tucked()
-                        .into_any_element()
-                })
+            (0..SUGGESTED_WAITING).map(|at| {
+                Card::skeleton(("search-offer-waiting", at))
+                    .tucked()
+                    .into_any_element()
+            })
         });
 
         div()
