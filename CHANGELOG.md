@@ -26,6 +26,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - In fullscreen, the cover and title no longer jump a pixel at a time as the controls hide and come back.
 - The lyrics scrollbar stays hidden while the lyrics scroll along with the song.
 - The mute button in fullscreen no longer covers the volume slider with a tooltip.
+- The visualizer falls all the way to the bottom when you pause or the music goes quiet, instead of holding its last levels.
 
 ## [0.47.0] - 2026-11-02
 
