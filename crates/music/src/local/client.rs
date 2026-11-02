@@ -6,6 +6,7 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use storage::Database;
 
+use crate::cover::{self, CoverLimits};
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, GenreItem, GenreSection, HomeFeed,
     ImportedPlaylist, MediaKind, MusicApi, Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist,
@@ -14,11 +15,47 @@ use crate::{
 
 use super::index::Index;
 use super::scan::Scanned;
-use super::store::{Starred, Store};
+use super::store::{Starred, Store, Stored};
 use super::{m3u, tags, wire};
 
 const COVERS: usize = 4;
 const NOT_SUPPORTED: &str = "local playlists are not shared";
+/// A local cover is kept no larger than a big screen shows it.
+const COVER_LIMITS: CoverLimits = CoverLimits {
+    side: 1200,
+    bytes: 2 * 1024 * 1024,
+};
+
+/// Where a new cover for `playlist_id` goes, in Sonora's data folder rather than the cache,
+/// since the listener's picture cannot be fetched again.
+fn cover_path(playlist_id: &str) -> PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis())
+        .unwrap_or_default();
+    let name: String = playlist_id
+        .chars()
+        .map(|letter| match letter.is_ascii_alphanumeric() {
+            true => letter,
+            false => '_',
+        })
+        .collect();
+    dirs::data_local_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("sonora")
+        .join("playlist-covers")
+        .join(format!("{name}-{stamp}.jpg"))
+}
+
+/// Deletes a cover file no playlist points at any more. A file that is already gone is fine.
+fn discard(cover: Option<PathBuf>) {
+    if let Some(path) = cover
+        && let Err(error) = std::fs::remove_file(&path)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!("local: cannot delete {}: {error}", path.display());
+    }
+}
 
 pub struct LocalClient {
     scanned: RwLock<Scanned>,
@@ -52,7 +89,7 @@ impl LocalClient {
         let stored = self.store.one(id)?;
         let tracks = self.listed(&self.store.tracks(id)?);
         Ok(PlaylistDetail {
-            playlist: playlist_from(stored.id, stored.name, stored.modified_at, &tracks),
+            playlist: playlist_from(stored, &tracks),
             tracks,
             continuation: None,
         })
@@ -139,19 +176,22 @@ impl LocalClient {
     }
 }
 
-fn playlist_from(id: String, name: String, modified_at: i64, tracks: &[Track]) -> Playlist {
+fn playlist_from(stored: Stored, tracks: &[Track]) -> Playlist {
+    let own = stored
+        .cover
+        .map(|path| format!("file://{}", path.display()));
     Playlist {
-        id,
-        name,
+        id: stored.id,
+        name: stored.name,
         owner: String::new(),
         owner_id: String::new(),
         owned: true,
         collaborative: false,
         blend: false,
         public: false,
-        cover: tracks.iter().find_map(|track| track.cover.clone()),
+        cover: own.or_else(|| tracks.iter().find_map(|track| track.cover.clone())),
         track_count: tracks.len() as u32,
-        modified_at: Some(modified_at / 1_000),
+        modified_at: Some(stored.modified_at / 1_000),
     }
 }
 
@@ -196,6 +236,7 @@ impl MusicApi for LocalClient {
         Ok(Artist {
             name: artist.name,
             cover_large: artist.cover,
+            banner: None,
             biography: None,
             monthly_listeners: None,
             top_tracks: scanned
@@ -326,7 +367,7 @@ impl MusicApi for LocalClient {
                     .tracks(&stored.id)
                     .map(|ids| self.listed(&ids))
                     .unwrap_or_default();
-                playlist_from(stored.id, stored.name, stored.modified_at, &tracks)
+                playlist_from(stored, &tracks)
             })
             .collect())
     }
@@ -340,7 +381,10 @@ impl MusicApi for LocalClient {
     }
 
     async fn delete_playlist(&self, playlist_id: &str) -> Result<()> {
-        self.store.delete(playlist_id)
+        let cover = self.store.set_cover(playlist_id, None)?;
+        self.store.delete(playlist_id)?;
+        discard(cover);
+        Ok(())
     }
 
     async fn remove_playlist_from_library(&self, _playlist_id: &str) -> Result<()> {
@@ -353,6 +397,33 @@ impl MusicApi for LocalClient {
 
     async fn set_playlist_public(&self, _playlist_id: &str, _public: bool) -> Result<()> {
         Err(anyhow!(NOT_SUPPORTED))
+    }
+
+    /// Keeps the cover as a JPEG in Sonora's data folder, named afresh on every change so an
+    /// image cache keyed by the path never shows the old one.
+    async fn set_playlist_cover(&self, playlist_id: &str, image: Option<&[u8]>) -> Result<()> {
+        self.store.one(playlist_id)?;
+        let written = match image {
+            Some(image) => {
+                let jpeg = cover::square_jpeg(image, COVER_LIMITS)?;
+                let path = cover_path(playlist_id);
+                let folder = path.parent().context("cannot place a playlist cover")?;
+                std::fs::create_dir_all(folder).context("cannot create the covers folder")?;
+                std::fs::write(&path, jpeg).context("cannot write the playlist cover")?;
+                Some(path)
+            }
+            None => None,
+        };
+        match self.store.set_cover(playlist_id, written.as_deref()) {
+            Ok(previous) => {
+                discard(previous);
+                Ok(())
+            }
+            Err(error) => {
+                discard(written);
+                Err(error)
+            }
+        }
     }
 
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {

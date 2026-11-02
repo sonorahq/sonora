@@ -44,6 +44,21 @@ pub enum Value {
     Provider(Option<String>),
     /// What a search found, best first.
     Hits(Vec<Hit>),
+    /// The Sonora Session Sonora is in, `None` while it is in none.
+    Session(Option<SessionInfo>),
+}
+
+/// A Sonora Session as `sonora session` prints it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionInfo {
+    /// The six digits friends join with.
+    pub code: String,
+    /// The slug of the provider the session plays from.
+    pub provider: String,
+    /// Whether this Sonora hosts the session.
+    pub hosting: bool,
+    /// Everyone in the session by name, the host first.
+    pub members: Vec<String>,
 }
 
 /// A search hit as `sonora search` lists it.
@@ -80,6 +95,40 @@ pub struct Current {
     pub volume: u8,
     pub shuffle: bool,
     pub repeat: Repeat,
+    /// The provider the track comes from, as `sonora providers` lists it, `local` for a file.
+    /// `None` while no provider is chosen.
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// Whether the track is saved to the library.
+    #[serde(default)]
+    pub liked: bool,
+    /// The collection the track was queued from, `None` when it was queued on its own.
+    #[serde(default)]
+    pub origin: Option<Origin>,
+}
+
+/// A collection a track plays from, as `sonora current` prints it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Origin {
+    pub kind: OriginKind,
+    /// The provider's id for it, empty for liked songs.
+    pub id: String,
+    /// What the app calls it, when it knows.
+    pub name: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OriginKind {
+    Album,
+    Playlist,
+    /// An artist's top tracks.
+    Artist,
+    Radio,
+    /// The liked songs of the library.
+    Liked,
+    /// The local library.
+    Local,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

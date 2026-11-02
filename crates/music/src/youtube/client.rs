@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use tokio::task::JoinSet;
 use ytmusic::YtMusic;
 
+use crate::cover::{self, CoverLimits};
 use crate::youtube::{genres, radio, subscriptions, wire};
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Feed, Genre,
@@ -14,6 +15,12 @@ use crate::{
 };
 
 const PORTRAIT_LIMIT: usize = 24;
+/// YouTube documents no limit for a playlist thumbnail, so this stays near what its own upload
+/// sends.
+const COVER_LIMITS: CoverLimits = CoverLimits {
+    side: 1200,
+    bytes: 1024 * 1024,
+};
 const EPISODES: &str = "SE";
 
 pub struct YouTubeClient {
@@ -222,6 +229,16 @@ impl MusicApi for YouTubeClient {
         self.api.set_playlist_privacy(playlist_id, public).await
     }
 
+    async fn set_playlist_cover(&self, playlist_id: &str, image: Option<&[u8]>) -> Result<()> {
+        match image {
+            Some(image) => {
+                let jpeg = cover::square_jpeg(image, COVER_LIMITS)?;
+                self.api.set_playlist_thumbnail(playlist_id, jpeg).await
+            }
+            None => self.api.remove_playlist_thumbnail(playlist_id).await,
+        }
+    }
+
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
         self.api.add_playlist_track(playlist_id, track_id).await
     }
@@ -407,6 +424,11 @@ impl MusicApi for YouTubeClient {
 
     async fn genre(&self, genre_id: &str) -> Result<GenreDetail> {
         genres::genre(&self.api, genre_id).await
+    }
+
+    /// The first cover on the category's own page, since the category buttons carry only a colour.
+    async fn genre_cover(&self, genre_id: &str) -> Result<Option<String>> {
+        Ok(genres::genre(&self.api, genre_id).await?.cover())
     }
 }
 

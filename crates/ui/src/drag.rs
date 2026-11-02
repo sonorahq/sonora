@@ -74,6 +74,7 @@ pub struct Ghost {
     label: SharedString,
     cover: Option<String>,
     fallback: Option<SharedString>,
+    badge: Option<SharedString>,
     art: bool,
     round: bool,
 }
@@ -86,6 +87,7 @@ impl Ghost {
             label: label.into(),
             cover: None,
             fallback: None,
+            badge: None,
             art: false,
             round: false,
         }
@@ -104,6 +106,12 @@ impl Ghost {
 
     pub fn circle(mut self) -> Self {
         self.round = true;
+        self
+    }
+
+    /// An icon after the label that says what the drop does, such as copy or move.
+    pub fn badge(mut self, icon: impl Into<SharedString>) -> Self {
+        self.badge = Some(icon.into());
         self
     }
 }
@@ -139,7 +147,16 @@ impl RenderOnce for Ghost {
             .bg(theme.secondary)
             .text_color(theme.foreground)
             .children(leading)
-            .child(div().min_w_0().truncate().child(self.label));
+            .child(div().min_w_0().truncate().child(self.label))
+            .when_some(self.badge, |chip, badge| {
+                chip.child(
+                    svg()
+                        .path(icons::path(&badge))
+                        .flex_none()
+                        .size(theme.text(Text::Small))
+                        .text_color(theme.muted_foreground),
+                )
+            });
         chip.style().refine(&overrides);
 
         div()

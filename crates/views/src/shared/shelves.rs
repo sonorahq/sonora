@@ -375,7 +375,8 @@ pub(crate) fn grid(
         .into_any_element()
 }
 
-fn lanes(width: Pixels) -> usize {
+/// How many columns a grid of genre plates `width` wide lays out.
+pub(crate) fn lanes(width: Pixels) -> usize {
     ((width / PLATE).floor().max(1.) as usize).min(LANES)
 }
 

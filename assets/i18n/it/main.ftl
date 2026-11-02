@@ -37,7 +37,6 @@ nav-pinned = Fissati
 nav-unpin = Rimuovi
 nav-pin-hint = Trascina qui per fissare
 library-liked-songs = Preferiti
-library-play-liked-songs = Riproduci
 library-no-songs = Ancora nessun preferito
 library-no-albums = Ancora nessun album salvato
 library-no-playlists = Ancora nessuna playlist
@@ -155,8 +154,11 @@ menu-play-tracks-last = { $count ->
     [one] Riproduci { $count } brano per ultimo
    *[other] Riproduci { $count } brani per ultimi
 }
-menu-song-radio = Vai alla radio del brano
-menu-go-to-album = Vai all'album
+menu-go-to = Vai a
+menu-artist = Artista
+menu-album = Album
+menu-radio = Radio
+menu-details = Dettagli
 menu-go-to-artist = Vai all'artista
 menu-view-details = Mostra dettagli
 menu-copy-link = Copia link
@@ -165,7 +167,7 @@ menu-copy = Copia
 menu-paste = Incolla
 menu-select-all = Seleziona tutto
 menu-remove-from-queue = Rimuovi dalla coda
-menu-rename-playlist = Rinomina playlist
+menu-edit-playlist = Modifica playlist
 menu-delete-playlist = Elimina playlist
 menu-export-playlist = Esporta playlist…
 menu-add-playlist-to-library = Aggiungi alla Libreria
@@ -187,7 +189,12 @@ menu-play-artist = Riproduci artista
 # playlist editor
 playlist-name-placeholder = Nome playlist
 playlist-create-title = Crea playlist
-playlist-rename-title = Rinomina playlist
+playlist-edit-title = Modifica playlist
+playlist-cover-choose = Scegli immagine
+playlist-cover-remove = Rimuovi copertina
+playlist-cover-unopenable = Sonora non riesce ad aprire questo file
+playlist-cover-too-large = Quest'immagine supera i 40 MB
+playlist-cover-not-a-picture = Questo file non è un'immagine JPEG, PNG o WebP
 playlist-delete-title = Elimina playlist
 playlist-delete-confirm = Eliminare “{ $name }”? Questa operazione non può essere annullata.
 playlist-again-title = Aggiungere di nuovo?
@@ -254,10 +261,7 @@ player-previous = Brano precedente
 player-next = Brano successivo
 player-fullscreen = Schermo intero
 player-fullscreen-leave = Esci dallo schermo intero
-player-devices = Dispositivi
 devices-this-computer = Questo computer
-devices-pause = Pausa
-devices-resume = Riprendi
 devices-jam-join = Unisciti a una Jam…
 devices-jam-join-title = Unisciti a una Jam
 devices-jam-join-detail = Incolla il link che ti ha condiviso un amico
@@ -265,15 +269,12 @@ devices-jam-paste = Incolla
 devices-jam-link-hint = Link della Jam
 devices-jam-start = Avvia una Jam
 devices-jam-copy = Copia link della Jam
-devices-jam-code = Codice QR
 devices-jam-code-menu = Mostra codice QR
 devices-jam-code-title = Scansiona per unirti alla Jam di { $host }
 devices-jam-code-title-anonymous = Scansiona per unirti alla Jam
 devices-jam-code-close = Chiudi
 devices-jam-leave = Esci dalla Jam
 devices-jam-end = Termina Jam
-devices-jam-banner = Nella Jam di { $host }
-devices-jam-banner-anonymous = In una Jam
 devices-jam-more = +{ $count }
 devices-jam-host = Host
 devices-jam-you = Tu
@@ -285,8 +286,6 @@ devices-jam-invite-detail = { $count ->
    *[other] { $count } persone sono già in questa Jam.
 }
 devices-jam-invite-join = Unisciti
-devices-elsewhere-banner = In riproduzione su { $device }
-devices-elsewhere-here = Riproduci qui
 fullscreen-artwork = Copertina
 
 # filters
@@ -367,8 +366,6 @@ login-choose-detail = Scegli come accedere a { $provider }.
 
 # album and playlist pages
 detail-playlist = Playlist
-detail-play-album = Riproduci album
-detail-play-playlist = Riproduci playlist
 
 # play button
 play-pause = Pausa
@@ -381,7 +378,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } ascoltatore al mese
    *[other] { $value } ascoltatori al mese
 }
-artist-play = Riproduci
 artist-popular = Popolari
 artist-popular-eyebrow = Esplora questo artista
 artist-popular-empty = Ancora nulla da riprodurre di questo artista
@@ -426,6 +422,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Scelte rapide
 home-quick-picks-empty = Metti Mi piace a qualche brano e apparirà qui
 home-recently-added = Aggiunti di recente
+home-recently-played = Ascoltati di recente
 home-playlists = Playlist
 home-favorite-albums = Album preferiti
 home-artists = Artisti
@@ -434,6 +431,9 @@ home-collection-albums = Album dalla tua collezione
 # search page
 search-placeholder = Cosa vuoi ascoltare?
 search-browse = Sfoglia tutto
+search-submit = Cerca
+search-recent = Ricerche recenti
+search-forget = Rimuovi dalla cronologia
 genre-empty = Nulla da mostrare qui
 search-best-match = Miglior risultato
 search-no-matches = Nessun risultato
@@ -453,7 +453,6 @@ kind-playlist = Playlist
 
 # song page
 song-eyebrow = Brano
-song-play = Riproduci brano
 song-view-album = Mostra album
 song-loading = Caricamento informazioni brano…
 song-about = Informazioni sul brano
@@ -1076,6 +1075,9 @@ saver-fps = { $fps } FPS
 
 toast-playlist-created = Playlist creata
 toast-playlist-renamed = Playlist rinominata
+toast-playlist-updated = Playlist aggiornata
+toast-playlist-cover-changed = Copertina della playlist cambiata
+toast-playlist-cover-removed = Copertina della playlist rimossa
 toast-playlist-deleted = Playlist eliminata
 toast-local-delete-failed = Impossibile eliminare alcuni file dei brani
 toast-playlist-added = Playlist aggiunta alla tua libreria
@@ -1263,19 +1265,6 @@ toast-offline-mode = Sei offline. Torna online per ascoltare questo brano in str
 offline-title = Sei offline.
 offline-go-online = Torna online
 toast-download-failed = Impossibile elencare i brani da scaricare.
-toast-downloading = Download di { $name }
-toast-downloading-songs = { $count ->
-    [one] Download di { $count } brano
-   *[other] Download di { $count } brani
-}
-toast-downloaded = { $name } scaricato
-toast-downloaded-songs = { $count ->
-    [one] { $count } brano scaricato
-   *[other] { $count } brani scaricati
-}
-toast-download-set-failed = Impossibile scaricare alcuni brani di { $name }
-toast-download-song-failed = Impossibile scaricare { $name }
-toast-download-songs-failed = Impossibile scaricare alcuni brani
 toast-percent = { $percent }%
 toast-download-cancelled = Download di { $name } annullato
 toast-downloads-cancelled = { $count ->

@@ -325,6 +325,21 @@ impl Devices {
         )
     }
 
+    /// The listener as the Jam's members list them, so a song they queue names them.
+    pub(crate) fn you(&self) -> Option<Arc<Contributor>> {
+        let member = self
+            .jam
+            .as_ref()?
+            .members
+            .iter()
+            .find(|member| member.you)?;
+        Some(Arc::new(Contributor {
+            id: member.id.clone(),
+            name: member.name.clone(),
+            avatar: member.image.clone(),
+        }))
+    }
+
     /// The person a provider id names, by the Jam's members or a profile already read, when
     /// either knows them.
     fn known(&self, id: &str) -> Option<Arc<Contributor>> {

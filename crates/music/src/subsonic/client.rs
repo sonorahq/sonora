@@ -10,6 +10,7 @@ use opensubsonic::{Auth, Client};
 use tokio::sync::OnceCell;
 use tokio::task::JoinSet;
 
+use crate::cover::{self, CoverLimits};
 use crate::engine::Loudness;
 use crate::escape;
 use crate::subsonic::auth::Signature;
@@ -31,6 +32,13 @@ const HOME_ALBUMS: i32 = 12;
 const LIBRARY_PAGE: i32 = 500;
 const API_VERSION: &str = "1.16.1";
 const CLIENT_NAME: &str = "sonora";
+/// The first Navidrome that takes a playlist picture through its own API.
+const NAVIDROME_COVERS: (u32, u32) = (0, 61);
+/// Navidrome takes up to 10 MB by default, and shows a cover at most this large.
+const PLAYLIST_COVER: CoverLimits = CoverLimits {
+    side: 1500,
+    bytes: 4 * 1024 * 1024,
+};
 /// The OpenSubsonic extension that takes a playback position and state.
 const PLAYBACK_REPORT: &str = "playbackReport";
 /// The edge of a list cover, in pixels.
@@ -44,6 +52,10 @@ const COVER_LARGE: i32 = 1200;
 pub struct SubsonicClient {
     client: Client,
     username: String,
+    /// The password Navidrome's own API signs in with, which a playlist picture goes through.
+    password: String,
+    /// The fixed signature as a query, which every hand-built Subsonic url starts with.
+    signed: String,
     /// The server address with no trailing slash.
     server: String,
     http: reqwest::Client,
@@ -72,23 +84,68 @@ impl SubsonicClient {
         signature: &Signature,
     ) -> Result<Self> {
         let server = server.trim_end_matches('/').to_owned();
-        let client = Client::new(&server, Auth::token(&username, password))
+        let client = Client::new(&server, Auth::token(&username, password.clone()))
             .context("cannot parse the subsonic server address")?
             .with_client_name(CLIENT_NAME);
-        let covers = format!(
-            "{server}/rest/getCoverArt?u={}&t={}&s={}&v={API_VERSION}&c={CLIENT_NAME}&f=json",
+        let signed = format!(
+            "u={}&t={}&s={}&v={API_VERSION}&c={CLIENT_NAME}&f=json",
             escape::component(&username),
             escape::component(&signature.token),
             escape::component(&signature.salt),
         );
+        let covers = format!("{server}/rest/getCoverArt?{signed}");
         Ok(Self {
             client,
             username,
+            password,
+            signed,
             server,
             http: reqwest::Client::new(),
             covers,
             playback_report: Arc::default(),
         })
+    }
+
+    /// Whether the server is a Navidrome that takes playlist pictures. Only its own API does,
+    /// and only from 0.61 on. A server that cannot be asked counts as not taking them.
+    pub async fn takes_playlist_covers(&self) -> bool {
+        let url = format!("{}/rest/ping?{}", self.server, self.signed);
+        let answer: serde_json::Value = match self.http.get(url).send().await {
+            Ok(response) => response.json().await.unwrap_or_default(),
+            Err(error) => {
+                log::info!("subsonic: cannot ask what the server is: {error:#}");
+                return false;
+            }
+        };
+        let response = &answer["subsonic-response"];
+        response["type"].as_str() == Some("navidrome")
+            && response["serverVersion"]
+                .as_str()
+                .and_then(release)
+                .is_some_and(|version| version >= NAVIDROME_COVERS)
+    }
+
+    /// Signs in to Navidrome's own API and answers the token its requests carry.
+    async fn navidrome_token(&self) -> Result<String> {
+        let answer: serde_json::Value = self
+            .http
+            .post(format!("{}/auth/login", self.server))
+            .json(&serde_json::json!({
+                "username": self.username,
+                "password": self.password,
+            }))
+            .send()
+            .await
+            .context("cannot reach navidrome's sign-in")?
+            .error_for_status()
+            .context("navidrome refused the sign-in")?
+            .json()
+            .await
+            .context("navidrome's sign-in answered no json")?;
+        answer["token"]
+            .as_str()
+            .map(str::to_owned)
+            .context("navidrome's sign-in answered no token")
     }
 
     /// Whether the server lists the `playbackReport` extension, asked once per client. A plain
@@ -345,6 +402,7 @@ impl MusicApi for SubsonicClient {
         Ok(Artist {
             name,
             cover_large,
+            banner: None,
             biography,
             monthly_listeners: None,
             top_tracks,
@@ -538,6 +596,51 @@ impl MusicApi for SubsonicClient {
             .update_playlist(playlist_id, None, None, Some(public), &[], &[])
             .await
             .context("cannot change the playlist visibility")
+    }
+
+    /// Goes through Navidrome's own API, since Subsonic has no way to upload a picture.
+    /// Taking the picture off brings back the mosaic Navidrome draws.
+    async fn set_playlist_cover(&self, playlist_id: &str, image: Option<&[u8]>) -> Result<()> {
+        let token = self.navidrome_token().await?;
+        let url = format!(
+            "{}/api/playlist/{}/image",
+            self.server,
+            escape::component(playlist_id)
+        );
+        let request = match image {
+            Some(image) => {
+                let jpeg = cover::square_jpeg(image, PLAYLIST_COVER)?;
+                let boundary = format!("sonora{:016x}", fastrand::u64(..));
+                let mut body = format!(
+                    "--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"cover.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n"
+                )
+                .into_bytes();
+                body.extend_from_slice(&jpeg);
+                body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+                self.http
+                    .post(url)
+                    .header(
+                        "Content-Type",
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(body)
+            }
+            None => self.http.delete(url),
+        };
+        let response = request
+            .header("X-ND-Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+            .context("cannot reach navidrome")?;
+        let status = response.status();
+        if !status.is_success() {
+            let reason = response.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "navidrome refused the cover with {status}: {}",
+                reason.trim()
+            );
+        }
+        Ok(())
     }
 
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
@@ -916,6 +1019,26 @@ impl MusicApi for SubsonicClient {
             },
         })
     }
+
+    /// The cover of one album filed under the genre, since Subsonic genres have no picture.
+    async fn genre_cover(&self, genre_id: &str) -> Result<Option<String>> {
+        let albums = self
+            .client
+            .get_album_list2(
+                AlbumListType::ByGenre,
+                Some(1),
+                None,
+                None,
+                None,
+                Some(genre_id),
+                None,
+            )
+            .await
+            .with_context(|| format!("cannot load the genre {genre_id}"))?;
+        Ok(albums
+            .into_iter()
+            .find_map(|album| self.convert_album(album).cover))
+    }
 }
 
 impl SubsonicClient {
@@ -1033,4 +1156,12 @@ fn source_genre(source: SourceGenre) -> Genre {
         name,
         cover: None,
     }
+}
+
+/// The major and minor numbers of a version such as `0.61.0` or `0.61.0 (a1b2c3)`.
+fn release(version: &str) -> Option<(u32, u32)> {
+    let mut parts = version.split(|letter: char| !letter.is_ascii_digit());
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    Some((major, minor))
 }

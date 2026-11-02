@@ -30,6 +30,8 @@ use crate::{
 /// The size artwork is asked to render at, and the larger one for a page header.
 pub const ART: u32 = 600;
 pub const HERO: u32 = 1200;
+/// The widest an artist banner is asked for, since it spans the whole page.
+const BANNER: u64 = 2400;
 
 /// The artist views the page shows first, before every edition arrives from the artist's albums.
 /// Apple keeps live albums and compilations out of `full-albums`, so each needs its own view.
@@ -190,6 +192,10 @@ pub struct Attributes<'a> {
     pub play_params: Option<PlayParams<'a>>,
     #[serde(deserialize_with = "loose")]
     pub artwork: Artwork<'a>,
+    /// The wide pictures Apple keeps for an artist page, sent only when asked for with
+    /// `extend=editorialArtwork`.
+    #[serde(deserialize_with = "loose")]
+    pub editorial_artwork: Editorial<'a>,
     #[serde(deserialize_with = "loose")]
     pub editorial_notes: Notes<'a>,
     #[serde(deserialize_with = "loose")]
@@ -211,6 +217,20 @@ pub struct PlayParams<'a> {
 #[serde(default, bound(deserialize = "'de: 'a"))]
 pub struct Artwork<'a> {
     pub url: Leaf<'a>,
+    pub width: Leaf<'a>,
+    pub height: Leaf<'a>,
+}
+
+/// The editorial pictures of an artist, in the order a page banner prefers them.
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", bound(deserialize = "'de: 'a"))]
+pub struct Editorial<'a> {
+    #[serde(deserialize_with = "loose")]
+    pub banner_uber: Artwork<'a>,
+    #[serde(deserialize_with = "loose")]
+    pub super_hero_wide: Artwork<'a>,
+    #[serde(deserialize_with = "loose")]
+    pub centered_fullscreen_background: Artwork<'a>,
 }
 
 /// What Apple writes about an artist. Some answers send it as one string, kept in `text`, and
@@ -356,6 +376,7 @@ objects!(
     Attributes,
     PlayParams,
     Artwork,
+    Editorial,
     Title,
     Loudness,
     Measure,
@@ -688,7 +709,27 @@ fn number(field: &Leaf) -> u32 {
 /// generated cover carries a signature, so only the placeholders are touched.
 pub fn artwork(attributes: &Attributes, size: u32) -> Option<String> {
     let template = attributes.artwork.url.as_str()?;
-    Some(sized(template, size))
+    Some(sized(template, size, size))
+}
+
+/// The first editorial picture of an artist that Apple sent, at no more than `BANNER` across
+/// and its own aspect.
+pub fn banner(attributes: &Attributes) -> Option<String> {
+    let editorial = &attributes.editorial_artwork;
+    [
+        &editorial.banner_uber,
+        &editorial.super_hero_wide,
+        &editorial.centered_fullscreen_background,
+    ]
+    .into_iter()
+    .find_map(|art| {
+        let template = art.url.as_str()?;
+        let width = art.width.as_u64().filter(|width| *width > 0)?;
+        let height = art.height.as_u64()?;
+        let across = BANNER.min(width);
+        let down = height * across / width;
+        Some(sized(template, across as u32, down as u32))
+    })
 }
 
 /// An ISO-8601 stamp as seconds since the epoch. Apple writes them two ways, `2026-09-15` and
@@ -902,6 +943,7 @@ pub fn artist(value: &Resource) -> Option<Artist> {
     Some(Artist {
         name: text(&attributes.name)?,
         cover_large: artwork(attributes, HERO),
+        banner: banner(attributes),
         biography: text(&notes.text)
             .or_else(|| text(&notes.standard))
             .or_else(|| text(&attributes.artist_bio)),
@@ -1099,17 +1141,21 @@ fn loose<'de, D: Deserializer<'de>, T: Loose<'de>>(deserializer: D) -> Result<T,
     T::loose(deserializer)
 }
 
-/// An artwork template with its placeholders filled in one pass: both sides with `size`, the
-/// format with `jpg` and the crop with nothing.
-fn sized(template: &str, size: u32) -> String {
+/// An artwork template with its placeholders filled in one pass: the sides with `width` and
+/// `height`, the format with `jpg` and the crop with nothing.
+fn sized(template: &str, width: u32, height: u32) -> String {
     let mut filled = String::with_capacity(template.len() + 8);
     let mut rest = template;
     while let Some(at) = rest.find('{') {
         filled.push_str(&rest[..at]);
         rest = &rest[at..];
         match rest.get(..3) {
-            Some("{w}" | "{h}") => {
-                let _ = write!(filled, "{size}");
+            Some("{w}") => {
+                let _ = write!(filled, "{width}");
+                rest = &rest[3..];
+            }
+            Some("{h}") => {
+                let _ = write!(filled, "{height}");
                 rest = &rest[3..];
             }
             Some("{f}") => {

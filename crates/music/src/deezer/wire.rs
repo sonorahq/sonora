@@ -6,7 +6,21 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::{Album, ArtistRef, Playlist, ReleaseType, SavedArtist, Track, UserProfile, calendar};
+use crate::{
+    Album, ArtistRef, Genre, GenreItem, GenreSection, Playlist, ReleaseType, SavedArtist, Track,
+    UserProfile, calendar,
+};
+
+/// Sets a smart tracklist's id apart from a playlist's, so a later lookup knows to ask for
+/// the tracklist. Deezer names these by a word such as `discovery` rather than a number.
+pub const SMART: &str = "smarttracklist:";
+
+/// Sets a Flow's id apart from a playlist's. What follows is the Flow's config, such as
+/// `default` or `chill`.
+pub const FLOW: &str = "flow:";
+
+/// Who a smart tracklist or a Flow is credited to, since Deezer makes them for the listener.
+const MAKER: &str = "Deezer";
 
 /// A track id is a numeric string. Zero and negative ids are user uploads, which the
 /// streaming endpoints treat differently; the sign stays in the string.
@@ -348,4 +362,172 @@ pub fn saved_artist(value: &Value) -> Option<SavedArtist> {
         cover: artist_picture(value, 300),
         added_at: when(value, &["ADDED_AT", "time_add", "DATE_ADD"]),
     })
+}
+
+/// The sections of a `page.get` answer that hold at least one card Sonora can draw, in the
+/// order Deezer lays them out. A section without a title takes `fallback`, which is how a
+/// module page names its one untitled grid.
+pub fn sections(page: &Value, user_id: &str, fallback: &str) -> Vec<GenreSection> {
+    page.get("sections")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|section| {
+            let items: Vec<GenreItem> = section
+                .get("items")
+                .and_then(Value::as_array)?
+                .iter()
+                .filter_map(|item| card(item, user_id))
+                .collect();
+            let title = text(section, &["title"])
+                .filter(|title| !title.is_empty())
+                .unwrap_or(fallback)
+                .to_owned();
+            (!items.is_empty()).then_some(GenreSection { title, items })
+        })
+        .collect()
+}
+
+/// One card of a `page.get` section. The `data` under it is the same gateway record the rest
+/// of the gateway answers with, except for a Flow and a channel, which only the card describes
+/// in full.
+fn card(item: &Value, user_id: &str) -> Option<GenreItem> {
+    let data = item.get("data")?;
+    match text(item, &["type"])? {
+        "album" => album(data).map(GenreItem::Album),
+        "playlist" => playlist(data, user_id).map(GenreItem::Playlist),
+        "artist" => saved_artist(data).map(GenreItem::Artist),
+        "track" => track(data).map(GenreItem::Track),
+        "smarttracklist" => smart_tracklist(data).map(GenreItem::Playlist),
+        "flow" => flow(item).map(GenreItem::Playlist),
+        "channel" => channel(item).map(GenreItem::Genre),
+        _ => None,
+    }
+}
+
+/// A smart tracklist as a playlist, from a home card or the `DATA` of
+/// `deezer.pageSmartTracklist`. Every daily mix is titled `daily`, so the generated title
+/// tells them apart, with the date it ends in left out.
+pub fn smart_tracklist(value: &Value) -> Option<Playlist> {
+    let smart_id = text(value, &["SMARTTRACKLIST_ID"]).filter(|id| !id.is_empty())?;
+    let name = text(value, &["AUTO_GENERATED_TITLE"])
+        .map(undated)
+        .filter(|name| !name.is_empty())
+        .or_else(|| text(value, &["TITLE"]))
+        .unwrap_or(smart_id);
+    let cover = value.get("COVER").and_then(|cover| {
+        image(
+            text(cover, &["TYPE"]).unwrap_or("cover"),
+            text(cover, &["MD5"]),
+            300,
+        )
+    });
+    Some(made(
+        format!("{SMART}{smart_id}"),
+        name,
+        cover,
+        number(value, &["NB_SONG"]).unwrap_or(0) as u32,
+    ))
+}
+
+/// A Flow card as a playlist. The card's `data` names the Flow but leaves its picture to the
+/// card itself.
+pub fn flow(item: &Value) -> Option<Playlist> {
+    let data = item.get("data").unwrap_or(&Value::Null);
+    let config = text(item, &["id"])
+        .or_else(|| text(data, &["id"]))
+        .filter(|id| !id.is_empty())?;
+    let name = text(item, &["title"])
+        .or_else(|| text(data, &["title"]))
+        .unwrap_or("Flow");
+    Some(made(format!("{FLOW}{config}"), name, picture(item, 300), 0))
+}
+
+/// A channel card as a genre whose id is the page path `page.get` opens it by, such as
+/// `channels/metal`. A card that leads anywhere else, such as the concerts page, is left out.
+fn channel(item: &Value) -> Option<Genre> {
+    let path = text(item, &["target"])?.trim_start_matches('/');
+    if !path.starts_with("channels/") {
+        return None;
+    }
+    let data = item.get("data").unwrap_or(&Value::Null);
+    let name = text(item, &["title"]).or_else(|| text(data, &["title", "name"]))?;
+    let cover = picture(item, 300).or_else(|| {
+        let linked = item.get("image_linked_item")?;
+        image(
+            text(linked, &["type"]).unwrap_or("playlist"),
+            text(linked, &["md5"]),
+            300,
+        )
+    });
+    Some(Genre {
+        id: path.to_owned(),
+        name: name.to_owned(),
+        cover,
+    })
+}
+
+/// The first picture a card lists.
+fn picture(item: &Value, size: u32) -> Option<String> {
+    let first = item.get("pictures")?.as_array()?.first()?;
+    image(
+        text(first, &["type"]).unwrap_or("cover"),
+        text(first, &["md5"]),
+        size,
+    )
+}
+
+/// A playlist Deezer makes for the listener rather than one a user owns.
+fn made(id: String, name: &str, cover: Option<String>, track_count: u32) -> Playlist {
+    Playlist {
+        id,
+        name: name.to_owned(),
+        owner: MAKER.to_owned(),
+        owner_id: String::new(),
+        owned: false,
+        collaborative: false,
+        blend: false,
+        public: true,
+        cover,
+        track_count,
+        modified_at: None,
+    }
+}
+
+/// A generated title without the ` - 31.10.2026` it ends in, whatever the date's format.
+fn undated(title: &str) -> &str {
+    match title.rsplit_once(" - ") {
+        Some((name, date))
+            if date.bytes().any(|byte| byte.is_ascii_digit())
+                && date
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || b"./-".contains(&byte)) =>
+        {
+            name.trim()
+        }
+        _ => title.trim(),
+    }
+}
+
+/// The music channels of the `channels/explore` page. Podcasts are not something Sonora
+/// plays, so the podcasts channel goes, and so does any section where a channel's picture
+/// comes from a podcast, which is how the podcast categories show.
+pub fn explore(page: &Value) -> Vec<Genre> {
+    page.get("sections")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|section| section.get("items")?.as_array())
+        .filter(|items| {
+            !items.iter().any(|item| {
+                item.get("image_linked_item")
+                    .and_then(|linked| text(linked, &["type"]))
+                    == Some("talk")
+            })
+        })
+        .flatten()
+        .filter(|item| text(item, &["type"]) == Some("channel"))
+        .filter_map(channel)
+        .filter(|genre| genre.id != "channels/podcasts")
+        .collect()
 }

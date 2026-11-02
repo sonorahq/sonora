@@ -1,6 +1,6 @@
 use gpui::{Pixels, TextAlign, px};
 use ui::rank::{ESSENTIAL, HANDY, NICE, SPARE, USEFUL};
-use ui::{ColumnSpec, Width};
+use ui::{ColumnSpec, Sort, Width};
 
 use crate::shared::cells::{DATE, NUMBER};
 
@@ -63,6 +63,7 @@ const ADDED_AT: ColumnSpec<TrackField> = ColumnSpec {
     header: "column-date-added",
     width: Width::Fixed(DATE),
     rank: NICE,
+    first: Sort::Descending,
     ..COLUMN
 };
 

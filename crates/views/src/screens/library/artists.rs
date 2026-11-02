@@ -8,7 +8,7 @@ use i18n::t;
 use music::SavedArtist;
 use state::{Library, LibraryPart, Network, Origin, Playback, Shelf, Sonora};
 use ui::rank::{ESSENTIAL, HANDY};
-use ui::{Cell, ColumnSpec, Menu, Pin, TableSource, Width};
+use ui::{Cell, ColumnSpec, Menu, Pin, Sort, TableSource, Width};
 
 use crate::shared::cells::{self, DATE, NUMBER};
 use crate::shared::menus::artist_menu;
@@ -44,6 +44,7 @@ const ADDED_AT: ColumnSpec<ArtistField> = ColumnSpec {
     header: "column-date-added",
     width: Width::Fixed(DATE),
     rank: HANDY,
+    first: Sort::Descending,
     ..COLUMN
 };
 

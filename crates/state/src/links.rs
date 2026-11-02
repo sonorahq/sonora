@@ -187,7 +187,7 @@ impl Links {
                 Toasts::about(
                     Outcome::Failed,
                     "toast-theme-install-failed",
-                    offer.variant.title,
+                    offer.family.name,
                     cx,
                 );
                 false

@@ -120,6 +120,9 @@ struct Scored {
     hit: Hit,
 }
 
+/// A search against the provider and the library, ranked into hits as the answers land. The
+/// search page holds two: one for the results of a submitted query and one that suggests hits
+/// while the query is typed.
 pub struct Search {
     query: String,
     served: Option<String>,

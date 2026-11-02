@@ -10,9 +10,11 @@ use gpui::{
 use i18n::t;
 use music::SoundServer;
 use state::{AppSettings, Requirement, Requirements, Sonora, UpdateState, Updates};
-use ui::{ActiveTheme as _, Button, SMALL_INSET, Text, corners};
+use ui::{ActiveTheme as _, Button, Text, corners};
 
-const ICON: Pixels = px(18.);
+const ICON: Pixels = px(16.);
+/// The title's line height as a multiple of its size, which the icon centres on.
+const LEADING: f32 = 1.4;
 const REACH: Pixels = px(400.);
 /// Where the README says what to install alongside Sonora.
 const INSTALL: &str = "https://github.com/sonorahq/sonora#linux";
@@ -36,7 +38,7 @@ struct Card {
     silence: Handler,
     /// A link in the bottom row, such as the release notes.
     link: Option<Button>,
-    /// What the card is about, in the bottom row after the never-again button.
+    /// What the card is about, first in the bottom row.
     actions: Vec<Button>,
 }
 
@@ -199,10 +201,9 @@ impl Render for AppNotice {
     }
 }
 
-/// Draws one card: icon, a one-line title and a close button on top, then the detail, and a row
-/// at the bottom spreading the never-again button, the link and the card's own actions across
-/// its width. The detail is inset as far as a small button's label, so it lines up with the
-/// buttons under it. The card takes every click and hover over it, so nothing under it reacts.
+/// Draws one card the way shadcn draws an alert: the icon in its own column, the title, detail
+/// and buttons stacked beside it on one left edge, and the close button in the top right corner.
+/// The card takes every click and hover over it, so nothing under it reacts.
 fn card_element(card: Card, cx: &App) -> AnyElement {
     let theme = cx.theme();
     let Card {
@@ -218,8 +219,9 @@ fn card_element(card: Card, cx: &App) -> AnyElement {
     } = card;
 
     let outer = corners(theme.radius);
-    // Concentric corners: the buttons sit one padding inside the card.
+    // Concentric corners: the close button sits one padding inside the card.
     let inner = (outer - theme.metrics.pad).max(Pixels::ZERO);
+    let line = theme.text(Text::Body) * LEADING;
 
     div()
         .id(SharedString::from(format!("{id}-card")))
@@ -227,10 +229,12 @@ fn card_element(card: Card, cx: &App) -> AnyElement {
         .aria_label(title.clone())
         .when_some(detail.clone(), |this, detail| this.aria_description(detail))
         .occlude()
+        .relative()
         .flex()
-        .flex_col()
-        .gap_2()
-        .p(theme.metrics.pad)
+        .items_start()
+        .gap_3()
+        .px_4()
+        .py_3()
         .rounded(outer)
         .border_1()
         .border_color(theme.border)
@@ -238,79 +242,81 @@ fn card_element(card: Card, cx: &App) -> AnyElement {
         .bg(theme.popover)
         .text_color(theme.foreground)
         .child(
+            // As tall as the title's line, so the icon centres on it.
+            div().flex().flex_none().items_center().h(line).child(
+                svg()
+                    .path(icons::path(icon))
+                    .size(ICON)
+                    .text_color(theme.foreground),
+            ),
+        )
+        .child(
             div()
                 .flex()
-                .items_start()
-                .justify_between()
-                .gap_2()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .gap_1()
+                .child(
+                    div()
+                        .min_w_0()
+                        .pr(theme.metrics.control_small)
+                        .line_height(line)
+                        .font_weight(FontWeight::MEDIUM)
+                        .truncate()
+                        .child(title),
+                )
+                .when_some(detail, |this, detail| {
+                    this.child(
+                        div()
+                            .text_size(theme.text(Text::Small))
+                            .text_color(theme.muted_foreground)
+                            .child(detail),
+                    )
+                })
                 .child(
                     div()
                         .flex()
+                        .flex_wrap()
                         .items_center()
                         .gap_2()
-                        .min_w_0()
+                        .mt_2()
+                        .children(actions)
+                        .children(link)
                         .child(
-                            svg()
-                                .path(icons::path(icon))
-                                .size(ICON)
-                                .flex_none()
-                                .text_color(theme.primary),
-                        )
-                        .child(
-                            div()
-                                .min_w_0()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .truncate()
-                                .child(title),
+                            Button::new(SharedString::from(format!("{id}-never")))
+                                .ghost()
+                                .small()
+                                .label(never)
+                                .on_click(silence),
                         ),
-                )
+                ),
+        )
+        .child(
+            div()
+                .absolute()
+                .top(theme.metrics.pad)
+                .right(theme.metrics.pad)
                 .child(
                     Button::new(SharedString::from(format!("{id}-dismiss")))
                         .ghost()
                         .small()
                         .icon("icons/x.svg")
+                        .tint(theme.muted_foreground)
                         .rounded(inner)
                         .tooltip("common-dismiss")
                         .on_click(close),
                 ),
         )
-        .when_some(detail, |this, detail| {
-            this.child(
-                div()
-                    .px(SMALL_INSET)
-                    .text_size(theme.text(Text::Small))
-                    .text_color(theme.muted_foreground)
-                    .child(detail),
-            )
-        })
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .justify_between()
-                .gap_2()
-                .child(
-                    Button::new(SharedString::from(format!("{id}-never")))
-                        .ghost()
-                        .small()
-                        .icon("icons/x.svg")
-                        .label(never)
-                        .rounded(inner)
-                        .on_click(silence),
-                )
-                .children(link.map(|link| link.rounded(inner)))
-                .children(actions.into_iter().map(|action| action.rounded(inner))),
-        )
         .into_any_element()
 }
 
-/// A link-style button that opens `url`, with the external-link arrow before its label.
+/// An outlined button that opens `url`, with the external-link arrow after its label.
 fn link(id: SharedString, label: SharedString, url: String) -> Button {
     Button::new(id)
-        .ghost()
+        .outline()
         .small()
         .label(label)
-        .icon("icons/external-link.svg")
+        .trailing("icons/external-link.svg")
         .on_click(move |_, _, cx| cx.open_url(&url))
 }

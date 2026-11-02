@@ -246,6 +246,10 @@ impl MusicApi for LibrespotClient {
         playlists::set_public(&self.session, playlist_id, public).await
     }
 
+    async fn set_playlist_cover(&self, playlist_id: &str, image: Option<&[u8]>) -> Result<()> {
+        playlists::set_cover(&self.session, playlist_id, image).await
+    }
+
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
         playlists::add_track(&self.session, playlist_id, track_id).await
     }

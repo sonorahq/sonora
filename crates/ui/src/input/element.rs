@@ -1,8 +1,8 @@
 use gpui::prelude::*;
 use gpui::{
-    App, Bounds, Context, CursorStyle, Element, ElementInputHandler, Entity, GlobalElementId,
-    InspectorElementId, LayoutId, MouseButton, PaintQuad, Pixels, Point, ShapedLine, Style,
-    TextRun, UnderlineStyle, Window, div, fill, point, px, relative, size, svg,
+    App, Bounds, ContentMask, Context, CursorStyle, Element, ElementInputHandler, Entity,
+    GlobalElementId, InspectorElementId, LayoutId, MouseButton, PaintQuad, Pixels, Point,
+    ShapedLine, Style, TextRun, UnderlineStyle, Window, div, fill, point, px, relative, size, svg,
 };
 
 use i18n::t;
@@ -155,10 +155,31 @@ impl Element for Text {
         let line = window
             .text_system()
             .shape_line(text, font_size, &runs, None);
-        let left = match input.end {
-            true => bounds.left() + (bounds.size.width - line.width - CARET).max(Pixels::ZERO),
-            false => bounds.left(),
+        // Text wider than the field scrolls under it, by just enough to keep the caret in sight,
+        // so what is cut off is on the side the caret is not. Deleting never leaves a blank tail
+        // while there is text to fill it.
+        let room = (bounds.size.width - CARET).max(Pixels::ZERO);
+        let overflow = (line.width - room).max(Pixels::ZERO);
+        let caret_x = line.x_for_index(cursor);
+        let mut scroll = input.scroll.min(overflow);
+        if caret_x - scroll > room {
+            scroll = caret_x - room;
+        }
+        if caret_x < scroll {
+            scroll = caret_x;
+        }
+        let left = match (overflow > Pixels::ZERO, input.end) {
+            (true, _) => bounds.left() - scroll,
+            (false, true) => {
+                bounds.left() + (bounds.size.width - line.width - CARET).max(Pixels::ZERO)
+            }
+            (false, false) => bounds.left(),
         };
+        let scroll = match overflow > Pixels::ZERO {
+            true => scroll,
+            false => Pixels::ZERO,
+        };
+        self.input.update(cx, |input, _| input.scroll = scroll);
 
         let (selection, caret) = match selected.is_empty() {
             true => (
@@ -209,27 +230,29 @@ impl Element for Text {
         );
 
         let focused = focus.is_focused(window);
-        if focused && let Some(selection) = painted.selection.take() {
-            window.paint_quad(selection);
-        }
-
         let Some(line) = painted.line.take() else {
             return;
         };
         let origin = painted.origin;
-        line.paint(
-            origin,
-            window.line_height(),
-            gpui::TextAlign::Left,
-            None,
-            window,
-            cx,
-        )
-        .ok();
-
-        if focused && let Some(caret) = painted.caret.take() {
-            window.paint_quad(caret);
-        }
+        // text scrolled under the field stays inside the text's own box, clear of the icon and
+        // the buttons beside it
+        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            if focused && let Some(selection) = painted.selection.take() {
+                window.paint_quad(selection);
+            }
+            line.paint(
+                origin,
+                window.line_height(),
+                gpui::TextAlign::Left,
+                None,
+                window,
+                cx,
+            )
+            .ok();
+            if focused && let Some(caret) = painted.caret.take() {
+                window.paint_quad(caret);
+            }
+        });
 
         self.input.update(cx, |input, _| {
             input.last_layout = (!input.content.is_empty()).then_some(line);
@@ -346,7 +369,12 @@ impl Render for Input {
             .when_else(
                 self.tucked,
                 |this| this.w_full(),
-                |this| this.border_1().border_color(theme.border),
+                |this| {
+                    this.border_1().border_color(match self.invalid {
+                        true => theme.danger,
+                        false => theme.border,
+                    })
+                },
             )
             .overflow_hidden()
             .key_context(INPUT_CONTEXT)

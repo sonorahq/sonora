@@ -37,7 +37,6 @@ nav-pinned = 已固定
 nav-unpin = 取消固定
 nav-pin-hint = 拖放到此处以固定
 library-liked-songs = 收藏
-library-play-liked-songs = 播放
 library-no-songs = 还没有收藏的歌曲
 library-no-albums = 还没有保存的专辑
 library-no-playlists = 还没有播放列表
@@ -155,8 +154,11 @@ menu-play-tracks-last = { $count ->
     [one] 最后播放 { $count } 首歌曲
    *[other] 最后播放 { $count } 首歌曲
 }
-menu-song-radio = 前往歌曲电台
-menu-go-to-album = 前往专辑
+menu-go-to = 前往
+menu-artist = 歌手
+menu-album = 专辑
+menu-radio = 电台
+menu-details = 详情
 menu-go-to-artist = 前往歌手
 menu-view-details = 查看详情
 menu-copy-link = 复制链接
@@ -165,7 +167,7 @@ menu-copy = 复制
 menu-paste = 粘贴
 menu-select-all = 全选
 menu-remove-from-queue = 从播放队列中移除
-menu-rename-playlist = 重命名播放列表
+menu-edit-playlist = 编辑播放列表
 menu-delete-playlist = 删除播放列表
 menu-export-playlist = 导出播放列表…
 menu-add-playlist-to-library = 添加到音乐库
@@ -187,7 +189,12 @@ menu-play-artist = 播放歌手
 # playlist editor
 playlist-name-placeholder = 播放列表名称
 playlist-create-title = 创建播放列表
-playlist-rename-title = 重命名播放列表
+playlist-edit-title = 编辑播放列表
+playlist-cover-choose = 选择图片
+playlist-cover-remove = 移除封面
+playlist-cover-unopenable = Sonora 无法打开此文件
+playlist-cover-too-large = 这张图片超过 40 MB
+playlist-cover-not-a-picture = 此文件不是 JPEG、PNG 或 WebP 图片
 playlist-delete-title = 删除播放列表
 playlist-delete-confirm = 删除“{ $name }”？此操作无法撤销。
 playlist-again-title = 再次添加？
@@ -254,10 +261,7 @@ player-previous = 上一首
 player-next = 下一首
 player-fullscreen = 全屏
 player-fullscreen-leave = 退出全屏
-player-devices = 设备
 devices-this-computer = 此电脑
-devices-pause = 暂停
-devices-resume = 继续播放
 devices-jam-join = 加入 Jam…
 devices-jam-join-title = 加入 Jam
 devices-jam-join-detail = 粘贴好友分享给你的链接
@@ -265,15 +269,12 @@ devices-jam-paste = 粘贴
 devices-jam-link-hint = Jam 链接
 devices-jam-start = 发起 Jam
 devices-jam-copy = 复制 Jam 链接
-devices-jam-code = 二维码
 devices-jam-code-menu = 显示二维码
 devices-jam-code-title = 扫码加入 { $host } 的 Jam
 devices-jam-code-title-anonymous = 扫码加入 Jam
 devices-jam-code-close = 关闭
 devices-jam-leave = 退出 Jam
 devices-jam-end = 结束 Jam
-devices-jam-banner = 正在 { $host } 的 Jam 中
-devices-jam-banner-anonymous = 正在 Jam 中
 devices-jam-more = +{ $count }
 devices-jam-host = 主持人
 devices-jam-you = 你
@@ -285,8 +286,6 @@ devices-jam-invite-detail = { $count ->
    *[other] 已有 { $count } 人在此 Jam 中。
 }
 devices-jam-invite-join = 加入
-devices-elsewhere-banner = 正在 { $device } 上播放
-devices-elsewhere-here = 在此播放
 fullscreen-artwork = 封面
 
 # filters
@@ -367,8 +366,6 @@ login-choose-detail = 选择登录 { $provider } 的方式。
 
 # album and playlist pages
 detail-playlist = 播放列表
-detail-play-album = 播放专辑
-detail-play-playlist = 播放该列表
 
 # play button
 play-pause = 暂停
@@ -381,7 +378,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } 位每月听众
    *[other] { $value } 位每月听众
 }
-artist-play = 立即播放
 artist-popular = 热门
 artist-popular-eyebrow = 探索这位歌手
 artist-popular-empty = 这位歌手暂无可播放内容
@@ -425,6 +421,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = 快速推荐
 home-quick-picks-empty = 收藏几首歌后，它们会显示在这里
 home-recently-added = 最近添加
+home-recently-played = 最近播放
 home-playlists = 播放列表
 home-favorite-albums = 收藏的专辑
 home-artists = 歌手
@@ -433,6 +430,9 @@ home-collection-albums = 你音乐库中的专辑
 # search page
 search-placeholder = 你想听什么？
 search-browse = 浏览全部
+search-submit = 搜索
+search-recent = 最近搜索
+search-forget = 从历史记录中移除
 genre-empty = 这里暂时没有可显示的内容
 search-best-match = 最佳匹配
 search-no-matches = 无匹配结果
@@ -453,7 +453,6 @@ kind-playlist = 播放列表
 
 # song page
 song-eyebrow = 歌曲
-song-play = 播放歌曲
 song-view-album = 查看专辑
 song-loading = 正在加载歌曲信息…
 song-about = 关于这首歌
@@ -1075,6 +1074,9 @@ saver-fps = { $fps } FPS
 
 toast-playlist-created = 播放列表已创建
 toast-playlist-renamed = 播放列表已重命名
+toast-playlist-updated = 播放列表已更新
+toast-playlist-cover-changed = 播放列表封面已更换
+toast-playlist-cover-removed = 播放列表封面已移除
 toast-playlist-deleted = 播放列表已删除
 toast-local-delete-failed = 部分歌曲文件无法删除
 toast-playlist-added = 播放列表已添加到你的音乐库
@@ -1262,19 +1264,6 @@ toast-offline-mode = 你处于离线状态。切换为在线即可串流这首�
 offline-title = 你处于离线状态。
 offline-go-online = 切换为在线
 toast-download-failed = 无法列出要下载的歌曲。
-toast-downloading = 正在下载 { $name }
-toast-downloading-songs = { $count ->
-    [one] 正在下载 { $count } 首歌曲
-   *[other] 正在下载 { $count } 首歌曲
-}
-toast-downloaded = 已下载 { $name }
-toast-downloaded-songs = { $count ->
-    [one] 已下载 { $count } 首歌曲
-   *[other] 已下载 { $count } 首歌曲
-}
-toast-download-set-failed = { $name } 中的部分歌曲无法下载
-toast-download-song-failed = { $name } 无法下载
-toast-download-songs-failed = 部分歌曲无法下载
 toast-percent = { $percent }%
 toast-download-cancelled = 已取消下载 { $name }
 toast-downloads-cancelled = { $count ->

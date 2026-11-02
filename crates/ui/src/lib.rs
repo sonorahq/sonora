@@ -6,12 +6,12 @@ mod checkbox;
 mod controls;
 mod deck;
 mod drag;
+mod dropdown;
 mod explicit;
 mod filters;
 mod form;
 mod glass;
 mod glide;
-mod grain;
 mod info_card;
 mod inline_links;
 mod input;
@@ -26,6 +26,7 @@ mod modal;
 pub mod motion;
 mod notice;
 mod option_card;
+mod otp;
 mod palette;
 mod panel;
 mod picker;
@@ -41,6 +42,7 @@ mod scrollbar;
 mod scroller;
 mod scrubber;
 mod separator;
+mod shader;
 mod shield;
 mod skeleton;
 mod spinner;
@@ -56,6 +58,7 @@ mod vacancy;
 mod veil;
 mod view;
 mod visualizer;
+mod waves;
 
 pub use arrow_ring::ArrowRing;
 pub use artwork::{
@@ -70,6 +73,7 @@ pub use controls::WindowControls;
 pub use controls::WindowFrame;
 pub use deck::Deck;
 pub use drag::{Edge, Ghost, drop_gap, drop_into, drop_marker, grip};
+pub use dropdown::Dropdown;
 pub use explicit::ExplicitBadge;
 pub use filters::{
     Filter, FilterChange, FlagAxis, RangeAxis, RangeScrubber, RangeState, SortAxis, Unit,
@@ -79,7 +83,6 @@ pub use glass::{
     GLASS_BLUR, GLASS_FILL, bar_surface, blurring, frost, glass, popover_fill, popover_surface,
 };
 pub use glide::{Glide, ScrollPosition};
-pub use grain::grain;
 pub use info_card::{Fact, InfoCard};
 pub use inline_links::{InlineLink, InlineLinks};
 pub use input::{
@@ -106,6 +109,7 @@ pub use motion::{
 };
 pub use notice::Notice;
 pub use option_card::OptionCard;
+pub use otp::{OtpInput, OtpSlots};
 pub use palette::{CoverPalette, palette, tint};
 pub use panel::{Panel, Side};
 pub use picker::Picker;
@@ -149,3 +153,4 @@ pub use vacancy::Vacancy;
 pub use veil::{VeilEdge, effects, veil};
 pub use view::Mode;
 pub use visualizer::{Levels, Visualizer, VisualizerStyle};
+pub use waves::Waves;

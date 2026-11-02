@@ -152,6 +152,9 @@ pub fn artist(source: ytmusic::Artist) -> Artist {
     Artist {
         name: source.name,
         cover_large: cover_large(&source.thumbnails),
+        // YouTube's header picture is also the artist's portrait, so the page washes the portrait
+        // out behind the hero instead of showing the same picture twice.
+        banner: None,
         biography: source.description,
         monthly_listeners: None,
         top_tracks,

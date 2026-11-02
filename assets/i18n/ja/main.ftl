@@ -37,7 +37,6 @@ nav-pinned = ピン留め
 nav-unpin = ピン留めを解除
 nav-pin-hint = ここにドロップしてピン留め
 library-liked-songs = お気に入り
-library-play-liked-songs = 再生
 library-no-songs = お気に入りはまだありません
 library-no-albums = 保存したアルバムはまだありません
 library-no-playlists = プレイリストはまだありません
@@ -131,8 +130,11 @@ menu-play-last = 最後に再生
 menu-play-tracks-last = { $count ->
    *[other] { $count }曲を最後に再生
 }
-menu-song-radio = 曲のラジオを開く
-menu-go-to-album = アルバムを表示
+menu-go-to = 移動
+menu-artist = アーティスト
+menu-album = アルバム
+menu-radio = ラジオ
+menu-details = 詳細
 menu-go-to-artist = アーティストを表示
 menu-view-details = 詳細を表示
 menu-copy-link = リンクをコピー
@@ -141,7 +143,7 @@ menu-copy = コピー
 menu-paste = 貼り付け
 menu-select-all = すべて選択
 menu-remove-from-queue = 再生キューから削除
-menu-rename-playlist = プレイリストの名前を変更
+menu-edit-playlist = プレイリストを編集
 menu-delete-playlist = プレイリストを削除
 menu-export-playlist = プレイリストをエクスポート…
 menu-add-playlist-to-library = ライブラリに追加
@@ -161,7 +163,12 @@ menu-play-artist = アーティストを再生
 # playlist editor
 playlist-name-placeholder = プレイリスト名
 playlist-create-title = プレイリストを作成
-playlist-rename-title = プレイリストの名前を変更
+playlist-edit-title = プレイリストを編集
+playlist-cover-choose = 画像を選択
+playlist-cover-remove = カバーを削除
+playlist-cover-unopenable = このファイルを開けません
+playlist-cover-too-large = この画像は 40 MB を超えています
+playlist-cover-not-a-picture = このファイルは JPEG、PNG、WebP の画像ではありません
 playlist-delete-title = プレイリストを削除
 playlist-delete-confirm = 「{ $name }」を削除しますか？この操作は取り消せません。
 playlist-again-title = もう一度追加しますか？
@@ -212,10 +219,7 @@ player-previous = 前の曲
 player-next = 次の曲
 player-fullscreen = フルスクリーン
 player-fullscreen-leave = フルスクリーンを終了
-player-devices = デバイス
 devices-this-computer = このコンピューター
-devices-pause = 一時停止
-devices-resume = 再開
 devices-jam-join = Jam に参加…
 devices-jam-join-title = Jam に参加
 devices-jam-join-detail = フレンドから共有されたリンクを貼り付けてください
@@ -223,15 +227,12 @@ devices-jam-paste = 貼り付け
 devices-jam-link-hint = Jam のリンク
 devices-jam-start = Jam を開始
 devices-jam-copy = Jam のリンクをコピー
-devices-jam-code = QR コード
 devices-jam-code-menu = QR コードを表示
 devices-jam-code-title = スキャンして { $host } の Jam に参加
 devices-jam-code-title-anonymous = スキャンして Jam に参加
 devices-jam-code-close = 閉じる
 devices-jam-leave = Jam から退出
 devices-jam-end = Jam を終了
-devices-jam-banner = { $host } の Jam に参加中
-devices-jam-banner-anonymous = Jam に参加中
 devices-jam-more = +{ $count }
 devices-jam-host = ホスト
 devices-jam-you = あなた
@@ -242,8 +243,6 @@ devices-jam-invite-detail = { $count ->
    *[other] この Jam にはすでに{ $count }人が参加しています。
 }
 devices-jam-invite-join = 参加
-devices-elsewhere-banner = { $device } で再生中
-devices-elsewhere-here = ここで再生
 fullscreen-artwork = アートワーク
 
 # filters
@@ -324,8 +323,6 @@ login-choose-detail = { $provider } へのサインイン方法を選んでく�
 
 # album and playlist pages
 detail-playlist = プレイリスト
-detail-play-album = アルバムを再生
-detail-play-playlist = プレイリストを再生
 
 # play button
 play-pause = 一時停止
@@ -337,7 +334,6 @@ artist-eyebrow = アーティスト
 artist-monthly-listeners = { $count ->
    *[other] 月間リスナー { $value }人
 }
-artist-play = 今すぐ再生
 artist-popular = 人気の曲
 artist-popular-eyebrow = このアーティストを知る
 artist-popular-empty = このアーティストにはまだ再生できる曲がありません
@@ -380,6 +376,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = クイックピック
 home-quick-picks-empty = 何曲かお気に入りに追加するとここに表示されます
 home-recently-added = 最近追加した項目
+home-recently-played = 最近再生した項目
 home-playlists = プレイリスト
 home-favorite-albums = お気に入りのアルバム
 home-artists = アーティスト
@@ -388,6 +385,9 @@ home-collection-albums = コレクションのアルバム
 # search page
 search-placeholder = 何を聴きたいですか？
 search-browse = すべてのジャンル
+search-submit = 検索
+search-recent = 最近の検索
+search-forget = 履歴から削除
 genre-empty = ここにはまだ何もありません
 search-best-match = ベストマッチ
 search-no-matches = 一致する項目がありません
@@ -407,7 +407,6 @@ kind-playlist = プレイリスト
 
 # song page
 song-eyebrow = 曲
-song-play = 曲を再生
 song-view-album = アルバムを表示
 song-loading = 曲の情報を読み込んでいます…
 song-about = この曲について
@@ -1022,6 +1021,9 @@ saver-fps = { $fps } FPS
 
 toast-playlist-created = プレイリストを作成しました
 toast-playlist-renamed = プレイリストの名前を変更しました
+toast-playlist-updated = プレイリストを更新しました
+toast-playlist-cover-changed = プレイリストのカバーを変更しました
+toast-playlist-cover-removed = プレイリストのカバーを削除しました
 toast-playlist-deleted = プレイリストを削除しました
 toast-local-delete-failed = 一部の曲ファイルを削除できませんでした
 toast-playlist-added = プレイリストをライブラリに追加しました
@@ -1200,17 +1202,6 @@ toast-offline-mode = オフラインです。この曲をストリーミング�
 offline-title = オフラインです。
 offline-go-online = オンラインにする
 toast-download-failed = ダウンロードする曲の一覧を取得できませんでした。
-toast-downloading = { $name } をダウンロード中
-toast-downloading-songs = { $count ->
-   *[other] { $count }曲をダウンロード中
-}
-toast-downloaded = { $name } をダウンロードしました
-toast-downloaded-songs = { $count ->
-   *[other] { $count }曲をダウンロードしました
-}
-toast-download-set-failed = { $name } の一部の曲をダウンロードできませんでした
-toast-download-song-failed = { $name } をダウンロードできませんでした
-toast-download-songs-failed = 一部の曲をダウンロードできませんでした
 toast-percent = { $percent }%
 toast-download-cancelled = { $name } のダウンロードをキャンセルしました
 toast-downloads-cancelled = { $count ->

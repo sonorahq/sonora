@@ -156,6 +156,7 @@ impl YouTubeProvider {
             authenticated: true,
             capabilities: Capabilities {
                 playcounts: false,
+                playlist_covers: true,
                 qualities: playback::QUALITIES,
                 ..Capabilities::ALL
             },

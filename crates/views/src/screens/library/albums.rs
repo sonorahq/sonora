@@ -8,7 +8,7 @@ use i18n::t;
 use music::Album;
 use state::{Collection, Library, LibraryPart, Network, Origin, Playback, Shelf, Sonora};
 use ui::rank::{HANDY, NICE, SPARE, USEFUL};
-use ui::{Cell, ColumnSpec, Menu, Pin, TableSource, Width};
+use ui::{Cell, ColumnSpec, Menu, Pin, Sort, TableSource, Width};
 
 use crate::shared::cells::{self, DATE, NUMBER, TRAILING, YEAR};
 use crate::shared::menus::{ItemMenu, album_menu};
@@ -76,6 +76,7 @@ const ADDED_AT: ColumnSpec<AlbumField> = ColumnSpec {
     header: "column-date-added",
     width: Width::Fixed(DATE),
     rank: NICE,
+    first: Sort::Descending,
     ..COLUMN
 };
 

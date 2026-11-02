@@ -1,4 +1,5 @@
-//! Spotify's links: `spotify:` URIs, open.spotify.com pages and spotify.link short links.
+//! Spotify's links: `spotify:` and `spotify://` URIs, open.spotify.com pages and spotify.link short
+//! links.
 
 use crate::link::{self, Linked};
 use crate::spotify::connect::INVITE;
@@ -13,7 +14,11 @@ const REGION: &str = "intl-";
 pub(super) fn read(text: &str) -> Option<Linked> {
     let text = text.trim();
     if let Some(rest) = text.strip_prefix(SCHEME) {
-        return from_parts(rest.split(':'));
+        // `spotify://track/<id>` names the same thing as `spotify:track:<id>`
+        return match rest.strip_prefix('/') {
+            Some(path) => from_parts(path.split('/').filter(|part| !part.is_empty())),
+            None => from_parts(rest.split(':')),
+        };
     }
     let url = link::address(text).filter(|url| matches!(url.scheme(), "https" | "http"))?;
     match link::host(&url)? {

@@ -32,7 +32,7 @@ use crate::shared::album_grid::CardGrid;
 use crate::shared::cards;
 use crate::shared::confirm::Confirm;
 use crate::shared::hero::{
-    HeroMetaStrip, HeroPlayButton, PageHero, copyright_notices, release_date_label,
+    ACTION_GAP, HeroMetaStrip, HeroPlayButton, PageHero, copyright_notices, release_date_label,
 };
 use crate::shared::shelves::{Rail, RailSpec};
 use crate::shared::tracks::{
@@ -360,7 +360,7 @@ impl DetailView {
         page::restore(&self.settings.clone(), &self.table, &key, cx);
     }
 
-    fn header(&self, cx: &Context<Self>) -> AnyElement {
+    fn header(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
         let header = self.detail.read(cx).header();
@@ -384,12 +384,9 @@ impl DetailView {
         let track_count = header.map(|header| header.track_count).unwrap_or(0);
         let listed = self.detail.read(cx).tracks();
         let duration: std::time::Duration = listed.iter().map(|track| track.duration).sum();
-        let (eyebrow, label) = match kind {
-            Collection::Playlist => (t!("detail-playlist"), t!("detail-play-playlist")),
-            Collection::Album => (
-                i18n::lookup(cards::release_key(release), None),
-                t!("detail-play-album"),
-            ),
+        let eyebrow = match kind {
+            Collection::Playlist => t!("detail-playlist"),
+            Collection::Album => i18n::lookup(cards::release_key(release), None),
         };
 
         let mut strip = HeroMetaStrip::new();
@@ -426,30 +423,49 @@ impl DetailView {
             strip = strip.text(runtime(duration));
         }
 
-        let overflow = self.menu(cx).map(|menu| {
+        let play = HeroPlayButton::listed("play-detail", &self.table, self.playback.clone());
+        let shuffle =
+            HeroPlayButton::shuffle_listed("shuffle-detail", &self.table, self.playback.clone());
+        let menu = self.menu(cx);
+        // Buttons whose action the overflow menu also offers fold into it from the right when
+        // the row runs out of room, Download first and Shuffle last. Play and More always show.
+        let mut spare = match menu.is_some() {
+            true => {
+                let gap = ACTION_GAP.to_pixels(window.rem_size());
+                let step = Button::width(std::iter::empty::<SharedString>(), window) + gap;
+                let room = PageHero::room(self.width - theme.metrics.inset * 2., window, cx);
+                ((room - play.width(window) - step) / step).floor().max(0.) as usize
+            }
+            false => usize::MAX,
+        };
+        let mut fits = || match spare {
+            0 => false,
+            _ => {
+                spare -= 1;
+                true
+            }
+        };
+        let (shuffle, folded) = match fits() {
+            true => (Some(shuffle), None),
+            false => (None, Some(shuffle.shuffle_item(cx))),
+        };
+        let library = self.library_button(cx).filter(|_| fits());
+        let download = self.download_button(cx).filter(|_| fits());
+        let overflow = menu.map(|menu| {
             Picker::icon("detail-overflow", &self.popovers, "icons/ellipsis.svg")
                 .tooltip("common-more")
                 .large()
                 .left()
-                .menu(menu)
+                .menu(menu.lead(folded))
         });
         let actions = div()
             .flex()
             .items_center()
-            .gap_2()
-            .child(HeroPlayButton::listed(
-                "play-detail",
-                label,
-                &self.table,
-                self.playback.clone(),
-            ))
-            .child(HeroPlayButton::shuffle_listed(
-                "shuffle-detail",
-                &self.table,
-                self.playback.clone(),
-            ))
-            .children(self.library_button(cx))
-            .children(self.download_button(cx))
+            .gap(ACTION_GAP)
+            .child(play)
+            .children(shuffle)
+            .children(library)
+            .children(download)
             .children(overflow);
 
         let cover = header.and_then(|header| header.cover.clone());
@@ -827,7 +843,7 @@ impl Render for DetailView {
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
                     .pt(inset)
                     .pb(inset)
-                    .child(div().px(inset).child(self.header(cx)))
+                    .child(div().px(inset).child(self.header(window, cx)))
                     .child(table(&self.table))
                     .children(self.notices(cx))
                     .child(div().px(inset).pt_10().children(rails)),

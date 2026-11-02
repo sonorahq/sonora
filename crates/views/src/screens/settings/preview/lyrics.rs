@@ -64,8 +64,16 @@ pub(in crate::screens::settings) fn preview(
     window: &mut Window,
     cx: &mut Context<SettingsView>,
 ) -> Option<AnyElement> {
-    let theme = *cx.theme();
     let height = (Layout::of(window, cx).width * ASPECT).round();
+    let field = view.settings.read(cx).ambient().then(|| {
+        let cover = view.previews.playing_or_picked(cx).large_cover(cx);
+        view.previews.ambient(cover, cx)
+    });
+    // over the field the lines wear what fullscreen would, not the theme around them
+    let theme = match &field {
+        Some(field) => field.read(cx).theme(cx),
+        None => *cx.theme(),
+    };
 
     let settings = view.settings.read(cx);
     let look = Look {
@@ -76,11 +84,6 @@ pub(in crate::screens::settings) fn preview(
             .then(|| settings.romanization_scripts()),
     };
     let sizes = verse_sizes(false, settings.fullscreen_lyrics_scale(), &theme);
-    let field = settings.ambient().then(|| {
-        let cover = view.previews.playing_or_picked(cx).large_cover(cx);
-        view.previews.ambient(cover, cx)
-    });
-
     let sheet = div()
         .relative()
         .w_full()

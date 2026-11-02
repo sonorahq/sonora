@@ -1,5 +1,7 @@
+use std::path::{Path, PathBuf};
+
 use anyhow::{Context as _, Result};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension as _, params};
 use storage::Database;
 
 use crate::LOCAL_PLAYLIST_PREFIX;
@@ -8,6 +10,8 @@ pub struct Stored {
     pub id: String,
     pub name: String,
     pub modified_at: i64,
+    /// The picture the listener gave the playlist, if any.
+    pub cover: Option<PathBuf>,
 }
 
 /// Which local favorites table a star lands in.
@@ -111,7 +115,11 @@ impl Store {
     pub fn list(&self) -> Result<Vec<Stored>> {
         let connection = self.open()?;
         let mut query = connection
-            .prepare("SELECT id, name, modified_at FROM playlists ORDER BY modified_at DESC")
+            .prepare(
+                "SELECT id, name, modified_at, path FROM playlists
+                 LEFT JOIN playlist_covers ON playlist_id = id
+                 ORDER BY modified_at DESC",
+            )
             .context("cannot read local playlists")?;
         let rows = query
             .query_map([], |row| {
@@ -119,6 +127,7 @@ impl Store {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     modified_at: row.get(2)?,
+                    cover: row.get::<_, Option<String>>(3)?.map(PathBuf::from),
                 })
             })
             .context("cannot read local playlists")?;
@@ -130,13 +139,16 @@ impl Store {
     pub fn one(&self, id: &str) -> Result<Stored> {
         self.open()?
             .query_row(
-                "SELECT id, name, modified_at FROM playlists WHERE id = ?",
+                "SELECT id, name, modified_at, path FROM playlists
+                 LEFT JOIN playlist_covers ON playlist_id = id
+                 WHERE id = ?",
                 params![id],
                 |row| {
                     Ok(Stored {
                         id: row.get(0)?,
                         name: row.get(1)?,
                         modified_at: row.get(2)?,
+                        cover: row.get::<_, Option<String>>(3)?.map(PathBuf::from),
                     })
                 },
             )
@@ -176,6 +188,33 @@ impl Store {
             .execute("DELETE FROM playlists WHERE id = ?", params![id])
             .context("cannot delete a local playlist")?;
         Ok(())
+    }
+
+    /// Records `cover` as the playlist's own picture, or forgets it when `None`. Answers the
+    /// picture it replaces, so the caller can delete that file.
+    pub fn set_cover(&self, id: &str, cover: Option<&Path>) -> Result<Option<PathBuf>> {
+        let connection = self.open()?;
+        let previous = connection
+            .query_row(
+                "SELECT path FROM playlist_covers WHERE playlist_id = ?",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("cannot read a local playlist cover")?;
+        match cover {
+            Some(path) => connection.execute(
+                "INSERT OR REPLACE INTO playlist_covers (playlist_id, path) VALUES (?, ?)",
+                params![id, path.to_string_lossy()],
+            ),
+            None => connection.execute(
+                "DELETE FROM playlist_covers WHERE playlist_id = ?",
+                params![id],
+            ),
+        }
+        .context("cannot change a local playlist cover")?;
+        touch(&connection, id)?;
+        Ok(previous.map(PathBuf::from))
     }
 
     pub fn add(&self, id: &str, track_id: &str) -> Result<()> {

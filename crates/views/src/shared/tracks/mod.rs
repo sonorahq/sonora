@@ -26,7 +26,7 @@ use ui::{
 
 use crate::shared::cells;
 use crate::shared::confirm::{Confirm, Kind};
-use crate::shared::pins::Pinned as _;
+use crate::shared::pins::{Pinned as _, origin_tag};
 
 pub(crate) use columns::{
     HISTORY_COLUMNS, LIBRARY_COLUMNS, TrackField, album_columns, artist_columns, playlist_columns,
@@ -265,6 +265,16 @@ impl TrackSource {
 
     pub(crate) fn whence(&self, cx: &App) -> Option<Origin> {
         self.whence.as_ref().and_then(|whence| whence(cx))
+    }
+
+    /// The origin tag a song dragged from this table carries, for a move. A song its playlist
+    /// holds more than once stays a copy, since the provider would take out every copy and the
+    /// Undo would bring back one.
+    fn origin_tag(&self, track: &Track, tracks: &[Track], cx: &App) -> Option<String> {
+        let origin = self.whence(cx)?;
+        let once = origin.whence != state::Whence::Playlist
+            || tracks.iter().filter(|other| other.id == track.id).count() == 1;
+        once.then(|| origin_tag(&origin)).flatten()
     }
 
     pub(crate) fn table(mut self, table: WeakEntity<TableState<TrackSource>>) -> Self {
@@ -694,7 +704,9 @@ impl TableSource for TrackSource {
     }
 
     fn pin(&self, row: usize, cx: &App) -> Option<Pin> {
-        self.provider.tracks(cx).get(row)?.pin()
+        let tracks = self.provider.tracks(cx);
+        let track = tracks.get(row)?;
+        Some(track.pin()?.origin(self.origin_tag(track, tracks, cx)))
     }
 
     fn cell(&self, cell: Cell<TrackField>, cx: &mut App) -> AnyElement {
@@ -809,12 +821,15 @@ fn download_mark(cell: &Cell<TrackField>, track: &Track, cx: &App) -> Option<Any
         Progress::Waiting => return None,
         Progress::Failed => (ring(Some(0.)).arrow(theme.danger), false),
     };
-    let ring = div().flex_none().child(ring);
-    // Only a landed download keeps a name, since no catalogued string says what a
-    // running or failed one is doing here.
+    // The id stays the same in every state, since the ring keeps its animation under it and a
+    // new id on landing would skip the fade. Only a landed download keeps a name, since no
+    // catalogued string says what a running or failed one is doing here.
+    let ring = div()
+        .id(("downloaded-mark", cell.row))
+        .flex_none()
+        .child(ring);
     Some(match landed {
         true => ring
-            .id(("downloaded-mark", cell.row))
             .role(Role::Image)
             .aria_label(t!("filter-downloaded"))
             .into_any_element(),

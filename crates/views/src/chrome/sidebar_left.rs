@@ -13,14 +13,18 @@ use gpui::{
     Pixels, Point, Render, ScrollHandle, SharedString, svg,
 };
 use gpui::{Window, div, px};
+use music::Shape;
 use router::{
     Destination, LibraryTab, NavEntry, Navigation, NavigationEvent, SettingsPage, navigate,
     open_settings,
 };
-use state::{AppSettings, Library, Origin, PinSort, Pins, Playback, Session, Shelf, Sonora};
+use state::{
+    AppSettings, Leaving, Library, Origin, PinSort, Pins, Playback, Session, Shelf, Sonora,
+};
 
 use crate::shared::menus::{ItemMenu, item_menu};
 use crate::shared::nav::nav_row;
+use crate::shared::pins::leaving;
 use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 
 /// The one drag list the pinned section keeps, so a pin dropped anywhere in it lands in order.
@@ -652,17 +656,46 @@ impl SidebarLeft {
     }
 
     /// Adds a dropped song to a playlist, and asks first when the playlist holds the song already.
+    /// Shift held on the drop moves the song instead.
     fn add_into(&self, target: &Pin, song: &Pin, window: &mut Window, cx: &mut Context<Self>) {
         let library = self.library.read(cx);
         let Some(playlist) = library.playlist(&target.id).cloned() else {
             return;
         };
         let track = song.id.clone();
+        let leaving = window
+            .modifiers()
+            .shift
+            .then(|| self.leaves(song, &playlist.id, cx))
+            .flatten();
         match library.holds(&playlist.id, &track) == Some(true) {
-            true => PlaylistEditor::open(Edit::Again { playlist, track }, window, cx),
-            false => self.library.update(cx, |library, cx| {
-                library.add_to_playlist(playlist.id, track, cx)
+            true => PlaylistEditor::open(
+                Edit::Again {
+                    playlist,
+                    track,
+                    leaving,
+                },
+                window,
+                cx,
+            ),
+            false => self.library.update(cx, |library, cx| match leaving {
+                Some(leaving) => library.move_to_playlist(playlist.id, track, leaving, cx),
+                None => library.add_to_playlist(playlist.id, track, cx),
             }),
+        }
+    }
+
+    /// What a moved song leaves. The favorites count only on a `Shape::Saved` shelf, since a
+    /// catalog page lists every song.
+    fn leaves(&self, song: &Pin, target: &str, cx: &App) -> Option<Leaving> {
+        let library = self.library.read(cx);
+        match leaving(song.origin.as_deref()?) {
+            Leaving::Liked => {
+                (library.shape(Shelf::Streaming) == Shape::Saved).then_some(Leaving::Liked)
+            }
+            Leaving::Playlist(id) => {
+                (id != target && library.is_editable(&id)).then_some(Leaving::Playlist(id))
+            }
         }
     }
 
@@ -724,7 +757,7 @@ impl Render for SidebarLeft {
                 match this.drop_into.take() {
                     Some(playlist) => this.add_into(&playlist, &dragged.pin, window, cx),
                     None => {
-                        let pin = dragged.pin.clone();
+                        let pin = dragged.pin.clone().origin(None);
                         this.pins.update(cx, |pins, cx| pins.place(pin, gap, cx));
                     }
                 }
