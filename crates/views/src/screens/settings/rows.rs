@@ -41,7 +41,8 @@ impl Row {
         self
     }
 
-    /// Adds a muted explanation below the label, wrapping within the space beside the control.
+    /// Adds a muted explanation below the label. It wraps well short of the control, so a long
+    /// one never runs up against a switch or picker.
     pub(crate) fn detail(mut self, detail: SharedString) -> Self {
         self.detail = Some(detail);
         self
@@ -93,6 +94,7 @@ impl RenderOnce for Row {
                             .id(SharedString::from(format!("settings-row-detail-{title}")))
                             .role(Role::Paragraph)
                             .aria_label(detail.clone())
+                            .pr_8()
                             .text_size(theme.text(ui::Text::Small))
                             .text_color(theme.muted_foreground)
                             .child(detail)

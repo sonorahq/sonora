@@ -109,6 +109,7 @@ enum Slot {
     OutputFailure,
     SampleRate,
     Buffer,
+    MatchRate,
     Equalizer,
     SpotifyConnect,
     SpotifyConnectName,
@@ -844,6 +845,7 @@ impl SettingsView {
                 t!("settings-sample-rate-detail"),
             ),
             Slot::Buffer => (t!("settings-buffer"), t!("settings-buffer-detail")),
+            Slot::MatchRate => (t!("settings-match-rate"), t!("settings-match-rate-detail")),
             Slot::Equalizer => (
                 t!("settings-equalizer"),
                 format!(
@@ -999,6 +1001,7 @@ impl SettingsView {
             Slot::OutputFailure => self.output_failure_row(cx),
             Slot::SampleRate => self.sample_rate_row(cx),
             Slot::Buffer => self.buffer_row(cx),
+            Slot::MatchRate => self.match_rate_row(cx),
             Slot::Widevine => self.widevine_row(cx),
             Slot::Equalizer => self.equalizer_row(cx),
             Slot::LyricsSources => self.lyrics_sources_row(cx),

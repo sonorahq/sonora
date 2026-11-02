@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Drag the playing song from the player bar onto a playlist, Pinned or the queue.
+- Play directly to hardware on macOS. Every output device is listed a second time under Direct
+  to hardware, and picking one there keeps every other app off it.
+- Turn on Match sample rate in the sound settings to have a Direct to hardware device follow
+  each track's own sample rate on Linux and macOS.
+
 ### Changed
 
 - The fullscreen background now folds the cover's colours into one another in slow soft waves instead of drifting blurred spots, and shows a strong second colour from the art.
@@ -16,13 +24,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Hover a page title cut short by the window to read it in full.
 - In fullscreen, the volume slider rises in and shows the level for as long as you point at it.
 - Lyrics still to be sung and the artist name in fullscreen take on the colour behind them instead of a flat grey.
-- The highlight on a hovered lyric line ends where its words end.
+- The highlight on a hovered lyric line or instrumental break ends where its words or notes end.
 - The title and artist in fullscreen carry a lighter shadow.
 
 ### Fixed
 
-- Text pasted on several lines, into a field or the Jam link, shows on one line instead of
-  leaving the field blank.
+- Local libraries no longer list macOS AppleDouble metadata files as songs.
+- Text pasted on several lines, into a field or the Jam link, shows on one line instead of leaving the field blank.
 - On Windows, playback no longer crackles while you open apps or browser tabs.
 - Sonora no longer downloads every genre page at launch to find their pictures, so it uses far less memory with YouTube Music.
 - Sonora starts faster again, since genres load when you first open Search instead of at launch.
@@ -30,6 +38,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The lyrics scrollbar stays hidden while the lyrics scroll along with the song.
 - The mute button in fullscreen no longer covers the volume slider with a tooltip.
 - The visualizer falls all the way to the bottom when you pause or the music goes quiet, instead of holding its last levels.
+- The highlighted row in search suggestions follows the panel's rounded corners instead of bulging into them.
 
 ## [0.47.0] - 2026-11-02
 
