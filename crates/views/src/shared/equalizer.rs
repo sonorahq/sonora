@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gpui::prelude::*;
 use gpui::{App, Entity, SharedString};
 use i18n::t;
-use music::equalizer::{Curve, Preset};
+use music::equalizer::{Curve, Preset, TONE_RANGE, Tone};
 use state::{AppSettings, Equalizer, Sound};
 use ui::{
     ActiveTheme as _, MenuItem, Picker, Popovers, ResponseAxes, ResponsePoint, ResponseSketch,
@@ -21,6 +21,44 @@ const SKETCH_SPAN: f32 = 8.;
 const SKETCH_POINTS: usize = 15;
 /// The rate a sketch is drawn for, whatever the output plays at.
 const SKETCH_RATE: u32 = 48_000;
+/// The step the bass and treble move in, and how near 0 dB a drag snaps to it.
+const TONE_STEP: f64 = 0.5;
+const TONE_REST: f64 = 0.75;
+
+/// One of the two shelves of the tone.
+#[derive(Clone, Copy)]
+pub(crate) enum Shelf {
+    Bass,
+    Treble,
+}
+
+impl Shelf {
+    pub(crate) fn gain(self, tone: Tone) -> f64 {
+        match self {
+            Self::Bass => tone.bass(),
+            Self::Treble => tone.treble(),
+        }
+    }
+
+    /// `tone` with this shelf at `gain` and the other as it was.
+    pub(crate) fn with(self, tone: Tone, gain: f64) -> Tone {
+        match self {
+            Self::Bass => Tone::new(gain, tone.treble()),
+            Self::Treble => Tone::new(tone.bass(), gain),
+        }
+    }
+}
+
+/// The gain a bass or treble slider at `fraction` of its travel stands for, in `TONE_STEP`s,
+/// resting at 0 dB when it comes within `TONE_REST` of it.
+pub(crate) fn tone_gain(fraction: f32) -> f64 {
+    let (low, high) = (*TONE_RANGE.start(), *TONE_RANGE.end());
+    let gain = low + f64::from(fraction) * (high - low);
+    match gain.abs() < TONE_REST {
+        true => 0.,
+        false => (gain / TONE_STEP).round() * TONE_STEP,
+    }
+}
 
 /// One picker for every sound the equalizer can play: the built-in presets, the curve someone
 /// shaped from one, and the named profiles. Choosing any of them turns the equalizer on.

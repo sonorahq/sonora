@@ -67,6 +67,7 @@ pub struct Popover {
     menu: Option<Menu>,
     selected: bool,
     commands: bool,
+    above: bool,
     on_open: Option<Open>,
 }
 
@@ -82,6 +83,7 @@ impl Popover {
             menu: None,
             selected: false,
             commands: false,
+            above: false,
             on_open: None,
         }
     }
@@ -119,6 +121,13 @@ impl Popover {
         self
     }
 
+    /// Opens the menu above its trigger rather than under it, for one along the bottom of the
+    /// window.
+    pub fn above(mut self) -> Self {
+        self.above = true;
+        self
+    }
+
     /// Runs `handler` when a click on the trigger opens the popover, not when it closes it, as
     /// for reading afresh what the menu lists.
     pub fn on_open(
@@ -148,6 +157,7 @@ impl RenderOnce for Popover {
             menu,
             selected,
             commands,
+            above,
             on_open,
         } = self;
         let overrides = std::mem::take(base.style());
@@ -192,6 +202,10 @@ impl RenderOnce for Popover {
         let body = menu.filter(|_| open).map(|menu| {
             let outside = group.clone();
             let chosen = group.clone();
+            let menu = match above {
+                true => menu.above(),
+                false => menu,
+            };
 
             menu.trigger(trigger)
                 .on_dismiss(move |_, _, cx| {

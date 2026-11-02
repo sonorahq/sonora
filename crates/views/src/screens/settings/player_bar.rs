@@ -15,6 +15,11 @@ impl SettingsView {
                 .cards(Slot::PlayerBarLayout),
             Group::new("settings-player-bar-surface", "icons/blend.svg")
                 .rows([Slot::PlayerBarTransparent]),
+            Group::new(
+                "settings-player-bar-controls",
+                "icons/sliders-horizontal.svg",
+            )
+            .rows([Slot::PlayerBarEqualizerButton]),
         ]
     }
 
@@ -48,6 +53,22 @@ impl SettingsView {
                     }),
             )
             .into_any_element()
+    }
+
+    /// Whether the player bar shows its shortcut to the equalizer.
+    pub(super) fn player_bar_equalizer_button_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).equalizer_button();
+        self.row(
+            t!("settings-player-bar-equalizer-button"),
+            Switch::new("player-bar-equalizer-button", on)
+                .name(t!("settings-player-bar-equalizer-button"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_equalizer_button(!on, cx);
+                    });
+                }))
+                .into_any_element(),
+        )
     }
 
     /// Explains that transparency also moves the page behind the player bar. The switch stands

@@ -645,8 +645,7 @@ impl Menu {
     }
 
     /// Grows the panel upward from where the menu is placed instead of downward, for one opened
-    /// at a point along the bottom of the window. Only a menu with no trigger takes it, since a
-    /// trigger already says which side to open on.
+    /// along the bottom of the window. A menu with a trigger opens above the trigger.
     pub(crate) fn above(mut self) -> Self {
         self.above = true;
         self
@@ -1149,7 +1148,7 @@ impl RenderOnce for Menu {
         let width = overrides.size.width.take();
         let ceiling = overrides.max_size.height.take();
         let right = overrides.inset.left.is_none() && overrides.inset.right.is_some();
-        let corner = match (right, above && trigger.is_none()) {
+        let corner = match (right, above) {
             (true, false) => Anchor::TopRight,
             (false, false) => Anchor::TopLeft,
             (true, true) => Anchor::BottomRight,
@@ -1164,7 +1163,10 @@ impl RenderOnce for Menu {
                     false => bounds.left(),
                 };
                 let position = point(x, bounds.top() - TRIGGER_GAP);
-                let offset = point(Pixels::ZERO, bounds.size.height + TRIGGER_GAP + TRIGGER_GAP);
+                let offset = match above {
+                    true => point(Pixels::ZERO, Pixels::ZERO),
+                    false => point(Pixels::ZERO, bounds.size.height + TRIGGER_GAP + TRIGGER_GAP),
+                };
                 (position, offset)
             });
         let frosting = blurring(cx);

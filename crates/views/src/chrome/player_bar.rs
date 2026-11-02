@@ -12,14 +12,17 @@ use gpui::{
 use gpui::{Window, div, px};
 use i18n::t;
 use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
-use state::{AppSettings, Playback, PlayerBarLayout, Queue, SideTab, Sonora};
+use music::equalizer::{Preset, TONE_RANGE};
+use state::{AppSettings, Equalizer, Playback, PlayerBarLayout, Queue, SideTab, Sonora, Sound};
 use ui::{
-    Artwork, Button, ExplicitBadge, InlineLink, InlineLinks, Pinnable, Popup, Room, Scrollbar,
-    Scrubber, ScrubberState, clock, tabular,
+    Artwork, Button, ExplicitBadge, InlineLink, InlineLinks, Menu, MenuItem, Pinnable, Popover,
+    Popovers, Popup, Room, Scrollbar, Scrubber, ScrubberState, SubmenuState, Switch, clock,
+    tabular,
 };
 
 use crate::chrome::sessions_button::SessionsButton;
 use crate::chrome::{Chrome, SidebarRight};
+use crate::shared::equalizer::{Shelf, sketch, sound_items, sound_name, tone_gain};
 use crate::shared::menus::ItemMenu;
 use crate::shared::pins::Pinned as _;
 use crate::shared::transport::{NOTCH, fraction, like, moved, percent, transport, volume_icon};
@@ -29,15 +32,29 @@ const VOLUME_WIDTH: f32 = 110.;
 const VOLUME_TIGHT: f32 = 72.;
 const CLOCK_SHORT: f32 = 3.4;
 const CLOCK_LONG: f32 = 5.4;
+/// How wide the equalizer flyout and its sounds menu are, in cover sizes.
+const EQUALIZER_PANEL: f32 = 2.8;
+const EQUALIZER_SOUNDS: f32 = 2.4;
+/// How wide the gain beside a tone slider is, in cover sizes.
+const EQUALIZER_GAIN: f32 = 0.7;
+/// The key of the player bar's equalizer flyout.
+const EQUALIZER: &str = "player-equalizer";
 
 pub(crate) struct PlayerBar {
     playback: Entity<Playback>,
     settings: Entity<AppSettings>,
+    equalizer: Entity<Equalizer>,
     track_menu: ItemMenu,
     sessions: Entity<SessionsButton>,
     context_menu: Option<(music::Track, Point<Pixels>)>,
+    /// Whether the equalizer flyout is open, shared with the popover that draws it.
+    equalizer_popovers: Popovers,
+    /// The sounds submenu of the flyout, kept between frames so it stays open under the pointer.
+    equalizer_sounds: SubmenuState,
     seek: ScrubberState,
     volume: ScrubberState,
+    bass: ScrubberState,
+    treble: ScrubberState,
     pending: Option<f32>,
     over_seek: Option<f32>,
     over_volume: Option<f32>,
@@ -50,11 +67,13 @@ impl PlayerBar {
         let library = Sonora::global(cx).library.clone();
         let settings = Sonora::global(cx).settings.clone();
         let devices = Sonora::global(cx).devices.clone();
+        let equalizer = Sonora::global(cx).equalizer.clone();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         cx.observe(&devices, |_, _, cx| cx.notify()).detach();
         cx.observe(&queue, |_, _, cx| cx.notify()).detach();
         cx.observe(&library, |_, _, cx| cx.notify()).detach();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+        cx.observe(&equalizer, |_, _, cx| cx.notify()).detach();
 
         let me = cx.entity_id();
         let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(me));
@@ -63,11 +82,16 @@ impl PlayerBar {
         Self {
             playback,
             settings,
+            equalizer,
             track_menu: ItemMenu::new(playlist_scrollbar, cx),
             sessions,
             context_menu: None,
+            equalizer_popovers: Popovers::default(),
+            equalizer_sounds: SubmenuState::default(),
             seek: ScrubberState::new("seek"),
             volume: ScrubberState::new("volume"),
+            bass: ScrubberState::new("player-equalizer-bass"),
+            treble: ScrubberState::new("player-equalizer-treble"),
             pending: None,
             over_seek: None,
             over_volume: None,
@@ -260,6 +284,196 @@ impl PlayerBar {
             .icon("icons/maximize.svg")
             .tooltip_above("player-fullscreen")
             .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleFullscreen), cx))
+    }
+
+    /// The equalizer's shortcut, with the flyout above it while it is open: its switch, its
+    /// sound, the bass and treble sliders and a way into the whole page.
+    fn equalizer_popover(&self, window: &mut Window, cx: &mut Context<Self>) -> Popover {
+        let theme = cx.theme();
+        let showing = self.equalizer_popovers.shows(EQUALIZER);
+        let button = Button::new("player-equalizer")
+            .ghost()
+            .small()
+            .icon("icons/sliders-horizontal.svg")
+            .tooltip_above("settings-equalizer")
+            .selected(showing)
+            .tint(match showing {
+                true => theme.foreground,
+                false => theme.muted_foreground,
+            });
+        let popover = Popover::new(EQUALIZER, self.equalizer_popovers.clone())
+            .button(button)
+            .commands()
+            .above();
+
+        match showing {
+            true => popover.menu(self.equalizer_content(window, cx)),
+            false => popover,
+        }
+    }
+
+    fn equalizer_content(&self, window: &mut Window, cx: &mut Context<Self>) -> Menu {
+        let theme = *cx.theme();
+        let (on, curve) = {
+            let equalizer = self.equalizer.read(cx);
+            (equalizer.enabled(), equalizer.curve().clone())
+        };
+        let sound = sound_name(self.settings.read(cx));
+        let sounds = self.sounds_menu(theme, window, cx);
+        let tone = self.tone_menu_item(cx);
+
+        Menu::new("player-equalizer-menu")
+            .w(theme.metrics.cover * EQUALIZER_PANEL)
+            .right_0()
+            .name(t!("settings-equalizer"))
+            .header(self.equalizer_header(on, cx))
+            .item(
+                MenuItem::new("player-equalizer-sound", t!("equalizer-sound"))
+                    .leading(sketch(&curve))
+                    .detail(
+                        div()
+                            .text_size(theme.text(ui::Text::Small))
+                            .text_color(theme.muted_foreground)
+                            .child(sound),
+                    )
+                    .submenu(sounds, self.equalizer_sounds.clone()),
+            )
+            .item(tone)
+            .item(
+                MenuItem::new("player-equalizer-open", t!("player-equalizer-open"))
+                    .icon("icons/sliders-horizontal.svg")
+                    .on_click(|_, _, cx| navigate(Destination::Equalizer, cx)),
+            )
+    }
+
+    fn equalizer_header(&self, on: bool, cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
+
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .px_2()
+            .pt_1()
+            .child(
+                div()
+                    .text_size(theme.text(ui::Text::Body))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child(t!("settings-equalizer")),
+            )
+            .child(
+                Switch::new("player-equalizer-enabled", on)
+                    .name(t!("settings-equalizer"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.equalizer
+                            .update(cx, |equalizer, cx| equalizer.set_enabled(!on, cx));
+                    })),
+            )
+            .into_any_element()
+    }
+
+    fn sounds_menu(&self, theme: ui::Theme, window: &mut Window, cx: &mut Context<Self>) -> Menu {
+        let equalizer = self.equalizer.clone();
+        let items = {
+            let settings = self.settings.read(cx);
+            let playing = settings.equalizer_profile();
+            let scratch = settings.equalizer_scratch();
+            let shaped = scratch
+                .and_then(|index| settings.equalizer_profile_curve(index))
+                .map(|curve| Preset::matching(&curve));
+            let on_scratch = scratch == Some(playing);
+            sound_items(
+                settings,
+                |sound| match sound {
+                    Sound::Preset(preset) => on_scratch && shaped == Some(Some(*preset)),
+                    Sound::Profile(name) => {
+                        !on_scratch && settings.equalizer_profile_name() == name
+                    }
+                },
+                move |sound, cx| {
+                    equalizer.update(cx, |equalizer, cx| equalizer.play_sound(sound, cx));
+                },
+            )
+        };
+        let view = window.current_view();
+        let scrollbar = window.use_keyed_state(
+            SharedString::from("player-equalizer-sounds-scroll"),
+            cx,
+            |_, _| Scrollbar::inset().watching(view),
+        );
+
+        Menu::new("player-equalizer-sounds")
+            .w(theme.metrics.cover * EQUALIZER_SOUNDS)
+            .max_h(theme.metrics.cover * crate::shared::equalizer::SOUND_MENU_HEIGHT)
+            .scrollbar(scrollbar)
+            .items(items)
+    }
+
+    fn tone_menu_item(&self, cx: &mut Context<Self>) -> MenuItem {
+        MenuItem::new("player-equalizer-tone", "").content(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .py_1()
+                .child(self.tone_slider(Shelf::Bass, cx))
+                .child(self.tone_slider(Shelf::Treble, cx)),
+        )
+    }
+
+    fn tone_slider(&self, shelf: Shelf, cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
+        let gain = shelf.gain(self.equalizer.read(cx).tone());
+        let (low, high) = (*TONE_RANGE.start(), *TONE_RANGE.end());
+        let (key, state, id) = match shelf {
+            Shelf::Bass => ("equalizer-bass", &self.bass, "player-equalizer-bass-slider"),
+            Shelf::Treble => (
+                "equalizer-treble",
+                &self.treble,
+                "player-equalizer-treble-slider",
+            ),
+        };
+        let title = i18n::lookup(key, None);
+        let value = signed_gain(gain);
+
+        div()
+            .id(id)
+            .role(Role::Group)
+            .aria_label(title.clone())
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(
+                div()
+                    .flex_none()
+                    .w(theme.metrics.cover * EQUALIZER_GAIN)
+                    .text_size(theme.text(ui::Text::Small))
+                    .text_color(theme.muted_foreground)
+                    .child(title.clone()),
+            )
+            .child(
+                div().flex_1().min_w_0().child(
+                    Scrubber::new(state, ((gain - low) / (high - low)) as f32)
+                        .name(title)
+                        .value(t!("equalizer-decibels-value", db = value.clone()))
+                        .colors(theme.muted, theme.muted, theme.foreground)
+                        .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
+                            let gain = tone_gain(*fraction);
+                            let tone = shelf.with(this.equalizer.read(cx).tone(), gain);
+                            this.equalizer
+                                .update(cx, |equalizer, cx| equalizer.glide_tone(tone, cx));
+                        })),
+                ),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .w(theme.metrics.cover * EQUALIZER_GAIN)
+                    .text_size(theme.text(ui::Text::Small))
+                    .child(t!("equalizer-decibels-value", db = value)),
+            )
+            .into_any_element()
     }
 
     fn now_playing(
@@ -500,13 +714,15 @@ impl Render for PlayerBar {
         let picker = self.settings.read(cx).sessions_button()
             && (Sonora::global(cx).devices.read(cx).available()
                 || Sonora::global(cx).listening.read(cx).available(cx));
+        let shortcut = self.settings.read(cx).equalizer_button();
         let buttons = div()
             .flex()
             .flex_none()
             .items_center()
             .gap_1()
             .when(picker, |this| this.child(self.sessions.clone()))
-            .children(sides);
+            .children(sides)
+            .children(shortcut.then(|| self.equalizer_popover(window, cx)));
 
         let playback = self.playback.read(cx);
         let seekable = playback.shown_track(cx).is_some();
@@ -708,5 +924,19 @@ impl Render for PlayerBar {
         content
             .relative()
             .when_some(context_menu, |this, menu| this.child(menu))
+    }
+}
+
+/// A bass or treble gain as the slider shows it: one decimal, no trailing zero, and a plus for
+/// a boost.
+fn signed_gain(gain: f64) -> String {
+    let text = format!("{gain:.1}");
+    let text = match text.trim_end_matches(".0") {
+        "-0" => "0",
+        text => text,
+    };
+    match gain > 0. {
+        true => format!("+{text}"),
+        false => text.to_owned(),
     }
 }

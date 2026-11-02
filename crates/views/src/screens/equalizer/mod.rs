@@ -20,7 +20,7 @@ use crate::chrome::Chrome;
 use crate::screens::settings::{self, Row};
 use crate::shared::confirm::{self, Confirm};
 use crate::shared::device_menu::DeviceMenu;
-use crate::shared::equalizer::{preset_key, sound_picker};
+use crate::shared::equalizer::{Shelf, preset_key, sound_picker, tone_gain};
 
 use graph::{EqualizerGraph, EqualizerSpectrum};
 use meter::OutputMeter;
@@ -47,9 +47,6 @@ const FILTERS_ICON: &str = "icons/funnel.svg";
 /// How wide the bass and treble sliders are, and the gain beside each, in cover sizes.
 const TONE_SLIDER: f32 = 1.6;
 const TONE_VALUE: f32 = 0.6;
-/// The step the bass and treble move in, and how near 0 dB a drag snaps to it.
-const TONE_STEP: f64 = 0.5;
-const TONE_REST: f64 = 0.75;
 
 /// The equalizer's own screen. Simple mode shows the sound picker, undo, the response graph
 /// and the bass and treble sliders, and advanced mode trades the sliders for the preamp and a
@@ -120,30 +117,6 @@ struct Drawn {
     port: Option<Port>,
     /// What the device rules' menu offers.
     devices: Vec<DeviceOption>,
-}
-
-/// One of the two shelves of the tone.
-#[derive(Clone, Copy)]
-enum Shelf {
-    Bass,
-    Treble,
-}
-
-impl Shelf {
-    fn gain(self, tone: Tone) -> f64 {
-        match self {
-            Self::Bass => tone.bass(),
-            Self::Treble => tone.treble(),
-        }
-    }
-
-    /// `tone` with this shelf at `gain` and the other as it was.
-    fn with(self, tone: Tone, gain: f64) -> Tone {
-        match self {
-            Self::Bass => Tone::new(gain, tone.treble()),
-            Self::Treble => Tone::new(tone.bass(), gain),
-        }
-    }
 }
 
 /// The parts of the page that are views of their own.
@@ -914,15 +887,4 @@ fn card(
     Lazy::new(id, move |window, cx| {
         view.update(cx, |this, cx| build(this, window, cx))
     })
-}
-
-/// The gain a bass or treble slider at `fraction` of its travel stands for, in `TONE_STEP`s,
-/// resting at 0 dB when it comes within `TONE_REST` of it.
-fn tone_gain(fraction: f32) -> f64 {
-    let (low, high) = (*TONE_RANGE.start(), *TONE_RANGE.end());
-    let gain = low + f64::from(fraction) * (high - low);
-    match gain.abs() < TONE_REST {
-        true => 0.,
-        false => (gain / TONE_STEP).round() * TONE_STEP,
-    }
 }
