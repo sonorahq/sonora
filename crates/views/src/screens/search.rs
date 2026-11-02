@@ -439,7 +439,8 @@ impl SearchView {
             .into_any_element()
     }
 
-    /// The panel's heading and rows, with placeholder rows while the first suggestions load.
+    /// The panel's rows, with placeholder rows while the first suggestions load. The heading only
+    /// names the list for screen readers.
     fn panel_rows(&self, cx: &Context<Self>) -> AnyElement {
         let offers = self.offers(cx);
         let me = cx.entity().downgrade();
@@ -455,7 +456,7 @@ impl SearchView {
         div()
             .id("search-offers")
             .role(Role::ListBox)
-            .aria_label(heading.clone())
+            .aria_label(heading)
             .flex()
             .flex_col()
             .gap_px()
@@ -465,7 +466,6 @@ impl SearchView {
                 remember(&this.typed, cx);
                 this.close_panel(cx);
             }))
-            .child(eyebrow(heading, cx).px_2().pt_1().pb_1())
             .children(waiting.into_iter().flatten())
             .children(
                 offers
