@@ -1410,10 +1410,19 @@ impl Aside {
                             false => group.into_any_element(),
                         }
                     });
+                    // The hover tint sits on the content rather than the row, so it ends where
+                    // the words do instead of running the width of the sheet.
                     let content = div()
                         .flex()
                         .flex_col()
                         .gap_1()
+                        .min_w_0()
+                        .px_2()
+                        .py_1()
+                        .rounded(theme.radius)
+                        .when(warmth > 0., |this| {
+                            this.bg(theme.table_hover.opacity(warmth))
+                        })
                         .when(hugs_end(line.voice, sung.mirrored), |this| {
                             this.items_end().text_right()
                         })
@@ -1457,14 +1466,12 @@ impl Aside {
                         .aria_size_of_set(lines.len())
                         .w_full()
                         .max_w(reach)
-                        .px_2()
-                        .py_1()
-                        .when(traded, |this| this.mt_2())
-                        .rounded(theme.radius)
-                        .cursor_pointer()
-                        .when(warmth > 0., |this| {
-                            this.bg(theme.table_hover.opacity(warmth))
+                        .flex()
+                        .when(hugs_end(line.voice, sung.mirrored), |this| {
+                            this.justify_end()
                         })
+                        .when(traded, |this| this.mt_2())
+                        .cursor_pointer()
                         .on_mouse_down(
                             gpui::MouseButton::Left,
                             cx.listener(move |this, _, _, cx| {
