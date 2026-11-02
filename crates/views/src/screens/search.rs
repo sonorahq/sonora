@@ -413,6 +413,7 @@ impl SearchView {
         let forget = me.clone();
 
         Card::new(("search-past", at), query.clone())
+            .tucked()
             .fallback("icons/rotate-ccw-clock.svg")
             .action(
                 Button::new(("search-forget", at))
@@ -449,7 +450,11 @@ impl SearchView {
         };
         let waiting = offers.is_empty().then(|| {
             (0..SUGGESTED_WAITING)
-                .map(|at| Card::skeleton(("search-offer-waiting", at)).into_any_element())
+                .map(|at| {
+                    Card::skeleton(("search-offer-waiting", at))
+                        .tucked()
+                        .into_any_element()
+                })
         });
 
         div()
@@ -882,6 +887,7 @@ impl SearchView {
         .when_some(hit.pin(), Pinnable::pin)
         .when_some(HitMenu::of(hit), |card, target| card.menu(menu(target, me)))
         .chosen(chosen)
+        .when(compact, Card::tucked)
         // The keyboard cursor stays on the container, so the chosen card claims
         // the active descendant while every card reports its seat in the list.
         .aria_position_in_set(index + 1)
