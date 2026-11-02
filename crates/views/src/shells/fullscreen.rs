@@ -1012,6 +1012,7 @@ impl FullscreenView {
         let empty = theme.muted_foreground.opacity(0.3);
         let restore = self.muted.unwrap_or(0.7);
         let span = theme.metrics.control_small + zone * 2.;
+        let reach = Scrubber::bubble_reach(cx);
         // The level shows for as long as the pointer is anywhere over the control, not only on
         // the track, and goes with it.
         let bubble = self.volume_open().then(|| (level, percent(level)));
@@ -1141,7 +1142,16 @@ impl FullscreenView {
                                             .fading("fullscreen-volume-frost"),
                                     )
                                 })
-                                .child(panel.rising("fullscreen-volume-rise")),
+                                // The rise composites what it carries as one layer the size of
+                                // its bounds, so the wrapper reaches out as far as the level
+                                // bubble can, and gives the room back with its margins.
+                                .child(
+                                    div()
+                                        .px(reach)
+                                        .mx(Pixels::ZERO - reach)
+                                        .child(panel)
+                                        .rising("fullscreen-volume-rise"),
+                                ),
                         ),
                 ))
             })
