@@ -163,6 +163,7 @@ impl SettingsView {
         Row::new(
             t!("settings-match-rate"),
             Switch::new("match-rate", on)
+                .name(t!("settings-match-rate"))
                 .disabled(!available || locked)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.outputs
