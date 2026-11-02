@@ -14,7 +14,7 @@ use music::connect::{Jam, JamMember};
 use state::{Devices, Outcome, Sonora, Toasts};
 use ui::{
     ActiveTheme as _, Avatar, Button, Dismiss, FORM_CONTEXT, Input, Modal, Qr, Submit, Text, Theme,
-    snapped,
+    single_line, snapped,
 };
 
 /// The side of the Jam's QR code. It does not scale with the theme, since a code has to stay a
@@ -256,7 +256,7 @@ impl Render for JamJoin {
                                             return;
                                         };
                                         link.update(cx, |input, cx| {
-                                            input.set_text(text.trim().to_owned(), cx);
+                                            input.set_text(single_line(text.trim()), cx);
                                             input.focus(window, cx);
                                         });
                                     }),
