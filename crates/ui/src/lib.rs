@@ -12,7 +12,6 @@ mod filters;
 mod form;
 mod glass;
 mod glide;
-mod grain;
 mod info_card;
 mod inline_links;
 mod input;
@@ -43,6 +42,7 @@ mod scrollbar;
 mod scroller;
 mod scrubber;
 mod separator;
+mod shader;
 mod shield;
 mod skeleton;
 mod spinner;
@@ -58,6 +58,7 @@ mod vacancy;
 mod veil;
 mod view;
 mod visualizer;
+mod waves;
 
 pub use arrow_ring::ArrowRing;
 pub use artwork::{
@@ -82,7 +83,6 @@ pub use glass::{
     GLASS_BLUR, GLASS_FILL, bar_surface, blurring, frost, glass, popover_fill, popover_surface,
 };
 pub use glide::{Glide, ScrollPosition};
-pub use grain::grain;
 pub use info_card::{Fact, InfoCard};
 pub use inline_links::{InlineLink, InlineLinks};
 pub use input::{
@@ -153,3 +153,4 @@ pub use vacancy::Vacancy;
 pub use veil::{VeilEdge, effects, veil};
 pub use view::Mode;
 pub use visualizer::{Levels, Visualizer, VisualizerStyle};
+pub use waves::Waves;
