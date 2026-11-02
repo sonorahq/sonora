@@ -10,6 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - Local libraries no longer list macOS AppleDouble metadata files as songs.
+- On Windows, playback no longer crackles while you open apps or browser tabs.
 
 ## [0.47.0] - 2026-11-02
 
