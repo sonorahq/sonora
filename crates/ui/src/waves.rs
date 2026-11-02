@@ -13,9 +13,9 @@ const MORPH: f32 = 1.;
 const PEAK: f32 = 0.72;
 /// How many times more of the field fits across than the shader is tuned for, so the waves lie as
 /// close as they would on a window that much wider and read as one woven sheet.
-const DENSITY: f32 = 2.4;
+const DENSITY: f32 = 1.8;
 /// How wide the edge of a pool runs against the shader's own, a light blur over the transitions.
-const SOFTNESS: f32 = 1.7;
+const SOFTNESS: f32 = 1.8;
 
 static WAVES: Effect = Effect::new("sonora-waves", include_str!("../shaders/waves.wgsl"));
 
