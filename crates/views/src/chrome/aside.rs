@@ -2024,7 +2024,11 @@ impl Render for Aside {
                                 Scroller::listing("queue-rows", &self.scrollbar)
                                     .bottom_inset(self.bottom(cx))
                                     .when(effects(), |this| {
-                                        this.fade_edges(px(FADE * 0.5), Pixels::ZERO)
+                                        let under = match self.titled {
+                                            true => Pixels::ZERO,
+                                            false => px(FADE * 0.5),
+                                        };
+                                        this.fade_edges(px(FADE * 0.5), under)
                                     })
                                     .child(
                                         self.rows(listing, sections.clone(), cx)
