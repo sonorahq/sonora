@@ -14,11 +14,17 @@
 // params[0].w  peak, how much of its colour a pool lays down at its core
 // params[1]    the fifth colour, straight alpha sRGB
 // params[2]    the stage the pools lie on, straight alpha sRGB
+// params[3].x  density, how many times more of the field fits across than at 1, so the waves
+//              lie as close as they do on a window that much wider
+// params[3].y  softness, how wide the edge of a pool runs, 1 for the default and more for a
+//              blur over the transitions
 // colors[0..3] the first four colours, straight alpha sRGB
 
 // How much of the plane the pool keyed by `seed` covers here, from 0 outside it to 1 at its core.
-fn pool(q: vec2<f32>, scale: f32, seed: vec2<f32>, drift: vec2<f32>) -> f32 {
-    return smoothstep(-0.2, 0.6, gradient_noise(q * scale + seed + drift));
+// `soft` widens the edge around the same middle, which reads as a blur over the transition.
+fn pool(q: vec2<f32>, scale: f32, seed: vec2<f32>, drift: vec2<f32>, soft: f32) -> f32 {
+    let reach = 0.4 * soft;
+    return smoothstep(0.2 - reach, 0.2 + reach, gradient_noise(q * scale + seed + drift));
 }
 
 fn shade(input: ShaderInput) -> vec4<f32> {
@@ -26,10 +32,12 @@ fn shade(input: ShaderInput) -> vec4<f32> {
     let swell = input.params[0].y;
     let morph = input.params[0].z;
     let peak = input.params[0].w;
+    let density = max(input.params[3].x, 0.1);
+    let soft = max(input.params[3].y, 0.1);
 
     let short = max(min(input.size.x, input.size.y), 1.0);
     let half = input.size / short * 0.5;
-    let p = input.position / short - half;
+    let p = (input.position / short - half) * density;
 
     // The turn drifts with time and with x * y, so each quarter of the plane twists its own way
     // and the twist keeps changing.
@@ -43,11 +51,11 @@ fn shade(input: ShaderInput) -> vec4<f32> {
     q.y += swell * 0.06 * sin(q.x * 2.9 - t * 0.17);
 
     var color = input.params[2].rgb;
-    color = mix(color, input.colors[0].rgb, peak * pool(q, 1.1, vec2<f32>(1.3, 0.0), vec2<f32>(t * 0.05, 0.0)));
-    color = mix(color, input.colors[1].rgb, peak * pool(q, 1.3, vec2<f32>(-4.7, 2.2), vec2<f32>(0.0, -t * 0.055)));
-    color = mix(color, input.colors[2].rgb, peak * pool(q, 1.0, vec2<f32>(7.1, -3.4), vec2<f32>(-t * 0.045, 0.0)));
-    color = mix(color, input.colors[3].rgb, peak * pool(q, 1.2, vec2<f32>(-2.6, -6.3), vec2<f32>(0.0, t * 0.04)));
-    color = mix(color, input.params[1].rgb, peak * pool(q, 1.15, vec2<f32>(9.4, 5.8), vec2<f32>(t * 0.035, -t * 0.03)));
+    color = mix(color, input.colors[0].rgb, peak * pool(q, 1.1, vec2<f32>(1.3, 0.0), vec2<f32>(t * 0.05, 0.0), soft));
+    color = mix(color, input.colors[1].rgb, peak * pool(q, 1.3, vec2<f32>(-4.7, 2.2), vec2<f32>(0.0, -t * 0.055), soft));
+    color = mix(color, input.colors[2].rgb, peak * pool(q, 1.0, vec2<f32>(7.1, -3.4), vec2<f32>(-t * 0.045, 0.0), soft));
+    color = mix(color, input.colors[3].rgb, peak * pool(q, 1.2, vec2<f32>(-2.6, -6.3), vec2<f32>(0.0, t * 0.04), soft));
+    color = mix(color, input.params[1].rgb, peak * pool(q, 1.15, vec2<f32>(9.4, 5.8), vec2<f32>(t * 0.035, -t * 0.03), soft));
 
     return vec4<f32>(dither(color, input.frag_coord), 1.0);
 }
