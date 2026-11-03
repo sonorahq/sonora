@@ -862,7 +862,10 @@ impl FullscreenView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // The clamp runs from the controls' own height once it is known. From a taller cap the
-        // dock would hold still through the start of the fade and catch up after.
+        // dock would hold still through the start of the fade and catch up after. A dock that
+        // keeps its footprint reserves it only once the controls are gone, because the height is
+        // a frame old and a switch between the full and split layouts would stretch the column
+        // by the difference until something renders again.
         let natural = self.dock_natural.get();
         let cap = match natural > Pixels::ZERO {
             true => natural,
@@ -879,7 +882,7 @@ impl FullscreenView {
                 true => this.when(hide > 0., |this| {
                     this.max_h(cap * (1. - hide)).overflow_hidden()
                 }),
-                false => this.min_h(cap),
+                false => this.when(hide >= 1., |this| this.min_h(cap)),
             })
             .when(hide > 0., |this| this.opacity(1. - hide))
             .map(|this| match DOCK_BLUR * hide {
