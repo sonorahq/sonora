@@ -361,6 +361,7 @@ login-problem-network = Sonora could not reach the music service. Check your int
 login-problem-cancelled = The sign-in was not approved in the browser, or ran out of time. Start again to finish.
 login-problem-refused = Spotify turned down the sign-in. Wait a moment and try again.
 login-problem-premium = Sonora streams through Spotify Premium, and this account does not have it. Sign in with a Premium account to continue.
+login-problem-subscription = Apple Music says this Apple ID has no active subscription. If you get Apple Music through Family Sharing, sign in with the Apple ID that joined the family group, and check that it is set to the same country as the organizer.
 login-sign-in = Sign in with { $provider }
 login-connect-cookies = Paste cookies manually
 login-cookie-open = Open { $provider }

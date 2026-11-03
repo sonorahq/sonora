@@ -132,6 +132,7 @@ fn unwrapped_reason(text: &str) -> String {
 fn reason(problem: SignInProblem) -> &'static str {
     match problem {
         SignInProblem::Premium => "login-problem-premium",
+        SignInProblem::Subscription => "login-problem-subscription",
         SignInProblem::Region => "login-problem-region",
         SignInProblem::Credentials => "login-problem-credentials",
         SignInProblem::Network => "login-problem-network",
