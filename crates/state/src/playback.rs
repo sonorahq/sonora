@@ -343,7 +343,7 @@ impl Origin {
         let tracks = match self.whence {
             Whence::Album => client.album_tracks(&self.id).await?,
             Whence::Playlist => client.playlist_tracks(&self.id).await?,
-            Whence::Artist => client.artist(&self.id).await?.top_tracks,
+            Whence::Artist => client.artist_tracks(&self.id).await?,
             Whence::Saved => client.saved_tracks().await?,
             Whence::Radio => {
                 let (mut tracks, next) = client.track_radio(&self.id, None).await?;
@@ -1419,7 +1419,7 @@ impl Playback {
     /// Fetches a collection and starts the queue from it, keeping the continuation if it is a
     /// station. Shows Loading only when nothing plays yet, so a failure mid-playback is logged
     /// rather than shown.
-    fn gather(&mut self, origin: Origin, cx: &mut Context<Self>) {
+    fn gather(&mut self, origin: Origin, shuffled: bool, cx: &mut Context<Self>) {
         let Some(client) = self.client_for(&origin.id, cx) else {
             return;
         };
@@ -1434,6 +1434,10 @@ impl Playback {
             async move { from.load(&*client).await },
             move |this, loaded, cx| match loaded {
                 Ok((tracks, next)) => {
+                    if shuffled && !tracks.is_empty() {
+                        this.queue
+                            .update(cx, |queue, cx| queue.set_shuffle(true, cx));
+                    }
                     let index = this.opener(&tracks, cx).unwrap_or_default();
                     let station = next.map(|next| Station {
                         origin: origin.clone(),
@@ -2129,10 +2133,20 @@ impl Playback {
     pub fn play_origin(&mut self, origin: Origin, cx: &mut Context<Self>) {
         match origin.whence {
             Whence::Album | Whence::Playlist | Whence::Artist | Whence::Radio => {
-                self.gather(origin, cx)
+                self.gather(origin, false, cx)
             }
             // the table plays these
             Whence::Saved | Whence::Local => {}
+        }
+    }
+
+    /// Turns shuffle on and plays `origin` from a random track once its tracks are loaded.
+    pub fn shuffle_origin(&mut self, origin: Origin, cx: &mut Context<Self>) {
+        if matches!(
+            origin.whence,
+            Whence::Album | Whence::Playlist | Whence::Artist | Whence::Radio
+        ) {
+            self.gather(origin, true, cx);
         }
     }
 

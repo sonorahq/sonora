@@ -1558,6 +1558,10 @@ impl MusicApi for AppleClient {
         recommend::artist_catalogue(self, artist_id).await
     }
 
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        recommend::artist_tracks(self, artist_id).await
+    }
+
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
         let body = self
             .get(

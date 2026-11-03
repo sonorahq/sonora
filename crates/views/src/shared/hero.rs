@@ -3,8 +3,8 @@ use std::rc::Rc;
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Div, ElementId, Entity, FontWeight, MouseButton, MouseDownEvent, Pixels, Rems,
-    SharedString, Stateful, Window, div, px, relative, rems,
+    AnyElement, App, Context, Div, ElementId, Entity, FontWeight, MouseButton, MouseDownEvent,
+    Pixels, Rems, SharedString, Stateful, Window, div, px, relative, rems,
 };
 use i18n::t;
 use music::{Album, Track};
@@ -138,16 +138,19 @@ impl RenderOnce for HeroMetaStrip {
     }
 }
 
+/// The tracks ready to play, or a collection to load when its button is pressed.
 enum Listing {
     Owned(Vec<Track>),
     Listed(Entity<TableState<TrackSource>>),
+    Origin(Option<Origin>),
 }
 
 impl Listing {
-    fn first(&self, cx: &App) -> Option<usize> {
+    fn can_start(&self, cx: &App) -> bool {
         match self {
-            Self::Owned(tracks) => tracks.iter().position(|track| track.playable),
-            Self::Listed(table) => tracks::first_playable(table, cx),
+            Self::Owned(tracks) => tracks.iter().any(|track| track.playable),
+            Self::Listed(table) => tracks::first_playable(table, cx).is_some(),
+            Self::Origin(origin) => origin.is_some(),
         }
     }
 
@@ -155,13 +158,7 @@ impl Listing {
         match self {
             Self::Owned(tracks) => tracks.iter().any(|track| track.id.as_deref() == Some(id)),
             Self::Listed(table) => tracks::holds(table, id, cx),
-        }
-    }
-
-    fn queue(&self, cx: &App) -> Vec<Track> {
-        match self {
-            Self::Owned(tracks) => tracks.clone(),
-            Self::Listed(table) => tracks::ordered(table, cx),
+            Self::Origin(_) => false,
         }
     }
 
@@ -169,15 +166,38 @@ impl Listing {
         match self {
             Self::Owned(_) => None,
             Self::Listed(table) => tracks::whence(table, cx),
+            Self::Origin(origin) => origin.clone(),
+        }
+    }
+
+    /// Loads a collection on demand or starts the tracks already held by the page.
+    fn start(&self, playback: &mut Playback, shuffle: bool, cx: &mut Context<Playback>) {
+        let tracks = match self {
+            Self::Origin(origin) => {
+                if let Some(origin) = origin.clone() {
+                    match shuffle {
+                        true => playback.shuffle_origin(origin, cx),
+                        false => playback.play_origin(origin, cx),
+                    }
+                }
+                return;
+            }
+            Self::Owned(tracks) => tracks.clone(),
+            Self::Listed(table) => tracks::ordered(table, cx),
+        };
+        let from = self.whence(cx);
+        match shuffle {
+            true => playback.shuffle_any(tracks, from, cx),
+            false => playback.start_any(tracks, from, cx),
         }
     }
 }
 
+/// A page's Play or Shuffle button, using loaded tracks or an origin fetched on demand.
 #[derive(IntoElement)]
 pub(crate) struct HeroPlayButton {
     id: ElementId,
     listing: Listing,
-    from: Option<Origin>,
     shuffled: bool,
     playback: Entity<Playback>,
 }
@@ -191,14 +211,14 @@ impl HeroPlayButton {
         Self {
             id: id.into(),
             listing: Listing::Owned(tracks),
-            from: None,
             shuffled: false,
             playback,
         }
     }
 
-    pub(crate) fn from(mut self, origin: Option<Origin>) -> Self {
-        self.from = origin;
+    /// Fetches the whole collection on press instead of playing only the page's loaded rows.
+    pub(crate) fn load_origin(mut self, origin: Option<Origin>) -> Self {
+        self.listing = Listing::Origin(origin);
         self
     }
 
@@ -235,7 +255,6 @@ impl HeroPlayButton {
         Self {
             id: id.into(),
             listing: Listing::Listed(table.clone()),
-            from: None,
             shuffled: false,
             playback,
         }
@@ -258,25 +277,21 @@ impl HeroPlayButton {
     /// The shuffle as a menu item, for a hero whose Shuffle button folded into its overflow
     /// menu.
     pub(crate) fn shuffle_item(self, cx: &App) -> MenuItem {
-        let disabled = self.listing.first(cx).is_none();
+        let disabled = !self.listing.can_start(cx);
         let listing = self.listing;
-        let from = self.from;
         let playback = self.playback;
 
         MenuItem::new("hero-shuffle", t!("play-shuffle"))
             .icon("icons/shuffle.svg")
             .when(disabled, MenuItem::disabled)
             .on_click(move |_, _, cx| {
-                let queued = listing.queue(cx);
-                let from = from.clone().or_else(|| listing.whence(cx));
-                playback.update(cx, |playback, cx| playback.shuffle_any(queued, from, cx));
+                playback.update(cx, |playback, cx| listing.start(playback, true, cx));
             })
     }
 
     fn shuffle_button(self, cx: &App) -> Button {
-        let disabled = self.listing.first(cx).is_none();
+        let disabled = !self.listing.can_start(cx);
         let listing = self.listing;
-        let from = self.from;
         let playback = self.playback;
 
         Button::new(self.id)
@@ -285,9 +300,7 @@ impl HeroPlayButton {
             .outline()
             .disabled(disabled)
             .on_click(move |_, _, cx| {
-                let queued = listing.queue(cx);
-                let from = from.clone().or_else(|| listing.whence(cx));
-                playback.update(cx, |playback, cx| playback.shuffle_any(queued, from, cx));
+                playback.update(cx, |playback, cx| listing.start(playback, true, cx));
             })
     }
 }
@@ -299,7 +312,7 @@ impl RenderOnce for HeroPlayButton {
         }
         let playing = {
             let playback = self.playback.read(cx);
-            match self.from.clone().or_else(|| self.listing.whence(cx)) {
+            match self.listing.whence(cx) {
                 Some(origin) => playback.playing_from(&origin, cx),
                 None => playback
                     .track()
@@ -314,9 +327,8 @@ impl RenderOnce for HeroPlayButton {
             Some(true) => (pause, "icons/pause.svg"),
             Some(false) | None => (play, "icons/play.svg"),
         };
-        let disabled = self.listing.first(cx).is_none();
+        let disabled = !self.listing.can_start(cx);
         let listing = self.listing;
-        let from = self.from;
         let playback = self.playback;
 
         div().flex().child(
@@ -329,11 +341,7 @@ impl RenderOnce for HeroPlayButton {
                 .on_click(move |_, _, cx| {
                     playback.update(cx, |playback, cx| match playing {
                         Some(_) => playback.toggle_play(cx),
-                        None => {
-                            let queued = listing.queue(cx);
-                            let from = from.clone().or_else(|| listing.whence(cx));
-                            playback.start_any(queued, from, cx)
-                        }
+                        None => listing.start(playback, false, cx),
                     });
                 }),
         )

@@ -32,6 +32,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Playing or shuffling an artist queues their songs beyond the Popular section, with popular songs first.
 - Local libraries no longer list macOS AppleDouble metadata files as songs.
 - Text pasted on several lines, into a field or the Jam link, shows on one line instead of leaving the field blank.
 - On Windows, playback no longer crackles while you open apps or browser tabs.
