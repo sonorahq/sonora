@@ -77,6 +77,10 @@ const HAZE_LEAST: Pixels = px(0.05);
 /// The step a row's blur is rounded to. Neighbouring rows that land on the same step share one
 /// offscreen layer in the renderer, where each distinct blur costs a layer of its own.
 const HAZE_STEP: Pixels = px(0.25);
+/// How far past the top and bottom of the lyrics view, as a share of its height, settled rows
+/// are still laid out. Rows further out are spacers, and the margin keeps a row at an edge from
+/// flipping between the two, which shapes its text again, as the sheet scrolls.
+const SPARE_MARGIN: f32 = 0.25;
 // How far a verse sinks while it is held.
 const PRESSED: f32 = 0.955;
 // The widest a line of lyrics is set, in multiples of its own size. Left to fill
@@ -1270,8 +1274,8 @@ impl Aside {
                         .then(|| viewport_place(&scroll, row, view, translation))
                         .flatten()
                         .filter(|place| {
-                            place.top + place.height < -view.size.height
-                                || place.top > view.size.height * 2.
+                            place.top + place.height < -view.size.height * SPARE_MARGIN
+                                || place.top > view.size.height * (1. + SPARE_MARGIN)
                         });
                     self.settled.push(settled);
                     if let Some(place) = spared {
