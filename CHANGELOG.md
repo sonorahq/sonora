@@ -38,6 +38,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The lyrics scrollbar stays hidden while the lyrics scroll along with the song.
 - The mute button in fullscreen no longer covers the volume slider with a tooltip.
 - The visualizer falls all the way to the bottom when you pause or the music goes quiet, instead of holding its last levels.
+- In fullscreen, the cover moves to its place in one step when you open lyrics or the queue, instead of sliding sideways first and dropping a moment later.
 - The highlighted row in search suggestions follows the panel's rounded corners instead of bulging into them.
 
 ## [0.47.0] - 2026-11-02
