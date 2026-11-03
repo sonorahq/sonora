@@ -912,7 +912,6 @@ impl AppSettings {
                 StateValues::default()
             }
         };
-        themes::adopt_legacy(&values.appearance.theme, &themes_path(&path));
         let themes = themes::load(&themes_path(&path), &[]).themes;
         let families = themes::catalog(&themes);
 
@@ -2633,7 +2632,6 @@ impl AppSettings {
         };
 
         log::info!("settings: reloaded {}", self.path.display());
-        themes::adopt_legacy(&values.appearance.theme, &themes_path(&self.path));
         let previous = std::mem::replace(&mut self.values, values);
         self.disk = Some(bytes);
         self.writable = true;
