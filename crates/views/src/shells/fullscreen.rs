@@ -15,9 +15,10 @@ use input::{ToggleFullscreen, ToggleWindowFullscreen, WORKSPACE_CONTEXT};
 use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
 use ui::{
-    ActiveTheme as _, Artwork, Button, ExplicitBadge, Fading as _, GLASS_BLUR, GLASS_FILL,
-    InlineLink, InlineLinks, Motion, Motioned as _, Popup, Rising as _, Room, Scrollbar, Scrubber,
-    ScrubberState, Springs, TabBar, Tails as _, Text, Visualizer, clock, snapped,
+    ActiveTheme as _, Artwork, Button, Entrance, ExplicitBadge, Fading as _, GLASS_BLUR,
+    GLASS_FILL, InlineLink, InlineLinks, Motion, Motioned as _, Popup, Rising as _, Room,
+    Scrollbar, Scrubber, ScrubberState, Springs, TabBar, Tails as _, Text, Visualizer, clock,
+    entering, snapped,
 };
 
 use crate::chrome::{Aside, TitleBarOptions};
@@ -93,6 +94,9 @@ pub struct FullscreenView {
     settings: Entity<AppSettings>,
     aside: Entity<Aside>,
     panel: Option<SideTab>,
+    /// The entrance the content plays after the pill shows another tab, the same one a settings
+    /// page plays. The pill itself never takes part.
+    switch: Option<Entrance>,
     seek: ScrubberState,
     pending: Option<f32>,
     over_seek: Option<f32>,
@@ -152,6 +156,7 @@ impl FullscreenView {
             settings,
             aside,
             panel,
+            switch: None,
             seek: ScrubberState::new("fullscreen-seek"),
             pending: None,
             over_seek: None,
@@ -209,6 +214,9 @@ impl FullscreenView {
     }
 
     fn show(&mut self, panel: Option<SideTab>, cx: &mut Context<Self>) {
+        if panel != self.panel && !cx.reduce_motion() {
+            self.switch = Some(Entrance::start());
+        }
         self.panel = panel;
         self.settings
             .update(cx, |settings, cx| settings.set_fullscreen_tab(panel, cx));
@@ -357,6 +365,20 @@ impl FullscreenView {
             window.request_animation_frame();
         }
         self.hidden.position.clamp(0., 1.)
+    }
+
+    /// How much of the tab just shown is still hidden, from 1 as the switch starts to 0 once it
+    /// ends. It asks for another frame while the switch runs.
+    fn switching(&mut self, window: &mut Window, cx: &App) -> f32 {
+        let Some(switch) = self.switch else {
+            return 0.;
+        };
+        if cx.reduce_motion() || !switch.running() {
+            self.switch = None;
+            return 0.;
+        }
+        window.request_animation_frame();
+        switch.hidden()
     }
 
     fn volume_open(&self) -> bool {
@@ -1243,6 +1265,7 @@ impl Render for FullscreenView {
         let split = room.fits(Room::Wide) && self.panel.is_some();
         self.watch(window, cx);
         let idle = self.hidden(window, cx);
+        let switching = self.switching(window, cx);
         let hide = match self.settings.read(cx).fullscreen_controls_autohide() {
             FullscreenControlsAutohide::Automatic => idle,
             FullscreenControlsAutohide::AlwaysShown => 0.,
@@ -1454,6 +1477,9 @@ impl Render for FullscreenView {
                                     |this| this.w_full(),
                                 )
                                 .map(|this| glide(this, shift, bleed, window))
+                                // A split column carries the pill in its dock, and its cover
+                                // holds still while the panel beside it enters.
+                                .when(!split, |this| entering(this, switching))
                                 .child(self.artwork(side, raster_side, cover_scale, cx))
                                 .child(self.meta(hide, lift, window, cx))
                                 .when(split, |this| {
@@ -1479,7 +1505,10 @@ impl Render for FullscreenView {
                                 .min_h_0()
                                 .h_full()
                                 .on_click(|_, _, cx| cx.stop_propagation())
-                                .child(self.aside.clone())
+                                .child(entering(
+                                    div().size_full().min_h_0().child(self.aside.clone()),
+                                    switching,
+                                ))
                                 .when(shown, |this| this.child(self.floating(hide, cx))),
                         )
                     }),
