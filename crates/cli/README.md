@@ -21,6 +21,7 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora next` / `prev` | Skip to the next track, or go back to the previous one |
 | `sonora seek <0-100\|TIME\|±STEP>` | Jump to a percent of the current track, a time such as `1:30`, or a step such as `+10` |
 | `sonora current` | Print what plays now as JSON, or `null` when nothing is loaded |
+| `sonora queue` | Print the queue: what played, what plays and what follows, without changing it |
 | `sonora watch [--position]` | Print what plays again on every change, one line of JSON each, until stopped |
 | `sonora volume [N\|+N\|-N]` | Print the volume, set it from 0 to 100, or step it |
 | `sonora shuffle [on\|off\|toggle]` | Print shuffle, or switch it |
@@ -120,6 +121,26 @@ sonora search daft punk --json | jq -r '.[0].link'
 }
 ```
 
+`queue` answers a read-only snapshot in play order, without mutating playback or fetching
+anything from a provider. Each track carries `id`, `title`, `artists`, `album`, `cover` and
+`duration`, and a `kind`: `context` for the collection being played, `queued` for a track added
+by hand, or `suggested` for a recommendation, when that is known. While another device is
+steered over Spotify Connect, only the tracks whose metadata Sonora has already read are
+listed. At most 100 previous and 100 upcoming tracks are listed (`wire::QUEUE_LIMIT`), most
+recent previous and next upcoming first in play order, with `truncated` set when either was cut:
+
+```sh
+sonora queue
+sonora queue --json | jq '.upcoming[].track.title'
+```
+
+```json
+{"previous":[],"current":{"track":{"id":"…","title":"One More Time","artists":["Daft Punk"],"album":"Discovery","cover":"https://…","duration":320},"kind":"context"},"upcoming":[],"truncated":false}
+```
+
+An empty queue prints `Queue is empty.` as text, and the same shape with empty lists and a
+`null` current as JSON.
+
 `state` is `playing`, `paused`, `loading` or `idle`. Times are whole seconds, the volume a percent.
 `provider` is the slug `sonora providers` lists, `local` for a file. `origin` is what the track was
 queued from, `null` when it was queued on its own; its `kind` is `album`, `playlist`, `artist`,
@@ -196,6 +217,7 @@ comes again on every change, on the same connection, until the command line hang
 ```
 → {"v":1,"body":{"playback":"next"}}
 → {"v":1,"body":{"playback":{"volume":{"by":5}}}}
+→ {"v":1,"body":{"queue":"snapshot"}}
 → {"v":1,"body":{"queue":{"add":[{"search":{"text":"one more time","kind":"song"}}]}}}
 → {"v":1,"body":{"watch":{"position":false}}}
 ← {"v":1,"body":"done"}

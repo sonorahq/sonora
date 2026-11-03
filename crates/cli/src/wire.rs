@@ -46,6 +46,72 @@ pub enum Value {
     Hits(Vec<Hit>),
     /// The Sonora Session Sonora is in, `None` while it is in none.
     Session(Option<SessionInfo>),
+    /// A read-only snapshot of the queue, as `sonora queue` prints it.
+    Queue(QueueSnapshot),
+}
+
+/// At most this many tracks are reported per section of a queue snapshot, so a very long
+/// playlist never makes an unbounded reply. `previous` keeps its most recent tracks and
+/// `upcoming` its next ones, both in play order; `truncated` says when either was cut.
+pub const QUEUE_LIMIT: usize = 100;
+
+/// The queue as `sonora queue` prints it: what played, what plays and what follows, in play
+/// order. This is a public contract, so a field is only ever added, never renamed or
+/// removed, without bumping `VERSION`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct QueueSnapshot {
+    pub previous: Vec<QueueEntry>,
+    pub current: Option<QueueEntry>,
+    pub upcoming: Vec<QueueEntry>,
+    /// Whether `previous` or `upcoming` held more than `QUEUE_LIMIT` tracks.
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+impl QueueSnapshot {
+    /// Bounds a snapshot to `QUEUE_LIMIT` tracks per section, keeping the most recent
+    /// previous tracks and the next upcoming ones, in play order.
+    pub fn bounded(
+        previous: Vec<QueueEntry>,
+        current: Option<QueueEntry>,
+        upcoming: Vec<QueueEntry>,
+    ) -> Self {
+        let truncated = previous.len() > QUEUE_LIMIT || upcoming.len() > QUEUE_LIMIT;
+        let previous = match previous.len() > QUEUE_LIMIT {
+            true => previous[previous.len() - QUEUE_LIMIT..].to_vec(),
+            false => previous,
+        };
+        let upcoming = match upcoming.len() > QUEUE_LIMIT {
+            true => upcoming[..QUEUE_LIMIT].to_vec(),
+            false => upcoming,
+        };
+        Self {
+            previous,
+            current,
+            upcoming,
+            truncated,
+        }
+    }
+}
+
+/// One track in a queue snapshot, with why it is in the queue when that is known.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct QueueEntry {
+    pub track: Track,
+    pub kind: QueueEntryKind,
+}
+
+/// Why a track is in the queue, as far as the snapshot knows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum QueueEntryKind {
+    /// Part of the album, playlist or other collection being played.
+    #[default]
+    Context,
+    /// Added by hand, after the current track or at the end of the queue.
+    Queued,
+    /// A recommendation that follows the queue.
+    Suggested,
 }
 
 /// A Sonora Session as `sonora session` prints it.
@@ -246,4 +312,77 @@ pub fn exchange<S: Read + Write>(stream: &mut S, request: &Request) -> Result<Re
         Error::Io(error) if error.kind() == ErrorKind::UnexpectedEof => Error::Closed,
         error => error,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(title: &str, kind: QueueEntryKind) -> QueueEntry {
+        QueueEntry {
+            track: Track {
+                id: Some(title.to_owned()),
+                title: title.to_owned(),
+                artists: vec!["artist".to_owned()],
+                album: "album".to_owned(),
+                cover: None,
+                duration: 60,
+            },
+            kind,
+        }
+    }
+
+    #[test]
+    fn an_empty_queue_snapshot_round_trips() {
+        let reply = Reply::Value(Value::Queue(QueueSnapshot::default()));
+        let mut line = Vec::new();
+        send(&mut line, &reply).unwrap();
+        let read: Reply = receive(&mut BufReader::new(line.as_slice())).unwrap();
+        assert_eq!(read, reply);
+        match read {
+            Reply::Value(Value::Queue(queue)) => {
+                assert!(queue.previous.is_empty());
+                assert_eq!(queue.current, None);
+                assert!(queue.upcoming.is_empty());
+                assert!(!queue.truncated);
+            }
+            other => panic!("expected a queue snapshot, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_bounded_snapshot_keeps_order_and_the_ends_that_matter() {
+        let previous: Vec<_> = (0..QUEUE_LIMIT + 5)
+            .map(|at| entry(&at.to_string(), QueueEntryKind::Context))
+            .collect();
+        let upcoming: Vec<_> = (0..QUEUE_LIMIT + 5)
+            .map(|at| entry(&at.to_string(), QueueEntryKind::Queued))
+            .collect();
+        let queue = QueueSnapshot::bounded(
+            previous,
+            Some(entry("now", QueueEntryKind::Context)),
+            upcoming,
+        );
+        assert!(queue.truncated);
+        assert_eq!(queue.previous.len(), QUEUE_LIMIT);
+        assert_eq!(queue.previous.first().unwrap().track.title, "5");
+        assert_eq!(queue.upcoming.len(), QUEUE_LIMIT);
+        assert_eq!(queue.upcoming.last().unwrap().track.title, "99");
+        assert_eq!(queue.current.unwrap().track.title, "now");
+    }
+
+    #[test]
+    fn queue_kinds_serialize_by_name() {
+        let queue = QueueSnapshot::bounded(
+            Vec::new(),
+            None,
+            vec![
+                entry("by-hand", QueueEntryKind::Queued),
+                entry("similar", QueueEntryKind::Suggested),
+            ],
+        );
+        let printed = serde_json::to_string(&queue).unwrap();
+        assert!(printed.contains("\"kind\":\"queued\""), "{printed}");
+        assert!(printed.contains("\"kind\":\"suggested\""), "{printed}");
+    }
 }
