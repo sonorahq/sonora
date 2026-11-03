@@ -2102,6 +2102,9 @@ fn source_link(name: SharedString, to: Destination, cx: &App) -> impl IntoElemen
         .child(name)
 }
 
+/// Rows that `lyrics_wrap_rows` already broke, one line each. They never wrap again, because at
+/// some window sizes gpui finds a row that measured as fitting a hair too wide and would push its
+/// last word onto a line of its own.
 fn fixed_lyrics_lane(rows: &[SharedString], voice: Voice, sung: Sung) -> Div {
     div()
         .flex()
@@ -2110,6 +2113,7 @@ fn fixed_lyrics_lane(rows: &[SharedString], voice: Voice, sung: Sung) -> Div {
             lifted(
                 div()
                     .w_full()
+                    .whitespace_nowrap()
                     .when(hugs_end(voice, sung.mirrored), |this| this.text_right())
                     .child(row.clone()),
                 sung,
@@ -2165,7 +2169,13 @@ pub(crate) fn verse(
             line.voice,
             sung,
         ),
-        _ => fixed_lyrics_lane(&[SharedString::from(line.text.clone())], line.voice, sung),
+        _ => lifted(
+            div()
+                .w_full()
+                .when(hugs_end(line.voice, mirrored), |this| this.text_right())
+                .child(SharedString::from(line.text.clone())),
+            sung,
+        ),
     };
     let active_size = active_verse_size(look.size);
     let haze = match effects() {
