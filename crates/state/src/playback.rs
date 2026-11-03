@@ -510,7 +510,8 @@ pub struct Playback {
     stored: Duration,
     sleep: Option<Sleep>,
     sleep_task: Option<Task<()>>,
-    open: Option<Task<()>>,
+    /// The task still reading files, which the next batch waits for.
+    pending_open: Option<Task<()>>,
     /// The device network, asked whether another device has playback to steer.
     devices: Option<WeakEntity<Devices>>,
     /// Whether the call being carried out is this app's own doing, which never steers.
@@ -655,7 +656,7 @@ impl Playback {
             stored: Duration::ZERO,
             sleep: None,
             sleep_task: None,
-            open: None,
+            pending_open: None,
             devices: None,
             local: false,
             seeks: 0,
@@ -1208,13 +1209,14 @@ impl Playback {
         Some(!kept)
     }
 
-    /// Opens paths handed in from the OS (a file-association launch or hand-off). They go after
-    /// the current track in queue in the order they were given, and the first one starts at once.
-    pub fn open_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+    /// Opens paths handed in from the OS (a file-association launch or hand-off). They join the
+    /// end of the manual queue in the order they were given. The first batch of a burst starts
+    /// playing at once and skips what was queued by hand before it, a `tail` batch only joins.
+    pub fn open_paths(&mut self, paths: Vec<PathBuf>, tail: bool, cx: &mut Context<Self>) {
         if paths.is_empty() {
             return;
         }
-        self.resolve_paths(paths, None, cx);
+        self.resolve_paths(paths, None, tail, cx);
     }
 
     /// Queues paths dropped on the queue at `gap` upcoming tracks in, or at the end of the queue.
@@ -1227,15 +1229,26 @@ impl Playback {
         if paths.is_empty() {
             return;
         }
-        self.resolve_paths(paths, Some(gap.unwrap_or(usize::MAX)), cx);
+        self.resolve_paths(paths, Some(gap.unwrap_or(usize::MAX)), false, cx);
     }
 
-    /// Reads the files on the tokio runtime and plays what it could read. Files it could not read
+    /// Reads the files on the tokio runtime and plays what it could read. A later batch waits for
+    /// the one before it, so tracks reach the queue in the order they came. Files it could not read
     /// are reported on a toast, as a failure when none could be read and as a warning otherwise.
-    fn resolve_paths(&mut self, paths: Vec<PathBuf>, gap: Option<usize>, cx: &mut Context<Self>) {
+    fn resolve_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        gap: Option<usize>,
+        tail: bool,
+        cx: &mut Context<Self>,
+    ) {
         let provider = self.session.read(cx).local_provider();
-        self.open = Some(Io::global(cx).load(
+        let previous_open = self.pending_open.take();
+        self.pending_open = Some(Io::global(cx).load(
             async move {
+                if let Some(previous) = previous_open {
+                    previous.await;
+                }
                 let mut tracks = Vec::new();
                 let mut unread = Vec::new();
                 for path in paths {
@@ -1258,8 +1271,20 @@ impl Playback {
                     match gap {
                         Some(gap) => this.insert_all(tracks, gap, None, cx),
                         None => this.locally(cx, |this, cx| {
-                            if this.place(tracks, None, QueuePlacement::Next, cx).is_some() {
-                                this.next(cx);
+                            let play = !tail || this.queue.read(cx).current().is_none();
+                            let at = this.queue.read(cx).manual_end();
+                            let first = tracks.iter().position(|track| track.playable);
+                            this.queue.update(cx, |queue, cx| {
+                                queue.insert(tracks, None, QueuePlacement::End, cx)
+                            });
+                            if play && let Some(first) = first {
+                                this.fetch = None;
+                                let track = this.queue.update(cx, |queue, cx| {
+                                    queue.select(crate::QueuePosition::Upcoming(at + first), cx)
+                                });
+                                if let Some(track) = track {
+                                    this.load_after(&track, Start::Pick, cx);
+                                }
                             }
                         }),
                     }

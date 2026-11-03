@@ -36,8 +36,9 @@ const LEAST_SIZE: Size<Pixels> = size(px(480.), px(400.));
 const FIRST_SIZE: Size<Pixels> = size(px(920.), px(640.));
 /// Some file managers launch a fresh process per selected file instead of one with every path,
 /// so a multi-file "Open With" arrives here as several single-file hand-offs within milliseconds
-/// of each other. This is how long to wait for the burst to go quiet before acting on it, so
-/// they land as one batch instead of racing each other into the engine one at a time.
+/// of each other. The first one plays at once and the rest join its queue. This is how long the
+/// burst has to stay quiet before it's considered over, so every file lands in one queue
+/// instead of racing the others in.
 const OPEN_COALESCE: Duration = Duration::from_millis(250);
 
 fn main() -> ExitCode {
@@ -223,12 +224,9 @@ fn main() -> ExitCode {
 
         cx.spawn(async move |cx| {
             let mut pending: Vec<String> = Vec::new();
-            loop {
-                match links.recv().await {
-                    Some(items) => pending.extend(items),
-                    None => break,
-                }
-                // Drain whatever else arrives in the same burst before acting on any of it.
+            while let Some(items) = links.recv().await {
+                // The first hand-off acts at once, the rest of the burst joins the queue.
+                cx.update(|cx| follow(&items, false, cx));
                 loop {
                     cx.background_executor().timer(OPEN_COALESCE).await;
                     let mut more = false;
@@ -239,9 +237,9 @@ fn main() -> ExitCode {
                     if !more {
                         break;
                     }
+                    let batch = std::mem::take(&mut pending);
+                    cx.update(|cx| follow(&batch, true, cx));
                 }
-                let batch = std::mem::take(&mut pending);
-                cx.update(|cx| follow(&batch, cx));
             }
         })
         .detach();
@@ -252,10 +250,13 @@ fn main() -> ExitCode {
 }
 
 /// Opens what a launch or a hand-off passed: a provider's link opens on that provider, and
-/// anything else is read as a file to play. An address no provider knows is refused with a
-/// toast rather than tried as a file.
-fn follow(items: &[String], cx: &mut App) {
-    show_window(cx);
+/// anything else is read as a file to play. The first batch of an open starts playing at once,
+/// later batches of the same open join its queue. An address no provider knows is refused with
+/// a toast rather than tried as a file.
+fn follow(items: &[String], tail: bool, cx: &mut App) {
+    if !tail {
+        show_window(cx);
+    }
     let links = Sonora::global(cx).links.clone();
     let mut paths: Vec<PathBuf> = Vec::new();
     for item in items {
@@ -267,7 +268,8 @@ fn follow(items: &[String], cx: &mut App) {
             false => paths.push(cli::item::local_path(item)),
         }
     }
-    if !paths.is_empty()
+    if !tail
+        && !paths.is_empty()
         && Sonora::global(cx)
             .settings
             .read(cx)
@@ -277,7 +279,7 @@ fn follow(items: &[String], cx: &mut App) {
     }
     if !paths.is_empty() {
         let playback = Sonora::global(cx).playback.clone();
-        playback.update(cx, |playback, cx| playback.open_paths(paths, cx));
+        playback.update(cx, |playback, cx| playback.open_paths(paths, tail, cx));
     }
 }
 
