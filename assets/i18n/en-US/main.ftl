@@ -114,26 +114,25 @@ column-year = Year
 column-tracks = Tracks
 
 # track menu
-menu-add-to-playlist = Add to playlist
-menu-add-tracks-to-playlist = { $count ->
-    [one] Add { $count } track to playlist
-   *[other] Add { $count } tracks to playlist
-}
 menu-new-playlist = New playlist
 menu-import-playlist = Import playlist…
 menu-edit-tags = Edit tags
 menu-no-playlists = No playlists
 menu-search-playlists = Search a playlist
+menu-save-to = Save to
+menu-save-tracks-to = { $count ->
+    [one] Save { $count } track to
+   *[other] Save { $count } tracks to
+}
+menu-saved-in = Saved in
+menu-tracks-saved-in = { $count ->
+    [one] { $count } track saved in
+   *[other] { $count } tracks saved in
+}
+menu-save-favorites = Favorites
+menu-save-library = Library
 menu-add-to-library = Add to Favorites
-menu-add-tracks-to-library = { $count ->
-    [one] Add { $count } track to Favorites
-   *[other] Add { $count } tracks to Favorites
-}
 menu-remove-from-library = Remove from Favorites
-menu-remove-tracks-from-library = { $count ->
-    [one] Remove { $count } track from Favorites
-   *[other] Remove { $count } tracks from Favorites
-}
 menu-remove-from-playlist = Remove from playlist
 menu-remove-tracks-from-playlist = { $count ->
     [one] Remove { $count } track from playlist
@@ -190,16 +189,6 @@ menu-delete-playlist = Delete playlist
 menu-export-playlist = Export playlist…
 menu-add-playlist-to-library = Add to Library
 menu-remove-playlist-from-library = Remove from Library
-menu-library-add = Add to Library
-menu-library-add-tracks = { $count ->
-    [one] Add { $count } track to Library
-   *[other] Add { $count } tracks to Library
-}
-menu-library-remove = Remove from Library
-menu-library-remove-tracks = { $count ->
-    [one] Remove { $count } track from Library
-   *[other] Remove { $count } tracks from Library
-}
 menu-make-playlist-public = Make public
 menu-make-playlist-private = Make private
 menu-play-artist = Play artist

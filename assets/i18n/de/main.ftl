@@ -96,26 +96,13 @@ column-year = Jahr
 column-tracks = Titel
 
 # track menu
-menu-add-to-playlist = Zur Playlist hinzufügen
-menu-add-tracks-to-playlist = { $count ->
-    [one] { $count } Track zur Playlist hinzufügen
-   *[other] { $count } Tracks zur Playlist hinzufügen
-}
 menu-new-playlist = Neue Playlist
 menu-import-playlist = Playlist importieren…
 menu-edit-tags = Tags bearbeiten
 menu-no-playlists = Keine Playlists
 menu-search-playlists = Playlist suchen
 menu-add-to-library = Zu Favoriten hinzufügen
-menu-add-tracks-to-library = { $count ->
-    [one] { $count } Track zu Favoriten hinzufügen
-   *[other] { $count } Tracks zu Favoriten hinzufügen
-}
 menu-remove-from-library = Aus Favoriten entfernen
-menu-remove-tracks-from-library = { $count ->
-    [one] { $count } Track aus Favoriten entfernen
-   *[other] { $count } Tracks aus Favoriten entfernen
-}
 menu-remove-from-playlist = Aus der Playlist entfernen
 menu-remove-tracks-from-playlist = { $count ->
     [one] { $count } Track aus Playlist entfernen
@@ -172,16 +159,6 @@ menu-delete-playlist = Playlist löschen
 menu-export-playlist = Playlist exportieren…
 menu-add-playlist-to-library = Zur Bibliothek hinzufügen
 menu-remove-playlist-from-library = Aus der Bibliothek entfernen
-menu-library-add = Zur Bibliothek hinzufügen
-menu-library-add-tracks = { $count ->
-    [one] { $count } Track zur Bibliothek hinzufügen
-   *[other] { $count } Tracks zur Bibliothek hinzufügen
-}
-menu-library-remove = Aus der Bibliothek entfernen
-menu-library-remove-tracks = { $count ->
-    [one] { $count } Track aus der Bibliothek entfernen
-   *[other] { $count } Tracks aus der Bibliothek entfernen
-}
 menu-make-playlist-public = Öffentlich machen
 menu-make-playlist-private = Privat machen
 menu-play-artist = Künstler abspielen

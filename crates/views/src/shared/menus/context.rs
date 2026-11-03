@@ -173,11 +173,18 @@ impl ItemMenu {
         self.build(tracks, None, Some(forget), None, columns, cx)
     }
 
-    /// The Add to playlist submenu for `addition`: a New playlist entry, then the playlists on
-    /// `shelf` the listener can add to. A playlist that already holds every named track is
-    /// checked, and `many` says whether one track or a run of them is being added. An album is
-    /// never checked, since its tracks are only read once it is added.
-    fn playlists(&self, addition: Addition, shelf: Shelf, many: bool, cx: &App) -> Menu {
+    /// The Save to submenu for `addition`: the `lead` rows, New playlist, then the playlists on
+    /// `shelf` the listener can add to. The lead rows hide while a search narrows the playlists.
+    /// A playlist holding every named track is checked, and picking it takes the tracks out
+    /// again with the menu left open. An album is never checked, since its tracks are only read
+    /// once it is added, and picking a playlist for it closes the menu.
+    fn playlist_rows(
+        &self,
+        addition: Addition,
+        shelf: Shelf,
+        lead: Vec<MenuItem>,
+        cx: &App,
+    ) -> Menu {
         let library = Sonora::global(cx).library.clone();
         let playlists: Vec<Playlist> = library
             .read(cx)
@@ -208,6 +215,7 @@ impl ItemMenu {
         if playlists.is_empty() {
             Menu::new("playlist-submenu")
                 .w(gpui::px(220.))
+                .items(lead)
                 .item(new_playlist)
                 .item(MenuItem::separator("playlist-separator"))
                 .item(MenuItem::new("no-playlists", t!("menu-no-playlists")).disabled())
@@ -225,7 +233,8 @@ impl ItemMenu {
                 .scrollbar(self.playlist_scrollbar.clone())
                 .search(self.playlist_search.clone())
                 .when(!searching, |menu| {
-                    menu.item(new_playlist)
+                    menu.items(lead)
+                        .item(new_playlist)
                         .item(MenuItem::separator("playlist-separator"))
                 })
                 .when(unmatched, |menu| {
@@ -241,7 +250,8 @@ impl ItemMenu {
                     let item =
                         MenuItem::new(format!("playlist-{}", playlist.id), playlist.name.clone())
                             .artwork(playlist.cover.clone())
-                            .checked(held);
+                            .checked(held)
+                            .when(!album, MenuItem::stays_open);
                     if album {
                         let library = library.clone();
                         let playlist_id = playlist.id.clone();
@@ -262,20 +272,15 @@ impl ItemMenu {
                             let library = library.clone();
                             let playlist_id = playlist.id.clone();
                             let track_ids = ids.clone();
-                            item.on_click(move |_, window, cx| {
-                                if held && !many {
-                                    PlaylistEditor::open(
-                                        Edit::Again {
-                                            playlist: playlist.clone(),
-                                            track: track_ids[0].clone(),
-                                            leaving: None,
-                                        },
-                                        window,
-                                        cx,
-                                    );
-                                    return;
-                                }
+                            item.on_click(move |_, _, cx| {
                                 if held {
+                                    library.update(cx, |library, cx| {
+                                        library.remove_tracks_from_playlist(
+                                            playlist_id.clone(),
+                                            track_ids.clone(),
+                                            cx,
+                                        )
+                                    });
                                     return;
                                 }
                                 let missing: Vec<String> = track_ids
@@ -302,6 +307,48 @@ impl ItemMenu {
         }
     }
 
+    /// The one row that saves tracks anywhere: Save to while `ids` sit in nothing yet, Saved in
+    /// once they are all a favorite, all in the library or all in one playlist. Its submenu
+    /// lists Favorites, the Library where it is apart from the favorites, then the playlists,
+    /// each checked where the tracks already are.
+    fn save_item(&self, tracks: &[Track], ids: &[String], shelf: Shelf, cx: &App) -> MenuItem {
+        let count = tracks.len();
+        let label = |saved: bool| match saved {
+            true => counted("menu-saved-in", "menu-tracks-saved-in", count),
+            false => counted("menu-save-to", "menu-save-tracks-to", count),
+        };
+        if ids.is_empty() {
+            return MenuItem::new("save-to", label(false))
+                .icon("icons/square-plus.svg")
+                .disabled();
+        }
+        let library = Sonora::global(cx).library.clone();
+        let editable = Sonora::global(cx)
+            .session
+            .read(cx)
+            .shape_of(shelf)
+            .editable();
+        let state = library.read(cx);
+        let saved = ids.iter().all(|id| state.saved(id))
+            || (editable && ids.iter().all(|id| state.in_library(id)))
+            || state.state(shelf).playlists().iter().any(|playlist| {
+                ids.iter()
+                    .all(|id| state.holds(&playlist.id, id).unwrap_or(false))
+            });
+        let lead: Vec<MenuItem> = [favorites_row(tracks, &library, cx)]
+            .into_iter()
+            .chain(editable.then(|| library_row(tracks, &library, cx)))
+            .chain([MenuItem::separator("save-separator")])
+            .collect();
+        let rows = self.playlist_rows(Addition::Tracks(ids.to_vec()), shelf, lead, cx);
+        MenuItem::new("save-to", label(saved))
+            .icon(match saved {
+                true => "icons/circle-check.svg",
+                false => "icons/square-plus.svg",
+            })
+            .submenu(rows, self.playlist_submenu.clone())
+    }
+
     fn build(
         &self,
         tracks: &[Track],
@@ -316,7 +363,6 @@ impl ItemMenu {
         };
         let count = tracks.len();
         let many = count > 1;
-        let library = Sonora::global(cx).library.clone();
         let held: Vec<String> = tracks.iter().filter_map(|track| track.id.clone()).collect();
         let imported = !held.is_empty() && held.iter().all(|id| music::is_local_id(id));
         let ids: Vec<String> = match imported {
@@ -326,12 +372,10 @@ impl ItemMenu {
                 .filter(|id| !music::is_local_id(id))
                 .collect(),
         };
-        let barren = ids.is_empty();
         let shelf = match imported {
             true => Shelf::Local,
             false => Shelf::Streaming,
         };
-        let playlist_menu = self.playlists(Addition::Tracks(ids.clone()), shelf, many, cx);
         let copy = (!many)
             .then(|| copy_link_item("copy-track-link", MediaKind::Track, track.id.as_deref(), cx));
         let queued: Vec<Track> = tracks
@@ -382,13 +426,6 @@ impl ItemMenu {
                     .disabled(),
             ),
         };
-        let toggle_library = library_toggle(tracks, &library, cx);
-        let editable = Sonora::global(cx)
-            .session
-            .read(cx)
-            .shape_of(shelf)
-            .editable();
-        let membership = (!barren && editable).then(|| library_membership(tracks, &library, cx));
         let download = (!imported)
             .then(|| download_item(tracks, &ids, cx))
             .flatten();
@@ -499,14 +536,7 @@ impl ItemMenu {
             .on_click(move |_, _, cx| Confirm::delete_track_files(ids.clone(), cx))
         });
 
-        let add_to_playlist = (!barren).then(|| {
-            MenuItem::new(
-                "add-to-playlist",
-                counted("menu-add-to-playlist", "menu-add-tracks-to-playlist", count),
-            )
-            .icon("icons/square-plus.svg")
-            .submenu(playlist_menu, self.playlist_submenu.clone())
-        });
+        let save = self.save_item(tracks, &ids, shelf, cx);
 
         sections(
             Menu::new("track-context-menu")
@@ -516,10 +546,9 @@ impl ItemMenu {
                     false => 210.,
                 })),
             vec![
-                add_to_playlist
+                [save]
                     .into_iter()
-                    .chain([library_action.unwrap_or(toggle_library)])
-                    .chain(membership)
+                    .chain(library_action)
                     .chain(download)
                     .collect(),
                 vec![next, queue, last],
@@ -567,8 +596,9 @@ fn counted(one: &'static str, many: &'static str, count: usize) -> SharedString 
     i18n::lookup(many, Some(&args))
 }
 
-fn library_toggle(tracks: &[Track], library: &Entity<Library>, cx: &App) -> MenuItem {
-    let count = tracks.len();
+/// The Favorites row of the Save to submenu, checked when every track is a favorite. Picking it
+/// favorites the rest or unfavorites them all.
+fn favorites_row(tracks: &[Track], library: &Entity<Library>, cx: &App) -> MenuItem {
     let actionable: Vec<Track> = tracks
         .iter()
         .filter(|track| {
@@ -586,21 +616,17 @@ fn library_toggle(tracks: &[Track], library: &Entity<Library>, cx: &App) -> Menu
                 .as_deref()
                 .is_some_and(|id| library.read(cx).saved(id))
         });
-    let item = MenuItem::new(
-        "toggle-library",
-        match saved {
-            true => counted(
-                "menu-remove-from-library",
-                "menu-remove-tracks-from-library",
-                count,
-            ),
-            false => counted("menu-add-to-library", "menu-add-tracks-to-library", count),
-        },
-    )
-    .icon(match saved {
-        true => "icons/heart-off.svg",
-        false => "icons/heart.svg",
-    });
+    // Unfavoriting asks first where the heart is the library itself, and the menu gives way to
+    // that question rather than staying open over it.
+    let asks = saved
+        && !actionable
+            .first()
+            .and_then(|track| track.id.as_deref())
+            .is_some_and(|id| Confirm::unstarring(id, cx));
+    let item = MenuItem::new("save-favorites", t!("menu-save-favorites"))
+        .icon("icons/heart.svg")
+        .checked(saved)
+        .when(!asks, MenuItem::stays_open);
 
     match actionable.is_empty() {
         true => item.disabled(),
@@ -624,11 +650,10 @@ fn library_toggle(tracks: &[Track], library: &Entity<Library>, cx: &App) -> Menu
     }
 }
 
-/// Add to Library or Remove from Library for tracks, on a provider whose library is apart
-/// from its favorites. Several tracks are added unless every one of them is there already,
-/// in which case they are removed.
-fn library_membership(tracks: &[Track], library: &Entity<Library>, cx: &App) -> MenuItem {
-    let count = tracks.len();
+/// The Library row of the Save to submenu, on a provider whose library is apart from its
+/// favorites. Several tracks are added unless every one of them is there already, in which
+/// case they are removed.
+fn library_row(tracks: &[Track], library: &Entity<Library>, cx: &App) -> MenuItem {
     let actionable: Vec<Track> = tracks
         .iter()
         .filter(|track| {
@@ -646,17 +671,10 @@ fn library_membership(tracks: &[Track], library: &Entity<Library>, cx: &App) -> 
                 .as_deref()
                 .is_some_and(|id| library.read(cx).in_library(id))
         });
-    let item = MenuItem::new(
-        "toggle-library-membership",
-        match present {
-            true => counted("menu-library-remove", "menu-library-remove-tracks", count),
-            false => counted("menu-library-add", "menu-library-add-tracks", count),
-        },
-    )
-    .icon(match present {
-        true => "icons/library-big-off.svg",
-        false => "icons/library-big.svg",
-    });
+    let item = MenuItem::new("save-library", t!("menu-save-library"))
+        .icon("icons/library-big.svg")
+        .checked(present)
+        .stays_open();
 
     match actionable.is_empty() {
         true => item.disabled(),
@@ -676,25 +694,19 @@ fn library_membership(tracks: &[Track], library: &Entity<Library>, cx: &App) -> 
     }
 }
 
-/// The same for one album, and nothing on a provider whose library is its favorites.
-fn album_membership_item(album: Album, cx: &App) -> Option<MenuItem> {
+/// The Library row of an album's Save to submenu, and nothing on a provider whose library is its
+/// favorites.
+fn album_library_row(album: Album, cx: &App) -> Option<MenuItem> {
     let session = Sonora::global(cx).session.read(cx);
     if !session.shape_of(Shelf::of(&album.id)).editable() {
         return None;
     }
     let library = Sonora::global(cx).library.clone();
     let present = library.read(cx).in_library(&album.id);
-    let item = MenuItem::new(
-        "toggle-album-membership",
-        match present {
-            true => t!("menu-library-remove"),
-            false => t!("menu-library-add"),
-        },
-    )
-    .icon(match present {
-        true => "icons/library-big-off.svg",
-        false => "icons/library-big.svg",
-    });
+    let item = MenuItem::new("save-album-library", t!("menu-save-library"))
+        .icon("icons/library-big.svg")
+        .checked(present)
+        .stays_open();
     Some(match library.read(cx).pending_library(&album.id) {
         true => item.disabled(),
         false => item.on_click(move |_, _, cx| {
@@ -720,8 +732,8 @@ fn sections(menu: Menu, groups: Vec<Vec<MenuItem>>) -> Menu {
         })
 }
 
-/// An album's menu, laid out like a track's: Add to playlist and the library first, then the
-/// queue, then the link and the pin. `menus` holds the playlist submenu's state.
+/// An album's menu, laid out like a track's: Save to and the download first, then the queue,
+/// then the link and the pin. `menus` holds the playlist submenu's state.
 pub(crate) fn album_menu(
     album: Album,
     playback: Entity<Playback>,
@@ -735,26 +747,41 @@ pub(crate) fn album_menu(
         true => Vec::new(),
         false => set_download_items(Collection::Album, Saved::Album(album.clone()), cx),
     };
-    let add_to_playlist = MenuItem::new("add-album-to-playlist", t!("menu-add-to-playlist"))
-        .icon("icons/square-plus.svg")
-        .submenu(
-            menus.playlists(
-                Addition::Album(album_id.clone()),
-                Shelf::of(&album_id),
-                true,
-                cx,
-            ),
-            menus.playlist_submenu.clone(),
-        );
+    let library_row = album_library_row(album.clone(), cx);
+    let saved = {
+        let library = Sonora::global(cx).library.read(cx);
+        library.saved_album(&album_id) || (library_row.is_some() && library.in_library(&album_id))
+    };
+    let lead: Vec<MenuItem> = [album_favorites_row(album.clone(), cx)]
+        .into_iter()
+        .chain(library_row)
+        .chain([MenuItem::separator("save-separator")])
+        .collect();
+    let save = MenuItem::new(
+        "save-album-to",
+        match saved {
+            true => t!("menu-saved-in"),
+            false => t!("menu-save-to"),
+        },
+    )
+    .icon(match saved {
+        true => "icons/circle-check.svg",
+        false => "icons/square-plus.svg",
+    })
+    .submenu(
+        menus.playlist_rows(
+            Addition::Album(album_id.clone()),
+            Shelf::of(&album_id),
+            lead,
+            cx,
+        ),
+        menus.playlist_submenu.clone(),
+    );
 
     sections(
         Menu::new("album-context-menu"),
         vec![
-            [add_to_playlist, album_library_item(album.clone(), cx)]
-                .into_iter()
-                .chain(album_membership_item(album.clone(), cx))
-                .chain(download)
-                .collect(),
+            [save].into_iter().chain(download).collect(),
             collection_queue_items(from, playback),
             vec![copy_link_item(
                 "copy-album-link",
@@ -771,20 +798,16 @@ pub(crate) fn album_menu(
     )
 }
 
-fn album_library_item(album: Album, cx: &App) -> MenuItem {
+/// The Favorites row of an album's Save to submenu. It stays open as it toggles, unless taking
+/// the heart off asks first.
+fn album_favorites_row(album: Album, cx: &App) -> MenuItem {
     let library = Sonora::global(cx).library.clone();
     let saved = library.read(cx).saved_album(&album.id);
-    let item = MenuItem::new(
-        "toggle-album-library",
-        match saved {
-            true => t!("menu-remove-from-library"),
-            false => t!("menu-add-to-library"),
-        },
-    )
-    .icon(match saved {
-        true => "icons/heart-off.svg",
-        false => "icons/heart.svg",
-    });
+    let asks = saved && !Confirm::unstarring(&album.id, cx);
+    let item = MenuItem::new("save-album-favorites", t!("menu-save-favorites"))
+        .icon("icons/heart.svg")
+        .checked(saved)
+        .when(!asks, MenuItem::stays_open);
 
     match library.read(cx).pending_album(&album.id) {
         true => item.disabled(),

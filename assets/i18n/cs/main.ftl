@@ -96,29 +96,13 @@ column-year = Rok
 column-tracks = Skladby
 
 # track menu
-menu-add-to-playlist = Přidat do playlistu
-menu-add-tracks-to-playlist = { $count ->
-    [one] Přidat { $count } skladbu do playlistu
-    [few] Přidat { $count } skladby do playlistu
-   *[other] Přidat { $count } skladeb do playlistu
-}
 menu-new-playlist = Nový playlist
 menu-import-playlist = Importovat playlist…
 menu-edit-tags = Upravit tagy
 menu-no-playlists = Žádné playlisty
 menu-search-playlists = Hledat playlist
 menu-add-to-library = Přidat do oblíbených
-menu-add-tracks-to-library = { $count ->
-    [one] Přidat { $count } skladbu do oblíbených
-    [few] Přidat { $count } skladby do oblíbených
-   *[other] Přidat { $count } skladeb do oblíbených
-}
 menu-remove-from-library = Odebrat z oblíbených
-menu-remove-tracks-from-library = { $count ->
-    [one] Odebrat { $count } skladbu z oblíbených
-    [few] Odebrat { $count } skladby z oblíbených
-   *[other] Odebrat { $count } skladeb z oblíbených
-}
 menu-remove-from-playlist = Odebrat z playlistu
 menu-remove-tracks-from-playlist = { $count ->
     [one] Odebrat { $count } skladbu z playlistu
@@ -186,18 +170,6 @@ menu-delete-playlist = Smazat playlist
 menu-export-playlist = Exportovat playlist…
 menu-add-playlist-to-library = Přidat do knihovny
 menu-remove-playlist-from-library = Odebrat z knihovny
-menu-library-add = Přidat do knihovny
-menu-library-add-tracks = { $count ->
-    [one] Přidat { $count } skladbu do knihovny
-    [few] Přidat { $count } skladby do knihovny
-   *[other] Přidat { $count } skladeb do knihovny
-}
-menu-library-remove = Odebrat z knihovny
-menu-library-remove-tracks = { $count ->
-    [one] Odebrat { $count } skladbu z knihovny
-    [few] Odebrat { $count } skladby z knihovny
-   *[other] Odebrat { $count } skladeb z knihovny
-}
 menu-make-playlist-public = Nastavit jako veřejný
 menu-make-playlist-private = Nastavit jako soukromý
 menu-play-artist = Přehrát interpreta

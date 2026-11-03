@@ -96,26 +96,13 @@ column-year = 年份
 column-tracks = 歌曲总数
 
 # track menu
-menu-add-to-playlist = 添加到播放列表
-menu-add-tracks-to-playlist = { $count ->
-    [one] 将 { $count } 首歌曲添加到播放列表
-   *[other] 将 { $count } 首歌曲添加到播放列表
-}
 menu-new-playlist = 新建播放列表
 menu-import-playlist = 导入播放列表…
 menu-edit-tags = 编辑标签
 menu-no-playlists = 没有播放列表
 menu-search-playlists = 搜索播放列表
 menu-add-to-library = 添加到收藏
-menu-add-tracks-to-library = { $count ->
-    [one] 将 { $count } 首歌曲添加到收藏
-   *[other] 将 { $count } 首歌曲添加到收藏
-}
 menu-remove-from-library = 从收藏中移除
-menu-remove-tracks-from-library = { $count ->
-    [one] 从收藏中移除 { $count } 首歌曲
-   *[other] 从收藏中移除 { $count } 首歌曲
-}
 menu-remove-from-playlist = 从播放列表中移除
 menu-remove-tracks-from-playlist = { $count ->
     [one] 从播放列表中移除 { $count } 首歌曲
@@ -172,16 +159,6 @@ menu-delete-playlist = 删除播放列表
 menu-export-playlist = 导出播放列表…
 menu-add-playlist-to-library = 添加到音乐库
 menu-remove-playlist-from-library = 从音乐库中移除
-menu-library-add = 添加到音乐库
-menu-library-add-tracks = { $count ->
-    [one] 将 { $count } 首歌曲添加到音乐库
-   *[other] 将 { $count } 首歌曲添加到音乐库
-}
-menu-library-remove = 从音乐库中移除
-menu-library-remove-tracks = { $count ->
-    [one] 从音乐库中移除 { $count } 首歌曲
-   *[other] 从音乐库中移除 { $count } 首歌曲
-}
 menu-make-playlist-public = 设为公开
 menu-make-playlist-private = 设为私密
 menu-play-artist = 播放歌手

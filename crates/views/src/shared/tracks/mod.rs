@@ -703,6 +703,11 @@ impl TableSource for TrackSource {
         })
     }
 
+    fn row_key(&self, row: usize, cx: &App) -> Option<SharedString> {
+        let id = self.provider.tracks(cx).get(row)?.id.clone()?;
+        Some(id.into())
+    }
+
     fn pin(&self, row: usize, cx: &App) -> Option<Pin> {
         let tracks = self.provider.tracks(cx);
         let track = tracks.get(row)?;

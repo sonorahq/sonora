@@ -96,29 +96,27 @@ column-year = Rok
 column-tracks = Utwory
 
 # track menu
-menu-add-to-playlist = Dodaj do playlisty
-menu-add-tracks-to-playlist = { $count ->
-    [one] Dodaj { $count } utwór do playlisty
-    [few] Dodaj { $count } utwory do playlisty
-   *[other] Dodaj { $count } utworów do playlisty
-}
 menu-new-playlist = Nowa playlista
 menu-import-playlist = Importuj playlistę…
 menu-edit-tags = Edytuj tagi
 menu-no-playlists = Brak playlist
 menu-search-playlists = Szukaj playlisty
+menu-save-to = Zapisz w
+menu-save-tracks-to = { $count ->
+    [one] Zapisz { $count } utwór w
+    [few] Zapisz { $count } utwory w
+   *[other] Zapisz { $count } utworów w
+}
+menu-saved-in = Zapisano w
+menu-tracks-saved-in = { $count ->
+    [one] Zapisano { $count } utwór w
+    [few] Zapisano { $count } utwory w
+   *[other] Zapisano { $count } utworów w
+}
+menu-save-favorites = Ulubione
+menu-save-library = Biblioteka
 menu-add-to-library = Dodaj do ulubionych
-menu-add-tracks-to-library = { $count ->
-    [one] Dodaj { $count } utwór do ulubionych
-    [few] Dodaj { $count } utwory do ulubionych
-   *[other] Dodaj { $count } utworów do ulubionych
-}
 menu-remove-from-library = Usuń z ulubionych
-menu-remove-tracks-from-library = { $count ->
-    [one] Usuń { $count } utwór z ulubionych
-    [few] Usuń { $count } utwory z ulubionych
-   *[other] Usuń { $count } utworów z ulubionych
-}
 menu-remove-from-playlist = Usuń z playlisty
 menu-remove-tracks-from-playlist = { $count ->
     [one] Usuń { $count } utwór z playlisty
@@ -182,18 +180,6 @@ menu-delete-playlist = Usuń playlistę
 menu-export-playlist = Eksportuj playlistę…
 menu-add-playlist-to-library = Dodaj do biblioteki
 menu-remove-playlist-from-library = Usuń z biblioteki
-menu-library-add = Dodaj do biblioteki
-menu-library-add-tracks = { $count ->
-    [one] Dodaj { $count } utwór do biblioteki
-    [few] Dodaj { $count } utwory do biblioteki
-   *[other] Dodaj { $count } utworów do biblioteki
-}
-menu-library-remove = Usuń z biblioteki
-menu-library-remove-tracks = { $count ->
-    [one] Usuń { $count } utwór z biblioteki
-    [few] Usuń { $count } utwory z biblioteki
-   *[other] Usuń { $count } utworów z biblioteki
-}
 menu-make-playlist-public = Ustaw jako publiczną
 menu-make-playlist-private = Ustaw jako prywatną
 menu-play-artist = Odtwórz wykonawcę

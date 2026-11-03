@@ -96,26 +96,13 @@ column-year = Viti
 column-tracks = Këngë
 
 # track menu
-menu-add-to-playlist = Shto te lista e luajtjes
-menu-add-tracks-to-playlist = { $count ->
-    [one] Shto { $count } këngë te lista e luajtjes
-   *[other] Shto { $count } këngë te lista e luajtjes
-}
 menu-new-playlist = Listë e re luajtjeje
 menu-import-playlist = Importo listë luajtjeje…
 menu-edit-tags = Ndrysho etiketat
 menu-no-playlists = Asnjë listë luajtjeje
 menu-search-playlists = Kërko një listë luajtjeje
 menu-add-to-library = Shto te të preferuarat
-menu-add-tracks-to-library = { $count ->
-    [one] Shto { $count } këngë te të preferuarat
-   *[other] Shto { $count } këngë te të preferuarat
-}
 menu-remove-from-library = Hiq nga të preferuarat
-menu-remove-tracks-from-library = { $count ->
-    [one] Hiq { $count } këngë nga të preferuarat
-   *[other] Hiq { $count } këngë nga të preferuarat
-}
 menu-remove-from-playlist = Hiq nga lista e luajtjes
 menu-remove-tracks-from-playlist = { $count ->
     [one] Hiq { $count } këngë nga lista e luajtjes
@@ -172,16 +159,6 @@ menu-delete-playlist = Fshi listën e luajtjes
 menu-export-playlist = Eksporto listën e luajtjes…
 menu-add-playlist-to-library = Shto te Biblioteka
 menu-remove-playlist-from-library = Hiq nga Biblioteka
-menu-library-add = Shto te Biblioteka
-menu-library-add-tracks = { $count ->
-    [one] Shto { $count } këngë te Biblioteka
-   *[other] Shto { $count } këngë te Biblioteka
-}
-menu-library-remove = Hiq nga Biblioteka
-menu-library-remove-tracks = { $count ->
-    [one] Hiq { $count } këngë nga Biblioteka
-   *[other] Hiq { $count } këngë nga Biblioteka
-}
 menu-make-playlist-public = Bëje publike
 menu-make-playlist-private = Bëje private
 menu-play-artist = Luaj artistin
