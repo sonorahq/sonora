@@ -21,7 +21,7 @@
 [![Discord](https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/a8N8Tx23rV)
 [![Matrix](https://img.shields.io/badge/Matrix-000000?style=for-the-badge&logo=matrix&logoColor=white)](https://matrix.to/#/#sonora:nolight.dev)
 
-### A native music streaming client, built with Rust and GPUI
+### A native, familiar music streaming client
 
 Stream from your favorite services and play local files — all in one **native** app.
 </div>
