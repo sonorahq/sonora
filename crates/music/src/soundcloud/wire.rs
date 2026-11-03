@@ -10,6 +10,10 @@ use crate::{
     Album, ArtistRef, Playlist, ReleaseType, SavedArtist, Track, UserProfile, iso_8601_to_epoch,
 };
 
+/// The protocol of a transcoding encrypted under Widevine with CENC, the one key system a CDM
+/// on the machine can open. `cbc-encrypted-hls` is FairPlay's and stays unplayable.
+pub const WIDEVINE: &str = "ctr-encrypted-hls";
+
 /// An id as a numeric string. Zero and missing ids answer nothing, since every id the api
 /// hands out is a positive number.
 pub fn id(value: &Value) -> Option<String> {
@@ -121,7 +125,7 @@ pub fn track(value: &Value) -> Option<Track> {
     Some(Track {
         id: Some(track_id),
         name: text(value, &["title"]).unwrap_or_default().to_owned(),
-        playable: truthy(value, &["streamable"]) && policy != "BLOCK" && !drm(value),
+        playable: truthy(value, &["streamable"]) && policy != "BLOCK" && decryptable(value),
         artists,
         artist_refs: if artist_ref.name.is_empty() {
             Vec::new()
@@ -276,21 +280,89 @@ pub fn saved_artist(value: &Value) -> Option<SavedArtist> {
     })
 }
 
-/// Whether a track's transcodings are encrypted, which SoundCloud only allows its own apps to
-/// play. Such a track still advertises plain transcodings that answer 404, so it is marked
-/// unplayable rather than queued to a stream that cannot open.
+/// Whether a track's transcodings are encrypted. Such a track still advertises plain
+/// transcodings that answer 404, so it only plays through its Widevine one.
 fn drm(value: &Value) -> bool {
+    protocols(value).any(|protocol| protocol.contains("encrypted"))
+}
+
+/// Whether a track offers a Widevine transcoding, which the machine's CDM can license and
+/// decrypt the way a browser does.
+pub fn widevine(value: &Value) -> bool {
+    protocols(value).any(|protocol| protocol == WIDEVINE)
+}
+
+/// Whether a track can be played here: a clear one always, a protected one only through a
+/// Widevine transcoding and only on a machine with a CDM. Whether there is one is asked once,
+/// since every track of every listing asks; a CDM installed later counts after a restart.
+fn decryptable(value: &Value) -> bool {
+    static CDM: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    !drm(value) || (widevine(value) && *CDM.get_or_init(crate::drm::available))
+}
+
+/// The protocol of every transcoding a track lists.
+fn protocols(value: &Value) -> impl Iterator<Item = &str> {
     value
         .get("media")
         .and_then(|media| media.get("transcodings"))
         .and_then(Value::as_array)
-        .is_some_and(|transcodings| {
-            transcodings.iter().any(|entry| {
-                entry
-                    .get("format")
-                    .and_then(|format| format.get("protocol"))
-                    .and_then(Value::as_str)
-                    .is_some_and(|protocol| protocol.contains("encrypted"))
-            })
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            entry
+                .get("format")
+                .and_then(|format| format.get("protocol"))
+                .and_then(Value::as_str)
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with_protocols(protocols: &[&str]) -> Value {
+        let transcodings: Vec<Value> = protocols
+            .iter()
+            .map(|protocol| {
+                serde_json::json!({"url": "u", "preset": "aac_160k", "format": {"protocol": protocol}})
+            })
+            .collect();
+        serde_json::json!({
+            "id": 7,
+            "title": "Signed",
+            "streamable": true,
+            "policy": "MONETIZE",
+            "user": {"id": 1, "username": "Label"},
+            "media": {"transcodings": transcodings},
+        })
+    }
+
+    #[test]
+    fn a_clear_track_plays() {
+        assert!(
+            track(&with_protocols(&["hls", "progressive"]))
+                .unwrap()
+                .playable
+        );
+    }
+
+    #[test]
+    fn a_widevine_track_plays_where_a_cdm_is() {
+        let track = track(&with_protocols(&[
+            "hls",
+            "cbc-encrypted-hls",
+            "ctr-encrypted-hls",
+        ]))
+        .unwrap();
+        assert_eq!(track.playable, crate::drm::available());
+    }
+
+    #[test]
+    fn a_track_only_fairplay_opens_never_plays() {
+        assert!(
+            !track(&with_protocols(&["hls", "cbc-encrypted-hls"]))
+                .unwrap()
+                .playable
+        );
+    }
 }

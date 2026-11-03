@@ -13,6 +13,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   library, and the wider catalogue — tracks, playlists, artists and albums — is there to search.
 - Sign in to SoundCloud through your own SoundCloud app to like tracks, follow artists and edit
   your playlists.
+- Play SoundCloud Go+ tracks that are protected, once Sonora has the Widevine module.
 
 ### Changed
 

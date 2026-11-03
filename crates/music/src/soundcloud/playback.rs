@@ -4,16 +4,27 @@
 //! segments of fragmented MP4, which [`Parts`] fetches one after another into one stream, so to
 //! the decoder it is one fragmented file. [`Timeline`] notes where each part lands in the
 //! stream, so a seek splices the init segment onto the segment that covers the position.
+//!
+//! A protected track is the same segments encrypted under Widevine with CENC. They go through
+//! the [`Media`] Apple Music's tracks do, which has the machine's CDM decrypt each sample just
+//! before it is read, so the decoder still sees one clear fragmented file. Only the license is
+//! SoundCloud's own. A protected track is never kept, in either form: it streams, and a
+//! download of one does not finish.
 
+use std::io::{Read, Seek};
+use std::num::NonZero;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use bytes::Bytes;
+use rodio::source::SeekError;
 use serde::{Deserialize, Serialize};
+use widevine::Cdm;
 
 use crate::aac::Aac;
+use crate::apple::progressive::{Cenc, Media};
 use crate::audio::Trimmed;
 use crate::engine::{self, Fetch};
 use crate::soundcloud::client::{self, SoundCloudClient};
@@ -32,8 +43,12 @@ const LONGEST_WAIT: Duration = Duration::from_secs(4);
 /// The most one segment may hold, so a wrong answer cannot fill memory.
 const SEGMENT_CEILING: usize = 8 * 1024 * 1024;
 
-/// A decoder over a SoundCloud track, with what comes before the position trimmed off.
-type Opened = Trimmed<rodio::Decoder<Reader<Plain>>>;
+/// A decoder over a SoundCloud track, clear or decrypting as it reads, with what comes before
+/// the position trimmed off.
+pub enum Decoded {
+    Clear(Trimmed<rodio::Decoder<Reader<Plain>>>),
+    Protected(Trimmed<rodio::Decoder<Reader<Cenc>>>),
+}
 
 /// Where the segments of a track start, in the music and in the stream.
 struct Timeline {
@@ -111,11 +126,26 @@ impl stream::Source for Parts {
 /// A track arriving, and how long SoundCloud says it is.
 #[derive(Clone)]
 pub struct Loaded {
-    stream: Stream<Plain>,
-    timeline: Arc<Mutex<Timeline>>,
+    body: Body,
     duration: Option<Duration>,
     /// How the track is encoded, from the preset it was served as.
     encoding: Option<Encoding>,
+}
+
+/// Where a track's bytes are: a clear stream with the timeline its seeks use, or a protected
+/// one that indexes its own fragments.
+#[derive(Clone)]
+enum Body {
+    Clear {
+        stream: Stream<Plain>,
+        timeline: Arc<Mutex<Timeline>>,
+    },
+    Protected {
+        media: Media,
+        /// Nothing reads it; it is what keeps the segments coming, since [`Parts`] stops once
+        /// nothing holds its timeline.
+        _timeline: Arc<Mutex<Timeline>>,
+    },
 }
 
 pub struct Factory {
@@ -190,16 +220,25 @@ impl SoundCloud {
             .ok()?;
         log::debug!("playback: {id} started from the vault");
         Some(Loaded {
-            stream,
-            timeline,
+            body: Body::Clear { stream, timeline },
             duration: facts.duration_s.map(Duration::from_secs),
             encoding: encoding_for(variant),
         })
     }
 
-    /// Downloads the playlist's segments and waits for the preroll.
+    /// Downloads the playlist's segments and waits for the preroll. A protected playlist is
+    /// licensed first and decrypts as it is read.
     async fn arrive(&self, id: &str, opened: client::Opened) -> Result<Loaded> {
         let playlist = hls::open(&self.media, &opened.m3u8).await?;
+        let key = playlist.key.clone();
+        match (opened.license.clone(), key) {
+            (Some(token), Some(key)) => {
+                return self.unlock(id, opened, playlist, &token, key).await;
+            }
+            (Some(_), None) => bail!("the protected soundcloud stream names no widevine key"),
+            (None, Some(_)) => bail!("soundcloud handed a protected stream no license token"),
+            (None, None) => {}
+        }
         let urls: Vec<String> = std::iter::once(playlist.init)
             .chain(playlist.media.iter().map(|segment| segment.url.clone()))
             .collect();
@@ -254,8 +293,69 @@ impl SoundCloud {
         };
         let stream = Stream::pulling(source, None, Plain).primed().await?;
         Ok(Loaded {
-            stream,
-            timeline,
+            body: Body::Clear { stream, timeline },
+            duration: opened.duration,
+            encoding: encoding_for(opened.served),
+        })
+    }
+
+    /// Licenses a protected playlist through the machine's CDM and starts its segments
+    /// arriving. The download and the license run side by side, since only reading the bytes
+    /// needs the keys.
+    async fn unlock(
+        &self,
+        id: &str,
+        opened: client::Opened,
+        playlist: hls::Playlist,
+        token: &str,
+        key: hls::Key,
+    ) -> Result<Loaded> {
+        widevine::require()?;
+        let urls: Vec<String> = std::iter::once(playlist.init)
+            .chain(playlist.media.into_iter().map(|segment| segment.url))
+            .collect();
+        // Parts keeps fetching for as long as something holds this.
+        let timeline = Arc::new(Mutex::new(Timeline {
+            starts: Vec::new(),
+            offsets: Vec::new(),
+        }));
+        let parts = Parts {
+            http: self.media.clone(),
+            urls,
+            next: 0,
+            sent: 0,
+            timeline: Arc::downgrade(&timeline),
+        };
+        let mut media = Media::pulling(Recording::through(parts), None);
+
+        log::info!("soundcloud: licensing protected track {id}");
+        // One exchange at a time, held from the challenge to its license, as the CDM needs.
+        let licensing = widevine::licensing().await;
+        let pssh = key.pssh;
+        let (cdm, challenge) = tokio::task::spawn_blocking(move || -> Result<(Cdm, Vec<u8>)> {
+            let cdm = Cdm::open()?;
+            let challenge = cdm.challenge(&pssh)?;
+            Ok((cdm, challenge))
+        })
+        .await
+        .context("the widevine challenge task failed")??;
+        let license = self.client.license(token, &challenge).await?;
+        let cdm = tokio::task::spawn_blocking(move || -> Result<Cdm> {
+            cdm.accept(&license)?;
+            Ok(cdm)
+        })
+        .await
+        .context("the widevine license task failed")??;
+        drop(licensing);
+
+        media.license(cdm, key.id)?;
+        media.release_when_downloaded();
+        media.prime().await?;
+        Ok(Loaded {
+            body: Body::Protected {
+                media,
+                _timeline: timeline,
+            },
             duration: opened.duration,
             encoding: encoding_for(opened.served),
         })
@@ -265,7 +365,7 @@ impl SoundCloud {
 #[async_trait]
 impl Fetch for SoundCloud {
     type Loaded = Loaded;
-    type Source = Opened;
+    type Source = Decoded;
 
     fn name(&self) -> &'static str {
         "soundcloud"
@@ -293,7 +393,10 @@ impl Fetch for SoundCloud {
     }
 
     async fn downloaded(&self, loaded: &Loaded) {
-        loaded.stream.finished().await;
+        match &loaded.body {
+            Body::Clear { stream, .. } => stream.finished().await,
+            Body::Protected { media, .. } => media.finished().await,
+        }
     }
 
     /// A segmented stream has no index for symphonia to jump around in, so a seek opens a
@@ -303,15 +406,81 @@ impl Fetch for SoundCloud {
     }
 
     fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Self::Source> {
+        let (stream, timeline) = match &loaded.body {
+            Body::Clear { stream, timeline } => (stream, timeline),
+            Body::Protected { media, .. } => return protected(id, media, at),
+        };
         if at.is_zero() {
-            let decoder = decoder(id, loaded.stream.reader())?;
-            return Some(Trimmed::new(decoder, Duration::ZERO, None));
+            let decoder = decoder(id, stream.reader())?;
+            return Some(Decoded::Clear(Trimmed::new(decoder, Duration::ZERO, None)));
         }
-        let entry = landing(&loaded.stream, &loaded.timeline, at)?;
-        let reader = loaded.stream.spliced(entry.head, entry.graft);
+        let entry = landing(stream, timeline, at)?;
+        let reader = stream.spliced(entry.head, entry.graft);
         let decoder = decoder(id, reader)?;
-        Some(Trimmed::new(decoder, entry.into, None))
+        Some(Decoded::Clear(Trimmed::new(decoder, entry.into, None)))
     }
+}
+
+impl Iterator for Decoded {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<f32> {
+        match self {
+            Self::Clear(inner) => inner.next(),
+            Self::Protected(inner) => inner.next(),
+        }
+    }
+}
+
+impl rodio::Source for Decoded {
+    fn current_span_len(&self) -> Option<usize> {
+        match self {
+            Self::Clear(inner) => inner.current_span_len(),
+            Self::Protected(inner) => inner.current_span_len(),
+        }
+    }
+
+    fn channels(&self) -> NonZero<u16> {
+        match self {
+            Self::Clear(inner) => inner.channels(),
+            Self::Protected(inner) => inner.channels(),
+        }
+    }
+
+    fn sample_rate(&self) -> NonZero<u32> {
+        match self {
+            Self::Clear(inner) => inner.sample_rate(),
+            Self::Protected(inner) => inner.sample_rate(),
+        }
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        match self {
+            Self::Clear(inner) => inner.total_duration(),
+            Self::Protected(inner) => inner.total_duration(),
+        }
+    }
+
+    fn try_seek(&mut self, position: Duration) -> Result<(), SeekError> {
+        match self {
+            Self::Clear(inner) => inner.try_seek(position),
+            Self::Protected(inner) => inner.try_seek(position),
+        }
+    }
+}
+
+/// A decoder over a protected track placed at `at`. The track indexes its own fragments, so a
+/// position past the start splices the init segment onto the fragment that covers it, and
+/// only the part of that fragment before the position is trimmed.
+fn protected(id: &str, media: &Media, at: Duration) -> Option<Decoded> {
+    let entry = (!at.is_zero()).then(|| media.entry(at)).flatten();
+    let skip = entry.map(|entry| entry.into).unwrap_or_default();
+    let reader = match entry {
+        Some(entry) => media.reader_at(entry),
+        None => media.reader(),
+    };
+    let decoder = decoder(id, reader)?;
+    Some(Decoded::Protected(Trimmed::new(decoder, skip, None)))
 }
 
 /// Where to read a segmented download to land on `at`: at once when it has the segment, after a
@@ -395,7 +564,10 @@ fn encoding_for(preset: &str) -> Option<Encoding> {
 }
 
 /// Builds a decoder that only reads forward, or reports a track that will not decode.
-fn decoder(id: &str, reader: Reader<Plain>) -> Option<rodio::Decoder<Reader<Plain>>> {
+fn decoder<R>(id: &str, reader: R) -> Option<rodio::Decoder<R>>
+where
+    R: Read + Seek + Send + Sync + 'static,
+{
     match rodio::Decoder::builder()
         .with_symphonia_decoder::<Aac>()
         .with_data(reader)

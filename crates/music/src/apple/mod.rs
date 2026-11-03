@@ -15,7 +15,9 @@ mod auth;
 mod client;
 mod links;
 mod playback;
-mod progressive;
+/// Shared with SoundCloud, whose protected streams are the same CENC fMP4 once their segments
+/// are joined.
+pub(crate) mod progressive;
 mod recommend;
 mod stream;
 mod wire;

@@ -24,6 +24,13 @@ use crate::{
 const API: &str = "https://api-v2.soundcloud.com";
 /// The public api, which takes the writes a registered app's grant may make.
 const PUBLIC: &str = "https://api.soundcloud.com";
+/// Where SoundCloud's web player exchanges a Widevine challenge for a license.
+const LICENSE: &str = "https://license.media-streaming.soundcloud.cloud/playback/widevine";
+/// The origin the web player's license requests come from, which the license server expects.
+const ORIGIN: &str = "https://soundcloud.com";
+/// How long a license answer may be. A license is a few kilobytes; this only bounds what a
+/// wrong answer can cost.
+const LICENSE_CEILING: usize = 1 << 20;
 /// The page whose script bundle carries the web app's `client_id`.
 const WEB: &str = "https://soundcloud.com";
 
@@ -60,6 +67,9 @@ pub struct Opened {
     pub duration: Option<Duration>,
     /// The preset served, which is also the vault variant the bytes are kept under.
     pub served: &'static str,
+    /// For a Widevine-protected stream, the token SoundCloud's license server wants beside the
+    /// challenge. It belongs to this one manifest. None for a clear stream.
+    pub license: Option<String>,
 }
 
 #[derive(Clone)]
@@ -76,10 +86,12 @@ struct Inner {
     /// cookie sign-in.
     app: Option<App>,
     client_id: String,
-    /// Where reads, writes and token renewals go: the real hosts, or a test's loopback server.
+    /// Where reads, writes, token renewals and licenses go: the real hosts, or a test's
+    /// loopback server.
     api: String,
     public: String,
     token_url: String,
+    license_url: String,
     profile: RwLock<UserProfile>,
     /// Artist avatars already looked up, so a search that ranks the same users on every
     /// keystroke does not fetch them again.
@@ -150,6 +162,7 @@ impl SoundCloudClient {
                 api: api.to_owned(),
                 public: public.to_owned(),
                 token_url: token_url.to_owned(),
+                license_url: LICENSE.to_owned(),
                 profile: RwLock::new(UserProfile {
                     id: String::new(),
                     display_name: String::new(),
@@ -386,26 +399,38 @@ impl SoundCloudClient {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        // A protected track still lists clear transcodings, which answer 404, so only its
+        // Widevine ones are worth asking for.
+        let protected = wire::widevine(&data);
 
         let mut last = anyhow::anyhow!("no format was offered");
         for preset in presets_from(quality) {
-            let Some(transcoding) = transcodings
-                .iter()
-                .find(|entry| entry.get("preset").and_then(Value::as_str) == Some(preset))
-            else {
+            let Some(transcoding) = pick(&transcodings, preset, protected) else {
                 continue;
             };
             let Some(media_url) = transcoding.get("url").and_then(Value::as_str) else {
                 continue;
             };
             let url = transcoding_url(media_url, &self.inner.client_id, authorization);
-            match self.stream_url(&url).await {
-                Ok(m3u8) => {
-                    log::debug!("soundcloud: {track_id} streams as {preset}");
+            let resolved = self.stream_url(&url).await.and_then(|(m3u8, license)| {
+                match (protected, license) {
+                    (true, None) => {
+                        bail!("soundcloud handed the protected stream no license token")
+                    }
+                    (true, license) => Ok((m3u8, license)),
+                    (false, _) => Ok((m3u8, None)),
+                }
+            });
+            match resolved {
+                Ok((m3u8, license)) => {
+                    log::debug!(
+                        "soundcloud: {track_id} streams as {preset}, protected {protected}"
+                    );
                     return Ok(Opened {
                         m3u8,
                         duration,
                         served: preset,
+                        license,
                     });
                 }
                 Err(error) => last = error,
@@ -420,8 +445,9 @@ impl SoundCloudClient {
         )))
     }
 
-    /// Resolves one transcoding url to a signed stream url.
-    async fn stream_url(&self, url: &str) -> Result<String> {
+    /// Resolves one transcoding url to a signed stream url, and the license token a protected
+    /// stream's answer carries beside it.
+    async fn stream_url(&self, url: &str) -> Result<(String, Option<String>)> {
         let token = self.bearer().await?;
         let answer: Value = self
             .inner
@@ -436,11 +462,58 @@ impl SoundCloudClient {
             .json()
             .await
             .context("cannot read the soundcloud stream answer")?;
-        answer
+        let m3u8 = answer
             .get("url")
             .and_then(Value::as_str)
             .map(str::to_owned)
-            .context("the stream answer names no url")
+            .context("the stream answer names no url")?;
+        let license = wire::text(&answer, &["licenseAuthToken"]).map(str::to_owned);
+        Ok((m3u8, license))
+    }
+
+    /// Exchanges the CDM's challenge for the license of one protected manifest. `token` is the
+    /// `licenseAuthToken` the manifest's stream answer carried; the license server only grants
+    /// one to an account whose plan covers the track, which is SoundCloud Go+ for these.
+    pub async fn license(&self, token: &str, challenge: &[u8]) -> Result<Vec<u8>> {
+        let url = format!(
+            "{}?license_token={}",
+            self.inner.license_url,
+            escape::component(token)
+        );
+        let response = self
+            .inner
+            .http
+            .post(&url)
+            .header("Content-Type", "application/octet-stream")
+            .header("Origin", ORIGIN)
+            .header("Referer", format!("{ORIGIN}/"))
+            .body(challenge.to_vec())
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .context("cannot reach the soundcloud license server")?;
+        let status = response.status();
+        let mut response = response;
+        let mut license = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .context("cannot read the soundcloud license")?
+        {
+            if license.len() + chunk.len() > LICENSE_CEILING {
+                bail!("the soundcloud license runs past {LICENSE_CEILING} bytes");
+            }
+            license.extend_from_slice(&chunk);
+        }
+        match status.as_u16() {
+            200..=299 if !license.is_empty() => Ok(license),
+            200..=299 => bail!("the soundcloud license server answered nothing"),
+            401 | 403 => bail!(
+                "soundcloud refused the license (http {status}); the track needs a plan that covers it"
+            ),
+            _ => bail!("soundcloud refused the license: http {status}"),
+        }
     }
 
     /// A write over the public api, as the registered app's grant. A cookie sign-in cannot
@@ -1058,6 +1131,24 @@ pub(crate) fn served(quality: Quality) -> &'static str {
     presets_from(quality)[0]
 }
 
+/// The transcoding of `preset` a track should stream from: a Widevine one for a protected
+/// track, and a clear one otherwise. A FairPlay or PlayReady transcoding shares its preset
+/// with the Widevine one, so the preset alone does not tell them apart.
+fn pick<'a>(transcodings: &'a [Value], preset: &str, protected: bool) -> Option<&'a Value> {
+    transcodings.iter().find(|entry| {
+        let protocol = entry
+            .get("format")
+            .and_then(|format| format.get("protocol"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let fits = match protected {
+            true => protocol == wire::WIDEVINE,
+            false => !protocol.contains("encrypted"),
+        };
+        fits && entry.get("preset").and_then(Value::as_str) == Some(preset)
+    })
+}
+
 /// The transcoding's own url, signed with the web app's `client_id` and the track's
 /// `track_authorization`. Asking it answers the playlist url the audio streams from.
 fn transcoding_url(media_url: &str, client_id: &str, authorization: &str) -> String {
@@ -1361,7 +1452,8 @@ mod tests {
             .unwrap()
             .replace("MEDIA", &mock_media);
         let url = transcoding_url(&media, "web-client", "auth-1");
-        let m3u8 = client.stream_url(&url).await.unwrap();
+        let (m3u8, license) = client.stream_url(&url).await.unwrap();
+        assert!(license.is_none());
 
         assert_eq!(
             m3u8,
@@ -1478,5 +1570,131 @@ mod tests {
                 .contains("authorization: oauth 2-renewed")
         );
         assert_eq!(client.inner.grant.lock().await.access, "2-renewed");
+    }
+
+    /// A protected track as api-v2 lists one: the clear transcoding it still advertises, the
+    /// FairPlay one and the Widevine one, all under the same preset.
+    fn protected_track() -> String {
+        TRACK.replace(
+            r#""media": {"transcodings": [{"#,
+            r#""track_authorization": "auth-1", "media": {"transcodings": [
+                {"url": "MEDIA/fairplay", "preset": "aac_160k", "format": {"protocol": "cbc-encrypted-hls"}},
+                {"url": "MEDIA/widevine", "preset": "aac_160k", "format": {"protocol": "ctr-encrypted-hls"}},
+                {"#,
+        )
+    }
+
+    #[test]
+    fn a_protected_track_streams_through_its_widevine_transcoding() {
+        let data: Value = serde_json::from_str(&protected_track()).unwrap();
+        let transcodings = data["media"]["transcodings"].as_array().unwrap();
+
+        let protected = pick(transcodings, "aac_160k", true).unwrap();
+        assert_eq!(protected["url"], "MEDIA/widevine");
+        let clear = pick(transcodings, "aac_160k", false).unwrap();
+        assert_eq!(clear["format"]["protocol"], "hls");
+        assert!(pick(transcodings, "aac_96k", true).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_protected_stream_hands_back_its_license_token() {
+        let base = Arc::new(std::sync::OnceLock::<String>::new());
+        let known = base.clone();
+        let mock = Mock::start(move |line| match line {
+            line if line.starts_with("GET /tracks?ids=1001") => (
+                200,
+                protected_track().replace("MEDIA", &format!("{}/media", known.get().unwrap())),
+            ),
+            line if line.starts_with("GET /media/widevine?") => (
+                200,
+                r#"{"url": "https://cf-hls-media.sndcdn.com/playlist/abc.m3u8", "licenseAuthToken": "lat-1"}"#
+                    .to_owned(),
+            ),
+            _ => (404, String::new()),
+        })
+        .await;
+        base.set(mock.base().to_owned()).unwrap();
+        let opened = client(&mock, None)
+            .await
+            .open_stream("1001", Quality::Normal)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            opened.m3u8,
+            "https://cf-hls-media.sndcdn.com/playlist/abc.m3u8"
+        );
+        assert_eq!(opened.license.as_deref(), Some("lat-1"));
+        assert_eq!(opened.served, "aac_160k");
+        let asked: Vec<String> = mock.requests().into_iter().map(|sent| sent.line).collect();
+        assert!(
+            asked.iter().all(|line| !line.contains("fairplay")),
+            "{asked:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_protected_stream_without_a_license_token_is_refused() {
+        let base = Arc::new(std::sync::OnceLock::<String>::new());
+        let known = base.clone();
+        let mock = Mock::start(move |line| match line {
+            line if line.starts_with("GET /tracks?ids=1001") => (
+                200,
+                protected_track().replace("MEDIA", &format!("{}/media", known.get().unwrap())),
+            ),
+            _ => (
+                200,
+                r#"{"url": "https://cf-hls-media.sndcdn.com/playlist/abc.m3u8"}"#.to_owned(),
+            ),
+        })
+        .await;
+        base.set(mock.base().to_owned()).unwrap();
+        let Err(error) = client(&mock, None)
+            .await
+            .open_stream("1001", Quality::Normal)
+            .await
+        else {
+            panic!("a protected stream without a license token opened");
+        };
+        assert!(
+            format!("{error:#}").contains("no license token"),
+            "{error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_challenge_goes_to_the_license_server_as_it_is() {
+        let mock = Mock::start(|_| (200, "LICENSE-BYTES".to_owned())).await;
+        let mut client = client(&mock, None).await;
+        Arc::get_mut(&mut client.inner).unwrap().license_url = mock.url("/playback/widevine");
+        let license = client
+            .license("lat+1/=", b"\x08\x01CHALLENGE")
+            .await
+            .unwrap();
+
+        assert_eq!(license, b"LICENSE-BYTES");
+        let sent = &mock.requests()[0];
+        assert!(
+            sent.line
+                .starts_with("POST /playback/widevine?license_token=lat%2B1%2F%3D "),
+            "{}",
+            sent.line
+        );
+        assert_eq!(sent.body.as_bytes(), b"\x08\x01CHALLENGE");
+        let headers = sent.headers.to_ascii_lowercase();
+        assert!(headers.contains("content-type: application/octet-stream"));
+        assert!(headers.contains("origin: https://soundcloud.com"));
+    }
+
+    #[tokio::test]
+    async fn a_refused_license_says_the_plan_does_not_cover_the_track() {
+        let mock = Mock::start(|_| (403, String::new())).await;
+        let mut client = client(&mock, None).await;
+        Arc::get_mut(&mut client.inner).unwrap().license_url = mock.url("/playback/widevine");
+        let error = client.license("lat", b"challenge").await.unwrap_err();
+        assert!(
+            error.to_string().contains("needs a plan that covers it"),
+            "{error}"
+        );
     }
 }
