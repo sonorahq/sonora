@@ -1,5 +1,5 @@
 {
-  description = "Sonora - a native music streaming client";
+  description = "A native, familiar music streaming client";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -250,7 +250,7 @@
           });
 
           meta = {
-            description = "A native music streaming client, built with Rust and GPUI";
+            description = "A native, familiar music streaming client";
             mainProgram = "sonora";
             license = with lib.licenses; [
               gpl3Plus

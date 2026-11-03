@@ -1,7 +1,9 @@
 # sonora
 
-A native music streaming client, built with Rust and [GPUI](https://github.com/zed-industries/zed)
-(Zed's UI framework). Cargo workspace, edition 2024, resolver 3.
+A native, familiar music streaming client.
+
+Built with Rust and [GPUI](https://github.com/zed-industries/zed), Zed's UI framework.
+Cargo workspace, edition 2024, resolver 3.
 
 ## Crate layout
 
