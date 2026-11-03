@@ -26,6 +26,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Lyrics still to be sung and the artist name in fullscreen take on the colour behind them instead of a flat grey.
 - The highlight on a hovered lyric line or instrumental break ends where its words or notes end.
 - The title and artist in fullscreen carry a lighter shadow.
+- Switching between the cover, lyrics and queue in fullscreen eases the new tab in the way settings pages do.
 
 ### Fixed
 
