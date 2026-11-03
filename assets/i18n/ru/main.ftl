@@ -96,29 +96,27 @@ column-year = Год
 column-tracks = Треки
 
 # track menu
-menu-add-to-playlist = Добавить в плейлист
-menu-add-tracks-to-playlist = { $count ->
-    [one] Добавить { $count } трек в плейлист
-    [few] Добавить { $count } трека в плейлист
-   *[other] Добавить { $count } треков в плейлист
-}
 menu-new-playlist = Новый плейлист
 menu-import-playlist = Импортировать плейлист…
 menu-edit-tags = Изменить теги
 menu-no-playlists = Нет плейлистов
 menu-search-playlists = Поиск плейлиста
+menu-save-to = Сохранить в
+menu-save-tracks-to = { $count ->
+    [one] Сохранить { $count } трек в
+    [few] Сохранить { $count } трека в
+   *[other] Сохранить { $count } треков в
+}
+menu-saved-in = Сохранено в
+menu-tracks-saved-in = { $count ->
+    [one] { $count } трек сохранён в
+    [few] { $count } трека сохранены в
+   *[other] { $count } треков сохранены в
+}
+menu-save-favorites = Избранное
+menu-save-library = Медиатека
 menu-add-to-library = В избранное
-menu-add-tracks-to-library = { $count ->
-    [one] Добавить { $count } трек в избранное
-    [few] Добавить { $count } трека в избранное
-   *[other] Добавить { $count } треков в избранное
-}
 menu-remove-from-library = Убрать из избранного
-menu-remove-tracks-from-library = { $count ->
-    [one] Убрать { $count } трек из избранного
-    [few] Убрать { $count } трека из избранного
-   *[other] Убрать { $count } треков из избранного
-}
 menu-remove-from-playlist = Удалить из плейлиста
 menu-remove-tracks-from-playlist = { $count ->
     [one] Удалить { $count } трек из плейлиста
@@ -182,18 +180,6 @@ menu-delete-playlist = Удалить плейлист
 menu-export-playlist = Экспортировать плейлист…
 menu-add-playlist-to-library = Добавить в медиатеку
 menu-remove-playlist-from-library = Удалить из медиатеки
-menu-library-add = Добавить в медиатеку
-menu-library-add-tracks = { $count ->
-    [one] Добавить { $count } трек в медиатеку
-    [few] Добавить { $count } трека в медиатеку
-   *[other] Добавить { $count } треков в медиатеку
-}
-menu-library-remove = Удалить из медиатеки
-menu-library-remove-tracks = { $count ->
-    [one] Удалить { $count } трек из медиатеки
-    [few] Удалить { $count } трека из медиатеки
-   *[other] Удалить { $count } треков из медиатеки
-}
 menu-make-playlist-public = Сделать публичным
 menu-make-playlist-private = Сделать приватным
 menu-play-artist = Воспроизвести исполнителя

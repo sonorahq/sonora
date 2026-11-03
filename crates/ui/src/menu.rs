@@ -362,6 +362,8 @@ struct Keys {
     search: MenuSearch,
     rows: Rc<[usize]>,
     picked: Option<Action>,
+    /// Whether the picked row keeps the menu open, so Enter neither closes it nor hands focus back.
+    stays: bool,
     action: Option<Action>,
     searches: Rc<[MenuSearch]>,
     scrollbar: Option<Entity<Scrollbar>>,
@@ -373,6 +375,7 @@ impl Keys {
             search,
             rows,
             picked,
+            stays,
             action,
             searches,
             scrollbar,
@@ -390,7 +393,9 @@ impl Keys {
                     return;
                 };
                 let click = ClickEvent::default();
-                release(&searches, window, cx);
+                if !stays {
+                    release(&searches, window, cx);
+                }
                 press(&click, window, cx);
                 if let Some(action) = action.as_ref() {
                     action(&click, window, cx);
@@ -421,6 +426,8 @@ pub struct MenuItem {
     tooltip: Option<SharedString>,
     press: Option<Action>,
     submenu: Option<Submenu>,
+    /// Whether picking the item leaves the menu open, for a row that toggles something in place.
+    stays: bool,
 }
 
 impl FluentBuilder for MenuItem {}
@@ -444,6 +451,7 @@ impl MenuItem {
             tooltip: None,
             press: None,
             submenu: None,
+            stays: false,
         }
     }
 
@@ -475,6 +483,7 @@ impl MenuItem {
             tooltip: None,
             press: None,
             submenu: None,
+            stays: false,
         }
     }
 
@@ -532,6 +541,13 @@ impl MenuItem {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.press = Some(Rc::new(handler));
+        self
+    }
+
+    /// Keeps the menu open after the item is picked, for a checked row that toggles in place.
+    /// The caller rebuilds the menu on its next render, so the check follows the new state.
+    pub fn stays_open(mut self) -> Self {
+        self.stays = true;
         self
     }
 
@@ -763,6 +779,7 @@ impl RenderOnce for Menu {
             .and_then(|search| search.place(pickable.len()))
             .map(|place| pickable[place]);
         let picked = cursor.and_then(|place| items[place].press.clone());
+        let picked_stays = cursor.is_some_and(|place| items[place].stays);
 
         if let (Some(scrollbar), Some(guard)) = (scrollbar.as_ref(), hover_guard.clone()) {
             let outer = outer.clone();
@@ -791,7 +808,8 @@ impl RenderOnce for Menu {
             search,
             rows: pickable.into(),
             picked,
-            action: action.clone(),
+            stays: picked_stays,
+            action: action.clone().filter(|_| !picked_stays),
             searches: searches.clone(),
             scrollbar: scrollbar.clone(),
         });
@@ -827,6 +845,7 @@ impl RenderOnce for Menu {
                 tooltip,
                 press,
                 submenu,
+                stays,
             } = item;
 
             if let Some(content) = content {
@@ -846,8 +865,11 @@ impl RenderOnce for Menu {
                 return Separator::horizontal().mx_2().my_1().into_any_element();
             }
             let action = action.clone();
-            let press_action = action.clone();
-            let press = press.map(|press| releasing(press, &row_searches));
+            let press_action = action.clone().filter(|_| !stays);
+            let press = press.map(|press| match stays {
+                true => press,
+                false => releasing(press, &row_searches),
+            });
             let submenu_state = submenu.as_ref().map(|submenu| submenu.state.clone());
             let expanded = submenu.as_ref().map(|submenu| submenu.state.is_open());
             let has_artwork = artwork.is_some();

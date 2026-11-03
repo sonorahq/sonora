@@ -96,17 +96,13 @@ column-year = Yıl
 column-tracks = Parçalar
 
 # track menu
-menu-add-to-playlist = Çalma listesine ekle
-menu-add-tracks-to-playlist = { $count } parçayı çalma listesine ekle
 menu-new-playlist = Yeni çalma listesi
 menu-import-playlist = Çalma listesini içe aktar…
 menu-edit-tags = Etiketleri düzenle
 menu-no-playlists = Çalma listesi yok
 menu-search-playlists = Çalma listesi ara
 menu-add-to-library = Favorilere ekle
-menu-add-tracks-to-library = { $count } parçayı favorilere ekle
 menu-remove-from-library = Favorilerden çıkar
-menu-remove-tracks-from-library = { $count } parçayı favorilerden çıkar
 menu-remove-from-playlist = Çalma listesinden çıkar
 menu-remove-tracks-from-playlist = { $count } parçayı çalma listesinden çıkar
 menu-remove-from-history = Geçmişten kaldır
@@ -148,14 +144,6 @@ menu-delete-playlist = Çalma listesini sil
 menu-export-playlist = Çalma listesini dışa aktar…
 menu-add-playlist-to-library = Kitaplığa ekle
 menu-remove-playlist-from-library = Kitaplıktan çıkar
-menu-library-add = Kitaplığa ekle
-menu-library-add-tracks = { $count ->
-   *[other] { $count } parçayı kitaplığa ekle
-}
-menu-library-remove = Kitaplıktan çıkar
-menu-library-remove-tracks = { $count ->
-   *[other] { $count } parçayı kitaplıktan çıkar
-}
 menu-make-playlist-public = Herkese açık yap
 menu-make-playlist-private = Gizli yap
 menu-play-artist = Sanatçıyı çal

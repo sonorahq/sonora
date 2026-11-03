@@ -96,26 +96,13 @@ column-year = Ano
 column-tracks = Faixas
 
 # track menu
-menu-add-to-playlist = Adicionar à playlist
-menu-add-tracks-to-playlist = { $count ->
-    [one] Adicionar { $count } faixa à playlist
-   *[other] Adicionar { $count } faixas à playlist
-}
 menu-new-playlist = Nova playlist
 menu-import-playlist = Importar playlist…
 menu-edit-tags = Editar tags
 menu-no-playlists = Nenhuma playlist
 menu-search-playlists = Pesquisar playlist
 menu-add-to-library = Adicionar às Favoritas
-menu-add-tracks-to-library = { $count ->
-    [one] Adicionar { $count } faixa às Favoritas
-   *[other] Adicionar { $count } faixas às Favoritas
-}
 menu-remove-from-library = Remover das Favoritas
-menu-remove-tracks-from-library = { $count ->
-    [one] Remover { $count } faixa das Favoritas
-   *[other] Remover { $count } faixas das Favoritas
-}
 menu-remove-from-playlist = Remover da playlist
 menu-remove-tracks-from-playlist = { $count ->
     [one] Remover { $count } faixa da playlist
@@ -172,16 +159,6 @@ menu-delete-playlist = Excluir playlist
 menu-export-playlist = Exportar playlist…
 menu-add-playlist-to-library = Adicionar à Biblioteca
 menu-remove-playlist-from-library = Remover da Biblioteca
-menu-library-add = Adicionar à Biblioteca
-menu-library-add-tracks = { $count ->
-    [one] Adicionar { $count } faixa à Biblioteca
-   *[other] Adicionar { $count } faixas à Biblioteca
-}
-menu-library-remove = Remover da Biblioteca
-menu-library-remove-tracks = { $count ->
-    [one] Remover { $count } faixa da Biblioteca
-   *[other] Remover { $count } faixas da Biblioteca
-}
 menu-make-playlist-public = Tornar pública
 menu-make-playlist-private = Tornar privada
 menu-play-artist = Tocar artista
