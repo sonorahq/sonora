@@ -4,6 +4,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use futures::{StreamExt as _, stream};
 use opensubsonic::api::lists::AlbumListType;
 use opensubsonic::data::{AlbumId3, AlbumWithSongsId3, Child, Genre as SourceGenre};
 use opensubsonic::{Auth, Client};
@@ -29,6 +30,8 @@ const SIMILAR_ARTISTS: usize = 6;
 const SIMILAR_RELEASES: usize = 2;
 const HOME_SONGS: i32 = 25;
 const HOME_ALBUMS: i32 = 12;
+/// How many albums playing an artist reads at once.
+const ALBUM_READS: usize = 4;
 const LIBRARY_PAGE: i32 = 500;
 const API_VERSION: &str = "1.16.1";
 const CLIENT_NAME: &str = "sonora";
@@ -408,6 +411,27 @@ impl MusicApi for SubsonicClient {
             top_tracks,
             albums,
         })
+    }
+
+    /// Keeps top songs first, then album tracks newest first because Subsonic has no further
+    /// popularity ranking. Albums that fail to load are omitted.
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        let artist = self.artist(artist_id).await?;
+        let mut albums = artist.albums;
+        albums.sort_by_key(|album| std::cmp::Reverse(album.year));
+        let reads: Vec<_> = stream::iter(albums)
+            .map(|album| async move { (self.album_tracks(&album.id).await, album.name) })
+            .buffered(ALBUM_READS)
+            .collect()
+            .await;
+        let mut tracks = artist.top_tracks;
+        for (read, album) in reads {
+            match read {
+                Ok(songs) => tracks.extend(songs),
+                Err(error) => log::warn!("subsonic: cannot read the album {album}: {error:#}"),
+            }
+        }
+        Ok(crate::artist_songs(tracks, artist_id))
     }
 
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {

@@ -819,10 +819,20 @@ async fn fetch(
             tracks,
             origin: Some(Origin::playlist(id)),
         }),
-        Linked::Artist(id) => client.artist(&id).await.map(|artist| Batch {
-            tracks: artist.top_tracks,
-            origin: Some(Origin::artist(id).named(artist.name)),
-        }),
+        Linked::Artist(id) => {
+            let (profile, tracks) =
+                tokio::join!(client.artist_profile(&id), client.artist_tracks(&id));
+            tracks.map(|tracks| {
+                let origin = Origin::artist(id.clone());
+                Batch {
+                    tracks,
+                    origin: Some(match profile {
+                        Ok(profile) => origin.named(profile.name),
+                        Err(_) => origin,
+                    }),
+                }
+            })
+        }
         Linked::User(_) | Linked::Jam(_) | Linked::Short => {
             return Err(Missed {
                 failure: Failure::Unqueueable(link),

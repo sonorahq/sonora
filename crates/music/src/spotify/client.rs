@@ -79,6 +79,10 @@ impl MusicApi for LibrespotClient {
         artists::catalogue(&self.session, artist_id, known.to_vec()).await
     }
 
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        artists::tracks(&self.session, artist_id).await
+    }
+
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
         artists::profile(&self.session, artist_id).await
     }

@@ -32,6 +32,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Playing or shuffling an artist queues their songs beyond the Popular section, with popular songs first.
 - YouTube Music no longer loses its refreshed sign-in cookies when several requests finish together.
 - On Windows, the hidden YouTube playback page no longer shares cookies with the sign-in window.
 - Local libraries no longer list macOS AppleDouble metadata files as songs.

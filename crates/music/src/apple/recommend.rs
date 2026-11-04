@@ -10,7 +10,7 @@ use anyhow::{Context as _, Result};
 use crate::apple::client::{ALBUM_ARTISTS, AppleClient, Missing};
 use crate::apple::wire;
 use crate::escape;
-use crate::{Album, AlbumCatalogue, ArtistCatalogue, SUGGESTIONS, SavedArtist};
+use crate::{Album, AlbumCatalogue, ArtistCatalogue, SUGGESTIONS, SavedArtist, Track};
 
 /// How many similar artists lend their releases to a thin rail, and how many releases each
 /// lends.
@@ -21,6 +21,9 @@ const SIMILAR_RELEASES: usize = 2;
 /// a discography may take.
 const ALBUM_PAGE: usize = 100;
 const ALBUM_PAGES: usize = 10;
+
+/// The page size for Apple's ranked artist songs.
+const SONG_PAGE: usize = 100;
 
 /// Every album of one artist, newest first, and its appears-on view, once a library id has been
 /// turned into the catalog's. The artist page itself holds only the first ten releases of each
@@ -58,6 +61,51 @@ pub(crate) async fn artist_catalogue(
             .collect(),
         ..Default::default()
     })
+}
+
+/// Reads Apple's ranked songs beyond the artist overview, resolving library artist ids first.
+/// A later page failure leaves the songs already read available for playback.
+pub(crate) async fn artist_tracks(client: &AppleClient, artist_id: &str) -> Result<Vec<Track>> {
+    let artist_id = client.catalog_artist(artist_id).await?;
+    let path = client.catalog(&format!(
+        "/artists/{}/view/top-songs",
+        escape::component(&artist_id)
+    ));
+    let limit = SONG_PAGE.to_string();
+    let mut tracks = Vec::new();
+    let mut seen = HashSet::new();
+    for page in 0.. {
+        let offset = (page * SONG_PAGE).to_string();
+        let answered = client
+            .get(
+                &path,
+                &[
+                    ("limit", &limit),
+                    ("offset", &offset),
+                    ("include[songs]", "artists,albums"),
+                ],
+            )
+            .await;
+        let body = match answered {
+            Ok(body) => body,
+            Err(error) if page == 0 => {
+                return Err(error).context("cannot read the artist's top songs");
+            }
+            Err(error) => {
+                log::warn!("apple: cannot read more top songs of {artist_id}: {error:#}");
+                break;
+            }
+        };
+        let outline = wire::outline(&body);
+        let mut songs = outline.read(&wire::song);
+        songs.retain(|track| track.id.as_ref().is_some_and(|id| seen.insert(id.clone())));
+        let exhausted = songs.is_empty() || !outline.next.is_present();
+        tracks.extend(songs);
+        if exhausted {
+            break;
+        }
+    }
+    Ok(crate::artist_songs(tracks, &artist_id))
 }
 
 /// The related-albums view of one album, without the album itself. A library album that is
