@@ -156,7 +156,7 @@ impl SettingsView {
                         },
                     };
                     MenuItem::new(id, label)
-                        .selected(place == cursor)
+                        .highlighted(place == cursor)
                         .checked(chosen == name.as_ref())
                         .when(shows, |item| item.face(preview))
                         .on_click(cx.listener(move |this, _, _, cx| {
