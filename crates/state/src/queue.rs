@@ -1052,7 +1052,7 @@ impl Queue {
 
     /// The gap right after the hand-queued run, where Add to queue puts a song. Hand-queued
     /// songs only ever sit in that run, which songs replayed from the history may precede.
-    fn manual_end(&self) -> usize {
+    pub(crate) fn manual_end(&self) -> usize {
         self.upcoming
             .iter()
             .rposition(|entry| entry.kind == QueueKind::Queued)

@@ -14,6 +14,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to hardware, and picking one there keeps every other app off it.
 - Turn on Match sample rate in the sound settings to have a Direct to hardware device follow
   each track's own sample rate on Linux and macOS.
+- Opening a file from a file manager can now switch to the fullscreen player automatically,
+  if enabled in Settings > Playback.
+- Sonora supports drag-and-drop from other programs, like file managers, into the queue. The line
+  shows the place in the queue where the files will land, the same one in-app drops use.
 
 ### Changed
 
@@ -30,6 +34,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Switching between the cover, lyrics and queue in fullscreen eases the new tab in the way settings pages do.
 - Song, album, artist and playlist menus open with a row of buttons to like, add to the library, download and pin, filled in while they are on, and the download button shows how far a download has got. Playlists sit under Add to playlist, and a checked playlist takes the song out again.
 - The device picker in the equalizer's device rules lists devices the way the output picker does, with sound card outputs grouped and Direct to hardware devices in their own submenu.
+- Opening tracks from a file manager now starts the first one with no delay, then queues the rest.
 
 ### Fixed
 
