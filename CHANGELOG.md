@@ -53,6 +53,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Fullscreen controls stay visible while you hover over the tabs after switching between lyrics and queue.
 - Signing in to Apple Music without an active subscription shows a short error and a link to check the account in the browser.
 - Lyrics that follow along with a song use less CPU by laying out only the lines near the screen.
+- The visualizer falls as soon as you pause instead of holding still for a moment first.
 
 ## [0.47.0] - 2026-11-02
 
