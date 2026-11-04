@@ -47,6 +47,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - In fullscreen, the cover moves to its place in one step when you open lyrics or the queue, instead of sliding sideways first and dropping a moment later.
 - The lyric being sung no longer breaks off its last word onto a line of its own at some window sizes.
 - The highlighted row in search suggestions follows the panel's rounded corners instead of bulging into them.
+- Signing in to Apple Music without an active subscription shows a short error and a link to check the account in the browser.
 
 ## [0.47.0] - 2026-11-02
 

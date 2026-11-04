@@ -1058,13 +1058,19 @@ impl RenderOnce for ProviderRow {
                     .child(div().flex().flex_none().items_center().child(trailing)),
             )
             .when_some(error, |this, error| {
+                let notice = match error.problem {
+                    Some(music::SignInProblem::Subscription) => {
+                        crate::shared::trouble::trouble(error, false, cx)
+                    }
+                    _ => account_error(&error, cx).into_any_element(),
+                };
                 this.child(
                     div()
                         .flex()
                         .gap_3()
                         .pb_3()
                         .child(div().flex_none().w(MARK))
-                        .child(div().flex_1().min_w_0().child(account_error(&error, cx))),
+                        .child(div().flex_1().min_w_0().child(notice)),
                 )
             })
     }
