@@ -49,6 +49,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The highlighted row in search suggestions follows the panel's rounded corners instead of bulging into them.
 - In fullscreen with the controls set to autohide, they no longer stay up after switching between
   the cover view and the lyrics or queue while the cursor rests inside the window.
+- Fullscreen controls stay visible while you hover over the tabs after switching between lyrics and queue.
 
 ## [0.47.0] - 2026-11-02
 

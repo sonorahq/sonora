@@ -218,8 +218,10 @@ impl FullscreenView {
         if panel != self.panel && !cx.reduce_motion() {
             self.switch = Some(Entrance::start());
         }
-        if panel != self.panel {
-            self.unpark();
+        if panel.is_some() != self.panel.is_some() {
+            // The pill changes parents between the cover and panel layouts, so its old
+            // hover listener cannot report a leave after it is removed.
+            self.over_pill = false;
         }
         self.panel = panel;
         self.settings
@@ -307,11 +309,8 @@ impl FullscreenView {
             || Sonora::global(cx).devices.read(cx).invite().is_some()
     }
 
-    /// Forgets where the pointer is parked on the chrome. A tab switch takes the pill out from
-    /// under it and puts a fresh one somewhere else: element state starts over, so the moved
-    /// element never reports the leave its listener would have. A flag kept through that move
-    /// would hold the controls awake for as long as the cursor stays inside the window. What is
-    /// still under the pointer speaks up again on the next paint and re-arms its flag alone.
+    /// Clears hover state when the fullscreen view opens or closes. Its elements report their
+    /// current hover state when they are mounted again.
     fn unpark(&mut self) {
         self.over_zone = false;
         self.over_panel = false;
