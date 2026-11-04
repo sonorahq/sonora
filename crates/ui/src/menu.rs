@@ -414,6 +414,9 @@ pub struct MenuItem {
     label: SharedString,
     detail: Option<AnyElement>,
     selected: bool,
+    /// Whether a keyboard cursor the owner tracks rests on the row. It paints the row like a
+    /// selected one but leaves out the check.
+    highlighted: bool,
     checked: bool,
     disabled: bool,
     separator: bool,
@@ -439,6 +442,7 @@ impl MenuItem {
             label: label.into(),
             detail: None,
             selected: false,
+            highlighted: false,
             checked: false,
             face: None,
             disabled: false,
@@ -465,12 +469,20 @@ impl MenuItem {
         self
     }
 
+    /// Marks the row the owner's own keyboard cursor is on, for a searchable list that keeps
+    /// its cursor outside the menu. Unlike `selected`, it draws no check.
+    pub fn highlighted(mut self, highlighted: bool) -> Self {
+        self.highlighted = highlighted;
+        self
+    }
+
     pub fn separator(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
             label: SharedString::default(),
             detail: None,
             selected: false,
+            highlighted: false,
             checked: false,
             disabled: true,
             separator: true,
@@ -833,6 +845,7 @@ impl RenderOnce for Menu {
                 label,
                 detail,
                 selected,
+                highlighted,
                 checked,
                 disabled,
                 separator,
@@ -906,7 +919,7 @@ impl RenderOnce for Menu {
                     |this| this.text_color(theme.muted_foreground).cursor_default(),
                     |this| this.cursor_pointer(),
                 )
-                .when(selected || cursor == Some(place), |this| {
+                .when(selected || highlighted || cursor == Some(place), |this| {
                     this.bg(theme.secondary_active)
                 })
                 .when(!disabled, |this| {
