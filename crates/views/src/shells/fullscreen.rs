@@ -214,6 +214,7 @@ impl FullscreenView {
         cx.notify();
     }
 
+    /// Selects the fullscreen panel and restarts the controls' idle timer.
     fn show(&mut self, panel: Option<SideTab>, cx: &mut Context<Self>) {
         if panel != self.panel && !cx.reduce_motion() {
             self.switch = Some(Entrance::start());

@@ -32,6 +32,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Horizontal card rows scroll all the way to the page edges, including album recommendations.
 - Playing or shuffling an artist queues their songs beyond the Popular section, with popular songs first.
 - YouTube Music no longer loses its refreshed sign-in cookies when several requests finish together.
 - On Windows, the hidden YouTube playback page no longer shares cookies with the sign-in window.
@@ -50,6 +51,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - In fullscreen with the controls set to autohide, they no longer stay up after switching between
   the cover view and the lyrics or queue while the cursor rests inside the window.
 - Fullscreen controls stay visible while you hover over the tabs after switching between lyrics and queue.
+- Signing in to Apple Music without an active subscription shows a short error and a link to check the account in the browser.
+- Lyrics that follow along with a song use less CPU by laying out only the lines near the screen.
 
 ## [0.47.0] - 2026-11-02
 
