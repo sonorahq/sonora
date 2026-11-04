@@ -49,6 +49,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The lyric being sung no longer breaks off its last word onto a line of its own at some window sizes.
 - The highlighted row in search suggestions follows the panel's rounded corners instead of bulging into them.
 - Signing in to Apple Music without an active subscription shows a short error and a link to check the account in the browser.
+- Lyrics that follow along with a song use less CPU by laying out only the lines near the screen.
 
 ## [0.47.0] - 2026-11-02
 
