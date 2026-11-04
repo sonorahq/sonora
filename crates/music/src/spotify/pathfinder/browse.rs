@@ -341,6 +341,7 @@ fn item(item: Item) -> Option<GenreItem> {
             public: true,
             cover: playlist.images.items.first().and_then(image),
             track_count: 0,
+            duration: None,
             modified_at: None,
         })),
         Entity::Album(album) => {

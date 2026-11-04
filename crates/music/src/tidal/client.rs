@@ -917,9 +917,11 @@ impl TidalClient {
                 public: true,
                 cover: None,
                 track_count: 0,
+                duration: None,
                 modified_at: None,
             });
         playlist.track_count = u32::try_from(tracks.len()).unwrap_or(u32::MAX);
+        playlist.duration = Playlist::length_of(&tracks);
         if playlist.cover.is_none() {
             playlist.cover = tracks.iter().find_map(|track| track.cover.clone());
         }

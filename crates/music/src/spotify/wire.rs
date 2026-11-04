@@ -122,6 +122,7 @@ pub fn playlist_from(id: &str, content: &RootList, username: &str) -> models::Pl
         public: false,
         cover: playlist_cover(&content.attributes),
         track_count: content.length().max(0) as u32,
+        duration: None,
         modified_at: seconds(content.timestamp()),
     }
 }
@@ -167,6 +168,7 @@ pub fn playlists_from(rootlist: &RootList) -> Vec<models::Playlist> {
                 public: item.attributes.public(),
                 cover: meta.and_then(|meta| playlist_cover(&meta.attributes)),
                 track_count: meta.map(|meta| meta.length()).unwrap_or_default().max(0) as u32,
+                duration: None,
                 modified_at: None,
             })
         })

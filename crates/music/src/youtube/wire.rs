@@ -106,6 +106,7 @@ pub fn playlist(source: ytmusic::Playlist, owned: bool, public: bool) -> Playlis
         public: source.public.unwrap_or(public),
         cover: cover(&source.thumbnails),
         track_count: source.track_count.unwrap_or(0),
+        duration: None,
         modified_at: None,
     }
 }

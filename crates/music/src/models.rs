@@ -101,7 +101,27 @@ pub struct Playlist {
     /// How many tracks the playlist holds. Zero also stands for a count the provider does not
     /// report, as for a Tidal mix, so a screen leaves it out rather than showing it.
     pub track_count: u32,
+    /// How long the playlist plays for, or `None` when the provider does not say. A screen leaves
+    /// it out then rather than showing a length of nothing.
+    #[serde(default)]
+    pub duration: Option<Duration>,
     pub modified_at: Option<i64>,
+}
+
+impl Playlist {
+    /// A length a provider gives in whole seconds. Zero is what a provider sends for a length it
+    /// does not know, so it reads as `None`.
+    pub(crate) fn length_in_seconds(seconds: Option<u64>) -> Option<Duration> {
+        seconds
+            .filter(|seconds| *seconds > 0)
+            .map(Duration::from_secs)
+    }
+
+    /// The length of `tracks` played end to end, for a playlist whose whole track list is in hand.
+    pub(crate) fn length_of(tracks: &[Track]) -> Option<Duration> {
+        let total = tracks.iter().map(|track| track.duration).sum::<Duration>();
+        (!total.is_zero()).then_some(total)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

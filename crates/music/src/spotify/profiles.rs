@@ -208,6 +208,7 @@ fn listed(found: &Listed) -> Option<Playlist> {
             .filter(|url| wire::fetchable(url))
             .map(str::to_owned),
         track_count: 0,
+        duration: None,
         modified_at: None,
     })
 }

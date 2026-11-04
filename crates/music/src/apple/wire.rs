@@ -896,6 +896,7 @@ pub fn playlist(value: &Resource) -> Option<Playlist> {
         public: true,
         cover: artwork(attributes, ART),
         track_count: value.relationships.tracks.rows().len() as u32,
+        duration: None,
         modified_at: moment(attributes.last_modified_date.as_str()),
     })
 }
@@ -915,6 +916,7 @@ pub fn library_playlist(value: &Resource, owner: &str) -> Option<Playlist> {
         public: attributes.is_public.as_bool().unwrap_or(false),
         cover: artwork(attributes, ART),
         track_count: 0,
+        duration: None,
         modified_at: moment(attributes.last_modified_date.as_str())
             .or(moment(attributes.date_added.as_str())),
     })

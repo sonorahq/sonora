@@ -1417,6 +1417,7 @@ fn playlist_of(hit: &PlaylistHit, cx: &App) -> Playlist {
             public: false,
             cover: hit.cover.clone(),
             track_count: 0,
+            duration: None,
             modified_at: None,
         })
 }

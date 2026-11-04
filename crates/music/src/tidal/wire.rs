@@ -354,6 +354,7 @@ pub fn playlist(wrapper: &Value, user_id: &str) -> Option<Playlist> {
         cover: image(text(value, "squareImage"), SQUARE)
             .or_else(|| image(text(value, "image"), SQUARE)),
         track_count: count(value, "numberOfTracks").unwrap_or(0),
+        duration: Playlist::length_in_seconds(number(value, "duration")),
         modified_at,
         id,
     })
@@ -403,6 +404,7 @@ pub fn mix(value: &Value) -> Option<Playlist> {
         cover,
         // A mix's listing carries no count, and only its page says how many tracks it holds.
         track_count: 0,
+        duration: None,
         modified_at: None,
     })
 }

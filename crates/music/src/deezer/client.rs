@@ -669,6 +669,7 @@ impl DeezerClient {
         let mut playlist = wire::smart_tracklist(&results["DATA"])
             .with_context(|| format!("cannot read the smart tracklist {smart_id}"))?;
         playlist.track_count = tracks.len() as u32;
+        playlist.duration = Playlist::length_of(&tracks);
         if playlist.cover.is_none() {
             playlist.cover = tracks.iter().find_map(|track| track.cover.clone());
         }

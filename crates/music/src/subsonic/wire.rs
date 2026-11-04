@@ -107,6 +107,7 @@ pub fn playlist(
         public,
         cover,
         track_count,
+        duration: None,
         modified_at: None,
     }
 }

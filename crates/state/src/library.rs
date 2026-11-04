@@ -1902,6 +1902,7 @@ impl Library {
                         public: false,
                         cover: None,
                         track_count: 0,
+                        duration: None,
                         modified_at: None,
                     }
                 }))
@@ -2340,7 +2341,11 @@ impl Library {
         let added_count = track_ids.len() as u32;
         self.amend_playlist(
             playlist_id,
-            |playlist| playlist.track_count += added_count,
+            |playlist| {
+                playlist.track_count += added_count;
+                // the tracks' lengths are not known here, and a stale total is worse than none
+                playlist.duration = None;
+            },
             cx,
         );
         if let Some(ids) = self.contents.get_mut(playlist_id) {
@@ -2361,7 +2366,10 @@ impl Library {
     ) {
         self.amend_playlist(
             playlist_id,
-            |playlist| playlist.track_count = playlist.track_count.saturating_sub(dropped_count),
+            |playlist| {
+                playlist.track_count = playlist.track_count.saturating_sub(dropped_count);
+                playlist.duration = None;
+            },
             cx,
         );
         if let Some(ids) = self.contents.get_mut(playlist_id) {

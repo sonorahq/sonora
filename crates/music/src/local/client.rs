@@ -191,6 +191,7 @@ fn playlist_from(stored: Stored, tracks: &[Track]) -> Playlist {
         public: false,
         cover: own.or_else(|| tracks.iter().find_map(|track| track.cover.clone())),
         track_count: tracks.len() as u32,
+        duration: Playlist::length_of(tracks),
         modified_at: Some(stored.modified_at / 1_000),
     }
 }

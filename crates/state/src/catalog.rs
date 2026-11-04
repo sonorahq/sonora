@@ -509,6 +509,7 @@ mod tests {
                     public: false,
                     cover: None,
                     track_count: 0,
+                    duration: None,
                     modified_at: None,
                 },
                 tracks: Vec::new(),

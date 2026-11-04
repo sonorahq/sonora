@@ -242,7 +242,7 @@ impl SubsonicClient {
             .cover_art
             .as_deref()
             .and_then(|id| self.cover_url(id, COVER));
-        wire::playlist(
+        let mut playlist = wire::playlist(
             &source.id,
             &source.name,
             source.owner.as_deref(),
@@ -250,7 +250,9 @@ impl SubsonicClient {
             source.song_count.unwrap_or(0).max(0) as u32,
             cover,
             &self.username,
-        )
+        );
+        playlist.duration = length(source.duration);
+        playlist
     }
 
     fn artist_cover(
@@ -879,6 +881,7 @@ impl MusicApi for SubsonicClient {
             cover,
             &self.username,
         );
+        playlist.duration = length(detail.duration);
         if playlist.track_count == 0 {
             playlist.track_count = tracks.len() as u32;
         }
@@ -1188,4 +1191,9 @@ fn release(version: &str) -> Option<(u32, u32)> {
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next()?.parse().ok()?;
     Some((major, minor))
+}
+
+/// A playlist's length as the server gives it, in seconds.
+fn length(seconds: Option<i64>) -> Option<Duration> {
+    Playlist::length_in_seconds(seconds.and_then(|seconds| u64::try_from(seconds).ok()))
 }
