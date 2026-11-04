@@ -784,7 +784,8 @@ pub enum Catalog {
     /// files and a self-hosted server.
     Fixed,
     /// A set the listener picked out of a bigger catalog, which tracks and albums are put into
-    /// and taken out of through `set_in_library`, as on Apple Music.
+    /// and taken out of through `set_in_library`, as on Apple Music. A favorite is a mark on a
+    /// library item, so taking an item out of the library takes its favorite with it.
     Editable,
 }
 

@@ -119,15 +119,7 @@ menu-delete-track-files = { $count ->
    *[other] Supprimer les fichiers de { $count } titres
 }
 menu-download = Télécharger
-menu-download-tracks = { $count ->
-    [one] Télécharger { $count } titre
-   *[other] Télécharger { $count } titres
-}
 menu-remove-download = Supprimer le téléchargement
-menu-remove-downloads = { $count ->
-    [one] Supprimer { $count } téléchargement
-   *[other] Supprimer { $count } téléchargements
-}
 menu-downloading = Téléchargement en cours. Cliquer pour arrêter
 menu-play-next = Lire juste après
 menu-play-tracks-next = { $count ->

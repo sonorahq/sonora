@@ -116,15 +116,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Hapus file lagu
 menu-delete-track-files = Hapus { $count } file lagu
 menu-download = Unduh
-menu-download-tracks = { $count ->
-    [one] Unduh { $count } lagu
-   *[other] Unduh { $count } lagu
-}
 menu-remove-download = Hapus unduhan
-menu-remove-downloads = { $count ->
-    [one] Hapus { $count } unduhan
-   *[other] Hapus { $count } unduhan
-}
 menu-downloading = Mengunduh. Klik untuk berhenti
 menu-play-next = Putar berikutnya
 menu-play-tracks-next = { $count ->

@@ -101,19 +101,6 @@ menu-import-playlist = Імпортувати плейлист…
 menu-edit-tags = Змінити теги
 menu-no-playlists = Немає плейлистів
 menu-search-playlists = Пошук плейлиста
-menu-save-to = Зберегти в
-menu-save-tracks-to = { $count ->
-    [one] Зберегти { $count } трек в
-    [few] Зберегти { $count } треки в
-   *[other] Зберегти { $count } треків в
-}
-menu-saved-in = Збережено в
-menu-tracks-saved-in = { $count ->
-    [one] { $count } трек збережено в
-    [few] { $count } треки збережено в
-   *[other] { $count } треків збережено в
-}
-menu-save-favorites = Улюблене
 menu-save-library = Медіатека
 menu-add-to-library = До улюбленого
 menu-remove-from-library = Прибрати з улюбленого
@@ -132,17 +119,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Видалити файл треку
 menu-delete-track-files = Видалити файли треків: { $count }
 menu-download = Завантажити
-menu-download-tracks = { $count ->
-    [one] Завантажити { $count } трек
-    [few] Завантажити { $count } треки
-   *[other] Завантажити { $count } треків
-}
 menu-remove-download = Видалити завантаження
-menu-remove-downloads = { $count ->
-    [one] Видалити { $count } завантаження
-    [few] Видалити { $count } завантаження
-   *[other] Видалити { $count } завантажень
-}
 menu-downloading = Завантажується. Натисніть, щоб зупинити
 menu-play-next = Відтворити наступним
 menu-play-tracks-next = { $count ->

@@ -27,12 +27,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The highlight on a hovered lyric line or instrumental break ends where its words or notes end.
 - The title and artist in fullscreen carry a lighter shadow.
 - Switching between the cover, lyrics and queue in fullscreen eases the new tab in the way settings pages do.
-- A song's or album's menu has one Save to entry for Favorites, the Library and your playlists. It reads Saved in once the song is somewhere, and ticks toggle in place without closing the menu, so a checked playlist now takes the song out again.
+- Song, album, artist and playlist menus open with a row of buttons to like, add to the library, download and pin, filled in while they are on, and the download button shows how far a download has got. Playlists sit under Add to playlist, and a checked playlist takes the song out again.
 - The device picker in the equalizer's device rules lists devices the way the output picker does, with sound card outputs grouped and Direct to hardware devices in their own submenu.
 
 ### Fixed
 
 - Horizontal card rows scroll all the way to the page edges, including album recommendations.
+- Removing an Apple Music song or album from the library takes its like off right away, the way Apple does.
 - Playing or shuffling an artist queues their songs beyond the Popular section, with popular songs first.
 - YouTube Music no longer loses its refreshed sign-in cookies when several requests finish together.
 - On Windows, the hidden YouTube playback page no longer shares cookies with the sign-in window.

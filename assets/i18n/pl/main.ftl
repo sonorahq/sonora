@@ -101,19 +101,6 @@ menu-import-playlist = Importuj playlistę…
 menu-edit-tags = Edytuj tagi
 menu-no-playlists = Brak playlist
 menu-search-playlists = Szukaj playlisty
-menu-save-to = Zapisz w
-menu-save-tracks-to = { $count ->
-    [one] Zapisz { $count } utwór w
-    [few] Zapisz { $count } utwory w
-   *[other] Zapisz { $count } utworów w
-}
-menu-saved-in = Zapisano w
-menu-tracks-saved-in = { $count ->
-    [one] Zapisano { $count } utwór w
-    [few] Zapisano { $count } utwory w
-   *[other] Zapisano { $count } utworów w
-}
-menu-save-favorites = Ulubione
 menu-save-library = Biblioteka
 menu-add-to-library = Dodaj do ulubionych
 menu-remove-from-library = Usuń z ulubionych
@@ -132,17 +119,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Usuń plik utworu
 menu-delete-track-files = Usuń pliki utworów ({ $count })
 menu-download = Pobierz
-menu-download-tracks = { $count ->
-    [one] Pobierz { $count } utwór
-    [few] Pobierz { $count } utwory
-   *[other] Pobierz { $count } utworów
-}
 menu-remove-download = Usuń z pobranych
-menu-remove-downloads = { $count ->
-    [one] Usuń { $count } utwór z pobranych
-    [few] Usuń { $count } utwory z pobranych
-   *[other] Usuń { $count } utworów z pobranych
-}
 menu-downloading = Pobieranie. Kliknij, aby zatrzymać
 menu-play-next = Odtwórz jako następny
 menu-play-tracks-next = { $count ->
