@@ -114,22 +114,16 @@ column-year = Year
 column-tracks = Tracks
 
 # track menu
+menu-add-to-playlist = Add to playlist
+menu-add-tracks-to-playlist = { $count ->
+    [one] Add { $count } track to playlist
+   *[other] Add { $count } tracks to playlist
+}
 menu-new-playlist = New playlist
 menu-import-playlist = Import playlist…
 menu-edit-tags = Edit tags
 menu-no-playlists = No playlists
 menu-search-playlists = Search a playlist
-menu-save-to = Save to
-menu-save-tracks-to = { $count ->
-    [one] Save { $count } track to
-   *[other] Save { $count } tracks to
-}
-menu-saved-in = Saved in
-menu-tracks-saved-in = { $count ->
-    [one] { $count } track saved in
-   *[other] { $count } tracks saved in
-}
-menu-save-favorites = Favorites
 menu-save-library = Library
 menu-add-to-library = Add to Favorites
 menu-remove-from-library = Remove from Favorites
@@ -146,15 +140,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Delete track file
 menu-delete-track-files = Delete { $count } track files
 menu-download = Download
-menu-download-tracks = { $count ->
-    [one] Download { $count } track
-   *[other] Download { $count } tracks
-}
 menu-remove-download = Remove download
-menu-remove-downloads = { $count ->
-    [one] Remove { $count } download
-   *[other] Remove { $count } downloads
-}
 menu-downloading = Downloading. Click to stop
 menu-play-next = Play next
 menu-play-tracks-next = { $count ->

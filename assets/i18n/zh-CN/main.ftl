@@ -116,15 +116,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = 删除歌曲文件
 menu-delete-track-files = 删除 { $count } 个歌曲文件
 menu-download = 下载
-menu-download-tracks = { $count ->
-    [one] 下载 { $count } 首歌曲
-   *[other] 下载 { $count } 首歌曲
-}
 menu-remove-download = 移除下载
-menu-remove-downloads = { $count ->
-    [one] 移除 { $count } 个下载
-   *[other] 移除 { $count } 个下载
-}
 menu-downloading = 正在下载。点击停止
 menu-play-next = 下一首播放
 menu-play-tracks-next = { $count ->

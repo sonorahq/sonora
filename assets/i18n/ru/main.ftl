@@ -96,24 +96,17 @@ column-year = Год
 column-tracks = Треки
 
 # track menu
+menu-add-to-playlist = Добавить в плейлист
+menu-add-tracks-to-playlist = { $count ->
+    [one] Добавить { $count } трек в плейлист
+    [few] Добавить { $count } трека в плейлист
+   *[other] Добавить { $count } треков в плейлист
+}
 menu-new-playlist = Новый плейлист
 menu-import-playlist = Импортировать плейлист…
 menu-edit-tags = Изменить теги
 menu-no-playlists = Нет плейлистов
 menu-search-playlists = Поиск плейлиста
-menu-save-to = Сохранить в
-menu-save-tracks-to = { $count ->
-    [one] Сохранить { $count } трек в
-    [few] Сохранить { $count } трека в
-   *[other] Сохранить { $count } треков в
-}
-menu-saved-in = Сохранено в
-menu-tracks-saved-in = { $count ->
-    [one] { $count } трек сохранён в
-    [few] { $count } трека сохранены в
-   *[other] { $count } треков сохранены в
-}
-menu-save-favorites = Избранное
 menu-save-library = Медиатека
 menu-add-to-library = В избранное
 menu-remove-from-library = Убрать из избранного
@@ -132,17 +125,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Удалить файл трека
 menu-delete-track-files = Удалить файлы треков ({ $count })
 menu-download = Скачать
-menu-download-tracks = { $count ->
-    [one] Скачать { $count } трек
-    [few] Скачать { $count } трека
-   *[other] Скачать { $count } треков
-}
 menu-remove-download = Удалить загрузку
-menu-remove-downloads = { $count ->
-    [one] Удалить { $count } загрузку
-    [few] Удалить { $count } загрузки
-   *[other] Удалить { $count } загрузок
-}
 menu-downloading = Скачивается. Щёлкните для остановки
 menu-play-next = Воспроизвести следующим
 menu-play-tracks-next = { $count ->

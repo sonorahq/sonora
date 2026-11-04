@@ -122,17 +122,7 @@ menu-delete-track-files = { $count ->
    *[other] Smazat { $count } souborů skladeb
 }
 menu-download = Stáhnout
-menu-download-tracks = { $count ->
-    [one] Stáhnout { $count } skladbu
-    [few] Stáhnout { $count } skladby
-   *[other] Stáhnout { $count } skladeb
-}
 menu-remove-download = Odebrat ze stažených
-menu-remove-downloads = { $count ->
-    [one] Odebrat { $count } staženou skladbu
-    [few] Odebrat { $count } stažené skladby
-   *[other] Odebrat { $count } stažených skladeb
-}
 menu-downloading = Stahuje se. Kliknutím zastavíš
 menu-play-next = Přehrát jako další
 menu-play-tracks-next = { $count ->

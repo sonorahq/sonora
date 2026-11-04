@@ -116,15 +116,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Excluir arquivo da faixa
 menu-delete-track-files = Excluir { $count } arquivos de faixa
 menu-download = Baixar
-menu-download-tracks = { $count ->
-    [one] Baixar { $count } faixa
-   *[other] Baixar { $count } faixas
-}
 menu-remove-download = Remover download
-menu-remove-downloads = { $count ->
-    [one] Remover { $count } download
-   *[other] Remover { $count } downloads
-}
 menu-downloading = Baixando. Clique para parar
 menu-play-next = Tocar a seguir
 menu-play-tracks-next = { $count ->

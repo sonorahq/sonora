@@ -116,15 +116,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Fshi skedarin e këngës
 menu-delete-track-files = Fshi { $count } skedarë këngësh
 menu-download = Shkarko
-menu-download-tracks = { $count ->
-    [one] Shkarko { $count } këngë
-   *[other] Shkarko { $count } këngë
-}
 menu-remove-download = Hiq shkarkimin
-menu-remove-downloads = { $count ->
-    [one] Hiq { $count } shkarkim
-   *[other] Hiq { $count } shkarkime
-}
 menu-downloading = Duke shkarkuar. Kliko për ta ndalur
 menu-play-next = Luaj të radhës
 menu-play-tracks-next = { $count ->

@@ -110,13 +110,7 @@ menu-remove-tracks-from-history = { $count } parçayı geçmişten kaldır
 menu-delete-track-file = Parça dosyasını sil
 menu-delete-track-files = { $count } parça dosyasını sil
 menu-download = İndir
-menu-download-tracks = { $count ->
-   *[other] { $count } parçayı indir
-}
 menu-remove-download = İndirmeyi kaldır
-menu-remove-downloads = { $count ->
-   *[other] { $count } indirmeyi kaldır
-}
 menu-downloading = İndiriliyor. Durdurmak için tıkla
 menu-play-next = Sıradaki olarak çal
 menu-play-tracks-next = { $count } parçayı sıradaki olarak çal
