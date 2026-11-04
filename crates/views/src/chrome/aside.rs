@@ -3275,7 +3275,7 @@ fn has_right_to_left(text: &str) -> bool {
 mod tests {
     use std::time::Duration;
 
-    use music::{LyricsLane, LyricsLine, LyricsWord, Voice};
+    use music::{LyricsLane, LyricsLine, LyricsWord};
     use ui::Springs;
 
     use super::{
@@ -3387,19 +3387,13 @@ mod tests {
                 start: Duration::from_secs(2),
                 end: Some(Duration::from_secs(5)),
                 text: "first".to_owned(),
-                romanized: None,
-                words: None,
-                secondary: Vec::new(),
-                voice: Voice::Lead,
+                ..Default::default()
             },
             LyricsLine {
                 start: Duration::from_secs(12),
                 end: Some(Duration::from_secs(15)),
                 text: "second".to_owned(),
-                romanized: None,
-                words: None,
-                secondary: Vec::new(),
-                voice: Voice::Lead,
+                ..Default::default()
             },
         ];
 
@@ -3417,23 +3411,18 @@ mod tests {
                 start: Duration::from_secs(2),
                 end: Some(Duration::from_secs(12)),
                 text: "first".to_owned(),
-                romanized: None,
                 words: Some(vec![LyricsWord {
                     start: Duration::from_secs(2),
                     end: Duration::from_secs(5),
                     text: "first".to_owned(),
                 }]),
-                secondary: Vec::new(),
-                voice: Voice::Lead,
+                ..Default::default()
             },
             LyricsLine {
                 start: Duration::from_secs(12),
                 end: Some(Duration::from_secs(15)),
                 text: "second".to_owned(),
-                romanized: None,
-                words: None,
-                secondary: Vec::new(),
-                voice: Voice::Lead,
+                ..Default::default()
             },
         ];
 
@@ -3559,12 +3548,12 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(3)),
             text: "(E)".to_owned(),
-            romanized: None,
             words: Some(vec![LyricsWord {
                 start: Duration::from_secs(2),
                 end: Duration::from_secs(3),
                 text: "(E)".to_owned(),
             }]),
+            ..Default::default()
         };
 
         assert!(!secondary_karaoke_visible(
@@ -3595,14 +3584,12 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(8)),
             text: "Wake me up inside".to_owned(),
-            romanized: None,
             words: Some(vec![LyricsWord {
                 start: Duration::from_secs(2),
                 end: Duration::from_secs(8),
                 text: "Wake me up inside".to_owned(),
             }]),
-            secondary: Vec::new(),
-            voice: Voice::Lead,
+            ..Default::default()
         };
 
         assert!(!primary_karaoke_visible(
@@ -3633,14 +3620,12 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(5)),
             text: "line".to_owned(),
-            romanized: None,
             words: Some(vec![LyricsWord {
                 start: Duration::from_secs(2),
                 end: Duration::from_secs(5),
                 text: "line".to_owned(),
             }]),
-            secondary: Vec::new(),
-            voice: Voice::Lead,
+            ..Default::default()
         };
 
         assert!(primary_karaoke_visible(&line, true, Duration::from_secs(8)));
@@ -3652,14 +3637,12 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(8)),
             text: "Wake me up inside".to_owned(),
-            romanized: None,
             words: Some(vec![LyricsWord {
                 start: Duration::from_secs(2),
                 end: Duration::from_secs(8),
                 text: "Wake me up inside".to_owned(),
             }]),
-            secondary: Vec::new(),
-            voice: Voice::Lead,
+            ..Default::default()
         };
         let fade = Motion::Control.span();
 
@@ -3687,14 +3670,12 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(8)),
             text: "Wake me up inside".to_owned(),
-            romanized: None,
             words: Some(vec![LyricsWord {
                 start: Duration::from_secs(2),
                 end: Duration::from_secs(8),
                 text: "Wake me up inside".to_owned(),
             }]),
-            secondary: Vec::new(),
-            voice: Voice::Lead,
+            ..Default::default()
         };
 
         assert!(!background_line_singing(
@@ -3725,10 +3706,7 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(5)),
             text: "line".to_owned(),
-            romanized: None,
-            words: None,
-            secondary: Vec::new(),
-            voice: Voice::Lead,
+            ..Default::default()
         };
 
         assert!(line_has_passed(&line, Duration::from_secs(8)));

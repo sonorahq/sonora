@@ -753,21 +753,17 @@ async fn gather(
 mod tests {
     use std::time::Duration;
 
-    use music::{Lyrics as Sheet, LyricsHit, LyricsLine, LyricsWord, Voice};
+    use music::{Lyrics as Sheet, LyricsHit, LyricsLine, LyricsWord};
 
     use super::keep_displayed_first;
 
     fn hit(source: &'static str, lyrics: Sheet) -> LyricsHit {
         LyricsHit {
             source,
-            trust: 0,
             lyrics,
-            instrumental: false,
             title: "title".to_owned(),
             artist: "artist".to_owned(),
-            album: None,
-            duration: None,
-            writers: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -778,17 +774,14 @@ mod tests {
             "karaoke",
             Sheet::Synced {
                 lines: vec![LyricsLine {
-                    start: Duration::ZERO,
                     end: Some(Duration::from_secs(1)),
                     text: "line".to_owned(),
-                    romanized: None,
                     words: Some(vec![LyricsWord {
                         start: Duration::ZERO,
                         end: Duration::from_secs(1),
                         text: "line".to_owned(),
                     }]),
-                    secondary: Vec::new(),
-                    voice: Voice::Lead,
+                    ..Default::default()
                 }]
                 .into(),
             },

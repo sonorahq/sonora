@@ -729,18 +729,7 @@ mod tests {
                 .collect(),
             album: album.to_owned(),
             album_id: Some(album.to_owned()),
-            cover: None,
-            duration: Duration::ZERO,
-            added_at: None,
-            added_by: None,
-            playcount: None,
-            popularity: 0,
-            explicit: false,
-            track_number: 0,
-            disc_number: 0,
-            tags: Vec::new(),
-            languages: Vec::new(),
-            credits: Vec::new(),
+            ..Default::default()
         }
     }
 

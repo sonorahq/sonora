@@ -1894,15 +1894,8 @@ impl Library {
                     Playlist {
                         id,
                         name,
-                        owner: String::new(),
-                        owner_id: String::new(),
                         owned: true,
-                        collaborative: false,
-                        blend: false,
-                        public: false,
-                        cover: None,
-                        track_count: 0,
-                        modified_at: None,
+                        ..Default::default()
                     }
                 }))
             },

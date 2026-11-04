@@ -12,7 +12,7 @@ pub enum CoverSize {
     Full,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UserProfile {
     pub id: String,
     pub display_name: String,
@@ -31,7 +31,8 @@ pub struct UserDetail {
     pub playlists: Vec<Playlist>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Contributor {
     pub id: String,
     pub name: String,
@@ -57,14 +58,18 @@ pub struct ArtistRef {
     pub id: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Credit {
     pub name: String,
     pub role: String,
     pub id: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A song or episode as a provider lists it. The default is an unplayable track with no id, so a
+/// caller that builds one from `..Default::default()` sets `playable` itself.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Track {
     pub id: Option<String>,
     pub name: String,
@@ -87,7 +92,8 @@ pub struct Track {
     pub credits: Vec<Credit>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Playlist {
     pub id: String,
     pub name: String,
@@ -104,8 +110,9 @@ pub struct Playlist {
     pub modified_at: Option<i64>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReleaseType {
+    #[default]
     Album,
     Single,
     Compilation,
@@ -150,7 +157,8 @@ impl ReleaseType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Album {
     pub id: String,
     pub name: String,
@@ -179,7 +187,7 @@ impl Album {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AlbumDetail {
     pub album: Album,
     pub tracks: Vec<Track>,
@@ -202,7 +210,7 @@ impl AlbumCatalogue {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Genre {
     pub id: String,
     pub name: String,
@@ -220,7 +228,7 @@ pub enum GenreItem {
     Artist(SavedArtist),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GenreSection {
     pub title: String,
     pub items: Vec<GenreItem>,
@@ -260,7 +268,7 @@ impl GenreDetail {
 }
 
 /// What reading a playlist file into the library came to.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ImportedPlaylist {
     /// The playlist made from the file, or `None` when none of its songs is in the library,
     /// in which case nothing was made.
@@ -291,21 +299,22 @@ pub struct TrackTags {
     pub lyrics: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PlaylistDetail {
     pub playlist: Playlist,
     pub tracks: Vec<Track>,
     pub continuation: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ArtistProfile {
     pub name: String,
     pub cover_large: Option<String>,
     pub biography: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SavedArtist {
     pub id: String,
     pub name: String,
@@ -313,7 +322,7 @@ pub struct SavedArtist {
     pub added_at: Option<i64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Artist {
     pub name: String,
     pub cover_large: Option<String>,
@@ -355,6 +364,16 @@ pub enum Lyrics {
     },
 }
 
+/// No lyrics at all, as empty plain text.
+impl Default for Lyrics {
+    fn default() -> Self {
+        Self::Plain {
+            text: String::new(),
+            romanized: None,
+        }
+    }
+}
+
 impl Lyrics {
     pub fn plain(text: impl Into<String>) -> Self {
         let text = text.into();
@@ -391,7 +410,8 @@ impl Lyrics {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LyricsLine {
     pub start: Duration,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -428,7 +448,8 @@ impl LyricsLine {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LyricsLane {
     pub start: Duration,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -454,13 +475,14 @@ impl LyricsLane {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RomanizedText {
     pub text: String,
     pub writing_system: WritingSystem,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WritingSystem {
     Japanese,
     Chinese,
@@ -468,6 +490,7 @@ pub enum WritingSystem {
     Cyrillic,
     Greek,
     Arabic,
+    #[default]
     Other,
 }
 
@@ -496,20 +519,21 @@ impl Voice {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LyricsWord {
     pub start: Duration,
     pub end: Duration,
     pub text: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TrackKey {
     pub provider: &'static str,
     pub id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LyricsQuery {
     pub title: String,
     pub artist: String,
@@ -527,7 +551,7 @@ impl LyricsQuery {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LyricsHit {
     pub source: &'static str,
     pub trust: u32,
