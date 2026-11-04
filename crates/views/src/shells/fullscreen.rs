@@ -205,6 +205,7 @@ impl FullscreenView {
             position: 0.,
             velocity: 0.,
         };
+        self.unpark();
         self.last_pos = None;
         match shown {
             true => self.stir(cx),
@@ -213,9 +214,15 @@ impl FullscreenView {
         cx.notify();
     }
 
+    /// Selects the fullscreen panel and restarts the controls' idle timer.
     fn show(&mut self, panel: Option<SideTab>, cx: &mut Context<Self>) {
         if panel != self.panel && !cx.reduce_motion() {
             self.switch = Some(Entrance::start());
+        }
+        if panel.is_some() != self.panel.is_some() {
+            // The pill changes parents between the cover and panel layouts, so its old
+            // hover listener cannot report a leave after it is removed.
+            self.over_pill = false;
         }
         self.panel = panel;
         self.settings
@@ -301,6 +308,18 @@ impl FullscreenView {
             || self.pending.is_some()
             || self.context_menu.is_some()
             || Sonora::global(cx).devices.read(cx).invite().is_some()
+    }
+
+    /// Clears hover state when the fullscreen view opens or closes. Its elements report their
+    /// current hover state when they are mounted again.
+    fn unpark(&mut self) {
+        self.over_zone = false;
+        self.over_panel = false;
+        self.over_pill = false;
+        self.over_transport = false;
+        self.over_leave = false;
+        self.over_volume = false;
+        self.over_seek = None;
     }
 
     /// Follows the pointer in and out of the window, once a frame. A hover flag clears on an
