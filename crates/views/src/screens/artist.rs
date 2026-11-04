@@ -504,7 +504,7 @@ impl ArtistView {
             id: detail.id()?.to_owned(),
             name: artist.name.clone(),
             cover: artist.cover_large.clone(),
-            added_at: None,
+            ..Default::default()
         })
     }
 

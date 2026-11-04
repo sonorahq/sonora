@@ -1277,7 +1277,7 @@ pub(crate) fn pinned_artist(pin: &Pin) -> SavedArtist {
         id: pin.id.clone(),
         name: pin.title.clone(),
         cover: pin.cover.clone(),
-        added_at: None,
+        ..Default::default()
     }
 }
 

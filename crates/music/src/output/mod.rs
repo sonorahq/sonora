@@ -132,7 +132,8 @@ pub struct DeviceOption {
 
 /// An output as device rules know it: its key, from `output_key`, and its name when it was seen,
 /// so a rule for an output that is not connected can still be shown.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct OutputId {
     pub id: String,
     pub name: String,
