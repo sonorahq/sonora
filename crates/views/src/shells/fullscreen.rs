@@ -205,6 +205,7 @@ impl FullscreenView {
             position: 0.,
             velocity: 0.,
         };
+        self.unpark();
         self.last_pos = None;
         match shown {
             true => self.stir(cx),
@@ -216,6 +217,9 @@ impl FullscreenView {
     fn show(&mut self, panel: Option<SideTab>, cx: &mut Context<Self>) {
         if panel != self.panel && !cx.reduce_motion() {
             self.switch = Some(Entrance::start());
+        }
+        if panel != self.panel {
+            self.unpark();
         }
         self.panel = panel;
         self.settings
@@ -301,6 +305,21 @@ impl FullscreenView {
             || self.pending.is_some()
             || self.context_menu.is_some()
             || Sonora::global(cx).devices.read(cx).invite().is_some()
+    }
+
+    /// Forgets where the pointer is parked on the chrome. A tab switch takes the pill out from
+    /// under it and puts a fresh one somewhere else: element state starts over, so the moved
+    /// element never reports the leave its listener would have. A flag kept through that move
+    /// would hold the controls awake for as long as the cursor stays inside the window. What is
+    /// still under the pointer speaks up again on the next paint and re-arms its flag alone.
+    fn unpark(&mut self) {
+        self.over_zone = false;
+        self.over_panel = false;
+        self.over_pill = false;
+        self.over_transport = false;
+        self.over_leave = false;
+        self.over_volume = false;
+        self.over_seek = None;
     }
 
     /// Follows the pointer in and out of the window, once a frame. A hover flag clears on an
