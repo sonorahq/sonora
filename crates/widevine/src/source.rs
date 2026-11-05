@@ -320,7 +320,6 @@ fn places() -> Vec<Place> {
 fn places() -> Vec<Place> {
     let component = component();
     let mut places = Vec::new();
-    // Bundle identifiers survive renaming or moving the app.
     let workspace = objc2_app_kit::NSWorkspace::sharedWorkspace();
     for (identifier, framework) in [
         ("com.google.Chrome", "Google Chrome Framework"),
