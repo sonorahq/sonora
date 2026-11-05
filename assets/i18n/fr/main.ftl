@@ -96,26 +96,13 @@ column-year = Année
 column-tracks = Titres
 
 # track menu
-menu-add-to-playlist = Ajouter à une playlist
-menu-add-tracks-to-playlist = { $count ->
-    [one] Ajouter { $count } titre à une playlist
-   *[other] Ajouter { $count } titres à une playlist
-}
 menu-new-playlist = Nouvelle playlist
 menu-import-playlist = Importer une playlist…
 menu-edit-tags = Modifier les tags
 menu-no-playlists = Aucune playlist
 menu-search-playlists = Rechercher une playlist
 menu-add-to-library = Ajouter aux favoris
-menu-add-tracks-to-library = { $count ->
-    [one] Ajouter { $count } titre aux favoris
-   *[other] Ajouter { $count } titres aux favoris
-}
 menu-remove-from-library = Retirer des favoris
-menu-remove-tracks-from-library = { $count ->
-    [one] Retirer { $count } titre des favoris
-   *[other] Retirer { $count } titres des favoris
-}
 menu-remove-from-playlist = Retirer de la playlist
 menu-remove-tracks-from-playlist = { $count ->
     [one] Retirer { $count } titre de la playlist
@@ -132,15 +119,7 @@ menu-delete-track-files = { $count ->
    *[other] Supprimer les fichiers de { $count } titres
 }
 menu-download = Télécharger
-menu-download-tracks = { $count ->
-    [one] Télécharger { $count } titre
-   *[other] Télécharger { $count } titres
-}
 menu-remove-download = Supprimer le téléchargement
-menu-remove-downloads = { $count ->
-    [one] Supprimer { $count } téléchargement
-   *[other] Supprimer { $count } téléchargements
-}
 menu-downloading = Téléchargement en cours. Cliquer pour arrêter
 menu-play-next = Lire juste après
 menu-play-tracks-next = { $count ->
@@ -175,16 +154,6 @@ menu-delete-playlist = Supprimer la playlist
 menu-export-playlist = Exporter la playlist…
 menu-add-playlist-to-library = Ajouter à la bibliothèque
 menu-remove-playlist-from-library = Retirer de la bibliothèque
-menu-library-add = Ajouter à la bibliothèque
-menu-library-add-tracks = { $count ->
-    [one] Ajouter { $count } titre à la bibliothèque
-   *[other] Ajouter { $count } titres à la bibliothèque
-}
-menu-library-remove = Retirer de la bibliothèque
-menu-library-remove-tracks = { $count ->
-    [one] Retirer { $count } titre de la bibliothèque
-   *[other] Retirer { $count } titres de la bibliothèque
-}
 menu-make-playlist-public = Rendre publique
 menu-make-playlist-private = Rendre privée
 menu-play-artist = Lire l'artiste

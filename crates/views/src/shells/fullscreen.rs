@@ -15,9 +15,10 @@ use input::{ToggleFullscreen, ToggleWindowFullscreen, WORKSPACE_CONTEXT};
 use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
 use ui::{
-    ActiveTheme as _, Artwork, Button, ExplicitBadge, Fading as _, GLASS_BLUR, GLASS_FILL,
-    InlineLink, InlineLinks, Motion, Motioned as _, Popup, Rising as _, Room, Scrollbar, Scrubber,
-    ScrubberState, Springs, TabBar, Tails as _, Text, Visualizer, clock, snapped,
+    ActiveTheme as _, Artwork, Button, Entrance, ExplicitBadge, Fading as _, GLASS_BLUR,
+    GLASS_FILL, InlineLink, InlineLinks, Motion, Motioned as _, Popup, Rising as _, Room,
+    Scrollbar, Scrubber, ScrubberState, Springs, TabBar, Tails as _, Text, Visualizer, clock,
+    entering, snapped,
 };
 
 use crate::chrome::{Aside, TitleBarOptions};
@@ -69,6 +70,9 @@ const TEXT_SHADOW: [f32; 2] = [2., 8.];
 /// How much of the page colour the title and artist shadows carry. The text reads on the field
 /// without them, so they only hold it where something bright passes behind.
 const TEXT_SHADOW_STRENGTH: f32 = 0.45;
+/// How far the widest text shadow spreads past its glyphs: three of its deviations, as far as the
+/// renderer carries a blur. A gliding layer keeps this much room so it never cuts a shadow off.
+const SHADOW_BLEED: f32 = TEXT_SHADOW[1] * 3.;
 /// How hard the docked controls blur once they are all but hidden. The dock shrinks over them as
 /// they leave, so without it the last frames show the tops of the seek row cut off by its edge.
 const DOCK_BLUR: Pixels = px(8.);
@@ -90,6 +94,9 @@ pub struct FullscreenView {
     settings: Entity<AppSettings>,
     aside: Entity<Aside>,
     panel: Option<SideTab>,
+    /// The entrance the content plays after the pill shows another tab, the same one a settings
+    /// page plays. The pill itself never takes part.
+    switch: Option<Entrance>,
     seek: ScrubberState,
     pending: Option<f32>,
     over_seek: Option<f32>,
@@ -149,6 +156,7 @@ impl FullscreenView {
             settings,
             aside,
             panel,
+            switch: None,
             seek: ScrubberState::new("fullscreen-seek"),
             pending: None,
             over_seek: None,
@@ -197,6 +205,7 @@ impl FullscreenView {
             position: 0.,
             velocity: 0.,
         };
+        self.unpark();
         self.last_pos = None;
         match shown {
             true => self.stir(cx),
@@ -205,7 +214,16 @@ impl FullscreenView {
         cx.notify();
     }
 
+    /// Selects the fullscreen panel and restarts the controls' idle timer.
     fn show(&mut self, panel: Option<SideTab>, cx: &mut Context<Self>) {
+        if panel != self.panel && !cx.reduce_motion() {
+            self.switch = Some(Entrance::start());
+        }
+        if panel.is_some() != self.panel.is_some() {
+            // The pill changes parents between the cover and panel layouts, so its old
+            // hover listener cannot report a leave after it is removed.
+            self.over_pill = false;
+        }
         self.panel = panel;
         self.settings
             .update(cx, |settings, cx| settings.set_fullscreen_tab(panel, cx));
@@ -292,6 +310,18 @@ impl FullscreenView {
             || Sonora::global(cx).devices.read(cx).invite().is_some()
     }
 
+    /// Clears hover state when the fullscreen view opens or closes. Its elements report their
+    /// current hover state when they are mounted again.
+    fn unpark(&mut self) {
+        self.over_zone = false;
+        self.over_panel = false;
+        self.over_pill = false;
+        self.over_transport = false;
+        self.over_leave = false;
+        self.over_volume = false;
+        self.over_seek = None;
+    }
+
     /// Follows the pointer in and out of the window, once a frame. A hover flag clears on an
     /// event the pointer has to be present for, so the ones still set when it left the window are
     /// dropped here instead. Crossing the window edge repaints on its own, so this is never late.
@@ -354,6 +384,20 @@ impl FullscreenView {
             window.request_animation_frame();
         }
         self.hidden.position.clamp(0., 1.)
+    }
+
+    /// How much of the tab just shown is still hidden, from 1 as the switch starts to 0 once it
+    /// ends. It asks for another frame while the switch runs.
+    fn switching(&mut self, window: &mut Window, cx: &App) -> f32 {
+        let Some(switch) = self.switch else {
+            return 0.;
+        };
+        if cx.reduce_motion() || !switch.running() {
+            self.switch = None;
+            return 0.;
+        }
+        window.request_animation_frame();
+        switch.hidden()
     }
 
     fn volume_open(&self) -> bool {
@@ -547,11 +591,14 @@ impl FullscreenView {
             .gap_1()
             .w_full()
             .min_w_0()
-            .map(|this| glide(this, lift, window))
+            .map(|this| glide(this, lift, px(SHADOW_BLEED), window))
             .child(
                 canvas(move |bounds, _, _| meta_bounds.set(bounds), |_, _, _, _| {})
                     .absolute()
-                    .size_full(),
+                    .left_0()
+                    .right_0()
+                    .top(px(SHADOW_BLEED))
+                    .bottom(px(SHADOW_BLEED)),
             )
             .child(
                 // Three-part row with equal flex sides, so the title stays truly centred:
@@ -856,7 +903,10 @@ impl FullscreenView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // The clamp runs from the controls' own height once it is known. From a taller cap the
-        // dock would hold still through the start of the fade and catch up after.
+        // dock would hold still through the start of the fade and catch up after. A dock that
+        // keeps its footprint reserves it only once the controls are gone, because the height is
+        // a frame old and a switch between the full and split layouts would stretch the column
+        // by the difference until something renders again.
         let natural = self.dock_natural.get();
         let cap = match natural > Pixels::ZERO {
             true => natural,
@@ -873,7 +923,7 @@ impl FullscreenView {
                 true => this.when(hide > 0., |this| {
                     this.max_h(cap * (1. - hide)).overflow_hidden()
                 }),
-                false => this.min_h(cap),
+                false => this.when(hide >= 1., |this| this.min_h(cap)),
             })
             .when(hide > 0., |this| this.opacity(1. - hide))
             .map(|this| match DOCK_BLUR * hide {
@@ -1234,6 +1284,7 @@ impl Render for FullscreenView {
         let split = room.fits(Room::Wide) && self.panel.is_some();
         self.watch(window, cx);
         let idle = self.hidden(window, cx);
+        let switching = self.switching(window, cx);
         let hide = match self.settings.read(cx).fullscreen_controls_autohide() {
             FullscreenControlsAutohide::Automatic => idle,
             FullscreenControlsAutohide::AlwaysShown => 0.,
@@ -1310,6 +1361,13 @@ impl Render for FullscreenView {
             false => Pixels::ZERO,
         };
         let lift = settle((far - side) / 2.);
+        // The cover grows past the column's top and the meta sinks past its bottom while the
+        // column glides, so its layer keeps room for both. A split column already fills the
+        // height and has the slack around its content to grow into.
+        let bleed = match split {
+            true => Pixels::ZERO,
+            false => snapped((far - side) / 2., window) + px(COVER_LAYER_PAD + SHADOW_BLEED),
+        };
 
         let style = self.settings.read(cx).visualizer_style();
         let visualizer_on =
@@ -1437,7 +1495,10 @@ impl Render for FullscreenView {
                                     |this| this.flex_1().h_full(),
                                     |this| this.w_full(),
                                 )
-                                .map(|this| glide(this, shift, window))
+                                .map(|this| glide(this, shift, bleed, window))
+                                // A split column carries the pill in its dock, and its cover
+                                // holds still while the panel beside it enters.
+                                .when(!split, |this| entering(this, switching))
                                 .child(self.artwork(side, raster_side, cover_scale, cx))
                                 .child(self.meta(hide, lift, window, cx))
                                 .when(split, |this| {
@@ -1463,7 +1524,10 @@ impl Render for FullscreenView {
                                 .min_h_0()
                                 .h_full()
                                 .on_click(|_, _, cx| cx.stop_propagation())
-                                .child(self.aside.clone())
+                                .child(entering(
+                                    div().size_full().min_h_0().child(self.aside.clone()),
+                                    switching,
+                                ))
                                 .when(shown, |this| this.child(self.floating(hide, cx))),
                         )
                     }),
@@ -1487,10 +1551,13 @@ impl Render for FullscreenView {
 
 /// Places `element` `offset` below where layout puts it: the whole device pixels through layout
 /// and the fraction through the compositor, so a slow offset glides rather than stepping a pixel
-/// at a time. An offset that sits on the device grid takes no layer.
-fn glide<E: Styled>(element: E, offset: Pixels, window: &Window) -> E {
+/// at a time. An offset that sits on the device grid takes no layer. The layer clips to the
+/// element's bounds, so `bleed` pads them above and below by as far as the children paint past
+/// them, and matching negative margins give that room back to layout. The padding stays at rest
+/// too, so nothing moves when the layer comes and goes.
+fn glide<E: Styled>(element: E, offset: Pixels, bleed: Pixels, window: &Window) -> E {
     let grid = snapped(offset, window);
-    let element = element.top(grid);
+    let element = element.py(bleed).my(Pixels::ZERO - bleed).top(grid);
     match offset == grid {
         true => element,
         false => element.layer_translate(point(px(0.), offset - grid)),

@@ -14,13 +14,14 @@ use i18n::t;
 use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
 use state::{AppSettings, Playback, PlayerBarLayout, Queue, SideTab, Sonora};
 use ui::{
-    Artwork, Button, ExplicitBadge, InlineLink, InlineLinks, Popup, Room, Scrollbar, Scrubber,
-    ScrubberState, clock, tabular,
+    Artwork, Button, ExplicitBadge, InlineLink, InlineLinks, Pinnable, Popup, Room, Scrollbar,
+    Scrubber, ScrubberState, clock, tabular,
 };
 
 use crate::chrome::sessions_button::SessionsButton;
 use crate::chrome::{Chrome, SidebarRight};
 use crate::shared::menus::ItemMenu;
+use crate::shared::pins::Pinned as _;
 use crate::shared::transport::{NOTCH, fraction, like, moved, percent, transport, volume_icon};
 
 const SEEK_MAX: f32 = 560.;
@@ -304,6 +305,7 @@ impl PlayerBar {
         });
         div()
             .id("now-playing-artwork")
+            .when_some(track.and_then(|track| track.pin()), Pinnable::pin)
             .when_some(
                 track.and_then(|track| track.album_id.clone()),
                 |this, album| this.link(Destination::Album(album.into())),
@@ -334,6 +336,7 @@ impl PlayerBar {
         let title = match track {
             Some(track) => div()
                 .id("now-playing-track")
+                .when_some(track.pin(), Pinnable::pin)
                 .map(|this| match track.album_id.clone() {
                     Some(album_id) => this
                         .aria_label(SharedString::from(track.name.clone()))

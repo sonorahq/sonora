@@ -114,6 +114,8 @@ const ADD_CHUNK: usize = 100;
 
 /// How many artist lookups run at once, for portraits and for an album's recommendations.
 const LOOKUPS: usize = 4;
+/// The page size for Tidal's ranked artist songs.
+const ARTIST_TRACKS: usize = 1000;
 /// How many tracks a station asks for.
 const RADIO: &str = "100";
 /// How many results a search asks for.
@@ -1147,6 +1149,15 @@ impl MusicApi for TidalClient {
             top_tracks: Vec::new(),
             appears_on: wire::distinct(appears_on.unwrap_or_default()),
         })
+    }
+
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        let path = format!("/artists/{}/toptracks", escape::component(artist_id));
+        let tracks = self
+            .all(&path, &[], ARTIST_TRACKS, wire::track_list)
+            .await
+            .context("cannot load the artist's tracks")?;
+        Ok(crate::artist_songs(tracks, artist_id))
     }
 
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {

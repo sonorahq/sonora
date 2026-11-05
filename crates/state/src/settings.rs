@@ -399,6 +399,8 @@ struct Values {
     /// The buffer to ask the output device for, in frames, or `None` for Sonora's own. A device
     /// that does not allow it gets the nearest it does.
     output_buffer: Option<u32>,
+    /// Whether a direct output device is switched to the sample rate of each track that plays.
+    output_match_rate: bool,
     /// The format a Subsonic server is asked to convert tracks into, by its Subsonic name, or
     /// `None` to take what the server sends.
     subsonic_format: Option<String>,
@@ -611,6 +613,7 @@ impl Default for Values {
             output_device: None,
             output_rate: None,
             output_buffer: None,
+            output_match_rate: false,
             subsonic_format: None,
             subsonic_bitrate: None,
             stream_quality: Quality::default().id().to_owned(),
@@ -911,7 +914,6 @@ impl AppSettings {
                 StateValues::default()
             }
         };
-        themes::adopt_legacy(&values.appearance.theme, &themes_path(&path));
         let themes = themes::load(&themes_path(&path), &[]).themes;
         let families = themes::catalog(&themes);
 
@@ -1076,6 +1078,10 @@ impl AppSettings {
 
     pub fn output_buffer(&self) -> Option<u32> {
         self.values.output_buffer
+    }
+
+    pub fn output_match_rate(&self) -> bool {
+        self.values.output_match_rate
     }
 
     /// How a Subsonic server is asked to convert tracks. A format this build does not know reads
@@ -1679,6 +1685,11 @@ impl AppSettings {
 
     pub fn set_output_buffer(&mut self, frames: Option<u32>, cx: &mut Context<Self>) {
         self.values.output_buffer = frames;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_output_match_rate(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.values.output_match_rate = on;
         self.schedule_save(cx);
     }
 
@@ -2634,7 +2645,6 @@ impl AppSettings {
         };
 
         log::info!("settings: reloaded {}", self.path.display());
-        themes::adopt_legacy(&values.appearance.theme, &themes_path(&self.path));
         let previous = std::mem::replace(&mut self.values, values);
         self.disk = Some(bytes);
         self.writable = true;

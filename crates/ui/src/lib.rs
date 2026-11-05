@@ -89,7 +89,7 @@ pub use input::{
     Backspace, BackspaceToStart, BackspaceWord, Copy, Cut, Delete, DeleteToEnd, DeleteWord,
     Dismiss, End, Home, INPUT_CONTEXT, Input, Left, Paste, Right, SelectAll, SelectEnd, SelectHome,
     SelectLeft, SelectRight, SelectWordLeft, SelectWordRight, ShowCharacterPalette, Space,
-    WordLeft, WordRight, refresh_primary_paste,
+    WordLeft, WordRight, refresh_primary_paste, single_line,
 };
 pub use kbd::Kbd;
 pub use label::{
@@ -99,7 +99,7 @@ pub use label::{
 pub use layout::{ALWAYS, MIN_CONTENT, ROOMY, Room, SNUG, VAST, WIDE};
 pub use lazy::Lazy;
 pub use level_meter::LevelMeter;
-pub use menu::{MENU_CONTEXT, Menu, MenuItem, MenuSearch, SubmenuState};
+pub use menu::{MENU_CONTEXT, Menu, MenuItem, MenuSearch, SubmenuState, close_menu};
 pub use metrics::{LEADING, Metrics, Rounding, Text, snapped, tucked};
 pub use modal::{Modal, corners};
 pub use motion::{

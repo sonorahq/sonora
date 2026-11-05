@@ -96,17 +96,13 @@ column-year = 年
 column-tracks = 曲数
 
 # track menu
-menu-add-to-playlist = プレイリストに追加
-menu-add-tracks-to-playlist = { $count }曲をプレイリストに追加
 menu-new-playlist = 新しいプレイリスト
 menu-import-playlist = プレイリストをインポート…
 menu-edit-tags = タグを編集
 menu-no-playlists = プレイリストがありません
 menu-search-playlists = プレイリストを検索
 menu-add-to-library = お気に入りに追加
-menu-add-tracks-to-library = { $count }曲をお気に入りに追加
 menu-remove-from-library = お気に入りから削除
-menu-remove-tracks-from-library = { $count }曲をお気に入りから削除
 menu-remove-from-playlist = プレイリストから削除
 menu-remove-tracks-from-playlist = { $count }曲をプレイリストから削除
 menu-remove-from-history = 履歴から削除
@@ -114,13 +110,7 @@ menu-remove-tracks-from-history = { $count }曲を履歴から削除
 menu-delete-track-file = 曲ファイルを削除
 menu-delete-track-files = { $count }個の曲ファイルを削除
 menu-download = ダウンロード
-menu-download-tracks = { $count ->
-   *[other] { $count }曲をダウンロード
-}
 menu-remove-download = ダウンロードを削除
-menu-remove-downloads = { $count ->
-   *[other] { $count }件のダウンロードを削除
-}
 menu-downloading = ダウンロード中。クリックで停止
 menu-play-next = 次に再生
 menu-play-tracks-next = { $count }曲を次に再生
@@ -148,14 +138,6 @@ menu-delete-playlist = プレイリストを削除
 menu-export-playlist = プレイリストをエクスポート…
 menu-add-playlist-to-library = ライブラリに追加
 menu-remove-playlist-from-library = ライブラリから削除
-menu-library-add = ライブラリに追加
-menu-library-add-tracks = { $count ->
-   *[other] { $count }曲をライブラリに追加
-}
-menu-library-remove = ライブラリから削除
-menu-library-remove-tracks = { $count ->
-   *[other] { $count }曲をライブラリから削除
-}
 menu-make-playlist-public = 公開する
 menu-make-playlist-private = 非公開にする
 menu-play-artist = アーティストを再生

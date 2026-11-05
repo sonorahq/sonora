@@ -6,6 +6,7 @@ pub(crate) mod cards;
 pub(crate) mod cells;
 pub(crate) mod confirm;
 pub(crate) mod device_code;
+pub(crate) mod device_menu;
 pub(crate) mod equalizer;
 pub(crate) mod hero;
 pub(crate) mod local;

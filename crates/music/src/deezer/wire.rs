@@ -238,7 +238,7 @@ pub fn track(value: &Value) -> Option<Track> {
         added_at: when(value, &["ADDED_AT", "time_add", "DATE_ADD"]),
         added_by: None,
         playcount: None,
-        popularity: number(value, &["RANK", "rank"])
+        popularity: number(value, &["RANK", "rank", "RANK_SNG"])
             .map(|rank| (rank / 10_000).min(100) as u32)
             .unwrap_or(0),
         explicit: truthy(value, &["explicit_lyrics", "EXPLICIT_LYRICS"]),

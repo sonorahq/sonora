@@ -361,7 +361,7 @@ impl ArtistView {
                     self.popular.as_ref().clone(),
                     self.playback.clone(),
                 )
-                .from(self.playing_from(cx)),
+                .load_origin(self.playing_from(cx)),
             )
             .child(
                 HeroPlayButton::shuffle(
@@ -369,7 +369,7 @@ impl ArtistView {
                     self.popular.as_ref().clone(),
                     self.playback.clone(),
                 )
-                .from(self.playing_from(cx)),
+                .load_origin(self.playing_from(cx)),
             )
             .children(self.favorite_button(cx))
             .children(overflow);
@@ -504,7 +504,7 @@ impl ArtistView {
             id: detail.id()?.to_owned(),
             name: artist.name.clone(),
             cover: artist.cover_large.clone(),
-            added_at: None,
+            ..Default::default()
         })
     }
 

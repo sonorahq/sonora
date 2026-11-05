@@ -7,6 +7,7 @@ use state::{DeviceRule, RuleDevice};
 use ui::{ActiveTheme as _, Button, MenuItem, Picker, Text};
 
 use super::{EqualizerView, heading};
+use crate::shared::device_menu::device_rows;
 use crate::shared::equalizer::{SOUND_MENU_HEIGHT, sketch, sound_curve, sound_items, sound_label};
 
 const DEVICE: &str = "equalizer-rule-device";
@@ -16,23 +17,15 @@ const ICON: &str = "icons/headphones.svg";
 /// How wide a rule's sound column is, in cover sizes, so the sounds line up under each other.
 const SOUND_COLUMN: f32 = 1.4;
 
-/// A device the add row's device menu offers, with what is known about it.
-struct Offered {
-    device: RuleDevice,
-    playing: bool,
-    connected: bool,
-}
-
 impl EqualizerView {
     /// The device rules' group: a row for each rule with a remove button, then a row that adds
     /// one. A rule says which sound plays once the sound moves to its device.
-    pub(super) fn rules(&self, cx: &mut Context<Self>) -> AnyElement {
-        let offered = self.offered(cx);
+    pub(super) fn rules(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let playing = self.playing_output(cx);
+        let listed = self.listed_outputs(cx);
         let settings = self.settings.read(cx);
-        let governing = self
-            .outputs
-            .read(cx)
-            .binding_key()
+        let governing = playing
+            .as_ref()
             .and_then(|output| settings.equalizer_rule_for_output(&output.id))
             .map(|rule| rule.device.clone());
         let rules = settings.equalizer_rules().to_vec();
@@ -43,9 +36,12 @@ impl EqualizerView {
             .map(|(index, rule)| {
                 let connected = match &rule.device {
                     RuleDevice::Other => true,
-                    RuleDevice::Output(output) => offered.iter().any(|offer| {
-                        offer.connected && offer.device.id() == Some(output.id.as_str())
-                    }),
+                    RuleDevice::Output(output) => {
+                        playing.as_ref().is_some_and(|now| now.id == output.id)
+                            || listed
+                                .iter()
+                                .any(|(listed, connected)| *connected && listed.id == output.id)
+                    }
                 };
                 let playing = governing
                     .as_ref()
@@ -69,7 +65,7 @@ impl EqualizerView {
                         .children(rows),
                 )
             })
-            .child(self.add_rule(offered, cx))
+            .child(self.add_rule(playing, listed, cx))
             .into_any_element()
     }
 
@@ -165,10 +161,25 @@ impl EqualizerView {
 
     /// The row that adds a rule: a device picker, a sound picker, and the button that adds the
     /// rule once both are chosen. A device that has a rule already gets the new one instead.
-    fn add_rule(&self, offered: Vec<Offered>, cx: &mut Context<Self>) -> AnyElement {
+    /// The device picker opens the output picker's own menu, with the output playing now first
+    /// when the system does not list it, the outputs that have a rule but are not connected
+    /// after the listed ones, and every other device last.
+    fn add_rule(
+        &mut self,
+        playing: Option<OutputId>,
+        listed: Vec<(OutputId, bool)>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let rows = device_rows(self.outputs.read(cx).devices(), |device| {
+            !output::is_direct_copy(&device.id)
+        });
+        let open = self.popovers.shows(DEVICE);
+        self.device_menu.prepare(&rows, open, cx);
+
         let theme = *cx.theme();
         let small = theme.text(Text::Small);
         let settings = self.settings.read(cx);
+        let devices = self.outputs.read(cx).devices();
         let ruled = |device: &RuleDevice| {
             settings
                 .equalizer_rules()
@@ -176,36 +187,88 @@ impl EqualizerView {
                 .any(|rule| rule.device.id() == device.id())
         };
         let chosen = self.rule_device.as_ref();
-        let item = |index: usize, offer: Offered| {
-            let detail = match (ruled(&offer.device), offer.playing, offer.connected) {
-                (true, _, _) => Some(t!("equalizer-rule-replaces")),
-                (false, true, _) => Some(t!("equalizer-rule-playing")),
-                (false, false, false) => Some(t!("equalizer-rule-disconnected")),
-                (false, false, true) => None,
+        let playing_id = playing.as_ref().map(|output| output.id.clone());
+        let item =
+            |device: RuleDevice, label: SharedString, connected: bool, about: Option<&String>| {
+                let playing = device.id().is_some() && device.id() == playing_id.as_deref();
+                let detail = match (ruled(&device), playing, connected || playing) {
+                    (true, _, _) => Some(t!("equalizer-rule-replaces")),
+                    (false, true, _) => Some(t!("equalizer-rule-playing")),
+                    (false, false, false) => Some(t!("equalizer-rule-disconnected")),
+                    (false, false, true) => about.map(|about| about.clone().into()),
+                };
+                let id = SharedString::from(format!(
+                    "equalizer-rule-device-{}",
+                    device.id().unwrap_or("other")
+                ));
+                MenuItem::new(id, label)
+                    .selected(chosen.is_some_and(|chosen| chosen.id() == device.id()))
+                    .when_some(detail, |item, detail| {
+                        item.detail(
+                            div()
+                                .text_size(small)
+                                .text_color(theme.muted_foreground)
+                                .child(detail),
+                        )
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.rule_device = Some(device.clone());
+                        cx.notify();
+                    }))
             };
-            let device = offer.device;
-            MenuItem::new(("equalizer-rule-device", index), device_label(&device))
-                .selected(chosen.is_some_and(|chosen| chosen.id() == device.id()))
-                .when_some(detail, |item, detail| {
-                    item.detail(
-                        div()
-                            .text_size(small)
-                            .text_color(theme.muted_foreground)
-                            .child(detail),
-                    )
-                })
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.rule_device = Some(device.clone());
-                    cx.notify();
-                }))
-        };
-        let items = offered.into_iter().enumerate().flat_map(|(index, offer)| {
-            let divider = (index > 0 && offer.device == RuleDevice::Other)
-                .then(|| MenuItem::separator("equalizer-rule-devices-other"));
-            divider.into_iter().chain([item(index, offer)])
-        });
-        let items: Vec<MenuItem> = items.collect();
-        let height = theme.metrics.cover * SOUND_MENU_HEIGHT;
+        let known = |id: &str| listed.iter().any(|(output, _)| output.id == id);
+
+        let leading = playing
+            .clone()
+            .filter(|output| !known(&output.id))
+            .map(|output| {
+                let label = output.name.clone().into();
+                item(RuleDevice::Output(output), label, true, None)
+            });
+        let chosen_id = chosen.and_then(RuleDevice::id);
+        let listed_items = self.device_menu.items(
+            rows,
+            devices,
+            |device| chosen_id.is_some_and(|id| belongs(id, &device.id)),
+            |index, label| {
+                let device = &devices[index];
+                device_outputs(device, &label)
+                    .into_iter()
+                    .map(|(output, label, connected)| {
+                        item(
+                            RuleDevice::Output(output),
+                            label,
+                            connected,
+                            device.detail.as_ref(),
+                        )
+                    })
+                    .collect()
+            },
+        );
+        let absent = settings
+            .equalizer_rules()
+            .iter()
+            .filter_map(|rule| match &rule.device {
+                RuleDevice::Output(output) => Some(output.clone()),
+                RuleDevice::Other => None,
+            })
+            .filter(|output| !known(&output.id) && playing_id.as_deref() != Some(&output.id))
+            .map(|output| {
+                let label = output.name.clone().into();
+                item(RuleDevice::Output(output), label, false, None)
+            });
+        let other = [
+            MenuItem::separator("equalizer-rule-devices-other"),
+            item(RuleDevice::Other, t!("equalizer-rule-other"), true, None),
+        ];
+        let items: Vec<MenuItem> = leading
+            .into_iter()
+            .chain(listed_items)
+            .chain(absent)
+            .chain(other)
+            .collect();
+
+        // a device plugged in since the list was read is only found by asking again
         let device_picker = Picker::new(
             DEVICE,
             &self.popovers,
@@ -213,14 +276,14 @@ impl EqualizerView {
         )
         .name(t!("equalizer-rule-device"))
         .left()
-        .width(Picker::WIDE)
         .w(Picker::REGULAR)
         .on_open(cx.listener(|this, _, _, cx| {
             this.outputs.update(cx, |outputs, cx| outputs.refresh(cx));
         }))
-        .scroll_after(height)
+        .menu(self.device_menu.menu("equalizer-rule-devices-menu"))
         .items(items);
 
+        let height = theme.metrics.cover * SOUND_MENU_HEIGHT;
         let picked = self.rule_sound.clone();
         let shape = picked
             .as_ref()
@@ -287,12 +350,10 @@ impl EqualizerView {
         cx.notify();
     }
 
-    /// Every device a rule can be added for, each once: the output playing now, then the devices
-    /// the output picker lists, a sound server's sink once for each of its ports, then the devices
-    /// that have a rule, and last every other device.
-    fn offered(&self, cx: &App) -> Vec<Offered> {
+    /// The output playing now, named with the port that plays when its sink has several.
+    fn playing_output(&self, cx: &App) -> Option<OutputId> {
         let outputs = self.outputs.read(cx);
-        let current = outputs.binding_key().map(|output| OutputId {
+        outputs.binding_key().map(|output| OutputId {
             name: output_name(
                 &output.name,
                 outputs
@@ -302,44 +363,20 @@ impl EqualizerView {
             )
             .into(),
             id: output.id,
-        });
-        let devices = outputs.devices().iter().flat_map(device_outputs);
-        let ruled = self
-            .settings
-            .read(cx)
-            .equalizer_rules()
-            .iter()
-            .filter_map(|rule| match &rule.device {
-                RuleDevice::Output(output) => Some((output.clone(), false)),
-                RuleDevice::Other => None,
-            });
-        let playing = current.as_ref().map(|output| output.id.clone());
+        })
+    }
 
-        let mut offered: Vec<Offered> = Vec::new();
-        for (output, connected) in current
-            .map(|output| (output, true))
-            .into_iter()
-            .chain(devices)
-            .chain(ruled)
-        {
-            if offered
-                .iter()
-                .any(|offer| offer.device.id() == Some(output.id.as_str()))
-            {
-                continue;
-            }
-            offered.push(Offered {
-                playing: playing.as_deref() == Some(output.id.as_str()),
-                connected: connected || playing.as_deref() == Some(output.id.as_str()),
-                device: RuleDevice::Output(output),
-            });
-        }
-        offered.push(Offered {
-            device: RuleDevice::Other,
-            playing: false,
-            connected: true,
-        });
-        offered
+    /// Every output the system lists that a rule can be added for, each with whether it is
+    /// connected: a sound server's sink once for each of its ports.
+    fn listed_outputs(&self, cx: &App) -> Vec<(OutputId, bool)> {
+        self.outputs
+            .read(cx)
+            .devices()
+            .iter()
+            .filter(|device| !output::is_direct_copy(&device.id))
+            .flat_map(|device| device_outputs(device, &device.name))
+            .map(|(output, _, connected)| (output, connected))
+            .collect()
     }
 }
 
@@ -364,15 +401,17 @@ fn output_name(name: &str, port: Option<&str>) -> SharedString {
     }
 }
 
-/// The outputs a listed device offers rules for, each with whether it is connected: one for each
-/// port of a sound server's sink, named with the port when there are several, else the device.
-fn device_outputs(device: &DeviceOption) -> Vec<(OutputId, bool)> {
+/// The outputs a listed device offers rules for, each with the label its menu row shows and
+/// whether it is connected: one for each port of a sound server's sink, named with the port when
+/// there are several, else the device. `label` is what the device goes by where the menu lists
+/// it, while the output keeps the device's full name.
+fn device_outputs(device: &DeviceOption, label: &str) -> Vec<(OutputId, SharedString, bool)> {
     let Some(sink) = device.sink.as_ref().filter(|sink| !sink.ports.is_empty()) else {
         let output = OutputId {
             id: device.id.clone(),
             name: device.name.clone(),
         };
-        return vec![(output, true)];
+        return vec![(output, label.to_owned().into(), true)];
     };
     let several = sink.ports.len() > 1;
     sink.ports
@@ -383,7 +422,13 @@ fn device_outputs(device: &DeviceOption) -> Vec<(OutputId, bool)> {
                 id: output::output_key(&device.id, Some(port)),
                 name: output_name(&device.name, shown).into(),
             };
-            (output, port.available)
+            (output, output_name(label, shown), port.available)
         })
         .collect()
+}
+
+/// Whether the output keyed `key` is the device `device` or one of its ports.
+fn belongs(key: &str, device: &str) -> bool {
+    key.strip_prefix(device)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('#'))
 }

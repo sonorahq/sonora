@@ -5,7 +5,7 @@ use router::{Destination, navigate};
 use state::Outputs;
 use ui::{ActiveTheme as _, Button, Picker, Switch, Text};
 
-use super::{Group, SettingsView, Slot};
+use super::{Group, Row, SettingsView, Slot};
 use crate::shared::equalizer::sound_picker;
 
 /// The chevron at the end of the equalizer row, as large as a button's icon.
@@ -15,11 +15,19 @@ const SOUND: &str = "settings-equalizer-sound";
 
 impl SettingsView {
     pub(super) fn sound_groups(&self, cx: &App) -> Vec<Group> {
+        let match_rate = self.outputs.read(cx).match_rate_supported();
         let failed = self.outputs.read(cx).failure().is_some();
         // with nothing open there is no rate or buffer to show
         let output = match failed {
             true => vec![Slot::OutputDevice, Slot::OutputFailure],
-            false => vec![Slot::OutputDevice, Slot::SampleRate, Slot::Buffer],
+            false => {
+                let mut rows = vec![Slot::OutputDevice, Slot::SampleRate];
+                if match_rate {
+                    rows.push(Slot::MatchRate);
+                }
+                rows.push(Slot::Buffer);
+                rows
+            }
         };
         vec![
             Group::new("settings-group-output", "icons/volume-2.svg").rows(output),
@@ -72,13 +80,18 @@ impl SettingsView {
     pub(super) fn sample_rate_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let outputs = self.outputs.read(cx);
         let device = outputs.current();
-        let current = outputs.rate(cx);
+        // while the rate follows each track there is none to pick
+        let following = outputs.following(cx);
+        let current = match following {
+            true => device.map(|device| device.format.rate),
+            false => outputs.rate(cx),
+        };
         let rates = device
             .map(|device| device.rates.clone())
             .unwrap_or_default();
         // while another device is being tried, the open stream is not the one that will play
         let locked = outputs.switching();
-        let settings_uri = match rates.len() > 1 {
+        let settings_uri = match rates.len() > 1 || following {
             true => None,
             false => {
                 music::output::system_audio_settings_uri(device.map(|device| device.id.as_str()))
@@ -88,17 +101,19 @@ impl SettingsView {
             .map(|rate| t!("settings-sample-rate-value", khz = f64::from(rate) / 1_000.))
             .unwrap_or_else(|| t!("settings-output-idle"));
         let rate = ui::spoken("sample-rate-value", rate);
-        let stepper = current.filter(|_| rates.len() > 1).map(|current| {
-            output_stepper(
-                "sample-rate",
-                ("settings-sample-rate-lower", "settings-sample-rate-higher"),
-                current,
-                &rates,
-                locked,
-                Outputs::set_rate,
-                cx,
-            )
-        });
+        let stepper = current
+            .filter(|_| rates.len() > 1 && !following)
+            .map(|current| {
+                output_stepper(
+                    "sample-rate",
+                    ("settings-sample-rate-lower", "settings-sample-rate-higher"),
+                    current,
+                    &rates,
+                    locked,
+                    Outputs::set_rate,
+                    cx,
+                )
+            });
 
         self.row(
             t!("settings-sample-rate"),
@@ -122,6 +137,35 @@ impl SettingsView {
                 })
                 .into_any_element(),
         )
+    }
+
+    /// The switch that has a direct output run at the sample rate of each track. It means nothing
+    /// on a shared output, whose rate is every other app's too, and says so until a direct one is
+    /// chosen.
+    pub(super) fn match_rate_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let outputs = self.outputs.read(cx);
+        let on = outputs.match_rate(cx);
+        let available = outputs.direct_chosen();
+        let locked = outputs.switching();
+        let detail = match available {
+            true => t!("settings-match-rate-detail"),
+            false => t!("settings-match-rate-direct-only"),
+        };
+
+        Row::new(
+            t!("settings-match-rate"),
+            Switch::new("match-rate", on)
+                .name(t!("settings-match-rate"))
+                .disabled(!available || locked)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.outputs
+                        .update(cx, |outputs, cx| outputs.set_match_rate(!on, cx));
+                }))
+                .into_any_element(),
+        )
+        .detail(detail)
+        .disabled(!available)
+        .into_any_element()
     }
 
     /// The buffer Sonora asks the device for, in frames, with the buffers the device allows to

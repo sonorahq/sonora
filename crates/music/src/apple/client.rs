@@ -299,6 +299,16 @@ impl AppleClient {
         &self.storefront
     }
 
+    /// Whether Apple says the account has an active Apple Music subscription, which a Family
+    /// Sharing member's own Apple ID has too. `None` when the answer does not say either way.
+    pub(crate) async fn subscribed(&self) -> Result<Option<bool>> {
+        let body = self.get("/me/account", &[("meta", "subscription")]).await?;
+        let answered: Value = serde_json::from_str(&body).unwrap_or_default();
+        Ok(answered
+            .pointer("/meta/subscription/active")
+            .and_then(Value::as_bool))
+    }
+
     pub(crate) fn catalog(&self, path: &str) -> String {
         format!("/catalog/{}{path}", escape::component(&self.storefront))
     }
@@ -1556,6 +1566,10 @@ impl MusicApi for AppleClient {
 
     async fn artist_catalogue(&self, artist_id: &str, _known: &[Track]) -> Result<ArtistCatalogue> {
         recommend::artist_catalogue(self, artist_id).await
+    }
+
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        recommend::artist_tracks(self, artist_id).await
     }
 
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {

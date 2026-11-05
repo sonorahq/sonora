@@ -178,12 +178,17 @@ impl Render for Members {
         let listening = self.listening.clone();
         let rows = people.iter().enumerate().map(|(index, member)| {
             let id = member.id.clone();
+            // the listener reads as "You", the way the list in a Jam names them
+            let shown: SharedString = match member.you {
+                true => t!("devices-jam-you"),
+                false => SharedString::from(jam::name(member).to_owned()),
+            };
             let devices = devices.clone();
             let listening = listening.clone();
             div()
                 .id(SharedString::from(format!("member-{}", member.id)))
                 .role(Role::ListItem)
-                .aria_label(SharedString::from(jam::name(member).to_owned()))
+                .aria_label(shown.clone())
                 .aria_position_in_set(index + 1)
                 .aria_size_of_set(count)
                 .flex()
@@ -194,24 +199,11 @@ impl Render for Members {
                 .rounded(theme.radius)
                 .hover(|this| this.bg(theme.secondary_hover))
                 .child(jam::face(member, theme.metrics.control_small))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .child(jam::name(member).to_owned()),
-                )
+                .child(div().flex_1().min_w_0().truncate().child(shown))
                 .when(member.host, |this| {
                     this.child(jam::badge(
                         ("member-host", index),
                         t!("devices-jam-host"),
-                        theme,
-                    ))
-                })
-                .when(member.you, |this| {
-                    this.child(jam::badge(
-                        ("member-you", index),
-                        t!("devices-jam-you"),
                         theme,
                     ))
                 })
@@ -234,6 +226,7 @@ impl Render for Members {
                 .flex()
                 .flex_col()
                 .flex_none()
+                .items_center()
                 .gap_2()
                 .p_3()
                 .border_b_1()
@@ -244,8 +237,10 @@ impl Render for Members {
                         .role(Role::Label)
                         .aria_value(status.clone())
                         .flex()
+                        .flex_col()
                         .items_center()
-                        .gap_2()
+                        .gap_1()
+                        .max_w_full()
                         .child(jam::faces(
                             &people,
                             FACES,
@@ -256,7 +251,7 @@ impl Render for Members {
                         ))
                         .child(
                             div()
-                                .min_w_0()
+                                .max_w_full()
                                 .truncate()
                                 .text_size(theme.text(Text::Small))
                                 .text_color(theme.muted_foreground)
@@ -268,6 +263,7 @@ impl Render for Members {
                         .flex()
                         .flex_wrap()
                         .items_center()
+                        .justify_center()
                         .gap_1()
                         .children(actions),
                 ),

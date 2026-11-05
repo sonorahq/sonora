@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{AnyElement, Context, Div, Pixels, Window, div};
-use music::{LyricsLine, LyricsWord, RomanizedText, Voice, WritingSystem};
+use music::{LyricsLine, LyricsWord, RomanizedText, WritingSystem};
 use state::RomanizationScripts;
 use ui::{ActiveTheme as _, Theme};
 
@@ -175,8 +175,7 @@ fn sample() -> Vec<LyricsLine> {
                 words: Some(timed(&text, start)),
                 text,
                 romanized,
-                secondary: Vec::new(),
-                voice: Voice::Lead,
+                ..Default::default()
             }
         })
         .collect()

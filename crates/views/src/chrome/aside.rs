@@ -77,6 +77,10 @@ const HAZE_LEAST: Pixels = px(0.05);
 /// The step a row's blur is rounded to. Neighbouring rows that land on the same step share one
 /// offscreen layer in the renderer, where each distinct blur costs a layer of its own.
 const HAZE_STEP: Pixels = px(0.25);
+/// How far past the top and bottom of the lyrics view, as a share of its height, settled rows
+/// are still laid out. Rows further out are spacers, and the margin keeps a row at an edge from
+/// flipping between the two, which shapes its text again, as the sheet scrolls.
+const SPARE_MARGIN: f32 = 0.25;
 // How far a verse sinks while it is held.
 const PRESSED: f32 = 0.955;
 // The widest a line of lyrics is set, in multiples of its own size. Left to fill
@@ -1194,46 +1198,50 @@ impl Aside {
                             ),
                             false => 0.,
                         };
-                        let notes = instrumental_row(
+                        // Like a verse, the hover tint sits on the notes so it ends where they do.
+                        let glyphs = instrumental_row(
                             instrumental_progress,
                             instrumental_has_passed,
                             verse,
                             &theme,
                         )
-                        .id(("instrumental", index))
-                        .role(Role::Button)
-                        .aria_label(t!("lyrics-instrumental-break"))
-                        .when(instrumental_line == Some(index), |this| {
-                            this.aria_selected(true)
-                        })
-                        .w_full()
-                        .max_w(reach)
                         .px_2()
                         .rounded(theme.radius)
-                        .cursor_pointer()
                         .when(notes_touch.warmth > 0., |this| {
                             this.bg(theme.table_hover.opacity(notes_touch.warmth))
-                        })
-                        .when(notes_touch.depth > 0., |this| {
-                            this.layer_scale(1. - (1. - PRESSED) * notes_touch.depth)
-                        })
-                        .on_hover(cx.listener(move |this, over: &bool, _, cx| {
-                            this.set_hovered(Warm::Break(index), *over, cx)
-                        }))
-                        .on_mouse_down(
-                            gpui::MouseButton::Left,
-                            cx.listener(move |this, _, _, cx| {
-                                this.press_verse(Warm::Break(index), true, cx)
-                            }),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.seek_verse(notes_row, instrumental_start, cx);
-                        }))
-                        .when(softness > 0., |this| this.opacity(1. - VEIL * softness))
-                        .map(|this| match stepped(blur * softness) {
-                            soft if soft > HAZE_LEAST => this.blur(soft),
-                            _ => this,
                         });
+                        let notes = div()
+                            .id(("instrumental", index))
+                            .role(Role::Button)
+                            .aria_label(t!("lyrics-instrumental-break"))
+                            .when(instrumental_line == Some(index), |this| {
+                                this.aria_selected(true)
+                            })
+                            .w_full()
+                            .max_w(reach)
+                            .flex()
+                            .cursor_pointer()
+                            .child(glyphs)
+                            .when(notes_touch.depth > 0., |this| {
+                                this.layer_scale(1. - (1. - PRESSED) * notes_touch.depth)
+                            })
+                            .on_hover(cx.listener(move |this, over: &bool, _, cx| {
+                                this.set_hovered(Warm::Break(index), *over, cx)
+                            }))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.press_verse(Warm::Break(index), true, cx)
+                                }),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.seek_verse(notes_row, instrumental_start, cx);
+                            }))
+                            .when(softness > 0., |this| this.opacity(1. - VEIL * softness))
+                            .map(|this| match stepped(blur * softness) {
+                                soft if soft > HAZE_LEAST => this.blur(soft),
+                                _ => this,
+                            });
                         rendered.push(adrift(notes, notes_translation, false, window));
                     }
 
@@ -1266,8 +1274,8 @@ impl Aside {
                         .then(|| viewport_place(&scroll, row, view, translation))
                         .flatten()
                         .filter(|place| {
-                            place.top + place.height < -view.size.height
-                                || place.top > view.size.height * 2.
+                            place.top + place.height < -view.size.height * SPARE_MARGIN
+                                || place.top > view.size.height * (1. + SPARE_MARGIN)
                         });
                     self.settled.push(settled);
                     if let Some(place) = spared {
@@ -2098,6 +2106,9 @@ fn source_link(name: SharedString, to: Destination, cx: &App) -> impl IntoElemen
         .child(name)
 }
 
+/// Rows that `lyrics_wrap_rows` already broke, one line each. They never wrap again, because at
+/// some window sizes gpui finds a row that measured as fitting a hair too wide and would push its
+/// last word onto a line of its own.
 fn fixed_lyrics_lane(rows: &[SharedString], voice: Voice, sung: Sung) -> Div {
     div()
         .flex()
@@ -2106,6 +2117,7 @@ fn fixed_lyrics_lane(rows: &[SharedString], voice: Voice, sung: Sung) -> Div {
             lifted(
                 div()
                     .w_full()
+                    .whitespace_nowrap()
                     .when(hugs_end(voice, sung.mirrored), |this| this.text_right())
                     .child(row.clone()),
                 sung,
@@ -2161,7 +2173,13 @@ pub(crate) fn verse(
             line.voice,
             sung,
         ),
-        _ => fixed_lyrics_lane(&[SharedString::from(line.text.clone())], line.voice, sung),
+        _ => lifted(
+            div()
+                .w_full()
+                .when(hugs_end(line.voice, mirrored), |this| this.text_right())
+                .child(SharedString::from(line.text.clone())),
+            sung,
+        ),
     };
     let active_size = active_verse_size(look.size);
     let haze = match effects() {
@@ -3257,7 +3275,7 @@ fn has_right_to_left(text: &str) -> bool {
 mod tests {
     use std::time::Duration;
 
-    use music::{LyricsLane, LyricsLine, LyricsWord, Voice};
+    use music::{LyricsLane, LyricsLine, LyricsWord};
     use ui::Springs;
 
     use super::{
@@ -3369,19 +3387,13 @@ mod tests {
                 start: Duration::from_secs(2),
                 end: Some(Duration::from_secs(5)),
                 text: "first".to_owned(),
-                romanized: None,
-                words: None,
-                secondary: Vec::new(),
-                voice: Voice::Lead,
+                ..Default::default()
             },
             LyricsLine {
                 start: Duration::from_secs(12),
                 end: Some(Duration::from_secs(15)),
                 text: "second".to_owned(),
-                romanized: None,
-                words: None,
-                secondary: Vec::new(),
-                voice: Voice::Lead,
+                ..Default::default()
             },
         ];
 
@@ -3399,23 +3411,18 @@ mod tests {
                 start: Duration::from_secs(2),
                 end: Some(Duration::from_secs(12)),
                 text: "first".to_owned(),
-                romanized: None,
                 words: Some(vec![LyricsWord {
                     start: Duration::from_secs(2),
                     end: Duration::from_secs(5),
                     text: "first".to_owned(),
                 }]),
-                secondary: Vec::new(),
-                voice: Voice::Lead,
+                ..Default::default()
             },
             LyricsLine {
                 start: Duration::from_secs(12),
                 end: Some(Duration::from_secs(15)),
                 text: "second".to_owned(),
-                romanized: None,
-                words: None,
-                secondary: Vec::new(),
-                voice: Voice::Lead,
+                ..Default::default()
             },
         ];
 
@@ -3541,12 +3548,12 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(3)),
             text: "(E)".to_owned(),
-            romanized: None,
             words: Some(vec![LyricsWord {
                 start: Duration::from_secs(2),
                 end: Duration::from_secs(3),
                 text: "(E)".to_owned(),
             }]),
+            ..Default::default()
         };
 
         assert!(!secondary_karaoke_visible(
@@ -3577,14 +3584,12 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(8)),
             text: "Wake me up inside".to_owned(),
-            romanized: None,
             words: Some(vec![LyricsWord {
                 start: Duration::from_secs(2),
                 end: Duration::from_secs(8),
                 text: "Wake me up inside".to_owned(),
             }]),
-            secondary: Vec::new(),
-            voice: Voice::Lead,
+            ..Default::default()
         };
 
         assert!(!primary_karaoke_visible(
@@ -3615,14 +3620,12 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(5)),
             text: "line".to_owned(),
-            romanized: None,
             words: Some(vec![LyricsWord {
                 start: Duration::from_secs(2),
                 end: Duration::from_secs(5),
                 text: "line".to_owned(),
             }]),
-            secondary: Vec::new(),
-            voice: Voice::Lead,
+            ..Default::default()
         };
 
         assert!(primary_karaoke_visible(&line, true, Duration::from_secs(8)));
@@ -3634,14 +3637,12 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(8)),
             text: "Wake me up inside".to_owned(),
-            romanized: None,
             words: Some(vec![LyricsWord {
                 start: Duration::from_secs(2),
                 end: Duration::from_secs(8),
                 text: "Wake me up inside".to_owned(),
             }]),
-            secondary: Vec::new(),
-            voice: Voice::Lead,
+            ..Default::default()
         };
         let fade = Motion::Control.span();
 
@@ -3669,14 +3670,12 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(8)),
             text: "Wake me up inside".to_owned(),
-            romanized: None,
             words: Some(vec![LyricsWord {
                 start: Duration::from_secs(2),
                 end: Duration::from_secs(8),
                 text: "Wake me up inside".to_owned(),
             }]),
-            secondary: Vec::new(),
-            voice: Voice::Lead,
+            ..Default::default()
         };
 
         assert!(!background_line_singing(
@@ -3707,10 +3706,7 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(5)),
             text: "line".to_owned(),
-            romanized: None,
-            words: None,
-            secondary: Vec::new(),
-            voice: Voice::Lead,
+            ..Default::default()
         };
 
         assert!(line_has_passed(&line, Duration::from_secs(8)));

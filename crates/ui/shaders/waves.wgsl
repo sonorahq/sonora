@@ -14,17 +14,15 @@
 // params[0].w  peak, how much of its colour a pool lays down at its core
 // params[1]    the fifth colour, straight alpha sRGB
 // params[2]    the stage the pools lie on, straight alpha sRGB
-// params[3].x  density, how many units of the field fit in `SPAN` logical pixels. The waves keep
-//              their size in pixels whatever the shape of the surface, so a wide or tall one
-//              shows more of them rather than squeezing them
+// params[3].x  density, how many units of the field fit in the geometric mean of the surface's
+//              sides. The field takes the shape of the surface rather than being cut from a
+//              square: a wide one holds more waves across and fewer down, a tall one the other
+//              way, and the waves themselves stay round
 // params[3].y  softness, how wide the edge of a pool runs, 1 for the default and more for a
 //              blur over the transitions
 // params[3].z  vignette, how much darker the corners are than the middle, 0 for none
 // params[3].w  ceiling, the sRGB luma above which light is pressed back, 0 for none
 // colors[0..3] the first four colours, straight alpha sRGB
-
-// The length in logical pixels that `density` units of the field span.
-const SPAN: f32 = 1000.0;
 
 // How much of the plane the pool keyed by `seed` covers here, from 0 outside it to 1 at its core.
 // `soft` widens the edge around the same middle, which reads as a blur over the transition.
@@ -41,12 +39,14 @@ fn shade(input: ShaderInput) -> vec4<f32> {
     let density = max(input.params[3].x, 0.1);
     let soft = max(input.params[3].y, 0.1);
 
-    let p = (input.position - input.size * 0.5) / SPAN * density;
+    let p = (input.position - input.size * 0.5) / max(sqrt(input.size.x * input.size.y), 1.0) * density;
 
-    // The turn drifts with time and with x * y, so each quarter of the plane twists its own way
-    // and the twist keeps changing.
-    let turn = morph * 1.2 * gradient_noise(vec2<f32>(t * 0.045, p.x * p.y * 0.5 + 3.1));
-    var q = rotate(p, turn);
+    // The plane twists by an angle read off slow noise across it, about a pivot that sits off the
+    // middle and wanders, so no two parts of the surface turn alike and nothing mirrors across the
+    // centre.
+    let pivot = vec2<f32>(0.23 + 0.3 * sin(t * 0.031), -0.17 + 0.25 * cos(t * 0.023));
+    let turn = morph * 1.2 * gradient_noise(p * 0.55 + vec2<f32>(t * 0.045, 3.1));
+    var q = rotate(p - pivot, turn) + pivot;
     q += swell * 0.26 * vec2<f32>(
         gradient_noise(q * 1.05 + vec2<f32>(0.0, t * 0.06)),
         gradient_noise(q * 1.05 + vec2<f32>(5.2, -t * 0.05)),

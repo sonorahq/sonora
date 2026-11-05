@@ -134,7 +134,7 @@ impl SettingsView {
             .menu(self.languages.menu("languages-menu", Picker::WIDE))
             .items(entries.into_iter().enumerate().map(|(place, (id, label))| {
                 MenuItem::new(id, label)
-                    .selected(place == cursor)
+                    .highlighted(place == cursor)
                     .checked(chosen == id)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.settings

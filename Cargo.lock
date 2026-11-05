@@ -4431,6 +4431,8 @@ dependencies = [
  "log",
  "md-5",
  "oauth2",
+ "objc2-core-audio",
+ "objc2-core-foundation",
  "open",
  "opensubsonic",
  "percent-encoding",
@@ -4901,7 +4903,9 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1eebcea8b0dbff5f7c8504f3107c68fc061a3eb44932051c8cf8a68d969c3b2"
 dependencies = [
+ "block2 0.6.2",
  "dispatch2",
+ "libc",
  "objc2 0.6.4",
  "objc2-core-audio-types",
  "objc2-core-foundation",
@@ -10085,7 +10089,7 @@ dependencies = [
 [[package]]
 name = "ytmusic"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/ytmusic-rs?rev=d47b3ae#d47b3ae3212084e6f3f3027d06b0a9d29dcdcfb9"
+source = "git+https://github.com/sonorahq/ytmusic-rs?rev=937abca#937abcabca6534732fbdec13d4c15e2615190fb6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -10101,6 +10105,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
+ "tempfile",
  "tokio",
 ]
 

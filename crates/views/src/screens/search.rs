@@ -9,7 +9,7 @@ use gpui::{
 };
 use i18n::t;
 use input::SEARCH_CONTEXT;
-use music::{Album, Playlist, ReleaseType, SavedArtist, Track};
+use music::{Album, Playlist, SavedArtist, Track};
 use router::{Destination, navigate};
 use ui::Input;
 
@@ -413,6 +413,7 @@ impl SearchView {
         let forget = me.clone();
 
         Card::new(("search-past", at), query.clone())
+            .tucked()
             .fallback("icons/rotate-ccw-clock.svg")
             .action(
                 Button::new(("search-forget", at))
@@ -448,8 +449,11 @@ impl SearchView {
             false => t!("search-results"),
         };
         let waiting = offers.is_empty().then(|| {
-            (0..SUGGESTED_WAITING)
-                .map(|at| Card::skeleton(("search-offer-waiting", at)).into_any_element())
+            (0..SUGGESTED_WAITING).map(|at| {
+                Card::skeleton(("search-offer-waiting", at))
+                    .tucked()
+                    .into_any_element()
+            })
         });
 
         div()
@@ -882,6 +886,7 @@ impl SearchView {
         .when_some(hit.pin(), Pinnable::pin)
         .when_some(HitMenu::of(hit), |card, target| card.menu(menu(target, me)))
         .chosen(chosen)
+        .when(compact, Card::tucked)
         // The keyboard cursor stays on the container, so the chosen card claims
         // the active descendant while every card reports its seat in the list.
         .aria_position_in_set(index + 1)
@@ -1385,13 +1390,7 @@ fn album_of(hit: &AlbumHit, cx: &App) -> Album {
             artist_refs: hit.artist_refs.clone(),
             cover: hit.cover.clone(),
             cover_large: hit.cover.clone(),
-            release_type: ReleaseType::Album,
-            year: 0,
-            track_count: 0,
-            release_date: String::new(),
-            label: String::new(),
-            copyrights: Vec::new(),
-            added_at: None,
+            ..Default::default()
         })
 }
 
@@ -1405,14 +1404,8 @@ fn playlist_of(hit: &PlaylistHit, cx: &App) -> Playlist {
             id: hit.id.clone(),
             name: hit.name.clone(),
             owner: hit.owner.clone(),
-            owner_id: String::new(),
-            owned: false,
-            collaborative: false,
-            blend: false,
-            public: false,
             cover: hit.cover.clone(),
-            track_count: 0,
-            modified_at: None,
+            ..Default::default()
         })
 }
 
@@ -1427,7 +1420,7 @@ fn artist_of(hit: &ArtistHit, cx: &App) -> SavedArtist {
             id,
             name: hit.name.clone(),
             cover: hit.cover.clone(),
-            added_at: None,
+            ..Default::default()
         })
 }
 

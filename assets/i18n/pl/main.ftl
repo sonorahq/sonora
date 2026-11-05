@@ -96,29 +96,14 @@ column-year = Rok
 column-tracks = Utwory
 
 # track menu
-menu-add-to-playlist = Dodaj do playlisty
-menu-add-tracks-to-playlist = { $count ->
-    [one] Dodaj { $count } utwór do playlisty
-    [few] Dodaj { $count } utwory do playlisty
-   *[other] Dodaj { $count } utworów do playlisty
-}
 menu-new-playlist = Nowa playlista
 menu-import-playlist = Importuj playlistę…
 menu-edit-tags = Edytuj tagi
 menu-no-playlists = Brak playlist
 menu-search-playlists = Szukaj playlisty
+menu-save-library = Biblioteka
 menu-add-to-library = Dodaj do ulubionych
-menu-add-tracks-to-library = { $count ->
-    [one] Dodaj { $count } utwór do ulubionych
-    [few] Dodaj { $count } utwory do ulubionych
-   *[other] Dodaj { $count } utworów do ulubionych
-}
 menu-remove-from-library = Usuń z ulubionych
-menu-remove-tracks-from-library = { $count ->
-    [one] Usuń { $count } utwór z ulubionych
-    [few] Usuń { $count } utwory z ulubionych
-   *[other] Usuń { $count } utworów z ulubionych
-}
 menu-remove-from-playlist = Usuń z playlisty
 menu-remove-tracks-from-playlist = { $count ->
     [one] Usuń { $count } utwór z playlisty
@@ -134,17 +119,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Usuń plik utworu
 menu-delete-track-files = Usuń pliki utworów ({ $count })
 menu-download = Pobierz
-menu-download-tracks = { $count ->
-    [one] Pobierz { $count } utwór
-    [few] Pobierz { $count } utwory
-   *[other] Pobierz { $count } utworów
-}
 menu-remove-download = Usuń z pobranych
-menu-remove-downloads = { $count ->
-    [one] Usuń { $count } utwór z pobranych
-    [few] Usuń { $count } utwory z pobranych
-   *[other] Usuń { $count } utworów z pobranych
-}
 menu-downloading = Pobieranie. Kliknij, aby zatrzymać
 menu-play-next = Odtwórz jako następny
 menu-play-tracks-next = { $count ->
@@ -182,18 +157,6 @@ menu-delete-playlist = Usuń playlistę
 menu-export-playlist = Eksportuj playlistę…
 menu-add-playlist-to-library = Dodaj do biblioteki
 menu-remove-playlist-from-library = Usuń z biblioteki
-menu-library-add = Dodaj do biblioteki
-menu-library-add-tracks = { $count ->
-    [one] Dodaj { $count } utwór do biblioteki
-    [few] Dodaj { $count } utwory do biblioteki
-   *[other] Dodaj { $count } utworów do biblioteki
-}
-menu-library-remove = Usuń z biblioteki
-menu-library-remove-tracks = { $count ->
-    [one] Usuń { $count } utwór z biblioteki
-    [few] Usuń { $count } utwory z biblioteki
-   *[other] Usuń { $count } utworów z biblioteki
-}
 menu-make-playlist-public = Ustaw jako publiczną
 menu-make-playlist-private = Ustaw jako prywatną
 menu-play-artist = Odtwórz wykonawcę
