@@ -4369,19 +4369,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mpris-server"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70cf358e9a9516cc35ed40eebd56cbe80f5190a7a2b3cd0c2d358c86b879132b"
-dependencies = [
- "async-channel",
- "futures-channel",
- "serde",
- "trait-variant",
- "zbus",
-]
-
-[[package]]
 name = "muda"
 version = "0.19.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7466,7 +7453,6 @@ dependencies = [
  "libc",
  "log",
  "moka",
- "mpris-server",
  "music",
  "notify",
  "objc2-core-foundation",
@@ -7484,6 +7470,7 @@ dependencies = [
  "ui",
  "webview",
  "windows-sys 0.61.2",
+ "zbus",
 ]
 
 [[package]]
@@ -8350,17 +8337,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
-]
-
-[[package]]
-name = "trait-variant"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b19a4867a870f6edc4c283f2b455804b1879c0baf0e642f26b03ed8ee262d9d3"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]

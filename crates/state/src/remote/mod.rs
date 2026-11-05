@@ -1,14 +1,14 @@
 use std::ffi::c_void;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, Context, Entity, Global, Task};
 use music::Track;
 use tokio::sync::mpsc;
 
-use crate::{Cover, Io, Playback, PlaybackState, Queue, Repeat, Sonora, join};
+use crate::{Cover, Io, Playback, PlaybackEvent, PlaybackState, Queue, Repeat, Sonora, join};
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod mpris;
@@ -22,9 +22,6 @@ use mpris::Controls;
 
 const BUS_NAME: &str = "sonora";
 const DISPLAY_NAME: &str = "Sonora";
-/// How far the position may stray from where steady playback would have put it before the
-/// widget is told the track was seeked.
-const SEEK_SLACK: Duration = Duration::from_secs(2);
 const ARTWORK: &str = "artwork";
 /// How many covers the artwork folder keeps. The widget shows only the current track's, so the
 /// rest just save a download when the listener goes back.
@@ -53,6 +50,10 @@ enum Command {
     Shuffle(bool),
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     Repeat(Repeat),
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    Raise,
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    Quit,
 }
 
 /// Publishes what plays to the system media controls and carries their requests back. The
@@ -90,15 +91,14 @@ pub struct Remote {
     /// the stream loads can be republished without dropping the cover already on show.
     art: Option<String>,
     length: Option<Duration>,
-    reported: Option<PlaybackState>,
+    reported: Option<(PlaybackState, bool, bool)>,
     at: Duration,
-    /// When `at` was published, so the next position can be checked against steady playback.
-    stamp: Instant,
     volume: Option<f32>,
     shuffle: Option<bool>,
     repeat: Option<Repeat>,
     artwork: Option<Task<()>>,
     _events: Task<()>,
+    pending_seek: bool,
 }
 
 impl Remote {
@@ -121,6 +121,12 @@ impl Remote {
 
         cx.observe(&playback, |this, _, cx| this.publish(cx))
             .detach();
+        cx.subscribe(&playback, |this, _, event, cx| {
+            if let PlaybackEvent::Seeked(at) = event {
+                this.on_seeked(*at, cx);
+            }
+        })
+        .detach();
         cx.observe(&queue, |this, _, cx| this.publish(cx)).detach();
         // the album art resolves after the track it belongs to, so republish when it lands
         cx.observe(&cover, |this, _, cx| this.publish(cx)).detach();
@@ -136,37 +142,98 @@ impl Remote {
             length: None,
             reported: None,
             at: Duration::ZERO,
-            stamp: Instant::now(),
             volume: None,
             shuffle: None,
             repeat: None,
             artwork: None,
             _events,
+            pending_seek: false,
         }
     }
 
+    fn on_seeked(&mut self, at: Duration, cx: &mut Context<Self>) {
+        let playback = self.playback.read(cx);
+        let steered = playback.steered(cx);
+        let state = match steered.as_ref() {
+            Some(steered) => match steered.state.playing {
+                true => PlaybackState::Playing,
+                false => PlaybackState::Paused,
+            },
+            None => playback.state().clone(),
+        };
+        let wants_playing = match steered.as_ref() {
+            Some(steered) => steered.state.playing,
+            None => playback.wants_playing(),
+        };
+        let is_seeking = playback.is_seeking();
+        if matches!(state, PlaybackState::Loading) {
+            self.pending_seek = true;
+        }
+        self.reported = Some((state.clone(), wants_playing, is_seeking));
+        self.at = at;
+        self.controls
+            .set_playback(&state, at, wants_playing, is_seeking);
+        self.controls.seeked(at);
+    }
+
     fn act(&mut self, command: Command, cx: &mut Context<Self>) {
-        self.playback
-            .clone()
-            .update(cx, |playback, cx| match command {
-                Command::Play => playback.resume(cx),
-                Command::Pause => playback.pause(cx),
-                Command::Toggle => playback.toggle_play(cx),
-                Command::Next => playback.next(cx),
-                Command::Previous => playback.previous(cx),
-                Command::Seek(at) => playback.seek(at, cx),
-                Command::Forward(step) => {
-                    shift(playback, playback.position().saturating_add(step), cx)
-                }
-                Command::Back(step) => {
-                    shift(playback, playback.position().saturating_sub(step), cx)
-                }
-                Command::Volume(level) => playback.set_volume(level as f32, cx),
-                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                Command::Repeat(repeat) => playback.set_repeat(repeat, cx),
-                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                Command::Shuffle(on) => playback.set_shuffle(on, cx),
-            });
+        match command {
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            Command::Raise => {
+                cx.activate(true);
+            }
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            Command::Quit => {
+                cx.quit();
+            }
+            Command::Play => {
+                self.playback.update(cx, |playback, cx| playback.resume(cx));
+            }
+            Command::Pause => {
+                self.playback.update(cx, |playback, cx| playback.pause(cx));
+            }
+            Command::Toggle => {
+                self.playback
+                    .update(cx, |playback, cx| playback.toggle_play(cx));
+            }
+            Command::Next => {
+                self.playback.update(cx, |playback, cx| playback.next(cx));
+            }
+            Command::Previous => {
+                self.playback
+                    .update(cx, |playback, cx| playback.previous(cx));
+            }
+            Command::Seek(at) => {
+                self.playback
+                    .update(cx, |playback, cx| playback.seek(at, cx));
+            }
+            Command::Forward(step) => {
+                self.playback.update(cx, |playback, cx| {
+                    let at = playback.shown_time(cx).0;
+                    shift(playback, at.saturating_add(step), cx)
+                });
+            }
+            Command::Back(step) => {
+                self.playback.update(cx, |playback, cx| {
+                    let at = playback.shown_time(cx).0;
+                    shift(playback, at.saturating_sub(step), cx)
+                });
+            }
+            Command::Volume(level) => {
+                self.playback
+                    .update(cx, |playback, cx| playback.set_volume(level as f32, cx));
+            }
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            Command::Repeat(repeat) => {
+                self.playback
+                    .update(cx, |playback, cx| playback.set_repeat(repeat, cx));
+            }
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            Command::Shuffle(on) => {
+                self.playback
+                    .update(cx, |playback, cx| playback.set_shuffle(on, cx));
+            }
+        }
     }
 
     fn publish(&mut self, cx: &mut Context<Self>) {
@@ -186,6 +253,22 @@ impl Remote {
         let volume = playback.shown_volume(cx);
         let repeat = playback.shown_repeat(cx);
         let shuffle = playback.shown_shuffle(cx);
+        let wants_playing = match steered.as_ref() {
+            Some(steered) => steered.state.playing,
+            None => playback.wants_playing(),
+        };
+        let is_seeking = playback.is_seeking();
+
+        let queue_view = playback.shown_queue(cx);
+        let can_play =
+            track.is_some() || queue_view.sections.upcoming > 0 || !queue_view.sections.is_empty();
+        let can_pause = track.is_some();
+        let can_seek = track.as_ref().is_some_and(|t| t.duration > Duration::ZERO);
+        let can_go_next = queue_view.sections.upcoming > 0;
+        let can_go_previous = playback.has_previous(cx);
+
+        self.controls
+            .set_capabilities(can_play, can_pause, can_seek, can_go_next, can_go_previous);
 
         if self.volume != Some(volume) {
             self.volume = Some(volume);
@@ -204,6 +287,9 @@ impl Remote {
         let id = track.and_then(|track| track.id.as_deref());
         let cover = track.and_then(|track| self.artwork_url(track, cx));
         let moved = id != self.shown.as_deref();
+        if moved {
+            self.pending_seek = false;
+        }
         if moved || cover != self.source.as_deref() {
             self.shown = id.map(str::to_owned);
             self.source = cover.map(str::to_owned);
@@ -226,25 +312,22 @@ impl Remote {
             self.describe(track, art.as_deref(), cx);
         }
 
-        if self.reported.as_ref() == Some(&state) && self.at.as_secs() == at.as_secs() {
+        let looped = !moved && self.shown.is_some() && at < self.at;
+        let resync = !moved && self.pending_seek && state == PlaybackState::Playing;
+        if resync {
+            self.pending_seek = false;
+        }
+        let current = (state.clone(), wants_playing, is_seeking);
+        let status_changed = self.reported.as_ref() != Some(&current);
+        if !status_changed && !looped && !resync && self.at.as_secs() == at.as_secs() {
             return;
         }
-        let expected = match self.reported {
-            Some(PlaybackState::Playing) => self.at.saturating_add(self.stamp.elapsed()),
-            _ => self.at,
-        };
-        let jumped = !moved && at.abs_diff(expected) > SEEK_SLACK;
-        let steady = !moved && !jumped && self.reported.as_ref() == Some(&state);
-        self.reported = Some(state.clone());
+        self.reported = Some(current);
         self.at = at;
-        self.stamp = Instant::now();
 
-        // macos runs the clock
-        if cfg!(target_os = "macos") && steady {
-            return;
-        }
-        self.controls.set_playback(&state, at);
-        if jumped {
+        self.controls
+            .set_playback(&state, at, wants_playing, is_seeking);
+        if looped || resync {
             self.controls.seeked(at);
         }
     }
