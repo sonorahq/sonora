@@ -17,9 +17,10 @@ use crate::escape;
 use crate::subsonic::auth::Signature;
 use crate::subsonic::wire;
 use crate::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, Codec, Genre, GenreDetail,
-    GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail, Report,
-    SUGGESTIONS, SavedArtist, Track, Transcode, UserProfile, distinct_covers, iso_8601_to_epoch,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, Codec, CoverSize, Genre,
+    GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail,
+    Report, SUGGESTIONS, SavedArtist, Track, Transcode, UserProfile, distinct_covers,
+    iso_8601_to_epoch,
 };
 
 const PORTRAIT_LIMIT: usize = 24;
@@ -346,6 +347,10 @@ impl SubsonicClient {
 
 #[async_trait]
 impl MusicApi for SubsonicClient {
+    fn cover_original(&self, cover: &str) -> Option<String> {
+        cover_url_at(&self.covers, cover, CoverSize::Full)
+    }
+
     fn share_url(&self, _kind: MediaKind, _id: &str) -> Option<String> {
         None
     }
@@ -1173,6 +1178,28 @@ impl SubsonicClient {
     }
 }
 
+/// A signed cover url at another size, worked out from the url alone. Only the exact url
+/// shape this client hands out is rewritten, since the prefix carries the server and the fixed
+/// signature: a foreign or reshaped url is refused rather than pointed at another server or
+/// cover. The original comes from asking `getCoverArt` without a size, so a whole
+/// multi-megabyte scan only ever downloads for a full-size view, never for a list or the
+/// player.
+fn cover_url_at(covers: &str, cover: &str, size: CoverSize) -> Option<String> {
+    let id = cover
+        .strip_prefix(covers)?
+        .strip_prefix("&id=")?
+        .split('&')
+        .next()?;
+    if id.is_empty() {
+        return None;
+    }
+    let sized = match size {
+        CoverSize::Large => format!("&size={COVER_LARGE}"),
+        CoverSize::Full => String::new(),
+    };
+    Some(format!("{covers}&id={id}{sized}"))
+}
+
 fn source_genre(source: SourceGenre) -> Genre {
     let name = source.name;
     Genre {
@@ -1188,4 +1215,54 @@ fn release(version: &str) -> Option<(u32, u32)> {
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next()?.parse().ok()?;
     Some((major, minor))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const COVERS: &str = "https://navidrome.example/rest/getCoverArt?u=de%40ep.me&t=token&s=salt&v=1.16.1&c=sonora&f=json";
+
+    #[test]
+    fn cover_at_drops_the_size_for_the_original() {
+        let large = format!("{COVERS}&id=al-1&size={COVER_LARGE}");
+        assert_eq!(
+            cover_url_at(COVERS, &large, CoverSize::Full).as_deref(),
+            Some(format!("{COVERS}&id=al-1").as_str())
+        );
+    }
+
+    #[test]
+    fn cover_at_sizes_a_list_cover_up() {
+        let small = format!("{COVERS}&id=al-1&size={COVER}");
+        assert_eq!(
+            cover_url_at(COVERS, &small, CoverSize::Large).as_deref(),
+            Some(format!("{COVERS}&id=al-1&size={COVER_LARGE}").as_str())
+        );
+    }
+
+    #[test]
+    fn cover_at_keeps_an_escaped_cover_id() {
+        let cover = format!("{COVERS}&id=al%2F1&size={COVER}");
+        assert_eq!(
+            cover_url_at(COVERS, &cover, CoverSize::Full).as_deref(),
+            Some(format!("{COVERS}&id=al%2F1").as_str())
+        );
+    }
+
+    #[test]
+    fn cover_at_refuses_a_foreign_url() {
+        let foreign = "https://other.example/rest/getCoverArt?u=de%40ep.me&t=token&s=salt&v=1.16.1&c=sonora&f=json&id=al-1&size=300";
+        assert_eq!(cover_url_at(COVERS, foreign, CoverSize::Full), None);
+    }
+
+    #[test]
+    fn cover_at_refuses_a_reshaped_url() {
+        let no_id = format!("{COVERS}&size={COVER}");
+        assert_eq!(cover_url_at(COVERS, &no_id, CoverSize::Full), None);
+        let reordered = format!("{COVERS}&size={COVER}&id=al-1");
+        assert_eq!(cover_url_at(COVERS, &reordered, CoverSize::Full), None);
+        let empty_id = format!("{COVERS}&id=");
+        assert_eq!(cover_url_at(COVERS, &empty_id, CoverSize::Full), None);
+    }
 }

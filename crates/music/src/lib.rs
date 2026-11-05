@@ -128,6 +128,13 @@ pub trait MusicApi: Send + Sync {
         None
     }
 
+    /// The provider's original-resolution url for a cover it handed out, when the url alone
+    /// names one. Only the explicit full-size cover view asks for this, so a provider that
+    /// cannot name an original keeps showing the large cover.
+    fn cover_original(&self, _cover: &str) -> Option<String> {
+        None
+    }
+
     fn share_url(&self, kind: MediaKind, id: &str) -> Option<String>;
     async fn profile(&self) -> Result<UserProfile>;
 

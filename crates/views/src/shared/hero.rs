@@ -3,8 +3,8 @@ use std::rc::Rc;
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Div, ElementId, Entity, FontWeight, MouseButton, MouseDownEvent,
-    Pixels, Rems, SharedString, Stateful, Window, div, px, relative, rems,
+    AnyElement, App, ClickEvent, Context, Div, ElementId, Entity, FontWeight, MouseButton,
+    MouseDownEvent, Pixels, Rems, SharedString, Stateful, Window, div, px, relative, rems,
 };
 use i18n::t;
 use music::{Album, Track};
@@ -349,6 +349,8 @@ impl RenderOnce for HeroPlayButton {
 }
 
 type DragStart = Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>;
+type CoverHandler = dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static;
+type CoverClick = Box<CoverHandler>;
 
 #[derive(IntoElement)]
 pub(crate) struct PageHero {
@@ -363,6 +365,7 @@ pub(crate) struct PageHero {
     circle: bool,
     explicit: bool,
     drag_start: Option<DragStart>,
+    cover_click: Option<CoverClick>,
     pin: Option<Pin>,
     pending: bool,
 }
@@ -381,6 +384,7 @@ impl PageHero {
             circle: false,
             explicit: false,
             drag_start: None,
+            cover_click: None,
             pin: None,
             pending: false,
         }
@@ -406,6 +410,16 @@ impl PageHero {
 
     pub(crate) fn cover(mut self, cover: Option<String>) -> Self {
         self.cover = cover;
+        self
+    }
+
+    /// Makes the cover a button that opens it, named and announced as View cover. Pages whose
+    /// cover stands for something else, such as an artist's portrait, leave it inert.
+    pub(crate) fn on_cover_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.cover_click = Some(Box::new(handler));
         self
     }
 
@@ -459,6 +473,7 @@ impl RenderOnce for PageHero {
         let art = theme.metrics.cover;
         let drag_start = self.drag_start.map(Rc::from);
         let starter = drag_start.clone();
+        let cover_click: Option<Rc<CoverHandler>> = self.cover_click.map(Rc::from);
 
         if self.pending {
             return div()
@@ -513,8 +528,30 @@ impl RenderOnce for PageHero {
             .items_end()
             .gap(COVER_GAP)
             .pb_6()
-            .child(
-                div()
+            .child(match cover_click {
+                Some(on_cover) => div()
+                    .id((self.id.clone(), "cover"))
+                    .role(Role::Button)
+                    .aria_label(t!("cover-view"))
+                    .tip_label(t!("cover-view"), Perch::Above)
+                    .cursor_pointer()
+                    .flex_none()
+                    .when_some(starter, |this, drag_start: Rc<DragStart>| {
+                        this.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                            drag_start(event, window, cx)
+                        })
+                    })
+                    .on_click(move |event, window, cx| on_cover(event, window, cx))
+                    .child(
+                        Artwork::new(self.cover.clone())
+                            .size(art)
+                            .corner_radius(theme.radius * 1.5)
+                            .when(self.circle, Artwork::circle)
+                            .when_some(self.fallback.clone(), Artwork::fallback)
+                            .when(self.accent, Artwork::accent),
+                    )
+                    .into_any_element(),
+                None => div()
                     .flex_none()
                     .when_some(starter, |this, drag_start: Rc<DragStart>| {
                         this.on_mouse_down(MouseButton::Right, move |event, window, cx| {
@@ -522,14 +559,15 @@ impl RenderOnce for PageHero {
                         })
                     })
                     .child(
-                        Artwork::new(self.cover)
+                        Artwork::new(self.cover.clone())
                             .size(art)
                             .corner_radius(theme.radius * 1.5)
                             .when(self.circle, Artwork::circle)
-                            .when_some(self.fallback, Artwork::fallback)
+                            .when_some(self.fallback.clone(), Artwork::fallback)
                             .when(self.accent, Artwork::accent),
-                    ),
-            )
+                    )
+                    .into_any_element(),
+            })
             .child(
                 div()
                     .flex()
