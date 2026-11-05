@@ -7739,6 +7739,7 @@ dependencies = [
  "dirs 7.0.0",
  "log",
  "rusqlite",
+ "tempfile",
 ]
 
 [[package]]

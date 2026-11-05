@@ -27,6 +27,7 @@ use crate::screens::search::SearchView;
 use crate::screens::settings::SettingsHeader;
 use crate::shared::ambient::{self, Ambient};
 use crate::shared::confirm::Confirm;
+use crate::shared::lyrics_search::LyricsSearch;
 use crate::shared::playlist_editor::PlaylistEditor;
 use crate::shared::powerbar::{Powerbar, PowerbarEvent};
 use crate::shared::smart_playlist::SmartPlaylistEditor;
@@ -91,6 +92,7 @@ struct Dialogs {
     smart_playlist_editor: Entity<SmartPlaylistEditor>,
     tag_editor: Entity<TagEditor>,
     confirm: Entity<Confirm>,
+    lyrics_search: Entity<LyricsSearch>,
     widevine: Entity<WidevinePrompt>,
     soloist: Entity<SoloistSetup>,
     jam_join: Entity<JamJoin>,
@@ -106,6 +108,7 @@ impl Dialogs {
             smart_playlist_editor: SmartPlaylistEditor::entity(cx),
             tag_editor: TagEditor::entity(cx),
             confirm: Confirm::entity(cx),
+            lyrics_search: LyricsSearch::entity(cx),
             widevine: cx.new(WidevinePrompt::new),
             soloist: cx.new(SoloistSetup::new),
             jam_join: cx.new(JamJoin::new),
@@ -115,12 +118,13 @@ impl Dialogs {
         }
     }
 
-    fn views(&self) -> [AnyView; 10] {
+    fn views(&self) -> [AnyView; 11] {
         [
             self.playlist_editor.clone().into(),
             self.smart_playlist_editor.clone().into(),
             self.tag_editor.clone().into(),
             self.confirm.clone().into(),
+            self.lyrics_search.clone().into(),
             self.widevine.clone().into(),
             self.soloist.clone().into(),
             self.jam_join.clone().into(),
