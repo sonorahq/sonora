@@ -363,6 +363,13 @@ pub trait MusicApi: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// The artists the provider finds for `query`, best match first. A provider without an
+    /// artist search keeps the default of none, and search then names only the artists behind
+    /// the songs and albums it found.
+    async fn search_artists(&self, _query: &str) -> Result<Vec<SavedArtist>> {
+        Ok(Vec::new())
+    }
+
     async fn home(&self) -> Result<HomeFeed> {
         Ok(HomeFeed::default())
     }

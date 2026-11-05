@@ -1166,6 +1166,24 @@ impl MusicApi for AppleClient {
             .collect())
     }
 
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        let limit = HITS.to_string();
+        let body = self
+            .get(
+                &self.catalog("/search"),
+                &[("term", query), ("types", "artists"), ("limit", &limit)],
+            )
+            .await?;
+        let answered: wire::Answer<wire::Search> = wire::answer(&body);
+        Ok(answered
+            .results
+            .artists
+            .rows()
+            .iter()
+            .filter_map(wire::similar_artist)
+            .collect())
+    }
+
     async fn search_playlists(&self, query: &str) -> Result<Vec<Playlist>> {
         let limit = HITS.to_string();
         let body = self
