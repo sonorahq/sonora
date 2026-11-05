@@ -1434,3 +1434,7 @@ response-graph-readout = { $frequency } · { $direction ->
         [down] -{ $gain }
        *[flat] { $gain }
     } dB
+
+login-offline-title = Offline
+login-offline-detail = Listen to music on your computer. Choose a local folder to fill Home, Search, and your library with your music.
+login-offline-guest-detail = Just want to stream without signing in? Choose Guest mode instead. Offline uses only your local files.

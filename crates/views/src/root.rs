@@ -158,7 +158,10 @@ impl Root {
         .detach();
 
         cx.subscribe(&session, |_, session, event, cx| {
-            if matches!(event, SessionEvent::SignedIn) && !session.read(cx).authenticated() {
+            if matches!(event, SessionEvent::SignedIn)
+                && !session.read(cx).authenticated()
+                && !session.read(cx).local_only()
+            {
                 let settings = Sonora::global(cx).settings.clone();
                 let startup = settings.read(cx).startup().to_owned();
                 if Screen::from_id(&startup).is_some_and(Screen::needs_account) {
@@ -632,7 +635,7 @@ impl Root {
                 let history = Sonora::global(cx).history.clone();
                 Box::new(move |cx| matches!(history.read(cx).state(), HistoryState::Loading))
             }
-            Destination::Library(_) => shelf(Shelf::Streaming),
+            Destination::Library(_) => shelf(self.session.read(cx).primary_shelf()),
             Destination::Local(_) => {
                 let session = Sonora::global(cx).session.clone();
                 let local = shelf(Shelf::Local);
@@ -679,7 +682,8 @@ impl Root {
                 history.update(cx, |history, cx| history.reload(cx));
             }
             Destination::Library(_) => {
-                library.update(cx, |library, cx| library.reload(Shelf::Streaming, cx))
+                let shelf = self.session.read(cx).primary_shelf();
+                library.update(cx, |library, cx| library.reload(shelf, cx))
             }
             Destination::Local(_) => {
                 library.update(cx, |library, cx| library.reload(Shelf::Local, cx))
@@ -890,10 +894,11 @@ impl Root {
                 local.into()
             }
             Destination::Library(tab) => {
-                self.screens
-                    .library
-                    .update(cx, |library, cx| library.select(tab.into(), cx));
-                let library = self.screens.library.clone();
+                let library = match self.session.read(cx).local_only() {
+                    true => self.screens.local.clone(),
+                    false => self.screens.library.clone(),
+                };
+                library.update(cx, |library, cx| library.select(tab.into(), cx));
                 toolbar = Some(library.read(cx).toolbar());
                 library.into()
             }

@@ -365,6 +365,7 @@ impl SettingsView {
         if self.guest(cx).is_some() {
             names.push(t!("login-guest-title").to_string());
         }
+        names.push(t!("login-offline-title").to_string());
         names.join(" ")
     }
 
@@ -374,14 +375,16 @@ impl SettingsView {
         let pending = self.session.read(cx).is_pending();
         let providers = self.providers(cx);
         let guest = self.guest(cx);
-        let count = providers.len() + usize::from(guest.is_some());
+        let count = providers.len() + usize::from(guest.is_some()) + 1;
         let mut rows = Vec::new();
         for (place, account) in providers.into_iter().enumerate() {
             rows.push(self.account_row(account, pending, (place, count), cx));
         }
         if let Some(guest) = guest {
-            rows.push(self.guest_row(guest, pending, (count - 1, count), cx));
+            rows.push(self.guest_row(guest, pending, (count - 2, count), cx));
         }
+
+        rows.push(self.offline_row(pending, (count - 1, count), cx));
 
         div()
             .flex()
@@ -389,6 +392,40 @@ impl SettingsView {
             .gap_1()
             .children(rows)
             .into_any_element()
+    }
+
+    /// The local-only source, offered alongside streaming accounts and Guest mode.
+    fn offline_row(
+        &self,
+        pending: bool,
+        place: (usize, usize),
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let active = self.session.read(cx).local_only();
+        let leave = active.then(|| self.sign_out_button("offline", "local", pending, cx));
+        let press: Option<Press> = (!active && !pending).then(|| -> Press {
+            Box::new(cx.listener(|this, _, _, cx| {
+                this.chosen = None;
+                if this.session.read(cx).local_paths().is_empty() {
+                    local::choose_offline_folder(cx);
+                    return;
+                }
+                this.session.update(cx, |session, cx| session.use_local(cx));
+            }))
+        });
+        ProviderRow {
+            id: SharedString::from("account-offline"),
+            logo: "icons/file-music.svg",
+            brand: cx.theme().foreground,
+            active,
+            name: t!("login-offline-title"),
+            status: active.then(|| t!("settings-provider-current")),
+            offer: Offer::Choice { leave },
+            press,
+            error: None,
+            place,
+        }
+        .into_any_element()
     }
 
     /// A provider's row at `place`, its index and the length of the list. Clicking a provider

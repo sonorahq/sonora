@@ -8,9 +8,9 @@ use storage::Database;
 
 use crate::cover::{self, CoverLimits};
 use crate::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, GenreItem, GenreSection, HomeFeed,
-    ImportedPlaylist, MediaKind, MusicApi, Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist,
-    Track, TrackTags, UserProfile, distinct_covers,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, Genre, GenreDetail, GenreItem,
+    GenreSection, HomeFeed, ImportedPlaylist, LOCAL_GENRE_PREFIX, MediaKind, MusicApi, Playlist,
+    PlaylistDetail, SUGGESTIONS, SavedArtist, Track, TrackTags, UserProfile, distinct_covers,
 };
 
 use super::index::Index;
@@ -596,6 +596,95 @@ impl MusicApi for LocalClient {
             })
             .cloned()
             .collect())
+    }
+
+    async fn search_albums(&self, query: &str) -> Result<Vec<Album>> {
+        let query = query.to_lowercase();
+        Ok(self
+            .scanned
+            .read()
+            .unwrap()
+            .albums
+            .iter()
+            .filter(|album| {
+                album.name.to_lowercase().contains(&query)
+                    || album.artists.to_lowercase().contains(&query)
+            })
+            .cloned()
+            .collect())
+    }
+
+    async fn search_playlists(&self, query: &str) -> Result<Vec<Playlist>> {
+        let query = query.to_lowercase();
+        Ok(self
+            .playlists()
+            .await?
+            .into_iter()
+            .filter(|playlist| playlist.name.to_lowercase().contains(&query))
+            .collect())
+    }
+
+    async fn genres(&self) -> Result<Vec<Genre>> {
+        let scanned = self.scanned.read().unwrap();
+        let mut genres = HashMap::new();
+        for track in &scanned.tracks {
+            for tag in &track.tags {
+                let genre = genres.entry(tag.to_lowercase()).or_insert_with(|| Genre {
+                    id: format!("{LOCAL_GENRE_PREFIX}{}", tag.to_lowercase()),
+                    name: tag.clone(),
+                    cover: None,
+                });
+                if genre.cover.is_none() {
+                    genre.cover = track.cover.clone();
+                }
+            }
+        }
+        let mut genres: Vec<Genre> = genres.into_values().collect();
+        genres.sort_by_cached_key(|genre| genre.name.to_lowercase());
+        Ok(genres)
+    }
+
+    async fn genre(&self, genre_id: &str) -> Result<GenreDetail> {
+        let tag = genre_id
+            .strip_prefix(LOCAL_GENRE_PREFIX)
+            .ok_or_else(|| anyhow!("{genre_id} is not a local genre id"))?;
+        let scanned = self.scanned.read().unwrap();
+        let tracks: Vec<&Track> = scanned
+            .tracks
+            .iter()
+            .filter(|track| track.tags.iter().any(|name| name.to_lowercase() == tag))
+            .collect();
+        let name = tracks
+            .iter()
+            .flat_map(|track| &track.tags)
+            .find(|name| name.to_lowercase() == tag)
+            .cloned()
+            .unwrap_or_else(|| tag.to_owned());
+        let albums: HashSet<&str> = tracks
+            .iter()
+            .filter_map(|track| track.album_id.as_deref())
+            .collect();
+        let mut sections = Vec::new();
+        let items: Vec<GenreItem> = scanned
+            .albums
+            .iter()
+            .filter(|album| albums.contains(album.id.as_str()))
+            .cloned()
+            .map(GenreItem::Album)
+            .collect();
+        if !items.is_empty() {
+            sections.push(GenreSection {
+                title: "nav-albums".to_owned(),
+                items,
+            });
+        }
+        if !tracks.is_empty() {
+            sections.push(GenreSection {
+                title: "search-songs".to_owned(),
+                items: tracks.into_iter().cloned().map(GenreItem::Track).collect(),
+            });
+        }
+        Ok(GenreDetail { name, sections })
     }
 
     async fn delete_track_file(&self, track_id: &str) -> Result<()> {

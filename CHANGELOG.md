@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Choose Offline during setup to browse and play music from local folders without a streaming account.
+
 - Drag the playing song from the player bar onto a playlist, Pinned or the queue.
 - Play directly to hardware on macOS. Every output device is listed a second time under Direct
   to hardware, and picking one there keeps every other app off it.
@@ -31,6 +33,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The device picker in the equalizer's device rules lists devices the way the output picker does, with sound card outputs grouped and Direct to hardware devices in their own submenu.
 
 ### Fixed
+
+- Switching from Offline to Guest mode shows the streaming provider’s Home instead of local music.
+
+- Refreshing Home picks up music files added or removed outside Sonora.
+- Changing local lyrics lookup or offline mode updates the current song's lyrics immediately.
+
+- Editing local track tags no longer makes songs disappear from folders saved with a trailing slash.
+
+- Local songs can look up lyrics online when using the Offline music source.
 
 - Horizontal card rows scroll all the way to the page edges, including album recommendations.
 - Removing an Apple Music song or album from the library takes its like off right away, the way Apple does.

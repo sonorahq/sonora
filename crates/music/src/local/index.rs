@@ -117,18 +117,40 @@ impl Index {
     /// is the only thing that tells the next scan to look again.
     pub fn forget(&self, paths: &[PathBuf]) {
         let dropped = (|| -> Result<()> {
-            let connection = self.cache.open()?;
-            let mut file = connection.prepare("DELETE FROM local_files WHERE path = ?")?;
-            let mut folder = connection.prepare("DELETE FROM local_folders WHERE path = ?")?;
-            for path in paths {
-                file.execute(params![text(path)])
-                    .context("cannot drop a file from the index")?;
-                for above in path.ancestors().skip(1) {
-                    folder
-                        .execute(params![text(above)])
-                        .context("cannot drop a folder from the index")?;
+            let mut connection = self.cache.open()?;
+            let transaction = connection.transaction()?;
+            {
+                let mut file = transaction.prepare("DELETE FROM local_files WHERE path = ?")?;
+                for path in paths {
+                    file.execute(params![text(path)])
+                        .context("cannot drop a file from the index")?;
                 }
             }
+            // Native folder pickers may retain a trailing separator. Compare paths as paths,
+            // then delete the exact stored spelling so an edited file cannot disappear from
+            // a folder whose cached listing would otherwise still be trusted.
+            let folders = {
+                let mut statement = transaction.prepare("SELECT path FROM local_folders")?;
+                statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            {
+                let mut folder = transaction.prepare("DELETE FROM local_folders WHERE path = ?")?;
+                for stored in folders {
+                    if paths.iter().any(|path| {
+                        path.parent()
+                            .is_some_and(|parent| parent.starts_with(Path::new(&stored)))
+                    }) {
+                        folder
+                            .execute(params![stored])
+                            .context("cannot drop a folder from the index")?;
+                    }
+                }
+            }
+            transaction
+                .commit()
+                .context("cannot invalidate the scan index")?;
             Ok(())
         })();
         if let Err(error) = dropped {

@@ -627,7 +627,10 @@ impl History {
         let SessionState::SignedIn(profile) = session.state() else {
             return None;
         };
-        let provider = session.provider_slug()?;
+        let provider = match session.local_only() {
+            true => session.local_slug(),
+            false => session.provider_slug()?,
+        };
         Some(format!("{provider}:{}", profile.id))
     }
 
