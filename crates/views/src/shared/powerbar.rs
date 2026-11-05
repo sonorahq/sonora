@@ -1,15 +1,14 @@
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Div, Entity, FocusHandle, Global, MouseButton, Render, ScrollHandle,
-    SharedString, Window, div, px, svg,
+    AnyElement, App, Context, Entity, FocusHandle, Global, Render, ScrollHandle, SharedString,
+    Window, div,
 };
 use i18n::t;
 use input::{POWERBAR_CONTEXT, PowerbarConfirm, PowerbarNextCategory, PowerbarPrevCategory};
 use router::{Destination, navigate};
 use state::{Hit, Kind, Origin, Playback, Search};
 use ui::{
-    ActiveTheme as _, Artwork, Avatar, Dismiss, Input, Modal, SelectNext, SelectPrevious, Submit,
-    Text, eyebrow,
+    ActiveTheme as _, Card, Dismiss, Input, Modal, SelectNext, SelectPrevious, Submit, eyebrow,
 };
 
 use crate::shared::tracks::{PlaybackStatus, playback_status};
@@ -355,6 +354,7 @@ impl Render for Powerbar {
 
         let theme = *cx.theme();
         let selected = self.selected;
+        let total = self.total_items();
 
         let mut flat_children: Vec<AnyElement> = Vec::new();
         let mut flat_idx = 0;
@@ -372,22 +372,25 @@ impl Render for Powerbar {
             for hit in group_items {
                 let item_idx = flat_idx;
                 let is_chosen = selected == Some(item_idx);
-                let hit_clone = hit.clone();
+                let opened = hit.clone();
                 let hit_play = hit.clone();
                 let playback = self.playback.clone();
-                let this_entity = cx.entity().clone();
+                let open_entity = cx.entity().clone();
+                let play_entity = cx.entity().clone();
                 flat_children.push(
-                    hit_row(hit, item_idx, is_chosen, &theme, move |window, cx| {
-                        play_hit(&hit_play, &playback, cx);
-                        this_entity.update(cx, |this, cx| this.close(window, cx));
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _, window, cx| {
-                            cx.stop_propagation();
-                            navigate_hit(&hit_clone, cx);
-                            this.close(window, cx);
-                        }),
+                    hit_row(
+                        hit,
+                        item_idx,
+                        total,
+                        is_chosen,
+                        move |_, window, cx| {
+                            navigate_hit(&opened, cx);
+                            open_entity.update(cx, |this, cx| this.close(window, cx));
+                        },
+                        move |_, window, cx| {
+                            play_hit(&hit_play, &playback, cx);
+                            play_entity.update(cx, |this, cx| this.close(window, cx));
+                        },
                     )
                     .into_any_element(),
                 );
@@ -437,101 +440,29 @@ impl Render for Powerbar {
 fn hit_row(
     hit: &Hit,
     item_idx: usize,
+    total: usize,
     chosen: bool,
-    theme: &ui::Theme,
-    on_play: impl Fn(&mut Window, &mut App) + 'static,
-) -> Div {
+    on_open: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    on_play: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+) -> Card {
     let (label, subtitle, cover, icon) = describe_hit(hit);
-
-    let bg = match chosen {
-        true => theme.secondary,
-        false => theme.background,
-    };
-
-    let thumb_size = theme.metrics.thumb;
     let is_artist = matches!(hit, Hit::Artist(_));
-    let visual = match is_artist {
-        true => Avatar::new(cover).size(thumb_size).into_any_element(),
-        false => Artwork::new(cover)
-            .size(thumb_size)
-            .fallback(icon)
-            .into_any_element(),
-    };
 
-    let corner = match is_artist {
-        true => thumb_size / 2.,
-        false => theme.radius,
-    };
-
-    let row_group: SharedString = format!("row-{item_idx}").into();
-
-    let thumbnail = div()
-        .relative()
-        .flex_none()
-        .size(thumb_size)
-        .child(visual)
-        .child(
-            div()
-                .id(("hit-play-scrim", item_idx))
-                .absolute()
-                .inset_0()
-                .rounded(corner)
-                .flex()
-                .items_center()
-                .justify_center()
-                .cursor_pointer()
-                .invisible()
-                .hover(|style| style.visible().bg(theme.overlay))
-                .group_hover(row_group.clone(), |style| style.visible().bg(theme.overlay))
-                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                    cx.stop_propagation();
-                    on_play(window, cx);
-                })
-                .child(
-                    svg()
-                        .path(icons::path("icons/play-filled.svg"))
-                        .size(px(16.))
-                        .text_color(theme.overlay_foreground),
-                ),
-        );
-
-    div()
-        .group(row_group)
-        .flex()
-        .items_center()
-        .gap_2()
-        .px_2()
-        .py_1()
-        .rounded(theme.radius)
-        .cursor_pointer()
-        .bg(bg)
-        .hover(|style| match chosen {
-            true => style,
-            false => style.bg(theme.secondary_hover),
+    Card::new(("powerbar-hit", item_idx), label.clone())
+        .cover(cover)
+        .fallback(icon)
+        .when(is_artist, Card::circle)
+        .tucked()
+        .meta(div().child(subtitle.clone()))
+        .aria_description(subtitle)
+        .chosen(chosen)
+        .aria_position_in_set(item_idx + 1)
+        .aria_size_of_set(total)
+        .when(chosen, |card| {
+            card.aria_selected(true).aria_active_descendant()
         })
-        .child(thumbnail)
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w_0()
-                .child(
-                    div()
-                        .truncate()
-                        .text_size(theme.text(Text::Body))
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(theme.foreground)
-                        .child(label),
-                )
-                .child(
-                    div()
-                        .truncate()
-                        .text_size(theme.text(Text::Small))
-                        .text_color(theme.muted_foreground)
-                        .child(subtitle),
-                ),
-        )
+        .press(on_open)
+        .play(false, on_play)
 }
 
 fn describe_hit(hit: &Hit) -> (SharedString, SharedString, Option<String>, &'static str) {
