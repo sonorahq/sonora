@@ -132,6 +132,8 @@ pub struct Session {
     local_only: bool,
     local_provider: Arc<dyn MusicProvider>,
     local_folders: Vec<PathBuf>,
+    /// Retains folder ordering across multiple outstanding removal Undo actions.
+    local_order: Vec<PathBuf>,
     local_client: Option<Arc<dyn MusicApi>>,
     /// The latest local metadata and exact move aliases, applied to already queued songs.
     local_tracks: HashMap<String, Track>,
@@ -140,6 +142,10 @@ pub struct Session {
     local_playback: Option<Arc<dyn PlaybackFactory>>,
     local_capabilities: Capabilities,
     local_task: Option<Task<()>>,
+    /// Protects a newer folder selection from a scan that was already finishing when cancelled.
+    local_revision: u64,
+    /// The scan warning for the current folder selection, withdrawn when that selection changes.
+    local_warning: Option<usize>,
     /// Whether a local scan is under way, so the UI can show its progress.
     scanning: bool,
     /// Whether the scan under way is one the user started, so its end is reported. An automatic
@@ -190,6 +196,7 @@ impl Session {
             window_task: None,
             local_only: remembered == local_provider.slug(),
             local_provider,
+            local_order: local_folders.clone(),
             local_folders,
             local_client: None,
             local_tracks: HashMap::new(),
@@ -198,6 +205,8 @@ impl Session {
             local_playback,
             local_capabilities: Capabilities::NONE,
             local_task: None,
+            local_revision: 0,
+            local_warning: None,
             scanning: false,
             scan_asked: false,
             watch: None,
@@ -1088,6 +1097,8 @@ impl Session {
                 );
                 continue;
             }
+            self.local_order.retain(|existing| existing != &path);
+            self.local_order.push(path.clone());
             folders.push(path);
         }
         if folders.len() == self.local_folders.len() {
@@ -1143,7 +1154,21 @@ impl Session {
             return;
         }
         let mut folders = self.local_folders.clone();
-        folders.insert(at.min(folders.len()), path);
+        let position = self.local_order.iter().position(|known| known == &path);
+        let at = position
+            .and_then(|position| {
+                folders.iter().position(|folder| {
+                    self.local_order
+                        .iter()
+                        .position(|known| known == folder)
+                        .is_some_and(|rank| rank > position)
+                })
+            })
+            .unwrap_or_else(|| match position {
+                Some(_) => folders.len(),
+                None => at.min(folders.len()),
+            });
+        folders.insert(at, path);
         self.set_local_folders(folders, true, cx);
     }
 
@@ -1152,9 +1177,6 @@ impl Session {
     /// it forgets what the last scan recorded, so every folder is listed and every file stat'd
     /// again, which is the only way an edit made behind Sonora's back is noticed.
     pub fn rescan_local(&mut self, thorough: bool, cx: &mut Context<Self>) {
-        if thorough {
-            self.local_provider.forget_scan();
-        }
         self.set_local_folders(self.local_folders.clone(), thorough, cx);
     }
 
@@ -1163,7 +1185,17 @@ impl Session {
     /// fight over the same disk. An `asked` scan is one the user started, and its end or
     /// failure is reported in a toast.
     fn set_local_folders(&mut self, folders: Vec<PathBuf>, asked: bool, cx: &mut Context<Self>) {
-        music::progress::cancel();
+        let ticket = music::progress::reserve();
+        if let Some(warning) = self.local_warning.take() {
+            Toasts::close(warning, cx);
+        }
+        self.local_revision = self.local_revision.wrapping_add(1);
+        let revision = self.local_revision;
+        self.local_task = None;
+        self.local_folders = folders.clone();
+        self.settings.update(cx, |settings, cx| {
+            settings.set_local_folders(folders.clone(), cx)
+        });
         self.scan_asked |= asked;
         if folders.is_empty() {
             self.scanning = false;
@@ -1185,15 +1217,13 @@ impl Session {
         }
 
         let provider = self.local_provider.clone();
-        let chosen = folders.clone();
         let io = self.io.clone();
+        let thorough = self.scan_asked;
         self.scanning = true;
         cx.notify();
         self.local_task = Some(cx.spawn(async move |this, cx| {
-            let prompt: PromptSink = Arc::new(|_| {});
-            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
             let signed_in = join(io.spawn(async move {
-                let session = provider.sign_in(SignIn::Path(folders), prompt, rx).await?;
+                let session = provider.scan(folders, ticket, thorough).await?;
                 let tracks = session.api.all_tracks().await?;
                 let report = session.api.scan_report();
                 anyhow::Ok((session, tracks, report))
@@ -1201,27 +1231,27 @@ impl Session {
             .await;
 
             this.update(cx, |this, cx| {
+                if this.local_revision != revision {
+                    return;
+                }
                 this.scanning = false;
                 let asked = std::mem::take(&mut this.scan_asked);
                 match signed_in {
                     Ok((session, tracks, report)) => {
                         let songs = tracks.len();
-                        this.local_folders = chosen.clone();
-                        this.settings
-                            .update(cx, |settings, cx| settings.set_local_folders(chosen, cx));
                         this.local_tracks = tracks
                             .into_iter()
                             .filter_map(|track| Some((track.id.clone()?, track)))
                             .collect();
                         this.local_report = report;
                         if !this.local_report.issues.is_empty() {
-                            Toasts::post(
+                            this.local_warning = Some(Toasts::post(
                                 Toast::new(Outcome::Warning, "toast-scan-issues")
                                     .count(this.local_report.issues.len())
                                     .detail(this.local_report.issues.join("\n"))
                                     .open("settings-local-folder", Target::ProviderSettings),
                                 cx,
-                            );
+                            ));
                         }
                         this.local_signed_in(session, cx);
                         if asked && this.local_report.issues.is_empty() {
@@ -1230,13 +1260,11 @@ impl Session {
                     }
                     Err(error) => {
                         log::warn!("session: cannot update local music folders: {error:#}");
-                        Toasts::with_detail(
-                            Outcome::Failed,
-                            "toast-scan-failed",
-                            None,
-                            format!("{error:#}"),
+                        this.local_warning = Some(Toasts::post(
+                            Toast::new(Outcome::Failed, "toast-scan-failed")
+                                .detail(format!("{error:#}")),
                             cx,
-                        );
+                        ));
                         cx.notify();
                     }
                 }

@@ -96,8 +96,9 @@ impl Store {
             .context("cannot commit moved music references")
     }
 
-    /// Reports unresolved playlist and favorite references instead of silently hiding missing files.
-    pub fn missing_tracks(&self, tracks: &[Track]) -> Result<Vec<String>> {
+    /// Reports missing references only inside the currently configured music folders. References
+    /// in a removed folder remain stored for re-adding it and are not scan failures.
+    pub fn missing_tracks(&self, tracks: &[Track], roots: &[PathBuf]) -> Result<Vec<String>> {
         let ids: HashSet<&str> = tracks
             .iter()
             .filter_map(|track| track.id.as_deref())
@@ -111,6 +112,7 @@ impl Store {
             let id = id?;
             if !ids.contains(id.as_str())
                 && let Some(path) = super::wire::path_from_track_id(&id)
+                && roots.iter().any(|root| path.starts_with(root))
             {
                 missing.push(format!(
                     "cannot find music file referenced by a playlist or favorite: {}",
@@ -178,6 +180,25 @@ impl Store {
         }
         .context("cannot update a local favorite")?;
         Ok(())
+    }
+
+    /// Removes a favorite and late writes through its old aliases in one transaction.
+    pub fn unstar(&self, kind: Starred, ids: &[String]) -> Result<()> {
+        let mut connection = self.open()?;
+        let transaction = connection.transaction()?;
+        {
+            let mut remove = transaction.prepare(&format!(
+                "DELETE FROM {} WHERE {} = ?",
+                kind.table(),
+                kind.column()
+            ))?;
+            for id in ids {
+                remove.execute([id])?;
+            }
+        }
+        transaction
+            .commit()
+            .context("cannot remove a local favorite")
     }
 
     pub fn list(&self) -> Result<Vec<Stored>> {
@@ -333,15 +354,21 @@ impl Store {
             .context("cannot add tracks to a local playlist")
     }
 
-    pub fn remove(&self, id: &str, track_id: &str) -> Result<()> {
-        let connection = self.open()?;
-        connection
-            .execute(
-                "DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?",
-                params![id, track_id],
-            )
-            .context("cannot remove a track from a local playlist")?;
-        touch(&connection, id)
+    /// Removes the track and its old aliases together, preserving unrelated playlist members.
+    pub fn remove(&self, id: &str, track_ids: &[String]) -> Result<()> {
+        let mut connection = self.open()?;
+        let transaction = connection.transaction()?;
+        {
+            let mut remove = transaction
+                .prepare("DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?")?;
+            for track_id in track_ids {
+                remove.execute(params![id, track_id])?;
+            }
+        }
+        touch(&transaction, id)?;
+        transaction
+            .commit()
+            .context("cannot remove a track from a local playlist")
     }
 
     pub fn tracks(&self, id: &str) -> Result<Vec<String>> {

@@ -77,9 +77,37 @@ pub(super) struct Look {
 /// it are never opened. A folder's time moves when an entry is added, removed or renamed, so an
 /// edit in place hides from it: Sonora's own tag editor drops the file it wrote from the index,
 /// and the Rescan button drops every folder, which is what makes it thorough.
+#[cfg(test)]
 pub fn scan(roots: &[PathBuf], cache_dir: &Path, index: &Index) -> Scanned {
+    let _scan = index.scanning();
+    scan_running(roots, cache_dir, index, progress::start())
+}
+
+/// Runs only the worker reserved by the current folder request and serializes index commits.
+pub fn reserved(
+    roots: &[PathBuf],
+    cache_dir: &Path,
+    index: &Index,
+    ticket: progress::Ticket,
+    thorough: bool,
+) -> Option<Scanned> {
+    let _scan = index.scanning();
+    let progress = progress::begin(ticket)?;
+    if thorough {
+        index.distrust();
+    }
+    let scanned = scan_running(roots, cache_dir, index, progress);
+    ticket.live().then_some(scanned)
+}
+
+/// Walks and commits under the index's scan lock; cancellation never applies a partial catalogue.
+fn scan_running(
+    roots: &[PathBuf],
+    cache_dir: &Path,
+    index: &Index,
+    progress: progress::Scan,
+) -> Scanned {
     let started = std::time::Instant::now();
-    let progress = progress::start();
     let mut scanned = Scanned::default();
     let remembered = index.load();
 
@@ -157,13 +185,20 @@ pub fn scan(roots: &[PathBuf], cache_dir: &Path, index: &Index) -> Scanned {
         .filter_map(|reading| reading.tagged.track.album_id.as_deref())
         .collect();
     let mut albums: HashMap<String, HashSet<String>> = HashMap::new();
-    for (from, to) in &scanned.report.moved {
-        let previous = wire::path_from_track_id(from).and_then(|path| remembered.files.get(path));
-        if let (Some(previous), Some(current)) = (previous, by_id.get(to.as_str()))
+    for (from_track, to_track) in &scanned.report.moved {
+        let previous =
+            wire::path_from_track_id(from_track).and_then(|path| remembered.files.get(path));
+        if let (Some(previous), Some(current)) = (previous, by_id.get(to_track.as_str()))
             && let (Some(from), Some(to)) = (&previous.tagged.track.album_id, &current.album_id)
             && from != to
             && !existing_albums.contains(from.as_str())
         {
+            scanned
+                .report
+                .album_move_paths
+                .entry(from.clone())
+                .or_default()
+                .push(from_track.clone());
             albums.entry(from.clone()).or_default().insert(to.clone());
         }
     }
@@ -189,6 +224,9 @@ pub fn scan(roots: &[PathBuf], cache_dir: &Path, index: &Index) -> Scanned {
     scanned.albums = group_albums(&parsed);
     scanned.artists = group_artists(&parsed, &scanned.portraits, &scanned.albums);
     scanned.tracks = parsed.into_iter().map(|tagged| tagged.track).collect();
+    if !progress.live() {
+        return Scanned::default();
+    }
     match index.keep_moves(&mut scanned.report) {
         Ok(()) => {
             index.save(&changes);
@@ -266,7 +304,7 @@ fn read_tags(
             && reading.tagged.fingerprint.is_none()
             && reading.tagged.track.playable
         {
-            match fingerprint(&reading.path) {
+            match fingerprint(&reading.path, progress) {
                 Ok(hash) => {
                     reading.tagged.fingerprint = Some(hash);
                     reading.fresh = true;
@@ -782,11 +820,14 @@ fn is_audio_file(path: &Path) -> bool {
 }
 
 /// Hashes exact file contents; names and directories do not affect move matching.
-fn fingerprint(path: &Path) -> std::io::Result<String> {
+fn fingerprint(path: &Path, progress: &progress::Scan) -> std::io::Result<String> {
     let mut file = std::fs::File::open(path)?;
     let mut digest = ring::digest::Context::new(&ring::digest::SHA256);
     let mut buffer = [0u8; HASH_BUFFER];
     loop {
+        if !progress.live() {
+            return Err(std::io::Error::from(std::io::ErrorKind::Interrupted));
+        }
         let read = file.read(&mut buffer)?;
         if read == 0 {
             break;

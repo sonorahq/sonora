@@ -1069,6 +1069,21 @@ pub trait MusicProvider: Send + Sync {
         None
     }
     async fn restore(&self) -> Result<Option<ProviderSession>>;
+    /// Scans local folders under a reservation made before the worker was scheduled.
+    async fn scan(
+        &self,
+        paths: Vec<PathBuf>,
+        _ticket: progress::Ticket,
+        thorough: bool,
+    ) -> Result<ProviderSession> {
+        if thorough {
+            self.forget_scan();
+        }
+        let (_sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        self.sign_in(SignIn::Path(paths), Arc::new(|_| {}), receiver)
+            .await
+    }
+
     async fn sign_in(
         &self,
         method: SignIn,

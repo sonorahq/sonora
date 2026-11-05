@@ -76,52 +76,50 @@ impl LocalClient {
     /// Resolves a known move only while the old path has no current indexed track.
     fn current_id(&self, id: &str) -> String {
         let scanned = self.scanned.read().unwrap();
-        if scanned
-            .tracks
-            .iter()
-            .any(|track| track.id.as_deref() == Some(id))
-        {
-            return id.to_owned();
-        }
-        scanned
-            .report
-            .moved
-            .iter()
-            .find(|(from, to)| {
-                from == id
-                    && scanned
-                        .tracks
-                        .iter()
-                        .any(|track| track.id.as_deref() == Some(to))
-            })
-            .map_or_else(|| id.to_owned(), |(_, to)| to.clone())
+        local_track(&scanned, id)
+            .and_then(|track| track.id.clone())
+            .unwrap_or_else(|| id.to_owned())
     }
 
     /// Keeps old album links usable after an entire folder-based album moves.
     fn current_album_id(&self, id: &str) -> String {
         let scanned = self.scanned.read().unwrap();
-        if scanned.albums.iter().any(|album| album.id == id) {
-            return id.to_owned();
-        }
-        scanned
-            .report
-            .moved_albums
-            .iter()
-            .find(|(from, to)| from == id && scanned.albums.iter().any(|album| album.id == *to))
-            .map_or_else(|| id.to_owned(), |(_, to)| to.clone())
+        local_album(&scanned, id).map_or_else(|| id.to_owned(), |album| album.id.clone())
+    }
+
+    /// Old IDs written by a scan's previous client belong to the same removal, unless reused.
+    fn aliases(&self, id: &str, album: bool) -> Vec<String> {
+        let scanned = self.scanned.read().unwrap();
+        let moves = match album {
+            true => &scanned.report.moved_albums,
+            false => &scanned.report.moved,
+        };
+        let mut ids = vec![id.to_owned()];
+        ids.extend(
+            moves
+                .iter()
+                .filter(|(from, to)| {
+                    to == id
+                        && match album {
+                            true => !scanned.albums.iter().any(|album| album.id == *from),
+                            false => !scanned
+                                .tracks
+                                .iter()
+                                .any(|track| track.id.as_deref() == Some(from)),
+                        }
+                })
+                .map(|(from, _)| from.clone()),
+        );
+        ids
     }
 
     fn listed(&self, ids: &[String]) -> Vec<Track> {
-        let ids: Vec<String> = ids.iter().map(|id| self.current_id(id)).collect();
         let scanned = self.scanned.read().unwrap();
+        let mut seen = HashSet::new();
         ids.iter()
-            .filter_map(|id| {
-                scanned
-                    .tracks
-                    .iter()
-                    .find(|track| track.id.as_deref() == Some(id.as_str()))
-                    .cloned()
-            })
+            .filter_map(|id| local_track(&scanned, id))
+            .filter(|track| seen.insert(track.id.as_deref()))
+            .cloned()
             .collect()
     }
 
@@ -337,14 +335,14 @@ impl MusicApi for LocalClient {
     async fn saved_tracks(&self) -> Result<Vec<Track>> {
         let starred = self.store.starred(Starred::Tracks)?;
         let scanned = self.scanned.read().unwrap();
+        let mut seen = HashSet::new();
         Ok(starred
             .into_iter()
             .filter_map(|(id, added_at)| {
-                let mut track = scanned
-                    .tracks
-                    .iter()
-                    .find(|track| track.id.as_deref() == Some(id.as_str()))
-                    .cloned()?;
+                let mut track = local_track(&scanned, &id)?.clone();
+                if !seen.insert(track.id.clone()) {
+                    return None;
+                }
                 track.added_at = Some(added_at);
                 Some(track)
             })
@@ -357,8 +355,13 @@ impl MusicApi for LocalClient {
     }
 
     async fn set_track_saved(&self, track_id: &str, saved: bool) -> Result<()> {
-        self.store
-            .set_starred(Starred::Tracks, &self.current_id(track_id), saved)
+        let id = self.current_id(track_id);
+        match saved {
+            true => self.store.set_starred(Starred::Tracks, &id, true),
+            false => self
+                .store
+                .unstar(Starred::Tracks, &self.aliases(&id, false)),
+        }
     }
 
     async fn track_tags(&self, track_id: &str) -> Result<TrackTags> {
@@ -479,7 +482,10 @@ impl MusicApi for LocalClient {
     }
 
     async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
-        self.store.remove(playlist_id, &self.current_id(track_id))
+        self.store.remove(
+            playlist_id,
+            &self.aliases(&self.current_id(track_id), false),
+        )
     }
 
     async fn import_playlist(&self, path: &Path) -> Result<ImportedPlaylist> {
@@ -517,14 +523,14 @@ impl MusicApi for LocalClient {
     async fn saved_albums(&self) -> Result<Vec<Album>> {
         let starred = self.store.starred(Starred::Albums)?;
         let scanned = self.scanned.read().unwrap();
+        let mut seen = HashSet::new();
         Ok(starred
             .into_iter()
             .filter_map(|(id, added_at)| {
-                let mut album = scanned
-                    .albums
-                    .iter()
-                    .find(|album| album.id == id)
-                    .cloned()?;
+                let mut album = local_album(&scanned, &id)?.clone();
+                if !seen.insert(album.id.clone()) {
+                    return None;
+                }
                 album.added_at = Some(added_at);
                 Some(album)
             })
@@ -537,8 +543,11 @@ impl MusicApi for LocalClient {
     }
 
     async fn set_album_saved(&self, album_id: &str, saved: bool) -> Result<()> {
-        self.store
-            .set_starred(Starred::Albums, &self.current_album_id(album_id), saved)
+        let id = self.current_album_id(album_id);
+        match saved {
+            true => self.store.set_starred(Starred::Albums, &id, true),
+            false => self.store.unstar(Starred::Albums, &self.aliases(&id, true)),
+        }
     }
 
     async fn saved_artists(&self) -> Result<Vec<SavedArtist>> {
@@ -906,6 +915,37 @@ fn resolve<'a>(known: &HashSet<&'a str>) -> HashMap<PathBuf, &'a str> {
             Some((path, id))
         })
         .collect()
+}
+
+/// Resolves direct IDs before historical aliases so a reused path remains a separate song.
+fn local_track<'a>(scanned: &'a Scanned, id: &str) -> Option<&'a Track> {
+    scanned
+        .tracks
+        .iter()
+        .find(|track| track.id.as_deref() == Some(id))
+        .or_else(|| {
+            let (_, to) = scanned.report.moved.iter().find(|(from, _)| from == id)?;
+            scanned
+                .tracks
+                .iter()
+                .find(|track| track.id.as_deref() == Some(to))
+        })
+}
+
+/// Resolves an album through the active scan's scoped aliases, without overriding a live album.
+fn local_album<'a>(scanned: &'a Scanned, id: &str) -> Option<&'a Album> {
+    scanned
+        .albums
+        .iter()
+        .find(|album| album.id == id)
+        .or_else(|| {
+            let (_, to) = scanned
+                .report
+                .moved_albums
+                .iter()
+                .find(|(from, _)| from == id)?;
+            scanned.albums.iter().find(|album| album.id == *to)
+        })
 }
 
 #[cfg(test)]

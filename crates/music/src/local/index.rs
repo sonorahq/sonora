@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::ScanReport;
 use anyhow::{Context as _, Result};
@@ -61,11 +62,21 @@ impl Remembered {
 #[derive(Clone)]
 pub struct Index {
     cache: Cache,
+    /// Serializes scan reads and commits across clones, without blocking the UI's cancellation.
+    scan: Arc<Mutex<()>>,
 }
 
 impl Index {
     pub fn new(cache: Cache) -> Self {
-        Self { cache }
+        Self {
+            cache,
+            scan: Arc::new(Mutex::new(())),
+        }
+    }
+
+    /// Holds a scan through its commit so an older worker cannot overwrite a newer index.
+    pub fn scanning(&self) -> MutexGuard<'_, ()> {
+        self.scan.lock().unwrap_or_else(|error| error.into_inner())
     }
 
     /// Reads the whole index in one go. A row whose track no longer parses, because the models
@@ -117,6 +128,7 @@ impl Index {
     /// read as the folder having left. Writing a file in place moves no folder's time, so this
     /// is the only thing that tells the next scan to look again.
     pub fn forget(&self, paths: &[PathBuf]) {
+        let _scan = self.scanning();
         self.invalidate(paths, true);
     }
 
@@ -183,6 +195,8 @@ impl Index {
             })?
             .transpose()?
             .unwrap_or_default();
+        kept.album_move_paths
+            .extend(report.album_move_paths.clone());
         for (moves, fresh) in [
             (&mut kept.moved, &report.moved),
             (&mut kept.moved_albums, &report.moved_albums),
@@ -204,6 +218,7 @@ impl Index {
         }
         report.moved = kept.moved;
         report.moved_albums = kept.moved_albums;
+        report.album_move_paths = kept.album_move_paths;
         Ok(())
     }
 

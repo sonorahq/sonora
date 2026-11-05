@@ -34,6 +34,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Continue into offline mode from the start screen with your existing folders and manage them in Settings.
+- Undoing several music-folder removals restores their original order.
+- Cancelled music scans no longer interrupt or overwrite newer folder selections.
+- Playlist and favorite changes made during a scan remain removable after a file moves.
+- Switching music folders no longer reports playlist or favorite entries from folders you removed as scan failures.
+- Adding or removing music folders while a scan runs keeps the latest folder selection.
 - Keep playlists, favorites and play history linked when a uniquely matching local file moves within the music folders.
 - Refresh the player, queue and lyrics after local tags change, and keep the local queue across restarts.
 - Keep cached songs visible when a music folder is unavailable and report unreadable files and folders.

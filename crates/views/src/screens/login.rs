@@ -470,6 +470,7 @@ impl Render for LoginView {
             })
             .collect::<Vec<_>>();
         let offline_tab = providers.len();
+        let local_configured = !self.session.read(cx).local_paths().is_empty();
         tabs.push(
             Button::new("login-tab-offline")
                 .label(t!("login-offline-title"))
@@ -603,20 +604,36 @@ impl Render for LoginView {
                         .gap_3()
                         .w(COLUMN)
                         .child(
-                            ui::spoken("login-offline-detail", t!("login-offline-detail"))
-                                .text_center()
-                                .text_color(theme.muted_foreground),
+                            ui::spoken(
+                                "login-offline-detail",
+                                match local_configured {
+                                    true => t!("login-offline-ready-detail"),
+                                    false => t!("login-offline-detail"),
+                                },
+                            )
+                            .text_center()
+                            .text_color(theme.muted_foreground),
                         )
                         .child(
                             Button::new("login-offline-folder")
-                                .label(t!("settings-choose-folder"))
-                                .icon("icons/folder-plus.svg")
+                                .label(match local_configured {
+                                    true => t!("login-offline-continue"),
+                                    false => t!("settings-choose-folder"),
+                                })
+                                .icon(match local_configured {
+                                    true => "icons/file-music.svg",
+                                    false => "icons/folder-plus.svg",
+                                })
                                 .primary()
                                 .w_full()
                                 .disabled(pending)
-                                .on_click(|_, _, cx| {
-                                    crate::shared::local::choose_offline_folder(cx)
-                                }),
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    if this.session.read(cx).local_paths().is_empty() {
+                                        crate::shared::local::choose_offline_folder(cx);
+                                        return;
+                                    }
+                                    this.session.update(cx, |session, cx| session.use_local(cx));
+                                })),
                         )
                         .when(guest.is_some(), |this| {
                             this.child(

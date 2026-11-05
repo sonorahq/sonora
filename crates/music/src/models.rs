@@ -71,6 +71,8 @@ pub struct ScanReport {
     pub issues: Vec<String>,
     pub moved: Vec<(String, String)>,
     pub moved_albums: Vec<(String, String)>,
+    /// Original file IDs proving the folder scope of each durable album alias.
+    pub album_move_paths: std::collections::HashMap<String, Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
