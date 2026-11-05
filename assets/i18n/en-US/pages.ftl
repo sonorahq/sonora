@@ -65,6 +65,11 @@ login-providers = Music services
 login-welcome-title = Welcome to Sonora
 login-welcome-detail = You can add more services later in Settings.
 login-or = or
+login-offline-title = Offline
+login-offline-detail = Listen to music on your computer. Choose a folder to continue.
+login-offline-ready-detail = Listen to music from your selected folders. You can manage your local folders in Settings.
+login-offline-continue = Continue offline
+login-offline-guest-detail = Just want to stream without signing in? Choose Guest mode instead.
 
 # album and playlist pages
 

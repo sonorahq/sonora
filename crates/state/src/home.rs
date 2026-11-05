@@ -134,21 +134,11 @@ impl Home {
     }
 
     fn client(&self, cx: &App) -> Option<Arc<dyn MusicApi>> {
-        let session = self.session.read(cx);
-        if session.guest() && session.local_client().is_some() {
-            session.local_client()
-        } else {
-            session.client()
-        }
+        self.session.read(cx).browsing_client()
     }
 
     fn shelf(&self, cx: &App) -> Shelf {
-        let session = self.session.read(cx);
-        if session.guest() {
-            Shelf::Local
-        } else {
-            Shelf::Streaming
-        }
+        self.session.read(cx).primary_shelf()
     }
 
     pub fn is_local(&self, cx: &App) -> bool {
@@ -175,12 +165,14 @@ impl Home {
         cx.notify();
     }
 
-    /// Fetches the feed again from the provider and refreshes the library shelf it mixes Quick
-    /// picks from. The page shows its loading shelves until the new feed lands.
+    /// Fetches the feed again and refreshes the library it mixes Quick picks from. Local folders
+    /// are rescanned first, so files added outside Sonora appear too.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let shelf = self.shelf(cx);
-        self.library
-            .update(cx, |library, cx| library.refresh(shelf, cx));
+        self.library.update(cx, |library, cx| match shelf.local() {
+            true => library.reload(shelf, cx),
+            false => library.refresh(shelf, cx),
+        });
         self.reload(cx);
     }
 

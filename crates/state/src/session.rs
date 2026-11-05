@@ -127,6 +127,8 @@ pub struct Session {
     /// The browser window a `SignInPrompt::Secret` opened, while it is up.
     window: Option<webview::Page>,
     window_task: Option<Task<()>>,
+    /// Whether this run uses only local folders, independently of a stored streaming account.
+    local_only: bool,
     local_provider: Arc<dyn MusicProvider>,
     local_folders: Vec<PathBuf>,
     local_client: Option<Arc<dyn MusicApi>>,
@@ -186,6 +188,7 @@ impl Session {
             input: None,
             window: None,
             window_task: None,
+            local_only: remembered == local_provider.slug(),
             local_provider,
             local_folders,
             local_client: None,
@@ -212,6 +215,41 @@ impl Session {
 
     pub fn client(&self) -> Option<Arc<dyn MusicApi>> {
         self.client.clone()
+    }
+
+    /// Whether Offline was selected as the music source. Streaming accounts remain stored.
+    pub fn local_only(&self) -> bool {
+        self.local_only
+    }
+
+    /// The library shown by the main Library page and searched in this run.
+    pub fn primary_shelf(&self) -> Shelf {
+        match self.local_only {
+            true => Shelf::Local,
+            false => Shelf::Streaming,
+        }
+    }
+
+    /// The source for browsing and searching, without exposing a concrete provider.
+    pub fn browsing_client(&self) -> Option<Arc<dyn MusicApi>> {
+        self.client_of(self.primary_shelf())
+    }
+
+    /// Starts a local-only run and remembers it without opening a streaming session.
+    pub fn use_local(&mut self, cx: &mut Context<Self>) {
+        self.release(cx);
+        self.active = None;
+        self.local_only = true;
+        self.settings.update(cx, |settings, cx| {
+            settings.set_provider(self.local_slug(), cx);
+        });
+        self.state = SessionState::SignedIn(UserProfile {
+            id: self.local_slug().to_owned(),
+            display_name: t!("login-offline-title").to_string(),
+            avatar: None,
+        });
+        cx.notify();
+        cx.emit(SessionEvent::SignedIn);
     }
 
     pub fn playback(&self) -> Option<Arc<dyn PlaybackFactory>> {
@@ -315,6 +353,9 @@ impl Session {
     /// Whether a browser window matters right now: the current provider signs in through one,
     /// or no account is stored yet and the sign-in screen offers every provider.
     pub fn wants_browser(&self) -> bool {
+        if self.local_only {
+            return false;
+        }
         match self.active {
             Some(index) => self.providers[index].web_sign_in().is_some(),
             None => !self.providers.iter().any(|provider| provider.stored()),
@@ -322,6 +363,9 @@ impl Session {
     }
 
     pub fn forget(&mut self, slug: &str, cx: &mut Context<Self>) {
+        if self.local_only && slug == self.local_slug() {
+            return self.sign_out(cx);
+        }
         let Some(index) = self
             .providers
             .iter()
@@ -351,6 +395,7 @@ impl Session {
             return;
         }
         self.release(cx);
+        self.local_only = false;
         self.active = Some(index);
         self.restore(cx);
     }
@@ -543,6 +588,9 @@ impl Session {
     pub fn restore(&mut self, cx: &mut Context<Self>) {
         if self.is_pending() {
             return;
+        }
+        if self.local_only {
+            return self.use_local(cx);
         }
         self.passed.clear();
         let Some(active) = self.active else {
@@ -778,6 +826,9 @@ impl Session {
             cx.notify();
             return;
         }
+        if self.local_only {
+            return self.use_local(cx);
+        }
         self.state = SessionState::SignedOut;
         cx.notify();
         cx.emit(SessionEvent::SignedOut);
@@ -934,6 +985,12 @@ impl Session {
     }
 
     pub fn sign_out(&mut self, cx: &mut Context<Self>) {
+        if self.local_only {
+            self.settings
+                .update(cx, |settings, cx| settings.set_provider("", cx));
+            self.release(cx);
+            return;
+        }
         if let Some(active) = self.active {
             self.providers[active].sign_out();
         }
@@ -1009,17 +1066,20 @@ impl Session {
         self.shape = Shape::Saved;
         self.authenticated = false;
         self.capabilities = Capabilities::NONE;
+        self.local_only = false;
         self.state = SessionState::SignedOut;
         cx.notify();
         cx.emit(SessionEvent::SignedOut);
     }
 
     fn signed_in(&mut self, session: ProviderSession, index: usize, cx: &mut Context<Self>) {
+        let local = self.local_only;
+        self.local_only = false;
         let replaced = self
             .resume
             .take()
             .is_some_and(|(held, profile)| held != index || profile.id != session.profile.id);
-        if replaced {
+        if local || replaced {
             self.drop_previous_session(cx);
         }
         self.active = Some(index);
@@ -1175,6 +1235,9 @@ impl Session {
             self.state = SessionState::SignedIn(profile);
             cx.notify();
             return;
+        }
+        if self.local_only {
+            return self.use_local(cx);
         }
         if restoring && failure.offline() && self.stored_active() {
             log::warn!("session: the account could not be reached, carrying on offline");

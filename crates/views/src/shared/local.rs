@@ -22,6 +22,16 @@ pub(crate) fn unconfigured(id: impl Into<ElementId>) -> Vacancy {
 }
 
 pub(crate) fn choose_folder(cx: &mut App) {
+    prompt_folder(false, cx);
+}
+
+/// Chooses the folders for a local-only run. Cancelling leaves the provider selection intact.
+pub(crate) fn choose_offline_folder(cx: &mut App) {
+    prompt_folder(true, cx);
+}
+
+/// Opens the shared folder picker and optionally switches the app to the local source.
+fn prompt_folder(offline: bool, cx: &mut App) {
     let receiver = cx.prompt_for_paths(PathPromptOptions {
         files: false,
         directories: true,
@@ -35,6 +45,12 @@ pub(crate) fn choose_folder(cx: &mut App) {
         };
         if paths.is_empty() {
             return;
+        }
+        if offline {
+            cx.update(|cx| {
+                let session = Sonora::global(cx).session.clone();
+                session.update(cx, |session, cx| session.use_local(cx));
+            });
         }
         library.update(cx, |library, cx| library.add_local_folders(paths, cx));
     })

@@ -43,6 +43,9 @@ pub struct Lyrics {
     /// Whether lyrics are on at all. While off, nothing is looked up and the sheet stays empty.
     enabled: bool,
     enabled_providers: Vec<String>,
+    /// The lookup permissions last applied, so changing either restarts the current sheet.
+    local_online: bool,
+    offline: bool,
     /// The order of the sources the answer on show was ranked by. A new order looks the track
     /// up again, from what is held, so the source now ranked first is the one shown.
     priority: Vec<String>,
@@ -89,10 +92,14 @@ impl Lyrics {
             let enabled = settings.lyrics_providers();
             let priority = settings.lyrics_provider_priority();
             let worded_first = settings.lyrics_word_synced_first();
+            let local_online = settings.lyrics_for_local_files();
+            let offline = settings.offline_mode();
             if on == this.enabled
                 && enabled == this.enabled_providers
                 && priority == this.priority
                 && worded_first == this.worded_first
+                && local_online == this.local_online
+                && offline == this.offline
             {
                 return;
             }
@@ -100,6 +107,8 @@ impl Lyrics {
             this.enabled_providers = enabled.to_vec();
             this.priority = priority;
             this.worded_first = worded_first;
+            this.local_online = local_online;
+            this.offline = offline;
             this.task = None;
             this.ahead = None;
             this.ahead_of = None;
@@ -130,6 +139,8 @@ impl Lyrics {
             providers,
             enabled,
             enabled_providers,
+            local_online: settings.read(cx).lyrics_for_local_files(),
+            offline: settings.read(cx).offline_mode(),
             priority,
             worded_first,
             playback,
