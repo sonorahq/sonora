@@ -187,9 +187,11 @@ impl Powerbar {
         match self.selected {
             None => {}
             Some(0) => {
-                self.selected = None;
-                self.scroll.scroll_to_item(0);
-                self.input.update(cx, |input, cx| input.focus(window, cx));
+                self.selected = Some(0);
+                if let Some(&child) = self.item_to_child.first() {
+                    self.scroll.scroll_to_item(child);
+                }
+                window.focus(&self.focus, cx);
                 cx.notify();
             }
             Some(i) => {
