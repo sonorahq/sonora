@@ -12,7 +12,7 @@ use music::{Album, AlbumDetail, Playlist, ReleaseType, Track, is_local_id};
 use router::{Destination, navigate};
 use state::{
     AppSettings, Collection, Detail, DownloadsChanged, LibraryEvent, Origin, Playback, Progress,
-    Sonora,
+    SessionEvent, Sonora,
 };
 use ui::{
     ActiveTheme as _, ArrowRing, Button, InlineLink, InlineLinks, Menu, MenuItem, Picker, Popovers,
@@ -201,6 +201,24 @@ impl DetailView {
             this.retune(cx);
             this.rebuild(cx);
             cx.notify();
+        })
+        .detach();
+
+        let session = Sonora::global(cx).session.clone();
+        cx.subscribe(&session, |this, _, event, cx| match event {
+            SessionEvent::SignedOut | SessionEvent::SignedIn => {
+                // These sign events clear and reload a provider detail under a new account,
+                // possibly within one frame, so the render guard can miss it: close the
+                // viewer here. A local album's art does not depend on the account.
+                let local = this.detail.read(cx).id().is_some_and(is_local_id);
+                if !local {
+                    this.viewer_for = None;
+                    this.viewer_cover = None;
+                    this.cover_viewer
+                        .update(cx, |viewer, cx| viewer.force_close(cx));
+                }
+            }
+            _ => {}
         })
         .detach();
 
