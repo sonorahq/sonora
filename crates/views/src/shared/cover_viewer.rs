@@ -107,6 +107,18 @@ impl CoverViewer {
         self.open.is_some()
     }
 
+    /// Closes without a window, for session changes that replace the detail under the viewer:
+    /// the art is dropped and the focus claim released, with nothing to restore focus to.
+    pub(crate) fn force_close(&mut self, cx: &mut Context<Self>) {
+        if self.open.is_none() {
+            return;
+        }
+        self.open = None;
+        self.grab = false;
+        self.restore = None;
+        cx.notify();
+    }
+
     pub(crate) fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = None;
         self.grab = false;
