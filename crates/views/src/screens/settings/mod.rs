@@ -82,6 +82,7 @@ enum Slot {
     VisualizerAbsolute,
     PlayerBarLayout,
     PlayerBarTransparent,
+    PlayerBarEqualizerButton,
     FullscreenControlsAutohide,
     OsFullscreen,
     Karaoke,
@@ -730,6 +731,10 @@ impl SettingsView {
                 t!("settings-player-bar-transparent"),
                 t!("settings-player-bar-transparent-detail"),
             ),
+            Slot::PlayerBarEqualizerButton => (
+                t!("settings-player-bar-equalizer-button"),
+                t!("settings-player-bar-equalizer-button-detail"),
+            ),
             Slot::VisualizerAbsolute => (
                 t!("settings-visualizer-absolute"),
                 t!("settings-visualizer-absolute-detail"),
@@ -955,6 +960,7 @@ impl SettingsView {
             Slot::Visualizer => div().into_any_element(),
             Slot::PlayerBarLayout => div().into_any_element(),
             Slot::PlayerBarTransparent => self.player_bar_transparent_row(cx),
+            Slot::PlayerBarEqualizerButton => self.player_bar_equalizer_button_row(cx),
             Slot::VisualizerAbsolute => self.visualizer_absolute_row(cx),
             Slot::Opacity => self.opacity_row(cx),
             Slot::WindowBlur => self.blur_window_row(cx),

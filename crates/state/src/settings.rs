@@ -372,6 +372,8 @@ struct Values {
     spotify_connect: bool,
     spotify_connect_name: ConnectName,
     spotify_connect_custom_name: String,
+    /// Whether the player bar shows a shortcut to the equalizer.
+    equalizer_button: bool,
     /// Whether the player bar shows the Sessions button.
     sessions_button: bool,
     /// Whether Sonora Sessions go through the official server rather than `sessions_server`.
@@ -596,6 +598,7 @@ impl Default for Values {
             spotify_connect_name: ConnectName::Both,
             spotify_connect_custom_name: String::new(),
             sessions_button: true,
+            equalizer_button: true,
             sessions_official: true,
             sessions_server: String::new(),
             discord_presence: false,
@@ -987,6 +990,11 @@ impl AppSettings {
     /// The name Sonora goes by in that list when it is `ConnectName::Custom`.
     pub fn spotify_connect_custom_name(&self) -> &str {
         &self.values.spotify_connect_custom_name
+    }
+
+    /// Whether the player bar shows a shortcut to the equalizer.
+    pub fn equalizer_button(&self) -> bool {
+        self.values.equalizer_button
     }
 
     /// Whether the player bar shows the Sessions button.
@@ -1580,6 +1588,11 @@ impl AppSettings {
             return;
         }
         self.values.spotify_connect_custom_name = name;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_equalizer_button(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.values.equalizer_button = shown;
         self.schedule_save(cx);
     }
 
