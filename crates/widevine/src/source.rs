@@ -320,6 +320,17 @@ fn places() -> Vec<Place> {
 fn places() -> Vec<Place> {
     let component = component();
     let mut places = Vec::new();
+    // The bundle identifier survives renaming or moving Chrome.app.
+    let workspace = objc2_app_kit::NSWorkspace::sharedWorkspace();
+    let identifier = objc2_foundation::NSString::from_str("com.google.Chrome");
+    if let Some(path) = workspace
+        .URLForApplicationWithBundleIdentifier(&identifier)
+        .and_then(|url| url.path())
+    {
+        places.push(Place::Exact(PathBuf::from(path.to_string()).join(format!(
+            "Contents/Frameworks/Google Chrome Framework.framework/Libraries/WidevineCdm/{component}"
+        ))));
+    }
     let bundles = [
         "Google Chrome",
         "Google Chrome Beta",

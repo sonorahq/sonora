@@ -33,6 +33,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- On macOS, Widevine is also found when Chrome has been renamed or moved.
 - Horizontal card rows scroll all the way to the page edges, including album recommendations.
 - Removing an Apple Music song or album from the library takes its like off right away, the way Apple does.
 - Playing or shuffling an artist queues their songs beyond the Popular section, with popular songs first.
