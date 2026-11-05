@@ -37,6 +37,10 @@ const DRIFT_RATE: f32 = 30.;
 /// How early a display tick may come and still count as the next drift frame, in seconds. It keeps
 /// the frames on a steady share of the ticks, every second one at 60 Hz and every fourth at 120.
 const DRIFT_SLACK: f32 = 0.004;
+/// How many times smaller across each side the field behind the window is drawn before it is
+/// stretched back over it. Nothing in it is sharper than a heavy blur, so the stretch does not show,
+/// and the shader runs on a sixteenth of the pixels.
+const FIELD_SHRINK: f32 = 4.;
 
 /// The flowing colour field. One sits behind the whole window in fullscreen, and a preview can
 /// hold another of its own made with `Ambient::framed`.
@@ -248,20 +252,39 @@ impl Render for Ambient {
             Some(_) => None,
         };
 
+        let waves = ui::Waves::new(layered(colors).map(shaded))
+            .stage(shaded(Hsla {
+                a: 1.,
+                ..theme.background
+            }))
+            .time(elapsed);
+
         div()
             .id("ambient")
             .absolute()
             .inset_0()
             .opacity(clarity)
-            .child(
-                ui::Waves::new(layered(colors).map(shaded))
-                    .stage(shaded(Hsla {
-                        a: 1.,
-                        ..theme.background
-                    }))
-                    .time(elapsed)
-                    .when_some(radius, ui::Waves::corner_radius),
-            )
+            .map(|this| match self.framed {
+                // A preview is small enough to draw at full size.
+                Some(_) => this.child(waves),
+                None => {
+                    let viewport = window.viewport_size();
+                    this.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .w((viewport.width / FIELD_SHRINK).ceil())
+                            .h((viewport.height / FIELD_SHRINK).ceil())
+                            .layer_scale(FIELD_SHRINK)
+                            .layer_scale_origin(gpui::point(0., 0.))
+                            .child(waves.when_some(
+                                radius.map(|radius| radius / FIELD_SHRINK),
+                                ui::Waves::corner_radius,
+                            )),
+                    )
+                }
+            })
     }
 }
 
