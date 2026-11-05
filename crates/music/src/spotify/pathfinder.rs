@@ -20,7 +20,9 @@ pub(crate) use artist::{Overview, artist};
 pub(crate) use browse::{all as genres, home, page as genre};
 pub(crate) use library::{library, set_pinned};
 pub(crate) use plays::track;
-pub(crate) use search::{albums as search_albums, playlists as search_playlists};
+pub(crate) use search::{
+    albums as search_albums, artists as search_artists, playlists as search_playlists,
+};
 
 const ENDPOINT: &str = "https://api-partner.spotify.com/pathfinder/v2/query";
 const APP_PLATFORM: &str = "WebPlayer";

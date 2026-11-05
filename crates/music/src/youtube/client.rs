@@ -448,6 +448,10 @@ impl MusicApi for YouTubeClient {
             .collect())
     }
 
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        subscriptions::search(&self.api, query).await
+    }
+
     async fn search_playlists(&self, query: &str) -> Result<Vec<Playlist>> {
         Ok(self
             .api

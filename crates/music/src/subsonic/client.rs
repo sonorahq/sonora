@@ -953,6 +953,26 @@ impl MusicApi for SubsonicClient {
             .collect())
     }
 
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        let found = self
+            .client
+            .search3(query, Some(30), None, Some(0), None, Some(0), None, None)
+            .await
+            .context("cannot search artists")?;
+        Ok(found
+            .artist
+            .iter()
+            .map(|artist| {
+                let cover = self.artist_cover(
+                    artist.cover_art.as_deref(),
+                    artist.artist_image_url.as_deref(),
+                    &artist.id,
+                );
+                wire::saved_artist(artist, cover)
+            })
+            .collect())
+    }
+
     async fn search_playlists(&self, query: &str) -> Result<Vec<Playlist>> {
         let needle = query.to_lowercase();
         Ok(self
