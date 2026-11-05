@@ -120,11 +120,8 @@ menu-play-last = 最後に再生
 menu-play-tracks-last = { $count ->
    *[other] { $count }曲を最後に再生
 }
-menu-go-to = 移動
-menu-artist = アーティスト
-menu-album = アルバム
-menu-radio = ラジオ
-menu-details = 詳細
+menu-song-radio = 曲のラジオを開く
+menu-go-to-album = アルバムを表示
 menu-go-to-artist = アーティストを表示
 menu-view-details = 詳細を表示
 menu-copy-link = リンクをコピー
