@@ -18,6 +18,7 @@ pub(crate) mod pins;
 pub(crate) mod playlist_editor;
 pub(crate) mod popups;
 pub(crate) mod shelves;
+pub(crate) mod smart_playlist;
 pub(crate) mod steps;
 pub(crate) mod tag_editor;
 pub(crate) mod text;

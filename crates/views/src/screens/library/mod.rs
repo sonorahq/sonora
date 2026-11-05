@@ -1169,6 +1169,7 @@ impl Render for LibraryView {
                     cx.listener(|this, _, window, cx| {
                         this.create_playlist(window, cx);
                     }),
+                    cx,
                 ),
             };
             Popup::new(position, menu).on_close(cx.listener(|this, _, _, cx| {

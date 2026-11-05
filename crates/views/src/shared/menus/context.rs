@@ -18,6 +18,7 @@ use crate::shared::confirm::Confirm;
 use crate::shared::local;
 use crate::shared::pins::Pinned as _;
 use crate::shared::playlist_editor::{Edit, PlaylistEditor};
+use crate::shared::smart_playlist::{SmartEdit, SmartPlaylistEditor};
 use crate::shared::tag_editor::TagEditor;
 
 /// The narrowest the menu of one song, album, artist or playlist gets, which is wide enough for
@@ -1190,27 +1191,52 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
             }
         })
     });
+    // Rules edit where the provider takes smart playlists and the account owns this one.
+    let smart_rules = (playlist.owned
+        && !imported
+        && Sonora::global(cx)
+            .session
+            .read(cx)
+            .capabilities_of(Shelf::of(&playlist.id))
+            .smart_playlists)
+        .then(|| {
+            MenuItem::new("smart-playlist-rules", t!("menu-smart-playlist-rules"))
+                .icon("icons/list-plus.svg")
+                .on_click({
+                    let playlist = playlist.clone();
+                    move |_, window, cx| {
+                        SmartPlaylistEditor::open(
+                            SmartEdit::Rules {
+                                playlist: playlist.clone(),
+                            },
+                            window,
+                            cx,
+                        );
+                    }
+                })
+        });
     let actions = match playlist.owned {
         true => visibility
             .into_iter()
-            .chain([
-                MenuItem::new("edit-playlist", t!("menu-edit-playlist"))
-                    .icon("icons/pencil.svg")
-                    .on_click({
-                        let playlist = playlist.clone();
-                        move |_, window, cx| {
-                            PlaylistEditor::open(Edit::Details(playlist.clone()), window, cx);
-                        }
-                    }),
-                MenuItem::new("delete-playlist", t!("menu-delete-playlist"))
+            .chain([MenuItem::new("edit-playlist", t!("menu-edit-playlist"))
+                .icon("icons/pencil.svg")
+                .on_click({
+                    let playlist = playlist.clone();
+                    move |_, window, cx| {
+                        PlaylistEditor::open(Edit::Details(playlist.clone()), window, cx);
+                    }
+                })])
+            .chain(smart_rules)
+            .chain(
+                [MenuItem::new("delete-playlist", t!("menu-delete-playlist"))
                     .icon("icons/trash-2.svg")
                     .on_click({
                         let playlist = playlist.clone();
                         move |_, window, cx| {
                             PlaylistEditor::open(Edit::Delete(playlist.clone()), window, cx);
                         }
-                    }),
-            ])
+                    })],
+            )
             .chain(imported.then(|| {
                 MenuItem::new("export-playlist", t!("menu-export-playlist"))
                     .icon("icons/square-arrow-out-up-right.svg")
@@ -1454,13 +1480,28 @@ fn share_link(kind: MediaKind, id: Option<&str>, cx: &App) -> Result<String, &'s
 pub(crate) fn new_playlist_menu(
     shelf: Shelf,
     on_create: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &App,
 ) -> Menu {
+    // A provider with smart playlists offers a rules-first playlist next to the plain one.
+    let smart = !shelf.local()
+        && Sonora::global(cx)
+            .session
+            .read(cx)
+            .capabilities_of(shelf)
+            .smart_playlists;
     Menu::new("playlist-background-menu")
         .item(
             MenuItem::new("create-playlist", t!("menu-new-playlist"))
                 .icon("icons/plus.svg")
                 .on_click(on_create),
         )
+        .items(smart.then(|| {
+            MenuItem::new("create-smart-playlist", t!("menu-new-smart-playlist"))
+                .icon("icons/list-plus.svg")
+                .on_click(move |_, window, cx| {
+                    SmartPlaylistEditor::open(SmartEdit::Create { shelf }, window, cx);
+                })
+        }))
         .items(shelf.local().then(|| {
             MenuItem::new("import-playlist", t!("menu-import-playlist"))
                 .icon("icons/file-music.svg")
