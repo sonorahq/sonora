@@ -131,7 +131,7 @@ mod tests {
 
     use super::{Choice, Choices};
 
-    const KNOWN: &[&'static str] = &["LrcLib", "NetEase"];
+    const KNOWN: &[&str] = &["LrcLib", "NetEase"];
 
     fn hit(source: &'static str) -> music::LyricsHit {
         music::LyricsHit {
