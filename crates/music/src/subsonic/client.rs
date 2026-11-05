@@ -1352,6 +1352,14 @@ fn genre_artists(albums: &[Album], songs: &[Track]) -> Vec<SavedArtist> {
     artists
 }
 
+/// The major and minor numbers of a version such as `0.61.0` or `0.61.0 (a1b2c3)`.
+fn release(version: &str) -> Option<(u32, u32)> {
+    let mut parts = version.split(|letter: char| !letter.is_ascii_digit());
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    Some((major, minor))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1472,12 +1480,4 @@ mod tests {
     fn genre_artists_of_no_albums_and_no_songs_is_empty() {
         assert!(genre_artists(&[], &[]).is_empty());
     }
-}
-
-/// The major and minor numbers of a version such as `0.61.0` or `0.61.0 (a1b2c3)`.
-fn release(version: &str) -> Option<(u32, u32)> {
-    let mut parts = version.split(|letter: char| !letter.is_ascii_digit());
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    Some((major, minor))
 }
