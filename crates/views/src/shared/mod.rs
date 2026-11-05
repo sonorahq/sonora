@@ -10,6 +10,7 @@ pub(crate) mod device_menu;
 pub(crate) mod equalizer;
 pub(crate) mod hero;
 pub(crate) mod local;
+pub(crate) mod lyrics_search;
 pub(crate) mod menus;
 pub(crate) mod nav;
 pub(crate) mod page;

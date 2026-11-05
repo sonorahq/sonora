@@ -397,6 +397,13 @@ pub trait MusicApi: Send + Sync {
 pub trait LyricsProvider: Send + Sync {
     fn name(&self) -> &'static str;
     async fn search(&self, query: &LyricsQuery) -> Result<Vec<LyricsHit>>;
+
+    /// Whether `search` can answer from a title and an artist typed by the listener, with no
+    /// track identity in the query. A provider keyed to the track itself, such as the file's
+    /// own tags or a server's song id, leaves this false rather than pretending it searched.
+    fn text_search(&self) -> bool {
+        false
+    }
 }
 
 /// What an engine is started with. `equalizer` is shared rather than copied: the engine keeps
@@ -1024,6 +1031,14 @@ pub trait MusicProvider: Send + Sync {
         false
     }
     fn location(&self) -> Option<String> {
+        None
+    }
+    /// The account or server this provider's track ids mean something under, where one
+    /// provider can be signed into different accounts or servers over time. Durable per-track
+    /// records key on it so two servers' tracks that share an id never collide. `None` where
+    /// ids are global, as with the streaming services, or carry their own identity, as a local
+    /// file's path does.
+    fn identity(&self) -> Option<String> {
         None
     }
     /// The host to open a connection to when checking whether the network is back. `None`

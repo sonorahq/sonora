@@ -138,6 +138,13 @@ impl MusicProvider for SubsonicProvider {
         auth::load().map(|credentials| credentials.server)
     }
 
+    /// The account and server this library plays from, as `username@server`: a track id only
+    /// means something on its own server, so durable per-track records are namespaced by it.
+    fn identity(&self) -> Option<String> {
+        let credentials = auth::load()?;
+        Some(format!("{}@{}", credentials.username, credentials.server))
+    }
+
     /// The configured server's host, since a self-hosted library has no address in common with
     /// anyone else's.
     fn reach(&self) -> Option<String> {

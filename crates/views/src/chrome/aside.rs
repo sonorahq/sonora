@@ -29,6 +29,7 @@ use ui::{
 use unicode_bidi::{BidiClass, Direction};
 
 use crate::chrome::{Chrome, section_label};
+use crate::shared::lyrics_search::LyricsSearch;
 use crate::shared::menus::ItemMenu;
 use crate::shared::pins::Pinned as _;
 use crate::shared::{effects, quiet};
@@ -849,6 +850,17 @@ impl Aside {
             })
             .when(!self.titled, |this| {
                 this.justify_end().pr(theme.metrics.control + px(8.))
+            })
+            .when(self.tab == SideTab::Lyrics && self.titled, |this| {
+                this.child(
+                    Button::new("search-lyrics-manually")
+                        .ghost()
+                        .small()
+                        .icon("icons/search.svg")
+                        .tooltip("lyrics-search-open")
+                        .disabled(self.lyrics.read(cx).following().is_none())
+                        .on_click(|_, window, cx| LyricsSearch::open(window, cx)),
+                )
             })
             .when(self.tab == SideTab::Queue && !remote, |this| {
                 this.child(

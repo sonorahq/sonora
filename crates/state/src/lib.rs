@@ -1,5 +1,6 @@
 mod artist;
 mod catalog;
+mod choices;
 mod control;
 mod cover;
 mod detail;
@@ -64,7 +65,7 @@ pub use library::{
 pub use links::{Links, Opened};
 pub use listening::{CODE_LENGTH as SESSION_CODE_LENGTH, Listening, Member as RoomMember, Room};
 pub use logging::log_file;
-pub use lyrics::{Lyrics, LyricsState};
+pub use lyrics::{Lyrics, LyricsState, SearchState};
 pub use music::connect::{Elsewhere, Repeat};
 pub use network::{Network, Reconnected};
 pub use outputs::Outputs;
@@ -351,6 +352,7 @@ pub fn init(
             settings.clone(),
             lyrics_providers,
             io.clone(),
+            database.clone(),
             cx,
         )
     });
