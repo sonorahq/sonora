@@ -33,7 +33,8 @@ pub use models::{
     Contributor, CoverSize, Credit, Found, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
     ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsWord,
     PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail, ReleaseType, RomanizedText,
-    SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
+    SavedArtist, ScanReport, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice,
+    WritingSystem,
 };
 pub use redact::redact;
 pub use smart::{
@@ -99,6 +100,10 @@ pub enum Report {
 
 #[async_trait]
 pub trait MusicApi: Send + Sync {
+    /// Diagnostics and reconciled moves from the last local scan, empty for streaming sources.
+    fn scan_report(&self) -> ScanReport {
+        ScanReport::default()
+    }
     fn alive(&self) -> bool {
         true
     }

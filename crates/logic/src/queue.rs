@@ -629,6 +629,31 @@ impl<O: Clone + PartialEq> Order<O> {
         }
     }
 
+    /// Swaps in a newer copy of each track `fresh` knows, keeping every entry's place, kind and
+    /// origin. Returns whether anything changed.
+    pub fn refresh<'a>(&mut self, fresh: impl Fn(&str) -> Option<&'a Track>) -> bool {
+        let mut changed = false;
+        for entry in self
+            .past
+            .iter_mut()
+            .chain(self.current.iter_mut())
+            .chain(self.upcoming.iter_mut())
+            .chain(self.source.iter_mut())
+        {
+            let Some(track) = entry.track.id.as_deref().and_then(&fresh) else {
+                continue;
+            };
+            if entry.track.as_ref() != track {
+                entry.track = Arc::new(track.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            self.changed();
+        }
+        changed
+    }
+
     pub fn revision(&self) -> u64 {
         self.revision
     }
