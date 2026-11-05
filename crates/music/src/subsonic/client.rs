@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use futures::{StreamExt as _, stream};
 use opensubsonic::api::lists::AlbumListType;
@@ -77,6 +77,42 @@ pub struct Details {
     /// The track's ReplayGain, which OpenSubsonic servers such as Navidrome report and plain
     /// Subsonic servers do not.
     pub loudness: Option<Loudness>,
+}
+
+/// The ids a paged listing already holds, so a repeat page tells it apart from fresh rows. Some
+/// servers answer every offset with their first page; without the check such a server would be
+/// asked for pages forever.
+#[derive(Default)]
+struct Paged {
+    seen: HashSet<String>,
+}
+
+impl Paged {
+    /// Records the ids of one page, answering which positions were new and what the page means
+    /// for the listing. Only an empty page ends it normally: a server is free to answer fewer
+    /// rows than asked, so a short page is just another page. A nonempty page whose rows were
+    /// all seen before means the server ignores the offset; asking again would loop forever,
+    /// and what it served so far is its first page, not the whole listing.
+    fn absorb(&mut self, ids: &[String]) -> (Vec<bool>, Turn) {
+        let fresh: Vec<bool> = ids.iter().map(|id| self.seen.insert(id.clone())).collect();
+        let turn = match ids.is_empty() {
+            true => Turn::End,
+            false if fresh.iter().any(|fresh| *fresh) => Turn::More,
+            false => Turn::Stalled,
+        };
+        (fresh, turn)
+    }
+}
+
+/// What one page meant for a paged listing.
+enum Turn {
+    /// Fresh rows arrived; ask for the next page.
+    More,
+    /// An empty page: the listing is complete.
+    End,
+    /// A nonempty page whose rows were all seen before. The server ignores the offset, so the
+    /// listing cannot be completed by paging.
+    Stalled,
 }
 
 impl SubsonicClient {
@@ -1014,33 +1050,38 @@ impl MusicApi for SubsonicClient {
         Ok(genres.into_iter().map(source_genre).collect())
     }
 
+    /// The genre's albums, songs and artists, complete. The single page of 50 albums a genre
+    /// used to stop at hid the rest of a large library, and its songs and artists never made
+    /// the page at all. A genre whose songs cannot be read fails the page, rather than showing
+    /// an incomplete one as if it were whole; opening the genre again is the retry. The shelf
+    /// titles are Fluent keys, which the page translates.
     async fn genre(&self, genre_id: &str) -> Result<GenreDetail> {
-        let albums = self
-            .client
-            .get_album_list2(
-                AlbumListType::ByGenre,
-                Some(50),
-                None,
-                None,
-                None,
-                Some(genre_id),
-                None,
-            )
-            .await
-            .with_context(|| format!("cannot load the genre {genre_id}"))?;
-        let items: Vec<GenreItem> = albums
-            .into_iter()
-            .map(|album| GenreItem::Album(self.convert_album(album)))
-            .collect();
+        let albums = self.genre_albums(genre_id).await?;
+        let songs = self.genre_songs(genre_id).await?;
+        let artists = genre_artists(&albums, &songs);
+
+        let mut sections = Vec::new();
+        if !albums.is_empty() {
+            sections.push(GenreSection {
+                title: "nav-albums".to_owned(),
+                items: albums.into_iter().map(GenreItem::Album).collect(),
+            });
+        }
+        if !songs.is_empty() {
+            sections.push(GenreSection {
+                title: "nav-songs".to_owned(),
+                items: songs.into_iter().map(GenreItem::Track).collect(),
+            });
+        }
+        if !artists.is_empty() {
+            sections.push(GenreSection {
+                title: "nav-artists".to_owned(),
+                items: artists.into_iter().map(GenreItem::Artist).collect(),
+            });
+        }
         Ok(GenreDetail {
             name: genre_id.to_owned(),
-            sections: match items.is_empty() {
-                true => Vec::new(),
-                false => vec![GenreSection {
-                    title: genre_id.to_owned(),
-                    items,
-                }],
-            },
+            sections,
         })
     }
 
@@ -1095,6 +1136,106 @@ impl SubsonicClient {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// Every album filed under the genre, read page by page. `getAlbumList2` takes a genre, so
+    /// no request beyond the paging is needed.
+    async fn genre_albums(&self, genre_id: &str) -> Result<Vec<Album>> {
+        let mut paged = Paged::default();
+        let mut albums = Vec::new();
+        let mut offset = 0i32;
+        loop {
+            let page = self
+                .client
+                .get_album_list2(
+                    AlbumListType::ByGenre,
+                    Some(LIBRARY_PAGE),
+                    Some(offset),
+                    None,
+                    None,
+                    Some(genre_id),
+                    None,
+                )
+                .await
+                .with_context(|| format!("cannot load the genre {genre_id}"))?;
+            offset += page.len() as i32;
+            let ids: Vec<String> = page.iter().map(|album| album.id.clone()).collect();
+            let (fresh, turn) = paged.absorb(&ids);
+            albums.extend(
+                page.into_iter()
+                    .zip(fresh)
+                    .filter(|(_, fresh)| *fresh)
+                    .map(|(album, _)| self.convert_album(album)),
+            );
+            match turn {
+                Turn::More => {}
+                Turn::End => return Ok(albums),
+                Turn::Stalled => {
+                    bail!("the server keeps answering the same page of the genre {genre_id}")
+                }
+            }
+        }
+    }
+
+    /// Every song filed under the genre, read page by page. `getSongsByGenre` predates the
+    /// client crate's coverage, so its url is signed by hand the way the cover urls are.
+    async fn genre_songs(&self, genre_id: &str) -> Result<Vec<Track>> {
+        let mut paged = Paged::default();
+        let mut songs = Vec::new();
+        let mut offset = 0i32;
+        loop {
+            let page = self.genre_songs_page(genre_id, offset).await?;
+            offset += page.len() as i32;
+            let ids: Vec<String> = page.iter().map(|song| song.id.clone()).collect();
+            let (fresh, turn) = paged.absorb(&ids);
+            songs.extend(
+                page.into_iter()
+                    .zip(fresh)
+                    .filter(|(_, fresh)| *fresh)
+                    .map(|(song, _)| self.song(song)),
+            );
+            match turn {
+                Turn::More => {}
+                Turn::End => return Ok(songs),
+                Turn::Stalled => {
+                    bail!("the server keeps answering the same page of the genre {genre_id}")
+                }
+            }
+        }
+    }
+
+    /// One page of the genre's songs, answered as the client crate's own `Child` rows.
+    async fn genre_songs_page(&self, genre_id: &str, offset: i32) -> Result<Vec<Child>> {
+        let url = format!(
+            "{}/rest/getSongsByGenre?{}&genre={}&count={LIBRARY_PAGE}&offset={offset}",
+            self.server,
+            self.signed,
+            escape::component(genre_id),
+        );
+        let answer: serde_json::Value = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .with_context(|| format!("cannot load the genre {genre_id}"))?
+            .error_for_status()
+            .with_context(|| format!("the server refused the genre {genre_id}"))?
+            .json()
+            .await
+            .with_context(|| format!("the genre {genre_id} answered no json"))?;
+        let response = &answer["subsonic-response"];
+        if response["status"].as_str() != Some("ok") {
+            let message = response["error"]["message"]
+                .as_str()
+                .unwrap_or("an unknown error");
+            bail!("the server refused the genre {genre_id}: {message}");
+        }
+        let songs = response["songsByGenre"]["song"].clone();
+        match songs.is_null() {
+            true => Ok(Vec::new()),
+            false => serde_json::from_value(songs)
+                .with_context(|| format!("cannot read the genre {genre_id}")),
+        }
     }
 
     /// The account and server this client plays from. A track id only means something on its
@@ -1179,6 +1320,157 @@ fn source_genre(source: SourceGenre) -> Genre {
         id: name.clone(),
         name,
         cover: None,
+    }
+}
+
+/// The artists a genre's albums and songs credit, albums first, in the order they are first
+/// named. Subsonic has no artists-of-a-genre endpoint, so the shelf derives membership from the
+/// genre's complete album and song lists; it is not guaranteed to hold every artist the server
+/// would file under the genre. An artist credit without an id would make a card that opens
+/// nothing, and is left out.
+fn genre_artists(albums: &[Album], songs: &[Track]) -> Vec<SavedArtist> {
+    let mut seen = HashSet::new();
+    let mut artists = Vec::new();
+    let credits = albums
+        .iter()
+        .flat_map(|album| &album.artist_refs)
+        .chain(songs.iter().flat_map(|song| &song.artist_refs));
+    for artist in credits {
+        let Some(id) = artist.id.clone() else {
+            continue;
+        };
+        if id.is_empty() || !seen.insert(id.clone()) {
+            continue;
+        }
+        artists.push(SavedArtist {
+            id,
+            name: artist.name.clone(),
+            cover: None,
+            added_at: None,
+        });
+    }
+    artists
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ids(page: &[&str]) -> Vec<String> {
+        page.iter().map(|id| id.to_string()).collect()
+    }
+
+    fn song(artists: Vec<(&str, Option<&str>)>) -> Track {
+        Track {
+            artist_refs: artists
+                .into_iter()
+                .map(|(name, id)| crate::ArtistRef {
+                    name: name.to_owned(),
+                    id: id.map(str::to_owned),
+                })
+                .collect(),
+            ..Track::default()
+        }
+    }
+
+    fn album(id: &str, artists: Vec<(&str, Option<&str>)>) -> Album {
+        Album {
+            id: id.to_owned(),
+            artist_refs: artists
+                .into_iter()
+                .map(|(name, id)| crate::ArtistRef {
+                    name: name.to_owned(),
+                    id: id.map(str::to_owned),
+                })
+                .collect(),
+            ..Album::default()
+        }
+    }
+
+    #[test]
+    fn paged_stops_on_an_empty_page() {
+        let mut paged = Paged::default();
+        let (fresh, turn) = paged.absorb(&ids(&["a", "b"]));
+        assert_eq!(fresh, [true, true]);
+        assert!(matches!(turn, Turn::More));
+        let (_, turn) = paged.absorb(&ids(&[]));
+        assert!(matches!(turn, Turn::End));
+    }
+
+    #[test]
+    fn paged_flags_a_page_of_repeats_as_stalled() {
+        let mut paged = Paged::default();
+        let (_, turn) = paged.absorb(&ids(&["a", "b"]));
+        assert!(matches!(turn, Turn::More));
+        // A server that ignores the offset answers its first page again. That must surface as a
+        // stall, never as a completed listing of its first page.
+        let (fresh, turn) = paged.absorb(&ids(&["a", "b"]));
+        assert_eq!(fresh, [false, false]);
+        assert!(matches!(turn, Turn::Stalled));
+    }
+
+    #[test]
+    fn paged_keeps_a_partly_fresh_page() {
+        let mut paged = Paged::default();
+        let (_, turn) = paged.absorb(&ids(&["a", "b", "c"]));
+        assert!(matches!(turn, Turn::More));
+        let (fresh, turn) = paged.absorb(&ids(&["c", "d"]));
+        assert_eq!(fresh, [false, true]);
+        assert!(matches!(turn, Turn::More));
+    }
+
+    #[test]
+    fn paged_dedupes_across_pages() {
+        let mut paged = Paged::default();
+        let (fresh, _) = paged.absorb(&ids(&["a", "b"]));
+        assert_eq!(fresh, [true, true]);
+        let (fresh, _) = paged.absorb(&ids(&["b", "c", "c"]));
+        assert_eq!(fresh, [false, true, false]);
+    }
+
+    #[test]
+    fn genre_artists_names_each_artist_once_in_album_order() {
+        let albums = vec![
+            album("1", vec![("Ana", Some("ar-1")), ("Bo", Some("ar-2"))]),
+            album("2", vec![("Bo", Some("ar-2")), ("Cid", Some("ar-3"))]),
+            album("3", vec![("Ana", Some("ar-1"))]),
+        ];
+        let artists = genre_artists(&albums, &[]);
+        let names: Vec<&str> = artists.iter().map(|artist| artist.name.as_str()).collect();
+        assert_eq!(names, ["Ana", "Bo", "Cid"]);
+        assert_eq!(artists[0].id, "ar-1");
+    }
+
+    #[test]
+    fn genre_artists_adds_song_credits_after_album_credits() {
+        let albums = vec![album("1", vec![("Ana", Some("ar-1"))])];
+        let songs = vec![
+            song(vec![("Dee", Some("ar-4"))]),
+            song(vec![("Ana", Some("ar-1"))]),
+        ];
+        let artists = genre_artists(&albums, &songs);
+        let names: Vec<&str> = artists.iter().map(|artist| artist.name.as_str()).collect();
+        assert_eq!(names, ["Ana", "Dee"]);
+    }
+
+    #[test]
+    fn genre_artists_leaves_out_credits_without_an_id() {
+        let albums = vec![album(
+            "1",
+            vec![
+                ("Nameless", None),
+                ("Empty", Some("")),
+                ("Real", Some("ar-1")),
+            ],
+        )];
+        let artists = genre_artists(&albums, &[]);
+        assert_eq!(artists.len(), 1);
+        assert_eq!(artists[0].name, "Real");
+    }
+
+    #[test]
+    fn genre_artists_of_no_albums_and_no_songs_is_empty() {
+        assert!(genre_artists(&[], &[]).is_empty());
     }
 }
 
