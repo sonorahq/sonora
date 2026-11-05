@@ -25,7 +25,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Hover a page title cut short by the window to read it in full.
 - In fullscreen, the volume slider rises in and shows the level for as long as you point at it.
 - Lyrics still to be sung and the artist name in fullscreen take on the colour behind them instead of a flat grey.
-- The highlight on a hovered lyric line or instrumental break ends where its words or notes end.
+- The highlight on a hovered lyric line or instrumental break ends where its words or notes end, and spans the sheet when the line wraps.
 - The title and artist in fullscreen carry a lighter shadow.
 - Switching between the cover, lyrics and queue in fullscreen eases the new tab in the way settings pages do.
 - Song, album, artist and playlist menus open with a row of buttons to like, add to the library, download and pin, filled in while they are on, and the download button shows how far a download has got. Playlists sit under Add to playlist, and a checked playlist takes the song out again.
