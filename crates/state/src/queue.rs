@@ -103,8 +103,7 @@ impl Queue {
         let session = self.session.clone();
         let session = session.read(cx);
         let before = self.order.revision();
-        self.order
-            .refresh(|id| session.refreshed_local_track(id));
+        self.order.refresh(|id| session.refreshed_local_track(id));
         if self.order.revision() != before {
             self.remember(cx);
             cx.notify();

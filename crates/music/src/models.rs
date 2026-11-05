@@ -77,6 +77,8 @@ pub struct ScanReport {
     pub issues: Vec<String>,
     pub moved: Vec<(String, String)>,
     pub moved_albums: Vec<(String, String)>,
+    /// Original file IDs proving the folder scope of each durable album alias.
+    pub album_move_paths: std::collections::HashMap<String, Vec<String>>,
 }
 
 /// A song or episode as a provider lists it. The default is an unplayable track with no id, so a

@@ -8,7 +8,7 @@ use music::{Album, ArtistRef, Found, MusicApi, Playlist, SavedArtist, Track};
 use serde::{Deserialize, Serialize};
 use tokio::task::AbortHandle;
 
-use crate::{Io, Library, Network, Session, SessionEvent, Shelf, Sonora, join};
+use crate::{Io, Library, Network, Session, SessionEvent, Sonora, join};
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
 const LIMIT: usize = 20;

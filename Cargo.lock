@@ -4443,6 +4443,7 @@ dependencies = [
  "lyrics",
  "music",
  "percent-encoding",
+ "ring",
  "rodio",
  "rusqlite",
  "serde",
