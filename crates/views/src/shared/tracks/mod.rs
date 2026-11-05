@@ -9,21 +9,24 @@ use std::rc::Rc;
 use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis, RangeAxis, Unit};
 
 use crate::shared::menus::{ItemMenu, TrackColumns};
+use gpui::accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
+use gpui::prelude::StatefulInteractiveElement as _;
 use gpui::{
-    AnyElement, App, Entity, Hsla, InteractiveElement as _, IntoElement as _, SharedString,
-    Styled as _, WeakEntity,
+    AnyElement, App, Context, Entity, Hsla, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, SharedString, Styled as _, WeakEntity, div,
 };
 use music::Track;
 use router::Destination;
-use state::{Detail, History, Library, Origin, Playback, Shelf, Sonora};
+use state::{Detail, History, Library, Network, Origin, Playback, Progress, Shelf, Sonora};
 use ui::{
-    Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, Scrollbar, TableSource, TableState,
+    ArrowRing, Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, Scrollbar, TableSource,
+    TableState,
 };
 
 use crate::shared::cells;
 use crate::shared::confirm::{Confirm, Kind};
-use crate::shared::pins::Pinned as _;
+use crate::shared::pins::{Pinned as _, origin_tag};
 
 pub(crate) use columns::{
     HISTORY_COLUMNS, LIBRARY_COLUMNS, TrackField, album_columns, artist_columns, playlist_columns,
@@ -33,23 +36,26 @@ pub(crate) use sort::initial;
 
 use sort::hits;
 
-/// The current track and its `Playback::control`. A screen keeps the last one and redraws only
-/// when it changes.
-pub(crate) type PlaybackStatus = (Option<String>, Option<bool>);
+/// How strongly an unsaved track's heart shows on its row.
+const SETTLED: f32 = 0.5;
+
+/// The current track, its `Playback::control` and its queue origin. A screen keeps the last
+/// status and redraws only when it changes, including a move between collections of the same song.
+pub(crate) type PlaybackStatus = (Option<String>, Option<bool>, Option<Origin>);
 
 pub(crate) fn playback_status(playback: &Entity<Playback>, cx: &App) -> PlaybackStatus {
     let playback = playback.read(cx);
     let track = playback.track().and_then(|track| track.id.clone());
-    (track, playback.control())
+    (track, playback.control(), playback.origin(cx).cloned())
 }
 pub(crate) trait Tracks: 'static {
     fn tracks<'a>(&self, cx: &'a App) -> &'a [Track];
     fn is_loading(&self, cx: &App) -> bool;
 
-    /// The skeleton rows the table draws before the first tracks arrive. A list that
-    /// leaves the default shows nothing while it loads.
-    fn pending(&self, _cx: &App) -> Option<Pending> {
-        None
+    /// The skeleton rows the table draws before the first tracks arrive. A list that leaves
+    /// the default fills the viewport with them while it loads.
+    fn pending(&self, cx: &App) -> Option<Pending> {
+        self.is_loading(cx).then_some(Pending::Screen)
     }
 }
 
@@ -161,6 +167,8 @@ pub(crate) struct TrackSource {
     playback: Entity<Playback>,
     is_liked: Option<Entity<Library>>,
     starrable: Option<Shelf>,
+    /// The library shelf the rows are, which offline mode keeps to its downloads.
+    library_shelf: Option<Shelf>,
     album: Option<Entity<Detail>>,
     playlist: Option<Entity<Detail>>,
     history: Option<Entity<History>>,
@@ -207,6 +215,7 @@ impl TrackSource {
             playback,
             is_liked: None,
             starrable: None,
+            library_shelf: None,
             album: None,
             playlist: None,
             history: None,
@@ -258,6 +267,16 @@ impl TrackSource {
         self.whence.as_ref().and_then(|whence| whence(cx))
     }
 
+    /// The origin tag a song dragged from this table carries, for a move. A song its playlist
+    /// holds more than once stays a copy, since the provider would take out every copy and the
+    /// Undo would bring back one.
+    fn origin_tag(&self, track: &Track, tracks: &[Track], cx: &App) -> Option<String> {
+        let origin = self.whence(cx)?;
+        let once = origin.whence != state::Whence::Playlist
+            || tracks.iter().filter(|other| other.id == track.id).count() == 1;
+        once.then(|| origin_tag(&origin)).flatten()
+    }
+
     pub(crate) fn table(mut self, table: WeakEntity<TableState<TrackSource>>) -> Self {
         self.table = Some(table);
         self
@@ -273,6 +292,18 @@ impl TrackSource {
     pub(crate) fn starrable(mut self, shelf: Shelf) -> Self {
         self.starrable = Some(shelf);
         self
+    }
+
+    /// Marks the rows as a library shelf, which offline mode keeps to what was downloaded.
+    pub(crate) fn shelved(mut self, shelf: Shelf) -> Self {
+        self.library_shelf = Some(shelf);
+        self
+    }
+
+    /// Whether offline mode keeps these rows to their downloads.
+    fn downloads_only(&self, cx: &App) -> bool {
+        self.library_shelf
+            .is_some_and(|shelf| Network::downloads_only(shelf, cx))
     }
 
     fn catalog(&self, cx: &App) -> bool {
@@ -364,9 +395,21 @@ impl TrackSource {
         )
     }
 
+    /// Whether a row can start playback now, which a track that has to be streamed cannot while
+    /// the network is gone.
+    fn plays_now(&self, track: &Track, cx: &App) -> bool {
+        track.playable
+            && self
+                .playback
+                .read(cx)
+                .unreachable_reason(track, cx)
+                .is_none()
+    }
+
     fn index_cell(&self, cell: &Cell<TrackField>, track: &Track, cx: &App) -> AnyElement {
         let playing = self.now_playing(cell.row, cx);
-        let (preload, press) = match track.playable {
+        let playable = self.plays_now(track, cx);
+        let (preload, press) = match playable {
             false => (None, None),
             true => {
                 let playback = self.playback.clone();
@@ -396,7 +439,7 @@ impl TrackSource {
 
         let number = self.number(track, cx);
 
-        cells::index(cell, playing, track.playable, number, preload, press, cx)
+        cells::index(cell, playing, playable, number, preload, press, cx)
     }
 
     fn title_cell(
@@ -410,8 +453,9 @@ impl TrackSource {
             cell,
             track.name.clone(),
             color,
-            track.explicit,
+            track.explicit.then(|| t!("song-explicit")),
             None,
+            download_mark(cell, track, cx),
             self.liked_button(cell, track, cx),
         )
     }
@@ -446,7 +490,7 @@ impl TrackSource {
                 })
                 .tint(match saved {
                     true => theme.primary,
-                    false => theme.muted_foreground,
+                    false => theme.muted_foreground.opacity(SETTLED),
                 })
                 .when(!saved, |this| {
                     this.invisible()
@@ -529,6 +573,14 @@ impl TableSource for TrackSource {
             if self.sieve.favorites && !self.starred(track, cx) {
                 return false;
             }
+            if (self.sieve.downloaded || self.downloads_only(cx))
+                && !track
+                    .id
+                    .as_deref()
+                    .is_some_and(|id| state::downloaded(id, cx))
+            {
+                return false;
+            }
             hits(track, query)
         })
     }
@@ -551,9 +603,9 @@ impl TableSource for TrackSource {
         let mut axes: Vec<Filter> = duration.into_iter().collect();
         axes.extend([
             Filter::Flag(FlagAxis {
-                key: "filter-explicit",
-                label: t!("filter-explicit"),
-                on: self.sieve.explicit,
+                key: "filter-hide-explicit",
+                label: t!("filter-hide-explicit"),
+                on: self.sieve.hide_explicit,
             }),
             Filter::Flag(FlagAxis {
                 key: "filter-playable",
@@ -568,6 +620,15 @@ impl TableSource for TrackSource {
                 on: self.sieve.favorites,
             }));
         }
+        // Offline mode already keeps a shelf to its downloads, so the filter would do nothing.
+        let offered = self.sieve.downloaded || !Sonora::global(cx).downloads.read(cx).is_empty();
+        if offered && !self.downloads_only(cx) {
+            axes.push(Filter::Flag(FlagAxis {
+                key: "filter-downloaded",
+                label: t!("filter-downloaded"),
+                on: self.sieve.downloaded,
+            }));
+        }
         axes
     }
 
@@ -577,8 +638,8 @@ impl TableSource for TrackSource {
                 self.sieve.duration = Some(value);
                 true
             }
-            FilterChange::Flag("filter-explicit", value) => {
-                self.sieve.explicit = value;
+            FilterChange::Flag("filter-hide-explicit", value) => {
+                self.sieve.hide_explicit = value;
                 true
             }
             FilterChange::Flag("filter-playable", value) => {
@@ -587,6 +648,10 @@ impl TableSource for TrackSource {
             }
             FilterChange::Flag("filter-favorites", value) => {
                 self.sieve.favorites = value;
+                true
+            }
+            FilterChange::Flag("filter-downloaded", value) => {
+                self.sieve.downloaded = value;
                 true
             }
             FilterChange::Reset => {
@@ -609,12 +674,44 @@ impl TableSource for TrackSource {
         self.provider.is_loading(cx)
     }
 
+    /// Why a track that has to be streamed cannot play while the network is gone, in the words
+    /// of the toast picking it would raise.
+    fn tip(&self, row: usize, cx: &App) -> Option<SharedString> {
+        let track = self.provider.tracks(cx).get(row)?;
+        let reason = self.playback.read(cx).unreachable_reason(track, cx)?;
+        let mut args = i18n::FluentArgs::new();
+        if let Some(provider) = reason.provider() {
+            args.set("name", i18n::Value::value(provider.as_ref()));
+        }
+        Some(i18n::lookup(reason.key(), Some(&args)))
+    }
+
     fn pending(&self, cx: &App) -> Option<Pending> {
         self.provider.pending(cx)
     }
 
+    /// The track's title and artists, which is what a screen reader announces for its row.
+    fn name(&self, row: usize, cx: &App) -> Option<SharedString> {
+        let track = self.provider.tracks(cx).get(row)?;
+        Some(match track.artists.is_empty() {
+            true => SharedString::from(track.name.clone()),
+            false => t!(
+                "track-row-name",
+                title = track.name.as_str(),
+                artists = track.artists.as_str()
+            ),
+        })
+    }
+
+    fn row_key(&self, row: usize, cx: &App) -> Option<SharedString> {
+        let id = self.provider.tracks(cx).get(row)?.id.clone()?;
+        Some(id.into())
+    }
+
     fn pin(&self, row: usize, cx: &App) -> Option<Pin> {
-        self.provider.tracks(cx).get(row)?.pin()
+        let tracks = self.provider.tracks(cx);
+        let track = tracks.get(row)?;
+        Some(track.pin()?.origin(self.origin_tag(track, tracks, cx)))
     }
 
     fn cell(&self, cell: Cell<TrackField>, cx: &mut App) -> AnyElement {
@@ -628,7 +725,7 @@ impl TableSource for TrackSource {
             return self.index_cell(&cell, track, cx);
         }
         let faded = muted.opacity(0.5);
-        let (title, detail) = match track.playable {
+        let (title, detail) = match self.plays_now(track, cx) {
             true => (None, muted),
             false => (Some(faded), faded),
         };
@@ -709,6 +806,48 @@ impl TableSource for TrackSource {
     }
 }
 
+/// How far a download the listener asked for has got, shown before the heart. The arrow sits on
+/// a filled disc like the explicit badge, the accent ring fades once the download lands, and a
+/// track still waiting its turn or only cached because it played shows nothing.
+fn download_mark(cell: &Cell<TrackField>, track: &Track, cx: &App) -> Option<AnyElement> {
+    let id = track.id.as_deref()?;
+    let downloads = Sonora::global(cx).downloads.read(cx);
+    let theme = cx.theme();
+    let mark = ("download-mark", cell.row);
+    let ring = |done| {
+        ArrowRing::new(mark, done)
+            .color(theme.primary)
+            .arrow(theme.muted_foreground)
+            .backdrop(theme.muted)
+    };
+    let (ring, landed) = match downloads.track(id)? {
+        Progress::Done => (ring(Some(1.)), true),
+        Progress::Running => (ring(downloads.fraction(id)), false),
+        Progress::Waiting => return None,
+        Progress::Failed => (ring(Some(0.)).arrow(theme.danger), false),
+    };
+    // The id stays the same in every state, since the ring keeps its animation under it and a
+    // new id on landing would skip the fade. Only a landed download keeps a name, since no
+    // catalogued string says what a running or failed one is doing here.
+    let ring = div()
+        .id(("downloaded-mark", cell.row))
+        .flex_none()
+        .child(ring);
+    Some(match landed {
+        true => ring
+            .role(Role::Image)
+            .aria_label(t!("filter-downloaded"))
+            .into_any_element(),
+        false => ring.into_any_element(),
+    })
+}
+
+/// Redraws a track table whenever downloads move, so the marks on its rows keep up.
+pub(crate) fn follow_downloads<T: 'static>(cx: &mut Context<T>) {
+    let downloads = Sonora::global(cx).downloads.clone();
+    cx.observe(&downloads, |_, _, cx| cx.notify()).detach();
+}
+
 #[cfg(test)]
 mod fixture {
     use std::time::Duration;
@@ -718,24 +857,10 @@ mod fixture {
     pub(super) fn track(seconds: u64, explicit: bool, playable: bool) -> Track {
         Track {
             id: Some("id".to_owned()),
-            name: String::new(),
             playable,
-            artists: String::new(),
-            artist_refs: Vec::new(),
-            album: String::new(),
-            album_id: None,
-            cover: None,
             duration: Duration::from_secs(seconds),
-            added_at: None,
-            added_by: None,
-            playcount: None,
-            popularity: 0,
             explicit,
-            track_number: 0,
-            disc_number: 0,
-            tags: Vec::new(),
-            languages: Vec::new(),
-            credits: Vec::new(),
+            ..Default::default()
         }
     }
 }

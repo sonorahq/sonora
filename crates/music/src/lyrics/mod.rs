@@ -29,9 +29,10 @@ pub fn rank(query: &LyricsQuery, hits: Vec<LyricsHit>) -> Vec<LyricsHit> {
     rank_with_priority(query, hits, &[])
 }
 
-/// Ranks hits best first and removes duplicates. Word-by-word beats line-synced, which beats
-/// plain or cut-short lyrics. Within one of those kinds the source earlier in `priority` wins,
-/// and the match score settles the rest. Sources missing from `priority` come after the rest.
+/// Ranks hits best first and removes duplicates. Synced lyrics beat plain ones, which beat
+/// cut-short ones. Within one of those kinds the source earlier in `priority` wins, and the match
+/// score, which favours word-by-word timing, settles the rest. Sources missing from `priority`
+/// come after the rest.
 pub fn rank_with_priority(
     query: &LyricsQuery,
     hits: Vec<LyricsHit>,
@@ -156,18 +157,19 @@ pub fn score(query: &LyricsQuery, hit: &LyricsHit) -> i64 {
     score
 }
 
-/// What kind of lyrics a sheet is, for ranking: 3 word-by-word, 2 line-synced, 1 plain. A sheet
-/// that ends well before the track does counts as 0 whatever its timing.
+/// Whether a sheet is synced and runs the length of the track, the best kind a source can offer.
+/// Once the preferred source has one, no later answer outranks it.
+pub fn fully_synced(query: &LyricsQuery, lyrics: &Lyrics) -> bool {
+    grade(query, lyrics) == 2
+}
+
+/// What kind of lyrics a sheet is, for ranking: 2 synced, 1 plain. A sheet that ends well before
+/// the track does counts as 0 whatever its timing.
 fn grade(query: &LyricsQuery, lyrics: &Lyrics) -> u8 {
-    match (
-        truncated(lyrics, query.duration),
-        lyrics.worded(),
-        lyrics.synced(),
-    ) {
-        (true, _, _) => 0,
-        (false, true, _) => 3,
-        (false, false, true) => 2,
-        (false, false, false) => 1,
+    match (truncated(lyrics, query.duration), lyrics.synced()) {
+        (true, _) => 0,
+        (false, true) => 2,
+        (false, false) => 1,
     }
 }
 

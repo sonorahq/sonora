@@ -1,7 +1,9 @@
 # sonora
 
-A native music streaming client, built with Rust and [GPUI](https://github.com/zed-industries/zed)
-(Zed's UI framework). Cargo workspace, edition 2024, resolver 3.
+A native, familiar music streaming client.
+
+Built with Rust and [GPUI](https://github.com/zed-industries/zed), Zed's UI framework.
+Cargo workspace, edition 2024, resolver 3.
 
 ## Crate layout
 
@@ -64,6 +66,18 @@ sonora → views → state → music
 - **Every user-facing string comes from Fluent.** Add the key to `assets/i18n/en-US/main.ftl`. Other
   locales may lag. Never call `t!` in a constructor: store the key and resolve it in `render`.
   Counts use Fluent selectors. Log messages and `.context(…)` stay in English.
+- **Every interactive element is announced by screen readers.** A node reaches the
+  accessibility tree only with both `.id()` and `.role()`; pair every role with an
+  `aria_label` resolved from Fluent in `render` (icon-only buttons take their name from the
+  tooltip). Keep ids stable across frames and unique within a list: wrap rows in
+  `div().id(("kind", stable_id))` with `aria_position_in_set`/`aria_size_of_set`, never a bare
+  row index. Extend `crates/ui/tests/a11y_tree.rs` with every new primitive.
+- **Every interactive element is announced by screen readers.** A node reaches the
+  accessibility tree only with both `.id()` and `.role()`; pair every role with an
+  `aria_label` resolved from Fluent in `render` (icon-only buttons take their name from the
+  tooltip). Keep ids stable across frames and unique within a list: wrap rows in
+  `div().id(("kind", stable_id))` with `aria_position_in_set`/`aria_size_of_set`, never a bare
+  row index. Extend `crates/ui/tests/a11y_tree.rs` with every new primitive.
 - **Network work runs on tokio.** Anything touching `MusicApi`, librespot or sockets goes inside
   `Io::global(cx).spawn`, awaited from `cx.spawn` and applied in `this.update` ending with
   `cx.notify()`. Store the returned `Task` in a field and never detach a data load. Network-backed
@@ -77,7 +91,9 @@ sonora → views → state → music
   `scripts/generate-icons.py`, `THIRD-PARTY.md` from `scripts/generate-notices.py`, the README
   translation table from `scripts/i18n-coverage.py`.
 - **Do not add tests unless asked.** Offering is fine. Existing tests are `#[cfg(test)] mod tests`
-  at the bottom of the file they cover.
+  at the bottom of the file they cover. Accessibility regression tests in
+  `crates/ui/tests/a11y_tree.rs` are the exception: extend them with every new primitive. Accessibility regression tests in
+  `crates/ui/tests/a11y_tree.rs` are the exception: extend them with every new primitive.
 
 ## Building and checks
 
@@ -122,7 +138,7 @@ body. Scopes in use: `views`, `ui`, `music`, `state`, `playback`, `player`, `set
 
 ## Pull requests
 
-One heading, one list, nothing else:
+One heading, one list and, for a visual change, screenshots. Nothing else:
 
 ```markdown
 ## Summary
@@ -133,9 +149,16 @@ One heading, one list, nothing else:
 
 Bullets are lowercase, imperative, one line each, and describe behaviour rather than files.
 
+A pull request that noticeably changes what the user sees gets screenshots of the result. That
+means a new screen or element, a reworked layout, a theme change, or anything else a reviewer
+would only judge by looking at it. When the change alters something that already exists, show it
+before and after. The images go below the list with no heading. A small spacing nudge or a change
+nobody can see needs none.
+
 ## Changelog
 
 `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Add to
-`## [Unreleased]` as features land, under `Added`, `Changed` or `Fixed`. Entries say what someone
-using Sonora can now do, in one or two short sentences, since the notes are posted to Discord.
-Leave out work no user can observe. Cutting a release is the `release-sonora` skill.
+`## [Unreleased]` as features land, under `Added`, `Changed` or `Fixed`. Each entry is one short
+line saying what someone using Sonora can now do, since the notes are posted to Discord. Leave out
+implementation details and any work no user can observe. Cutting a release is the
+`release-sonora` skill.

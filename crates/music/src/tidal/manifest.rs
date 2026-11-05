@@ -28,6 +28,10 @@ const SPATIAL: &[&str] = &["ec-3", "eac3", "ac-3", "ac3", "ac-4", "ac4", "mha1",
 /// bounds what a wrong `r` or `duration` attribute can cost.
 const SEGMENT_CEILING: usize = 20_000;
 
+/// The widest `%0Nd` a segment template may pad a number to. A `u64` has at most 20 digits, so
+/// anything wider is padding alone, and an absurd width would make the url too big to allocate.
+const WIDEST: usize = 20;
+
 /// What the identifiers of a segment template stand for, for one segment. The init segment has
 /// no number or time.
 #[derive(Clone, Copy)]
@@ -354,6 +358,7 @@ fn expand(template: &str, fields: Fields) -> Result<String> {
             Some(format) => format
                 .strip_suffix('d')
                 .and_then(|width| width.parse().ok())
+                .filter(|width| *width <= WIDEST)
                 .with_context(|| format!("a tidal segment template formats ${tag}$"))?,
         };
         write!(out, "{value:0width$}").ok();

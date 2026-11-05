@@ -3,7 +3,7 @@ use gpui::{Context, Entity, Pixels, Render, StyleRefinement, Window, div, px};
 use state::{AppSettings, Playback, Queue, SideTab, Sonora};
 use ui::{ActiveTheme as _, MIN_CONTENT, Panel, Room, Side};
 
-use crate::chrome::Aside;
+use crate::chrome::{Aside, Members};
 
 const MIN_WIDTH: Pixels = px(240.);
 const MAX_WIDTH: Pixels = px(560.);
@@ -12,11 +12,15 @@ fn fills_content(width: Pixels) -> bool {
     !Room::of(width).fits(Room::Wide)
 }
 
+/// The right sidebar: the queue and the lyrics, which share one view, and the members of the
+/// session or Jam the listener is in.
 pub(crate) struct SidebarRight {
     aside: Entity<Aside>,
+    members: Entity<Members>,
     settings: Entity<AppSettings>,
     width: Pixels,
     open: bool,
+    tab: SideTab,
 }
 
 impl SidebarRight {
@@ -29,13 +33,21 @@ impl SidebarRight {
         let width = px(settings.read(cx).sidebar_right_width()).clamp(MIN_WIDTH, MAX_WIDTH);
         let open = settings.read(cx).sidebar_right_open();
         let tab = settings.read(cx).sidebar_right_tab();
-        let aside = cx.new(|cx| Aside::new(queue, playback, tab, cx));
+        // the shared view starts on the queue while the members are what shows
+        let shown = match tab {
+            SideTab::Members => SideTab::Queue,
+            tab => tab,
+        };
+        let aside = cx.new(|cx| Aside::new(queue, playback, shown, cx));
+        let members = cx.new(Members::new);
 
         Self {
             aside,
+            members,
             settings,
             width,
             open,
+            tab,
         }
     }
 
@@ -70,8 +82,8 @@ impl SidebarRight {
 
     pub(crate) fn toggle(&mut self, cx: &mut Context<Self>) {
         self.open = !self.open;
-        if self.open {
-            let tab = self.aside.read(cx).tab();
+        if self.open && self.tab != SideTab::Members {
+            let tab = self.tab;
             self.aside.update(cx, |aside, cx| aside.show(tab, cx));
         }
         self.remember(cx);
@@ -79,18 +91,30 @@ impl SidebarRight {
     }
 
     pub(crate) fn show(&mut self, tab: SideTab, cx: &mut Context<Self>) {
-        if self.open && self.aside.read(cx).tab() == tab {
+        if self.open && self.tab == tab {
             self.close(cx);
             return;
         }
-        if self.aside.read(cx).tab() != tab {
+        if self.tab != tab {
             self.settings
                 .update(cx, |settings, cx| settings.set_sidebar_right_tab(tab, cx));
         }
-        self.aside.update(cx, |aside, cx| aside.show(tab, cx));
+        if tab != SideTab::Members {
+            self.aside.update(cx, |aside, cx| aside.show(tab, cx));
+        }
+        self.tab = tab;
         self.open = true;
         self.remember(cx);
         cx.notify();
+    }
+
+    /// Shows `tab`, and leaves the sidebar open when it already shows it, where `show` would
+    /// close it.
+    pub(crate) fn reveal(&mut self, tab: SideTab, cx: &mut Context<Self>) {
+        if self.open && self.tab == tab {
+            return;
+        }
+        self.show(tab, cx);
     }
 
     pub(crate) fn close(&mut self, cx: &mut Context<Self>) {
@@ -133,11 +157,14 @@ impl Render for SidebarRight {
             }))
             .when(!theme.transparent, |this| this.bg(theme.background))
             .border_color(theme.border)
-            .child(
-                self.aside
+            .child(match self.tab {
+                SideTab::Members => self.members.clone().into_any_element(),
+                _ => self
+                    .aside
                     .clone()
-                    .cached(StyleRefinement::default().size_full()),
-            )
+                    .cached(StyleRefinement::default().size_full())
+                    .into_any_element(),
+            })
             .into_any_element()
     }
 }

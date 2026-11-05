@@ -1,11 +1,14 @@
+use std::f32::consts::TAU;
+
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, ClickEvent, Div, ElementId, Hsla, Interactivity, MouseButton, Pixels,
-    SharedString, Stateful, StyleRefinement, Window, div, px, relative, svg,
+    SharedString, Stateful, StyleRefinement, TextStyleRefinement, Transformation, Window, div, px,
+    radians, relative, svg,
 };
 
 use crate::glass::{blurring, frost};
-use crate::metrics::Text;
+use crate::metrics::{Text, text_width};
 use crate::theme::ActiveTheme as _;
 use crate::tooltip::{Perch, Tipped as _};
 
@@ -15,8 +18,16 @@ const FADED: f32 = 0.55;
 /// laying a themed slab over it.
 const TINT_HOVER: f32 = 0.14;
 const TINT_ACTIVE: f32 = 0.24;
+/// The status dot's diameter and its distance from the top left corner, as parts of the pad.
+const STATUS: f32 = 0.75;
+const STATUS_INSET: f32 = 0.4;
 /// How far a small button's label sits from its edge, which text set beside one lines up with.
 pub const SMALL_INSET: Pixels = px(8.);
+/// A regular button's side padding and the space between its icon and its label.
+const INSET: Pixels = px(12.);
+const GAP: Pixels = px(6.);
+const ICON: Pixels = px(16.);
+const BORDER: Pixels = px(1.);
 
 type Click = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
@@ -32,6 +43,11 @@ enum Variant {
 pub struct Button {
     base: Stateful<Div>,
     label: Option<SharedString>,
+    /// Labels the button may switch between. The label slot is as wide as the widest of them,
+    /// so the button keeps one width as its label changes.
+    reserve: Vec<SharedString>,
+    /// What a screen reader calls the button when that differs from the visible label.
+    name: Option<SharedString>,
     icon: Option<SharedString>,
     /// A small element drawn after the icon and before the label, as a picker's curve sketch.
     leading: Option<AnyElement>,
@@ -41,10 +57,20 @@ pub struct Button {
     small: bool,
     disabled: bool,
     selected: bool,
+    /// Whether the menu or panel the button opens is showing, `None` for a button that opens
+    /// nothing.
+    expanded: Option<bool>,
+    /// Whether a button that flips a setting is on, `None` for one that does not.
+    toggled: Option<bool>,
+    /// Whether the button stands for one tab of a tab list.
+    tab: bool,
     indicator: bool,
+    /// The colour of the status dot over the icon's top left corner, `None` for no dot.
+    status: Option<Hsla>,
     backgroundless: bool,
     hoverless: bool,
     frosted: bool,
+    turn: f32,
     hovered: Option<StyleRefinement>,
     fill: Option<(Hsla, Hsla)>,
     pressed: Option<StyleRefinement>,
@@ -59,6 +85,8 @@ impl Button {
         Self {
             base: div().id(id),
             label: None,
+            reserve: Vec::new(),
+            name: None,
             icon: None,
             leading: None,
             detail: None,
@@ -67,10 +95,15 @@ impl Button {
             small: false,
             disabled: false,
             selected: false,
+            expanded: None,
+            toggled: None,
+            tab: false,
             indicator: false,
+            status: None,
             backgroundless: false,
             hoverless: false,
             frosted: false,
+            turn: 0.,
             hovered: None,
             fill: None,
             pressed: None,
@@ -82,6 +115,39 @@ impl Button {
 
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    /// Keeps room for the widest of `labels` and centres the shown label in it. Pass every
+    /// label the button can show, the current one included.
+    pub fn reserve(mut self, labels: impl IntoIterator<Item = impl Into<SharedString>>) -> Self {
+        self.reserve = labels.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// How wide a regular, bordered button with an icon and room for the widest of `labels`
+    /// draws, for a caller fitting a row of buttons into known space. No labels gives the width
+    /// of an icon-only button. Labels are measured at the window's current text style.
+    pub fn width(
+        labels: impl IntoIterator<Item = impl Into<SharedString>>,
+        window: &Window,
+    ) -> Pixels {
+        let widest = labels
+            .into_iter()
+            .map(|label| text_width(label, window))
+            .max()
+            .unwrap_or_default();
+        let label = match widest > Pixels::ZERO {
+            true => GAP + widest.ceil(),
+            false => Pixels::ZERO,
+        };
+        INSET * 2. + BORDER * 2. + ICON + label
+    }
+
+    /// Names the button for screen readers in place of its label, which is then read after the
+    /// name. A picker passes the setting it changes, so the current choice is not its only name.
+    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
         self
     }
 
@@ -164,9 +230,36 @@ impl Button {
         self
     }
 
+    /// Tells screen readers whether the menu or panel this button opens is showing.
+    pub fn expanded(mut self, expanded: bool) -> Self {
+        self.expanded = Some(expanded);
+        self
+    }
+
+    /// Announces the button as a toggle that is on or off, for one that flips a setting such as
+    /// shuffle. It changes nothing on screen.
+    pub fn toggled(mut self, toggled: bool) -> Self {
+        self.toggled = Some(toggled);
+        self
+    }
+
+    /// Announces the button as a tab of the tab list around it, read as chosen while `selected`
+    /// is set. It changes nothing on screen.
+    pub fn tab(mut self) -> Self {
+        self.tab = true;
+        self
+    }
+
     /// Paints an active-state dot below the icon without changing the button's layout or hit area.
     pub fn indicator(mut self, indicator: bool) -> Self {
         self.indicator = indicator;
+        self
+    }
+
+    /// Paints a dot of `color` over the top left corner of the icon, marking something under way,
+    /// without changing the button's layout or hit area.
+    pub fn status(mut self, color: Hsla) -> Self {
+        self.status = Some(color);
         self
     }
 
@@ -189,8 +282,14 @@ impl Button {
         self
     }
 
+    /// Rotates the icon by `turn` of a full turn, for an owner that animates it with `Spin`.
+    pub fn turned(mut self, turn: f32) -> Self {
+        self.turn = turn;
+        self
+    }
+
     pub fn tooltip(mut self, key: impl Into<SharedString>) -> Self {
-        self.tooltip = Some((key.into(), Perch::Pointer));
+        self.tooltip = Some((key.into(), Perch::Below));
         self
     }
 
@@ -241,10 +340,12 @@ struct Palette {
 }
 
 impl RenderOnce for Button {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Self {
             mut base,
             label,
+            reserve,
+            name,
             icon,
             leading,
             detail,
@@ -253,10 +354,15 @@ impl RenderOnce for Button {
             small,
             disabled,
             selected,
+            expanded,
+            toggled,
+            tab,
             indicator,
+            status,
             backgroundless,
             hoverless,
             frosted,
+            turn,
             hovered,
             fill,
             pressed,
@@ -338,9 +444,24 @@ impl RenderOnce for Button {
             true => palette.foreground,
             false => tint.unwrap_or(palette.foreground),
         };
+        let reserved = (!reserve.is_empty()).then(|| {
+            let size = small.then(|| TextStyleRefinement {
+                font_size: Some(theme.text(Text::Label).into()),
+                ..Default::default()
+            });
+            window
+                .with_text_style(size, |window| {
+                    reserve
+                        .into_iter()
+                        .map(|label| text_width(label, window))
+                        .max()
+                        .unwrap_or_default()
+                })
+                .ceil()
+        });
         let (height, padding, gap) = match small {
             true => (theme.metrics.control_small, SMALL_INSET, px(4.)),
-            false => (theme.metrics.control, px(12.), px(6.)),
+            false => (theme.metrics.control, INSET, GAP),
         };
         let (hover, active) = match interactive {
             true => (palette.hover, palette.active),
@@ -352,8 +473,39 @@ impl RenderOnce for Button {
         };
         let pressed = state_style(active, pressed, frosting);
         let overrides = std::mem::take(base.style());
+        // A node reaches the tree only with a role, and an icon-only button has
+        // no label of its own, so its tooltip key doubles as the accessible
+        // name the same way the hover text does.
+        // A nameless button still takes a role, so it lands in the tree with
+        // nothing to announce. Fail loudly in dev instead of going silent.
+        debug_assert!(
+            label.is_some() || name.is_some() || tooltip.is_some(),
+            "button without label or tooltip is invisible to screen readers"
+        );
+        let (accessible, description) = match name {
+            Some(name) => (Some(name), label.clone().or_else(|| detail.clone())),
+            None => (
+                label
+                    .clone()
+                    .or_else(|| tooltip.as_ref().map(|(key, _)| i18n::lookup(key, None))),
+                detail.clone(),
+            ),
+        };
 
         let mut button = base
+            .role(match tab {
+                true => gpui::accesskit::Role::Tab,
+                false => gpui::accesskit::Role::Button,
+            })
+            .when_some(accessible, |this, name| this.aria_label(name))
+            .when_some(description, |this, description| {
+                this.aria_description(description)
+            })
+            .when(selected || tab, |this| this.aria_selected(selected))
+            .when_some(expanded, |this, expanded| this.aria_expanded(expanded))
+            .when_some(toggled, |this, toggled| {
+                this.aria_toggled(gpui::accesskit::Toggled::from(toggled))
+            })
             .flex()
             .flex_none()
             .items_center()
@@ -381,9 +533,10 @@ impl RenderOnce for Button {
                 this.child(
                     svg()
                         .path(icons::path(path))
-                        .size(px(16.))
+                        .size(ICON)
                         .flex_none()
-                        .text_color(foreground),
+                        .text_color(foreground)
+                        .with_transformation(Transformation::rotate(radians(turn * TAU))),
                 )
             })
             .children(leading)
@@ -393,6 +546,9 @@ impl RenderOnce for Button {
                         .min_w_0()
                         .truncate()
                         .when(trailing.is_some() || detail.is_some(), |this| this.flex_1())
+                        .when_some(reserved, |this, width| {
+                            this.flex_none().w(width).text_center()
+                        })
                         .child(label),
                 )
             })
@@ -411,7 +567,7 @@ impl RenderOnce for Button {
                 this.child(
                     svg()
                         .path(icons::path(path))
-                        .size(px(16.))
+                        .size(ICON)
                         .flex_none()
                         .text_color(foreground),
                 )
@@ -427,6 +583,18 @@ impl RenderOnce for Button {
                         .size(diameter)
                         .rounded_full()
                         .bg(foreground),
+                )
+            })
+            .when_some(status, |this, color| {
+                let diameter = theme.metrics.pad * STATUS;
+                this.relative().child(
+                    div()
+                        .absolute()
+                        .top(theme.metrics.pad * STATUS_INSET)
+                        .left(theme.metrics.pad * STATUS_INSET)
+                        .size(diameter)
+                        .rounded_full()
+                        .bg(color),
                 )
             })
             .when(interactive, |this| {

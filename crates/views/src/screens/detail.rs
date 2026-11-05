@@ -1,21 +1,26 @@
+use gpui::accesskit::{Role, Toggled};
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Entity, Pixels, Point, Render, ScrollHandle, SharedString,
+    AnyElement, App, Context, Entity, Hsla, Pixels, Point, Render, ScrollHandle, SharedString,
     WeakEntity, Window, div, px,
 };
 
 use std::rc::Rc;
 
 use i18n::t;
-use music::{Album, Playlist, ReleaseType, Track};
+use music::{Album, AlbumDetail, Playlist, ReleaseType, Track};
 use router::{Destination, navigate};
-use state::{AppSettings, Collection, Detail, LibraryEvent, Origin, Playback, Sonora};
+use state::{
+    AppSettings, Collection, Detail, DownloadsChanged, LibraryEvent, Origin, Playback, Progress,
+    Sonora,
+};
 use ui::{
-    ActiveTheme as _, Button, InlineLink, InlineLinks, Menu, Picker, Popovers, Popup, SortAxis,
+    ActiveTheme as _, ArrowRing, Button, InlineLink, InlineLinks, Menu, Picker, Popovers, Popup,
+    SortAxis,
 };
 use ui::{
     ColumnSpec, FilterChange, Listing as _, MIN_CONTENT, Pending, Pin, PinKind, Scrollbar,
-    Scroller, TableDelegate, TableEvent, TableState, Text, Toggle, runtime, table,
+    Scroller, TableDelegate, TableEvent, TableState, Text, runtime, table,
 };
 
 use crate::shared::menus::{album_menu, playlist_menu};
@@ -27,7 +32,7 @@ use crate::shared::album_grid::CardGrid;
 use crate::shared::cards;
 use crate::shared::confirm::Confirm;
 use crate::shared::hero::{
-    HeroMetaStrip, HeroPlayButton, PageHero, copyright_notices, release_date_label,
+    ACTION_GAP, HeroMetaStrip, HeroPlayButton, PageHero, copyright_notices, release_date_label,
 };
 use crate::shared::shelves::{Rail, RailSpec};
 use crate::shared::tracks::{
@@ -133,6 +138,7 @@ impl DetailView {
 
         let table = cx.new(|cx| {
             let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(id));
+            crate::shared::tracks::follow_downloads(cx);
             let source = TrackSource::new(
                 columns,
                 DetailTracks(detail.clone()),
@@ -168,7 +174,7 @@ impl DetailView {
                 }
             });
             let source = source.table(cx.weak_entity());
-            let mut delegate = TableDelegate::new(source, width, cx);
+            let mut delegate = TableDelegate::new(source, width, cx).with_column_menu(&PINNED);
             delegate.set_layout(saved, cx);
             TableState::new(delegate, cx).follow(scroll)
         });
@@ -223,6 +229,18 @@ impl DetailView {
             })
             .detach();
         }
+
+        // Progress only redraws the download button. A filtered table rebuilds when what it
+        // shows may have changed, since a rebuild drops the open menu and the selection.
+        let downloads = Sonora::global(cx).downloads.clone();
+        cx.observe(&downloads, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&downloads, |this, _, _: &DownloadsChanged, cx| {
+            if this.table.narrowed(cx) {
+                this.rebuild(cx);
+            }
+            cx.notify();
+        })
+        .detach();
 
         let chrome = Chrome::entity(cx);
         cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
@@ -342,12 +360,13 @@ impl DetailView {
         page::restore(&self.settings.clone(), &self.table, &key, cx);
     }
 
-    fn header(&self, cx: &Context<Self>) -> AnyElement {
+    fn header(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
         let header = self.detail.read(cx).header();
         let kind = header
             .map(|header| header.kind)
+            .or(self.detail.read(cx).kind())
             .unwrap_or(Collection::Album);
         let release = header
             .and_then(|header| header.release)
@@ -365,12 +384,9 @@ impl DetailView {
         let track_count = header.map(|header| header.track_count).unwrap_or(0);
         let listed = self.detail.read(cx).tracks();
         let duration: std::time::Duration = listed.iter().map(|track| track.duration).sum();
-        let (eyebrow, label) = match kind {
-            Collection::Playlist => (t!("detail-playlist"), t!("detail-play-playlist")),
-            Collection::Album => (
-                i18n::lookup(cards::release_key(release), None),
-                t!("detail-play-album"),
-            ),
+        let eyebrow = match kind {
+            Collection::Playlist => t!("detail-playlist"),
+            Collection::Album => i18n::lookup(cards::release_key(release), None),
         };
 
         let mut strip = HeroMetaStrip::new();
@@ -407,29 +423,49 @@ impl DetailView {
             strip = strip.text(runtime(duration));
         }
 
-        let overflow = self.menu(cx).map(|menu| {
+        let play = HeroPlayButton::listed("play-detail", &self.table, self.playback.clone());
+        let shuffle =
+            HeroPlayButton::shuffle_listed("shuffle-detail", &self.table, self.playback.clone());
+        let menu = self.menu(cx);
+        // Buttons whose action the overflow menu also offers fold into it from the right when
+        // the row runs out of room, Download first and Shuffle last. Play and More always show.
+        let mut spare = match menu.is_some() {
+            true => {
+                let gap = ACTION_GAP.to_pixels(window.rem_size());
+                let step = Button::width(std::iter::empty::<SharedString>(), window) + gap;
+                let room = PageHero::room(self.width - theme.metrics.inset * 2., window, cx);
+                ((room - play.width(window) - step) / step).floor().max(0.) as usize
+            }
+            false => usize::MAX,
+        };
+        let mut fits = || match spare {
+            0 => false,
+            _ => {
+                spare -= 1;
+                true
+            }
+        };
+        let (shuffle, folded) = match fits() {
+            true => (Some(shuffle), None),
+            false => (None, Some(shuffle.shuffle_item(cx))),
+        };
+        let library = self.library_button(cx).filter(|_| fits());
+        let download = self.download_button(cx).filter(|_| fits());
+        let overflow = menu.map(|menu| {
             Picker::icon("detail-overflow", &self.popovers, "icons/ellipsis.svg")
                 .tooltip("common-more")
                 .large()
                 .left()
-                .menu(menu)
+                .menu(menu.lead(folded))
         });
         let actions = div()
             .flex()
             .items_center()
-            .gap_2()
-            .child(HeroPlayButton::listed(
-                "play-detail",
-                label,
-                &self.table,
-                self.playback.clone(),
-            ))
-            .child(HeroPlayButton::shuffle_listed(
-                "shuffle-detail",
-                &self.table,
-                self.playback.clone(),
-            ))
-            .children(self.library_button(cx))
+            .gap(ACTION_GAP)
+            .child(play)
+            .children(shuffle)
+            .children(library)
+            .children(download)
             .children(overflow);
 
         let cover = header.and_then(|header| header.cover.clone());
@@ -443,6 +479,7 @@ impl DetailView {
 
         let view = self.me.clone();
         PageHero::new("detail-hero", title)
+            .pending(header.is_none() && self.detail.read(cx).is_loading())
             .pin(pin)
             .cover(cover)
             .eyebrow(eyebrow)
@@ -517,6 +554,65 @@ impl DetailView {
         )
     }
 
+    /// Downloads the album or playlist for offline play, or removes its download. It shows for a
+    /// provider whose tracks can be downloaded, and for one that is offline with this page
+    /// downloaded.
+    fn download_button(&self, cx: &App) -> Option<Button> {
+        let theme = *cx.theme();
+        let sonora = Sonora::global(cx);
+        let downloads = sonora.downloads.clone();
+        let detail = self.detail.read(cx);
+        let id = detail.id()?.to_owned();
+        if music::is_local_id(&id) {
+            return None;
+        }
+        let kind = detail.header()?.kind;
+        let progress = downloads.read(cx).set(kind, &id);
+        if progress.is_none() && !sonora.session.read(cx).capabilities().downloads {
+            return None;
+        }
+        let album = detail.album().cloned();
+        let playlist = detail.playlist().cloned();
+        let tracks = detail.tracks().to_vec();
+        let share = downloads.read(cx).share(kind, &id);
+        let ring = |done: f32, color: Hsla| {
+            ArrowRing::new("detail-download-ring", Some(done)).color(color)
+        };
+        let button = Button::new("detail-download").outline();
+        Some(
+            match progress {
+                None => button.icon("icons/download.svg").tooltip("menu-download"),
+                Some(Progress::Failed) => button
+                    .leading(ring(share, theme.danger))
+                    .tooltip("menu-download"),
+                Some(Progress::Waiting | Progress::Running) => button
+                    .leading(ring(share, theme.primary))
+                    .tooltip("menu-downloading"),
+                Some(Progress::Done) => button
+                    .leading(ring(1., theme.primary))
+                    .tooltip("menu-remove-download"),
+            }
+            .on_click(move |_, _, cx| {
+                downloads.update(cx, |downloads, cx| match (progress, &album, &playlist) {
+                    (None | Some(Progress::Failed), Some(album), _) => {
+                        downloads.download_album(
+                            AlbumDetail {
+                                album: album.clone(),
+                                tracks: tracks.clone(),
+                            },
+                            cx,
+                        );
+                    }
+                    (None | Some(Progress::Failed), None, Some(playlist)) => {
+                        downloads.download_playlist_by_id(playlist, cx);
+                    }
+                    (None | Some(Progress::Failed), None, None) => {}
+                    _ => downloads.remove_set(kind, &id, cx),
+                })
+            }),
+        )
+    }
+
     /// The recommendation rail under the table, on album pages only: related releases
     /// under the albums tab, similar artists under the artists tab. The tabs show while
     /// both lists hold something. A rail still on its way reads as skeletons only while
@@ -572,6 +668,7 @@ impl DetailView {
                                 .small()
                                 .outline()
                                 .selected(tab == self.rail_tab)
+                                .aria_toggled(Toggled::from(tab == self.rail_tab))
                                 .on_click(move |_, _, cx| {
                                     opened
                                         .update(cx, |this, cx| {
@@ -591,15 +688,16 @@ impl DetailView {
                 )
             }
         };
+        let count = match tab {
+            RailTab::Albums => albums,
+            RailTab::Artists => artists,
+        };
         vec![self.rails[0].render(
             RailSpec {
                 tag: "detail-also-like",
                 place: 0,
                 title: t!("album-also-like"),
-                count: match tab {
-                    RailTab::Albums => albums,
-                    RailTab::Artists => artists,
-                },
+                count,
                 tile: card,
                 columns,
                 tabs,
@@ -618,18 +716,24 @@ impl DetailView {
                         let Some(album) = detail.also_like().get(position) else {
                             return div().into_any_element();
                         };
-                        cards::album_card(("detail-also-like", position), album, &held.playback, cx)
+                        let id = SharedString::from(format!("detail-also-like-{}", album.id));
+                        cards::album_card(id, album, &held.playback, cx)
                             .tile(card)
                             .flat()
+                            .aria_position_in_set(position + 1)
+                            .aria_size_of_set(count)
                             .into_any_element()
                     }
                     RailTab::Artists => {
                         let Some(artist) = detail.similar().get(position) else {
                             return div().into_any_element();
                         };
-                        cards::artist_card(("detail-similar", position), artist, &held.playback, cx)
+                        let id = SharedString::from(format!("detail-similar-{}", artist.id));
+                        cards::artist_card(id, artist, &held.playback, cx)
                             .tile(card)
                             .flat()
+                            .aria_position_in_set(position + 1)
+                            .aria_size_of_set(count)
                             .into_any_element()
                     }
                 }
@@ -655,7 +759,12 @@ impl DetailView {
                 .min_w_0()
                 .text_size(theme.text(Text::Tiny))
                 .text_color(theme.muted_foreground)
-                .children(notices)
+                .children(
+                    notices
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, notice)| ui::spoken(("detail-notice", index), notice)),
+                )
                 .into_any_element(),
         )
     }
@@ -682,7 +791,13 @@ impl DetailView {
 impl Render for DetailView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(failure) = self.failure(cx) {
-            return div().relative().size_full().child(failure);
+            return div()
+                .id("detail-failure")
+                .role(Role::Alert)
+                .relative()
+                .size_full()
+                .child(failure)
+                .into_any_element();
         }
 
         self.table.claim(cx);
@@ -728,21 +843,34 @@ impl Render for DetailView {
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
                     .pt(inset)
                     .pb(inset)
-                    .child(div().px(inset).child(self.header(cx)))
+                    .child(div().px(inset).child(self.header(window, cx)))
                     .child(table(&self.table))
                     .children(self.notices(cx))
                     .child(div().px(inset).pt_10().children(rails)),
             )
             .when_some(context_menu, |this, menu| this.child(menu))
+            .into_any_element()
     }
 }
 
 impl DetailView {
     /// The page an album or a playlist shows instead of its header and its table when it cannot
     /// be read: the No connection state as soon as the network is gone, whatever rows this page
-    /// happens to hold, and the failure of its own load otherwise.
+    /// happens to hold, and the failure of its own load otherwise. A downloaded album or
+    /// playlist opens from its kept copy instead, network or not.
     fn failure(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let id = self.detail.read(cx).id()?.to_owned();
+        let detail = self.detail.read(cx);
+        let id = detail.id()?.to_owned();
+        let kept = detail.kind().is_some_and(|kind| {
+            Sonora::global(cx)
+                .downloads
+                .read(cx)
+                .set(kind, &id)
+                .is_some()
+        });
+        if kept && detail.error().is_none() {
+            return None;
+        }
         let reason = match trouble::unreachable(&id, cx) {
             true => None,
             false => Some(self.detail.read(cx).error()?.to_owned()),
@@ -757,6 +885,7 @@ impl DetailView {
                 move |_, _, cx| {
                     detail.update(cx, |detail, cx| detail.reload(cx));
                 },
+                cx,
             )
             .size_full()
             .into_any_element(),
@@ -787,28 +916,6 @@ impl DetailView {
         self.table.clone().cycle_sort(key, cx);
         cx.notify();
     }
-
-    fn toggles(&self, cx: &App) -> Vec<Toggle> {
-        self.table
-            .read(cx)
-            .delegate()
-            .toggles()
-            .into_iter()
-            .filter(|toggle| !PINNED.contains(&toggle.key))
-            .collect()
-    }
-
-    fn toggle_column(&mut self, key: &'static str, cx: &mut Context<Self>) {
-        if PINNED.contains(&key) {
-            return;
-        }
-
-        let mut layout = self.table.layout(cx);
-        layout.toggle(key);
-        self.table.clone().set_layout(layout, cx);
-        self.persist(cx);
-        cx.notify();
-    }
 }
 
 impl Tooled for DetailView {
@@ -817,16 +924,10 @@ impl Tooled for DetailView {
     }
 
     fn tools(&self, cx: &App) -> Vec<AnyElement> {
-        let columned = self.me.clone();
         let sifted = self.me.clone();
         let sorted = self.me.clone();
 
         vec![
-            tools::columns(&self.popovers, self.toggles(cx), move |key, cx| {
-                columned
-                    .update(cx, |view, cx| view.toggle_column(key, cx))
-                    .ok();
-            }),
             tools::filters(
                 &self.popovers,
                 &self.sliders,

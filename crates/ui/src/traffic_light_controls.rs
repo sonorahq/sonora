@@ -1,8 +1,10 @@
 use gpui::prelude::*;
 use gpui::{
-    App, Div, Hsla, MouseButton, Pixels, StyleRefinement, Window, WindowControlArea, div, px, rgb,
-    svg,
+    App, Div, Hsla, MouseButton, Pixels, SharedString, StyleRefinement, Window, WindowControlArea,
+    div, px, rgb, svg,
 };
+
+use i18n::t;
 
 const SYSTEM_ACTS: bool = cfg!(target_os = "windows");
 const DOT: Pixels = px(12.);
@@ -41,6 +43,16 @@ impl Control {
             Self::Close => rgb(0xff5f57).into(),
             Self::Minimize => rgb(0xfebc2e).into(),
             Self::Maximize | Self::Restore => rgb(0x28c840).into(),
+        }
+    }
+
+    /// What a screen reader calls the control.
+    fn name(self) -> SharedString {
+        match self {
+            Self::Minimize => t!("app-minimize"),
+            Self::Maximize => t!("window-maximize"),
+            Self::Restore => t!("window-restore"),
+            Self::Close => t!("app-close-window"),
         }
     }
 
@@ -128,6 +140,8 @@ impl RenderOnce for TrafficLightControls {
             .children(wanted.into_iter().map(move |control| {
                 div()
                     .id(control.id())
+                    .role(gpui::accesskit::Role::Button)
+                    .aria_label(control.name())
                     .flex()
                     .flex_none()
                     .items_center()
@@ -157,6 +171,14 @@ impl RenderOnce for TrafficLightControls {
                                     Control::Close => window.remove_window(),
                                 }
                             })
+                    })
+                    // The system handles a press on its own maximize, which a screen reader cannot
+                    // reach, so the click action zooms the window itself. Zooming never restores,
+                    // so Restore gets no click action.
+                    .when(control == Control::Maximize && control.system(), |this| {
+                        this.on_a11y_action(gpui::accesskit::Action::Click, |_, window, _| {
+                            window.zoom_window()
+                        })
                     })
             }));
         controls.style().refine(&overrides);

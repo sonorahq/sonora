@@ -5,7 +5,7 @@ use router::{Destination, navigate};
 use state::Outputs;
 use ui::{ActiveTheme as _, Button, Picker, Switch, Text};
 
-use super::{Group, SettingsView, Slot};
+use super::{Group, Row, SettingsView, Slot};
 use crate::shared::equalizer::sound_picker;
 
 /// The chevron at the end of the equalizer row, as large as a button's icon.
@@ -15,11 +15,19 @@ const SOUND: &str = "settings-equalizer-sound";
 
 impl SettingsView {
     pub(super) fn sound_groups(&self, cx: &App) -> Vec<Group> {
+        let match_rate = self.outputs.read(cx).match_rate_supported();
         let failed = self.outputs.read(cx).failure().is_some();
         // with nothing open there is no rate or buffer to show
         let output = match failed {
             true => vec![Slot::OutputDevice, Slot::OutputFailure],
-            false => vec![Slot::OutputDevice, Slot::SampleRate, Slot::Buffer],
+            false => {
+                let mut rows = vec![Slot::OutputDevice, Slot::SampleRate];
+                if match_rate {
+                    rows.push(Slot::MatchRate);
+                }
+                rows.push(Slot::Buffer);
+                rows
+            }
         };
         vec![
             Group::new("settings-group-output", "icons/volume-2.svg").rows(output),
@@ -44,12 +52,11 @@ impl SettingsView {
 
         self.row(
             title,
-            div()
+            ui::spoken("settings-output-failure", detail)
                 .max_w(theme.metrics.cover * 2.)
                 .truncate()
                 .text_size(theme.text(Text::Label))
                 .text_color(theme.muted_foreground)
-                .child(detail)
                 .into_any_element(),
         )
     }
@@ -73,13 +80,18 @@ impl SettingsView {
     pub(super) fn sample_rate_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let outputs = self.outputs.read(cx);
         let device = outputs.current();
-        let current = outputs.rate(cx);
+        // while the rate follows each track there is none to pick
+        let following = outputs.following(cx);
+        let current = match following {
+            true => device.map(|device| device.format.rate),
+            false => outputs.rate(cx),
+        };
         let rates = device
             .map(|device| device.rates.clone())
             .unwrap_or_default();
         // while another device is being tried, the open stream is not the one that will play
         let locked = outputs.switching();
-        let settings_uri = match rates.len() > 1 {
+        let settings_uri = match rates.len() > 1 || following {
             true => None,
             false => {
                 music::output::system_audio_settings_uri(device.map(|device| device.id.as_str()))
@@ -88,16 +100,20 @@ impl SettingsView {
         let rate = current
             .map(|rate| t!("settings-sample-rate-value", khz = f64::from(rate) / 1_000.))
             .unwrap_or_else(|| t!("settings-output-idle"));
-        let stepper = current.filter(|_| rates.len() > 1).map(|current| {
-            output_stepper(
-                "sample-rate",
-                current,
-                &rates,
-                locked,
-                Outputs::set_rate,
-                cx,
-            )
-        });
+        let rate = ui::spoken("sample-rate-value", rate);
+        let stepper = current
+            .filter(|_| rates.len() > 1 && !following)
+            .map(|current| {
+                output_stepper(
+                    "sample-rate",
+                    ("settings-sample-rate-lower", "settings-sample-rate-higher"),
+                    current,
+                    &rates,
+                    locked,
+                    Outputs::set_rate,
+                    cx,
+                )
+            });
 
         self.row(
             t!("settings-sample-rate"),
@@ -123,6 +139,35 @@ impl SettingsView {
         )
     }
 
+    /// The switch that has a direct output run at the sample rate of each track. It means nothing
+    /// on a shared output, whose rate is every other app's too, and says so until a direct one is
+    /// chosen.
+    pub(super) fn match_rate_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let outputs = self.outputs.read(cx);
+        let on = outputs.match_rate(cx);
+        let available = outputs.direct_chosen();
+        let locked = outputs.switching();
+        let detail = match available {
+            true => t!("settings-match-rate-detail"),
+            false => t!("settings-match-rate-direct-only"),
+        };
+
+        Row::new(
+            t!("settings-match-rate"),
+            Switch::new("match-rate", on)
+                .name(t!("settings-match-rate"))
+                .disabled(!available || locked)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.outputs
+                        .update(cx, |outputs, cx| outputs.set_match_rate(!on, cx));
+                }))
+                .into_any_element(),
+        )
+        .detail(detail)
+        .disabled(!available)
+        .into_any_element()
+    }
+
     /// The buffer Sonora asks the device for, in frames, with the buffers the device allows to
     /// step through. The row keeps its shape while the stream reopens, showing the buffer it
     /// reopens with.
@@ -137,8 +182,17 @@ impl SettingsView {
         let buffer = current
             .map(|frames| SharedString::from(frames.to_string()))
             .unwrap_or_else(|| t!("settings-output-idle"));
+        let buffer = ui::spoken("buffer-value", buffer);
         let stepper = current.filter(|_| buffers.len() > 1).map(|current| {
-            output_stepper("buffer", current, &buffers, locked, Outputs::set_buffer, cx)
+            output_stepper(
+                "buffer",
+                ("settings-buffer-smaller", "settings-buffer-larger"),
+                current,
+                &buffers,
+                locked,
+                Outputs::set_buffer,
+                cx,
+            )
         });
 
         self.row(
@@ -161,10 +215,13 @@ impl SettingsView {
         let theme = *cx.theme();
         let on = self.equalizer.read(cx).enabled();
         let sound = sound_picker(SOUND, &self.popovers, &self.equalizer, &self.settings, cx)
-            .width(Picker::REGULAR);
+            .width(Picker::REGULAR)
+            .name(t!("equalizer-sound"));
 
         div()
             .id("open-equalizer")
+            .role(gpui::accesskit::Role::Button)
+            .aria_label(t!("settings-equalizer"))
             .flex()
             .items_center()
             .gap_3()
@@ -192,12 +249,14 @@ impl SettingsView {
                 div()
                     .flex_none()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(Switch::new("equalizer", on).on_click(cx.listener(
-                        move |this, _, _, cx| {
-                            this.equalizer
-                                .update(cx, |equalizer, cx| equalizer.set_enabled(!on, cx));
-                        },
-                    ))),
+                    .child(
+                        Switch::new("equalizer", on)
+                            .name(t!("settings-equalizer"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.equalizer
+                                    .update(cx, |equalizer, cx| equalizer.set_enabled(!on, cx));
+                            })),
+                    ),
             )
             .child(
                 svg()
@@ -212,9 +271,10 @@ impl SettingsView {
 
 /// The minus and plus buttons beside an output setting's value, which `apply` the next lower or
 /// higher of `options` than `current`. A button with nothing further that way is disabled, and
-/// both are while `locked`.
+/// both are while `locked`. `names` holds the Fluent keys screen readers name the two buttons by.
 pub(super) fn output_stepper(
     id: &'static str,
+    names: (&'static str, &'static str),
     current: u32,
     options: &[u32],
     locked: bool,
@@ -227,20 +287,22 @@ pub(super) fn output_stepper(
         .find(|&&option| option < current)
         .copied();
     let higher = options.iter().find(|&&option| option > current).copied();
-    let step = |suffix: &'static str, label: &'static str, next: Option<u32>| {
-        Button::new(SharedString::from(format!("{id}-{suffix}")))
-            .label(label)
-            .small()
-            .outline()
-            .disabled(locked || next.is_none())
-            .on_click(cx.listener(move |this, _, _, cx| {
-                let Some(next) = next else { return };
-                this.outputs
-                    .update(cx, |outputs, cx| apply(outputs, next, cx));
-            }))
-    };
+    let step =
+        |suffix: &'static str, label: &'static str, name: &'static str, next: Option<u32>| {
+            Button::new(SharedString::from(format!("{id}-{suffix}")))
+                .label(label)
+                .name(i18n::lookup(name, None))
+                .small()
+                .outline()
+                .disabled(locked || next.is_none())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let Some(next) = next else { return };
+                    this.outputs
+                        .update(cx, |outputs, cx| apply(outputs, next, cx));
+                }))
+        };
     (
-        step("lower", "\u{2212}", lower),
-        step("higher", "+", higher),
+        step("lower", "\u{2212}", names.0, lower),
+        step("higher", "+", names.1, higher),
     )
 }

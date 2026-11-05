@@ -11,6 +11,7 @@ bundled-sqlite = ["state/bundled-sqlite"]
 
 [dependencies]
 anyhow.workspace = true
+cli.workspace = true
 dirs.workspace = true
 env_logger.workspace = true
 futures.workspace = true
@@ -44,6 +45,7 @@ tray-icon.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2.workspace = true
+libc.workspace = true
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = [
   "block2",
@@ -61,7 +63,13 @@ resvg.workspace = true
 state = { workspace = true, features = ["bundled-sqlite"] }
 widestring.workspace = true
 windows.workspace = true
-windows-sys.workspace = true
+windows-sys = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_System_Console",
+  "Win32_System_Threading",
+] }
 
 [build-dependencies]
 embed.workspace = true

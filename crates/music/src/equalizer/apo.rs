@@ -35,6 +35,9 @@ const UNSUPPORTED: [&str; 15] = [
     "VSTPlugin",
     "LoudnessCorrection",
 ];
+/// The most bytes of text `parse` reads. Real profiles are a few kilobytes, so anything past
+/// this is not one and is refused before it can stall the thread reading it.
+pub const MAX_TEXT: usize = 1024 * 1024;
 
 /// A text read into a curve, with every line the curve leaves out.
 #[derive(Clone, Debug, PartialEq)]
@@ -81,12 +84,17 @@ pub enum Refused {
     /// More filters that are on than a curve holds, by count. Dropping some would make a
     /// different curve.
     TooMany(usize),
+    /// A text longer than `MAX_TEXT` bytes, left unread.
+    TooLarge,
 }
 
 /// Reads an Equalizer APO configuration the way APO does: `LS` and `HS` move their corner to
 /// the centre, the preamp is the sum of the `Preamp` lines, and an `OFF` filter is kept only
 /// while the curve has room for it after every `ON` one.
 pub fn parse(text: &str) -> Result<Parsed, Refused> {
+    if text.len() > MAX_TEXT {
+        return Err(Refused::TooLarge);
+    }
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut preamp: Option<(usize, f64)> = None;
     let mut filters = Vec::new();
@@ -399,12 +407,35 @@ fn spaced<'a>(text: &'a str, parts: &[&str], apart: bool) -> Option<&'a str> {
     Some(rest)
 }
 
-/// The longest start of `text` that is a number, the way C's `wcstod` reads one.
+/// The longest start of `text` that is a decimal number, the way C's `wcstod` reads one. It
+/// scans the sign, digits, dot and exponent once and parses only that span.
 fn leading(text: &str) -> Option<f64> {
-    (1..=text.len())
-        .rev()
-        .filter(|end| text.is_char_boundary(*end))
-        .find_map(|end| text[..end].parse().ok())
+    let bytes = text.as_bytes();
+    let digits = |from: usize| {
+        bytes[from..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count()
+    };
+    let mut end = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let whole = digits(end);
+    end += whole;
+    let mut fraction = 0;
+    if bytes.get(end) == Some(&b'.') {
+        fraction = digits(end + 1);
+        end += 1 + fraction;
+    }
+    if whole + fraction == 0 {
+        return None;
+    }
+    if matches!(bytes.get(end), Some(b'e' | b'E')) {
+        let sign = usize::from(matches!(bytes.get(end + 1), Some(b'+' | b'-')));
+        let exponent = digits(end + 1 + sign);
+        if exponent > 0 {
+            end += 1 + sign + exponent;
+        }
+    }
+    text[..end].parse().ok()
 }
 
 /// A preamp value as APO's `" %lf dB"` reads it, the unit optional.

@@ -2,8 +2,9 @@ use std::time::Duration;
 
 use gpui::{App, Context, Entity, EventEmitter, Task};
 
+use crate::library::Shelf;
 use crate::session::Session;
-use crate::{Io, Sonora};
+use crate::{AppSettings, Io, Sonora};
 
 /// How long to wait before each check of whether the network is back. The last one repeats
 /// for as long as the network stays gone.
@@ -23,22 +24,29 @@ pub struct Reconnected;
 
 /// Whether the app can reach the network at all, as one answer for the whole app rather than
 /// one per screen. It goes offline on the first failure that reads as a lost connection and
-/// comes back either when something reaches the network or when its own check does.
+/// comes back either when something reaches the network or when its own check does. Offline
+/// mode reads as a network that is gone for as long as the listener keeps it on.
 pub struct Network {
     session: Entity<Session>,
+    settings: Entity<AppSettings>,
     io: Io,
     lost: bool,
+    /// Whether the listener turned offline mode on.
+    offline: bool,
     probe: Option<Task<()>>,
 }
 
 impl EventEmitter<Reconnected> for Network {}
 
 impl Network {
-    pub fn new(session: Entity<Session>, io: Io) -> Self {
+    pub fn new(session: Entity<Session>, settings: Entity<AppSettings>, io: Io, cx: &App) -> Self {
+        let offline = settings.read(cx).offline_mode();
         Self {
             session,
+            settings,
             io,
             lost: false,
+            offline,
             probe: None,
         }
     }
@@ -47,12 +55,56 @@ impl Network {
         Sonora::global(cx).network.clone()
     }
 
-    /// Whether the network is gone. Every screen that needs one asks this rather than waiting
-    /// for its own load to fail.
+    /// Whether the network is gone, or offline mode is on. Every screen that needs one asks this
+    /// rather than waiting for its own load to fail.
     pub fn lost(cx: &App) -> bool {
         match cx.try_global::<Sonora>() {
-            Some(sonora) => sonora.network.read(cx).lost,
+            Some(sonora) => {
+                let network = sonora.network.read(cx);
+                network.lost || network.offline
+            }
             None => false,
+        }
+    }
+
+    /// Whether the listener turned offline mode on, which a screen tells apart from a lost
+    /// connection by offering to go online rather than to try again.
+    pub fn offline(cx: &App) -> bool {
+        cx.try_global::<Sonora>()
+            .is_some_and(|sonora| sonora.network.read(cx).offline)
+    }
+
+    /// Whether offline mode keeps the lists of `shelf` to what was downloaded. Local files need
+    /// no network, so their shelf keeps everything.
+    pub fn downloads_only(shelf: Shelf, cx: &App) -> bool {
+        !shelf.local() && Self::offline(cx)
+    }
+
+    /// Turns offline mode on or off and remembers it for the next launch. Going offline lets go of
+    /// the live account. Going online with the network there raises [`Reconnected`], so every
+    /// screen and the account load again.
+    pub fn set_offline(&mut self, offline: bool, cx: &mut Context<Self>) {
+        if self.offline == offline {
+            return;
+        }
+        log::info!(
+            "network: offline mode is {}",
+            match offline {
+                true => "on",
+                false => "off",
+            }
+        );
+        self.offline = offline;
+        self.settings
+            .update(cx, |settings, cx| settings.set_offline_mode(offline, cx));
+        cx.notify();
+        cx.refresh_windows();
+        match offline {
+            true => self
+                .session
+                .update(cx, |session, cx| session.go_offline(cx)),
+            false if !self.lost => cx.emit(Reconnected),
+            false => {}
         }
     }
 
@@ -100,7 +152,10 @@ impl Network {
         self.probe = None;
         cx.notify();
         cx.refresh_windows();
-        cx.emit(Reconnected);
+        // In offline mode nothing is let back on the network until the listener goes online.
+        if !self.offline {
+            cx.emit(Reconnected);
+        }
     }
 
     /// Opens a connection to the active provider's host until one succeeds, waiting longer

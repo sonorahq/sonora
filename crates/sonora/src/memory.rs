@@ -45,7 +45,7 @@ fn report(probed: (Footprint, Option<usize>), cx: &mut App) {
     let (entries, bytes) = ui::artwork_usage(cx).unwrap_or((0, 0));
     let queue = Sonora::global(cx).queue.read(cx);
     let past = queue.past().len();
-    let ahead = queue.upcoming().len() + queue.similar().len();
+    let ahead = queue.upcoming().len();
 
     log::debug!(
         "memory: rss {}, heap {}, gpu {}, file {}, artwork {entries} entries / {}, queue {past} past / {ahead} ahead",

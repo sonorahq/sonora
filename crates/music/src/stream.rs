@@ -104,9 +104,13 @@ pub trait Source: Send + 'static {
     fn chunk(&mut self) -> impl Future<Output = Result<Option<Bytes>>> + Send;
 }
 
+/// A failed read drops the url from its error, since a media url is often signed and the error
+/// ends up in the log.
 impl Source for reqwest::Response {
     async fn chunk(&mut self) -> Result<Option<Bytes>> {
-        Ok(reqwest::Response::chunk(self).await?)
+        Ok(reqwest::Response::chunk(self)
+            .await
+            .map_err(reqwest::Error::without_url)?)
     }
 }
 

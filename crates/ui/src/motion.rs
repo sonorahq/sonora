@@ -27,6 +27,8 @@ impl Springs {
     pub const LYRICS_ROW: SpringConfig = SpringConfig::new(210., 22., 1.);
     /// Fast, nearly critically damped feedback for direct UI transitions.
     pub const RESPONSIVE: SpringConfig = SpringConfig::new(360., 38., 1.);
+    /// A soft spring that overshoots a little and swings back, for an icon settling after it spun.
+    pub const SETTLE: SpringConfig = SpringConfig::new(160., 17., 1.);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,21 +1,20 @@
 //! The Jam as the app shows it: the question before a shared link is joined, the code a phone
-//! scans to join the one the listener started, and the list of people in the one the listener is
-//! in. All of them are `state::Devices`' to answer; this only draws them.
+//! scans to join the one the listener started, and the faces of the people in a Jam or a Sonora
+//! Session. All of it is `state::Devices`' to answer, and this only draws it.
 
 use gpui::prelude::*;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use gpui::{
-    AnyElement, App, ClipboardItem, Context, Div, Entity, FocusHandle, Hsla, Pixels, Point, Render,
-    SharedString, Window, div, px, rgb, svg,
+    AnyElement, App, ClipboardItem, Context, Div, ElementId, Entity, FocusHandle, FontWeight, Hsla,
+    Pixels, Render, SharedString, Window, div, px, rgb, svg,
 };
 use i18n::t;
 use music::connect::{Jam, JamMember};
-use router::{Destination, navigate};
 use state::{Devices, Outcome, Sonora, Toasts};
 use ui::{
-    ActiveTheme as _, Avatar, Button, Dismiss, FORM_CONTEXT, Input, Menu, MenuItem, Modal, Picker,
-    Popup, Qr, Submit, Text, Theme, snapped,
+    ActiveTheme as _, Avatar, Button, Dismiss, FORM_CONTEXT, Input, Modal, Qr, Submit, Text, Theme,
+    single_line, snapped,
 };
 
 /// The side of the Jam's QR code. It does not scale with the theme, since a code has to stay a
@@ -41,6 +40,10 @@ const FACE_COLORS: [u32; 8] = [
 /// How much of a placeholder the person glyph fills, and how far darker than the colour it is.
 const GLYPH: f32 = 0.6;
 const GLYPH_SHADE: f32 = 0.45;
+/// How tall a placeholder's initial stands, as a part of the face, and its colour, white on
+/// every face colour whatever the theme is, so a literal like `FACE_COLORS`.
+const INITIAL: f32 = 0.45;
+const INITIAL_COLOR: u32 = 0xffffff;
 
 /// Asks whether to join the Jam a pasted link names. It shows for as long as `Devices` holds an
 /// invite, wherever the listener is in the app, and either answer hands the invite back.
@@ -181,7 +184,8 @@ impl JamJoin {
         let Some(link) = self.wanted(cx) else {
             return;
         };
-        self.devices.read(cx).peek(&link);
+        self.devices
+            .update(cx, |devices, cx| devices.peek(&link, cx));
         self.close(window, cx);
     }
 
@@ -256,7 +260,7 @@ impl Render for JamJoin {
                                             return;
                                         };
                                         link.update(cx, |input, cx| {
-                                            input.set_text(text.trim().to_owned(), cx);
+                                            input.set_text(single_line(text.trim()), cx);
                                             input.focus(window, cx);
                                         });
                                     }),
@@ -384,113 +388,6 @@ impl Render for JamCode {
     }
 }
 
-/// The list of people in the Jam the listener is in, opened as a popup over the player bar. The
-/// owner gets a button to remove anyone else. It closes by itself once the Jam is over.
-pub(crate) struct JamPeople {
-    devices: Entity<Devices>,
-    /// Where the list ends while it is open.
-    at: Option<Point<Pixels>>,
-}
-
-impl JamPeople {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        let devices = Sonora::global(cx).devices.clone();
-        cx.observe(&devices, |this, devices, cx| {
-            if devices.read(cx).jam().is_none() {
-                this.at = None;
-            }
-            cx.notify();
-        })
-        .detach();
-        Self { devices, at: None }
-    }
-
-    /// Opens the list upward from `at`, a point on the strip or menu that asked for it.
-    pub fn show(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
-        self.at = Some(at);
-        cx.notify();
-    }
-}
-
-impl Render for JamPeople {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(at) = self.at else {
-            return div().absolute().into_any_element();
-        };
-        let Some(jam) = self.devices.read(cx).jam() else {
-            return div().absolute().into_any_element();
-        };
-
-        let theme = *cx.theme();
-        let size = theme.metrics.control_small;
-        let devices = self.devices.clone();
-        let rows = jam.members.iter().enumerate().map(|(index, member)| {
-            let removable = jam.owner && !member.host && !member.you;
-            let id = member.id.clone();
-            let devices = devices.clone();
-            // a profile is opened by the account name, which the id stands in for when missing
-            let profile = [&member.username, &member.id]
-                .into_iter()
-                .find(|id| !id.is_empty())
-                .map(|id| SharedString::from(id.clone()));
-
-            MenuItem::new(("jam-member", index), "").content(
-                div()
-                    .id(("jam-member-row", index))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .w_full()
-                    .px_1()
-                    .py_0p5()
-                    .rounded(theme.radius)
-                    .when_some(profile, |this, profile| {
-                        this.cursor_pointer()
-                            .hover(|this| this.bg(theme.secondary_hover))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.at = None;
-                                cx.notify();
-                                navigate(Destination::User(profile.clone()), cx);
-                            }))
-                    })
-                    .child(face(member, size))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .child(SharedString::from(name(member).to_owned())),
-                    )
-                    .when(member.host, |this| {
-                        this.child(badge(t!("devices-jam-host"), theme))
-                    })
-                    .when(member.you, |this| {
-                        this.child(badge(t!("devices-jam-you"), theme))
-                    })
-                    .when(removable, |this| {
-                        this.child(
-                            Button::new(("jam-remove", index))
-                                .small()
-                                .label(t!("devices-jam-remove"))
-                                .on_click(move |_, _, cx| {
-                                    cx.stop_propagation();
-                                    devices.read(cx).kick(&id)
-                                }),
-                        )
-                    }),
-            )
-        });
-
-        Popup::new(at, Menu::new("jam-people").w(Picker::WIDE).items(rows))
-            .above()
-            .on_close(cx.listener(|this, _, _, cx| {
-                this.at = None;
-                cx.notify();
-            }))
-            .into_any_element()
-    }
-}
-
 /// Copies a Jam's link and says so.
 pub(crate) fn copy_link(link: &str, cx: &mut App) {
     cx.write_to_clipboard(ClipboardItem::new_string(link.to_owned()));
@@ -499,21 +396,24 @@ pub(crate) fn copy_link(link: &str, cx: &mut App) {
 
 /// The name of the person who owns `jam`, when the provider gave one.
 pub(crate) fn host_name(jam: &Jam) -> Option<&str> {
-    jam.host()
+    jam.members
+        .iter()
+        .find(|member| member.host)
         .map(|host| host.name.as_str())
         .filter(|name| !name.is_empty())
 }
 
 /// What to call `member`: their name, or the id the provider knows them by when it gave none.
-fn name(member: &JamMember) -> &str {
+pub(crate) fn name(member: &JamMember) -> &str {
     match member.name.is_empty() {
         true => &member.id,
         false => &member.name,
     }
 }
 
-/// A member's round picture at `size`, or while they have none a person glyph on the colour
-/// their id picks, so two people without pictures still tell apart.
+/// A member's round picture at `size`, or while they have none the first letter of their name
+/// on the colour their id picks, so two people without pictures still tell apart. A name with no
+/// letter to show gets a person glyph instead.
 pub(crate) fn face(member: &JamMember, size: Pixels) -> AnyElement {
     if let Some(image) = &member.image {
         return Avatar::new(Some(image.clone()))
@@ -533,13 +433,26 @@ pub(crate) fn face(member: &JamMember, size: Pixels) -> AnyElement {
         .size(size)
         .rounded_full()
         .bg(color)
-        .child(
-            svg()
-                .path(icons::path("icons/user.svg"))
-                .size(size * GLYPH)
-                .text_color(glyph),
-        )
+        .map(|this| match initial(name(member)) {
+            Some(letter) => this
+                .text_size(size * INITIAL)
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(INITIAL_COLOR))
+                .child(letter),
+            None => this.child(
+                svg()
+                    .path(icons::path("icons/user.svg"))
+                    .size(size * GLYPH)
+                    .text_color(glyph),
+            ),
+        })
         .into_any_element()
+}
+
+/// The capital of the first letter or digit in `name`, if it has one.
+fn initial(name: &str) -> Option<SharedString> {
+    let first = name.chars().find(|c| c.is_alphanumeric())?;
+    Some(first.to_uppercase().collect::<String>().into())
 }
 
 /// The placeholder colour for the person `id` names, the same one on every launch.
@@ -623,9 +536,13 @@ pub(crate) fn faces(
         })
 }
 
-/// A small tag beside a member's name.
-fn badge(label: SharedString, theme: Theme) -> impl IntoElement {
-    div()
+/// A small tag beside a member's name, which screen readers reach under `id`.
+pub(crate) fn badge(
+    id: impl Into<ElementId>,
+    label: SharedString,
+    theme: Theme,
+) -> impl IntoElement {
+    ui::spoken(id, label)
         .flex_none()
         .px_2()
         .py_0p5()
@@ -633,5 +550,4 @@ fn badge(label: SharedString, theme: Theme) -> impl IntoElement {
         .bg(theme.muted)
         .text_size(theme.text(Text::Tiny))
         .text_color(theme.muted_foreground)
-        .child(label)
 }

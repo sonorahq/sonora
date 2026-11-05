@@ -47,7 +47,7 @@ pub fn init() {
     }
     catch_panics();
 
-    log::debug!("{STARTED} {} started", env!("CARGO_PKG_VERSION"));
+    log::debug!("{STARTED} {} started", state::VERSION);
 }
 
 /// Writes a panic to the log before the default hook prints it. A Sonora started from a

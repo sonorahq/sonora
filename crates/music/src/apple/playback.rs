@@ -25,6 +25,7 @@ use crate::audio::Trimmed;
 use crate::engine::{self, Fetch, Loudness};
 use crate::stream::Reader;
 use crate::trim;
+use crate::vault::Shelf;
 use crate::{Encoding, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Quality};
 
 /// Priming frames at the head of an Apple AAC encode, before the first frame of music.
@@ -66,6 +67,7 @@ impl PlaybackFactory for Factory {
             Apple {
                 client: self.client.clone(),
                 quality: config.quality,
+                shelf: config.vault.as_ref().map(|vault| vault.shelf("apple")),
             },
             config,
         )
@@ -76,6 +78,8 @@ struct Apple {
     client: AppleClient,
     /// The level every track is asked for at.
     quality: Quality,
+    /// Where played tracks are kept, still encrypted the way Apple sent them.
+    shelf: Option<Shelf>,
 }
 
 #[async_trait]
@@ -85,6 +89,16 @@ impl Fetch for Apple {
 
     fn name(&self) -> &'static str {
         "apple"
+    }
+
+    fn shelf(&self) -> Option<&Shelf> {
+        self.shelf.as_ref()
+    }
+
+    /// A kept track is still encrypted, and the key that opens it is licensed afresh for each
+    /// play and lasts about fifteen minutes, so a download cannot play without the network.
+    fn plays_offline(&self) -> bool {
+        false
     }
 
     /// Resolves and licenses the track, and asks the catalog how long and how loud it is at the
@@ -98,7 +112,8 @@ impl Fetch for Apple {
                 self.client.http(),
                 id,
                 self.client.user_token(),
-                self.quality
+                self.quality,
+                self.shelf.as_ref(),
             ),
             self.client.playback_details(id),
         );
@@ -131,6 +146,10 @@ impl Fetch for Apple {
 
     async fn downloaded(&self, loaded: &Loaded) {
         loaded.media.finished().await;
+    }
+
+    fn progress(&self, loaded: &Loaded) -> Option<f32> {
+        loaded.media.progress()
     }
 
     /// A fragmented stream has no index for symphonia to jump around in, so a seek opens a

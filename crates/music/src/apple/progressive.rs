@@ -28,7 +28,7 @@ use anyhow::{Result, bail};
 use widevine::Cdm;
 use widevine::cenc::{self, Encrypted, Sample, Step};
 
-use crate::stream::{Body, Reader, Spool, Stream, WeakStream};
+use crate::stream::{Body, Reader, Source, Spool, Stream, WeakStream};
 
 /// How much has to be in past the init segment before the decoder is let loose.
 const PREROLL: usize = 256 * 1024;
@@ -406,10 +406,17 @@ impl Body for Cenc {
 pub struct Media(Stream<Cenc>);
 
 impl Media {
-    /// Starts pulling the response. Nothing can be decrypted until [`license`](Self::license)
-    /// supplies the keys, so the license exchange can run while the body is arriving.
-    pub fn new(response: reqwest::Response) -> Self {
-        Self(Stream::new(response, Cenc::default()))
+    /// Starts pulling the encrypted file from `source`, which is `total` bytes long when that is
+    /// known. Nothing can be decrypted until [`license`](Self::license) supplies the keys, so
+    /// the license exchange can run while the body is arriving.
+    pub(crate) fn pulling(source: impl Source, total: Option<u64>) -> Self {
+        Self(Stream::pulling(source, total, Cenc::default()))
+    }
+
+    /// How much of the encrypted file has arrived, from 0 to 1, when its length is known.
+    pub(crate) fn progress(&self) -> Option<f32> {
+        let total = self.0.total().filter(|total| *total > 0)?;
+        Some(self.0.arrived() as f32 / total as f32)
     }
 
     /// Hands the track its content keys. Until this lands, a read that needs a sample fails

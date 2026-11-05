@@ -3,8 +3,8 @@
 //! enough to draw behind its response. `feed` carries a stage's samples to either.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex32;
@@ -35,6 +35,22 @@ const IDLE_POLL: Duration = Duration::from_millis(4);
 /// in a row, since paused the tap stays silent for hours. The ring holds far more audio.
 const QUIET_POLL: Duration = Duration::from_millis(50);
 const QUIET_AFTER: u32 = 250;
+/// How long the ring stays empty before the bands start to fall. It is longer than a device's
+/// buffer, so the gaps between its pulls never count. A ring that empties after `HUSHED_FRAMES`
+/// of silence falls at once instead.
+const SILENT_AFTER: Duration = Duration::from_millis(250);
+/// The level under which a sample counts as silence. An equalizer rings out below it within a few
+/// milliseconds of a pause.
+const HUSH: f32 = 1e-4;
+/// How many silent frames in a row end a stretch of sound. A paused player sends silence until
+/// its stream stops, at least four device buffers of it, so an empty ring after this many is a
+/// pause rather than a gap between pulls.
+const HUSHED_FRAMES: usize = 256;
+/// How often a band falls by `DECAY` while nothing is heard. One window lasts about this long
+/// at 48 kHz, so a paused track falls as fast as silence would.
+const FALL_STEP: Duration = Duration::from_millis(43);
+/// The level under which a falling band is put down to zero.
+const FALLEN: f32 = 1e-3;
 
 /// The band levels of one channel, published by the analyzer thread and read by the UI.
 #[derive(Clone)]
@@ -69,6 +85,17 @@ pub struct Spectrum {
     right: Lane,
     /// Whether the taps hear the track before the user's volume rather than after it.
     absolute: Arc<AtomicBool>,
+    /// How many `Listening` guards are held. The taps send nothing while there are none.
+    listeners: Arc<AtomicUsize>,
+}
+
+/// Keeps the taps feeding the analyzer while held. Dropping the last one stops them.
+pub struct Listening(Arc<AtomicUsize>);
+
+impl Drop for Listening {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 impl Spectrum {
@@ -77,7 +104,14 @@ impl Spectrum {
             left: Lane::new(),
             right: Lane::new(),
             absolute: Arc::new(AtomicBool::new(false)),
+            listeners: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// Has the taps feed the analyzer for as long as the returned guard is held.
+    pub fn listen(&self) -> Listening {
+        self.listeners.fetch_add(1, Ordering::Relaxed);
+        Listening(self.listeners.clone())
     }
 
     /// Makes every tap on this spectrum hear the track before the user's volume, so the levels
@@ -120,6 +154,8 @@ impl Spectrum {
         Tap {
             feed,
             absolute: self.absolute.clone(),
+            listeners: self.listeners.clone(),
+            on: false,
         }
     }
 }
@@ -135,6 +171,9 @@ impl Default for Spectrum {
 pub struct Tap {
     feed: Feed,
     absolute: Arc<AtomicBool>,
+    listeners: Arc<AtomicUsize>,
+    /// Whether the frame under way is sent, read once at its first sample.
+    on: bool,
 }
 
 impl Tap {
@@ -151,7 +190,12 @@ impl Tap {
 
     /// Takes one sample, `channel` being its place in its frame.
     pub fn push(&mut self, channel: u16, sample: f32) {
-        self.feed.push(channel, sample);
+        if channel == 0 {
+            self.on = self.listeners.load(Ordering::Relaxed) > 0;
+        }
+        if self.on {
+            self.feed.push(channel, sample);
+        }
     }
 }
 
@@ -168,6 +212,17 @@ impl Side {
             lane,
             samples: [0.; FFT_SIZE],
             smoothed: [0.; N_BANDS],
+        }
+    }
+
+    /// Lowers every band one `DECAY` step towards zero, for a stretch with no samples.
+    fn fall(&mut self) {
+        for (band, level) in self.smoothed.iter_mut().enumerate() {
+            *level = match *level * (1. - DECAY) {
+                lower if lower < FALLEN => 0.,
+                lower => lower,
+            };
+            self.lane.set(band, *level);
         }
     }
 }
@@ -208,6 +263,12 @@ fn analyze(mut listener: Listener, spectrum: Spectrum) {
     // Held for the life of the analyzer, since `process` allocates a fresh one on every call.
     let mut scratch = vec![Complex32::default(); fft.get_inplace_scratch_len()];
     let mut empty = 0u32;
+    // When the ring last turned empty, and how many falls the bands took since. Nothing arrives
+    // while a track is paused, so without them the last levels would hold.
+    let mut silent: Option<Instant> = None;
+    let mut fallen = 0u128;
+    // How many frames in a row at the end of what was heard were silent.
+    let mut hushed = 0usize;
 
     loop {
         let Some(heard) = listener.next() else {
@@ -215,6 +276,17 @@ fn analyze(mut listener: Listener, spectrum: Spectrum) {
                 return;
             }
             empty = empty.saturating_add(1);
+            let now = Instant::now();
+            let quiet = now.duration_since(*silent.get_or_insert(now));
+            let hold = match hushed >= HUSHED_FRAMES {
+                true => Duration::ZERO,
+                false => SILENT_AFTER,
+            };
+            let due = quiet.saturating_sub(hold).as_millis() / FALL_STEP.as_millis();
+            while fallen < due {
+                fallen += 1;
+                sides.iter_mut().for_each(Side::fall);
+            }
             std::thread::sleep(match empty > QUIET_AFTER {
                 true => QUIET_POLL,
                 false => IDLE_POLL,
@@ -230,6 +302,12 @@ fn analyze(mut listener: Listener, spectrum: Spectrum) {
             }
         };
         empty = 0;
+        silent = None;
+        fallen = 0;
+        hushed = match frame.iter().all(|sample| sample.abs() <= HUSH) {
+            true => hushed.saturating_add(1),
+            false => 0,
+        };
 
         for (index, side) in sides.iter_mut().enumerate() {
             let mut sum = 0.;

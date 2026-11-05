@@ -19,7 +19,9 @@ PACKS = {
 }
 
 MAP = {
+    "arrow-right-left": (None, "transfer-horizontal-linear", "arrow-left-right-line"),
     "arrow-up-down": ("sort", "sort-linear", "arrow-up-down-line"),
+    "blend": ("color-filter", None, "color-filter-line"),
     "check": ("check", None, "check-line"),
     "chevron-down": ("nav-arrow-down", "alt-arrow-down-linear", "arrow-down-s-line"),
     "chevron-left": ("nav-arrow-left", "alt-arrow-left-linear", "arrow-left-s-line"),
@@ -32,13 +34,17 @@ MAP = {
     "columns-3": ("view-columns-3", None, "layout-column-line"),
     "copy": ("copy", "copy-linear", "file-copy-line"),
     "disc-3": ("compact-disc", "vinyl-record-linear", "disc-line"),
+    "download": ("download", "download-minimalistic-linear", "download-2-line"),
     "ellipsis": ("more-horiz", "menu-dots-linear", "more-line"),
     "external-link": ("open-new-window", "square-top-down-linear", "external-link-line"),
     "file-music": (None, "music-library-2-linear", "file-music-line"),
     "folder-plus": ("folder-plus", "add-folder-linear", "folder-add-line"),
     "funnel": ("filter", "filter-linear", "filter-3-line"),
+    "gauge": ("dashboard-speed", "speedometer-middle-linear", "dashboard-3-line"),
+    "grip-vertical": (None, None, "draggable"),
     "guitar": (None, None, None),
     "hat-glasses": ("glasses", "glasses-linear", "glasses-line"),
+    "headphones": ("headset", "headphones-round-linear", "headphone-line"),
     "heart": ("heart", "heart-linear", "heart-3-line"),
     "heart-filled": ("heart-solid", "heart-bold", "heart-3-fill"),
     "heart-off": (None, None, None),

@@ -199,15 +199,8 @@ impl Store {
                     cover: row.get(8)?,
                     duration: std::time::Duration::from_millis(duration.max(0) as u64),
                     added_at: Some(played_at / 1_000),
-                    added_by: None,
-                    playcount: None,
-                    popularity: 0,
                     explicit: row.get(10)?,
-                    track_number: 0,
-                    disc_number: 0,
-                    tags: Vec::new(),
-                    languages: Vec::new(),
-                    credits: Vec::new(),
+                    ..Default::default()
                 })
             })
             .context("cannot read listening history")?;
@@ -279,7 +272,7 @@ impl History {
         cx.subscribe(&session, |this, _, event, cx| match event {
             SessionEvent::SignedIn | SessionEvent::Reconnected => this.refresh(cx),
             SessionEvent::SignedOut => this.reset(cx),
-            SessionEvent::LocalChanged => {}
+            SessionEvent::WentOffline | SessionEvent::LocalChanged => {}
         })
         .detach();
         cx.subscribe(&playback, |this, _, event, cx| match event {
@@ -498,6 +491,17 @@ impl History {
         self.state = HistoryState::Ready;
     }
 
+    /// Drops the list and loads it again, so the page shows its skeleton until the plays land.
+    /// A load already under way is left to finish and fills the list in its place.
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        self.tracks.clear();
+        self.state = HistoryState::Loading;
+        cx.notify();
+        self.refresh(cx);
+    }
+
+    /// Loads the plays again and keeps the list on screen until they land, which is how the
+    /// history picks up plays from other devices in the background.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         if self.task.is_some() {
             return;

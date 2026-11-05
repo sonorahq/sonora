@@ -5,10 +5,9 @@ use gpui::prelude::*;
 use gpui::{AnyElement, App, div};
 use ui::{
     ActiveTheme as _, Button, Filter, FilterChange, MenuItem, Mode, Picker, Popovers,
-    RangeScrubber, RangeState, Sort, SortAxis, Text, Toggle, eyebrow,
+    RangeScrubber, RangeState, Sort, SortAxis, Text, eyebrow,
 };
 
-const COLUMNS: &str = "columns";
 const FILTERS: &str = "filters";
 const SORTS: &str = "sorts";
 
@@ -26,27 +25,6 @@ impl Sliders {
         cache.push((key, state.clone()));
         state
     }
-}
-
-pub(crate) fn columns(
-    group: &Popovers,
-    toggles: Vec<Toggle>,
-    switch: impl Fn(&'static str, &mut App) + 'static,
-) -> AnyElement {
-    let switch = Rc::new(switch);
-
-    Picker::icon(COLUMNS, group, "icons/columns-3.svg")
-        .tooltip("tool-columns")
-        .sticky()
-        .items(toggles.into_iter().map(move |toggle| {
-            let key = toggle.key;
-            let switch = switch.clone();
-
-            MenuItem::new(key, toggle.label)
-                .selected(toggle.visible)
-                .on_click(move |_, _, cx| switch(key, cx))
-        }))
-        .into_any_element()
 }
 
 pub(crate) fn sorts(
@@ -115,18 +93,22 @@ pub(crate) fn filters(
                             .gap_2()
                             .child(eyebrow(axis.label.clone(), cx))
                             .child(
-                                div()
-                                    .text_size(theme.text(Text::Small))
-                                    .text_color(theme.muted_foreground)
-                                    .child(format!(
+                                ui::spoken(
+                                    gpui::SharedString::from(format!("{key}-range")),
+                                    format!(
                                         "{} - {}",
                                         unit.say(axis.value.0),
                                         unit.say(axis.value.1)
-                                    )),
+                                    ),
+                                )
+                                .text_size(theme.text(Text::Small))
+                                .text_color(theme.muted_foreground),
                             ),
                     )
                     .child(
                         RangeScrubber::new(&state, axis.share())
+                            .name(axis.label.clone())
+                            .values(unit.say(axis.value.0), unit.say(axis.value.1))
                             .stops(axis.stops())
                             .colors(theme.progress_bar, theme.muted, theme.foreground)
                             .on_change(move |share: &(f32, f32), _, cx| {

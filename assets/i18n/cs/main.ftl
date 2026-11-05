@@ -37,7 +37,6 @@ nav-pinned = Připnuté
 nav-unpin = Odepnout
 nav-pin-hint = Přetažením sem připneš
 library-liked-songs = Oblíbené
-library-play-liked-songs = Přehrát
 library-no-songs = Zatím nemáš žádné oblíbené
 library-no-albums = Zatím nemáš žádné uložené albumy
 library-no-playlists = Zatím žádné playlisty
@@ -58,6 +57,7 @@ library-part-not-loaded = Tato část tvé knihovny se nenačetla
 library-local-unconfigured = Nastav svou místní knihovnu
 
 # app menu
+app-refresh = Obnovit
 app-sign-out = Odhlásit se
 app-quit = Ukončit
 app-settings = Nastavení…
@@ -96,28 +96,13 @@ column-year = Rok
 column-tracks = Skladby
 
 # track menu
-menu-add-to-playlist = Přidat do playlistu
-menu-add-tracks-to-playlist = { $count ->
-    [one] Přidat { $count } skladbu do playlistu
-    [few] Přidat { $count } skladby do playlistu
-   *[other] Přidat { $count } skladeb do playlistu
-}
 menu-new-playlist = Nový playlist
+menu-import-playlist = Importovat playlist…
 menu-edit-tags = Upravit tagy
 menu-no-playlists = Žádné playlisty
 menu-search-playlists = Hledat playlist
 menu-add-to-library = Přidat do oblíbených
-menu-add-tracks-to-library = { $count ->
-    [one] Přidat { $count } skladbu do oblíbených
-    [few] Přidat { $count } skladby do oblíbených
-   *[other] Přidat { $count } skladeb do oblíbených
-}
 menu-remove-from-library = Odebrat z oblíbených
-menu-remove-tracks-from-library = { $count ->
-    [one] Odebrat { $count } skladbu z oblíbených
-    [few] Odebrat { $count } skladby z oblíbených
-   *[other] Odebrat { $count } skladeb z oblíbených
-}
 menu-remove-from-playlist = Odebrat z playlistu
 menu-remove-tracks-from-playlist = { $count ->
     [one] Odebrat { $count } skladbu z playlistu
@@ -136,6 +121,9 @@ menu-delete-track-files = { $count ->
     [few] Smazat { $count } soubory skladeb
    *[other] Smazat { $count } souborů skladeb
 }
+menu-download = Stáhnout
+menu-remove-download = Odebrat ze stažených
+menu-downloading = Stahuje se. Kliknutím zastavíš
 menu-play-next = Přehrát jako další
 menu-play-tracks-next = { $count ->
     [one] Přehrát { $count } skladbu jako další
@@ -164,22 +152,11 @@ menu-copy = Kopírovat
 menu-paste = Vložit
 menu-select-all = Vybrat vše
 menu-remove-from-queue = Odebrat z fronty
-menu-rename-playlist = Přejmenovat playlist
+menu-edit-playlist = Upravit playlist
 menu-delete-playlist = Smazat playlist
+menu-export-playlist = Exportovat playlist…
 menu-add-playlist-to-library = Přidat do knihovny
 menu-remove-playlist-from-library = Odebrat z knihovny
-menu-library-add = Přidat do knihovny
-menu-library-add-tracks = { $count ->
-    [one] Přidat { $count } skladbu do knihovny
-    [few] Přidat { $count } skladby do knihovny
-   *[other] Přidat { $count } skladeb do knihovny
-}
-menu-library-remove = Odebrat z knihovny
-menu-library-remove-tracks = { $count ->
-    [one] Odebrat { $count } skladbu z knihovny
-    [few] Odebrat { $count } skladby z knihovny
-   *[other] Odebrat { $count } skladeb z knihovny
-}
 menu-make-playlist-public = Nastavit jako veřejný
 menu-make-playlist-private = Nastavit jako soukromý
 menu-play-artist = Přehrát interpreta
@@ -187,7 +164,12 @@ menu-play-artist = Přehrát interpreta
 # playlist editor
 playlist-name-placeholder = Název playlistu
 playlist-create-title = Vytvořit playlist
-playlist-rename-title = Přejmenovat playlist
+playlist-edit-title = Upravit playlist
+playlist-cover-choose = Vybrat obrázek
+playlist-cover-remove = Odebrat obal
+playlist-cover-unopenable = Sonora tento soubor nedokáže otevřít
+playlist-cover-too-large = Tento obrázek je větší než 40 MB
+playlist-cover-not-a-picture = Tento soubor není obrázek JPEG, PNG ani WebP
 playlist-delete-title = Smazat playlist
 playlist-delete-confirm = Smazat „{ $name }“? Tuto akci nelze vzít zpět.
 playlist-again-title = Přidat znovu?
@@ -236,10 +218,12 @@ queue-title = Fronta
 queue-history = Historie
 queue-now-playing = Teď se hraje
 queue-from = Z
+queue-from-radio = Rádio { $name }
 queue-next-in-queue = Další ve frontě
 queue-up-next = Následuje
 queue-reset = Obnovit
 queue-clear = Vymazat
+queue-added-by = Přidáno uživatelem { $name }
 queue-empty = Tvoje fronta je prázdná
 queue-similar = Podobné skladby
 queue-radio = Přehrávat podobné skladby automaticky
@@ -258,6 +242,32 @@ player-previous = Předchozí skladba
 player-next = Další skladba
 player-fullscreen = Celá obrazovka
 player-fullscreen-leave = Ukončit celou obrazovku
+devices-this-computer = Tento počítač
+devices-jam-join = Připojit se k Jamu…
+devices-jam-join-title = Připojit se k Jamu
+devices-jam-join-detail = Vlož odkaz, který ti poslal kamarád
+devices-jam-paste = Vložit
+devices-jam-link-hint = Odkaz na Jam
+devices-jam-start = Spustit Jam
+devices-jam-copy = Kopírovat odkaz na Jam
+devices-jam-code-menu = Zobrazit QR kód
+devices-jam-code-title = Naskenuj a připoj se k Jamu uživatele { $host }
+devices-jam-code-title-anonymous = Naskenuj a připoj se k Jamu
+devices-jam-code-close = Zavřít
+devices-jam-leave = Opustit Jam
+devices-jam-end = Ukončit Jam
+devices-jam-more = +{ $count }
+devices-jam-host = Hostitel
+devices-jam-you = Ty
+devices-jam-remove = Odebrat
+devices-jam-invite-title = Připojit se k Jamu uživatele { $host }?
+devices-jam-invite-title-anonymous = Připojit se k tomuto Jamu?
+devices-jam-invite-detail = { $count ->
+    [one] V tomto Jamu už je { $count } člověk.
+    [few] V tomto Jamu už jsou { $count } lidé.
+   *[other] V tomto Jamu už je { $count } lidí.
+}
+devices-jam-invite-join = Připojit se
 fullscreen-artwork = Obálka
 
 # filters
@@ -272,9 +282,10 @@ filter-album = Filtrovat skladby alba
 filter-reset = Resetovat filtry
 filter-duration = Délka
 filter-year = Rok
-filter-explicit = Jen explicitní
+filter-hide-explicit = Skrýt explicitní
 filter-playable = Jen přehratelné
 filter-favorites = Jen oblíbené
+filter-downloaded = Stažené
 filter-owned = Vytvořené tebou
 
 # view
@@ -282,7 +293,6 @@ view-list = Seznam
 view-cards = Mřížka
 
 # toolbar
-tool-columns = Sloupce
 tool-sort = Řazení
 tool-filters = Filtry
 
@@ -338,8 +348,6 @@ login-choose-detail = Vyber způsob přihlášení k { $provider }.
 
 # album and playlist pages
 detail-playlist = Playlist
-detail-play-album = Přehrát album
-detail-play-playlist = Přehrát playlist
 
 # play button
 play-pause = Pozastavit
@@ -353,7 +361,6 @@ artist-monthly-listeners = { $count ->
     [few] { $value } měsíční posluchači
    *[other] { $value } měsíčních posluchačů
 }
-artist-play = Přehrát nyní
 artist-popular = Populární
 artist-popular-eyebrow = Prozkoumej tohoto interpreta
 artist-popular-empty = Zatím tu není co přehrát
@@ -400,6 +407,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Rychlý výběr
 home-quick-picks-empty = Označ pár skladeb jako oblíbené a objeví se tady
 home-recently-added = Nedávno přidané
+home-recently-played = Nedávno přehrávané
 home-playlists = Playlisty
 home-favorite-albums = Oblíbená alba
 home-artists = Interpreti
@@ -408,6 +416,9 @@ home-collection-albums = Alba z tvé knihovny
 # search page
 search-placeholder = Co chceš poslouchat?
 search-browse = Procházet vše
+search-submit = Hledat
+search-recent = Nedávná hledání
+search-forget = Odebrat z historie
 genre-empty = Tady zatím nic není
 search-best-match = Nejlepší shoda
 search-no-matches = Žádné výsledky
@@ -429,7 +440,6 @@ kind-playlist = Playlist
 
 # song page
 song-eyebrow = Skladba
-song-play = Přehrát skladbu
 song-view-album = Zobrazit album
 song-loading = Načítají se informace o skladbě…
 song-about = O této skladbě
@@ -514,12 +524,74 @@ month-12 = pro
 
 # settings
 settings-search = Hledat v nastavení
+settings-search-results = Výsledky hledání
+# where a search result lives: a drill-in page under the page it opens from
+settings-result-place = { $parent } › { $page }
+settings-page-providers = Poskytovatelé
+settings-page-appearance = Vzhled
+settings-page-player-bar = Panel přehrávače
+settings-player-bar-layout = Rozložení
+settings-player-bar-layout-detail = Uspořádej informace o skladbě, ovládání přehrávání a ukazatel průběhu
+settings-player-bar-classic = Klasické
+settings-player-bar-compact = Kompaktní
+settings-player-bar-centered = Vystředěné
+settings-player-bar-surface = Plocha
+settings-player-bar-transparent = Průhledný panel přehrávače
+settings-player-bar-transparent-detail = Nech stránky a postranní panely projíždět pod rozostřeným panelem přehrávače
+settings-player-bar-transparent-needs-blur = Zapni Rozostření rozhraní, aby stránky mohly projíždět pod rozostřeným panelem přehrávače
+settings-page-now-playing = Teď se hraje
+settings-page-lyrics = Texty písní
+settings-page-playback = Přehrávání
+settings-page-sound = Zvuk
+settings-page-storage = Úložiště
+settings-page-discord = Discord
+settings-page-scrobbling = Scrobbling
+settings-page-general = Obecné
+settings-page-about = O aplikaci
+settings-tab-integrations = Integrace
+settings-about-name = Sonora
+settings-page-lyrics-sources = Zdroje textů
+settings-page-music-folders = Hudební složky
+settings-group-services = Streamovací služby
+settings-group-local-files = Místní soubory
+settings-group-background = Pozadí
+settings-group-controls = Ovládání
+settings-group-display = Zobrazení
+settings-group-sources = Zdroje
+settings-group-lyrics-order = Priorita
+settings-group-playing = Přehrávání
+settings-group-cache = Přehrané skladby
+settings-group-downloads = Stažené
+settings-group-protected = Chráněné přehrávání
+settings-group-output = Výstup
+settings-group-status = Stav
+settings-group-startup = Spuštění
+settings-group-context-menus = Kontextové nabídky
+key-ctrl = Ctrl
+key-super = Super
+key-alt = Alt
+key-shift = Shift
+key-escape = Esc
+key-enter = Enter
+key-space = Mezerník
+key-tab = Tab
+key-backspace = Backspace
+key-delete = Delete
+settings-lyrics-sources = Zdroje textů
+settings-local-folder-count = { $count ->
+    [one] { $count } složka
+    [few] { $count } složky
+   *[other] { $count } složek
+    }
+settings-local-folder-none = Zatím žádné složky
+settings-license-short = GPL-3.0 nebo novější
 settings-theme = Motiv
 settings-theme-detail = Vyber barevnou paletu aplikace
 settings-opacity = Průhlednost
 settings-opacity-detail = Uprav průhlednost pozadí aplikace
 settings-opacity-value = { $percent } %
 settings-theme-folder = Otevřít složku
+settings-theme-unavailable = Tento motiv lze použít jen s vypnutým adaptivním motivem
 settings-adaptive = Adaptivní motiv
 settings-adaptive-detail = Obarvi paletu barvami obálky právě hrajícího alba
 settings-ambient = Ambientní pozadí
@@ -534,8 +606,13 @@ settings-visualizer-style-wave = Vlna
 settings-visualizer-style-both = Pruhy a vlna
 settings-visualizer-absolute = Ignorovat hlasitost
 settings-visualizer-absolute-detail = Kresli spektrum podle vlastní úrovně skladby, bez ohledu na to, jak hlasitě ji Sonora přehrává
+settings-preview-title = Název skladby
+settings-preview-artist = Interpret
+settings-preview-album = Album
 settings-fullscreen-controls-autohide = Skrýt ovládání na celé obrazovce
 settings-fullscreen-controls-autohide-detail = Skryje ovládací prvky přehrávání, když na celé obrazovce nic neděláš
+settings-os-fullscreen = Použít systémovou celou obrazovku
+settings-os-fullscreen-detail = Roztáhne Teď se hraje přes celou obrazovku, stejně jako F11
 settings-icons = Sada ikon
 settings-icons-detail = Vyber sadu ikon, ze které rozhraní kreslí
 settings-motion = Omezit pohyb
@@ -555,6 +632,7 @@ settings-font-detail = Základní velikost textu, vše ostatní se podle ní mě
 settings-font-value = { $size } px
 settings-startup = Zobrazit při startu
 settings-startup-detail = Obrazovka, kterou Sonora otevře po spuštění
+settings-startup-no-guest = Nedostupné v režimu hosta
 settings-entries = Položky postranního panelu
 settings-entries-detail = Sekce uvedené v postranním panelu
 settings-entries-pick = Vyber položky
@@ -583,6 +661,17 @@ settings-close-to-tray = Ponechat na pozadí
 settings-close-to-tray-detail = Nech Sonoru běžet a přehrávat i po zavření okna
 settings-tray-icon = Zobrazit v systémové liště
 settings-tray-icon-detail = Zobrazí ikonu s ovládáním přehrávání v systémové liště
+settings-spotify-connect = Zobrazit jako zařízení Spotify
+settings-spotify-connect-name = Název zařízení
+settings-spotify-connect-name-detail = Jak se Sonora jmenuje v seznamu zařízení v aplikacích Spotify
+settings-spotify-connect-name-sonora = Sonora
+settings-spotify-connect-name-both = Sonora (název počítače)
+settings-spotify-connect-name-computer = Název počítače
+settings-spotify-connect-name-custom = Vlastní
+settings-spotify-connect-custom = Vlastní název
+settings-spotify-connect-custom-detail = Název, který se zobrazí. Když zůstane prázdný, použije se Sonora a název počítače
+settings-spotify-connect-custom-hint = Název zařízení
+settings-spotify-connect-detail = Zobraz Sonoru ve výběru zařízení v aplikacích Spotify, abys ji mohl ovládat z telefonu a Spotify ukazovalo, co hraješ
 settings-discord = Zobrazit na Discordu
 settings-discord-detail = Zobrazit právě hrající skladbu na tvém profilu Discord
 settings-discord-name = Název stavu
@@ -599,9 +688,15 @@ settings-discord-badge = Zobrazit odznak poskytovatele
 settings-discord-badge-detail = Označit stav malou ikonou služby, ze které skladba pochází
 settings-discord-anonymous = Skrýt podrobnosti
 settings-discord-anonymous-detail = Říct jen, že se hraje hudba, bez názvu, interpreta a obálky
+settings-discord-hide-on-connect = Skrýt během Spotify Connect
+settings-discord-hide-on-connect-detail = Nech stav na samotném Spotify, když Sonora hraje jako zařízení Spotify nebo když hraje jiné zařízení
 settings-discord-buttons = Tlačítka
 settings-discord-buttons-detail = Odkazy pod stavem, které tvoji přátelé mohou otevřít, jeden na skladbu v její službě a jeden na Sonoru
 settings-discord-buttons-pick = Vyber tlačítka
+settings-discord-preview-listening = Poslouchá { $name }
+settings-discord-preview-music = Hudba
+settings-discord-preview-elapsed = Uplynulo { $time }
+settings-discord-preview-listen-on = Poslouchat na { $provider }
 # the Discord status when the track is left out of it
 discord-listening = Poslouchá hudbu
 get-sonora = Získat Sonoru
@@ -612,6 +707,68 @@ settings-normalisation = Normalizovat hlasitost
 settings-normalisation-detail = Drží skladby na stejné hlasitosti
 settings-gapless = Plynulé přehrávání
 settings-gapless-detail = Přehrává skladby za sebou bez pauzy, přesně jak byly seřazeny na albu
+settings-keep-tracks = Uchovávat přehrané skladby
+settings-keep-tracks-detail = Ukládá, co přehraješ, uzamčené pro tento počítač, takže se při dalším přehrání nic nestahuje. Vypnutím se uložené smaže a tvoje stažené skladby zůstanou. Spotify změnu převezme při příštím spuštění Sonory
+settings-cache-size = Velikost mezipaměti
+settings-cache-size-detail = Kolik místa smějí zabrat skladby, které jsi přehrál. Místo uvolní nejdřív ty přehrané nejdávněji a stažené skladby se do limitu nepočítají
+settings-cache-size-value = { $count } GB
+settings-cache-used = Využité místo
+settings-cache-used-detail = Kolik místa v tomto počítači zabírají skladby uchované po přehrání. Vymazání se tvých stažených skladeb nedotkne
+settings-cache-clear = Vymazat
+settings-downloads-used = Využité místo
+settings-downloads-used-detail = Kolik místa v tomto počítači zabírají skladby, které jsi stáhl
+settings-offline-mode = Režim offline
+settings-offline-mode-detail = Zobrazovat a přehrávat jen stažené
+settings-downloads-remove = Odebrat vše
+settings-size-gb = { $size } GB
+settings-size-mb = { $size } MB
+settings-size-measuring = Měří se…
+settings-stream-quality = Kvalita streamování
+settings-stream-quality-detail = Vyšší úrovně zní lépe a spotřebují víc dat. Když tvůj tarif nebo skladba nabízí méně, přehraje se nejbližší nižší úroveň
+settings-stream-quality-hi-res = Hi-Res
+settings-stream-quality-lossless = Bezztrátová
+settings-stream-quality-high = Vysoká
+settings-stream-quality-normal = Normální
+settings-stream-quality-low = Nízká
+settings-stream-quality-flac = FLAC, { $depth } bit, { $rate } kHz
+settings-stream-quality-flac-up-to = FLAC, až { $depth } bit, { $rate } kHz
+settings-stream-quality-lossy = { $codec }, { $kbps } kb/s
+settings-stream-quality-lossy-up-to = { $codec }, až { $kbps } kb/s
+settings-stream-format = Formát streamu
+settings-stream-format-detail = Do jakého formátu server převede každou skladbu před odesláním
+settings-stream-format-original = Původní
+settings-stream-format-mp3 = MP3
+settings-stream-format-opus = Opus
+settings-stream-format-aac = AAC
+settings-stream-bitrate = Maximální datový tok
+settings-stream-bitrate-detail = Server převede cokoli vyššího na tento tok
+settings-stream-bitrate-unlimited = Bez omezení
+settings-stream-bitrate-value = { $kbps } kb/s
+settings-stream-bitrate-hourly = Asi { $megabytes } MB za hodinu
+settings-stream-bitrate-unlimited-detail = Každý soubor ve vlastním datovém toku
+settings-output-device = Výstupní zařízení
+settings-output-device-detail = Zvukové zařízení, na kterém Sonora hraje
+settings-output-device-system = Výchozí systémové
+settings-output-device-missing = Uložené zařízení (nepřipojeno)
+settings-output-device-direct = Přímo do hardwaru
+settings-sample-rate = Vzorkovací frekvence
+settings-sample-rate-detail = Frekvence, na které zařízení běží. Sonora na ni převede každou skladbu
+settings-sample-rate-value = { $khz } kHz
+settings-sample-rate-change = Změnit
+settings-buffer = Velikost bufferu
+settings-buffer-detail = Kolik zvuku Sonora předává zařízení najednou
+settings-output-idle = Nehraje
+settings-output-device-loading = Načítají se zařízení…
+settings-output-failed = Zařízení není podporováno
+settings-output-failed-detail = Chyba: { $error }
+settings-signal-source = Zdroj
+settings-signal-normalized = Hlasitost
+settings-signal-gain = { $db } dB
+settings-signal-resampled = Převzorkování
+settings-signal-khz = { $khz } kHz
+settings-signal-kbps = { $kbps } kb/s
+settings-signal-bits = { $depth } bit
+settings-signal-source-detail = { $rate } · { $quality }
 settings-sleep = Časovač usnutí
 settings-sleep-detail = Nechá hudbu po nastavené době sama utichnout, takže tě ukolíbá
 settings-stay-awake = Nepřecházet do spánku při přehrávání
@@ -635,6 +792,8 @@ settings-widevine-fetch = Stáhnout
 settings-widevine-uninstall = Odinstalovat
 confirm-uninstall-widevine-title = Odinstalovat modul Widevine?
 confirm-uninstall-widevine = Sonora smaže kopii, kterou stáhla od Googlu. Skladby Apple Music přestanou přehrávat, dokud se znovu nestáhne.
+confirm-remove-downloads-title = Odebrat všechny stažené skladby?
+confirm-remove-downloads = Všechny skladby, které jsi stáhl, se smažou z tohoto počítače, ze všech služeb. Budou se znovu streamovat, dokud je opět nestáhneš.
 widevine-prompt-title = Modul Widevine
 widevine-prompt-wanted = Skladby Apple Music jsou šifrované a potřebují modul Widevine od Googlu. Žádný prohlížeč v tomto počítači ho nemá. Sonora ho může stáhnout ze serverů Googlu, stejný soubor, který instaluje Chrome, a uložit do své vlastní složky.
 widevine-prompt-replace = Skladby Apple Music jsou šifrované a potřebují modul Widevine od Googlu. Prohlížeč v tomto počítači ho má a Sonora si místo něj může stáhnout vlastní kopii od Googlu, stejný soubor, který instaluje Chrome, a uložit ji do své složky.
@@ -646,6 +805,8 @@ widevine-prompt-later = Teď ne
 widevine-prompt-accept = Přijmout a nainstalovat
 widevine-prompt-decline = Odmítnout
 settings-equalizer = Ekvalizér
+settings-equalizer-detail = Upraví zvuk předvolbou nebo vlastní křivkou
+settings-equalizer-preset-detail = Připravený zvuk, nebo jeden z tvých profilů
 settings-equalizer-custom = Vlastní
 settings-equalizer-flat = Plochá
 settings-equalizer-bass-boost = Zesílení basů
@@ -659,6 +820,129 @@ settings-equalizer-classical = Klasická hudba
 settings-equalizer-electronic = Elektronická
 settings-equalizer-acoustic = Akustická
 settings-equalizer-loudness = Hlasitost
+equalizer-advanced = Pokročilé
+equalizer-simple = Jednoduché
+equalizer-sound = Zvuk
+equalizer-profile-default = Výchozí
+equalizer-profile-new = Profil { $number }
+equalizer-profile-pasted = Vložený profil
+equalizer-profile-name-hint = Název profilu
+equalizer-save-as = Uložit jako profil
+equalizer-rename = Přejmenovat profil
+equalizer-delete = Smazat profil
+equalizer-delete-confirm = Smazat „{ $name }“? Tuto akci nelze vzít zpět.
+equalizer-undo = Zpět
+equalizer-redo = Znovu
+equalizer-bass = Basy
+equalizer-treble = Výšky
+equalizer-tone-reset = Vrátit na 0 dB
+equalizer-preamp = Předzesílení
+equalizer-preamp-auto = Automaticky
+equalizer-preamp-manual = Ručně
+equalizer-decibels = dB
+equalizer-decibels-value = { $db } dB
+equalizer-hertz = Hz
+equalizer-q = Q
+equalizer-octaves = okt.
+equalizer-no-gain = —
+equalizer-filters = Filtry
+equalizer-no-filters = Zatím žádné filtry. Přidej nějaký, vyber předvolbu výše nebo importuj profil.
+equalizer-add-filter = Přidat filtr
+equalizer-remove-filter = Odebrat filtr
+equalizer-kind-peak = Špička
+equalizer-kind-low-shelf = Dolní shelf
+equalizer-kind-high-shelf = Horní shelf
+equalizer-kind-low-pass = Dolní propust
+equalizer-kind-high-pass = Horní propust
+equalizer-kind-notch = Pásmová zádrž
+equalizer-kind-band-pass = Pásmová propust
+equalizer-kind-all-pass = Všepropust
+equalizer-transfer = Import a export
+equalizer-import = Importovat
+equalizer-export = Exportovat
+equalizer-import-file = Importovat soubor…
+equalizer-paste = Vložit
+equalizer-copy = Kopírovat
+equalizer-export-file = Exportovat soubor…
+equalizer-imported = Importováno: { $name }
+equalizer-imported-skipped = Importováno: { $name } bez { $count ->
+        [one] jednoho řádku
+       *[other] { $count } řádků
+    }
+equalizer-import-nothing = Nenalezeno žádné nastavení ekvalizéru k importu
+equalizer-import-too-many = Neimportováno: { $count ->
+        [one] je zapnutý jeden filtr
+        [few] jsou zapnuté { $count } filtry
+       *[other] je zapnuto { $count } filtrů
+    }, víc, než profil pojme
+equalizer-import-too-large = Neimportováno: text má přes 1 MB, na profil ekvalizéru je příliš velký
+equalizer-filter-limit =Profil pojme nejvýše { $max } filtrů.
+equalizer-paste-empty = Ve schránce není žádný text
+equalizer-copied = Profil zkopírován jako text Equalizer APO
+equalizer-exported = Profil exportován
+equalizer-dialog-failed = Dialog pro výběr souboru se nepodařilo otevřít
+equalizer-file-unreadable = Soubor se nepodařilo přečíst
+equalizer-file-unwritable = Soubor se nepodařilo zapsat
+equalizer-value-refused = Ponechána předchozí hodnota
+equalizer-skipped-line = Řádek { $line }: { $reason }
+equalizer-skipped-more = a { $count ->
+        [one] jeden další
+        [few] { $count } další
+       *[other] { $count } dalších
+    }
+equalizer-skip-unknown-type = neznámý typ filtru { $name }
+equalizer-skip-unreadable = není filtr, který Sonora umí přečíst
+equalizer-skip-no-frequency = chybí frekvence
+equalizer-skip-no-gain = chybí zisk
+equalizer-skip-no-width = chybí Q nebo šířka pásma
+equalizer-skip-expression = hodnota zapsaná jako výraz
+equalizer-skip-no-preamp = předzesílení není číslo
+equalizer-skip-unsupported = { $name } není podporováno
+equalizer-rules = Pravidla zařízení
+equalizer-rule-other = Jakékoli jiné zařízení
+equalizer-rule-playing = Právě hraje
+equalizer-rule-disconnected = Nepřipojeno
+equalizer-rule-replaces = Nahrazuje jeho pravidlo
+equalizer-rule-choose-device = Vyber zařízení
+equalizer-rule-choose-sound = Vyber zvuk
+equalizer-rule-add = Přidat pravidlo
+equalizer-rule-remove = Odebrat pravidlo
+equalizer-output-port = { $device } · { $port }
+signal-path-codec-alac = ALAC
+signal-path-codec-pcm = PCM
+signal-path-codec-other = Jiný kodek
+equalizer-invalid-frequency = Frekvence musí být mezi { $low } a { $high } Hz
+equalizer-invalid-gain = Zisk musí být mezi { $low } a { $high } dB
+equalizer-invalid-q = Q musí být mezi { $low } a { $high }
+equalizer-invalid-octaves = Šířka pásma musí být mezi { $low } a { $high } oktávami
+equalizer-invalid-shelf-octaves = Shelf používá Q, ne šířku pásma
+equalizer-invalid-preamp = Předzesílení musí být mezi { $low } a { $high } dB
+equalizer-overload = Přebuzení o { $db } dB
+equalizer-overload-slight = Přebuzení pod 0,1 dB
+equalizer-graph-preamp = { $db } dB
+equalizer-lower-preamp = Snížit předzesílení
+equalizer-level = Úroveň
+equalizer-status-bit-perfect = Bit-perfect
+equalizer-status-bit-perfect-detail = Bit-perfect ze Sonory
+equalizer-status-server = Zvukový server ho pak převede na { $khz } kHz
+equalizer-status-altered = Není bit-perfect kvůli:
+equalizer-status-separator = {", "}
+equalizer-status-more = +{ $count }
+equalizer-status-equalized = EQ
+equalizer-status-volume = Hlasitost
+equalizer-status-normalized = Normalizace
+equalizer-status-rate = { $from } → { $to } kHz
+equalizer-status-bits = { $from } → { $to } bit
+equalizer-status-float = Float → { $to } bit
+equalizer-status-channels = { $from ->
+    [1] Mono
+    [2] Stereo
+   *[other] { $from } kan.
+} → { $to ->
+    [1] mono
+    [2] stereo
+   *[other] { $to } kan.
+}
 settings-panel-lyrics-size = Velikost textu (panel)
 settings-panel-lyrics-size-detail = Velikost textu písně v postranním panelu nad základní velikostí písma
 settings-fullscreen-lyrics-size = Velikost textu (celá obrazovka)
@@ -672,9 +956,16 @@ settings-karaoke-lyrics = Karaoke texty
 settings-karaoke-lyrics-detail = Zvýrazňuje text slovo po slově, pokud je dostupné časování
 settings-blur-lyrics = Rozostřit neaktivní texty
 settings-blur-lyrics-detail = Rozostřuje nadcházející a předchozí řádky v panelu s textem
+settings-lyrics-sample-first = Libovolná data
+settings-lyrics-sample-second = Sem vlož nějaký vtipný text
+settings-lyrics-sample-japanese = ここに面白い文章を入れてください
+settings-lyrics-sample-romanized = koko ni omoshiroi bunshou o irete kudasai
+settings-lyrics-sample-fourth = Doufám, že ta japonština sedí
+settings-lyrics-sample-fifth = Pátý řádek
 settings-romanized-lyrics = Romanizované texty
 settings-romanized-lyrics-detail = Zobrazuje místně vytvořenou výslovnost pro vybrané písmové systémy
 settings-romanization-writing-systems = Písmové systémy
+settings-lyrics-priority = Priorita poskytovatelů
 settings-lyrics-providers-detail = Vyber služby, ve kterých se mají hledat texty písní
 settings-lyrics-providers-selected = { $count ->
     [one] Vybrán { $count } poskytovatel
@@ -682,6 +973,7 @@ settings-lyrics-providers-selected = { $count ->
    *[other] Vybráno { $count } poskytovatelů
     }
 settings-lyrics-provider-local = Místní soubory
+settings-lyrics-provider-subsonic = Subsonic
 settings-lyrics-provider-spotify = Spotify
 settings-lyrics-provider-youtube = YouTube Music
 settings-lyrics-provider-apple-music = Apple Music
@@ -699,11 +991,15 @@ settings-romanization-other = Ostatní písmové systémy
 settings-group-window = Okno
 settings-group-text = Text
 settings-group-motion = Pohyb
+settings-group-streaming = Streamování
+settings-group-spotify-connect = Spotify Connect
 settings-adaptive-menu = Adaptivní kontextová nabídka
 settings-adaptive-menu-detail = Vynechá položky, které řádek už ukazuje, například album nebo interpreta
 settings-accounts = Spravovat účty
 settings-accounts-detail = Služby, ze kterých toto zařízení umí přehrávat
 settings-provider-current = Přehrává se z této služby
+settings-provider-sign-in = Přihlásit se
+settings-profile-account = { $provider } · { $account }
 settings-sign-out = Odhlásit se
 settings-lastfm = Last.fm
 settings-lastfm-detail = Sonora odesílá poslechy přes tvůj vlastní účet Last.fm API. Vytvoř ho a sem vlož klíč a tajný klíč.
@@ -771,6 +1067,9 @@ saver-fps = { $fps } FPS
 
 toast-playlist-created = Playlist vytvořen
 toast-playlist-renamed = Playlist přejmenován
+toast-playlist-updated = Playlist upraven
+toast-playlist-cover-changed = Obal playlistu změněn
+toast-playlist-cover-removed = Obal playlistu odebrán
 toast-playlist-deleted = Playlist smazán
 toast-local-delete-failed = Některé soubory skladeb se nepodařilo smazat
 toast-playlist-added = Playlist přidán do tvé knihovny
@@ -778,9 +1077,18 @@ toast-playlist-removed = Playlist odebrán z tvé knihovny
 toast-playlist-visibility = Viditelnost playlistu změněna
 toast-track-added = Přidáno do playlistu: { $name }
 toast-track-removed = Odebráno z playlistu: { $name }
+toast-track-removed-unnamed = Odebráno z playlistu
 toast-playlist-failed = Tuto změnu se nepodařilo uložit
 toast-playlist-busy = Jiná změna ještě probíhá
 toast-playlist-signed-out = Pro změnu playlistů se přihlas
+toast-playlist-imported = Importováno: { $name }
+toast-playlist-imported-partly = Importováno: { $name }, bez { $count ->
+        [one] jedné skladby, která není
+       *[other] { $count } skladeb, které nejsou
+    } v tvé knihovně
+toast-playlist-import-empty = Žádná skladba z { $name } není v tvé knihovně
+toast-playlist-exported = Playlist exportován
+toast-file-dialog-failed = Dialog pro výběr souboru se nepodařilo otevřít
 toast-queued-track = Do fronty přidáno: { $name }
 toast-next-track = { $name } se přehraje jako další
 toast-last-track = { $name } se přehraje jako poslední
@@ -794,13 +1102,99 @@ toast-queued-artist = Interpret přidán do fronty
 toast-next-artist = Interpret se přehrá jako další
 toast-last-artist = Interpret se přehrá jako poslední
 toast-queue-failed = Toto se nepodařilo přidat do fronty
-toast-keys-refused = Spotify tomuto účtu neuděluje klíče pro přehrávání
+toast-queue-local-elsewhere = Místní soubory nelze přidat do fronty na jiném zařízení
+toast-queued-tracks = { $count ->
+    [one] { $count } skladba přidána do fronty
+    [few] { $count } skladby přidány do fronty
+   *[other] { $count } skladeb přidáno do fronty
+}
+toast-next-tracks = { $count ->
+    [one] { $count } skladba se přehraje jako další
+    [few] { $count } skladby se přehrají jako další
+   *[other] { $count } skladeb se přehraje jako další
+}
+toast-last-tracks = { $count ->
+    [one] { $count } skladba se přehraje jako poslední
+    [few] { $count } skladby se přehrají jako poslední
+   *[other] { $count } skladeb se přehraje jako poslední
+}
+toast-queue-cleared = Fronta vymazána
+toast-queue-removed-track = Z fronty odebráno: { $name }
+toast-queue-removed-tracks = { $count ->
+    [one] Z fronty odebrána { $count } skladba
+    [few] Z fronty odebrány { $count } skladby
+   *[other] Z fronty odebráno { $count } skladeb
+}
+toast-sleep-ended = Časovač usnutí skončil
+toast-radio-failed = Rádio pro { $name } se nepodařilo spustit
+toast-similar-failed = Ke skladbě { $name } se nepodařilo najít podobné skladby
+toast-open-failed = { $name } se nepodařilo otevřít
+toast-open-unsupported = { $name } není zvukový soubor, který Sonora umí přehrát
+toast-open-all-failed = { $count ->
+    [one] { $count } soubor se nepodařilo otevřít
+    [few] { $count } soubory se nepodařilo otevřít
+   *[other] { $count } souborů se nepodařilo otevřít
+}
+toast-open-some-failed = Některé soubory se nepodařilo otevřít
+toast-keys-error = Chyba klíče pro přehrávání
+toast-keys-refused = Spotify tu nemusí fungovat
+toast-why = Proč?
 toast-sign-in-to-play = { $name } lze streamovat jen po přihlášení
+toast-restore-failed = Službu { $name } se nepodařilo znovu přihlásit, a tak Sonora pokračovala bez ní
 toast-track-unplayable = { $name } se nepodařilo přehrát
+toast-playback-stopped = Přehrávání se zastavilo, protože několik skladeb za sebou nešlo přehrát
+toast-widevine-failed = Přehrávání se nezdařilo
+toast-widevine-borrowed = Zkus aktualizovat Widevine
+toast-open-settings = Nastavení
+toast-throttled = { $name } teď omezuje přehrávání. Za chvíli to zkusím znovu
+toast-still-throttled = { $name } stále omezuje přehrávání. Stiskni přehrát a zkus to znovu
 toast-library-add-failed = { $name } se nepodařilo přidat do tvé knihovny
 toast-library-remove-failed = { $name } se nepodařilo odebrat z tvé knihovny
 toast-library-added = Přidáno do tvé knihovny
 toast-library-removed = Odebráno z tvé knihovny
+toast-library-removed-one = Odebráno z tvé knihovny: { $name }
+toast-library-songs-removed = Z tvé knihovny { $count ->
+        [one] odebrána jedna skladba
+        [few] odebrány { $count } skladby
+       *[other] odebráno { $count } skladeb
+    }
+toast-library-albums-removed = Z tvé knihovny { $count ->
+        [one] odebráno jedno album
+        [few] odebrána { $count } alba
+       *[other] odebráno { $count } alb
+    }
+toast-playlists-removed = Z tvé knihovny { $count ->
+        [one] odebrán jeden playlist
+        [few] odebrány { $count } playlisty
+       *[other] odebráno { $count } playlistů
+    }
+toast-favorite-removed = Odebráno z tvých oblíbených: { $name }
+toast-favorite-songs-removed = Z tvých oblíbených { $count ->
+        [one] odebrána jedna skladba
+        [few] odebrány { $count } skladby
+       *[other] odebráno { $count } skladeb
+    }
+toast-favorite-albums-removed = Z tvých oblíbených { $count ->
+        [one] odebráno jedno album
+        [few] odebrána { $count } alba
+       *[other] odebráno { $count } alb
+    }
+toast-favorite-artists-removed = Z tvých oblíbených { $count ->
+        [one] odebrán jeden interpret
+        [few] odebráni { $count } interpreti
+       *[other] odebráno { $count } interpretů
+    }
+toast-tracks-removed = Z playlistu { $name } { $count ->
+        [one] odebrána jedna skladba
+        [few] odebrány { $count } skladby
+       *[other] odebráno { $count } skladeb
+    }
+toast-tracks-removed-unnamed = Z playlistu { $count ->
+        [one] odebrána jedna skladba
+        [few] odebrány { $count } skladby
+       *[other] odebráno { $count } skladeb
+    }
+toast-unpinned = Odepnuto: { $name }
 
 # lyrics
 lyrics-title = Text písně
@@ -821,6 +1215,18 @@ update-notes = Co je nového
 update-now = Aktualizovat
 update-working = Aktualizace se stahuje…
 update-failed = Aktualizaci se nepodařilo nainstalovat. Zkus to znovu ze stránky s vydáními.
+update-never = Nekontrolovat aktualizace
+notice-never = Už nezobrazovat
+requirement-audio-bridge-title = Sonora se nemůže spojit s tvým zvukovým serverem
+requirement-audio-bridge = { $server ->
+    [pulseaudio] PulseAudio běží, ale ALSA k němu nemá cestu, takže nic, co přehraješ, není slyšet. Nainstaluj pulseaudio-alsa a restartuj Sonoru.
+   *[pipewire] PipeWire běží, ale ALSA k němu nemá cestu, takže nic, co přehraješ, není slyšet. Nainstaluj pipewire-alsa a restartuj Sonoru.
+}
+requirement-audio-output-title = Žádný zvukový výstup
+requirement-audio-output = Sonora nemohla otevřít tvoje zvukové zařízení, takže nic, co přehraješ, není slyšet. Zkontroluj, že je zařízení připojené a nedrží ho jiná aplikace.
+requirement-web-engine-title = Přihlášení přes prohlížeč není k dispozici
+requirement-web-engine = Nainstaluj webkit2gtk-4.1, aby ses mohl přihlásit k YouTube Music, Deezeru nebo Apple Music v okně prohlížeče. Do té doby místo toho vlož své cookies.
+requirement-help = Co nainstalovat
 settings-check-updates = Kontrolovat aktualizace
 settings-check-updates-detail = Při startu se jednou zeptat GitHubu, jestli vyšla novější verze. Sonora nainstaluje aktualizaci sama jen na Windows; jinde ukáže, co se změnilo
 settings-log = Soubor protokolu
@@ -834,6 +1240,9 @@ tags-sheet-album = Album
 tags-sheet-details = Podrobnosti
 tags-title = Název
 tags-artist = Interpret
+tags-artists = Interpreti
+tags-add-artist = Přidat interpreta
+tags-remove-artist = Odebrat tohoto interpreta
 tags-track = Číslo skladby
 tags-track-total = Celkem skladeb
 tags-disc = Číslo disku
@@ -848,9 +1257,17 @@ tags-isrc = ISRC
 tags-comment = Komentář
 toast-tags-saved = Tagy pro { $name } uloženy
 toast-tags-failed = Tagy se nepodařilo uložit
+toast-output-select-failed = { $name } se nepodařilo vybrat
+toast-output-default-failed = Výchozí systémové zařízení se nepodařilo vybrat
 
 nav-pin = Připnout
 toast-library-pin-failed = Připnutí se nepodařilo změnit.
+toast-jam-unreadable = Tento odkaz nevede na Jam, ke kterému by ses mohl připojit.
+toast-jam-needs-connect = Pro připojení k Jamu zapni v nastavení „Zobrazit jako zařízení Spotify“
+toast-jam-failed = Jam se nepodařilo spustit ani se k němu připojit.
+toast-jam-ended = Jam skončil
+toast-jam-left = Opustil jsi Jam
+toast-jam-leave-failed = Jam se nepodařilo ukončit ani opustit.
 nav-nothing-pinned = Tady nic není
 nav-pins-alphabetical = Abecedně
 nav-pins-kind = Podle typu
@@ -863,8 +1280,79 @@ trouble-offline-detail = Zkontroluj připojení k internetu a zkus to znovu.
 trouble-not-loaded = Načtení se nezdařilo
 trouble-retry = Zkusit znovu
 toast-offline = Žádné připojení. Dokud se neobnoví, nic se nebude streamovat.
+toast-offline-unsupported = { $name } přehrává stažené skladby jen online.
+toast-offline-mode = Jsi offline. Pro streamování této skladby přejdi online.
+offline-title = Jsi offline.
+offline-go-online = Přejít online
+toast-download-failed = Nepodařilo se zjistit, které skladby stáhnout.
+toast-percent = { $percent } %
+toast-download-cancelled = Stahování { $name } zrušeno
+toast-downloads-cancelled = { $count ->
+    [one] Stahování { $count } skladby zrušeno
+    [few] Stahování { $count } skladeb zrušeno
+   *[other] Stahování { $count } skladeb zrušeno
+}
 toast-settings-broken = Oprav řádek { $name } v settings.json, aby se změny uložily
 toast-tray-unavailable = Systémová lišta není k dispozici, ikonu nelze zobrazit
+toast-undo = Zpět
+toast-link-copied = Odkaz zkopírován
+toast-link-sign-in = Pro otevření tohoto odkazu se přihlas k { $name }
+toast-link-unreadable = Tento odkaz Sonora neumí otevřít
+toast-code-copied = Kód zkopírován
+menu-copy-link-none = Tady není žádný odkaz ke sdílení
+menu-copy-link-local = Místní interpreti a playlisty nemají odkaz
+toast-settings-save-failed = Nastavení se nepodařilo uložit
+toast-settings-overwritten = Soubor settings.json se na disku změnil, a tak se tvoje poslední změna neuložila
+toast-widevine-download-failed = Widevine se nepodařilo stáhnout
+toast-widevine-install-failed = Widevine se nepodařilo nainstalovat
+toast-widevine-remove-failed = Widevine se nepodařilo odebrat
+toast-library-scanned = { $count ->
+    [one] Knihovna prohledána, nalezena jedna skladba
+    [few] Knihovna prohledána, nalezeny { $count } skladby
+   *[other] Knihovna prohledána, nalezeno { $count } skladeb
+}
+toast-scan-failed = Tvoje hudební složky se nepodařilo prohledat
+toast-folder-removed = Odebráno: { $name }
+toast-folder-missing = { $name } už na disku není
+toast-history-removed = { $count ->
+    [one] Odebráno z historie
+    [few] Z historie odebrány { $count } skladby
+   *[other] Z historie odebráno { $count } skladeb
+}
+toast-history-remove-failed = Skladbu se nepodařilo odebrat z historie
+toast-history-restore-failed = Historii se nepodařilo obnovit
+toast-history-clear-failed = Historii se nepodařilo vymazat
 
 # power
 wake-reason = Hraje hudba
+
+toast-sample-plain = Událost byla vytvořena
+toast-sample-done = Uloženo do tvé knihovny
+toast-sample-info = Přijď 10 minut před začátkem události.
+toast-sample-warning = Tvoje relace skončí za pět minut
+toast-sample-failed = Server se nepodařilo kontaktovat
+toast-sample-loading = Nahrávám tvoje skladby
+toast-sample-event = Událost vytvořena
+toast-sample-event-detail = Neděle 3. prosince v 9:00
+toast-sample-delete = Smazáno: { $name }
+toast-sample-undo = Zpět
+toast-sample-cancel = Zrušit
+toast-sample-undone = Vráceno zpět
+toast-sample-queued = Do fronty přidáno: { $name }
+toast-sample-long = Toto oznámení říká mnohem víc než ostatní, takže se text musí zalomit na druhý a možná i třetí řádek, aniž by vytlačil tlačítko zavřít z karty
+toast-sample-saving = Ukládá se { $name }
+toast-sample-saved = Uloženo: { $name }
+toast-sample-save-failed = { $name } se nepodařilo uložit
+toast-sample-save-failed-detail = Server odpověděl 503 Service Unavailable
+toast-sample-lasting = Toto oznámení zůstane, dokud ho nezavřeš
+toast-sample-burst = Oznámení číslo { $name }
+
+# Frequency response graph
+response-graph-hz = { $value } Hz
+response-graph-khz = { $value } kHz
+response-graph-db = { $value } dB
+response-graph-readout = { $frequency } · { $direction ->
+        [up] +{ $gain }
+        [down] -{ $gain }
+       *[flat] { $gain }
+    } dB

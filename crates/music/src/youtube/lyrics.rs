@@ -66,10 +66,11 @@ impl LyricsProvider for YouTubeLyrics {
         {
             return Ok(vec![catalog::hit(SOURCE, query, sheet)]);
         }
-        // Videos can lack lyrics even when the corresponding album recording has them.
+        // Videos can lack lyrics even when the corresponding album recording has them. The search
+        // goes out signed out so it stays out of the account's search history.
         let tracks = self
             .api
-            .search_songs(&format!("{} {}", query.title, query.artist))
+            .search_songs_with(&format!("{} {}", query.title, query.artist), false)
             .await?
             .into_iter()
             .enumerate()

@@ -1,3 +1,4 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{Div, Stateful};
 
@@ -9,9 +10,13 @@ pub trait Link: Sized {
 
 impl Link for Stateful<Div> {
     fn link(self, to: Destination) -> Self {
-        self.cursor_pointer().on_click(move |_, _, cx| {
-            cx.stop_propagation();
-            navigate(to.clone(), cx);
-        })
+        // The role alone makes the link a node; its name stays with the
+        // caller, which owns the label the link wraps.
+        self.role(Role::Link)
+            .cursor_pointer()
+            .on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                navigate(to.clone(), cx);
+            })
     }
 }

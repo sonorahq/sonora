@@ -35,7 +35,9 @@ const SETUP: Duration = Duration::from_secs(5);
 const DRM: &str = "/sys/class/drm";
 
 /// Firefox on Linux. WebKitGTK's own agent claims Safari on X11, a browser that does not exist,
-/// and Google answers a browser it cannot place with "this browser may not be secure".
+/// and Google answers a browser it cannot place with "this browser may not be secure". A scripted
+/// window keeps WebKitGTK's own agent instead, because Google's attestation checks the agent
+/// against the engine and a WebKit claiming to be Firefox gets tokens the stream host refuses.
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0";
 
 const GTK_WINDOW_TOPLEVEL: c_int = 0;
@@ -130,6 +132,7 @@ symbols! {
     webkit_user_script_unref: unsafe extern "C" fn(Ptr),
     webkit_web_view_get_uri: unsafe extern "C" fn(Ptr) -> *const c_char,
     webkit_web_view_load_uri: unsafe extern "C" fn(Ptr, *const c_char),
+    webkit_web_view_run_javascript: unsafe extern "C" fn(Ptr, *const c_char, Ptr, Option<Ready>, Ptr),
     webkit_web_view_terminate_web_process: unsafe extern "C" fn(Ptr),
     webkit_settings_set_user_agent: unsafe extern "C" fn(Ptr, *const c_char),
     webkit_cookie_manager_set_accept_policy: unsafe extern "C" fn(Ptr, c_int),
@@ -152,6 +155,8 @@ struct Shared {
     wanted: bool,
     /// The poll side wants this url loaded.
     load: Option<CString>,
+    /// Scripts the poll side wants run in the page, oldest first.
+    scripts: Vec<CString>,
     /// The poll side wants the window closed.
     dismissed: bool,
 }
@@ -253,6 +258,7 @@ impl Window {
                 fetch: Fetch::Idle,
                 wanted: false,
                 load: None,
+                scripts: Vec::new(),
                 dismissed: false,
             }),
         });
@@ -289,6 +295,14 @@ impl Window {
             return;
         };
         self.session.state.lock().unwrap().load = Some(url);
+    }
+
+    /// Asks the GTK thread to run `script` in the page. It runs within a tick.
+    pub(crate) fn run(&self, script: &str) {
+        let Ok(script) = CString::new(script) else {
+            return;
+        };
+        self.session.state.lock().unwrap().scripts.push(script);
     }
 
     /// Asks the GTK thread to take the window down. It is gone within a tick.
@@ -368,7 +382,14 @@ impl Live {
             CString::new(session.target.title.as_str()).context("the window title is not text")?;
         let uri = CString::new(format!("https://{}/", session.target.landing))
             .context("the landing host is not text")?;
-        let agent = CString::new(session.target.agent.as_deref().unwrap_or(USER_AGENT))
+        let agent = match (&session.target.agent, session.target.scripted()) {
+            (Some(agent), _) => Some(agent.as_str()),
+            (None, true) => None,
+            (None, false) => Some(USER_AGENT),
+        };
+        let agent = agent
+            .map(CString::new)
+            .transpose()
             .context("the user agent is not text")?;
 
         // The context is the whole session: dropping it at the end takes the cookies with it.
@@ -390,8 +411,10 @@ impl Live {
                 WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS,
             )
         };
-        let settings = unsafe { (api.webkit_web_view_get_settings)(view) };
-        unsafe { (api.webkit_settings_set_user_agent)(settings, agent.as_ptr()) };
+        if let Some(agent) = &agent {
+            let settings = unsafe { (api.webkit_web_view_get_settings)(view) };
+            unsafe { (api.webkit_settings_set_user_agent)(settings, agent.as_ptr()) };
+        }
 
         unsafe { (api.gtk_window_set_title)(window, title.as_ptr()) };
         unsafe { (api.gtk_window_set_default_size)(window, WIDTH, HEIGHT) };
@@ -456,10 +479,23 @@ impl Live {
         state.uri = unsafe { text((api.webkit_web_view_get_uri)(self.view)) };
         let wanted = std::mem::take(&mut state.wanted);
         let load = state.load.take();
+        let scripts = std::mem::take(&mut state.scripts);
         // `collected` locks the same state, so the read is started with the lock let go.
         drop(state);
         if let Some(url) = load {
             unsafe { (api.webkit_web_view_load_uri)(self.view, url.as_ptr()) };
+        }
+        for script in scripts {
+            // Nothing reads the result, and a task with no callback is simply dropped.
+            unsafe {
+                (api.webkit_web_view_run_javascript)(
+                    self.view,
+                    script.as_ptr(),
+                    ptr::null_mut(),
+                    None,
+                    ptr::null_mut(),
+                )
+            };
         }
         if wanted {
             let held = Arc::into_raw(self.session.clone()) as Ptr;

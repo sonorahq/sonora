@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{App, EntityId, Window};
-use music::Spectrum;
+use music::{Listening, Spectrum};
 use ui::Levels;
 
 /// How long the drawn levels take to close 63% of the gap to the analyzer's. A time constant
@@ -17,7 +17,11 @@ const STALL: Duration = Duration::from_millis(250);
 #[derive(Default)]
 struct State {
     shown: Levels,
+    spectrum: Spectrum,
+    listening: Option<Listening>,
     armed: bool,
+    /// Set by every `show`, so a step can tell the view stopped rendering.
+    seen: bool,
     visible: bool,
     beat: Option<Instant>,
 }
@@ -35,6 +39,9 @@ impl VisualizerDrive {
     pub fn show(&self, watch: EntityId, spectrum: Spectrum, window: &mut Window) {
         let mut state = self.state.borrow_mut();
         state.visible = true;
+        state.seen = true;
+        state.listening = Some(spectrum.listen());
+        state.spectrum = spectrum;
         if state.armed {
             return;
         }
@@ -43,20 +50,22 @@ impl VisualizerDrive {
         drop(state);
 
         let drive = self.clone();
-        window.on_next_frame(move |window, cx| drive.step(watch, spectrum, window, cx));
+        window.on_next_frame(move |window, cx| drive.step(watch, window, cx));
     }
 
     pub fn hide(&self) {
         self.state.borrow_mut().visible = false;
     }
 
-    fn step(&self, watch: EntityId, spectrum: Spectrum, window: &mut Window, cx: &mut App) {
+    fn step(&self, watch: EntityId, window: &mut Window, cx: &mut App) {
         {
             let mut state = self.state.borrow_mut();
-            if !state.visible {
+            if !state.visible || !std::mem::take(&mut state.seen) {
                 state.armed = false;
+                state.listening = None;
                 return;
             }
+            let spectrum = state.spectrum.clone();
             let now = Instant::now();
             let rate = match state.beat.replace(now) {
                 Some(beat) if now.duration_since(beat) < STALL => {
@@ -70,7 +79,7 @@ impl VisualizerDrive {
 
         cx.notify(watch);
         let drive = self.clone();
-        window.on_next_frame(move |window, cx| drive.step(watch, spectrum, window, cx));
+        window.on_next_frame(move |window, cx| drive.step(watch, window, cx));
     }
 }
 

@@ -17,22 +17,28 @@
 //! Loudness normalisation lives here too. A provider only reports how loud a track is, and the
 //! engine decides what gain that earns.
 
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, channel};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, ensure};
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 use rodio::Source as _;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::oneshot;
 
 use crate::audio::{Chain, Volume};
 use crate::sink::{Cue, Paced, packet, watch_for_output};
 use crate::spectrum::Spectrum;
+use crate::vault::Shelf;
 use crate::{
-    Encoding, Normalisation, PlaybackConfig, PlaybackEvent, PlaybackEvents, Player, TrackSignal,
+    Encoding, Fraction, Normalisation, PlaybackConfig, PlaybackEvent, PlaybackEvents, Player,
+    TrackSignal,
 };
 
+/// How often a download reports how far it has got.
+const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 /// How many frames the decoder hands over at a time. Small enough that a skip is heard at once,
 /// large enough that the queue is not rebuilt for every few samples.
 const CHUNK: usize = 4096;
@@ -83,6 +89,18 @@ pub trait Fetch: Send + Sync + 'static {
     /// What to call this engine's threads.
     fn name(&self) -> &'static str;
 
+    /// Where this provider keeps tracks, when it keeps any. A provider with a shelf can download
+    /// a track without playing it.
+    fn shelf(&self) -> Option<&Shelf> {
+        None
+    }
+
+    /// Whether a track on the shelf plays with no network. A provider that has to license every
+    /// play says no, and its downloads only save the fetch.
+    fn plays_offline(&self) -> bool {
+        true
+    }
+
     /// Fetches a track: enough of it to start decoding, not all of it.
     async fn load(&self, id: &str) -> Result<Self::Loaded>;
 
@@ -113,6 +131,12 @@ pub trait Fetch: Send + Sync + 'static {
     /// The engine reports it so the next track can be fetched without taking bandwidth from
     /// this one. The default answers at once, which suits a track that is already on disk.
     async fn downloaded(&self, _loaded: &Self::Loaded) {}
+
+    /// How much of the track has arrived, from 0 to 1, when the fetch can tell. A download shows
+    /// it as it goes.
+    fn progress(&self, _loaded: &Self::Loaded) -> Option<f32> {
+        None
+    }
 
     /// Opens a decoder placed at `at`. `None` means the track cannot be played, which the
     /// engine reports as unavailable.
@@ -149,6 +173,8 @@ pub fn start<F: Fetch>(
     let spectrum = Spectrum::new();
     let engine_spectrum = spectrum.clone();
     let name = fetch.name();
+    let shelf = fetch.shelf().cloned();
+    let offline = fetch.plays_offline();
     let spawned = std::thread::Builder::new()
         .name(format!("{name}-playback"))
         .spawn(move || run(Arc::new(fetch), config, command_rx, events, engine_spectrum));
@@ -156,7 +182,12 @@ pub fn start<F: Fetch>(
         log::error!("playback: cannot spawn the {name} engine thread: {error}");
     }
     (
-        Box::new(Handle { commands, spectrum }),
+        Box::new(Handle {
+            commands,
+            spectrum,
+            shelf,
+            offline,
+        }),
         Box::new(Events(event_rx)),
     )
 }
@@ -176,6 +207,12 @@ enum Command {
     Pause,
     Seek(Duration),
     Gain(f32),
+    /// Fetch a whole track into the downloads without playing it, and say how that went.
+    Download {
+        id: String,
+        progress: Fraction,
+        done: oneshot::Sender<Result<()>>,
+    },
 }
 
 /// What the audio thread is told to do. Everything that touches the network has happened by the
@@ -206,6 +243,11 @@ enum Job<F: Fetch> {
 struct Handle {
     commands: UnboundedSender<Command>,
     spectrum: Spectrum,
+    /// Where the provider keeps tracks, which says what is downloaded without asking the
+    /// engine thread.
+    shelf: Option<Shelf>,
+    /// Whether what is on the shelf plays with no network, as [`Fetch::plays_offline`] said.
+    offline: bool,
 }
 
 impl Player for Handle {
@@ -258,6 +300,45 @@ impl Player for Handle {
 
     fn spectrum(&self) -> Option<Spectrum> {
         Some(self.spectrum.clone())
+    }
+
+    fn download(&self, track_id: &str, progress: Fraction) -> BoxFuture<'static, Result<()>> {
+        let (done, answer) = oneshot::channel();
+        let sent = match self.shelf {
+            Some(_) => self
+                .commands
+                .send(Command::Download {
+                    id: track_id.to_owned(),
+                    progress,
+                    done,
+                })
+                .context("cannot reach the playback engine"),
+            None => Err(anyhow!("this provider cannot download")),
+        };
+        Box::pin(async move {
+            sent?;
+            answer.await.context("the playback engine stopped")?
+        })
+    }
+
+    fn downloaded(&self, track_id: &str) -> bool {
+        self.shelf
+            .as_ref()
+            .is_some_and(|shelf| shelf.holds(track_id))
+    }
+
+    fn plays_offline(&self, track_id: &str) -> bool {
+        self.offline
+            && self
+                .shelf
+                .as_ref()
+                .is_some_and(|shelf| shelf.may_hold(track_id))
+    }
+
+    fn discard(&self, track_id: &str) {
+        if let Some(shelf) = &self.shelf {
+            shelf.discard(track_id);
+        }
     }
 }
 
@@ -325,6 +406,8 @@ async fn engine_loop<F: Fetch>(
 ) {
     let (cue, mut written) = Cue::new();
     let (changed, mut gone) = unbounded_channel();
+    let heard = Heard::default();
+    let heard_audio = heard.clone();
     let chain = Chain {
         volume: Volume::new(config.gain),
         equalizer: config.equalizer.clone(),
@@ -353,6 +436,7 @@ async fn engine_loop<F: Fetch>(
                 audio_events,
                 interval,
                 normalisation,
+                heard_audio,
             )
         });
     if let Err(error) = spawned {
@@ -515,6 +599,12 @@ async fn engine_loop<F: Fetch>(
                     Command::Gain(level) => {
                         jobs.send(Job::Gain(level)).ok();
                     }
+                    Command::Download { id, progress, done } => {
+                        let fetch = fetch.clone();
+                        tokio::spawn(async move {
+                            done.send(download(&*fetch, &id, &progress).await).ok();
+                        });
+                    }
                 }
             }
             arrival = arrivals.recv() => {
@@ -577,7 +667,17 @@ async fn engine_loop<F: Fetch>(
                 }
             }
             join = joined.recv() => {
-                let Some(join) = join else { break };
+                // The audio thread has ended. One that lost its output tells `gone` before it
+                // returns, but `select!` picks among ready branches at random and can see the
+                // closed `joined` first. Without reading `gone` here the engine would end
+                // without telling the state to rebuild it, and playback would stay silent.
+                let Some(join) = join else {
+                    if gone.try_recv().is_ok() {
+                        events.send(PlaybackEvent::OutputChanged { heard: heard.position(&cue) }).ok();
+                        return;
+                    }
+                    break;
+                };
                 let before = current.clone();
                 settle(&mut current, join);
                 if current != before {
@@ -592,7 +692,7 @@ async fn engine_loop<F: Fetch>(
             }
             lost = gone.recv() => {
                 if lost.is_some() {
-                    events.send(PlaybackEvent::OutputChanged).ok();
+                    events.send(PlaybackEvent::OutputChanged { heard: heard.position(&cue) }).ok();
                 }
                 return;
             }
@@ -815,6 +915,7 @@ impl<F: Fetch> Playing<F> {
 
 /// The track being heard, which is not always the one being decoded: at the end of a track the
 /// decoder has moved on, or stopped, while the queue still holds the last seconds of it.
+#[derive(Clone)]
 struct Mark {
     id: String,
     channels: u16,
@@ -829,6 +930,30 @@ impl Mark {
         let mine = cue.played().saturating_sub(self.offset);
         let frames = mine / u64::from(self.channels).max(1);
         self.base + Duration::from_secs_f64(frames as f64 / f64::from(self.rate).max(1.0))
+    }
+}
+
+/// The mark of the track being heard, shared between the audio thread, which moves it, and the
+/// engine loop, which reads it when the output is lost to say where playback stood.
+#[derive(Clone, Default)]
+struct Heard(Arc<Mutex<Option<Mark>>>);
+
+impl Heard {
+    fn set(&self, mark: Option<Mark>) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = mark;
+    }
+
+    fn get(&self) -> Option<Mark> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The track being heard and how far into it, from what the output has drawn.
+    fn position(&self, cue: &Cue) -> Option<(String, Duration)> {
+        let mark = self.get()?;
+        Some((mark.id.clone(), mark.at(cue)))
     }
 }
 
@@ -855,21 +980,25 @@ fn audio_loop<F: Fetch>(
     events: UnboundedSender<PlaybackEvent>,
     interval: Duration,
     normalise: bool,
+    heard: Heard,
 ) {
     let mut paced = match Paced::open(cue.clone(), chain, changed.clone()) {
         Ok(paced) => paced,
         Err(error) => {
-            // Nothing can be decoded without an output, so this thread is done. The engine is
-            // told once a device is back, and the one that replaces it opens on that.
+            // Nothing can be decoded without an output, so the thread only holds its channels
+            // until the engine is dropped. Returning would close `joins` and end the engine, and
+            // the watch below ends with the engine before its first try, so playback would stay
+            // silent. A device that would not open once usually opens on the watch's next try.
             log::error!("playback: cannot open audio output: {error:#}");
-            return watch_for_output(changed);
+            watch_for_output(changed);
+            while jobs.recv().is_ok() {}
+            return;
         }
     };
 
     let mut current: Option<Playing<F>> = None;
     let mut written = 0u64;
     let mut joining: Option<Join<F>> = None;
-    let mut heard: Option<Mark> = None;
     let mut queued: Option<(String, F::Loaded)> = None;
     let mut playing = false;
     let mut reported_at = Instant::now();
@@ -903,9 +1032,12 @@ fn audio_loop<F: Fetch>(
                 })
                 .ok();
             events.send(PlaybackEvent::Ended { id: Some(ended) }).ok();
-            heard = current.as_ref().map(|held| held.mark(paced.rate()));
+            heard.set(current.as_ref().map(|held| held.mark(paced.rate())));
             match next {
                 Some((id, duration)) => {
+                    if let Some(following) = &current {
+                        paced.follow_rate(following.rate);
+                    }
                     announce_length(&events, &id, duration);
                     events
                         .send(PlaybackEvent::Playing {
@@ -920,9 +1052,9 @@ fn audio_loop<F: Fetch>(
 
         // reported from the sound, so it keeps moving while the last seconds play out
         if playing
-            && let Some(mark) = &heard
             && reported_at.elapsed() >= interval
             && !cue.cleared()
+            && let Some(mark) = heard.get()
         {
             reported_at = Instant::now();
             events
@@ -945,7 +1077,10 @@ fn audio_loop<F: Fetch>(
                     joining = None;
                     written = 0;
                     current = Playing::open(fetch.as_ref(), &id, loaded, at, 0, normalise, &events);
-                    heard = current.as_ref().map(|held| held.mark(paced.rate()));
+                    heard.set(current.as_ref().map(|held| held.mark(paced.rate())));
+                    if let Some(held) = &current {
+                        paced.follow_rate(held.rate);
+                    }
                     playing = start && current.is_some();
                     match playing {
                         true if paced.play().is_err() => return,
@@ -967,7 +1102,7 @@ fn audio_loop<F: Fetch>(
                     current = None;
                     queued = None;
                     joining = None;
-                    heard = None;
+                    heard.set(None);
                     written = 0;
                     playing = false;
                     paced.pause();
@@ -977,7 +1112,7 @@ fn audio_loop<F: Fetch>(
                     if playing && paced.play().is_err() {
                         return;
                     }
-                    if let Some(mark) = &heard {
+                    if let Some(mark) = heard.get() {
                         events
                             .send(PlaybackEvent::Playing {
                                 id: Some(mark.id.clone()),
@@ -989,7 +1124,7 @@ fn audio_loop<F: Fetch>(
                 Job::Pause => {
                     playing = false;
                     paced.pause();
-                    if let Some(mark) = &heard {
+                    if let Some(mark) = heard.get() {
                         events
                             .send(PlaybackEvent::Paused {
                                 id: Some(mark.id.clone()),
@@ -1025,7 +1160,7 @@ fn audio_loop<F: Fetch>(
                         continue;
                     }
                     written = 0;
-                    heard = current.as_ref().map(|held| held.mark(paced.rate()));
+                    heard.set(current.as_ref().map(|held| held.mark(paced.rate())));
                     cue.arm();
                 }
                 Job::Seek(position) => {
@@ -1046,8 +1181,13 @@ fn audio_loop<F: Fetch>(
                                 &events,
                             ) {
                                 Some(fresh) => current = Some(fresh),
+                                // The seek has already cleared the queue, so the old decoder
+                                // would go on unheard. The app moves on as from a failed load.
                                 None => {
                                     log::warn!("playback: cannot seek {id}");
+                                    events
+                                        .send(PlaybackEvent::Unavailable { id: Some(id) })
+                                        .ok();
                                     continue;
                                 }
                             }
@@ -1062,7 +1202,7 @@ fn audio_loop<F: Fetch>(
                     }
                     joining = None;
                     written = 0;
-                    heard = current.as_ref().map(|held| held.mark(paced.rate()));
+                    heard.set(current.as_ref().map(|held| held.mark(paced.rate())));
                     cue.arm();
                 }
                 Job::Gain(level) => paced.set_volume(level),
@@ -1144,6 +1284,40 @@ fn normalisation(enabled: bool, loudness: Option<Loudness>) -> f32 {
         .peak
         .map_or(1.0, |peak| (1.0 / peak).clamp(1.0, BOOST_CAP));
     wanted.min(headroom)
+}
+
+/// Fetches all of track `id` into the downloads, the way a play would fetch it, and holds on to
+/// it until the last byte is in. A track already downloaded costs nothing.
+async fn download<F: Fetch>(fetch: &F, id: &str, progress: &Fraction) -> Result<()> {
+    let shelf = fetch.shelf().context("this provider keeps nothing")?;
+    shelf.settle().await;
+    if shelf.holds(id) {
+        return Ok(());
+    }
+    shelf.want(id);
+    let fetched = async {
+        let loaded = fetch.load(id).await?;
+        let arrived = fetch.downloaded(&loaded);
+        tokio::pin!(arrived);
+        let mut ticks = tokio::time::interval(PROGRESS_EVERY);
+        loop {
+            tokio::select! {
+                () = &mut arrived => break,
+                _ = ticks.tick() => {
+                    if let Some(fraction) = fetch.progress(&loaded) {
+                        progress.set(fraction);
+                    }
+                }
+            }
+        }
+        progress.set(1.0);
+        anyhow::Ok(())
+    }
+    .await;
+    shelf.unwant(id);
+    fetched?;
+    ensure!(shelf.holds(id), "the download of {id} did not finish");
+    Ok(())
 }
 
 #[cfg(test)]

@@ -49,6 +49,10 @@ const SCHEMA: &str = "
     );
     CREATE INDEX IF NOT EXISTS playlist_tracks_order
         ON playlist_tracks (playlist_id, position);
+    CREATE TABLE IF NOT EXISTS playlist_covers (
+        playlist_id TEXT PRIMARY KEY,
+        path TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS favorites (
         track_id TEXT PRIMARY KEY,
         added_at INTEGER NOT NULL
@@ -60,6 +64,22 @@ const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS favorite_artists (
         artist_id TEXT PRIMARY KEY,
         added_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS downloads (
+        provider TEXT NOT NULL,
+        track_id TEXT NOT NULL,
+        single INTEGER NOT NULL,
+        done INTEGER NOT NULL,
+        added_at INTEGER NOT NULL,
+        PRIMARY KEY (provider, track_id)
+    );
+    CREATE TABLE IF NOT EXISTS downloaded_sets (
+        provider TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        set_id TEXT NOT NULL,
+        value TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        PRIMARY KEY (provider, kind, set_id)
     );";
 
 #[derive(Clone)]

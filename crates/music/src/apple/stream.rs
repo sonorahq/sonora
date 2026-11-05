@@ -9,9 +9,11 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
+use serde::{Deserialize, Serialize};
 
 use crate::apple::auth::{self, AGENT};
 use crate::apple::progressive::Media;
+use crate::vault::{Recording, Shelf};
 use crate::{Encoding, Offer, Quality};
 use widevine::{self, Cdm};
 
@@ -70,24 +72,64 @@ pub struct Loaded {
     pub extended: bool,
 }
 
+/// What a kept track needs to be licensed again without the playback lookup. The key id is
+/// no secret, since the file's own `pssh` carries it.
+#[derive(Serialize, Deserialize)]
+struct Facts {
+    key_uri: String,
+    key_id: Vec<u8>,
+    duration_ms: Option<u64>,
+    extended: bool,
+}
+
 /// Resolves a catalog track, licenses it, and hands back a reader over its cleartext.
 ///
 /// The body and the license are fetched at the same time: the bytes do not depend on the
 /// license, and the CDM is only needed to read what has already arrived, so the round trip
 /// costs nothing that the download was not spending anyway.
+///
+/// With a shelf, the encrypted file is kept as it arrives. A kept track skips the lookup and
+/// the download but is licensed afresh on every play, so it plays only while Apple still
+/// hands this account its key.
 pub async fn prepare(
     http: &reqwest::Client,
     adam_id: &str,
     user_token: &str,
     quality: Quality,
+    shelf: Option<&Shelf>,
 ) -> Result<Loaded> {
     widevine::require()?;
-    log::info!("apple: resolving track {adam_id}");
     let bearer = auth::bearer(http).await?;
-    let resolved = resolve(http, adam_id, &bearer, user_token, quality).await?;
-
-    let response = open_asset(http, &resolved.asset, user_token).await?;
-    let mut media = Media::new(response);
+    let variant = quality.within(QUALITIES).id();
+    let recalled = match shelf {
+        Some(shelf) => recall(shelf, adam_id, variant).await,
+        None => None,
+    };
+    let (mut media, resolved) = match recalled {
+        Some(recalled) => recalled,
+        None => {
+            log::info!("apple: resolving track {adam_id}");
+            let resolved = resolve(http, adam_id, &bearer, user_token, quality).await?;
+            let response = open_asset(http, &resolved.asset, user_token).await?;
+            let total = response.content_length();
+            let source = match shelf {
+                Some(shelf) => {
+                    let facts = Facts {
+                        key_uri: resolved.key_uri.clone(),
+                        key_id: resolved.key_id.clone(),
+                        duration_ms: resolved
+                            .duration
+                            .map(|duration| duration.as_millis() as u64),
+                        extended: resolved.extended,
+                    };
+                    let facts = move || serde_json::to_vec(&facts).ok();
+                    shelf.keep(adam_id, variant, facts, response)
+                }
+                None => Recording::through(response),
+            };
+            (Media::pulling(source, total), resolved)
+        }
+    };
 
     log::info!("apple: opening widevine");
     let init = widevine::pssh(&resolved.key_id);
@@ -123,6 +165,23 @@ pub async fn prepare(
         duration: resolved.duration,
         extended: resolved.extended,
     })
+}
+
+/// The kept encrypted file of a track and what licensing it takes, when the vault has it.
+async fn recall(shelf: &Shelf, adam_id: &str, variant: &str) -> Option<(Media, Resolved)> {
+    let kept = shelf.find(adam_id, variant).await?;
+    let facts = serde_json::from_slice::<Facts>(&kept.facts)
+        .inspect_err(|error| log::warn!("apple: the kept facts of {adam_id} do not read: {error}"))
+        .ok()?;
+    log::info!("apple: {adam_id} comes from the vault and is licensed again");
+    let resolved = Resolved {
+        asset: String::new(),
+        key_uri: facts.key_uri,
+        key_id: facts.key_id,
+        duration: facts.duration_ms.map(Duration::from_millis),
+        extended: facts.extended,
+    };
+    Some((Media::pulling(kept.source, Some(kept.length)), resolved))
 }
 
 /// Asks web playback for the track and reads the media playlist of its asset at `quality`.

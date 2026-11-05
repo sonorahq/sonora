@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::actions;
 use gpui::{
@@ -45,8 +46,57 @@ pub const INPUT_CONTEXT: &str = "Input";
 
 const CARET: Pixels = px(2.);
 const CARET_LINES: f32 = 1.25;
+/// The characters DirectWrite starts a new line at.
+const LINE_BREAKS: [char; 7] = [
+    '\n', '\u{b}', '\u{c}', '\r', '\u{85}', '\u{2028}', '\u{2029}',
+];
+/// Whether the platform has an X11 or Wayland primary selection, which GPUI exposes only on
+/// Linux and FreeBSD.
+const PRIMARY_SELECTION: bool = cfg!(any(target_os = "linux", target_os = "freebsd"));
+
+/// Whether the desktop lets a middle click paste the primary selection. GNOME can switch it off,
+/// and `refresh_primary_paste` keeps this in step with that switch.
+static PRIMARY_PASTE: AtomicBool = AtomicBool::new(true);
 
 type Motion = fn(&str, usize) -> usize;
+
+/// Re-reads GNOME's middle-click paste switch through the settings portal and repaints every
+/// window when it changed. A desktop that does not expose the switch keeps middle-click paste on.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub fn refresh_primary_paste(cx: &mut App) {
+    use gpui::AppContext as _;
+
+    cx.spawn(async move |cx| {
+        let enabled = cx
+            .background_spawn(async {
+                let settings = ashpd::desktop::settings::Settings::new().await.ok()?;
+                settings
+                    .read::<bool>("org.gnome.desktop.interface", "gtk-enable-primary-paste")
+                    .await
+                    .ok()
+            })
+            .await
+            .unwrap_or(true);
+        if PRIMARY_PASTE.swap(enabled, Ordering::Relaxed) != enabled {
+            cx.update(|cx| cx.refresh_windows());
+        }
+    })
+    .detach();
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+pub fn refresh_primary_paste(_cx: &mut App) {}
+
+/// Whether a middle click in a field pastes the primary selection right now.
+fn primary_paste() -> bool {
+    PRIMARY_SELECTION && PRIMARY_PASTE.load(Ordering::Relaxed)
+}
+
+/// `text` on one line: every line break becomes one space, `\r\n` included. A field holds one
+/// line, and GPUI on Windows draws nothing for a line with more than four line breaks.
+pub fn single_line(text: &str) -> String {
+    text.replace("\r\n", " ").replace(LINE_BREAKS, " ")
+}
 
 fn clamp_offset(text: &str, offset: usize) -> usize {
     let mut offset = offset.min(text.len());
@@ -59,6 +109,23 @@ fn clamp_offset(text: &str, offset: usize) -> usize {
 fn clamp_range(text: &str, range: &Range<usize>) -> Range<usize> {
     let start = clamp_offset(text, range.start);
     start..clamp_offset(text, range.end).max(start)
+}
+
+/// The stretch of `bounds` between the carets at `range.start` and `range.end` of a `line` drawn
+/// from `left`. In right-to-left text the caret at the start sits right of the one at the end, so
+/// the two are taken in whichever order they fall.
+fn span(
+    line: &ShapedLine,
+    range: Range<usize>,
+    left: Pixels,
+    bounds: Bounds<Pixels>,
+) -> Bounds<Pixels> {
+    let start = left + line.x_for_index(range.start);
+    let end = left + line.x_for_index(range.end);
+    Bounds::from_corners(
+        point(start.min(end), bounds.top()),
+        point(start.max(end), bounds.bottom()),
+    )
 }
 
 const MASK: &str = "•";
@@ -183,6 +250,8 @@ fn offset_to_utf16(text: &str, offset: usize) -> usize {
 pub struct Input {
     focus_handle: FocusHandle,
     hint: SharedString,
+    /// The Fluent key of what a screen reader calls the field, when that differs from its hint.
+    name: Option<SharedString>,
     icon: Option<SharedString>,
     compact: bool,
     tucked: bool,
@@ -191,6 +260,9 @@ pub struct Input {
     masked: bool,
     /// Whether the text keeps to the field's end rather than its start, as a column of numbers.
     end: bool,
+    /// Whether the field holds something that was turned down, which its border shows in the
+    /// danger colour until it is cleared.
+    invalid: bool,
     /// The Fluent key of the muted unit drawn after the text inside the field.
     suffix: Option<SharedString>,
     /// The keystroke that focuses the field, drawn as keys at its end while it is empty.
@@ -201,6 +273,9 @@ pub struct Input {
     marked_range: Option<Range<usize>>,
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
+    /// How far the text is scrolled left under the field, so the caret stays in sight when the
+    /// text is wider than the field.
+    scroll: Pixels,
     selecting: bool,
     selected_word: Option<Range<usize>>,
     context_menu: Option<Point<Pixels>>,
@@ -211,6 +286,7 @@ impl Input {
         Self {
             focus_handle: cx.focus_handle(),
             hint: hint.into(),
+            name: None,
             icon: None,
             compact: false,
             tucked: false,
@@ -218,6 +294,7 @@ impl Input {
             clearable: false,
             masked: false,
             end: false,
+            invalid: false,
             suffix: None,
             shortcut: None,
             content: SharedString::default(),
@@ -226,6 +303,7 @@ impl Input {
             marked_range: None,
             last_layout: None,
             last_bounds: None,
+            scroll: Pixels::ZERO,
             selecting: false,
             selected_word: None,
             context_menu: None,
@@ -266,6 +344,13 @@ impl Input {
         self
     }
 
+    /// Names the field for screen readers with the Fluent message `key`, for a field whose hint is
+    /// an example rather than what it asks for. The hint is then read as the placeholder.
+    pub fn name(mut self, key: impl Into<SharedString>) -> Self {
+        self.name = Some(key.into());
+        self
+    }
+
     /// Keeps the text against the field's end, so numbers in fields stacked or set side by side
     /// line up by their last digit. Text too long for the field starts at its start as usual.
     pub fn align_end(mut self) -> Self {
@@ -301,6 +386,14 @@ impl Input {
     pub fn set_hint(&mut self, hint: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.hint = hint.into();
         cx.notify();
+    }
+
+    /// Marks the field as holding something that was turned down, or clears the mark.
+    pub fn set_invalid(&mut self, invalid: bool, cx: &mut Context<Self>) {
+        if self.invalid != invalid {
+            self.invalid = invalid;
+            cx.notify();
+        }
     }
 
     /// Draws the content as dots, or stops. Offsets stay content offsets either way, so the
@@ -361,7 +454,28 @@ impl Input {
         self.replace_text_in_range(None, "", window, cx);
     }
 
+    /// Whether the text reads right to left, going by its first letter that has a direction. The
+    /// arrow keys then move the other way through it, so the caret still goes where they point.
+    fn right_to_left(&self) -> bool {
+        unicode_bidi::get_base_direction(&*self.content) == unicode_bidi::Direction::Rtl
+    }
+
     fn left(&mut self, _: &Left, window: &mut Window, cx: &mut Context<Self>) {
+        match self.right_to_left() {
+            true => self.forward(window, cx),
+            false => self.back(window, cx),
+        }
+    }
+
+    fn right(&mut self, _: &Right, window: &mut Window, cx: &mut Context<Self>) {
+        match self.right_to_left() {
+            true => self.back(window, cx),
+            false => self.forward(window, cx),
+        }
+    }
+
+    /// Moves the caret one character towards the start of the text.
+    fn back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             let prev = previous_boundary(&self.content, self.cursor());
             if prev == self.cursor() {
@@ -374,7 +488,8 @@ impl Input {
         }
     }
 
-    fn right(&mut self, _: &Right, window: &mut Window, cx: &mut Context<Self>) {
+    /// Moves the caret one character towards the end of the text.
+    fn forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             let next = next_boundary(&self.content, self.cursor());
             if next == self.cursor() {
@@ -388,27 +503,49 @@ impl Input {
     }
 
     fn word_left(&mut self, _: &WordLeft, _: &mut Window, cx: &mut Context<Self>) {
-        self.step(previous_word, true, cx);
+        match self.right_to_left() {
+            true => self.step(next_word, false, cx),
+            false => self.step(previous_word, true, cx),
+        }
     }
 
     fn word_right(&mut self, _: &WordRight, _: &mut Window, cx: &mut Context<Self>) {
-        self.step(next_word, false, cx);
+        match self.right_to_left() {
+            true => self.step(previous_word, true, cx),
+            false => self.step(next_word, false, cx),
+        }
     }
 
     fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
-        self.extend(previous_boundary, cx);
+        let motion: Motion = match self.right_to_left() {
+            true => next_boundary,
+            false => previous_boundary,
+        };
+        self.extend(motion, cx);
     }
 
     fn select_right(&mut self, _: &SelectRight, _: &mut Window, cx: &mut Context<Self>) {
-        self.extend(next_boundary, cx);
+        let motion: Motion = match self.right_to_left() {
+            true => previous_boundary,
+            false => next_boundary,
+        };
+        self.extend(motion, cx);
     }
 
     fn select_word_left(&mut self, _: &SelectWordLeft, _: &mut Window, cx: &mut Context<Self>) {
-        self.extend(previous_word, cx);
+        let motion: Motion = match self.right_to_left() {
+            true => next_word,
+            false => previous_word,
+        };
+        self.extend(motion, cx);
     }
 
     fn select_word_right(&mut self, _: &SelectWordRight, _: &mut Window, cx: &mut Context<Self>) {
-        self.extend(next_word, cx);
+        let motion: Motion = match self.right_to_left() {
+            true => previous_word,
+            false => next_word,
+        };
+        self.extend(motion, cx);
     }
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
@@ -504,8 +641,28 @@ impl Input {
         let Some(pasted) = cx.read_from_clipboard().and_then(|item| item.text()) else {
             return;
         };
-        let single_line = pasted.replace('\n', " ");
-        self.replace_text_in_range(None, &single_line, window, cx);
+        self.insert_pasted(&pasted, window, cx);
+    }
+
+    /// Inserts the primary selection where a middle click landed, as X11 and Wayland apps do.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn paste_primary(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pasted) = cx.read_from_primary().and_then(|item| item.text()) else {
+            return;
+        };
+        self.selected_word = None;
+        self.move_to(self.offset_for(position), cx);
+        self.insert_pasted(&pasted, window, cx);
+    }
+
+    /// Inserts pasted `text` over the selection, on one line.
+    fn insert_pasted(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.replace_text_in_range(None, &single_line(text), window, cx);
     }
 
     fn show_character_palette(
@@ -528,6 +685,8 @@ impl Input {
         let hovered = word_at(&self.content, offset);
         self.selected_range = hovered.start.min(anchor.start)..hovered.end.max(anchor.end);
         self.selection_reversed = offset < anchor.start;
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        self.publish_selection(cx);
         cx.notify();
     }
 
@@ -539,6 +698,12 @@ impl Input {
     ) {
         cx.stop_propagation();
         self.focus(window, cx);
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        if event.button == MouseButton::Middle {
+            self.context_menu = None;
+            self.paste_primary(event.position, window, cx);
+            return;
+        }
         if event.button == MouseButton::Right {
             self.context_menu = Some(event.position);
             window.prevent_default();
@@ -612,7 +777,20 @@ impl Input {
             self.selection_reversed = !self.selection_reversed;
             self.selected_range = self.selected_range.end..self.selected_range.start;
         }
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        self.publish_selection(cx);
         cx.notify();
+    }
+
+    /// Offers the selected text as the primary selection, so a middle click pastes it in other
+    /// apps. A masked field never offers its text.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn publish_selection(&self, cx: &mut Context<Self>) {
+        let range = clamp_range(&self.content, &self.selected_range);
+        if self.masked || range.is_empty() {
+            return;
+        }
+        cx.write_to_primary(ClipboardItem::new_string(self.content[range].to_owned()));
     }
 
     fn range_to_utf16(&self, range: &Range<usize>) -> Range<usize> {
@@ -734,15 +912,11 @@ impl EntityInputHandler for Input {
             true => mask_map(&self.content)[offset],
             false => offset,
         };
-        Some(Bounds::from_corners(
-            point(
-                bounds.left() + line.x_for_index(at(range.start)),
-                bounds.top(),
-            ),
-            point(
-                bounds.left() + line.x_for_index(at(range.end)),
-                bounds.bottom(),
-            ),
+        Some(span(
+            line,
+            at(range.start)..at(range.end),
+            bounds.left() - self.scroll,
+            bounds,
         ))
     }
 
@@ -768,6 +942,16 @@ mod tests {
     use super::*;
 
     const MULTI: &str = "héllo wörld";
+
+    #[test]
+    fn flattens_every_line_break() {
+        assert_eq!(single_line("a\r\nb\rc\nd"), "a b c d");
+        assert_eq!(single_line("a\r\n\r\nb"), "a  b");
+        assert_eq!(
+            single_line("a\u{2028}b\u{85}c\u{b}d\u{c}e\u{2029}f"),
+            "a b c d e f"
+        );
+    }
 
     #[test]
     fn clamps_past_the_end() {

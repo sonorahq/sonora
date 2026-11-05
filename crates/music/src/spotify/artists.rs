@@ -4,7 +4,6 @@ use anyhow::{Context as _, Result};
 use librespot_core::{Session, SpotifyUri};
 use librespot_protocol::extended_metadata::{BatchedEntityRequest, EntityRequest, ExtensionQuery};
 use librespot_protocol::extension_kind::ExtensionKind;
-use librespot_protocol::metadata::image::Size as ImageSize;
 use librespot_protocol::metadata::{Artist as ArtistMessage, Image};
 use protobuf::{EnumOrUnknown, Message as _};
 
@@ -16,7 +15,6 @@ use crate::{Album, Artist, ArtistCatalogue, ArtistProfile, ReleaseType, SavedArt
 const ARTIST_PREFIX: &str = "spotify:artist:";
 const ALBUM_PREFIX: &str = "spotify:album:";
 const TRACK_PREFIX: &str = "spotify:track:";
-const LARGE_PORTRAIT: i32 = 300;
 const UNKNOWN: &str = "Unknown";
 const TOP_TRACKS: usize = 30;
 /// How many releases the ranking reads the tracks of. A release holds ten or so tracks, so
@@ -56,6 +54,34 @@ pub async fn catalogue(
     })
 }
 
+/// Keeps the overview's popular tracks first, then ranks the discography by Spotify popularity.
+/// If the discography fails to load, playback can still use the overview.
+pub async fn tracks(session: &Session, artist_id: &str) -> Result<Vec<Track>> {
+    let (overview, releases) =
+        tokio::join!(artist(session, artist_id), discography(session, artist_id));
+    let ranked = overview?.top_tracks;
+    let mut releases = match releases {
+        Ok(releases) => releases,
+        Err(error) => {
+            log::warn!("artists: cannot list the releases to play: {error:#}");
+            return Ok(crate::artist_songs(ranked, artist_id));
+        }
+    };
+    releases.sort_by_key(|album| match album.release_type {
+        ReleaseType::Album | ReleaseType::Ep => 0,
+        ReleaseType::Single => 1,
+        _ => 2,
+    });
+    let tracks = match ranked_tracks(session, &releases).await {
+        Ok(rest) => ranked.into_iter().chain(rest).collect(),
+        Err(error) => {
+            log::warn!("artists: cannot rank the releases to play: {error:#}");
+            ranked
+        }
+    };
+    Ok(crate::artist_songs(tracks, artist_id))
+}
+
 pub async fn profile(session: &Session, artist_id: &str) -> Result<ArtistProfile> {
     Ok(profile_from(&metadata(session, artist_id).await?))
 }
@@ -81,6 +107,7 @@ async fn overview_artist(session: &Session, overview: pathfinder::Overview) -> R
     Ok(Artist {
         name: overview.name,
         cover_large: overview.cover_large,
+        banner: overview.banner,
         biography: overview
             .biography
             .map(|biography| plain_text(&biography))
@@ -114,7 +141,13 @@ async fn deepened(session: &Session, ranked: Vec<Track>, releases: &[Album]) -> 
         return ranked;
     }
 
-    match popular(session, releases, &ranked).await {
+    let mined: Vec<Album> = releases
+        .iter()
+        .filter(|album| matches!(album.release_type, ReleaseType::Album | ReleaseType::Ep))
+        .take(MINED_RELEASES)
+        .cloned()
+        .collect();
+    match popular(session, &mined, &ranked).await {
         Ok(rest) => ranked.into_iter().chain(rest).take(TOP_TRACKS).collect(),
         Err(error) => {
             log::warn!("artists: cannot rank the rest of the catalogue: {error:#}");
@@ -123,11 +156,22 @@ async fn deepened(session: &Session, ranked: Vec<Track>, releases: &[Album]) -> 
     }
 }
 
+/// The playable tracks of `releases` most popular first, leaving out any named like one in
+/// `known`.
 async fn popular(session: &Session, releases: &[Album], known: &[Track]) -> Result<Vec<Track>> {
+    let mut rest = ranked_tracks(session, releases).await?;
+    let mut seen: HashSet<String> = known
+        .iter()
+        .map(|track| track.name.to_lowercase())
+        .collect();
+    rest.retain(|track| seen.insert(track.name.to_lowercase()));
+    Ok(rest)
+}
+
+/// Reads album tracks in batches and ranks their metadata by Spotify's popularity score.
+async fn ranked_tracks(session: &Session, releases: &[Album]) -> Result<Vec<Track>> {
     let mined: Vec<String> = releases
         .iter()
-        .filter(|album| matches!(album.release_type, ReleaseType::Album | ReleaseType::Ep))
-        .take(MINED_RELEASES)
         .map(|album| format!("{ALBUM_PREFIX}{}", album.id))
         .collect();
     if mined.is_empty() {
@@ -153,11 +197,6 @@ async fn popular(session: &Session, releases: &[Album], known: &[Track]) -> Resu
         .collect();
     rest.sort_by_key(|track| std::cmp::Reverse(track.popularity));
 
-    let mut seen: HashSet<String> = known
-        .iter()
-        .map(|track| track.name.to_lowercase())
-        .collect();
-    rest.retain(|track| seen.insert(track.name.to_lowercase()));
     Ok(rest)
 }
 
@@ -274,7 +313,7 @@ async fn cards(session: &Session, ids: &[String]) -> Result<HashMap<String, Save
             };
             let smallest = portraits(&message)
                 .into_iter()
-                .min_by_key(|image| image_width(image));
+                .min_by_key(|image| wire::image_width(image));
 
             found.insert(
                 id.to_owned(),
@@ -300,6 +339,7 @@ fn artist_from(artist: &ArtistMessage, top_tracks: Vec<Track>, albums: Vec<Album
     Artist {
         name: profile.name,
         cover_large: profile.cover_large,
+        banner: None,
         biography: profile.biography,
         monthly_listeners: None,
         top_tracks,
@@ -314,9 +354,7 @@ fn profile_from(artist: &ArtistMessage) -> ArtistProfile {
         name: artist.name().to_owned(),
         cover_large: portraits
             .iter()
-            .filter(|image| image_width(image) >= LARGE_PORTRAIT)
-            .min_by_key(|image| image_width(image))
-            .or_else(|| portraits.iter().max_by_key(|image| image_width(image)))
+            .max_by_key(|image| wire::image_width(image))
             .and_then(|image| wire::image_url(image.file_id())),
         biography: artist.biography.iter().find_map(|bio| {
             bio.text
@@ -411,19 +449,6 @@ fn portraits(artist: &ArtistMessage) -> Vec<&Image> {
         .collect();
     portraits.extend(artist.portrait.iter().filter(|image| image.has_file_id()));
     portraits
-}
-
-fn image_width(image: &Image) -> i32 {
-    if image.width() > 0 {
-        return image.width();
-    }
-
-    match image.size() {
-        ImageSize::SMALL => 64,
-        ImageSize::DEFAULT => 300,
-        ImageSize::LARGE => 640,
-        ImageSize::XLARGE => 1_000,
-    }
 }
 
 #[cfg(test)]

@@ -1,3 +1,4 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Entity, Pixels, Render, ScrollHandle, SharedString, Window, div,
@@ -51,6 +52,7 @@ impl HistoryView {
         let scroll = scrollbar.read(cx).scroll().clone();
         let table = cx.new(|cx| {
             let menu = cx.new(|_| Scrollbar::inset().watching(id));
+            crate::shared::tracks::follow_downloads(cx);
             let source = TrackSource::new(
                 HISTORY_COLUMNS,
                 HistoryTracks(history.clone()),
@@ -201,7 +203,15 @@ impl Render for HistoryView {
             .pb(inset)
             .child(div().px(inset).child(self.header(cx)))
             .child(table(&self.table))
-            .when_some(note, |this, note| this.child(vacant(note, cx)));
+            .when_some(note, |this, note| {
+                this.child(
+                    div()
+                        .id("history-empty")
+                        .role(Role::Status)
+                        .aria_label(note.clone())
+                        .child(vacant(note, cx)),
+                )
+            });
 
         div()
             .size_full()

@@ -48,7 +48,7 @@ impl ArtistDetail {
                     cx.notify();
                 }
             }
-            SessionEvent::Reconnected => {}
+            SessionEvent::Reconnected | SessionEvent::WentOffline => {}
             SessionEvent::LocalChanged => {
                 if let Some(id) = this.id.clone().filter(|id| music::is_local_id(id)) {
                     this.clear();
@@ -151,11 +151,31 @@ impl ArtistDetail {
             cx.notify();
             return;
         }
+        self.load(id.to_owned(), false, cx);
+    }
+
+    /// Drops the page and fetches it again from the provider, past the catalog cache, so it
+    /// shows its loading state until the new overview lands.
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.id.clone() else {
+            return;
+        };
+        self.clear();
+        self.id = Some(id.clone());
+        self.load(id, true, cx);
+    }
+
+    /// Fetches the artist's overview and fills the rest of the page once it lands. A `fresh`
+    /// load drops the cached artist first, so the provider is asked again.
+    fn load(&mut self, id: String, fresh: bool, cx: &mut Context<Self>) {
+        let Some(catalog) = self.session.read(cx).catalog(&id) else {
+            cx.notify();
+            return;
+        };
 
         self.loading = true;
         cx.notify();
 
-        let id = id.to_owned();
         let local = music::is_local_id(&id)
             .then(|| self.session.read(cx).local_client())
             .flatten();
@@ -170,6 +190,9 @@ impl ArtistDetail {
                         .any(|artist| artist.id == id)
                 {
                     return Ok(None);
+                }
+                if fresh {
+                    catalog.invalidate_artist(&id).await;
                 }
                 catalog.artist(&id).await.map(Some)
             }

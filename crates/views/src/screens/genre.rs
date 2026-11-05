@@ -1,3 +1,4 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Entity, FontWeight, Pixels, Render, ScrollHandle, SharedString,
@@ -12,7 +13,8 @@ use crate::shared::cells;
 use crate::shared::shelves::Shelves;
 use crate::shared::trouble;
 
-const TILE: Pixels = px(220.);
+/// How wide the title skeleton reaches while the genre name is on its way.
+const TITLE_SKELETON: Pixels = px(240.);
 const STEADY: Pixels = px(0.5);
 const SECTION: &str = "genre";
 
@@ -107,6 +109,7 @@ impl GenreView {
                     let id = id.clone();
                     detail.update(cx, |detail, cx| detail.open(&id, cx));
                 },
+                cx,
             )
             .size_full()
             .into_any_element(),
@@ -117,7 +120,14 @@ impl GenreView {
 impl Render for GenreView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(failure) = self.failure(cx) {
-            return div().flex().flex_col().size_full().child(failure);
+            return div()
+                .id("genre-failure")
+                .role(Role::Alert)
+                .flex()
+                .flex_col()
+                .size_full()
+                .child(failure)
+                .into_any_element();
         }
 
         let theme = *cx.theme();
@@ -129,33 +139,63 @@ impl Render for GenreView {
 
         let detail = self.detail.read(cx);
         let loading = detail.is_loading();
-        let title = detail.name().unwrap_or_default().to_owned();
+        let title = detail.name().map(str::to_owned);
         let sections = detail.sections();
         let empty = !loading && sections.is_empty();
         let (mode, width) = (self.mode, self.width);
-        let shelves = self.shelves.update(cx, |shelves, cx| {
-            shelves.render(sections, mode, width, window, cx)
-        });
+        let shelves = self
+            .shelves
+            .update(cx, |shelves, cx| match loading && sections.is_empty() {
+                true => shelves.pending(width, cx),
+                false => vec![shelves.render(sections, mode, width, window, cx)],
+            });
 
-        div().flex().flex_col().size_full().child(
-            Scroller::new("genre", &self.scrollbar)
-                .bottom_inset(crate::chrome::Chrome::bottom(cx))
-                .p(pad)
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_8()
-                        .child(
-                            div()
-                                .text_size(theme.text(Text::Display))
-                                .font_weight(FontWeight::BOLD)
-                                .child(SharedString::from(title)),
-                        )
-                        .when(loading, |this| this.child(Skeleton::new().w_full().h(TILE)))
-                        .when(empty, |this| this.child(vacant(t!("genre-empty"), cx)))
-                        .child(shelves),
-                ),
-        )
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(
+                Scroller::new("genre", &self.scrollbar)
+                    .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .p(pad)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_8()
+                            .when(title.is_none() && loading, |this| {
+                                this.child(
+                                    Skeleton::new()
+                                        .w(TITLE_SKELETON)
+                                        .h(theme.text(Text::Display)),
+                                )
+                            })
+                            .when_some(title, |this, title| {
+                                let name = SharedString::from(title);
+                                this.child(
+                                    div()
+                                        .id("genre-title")
+                                        .role(Role::Heading)
+                                        .aria_level(1)
+                                        .aria_label(name.clone())
+                                        .text_size(theme.text(Text::Display))
+                                        .font_weight(FontWeight::BOLD)
+                                        .child(name),
+                                )
+                            })
+                            .when(empty, |this| {
+                                let label = t!("genre-empty");
+                                this.child(
+                                    div()
+                                        .id("genre-empty")
+                                        .role(Role::Status)
+                                        .aria_label(label.clone())
+                                        .child(vacant(label, cx)),
+                                )
+                            })
+                            .children(shelves),
+                    ),
+            )
+            .into_any_element()
     }
 }

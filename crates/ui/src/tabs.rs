@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Background, Div, ElementId, Hsla, Pixels, ScrollHandle, ScrollWheelEvent,
-    Stateful, StyleRefinement, Window, div, ease_in_out, linear_color_stop, linear_gradient, px,
+    SharedString, Stateful, StyleRefinement, Window, div, ease_in_out, linear_color_stop,
+    linear_gradient, px,
 };
 
 use crate::button::Button;
@@ -50,6 +51,7 @@ pub struct Tabs {
 pub struct TabBar {
     base: Div,
     id: ElementId,
+    name: Option<SharedString>,
     items: Vec<Button>,
     blurred: bool,
     reveal: Option<usize>,
@@ -61,10 +63,18 @@ impl TabBar {
         Self {
             base: div(),
             id: id.into(),
+            name: None,
             items: Vec::new(),
             blurred: false,
             reveal: None,
         }
+    }
+
+    /// Names the bar for screen readers, which read it on entering the bar before the option
+    /// in focus.
+    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
+        self
     }
 
     pub fn items(mut self, items: impl IntoIterator<Item = Button>) -> Self {
@@ -198,6 +208,7 @@ impl RenderOnce for TabBar {
         let Self {
             mut base,
             id,
+            name,
             items,
             blurred,
             reveal,
@@ -251,6 +262,8 @@ impl RenderOnce for TabBar {
 
         let row = div()
             .id(id)
+            .role(gpui::accesskit::Role::TabList)
+            .when_some(name, |row, name| row.aria_label(name))
             .flex()
             .items_center()
             .gap_1()
@@ -274,11 +287,16 @@ impl RenderOnce for TabBar {
                         cx.stop_propagation();
                     })
             })
-            .children(
-                items
-                    .into_iter()
-                    .map(|item| item.flex_shrink_0().rounded(radius)),
-            );
+            .children({
+                let count = items.len();
+                items.into_iter().enumerate().map(move |(index, item)| {
+                    item.tab()
+                        .aria_position_in_set(index + 1)
+                        .aria_size_of_set(count)
+                        .flex_shrink_0()
+                        .rounded(radius)
+                })
+            });
         // A glass bar has no flat fill to paint a fade with: a wash of its own thin fill hides
         // nothing. It fades the tabs themselves instead, and leaves the blur behind them whole.
         let row = match (glassy, rails.as_ref()) {

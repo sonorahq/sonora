@@ -9,11 +9,13 @@ mod equalizer;
 mod themes;
 
 pub use self::equalizer::equalizer_profile_label;
-pub use self::themes::{ThemeFamily, ThemeVariant};
+pub use self::themes::{ThemeFamily, ThemeOffer, ThemeVariant};
+pub(crate) use self::themes::{is_own_link, read_link as read_theme_link};
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -39,6 +41,7 @@ use self::equalizer::Profile;
 use crate::equalizer::DeviceRule;
 use crate::pins::PinSort;
 use crate::queue::{Resume, gap_target};
+use crate::updates::{Channel, updates_itself};
 use crate::{Outcome, Repeat, Sonora, Toasts};
 
 /// How Sonora is named on the device list of the provider's apps. `Both` is the app's name with
@@ -172,6 +175,8 @@ pub enum SideTab {
     #[default]
     Queue,
     Lyrics,
+    /// The people in the Sonora Session or Spotify Jam the listener is in.
+    Members,
 }
 
 /// The writing systems lyrics romanization applies to. Only CJK are enabled by default.
@@ -291,6 +296,8 @@ const RELOAD_RETRY_DELAY: Duration = Duration::from_secs(1);
 const RELOAD_RETRIES: usize = 3;
 const THEMES_DIRECTORY: &str = "themes";
 const DEFAULT_VOLUME: f32 = 0.7;
+/// How many past searches the history keeps.
+const SEARCHES: usize = 20;
 const DEFAULT_SIDEBAR_WIDTH: f32 = 195.;
 const DEFAULT_SIDEBAR_RIGHT_WIDTH: f32 = 254.;
 const DEFAULT_FONT_SIZE: f32 = 14.;
@@ -328,6 +335,13 @@ struct Held {
 struct Values {
     normalisation: bool,
     gapless: bool,
+    /// Whether played tracks are kept, sealed, so playing one again downloads nothing.
+    keep_tracks: bool,
+    /// How many gigabytes the cache of played tracks may take. Downloads do not count.
+    cache_gb: u32,
+    /// Whether the listener put Sonora offline, so it shows and plays only what was downloaded
+    /// until they go online again.
+    offline_mode: bool,
     equalizer: bool,
     /// The ten band gains an older Sonora saved. Read once to seed the profiles when there are
     /// none, never written back, and read leniently like the keys that replaced it.
@@ -355,10 +369,15 @@ struct Values {
     equalizer_bass: f64,
     #[serde(deserialize_with = "equalizer::read_tone")]
     equalizer_treble: f64,
-    sleep_timer: bool,
     spotify_connect: bool,
     spotify_connect_name: ConnectName,
     spotify_connect_custom_name: String,
+    /// Whether the player bar shows the Sessions button.
+    sessions_button: bool,
+    /// Whether Sonora Sessions go through the official server rather than `sessions_server`.
+    sessions_official: bool,
+    /// The WebSocket address of the Sonora Sessions server to use instead of the official one.
+    sessions_server: String,
     discord_presence: bool,
     discord_name: DiscordName,
     discord_show_paused: bool,
@@ -379,6 +398,8 @@ struct Values {
     /// The buffer to ask the output device for, in frames, or `None` for Sonora's own. A device
     /// that does not allow it gets the nearest it does.
     output_buffer: Option<u32>,
+    /// Whether a direct output device is switched to the sample rate of each track that plays.
+    output_match_rate: bool,
     /// The format a Subsonic server is asked to convert tracks into, by its Subsonic name, or
     /// `None` to take what the server sends.
     subsonic_format: Option<String>,
@@ -406,6 +427,9 @@ struct Values {
     romanization_scripts: RomanizationScripts,
     adaptive_menu: bool,
     check_updates: bool,
+    /// The release channel chosen in settings, by its id. Empty follows the running build's own
+    /// channel, and a copy a package manager installed ignores it.
+    update_channel: String,
     close_to_tray: bool,
     tray_icon: bool,
     stay_awake: bool,
@@ -557,6 +581,9 @@ impl Default for Values {
         Self {
             normalisation: false,
             gapless: true,
+            keep_tracks: true,
+            offline_mode: false,
+            cache_gb: crate::vault::CACHE_GB,
             equalizer: false,
             equalizer_bands: Vec::new(),
             equalizer_profiles: Vec::new(),
@@ -565,10 +592,12 @@ impl Default for Values {
             equalizer_advanced: false,
             equalizer_bass: 0.,
             equalizer_treble: 0.,
-            sleep_timer: false,
             spotify_connect: true,
             spotify_connect_name: ConnectName::Both,
             spotify_connect_custom_name: String::new(),
+            sessions_button: true,
+            sessions_official: true,
+            sessions_server: String::new(),
             discord_presence: false,
             discord_name: DiscordName::Sonora,
             discord_show_paused: false,
@@ -582,6 +611,7 @@ impl Default for Values {
             output_device: None,
             output_rate: None,
             output_buffer: None,
+            output_match_rate: false,
             subsonic_format: None,
             subsonic_bitrate: None,
             stream_quality: Quality::default().id().to_owned(),
@@ -600,7 +630,8 @@ impl Default for Values {
             fullscreen_lyrics_scale: DEFAULT_LYRICS_SCALE,
             romanization_scripts: RomanizationScripts::default(),
             adaptive_menu: false,
-            check_updates: cfg!(target_os = "windows"),
+            check_updates: cfg!(target_os = "windows") || updates_itself(),
+            update_channel: String::new(),
             close_to_tray: true,
             tray_icon: true,
             stay_awake: true,
@@ -662,6 +693,8 @@ struct StateValues {
     system_theme: String,
     /// The variant last chosen in each theme family, by family id.
     theme_variants: HashMap<String, String>,
+    /// What the search page was asked, newest first, without repeats.
+    searches: Vec<String>,
 }
 
 impl Default for StateValues {
@@ -691,6 +724,7 @@ impl Default for StateValues {
             window: None,
             system_theme: ThemeKind::Dark.id().to_owned(),
             theme_variants: HashMap::new(),
+            searches: Vec::new(),
         }
     }
 }
@@ -799,7 +833,7 @@ impl Default for Appearance {
 }
 
 /// Preferences from `settings.json` and runtime state from `state.sqlite`, each saved on its own
-/// debounce. `broken` prevents an invalid JSON file from being overwritten with defaults.
+/// debounce. `broken` protects nonempty invalid JSON from being overwritten with defaults.
 pub struct AppSettings {
     values: Values,
     state: StateValues,
@@ -852,11 +886,22 @@ impl AppSettings {
         let parsed = parsed.map(|(values, bytes)| (values.map(offer_subsonic_lyrics), bytes));
         let (values, writable, disk, broken) = match parsed {
             Some((Ok(values), bytes)) => (values.settled(), writable, Some(bytes), None),
+            Some((Err(_), bytes)) if empty_settings(&bytes) => {
+                (Values::default().settled(), writable, Some(bytes), None)
+            }
             Some((Err(error), _)) => {
                 log::warn!("settings: cannot parse {}: {error}", path.display());
                 (Values::default().settled(), false, None, Some(error.line()))
             }
-            None => (Values::default().settled(), writable, None, None),
+            // The default provider list already has Subsonic, so a fresh install marks it offered
+            // and a user who turns it off does not get it back on the next launch.
+            None => {
+                let values = Values {
+                    subsonic_lyrics_offered: true,
+                    ..Values::default()
+                };
+                (values.settled(), writable, None, None)
+            }
         };
 
         let state = match store.load() {
@@ -867,7 +912,6 @@ impl AppSettings {
                 StateValues::default()
             }
         };
-        themes::adopt_legacy(&values.appearance.theme, &themes_path(&path));
         let themes = themes::load(&themes_path(&path), &[]).themes;
         let families = themes::catalog(&themes);
 
@@ -915,8 +959,19 @@ impl AppSettings {
         self.values.gapless
     }
 
-    pub fn sleep_timer(&self) -> bool {
-        self.values.sleep_timer
+    pub fn keep_tracks(&self) -> bool {
+        self.values.keep_tracks
+    }
+
+    /// The cache limit in gigabytes, held within the setting's bounds whatever a hand-edited
+    /// settings file says.
+    pub fn cache_gb(&self) -> u32 {
+        let (low, high) = crate::vault::CACHE_GB_RANGE;
+        self.values.cache_gb.clamp(low, high)
+    }
+
+    pub fn offline_mode(&self) -> bool {
+        self.values.offline_mode
     }
 
     /// Whether Sonora shows up as a Spotify Connect device while a Spotify account is signed in.
@@ -932,6 +987,21 @@ impl AppSettings {
     /// The name Sonora goes by in that list when it is `ConnectName::Custom`.
     pub fn spotify_connect_custom_name(&self) -> &str {
         &self.values.spotify_connect_custom_name
+    }
+
+    /// Whether the player bar shows the Sessions button.
+    pub fn sessions_button(&self) -> bool {
+        self.values.sessions_button
+    }
+
+    /// Whether Sonora Sessions go through the official server.
+    pub fn sessions_official(&self) -> bool {
+        self.values.sessions_official
+    }
+
+    /// The address of the server to use instead of the official one, as typed.
+    pub fn sessions_server(&self) -> &str {
+        &self.values.sessions_server
     }
 
     /// Whether the playing track is published to a local Discord client.
@@ -995,6 +1065,10 @@ impl AppSettings {
 
     pub fn output_buffer(&self) -> Option<u32> {
         self.values.output_buffer
+    }
+
+    pub fn output_match_rate(&self) -> bool {
+        self.values.output_match_rate
     }
 
     /// How a Subsonic server is asked to convert tracks. A format this build does not know reads
@@ -1081,6 +1155,10 @@ impl AppSettings {
 
     pub fn adaptive_menu(&self) -> bool {
         self.values.adaptive_menu
+    }
+
+    pub fn update_channel(&self) -> Channel {
+        Channel::from_id(&self.values.update_channel)
     }
 
     pub fn check_updates(&self) -> bool {
@@ -1381,6 +1459,63 @@ impl AppSettings {
             .unwrap_or_else(|| inline.clone())
     }
 
+    /// Writes the theme or family a link offered into the themes folder and selects it the way
+    /// choosing its card does, turning the adaptive theme off since only the neutral themes wear
+    /// it. Returns the family's id.
+    pub fn install_theme(&mut self, offer: &ThemeOffer, cx: &mut Context<Self>) -> Result<String> {
+        let directory = themes_path(&self.path);
+        let id = themes::install(offer, &directory, &self.themes)?;
+        let loaded = themes::load(&directory, &self.themes);
+        let count = loaded
+            .themes
+            .iter()
+            .filter(|theme| theme.family == id)
+            .count();
+        anyhow::ensure!(
+            count >= offer.family.variants.len(),
+            "cannot load the installed theme {id}"
+        );
+        self.families = themes::catalog(&loaded.themes);
+        self.themes = loaded.themes;
+        if self.adaptive_theme() {
+            self.set_adaptive_theme(false, cx);
+        }
+        self.set_theme_family(&id, cx);
+        cx.notify();
+        Ok(id)
+    }
+
+    /// Deletes the user's theme family `id` from the themes folder and says whether it worked.
+    /// A selected theme in it falls back to Dark. A failure is logged and shown as a toast.
+    pub fn delete_theme_family(&mut self, id: &str, cx: &mut Context<Self>) -> bool {
+        let Some(family) = self.families.iter().find(|family| family.id == id).cloned() else {
+            return false;
+        };
+        let directory = themes_path(&self.path);
+        if let Err(error) = themes::remove(&family, &directory) {
+            log::warn!("settings: cannot delete theme {id}: {error:#}");
+            Toasts::about(
+                Outcome::Failed,
+                "toast-theme-delete-failed",
+                family.name,
+                cx,
+            );
+            return false;
+        }
+        log::info!("settings: deleted theme {id}");
+        let loaded = themes::load(&directory, &self.themes);
+        self.families = themes::catalog(&loaded.themes);
+        self.themes = loaded.themes;
+        if family.variant(self.theme()).is_some() {
+            self.set_theme(ThemeKind::Dark.id(), cx);
+        }
+        if self.state.theme_variants.remove(id).is_some() {
+            self.schedule_state_save(cx);
+        }
+        cx.notify();
+        true
+    }
+
     /// Creates and returns the folder that holds custom themes.
     pub fn ensure_themes_directory(&self) -> PathBuf {
         let path = themes_path(&self.path);
@@ -1398,9 +1533,11 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    /// Persists playback's volume without invalidating views that observe preferences.
+    /// Live volume changes are published by `Playback`, not by settings.
     pub fn set_volume(&mut self, volume: f32, cx: &mut Context<Self>) {
         self.state.volume = volume.clamp(0., 1.);
-        self.schedule_state_save(cx);
+        self.save_state_quietly(cx);
     }
 
     pub fn set_normalisation(&mut self, normalisation: bool, cx: &mut Context<Self>) {
@@ -1413,8 +1550,18 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
-    pub fn set_sleep_timer(&mut self, sleep_timer: bool, cx: &mut Context<Self>) {
-        self.values.sleep_timer = sleep_timer;
+    pub fn set_keep_tracks(&mut self, keep_tracks: bool, cx: &mut Context<Self>) {
+        self.values.keep_tracks = keep_tracks;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_offline_mode(&mut self, offline_mode: bool, cx: &mut Context<Self>) {
+        self.values.offline_mode = offline_mode;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_cache_gb(&mut self, cache_gb: u32, cx: &mut Context<Self>) {
+        self.values.cache_gb = cache_gb;
         self.schedule_save(cx);
     }
 
@@ -1433,6 +1580,24 @@ impl AppSettings {
             return;
         }
         self.values.spotify_connect_custom_name = name;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_sessions_button(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.values.sessions_button = shown;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_sessions_official(&mut self, official: bool, cx: &mut Context<Self>) {
+        self.values.sessions_official = official;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_sessions_server(&mut self, server: String, cx: &mut Context<Self>) {
+        if self.values.sessions_server == server {
+            return;
+        }
+        self.values.sessions_server = server;
         self.schedule_save(cx);
     }
 
@@ -1510,6 +1675,11 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    pub fn set_output_match_rate(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.values.output_match_rate = on;
+        self.schedule_save(cx);
+    }
+
     pub fn set_transcode(&mut self, transcode: Transcode, cx: &mut Context<Self>) {
         self.values.subsonic_format = transcode.codec.map(|codec| codec.id().to_owned());
         self.values.subsonic_bitrate = transcode.bitrate;
@@ -1570,6 +1740,11 @@ impl AppSettings {
 
     pub fn set_adaptive_menu(&mut self, adaptive_menu: bool, cx: &mut Context<Self>) {
         self.values.adaptive_menu = adaptive_menu;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_update_channel(&mut self, channel: Channel, cx: &mut Context<Self>) {
+        self.values.update_channel = channel.id().to_owned();
         self.schedule_save(cx);
     }
 
@@ -1834,6 +2009,36 @@ impl AppSettings {
         self.state.sidebar_pin_sort = sort.map(PinSort::id).unwrap_or_default().to_owned();
         self.state.sidebar_pin_reversed = reversed;
         self.schedule_state_save(cx);
+    }
+
+    /// The queries the search page was asked, newest first.
+    pub fn searches(&self) -> &[String] {
+        &self.state.searches
+    }
+
+    /// Puts `query` at the top of the search history, dropping an earlier copy that differs only
+    /// in case and the oldest entry past the cap. The save skips settings observers, so the
+    /// caller repaints what shows the history.
+    pub fn remember_search(&mut self, query: &str, cx: &mut Context<Self>) {
+        let query = query.trim();
+        if query.is_empty() {
+            return;
+        }
+        let searches = &mut self.state.searches;
+        let folded = query.to_lowercase();
+        searches.retain(|kept| kept.to_lowercase() != folded);
+        searches.insert(0, query.to_owned());
+        searches.truncate(SEARCHES);
+        self.save_state_quietly(cx);
+    }
+
+    /// Drops `query` from the search history. Like `remember_search`, it wakes no observers.
+    pub fn forget_search(&mut self, query: &str, cx: &mut Context<Self>) {
+        let kept = self.state.searches.len();
+        self.state.searches.retain(|held| held != query);
+        if self.state.searches.len() != kept {
+            self.save_state_quietly(cx);
+        }
     }
 
     /// Rewrites the pins of `slugs` into `order`, leaving another provider's pins in their slots.
@@ -2144,7 +2349,7 @@ impl AppSettings {
         self.save_state_quietly(cx);
     }
 
-    /// Debounces a `state.sqlite` write without waking observers, for state no view renders.
+    /// Debounces a `state.sqlite` write without waking settings observers.
     fn save_state_quietly(&mut self, cx: &mut Context<Self>) {
         self.save_state = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SAVE_DELAY).await;
@@ -2214,9 +2419,9 @@ impl AppSettings {
             }
             return SettingsSave::Complete;
         }
-        if let Err(error) = fs::write(&self.path, &bytes) {
-            log::error!("settings: cannot write {}: {error}", self.path.display());
-            return SettingsSave::Retry(error.to_string());
+        if let Err(error) = save_settings(&self.path, &bytes, current.as_deref()) {
+            log::error!("settings: cannot write {}: {error:#}", self.path.display());
+            return SettingsSave::Retry(format!("{error:#}"));
         }
         self.disk = Some(bytes);
         self.failing = false;
@@ -2380,7 +2585,8 @@ impl AppSettings {
         }
     }
 
-    /// Accepts a valid external settings write and protects a broken file from app saves.
+    /// Accepts valid external settings, treats an empty file like a deletion, and protects
+    /// nonempty broken files from app saves.
     fn reload_settings(&mut self, cx: &mut Context<Self>) -> SettingsReload {
         let bytes = match fs::read(&self.path) {
             Ok(bytes) => bytes,
@@ -2404,6 +2610,12 @@ impl AppSettings {
             self.broken = None;
             return SettingsReload::Unchanged;
         }
+        if empty_settings(&bytes) {
+            self.disk = Some(bytes);
+            self.writable = true;
+            self.broken = None;
+            return SettingsReload::Unchanged;
+        }
         let values = match serde_json::from_slice::<Values>(json(&bytes)) {
             Ok(values) => offer_subsonic_lyrics(values).settled(),
             Err(error) => {
@@ -2420,7 +2632,6 @@ impl AppSettings {
         };
 
         log::info!("settings: reloaded {}", self.path.display());
-        themes::adopt_legacy(&values.appearance.theme, &themes_path(&self.path));
         let previous = std::mem::replace(&mut self.values, values);
         self.disk = Some(bytes);
         self.writable = true;
@@ -2480,6 +2691,11 @@ fn overrides(current: &[u8], ours: &[u8]) -> bool {
 /// front of it on Windows, which serde_json rejects as an unexpected character.
 fn json(bytes: &[u8]) -> &[u8] {
     bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes)
+}
+
+/// Whether a file contains no settings to protect, allowing a later preference change to save.
+fn empty_settings(bytes: &[u8]) -> bool {
+    json(bytes).iter().all(u8::is_ascii_whitespace)
 }
 
 /// A saved provider list replaces the default one, so Subsonic reaches an existing user once.
@@ -2604,6 +2820,73 @@ fn absolute_path(path: &Path) -> PathBuf {
     std::env::current_dir()
         .map(|directory| directory.join(path))
         .unwrap_or_else(|_| path.to_owned())
+}
+
+/// Keeps the previous valid settings in `sonora.backup.json` before saving a new version.
+/// Unchanged saves and empty or broken previous files leave the backup alone. The caller must
+/// check that `previous` still matches the last contents it accepted from disk.
+fn save_settings(path: &Path, bytes: &[u8], previous: Option<&[u8]>) -> Result<()> {
+    if previous == Some(bytes) {
+        return Ok(());
+    }
+    if let Some(previous) =
+        previous.filter(|previous| serde_json::from_slice::<Values>(json(previous)).is_ok())
+    {
+        write_settings(&path.with_file_name("sonora.backup.json"), previous)
+            .context("cannot back up settings")?;
+    }
+    write_settings(path, bytes)
+}
+
+/// Replaces settings with a synced file beside the destination, so an interrupted save leaves
+/// the previous contents intact. Symlinks keep pointing to their target. The file can hold
+/// scrobbling keys, so on unix only its owner may read it.
+fn write_settings(path: &Path, bytes: &[u8]) -> Result<()> {
+    let path = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            fs::canonicalize(path).context("cannot resolve settings symlink")?
+        }
+        Ok(_) => path.to_owned(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => path.to_owned(),
+        Err(error) => return Err(error).context("cannot inspect settings file"),
+    };
+    let parent = path.parent().context("cannot find settings directory")?;
+    match fs::metadata(&path) {
+        Ok(metadata) => anyhow::ensure!(
+            !metadata.permissions().readonly(),
+            "cannot write read-only settings file"
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("cannot read settings permissions"),
+    }
+    let mut temporary = tempfile::Builder::new()
+        .prefix(".settings-")
+        .tempfile_in(parent)
+        .context("cannot create temporary settings file")?;
+    temporary
+        .write_all(bytes)
+        .context("cannot write temporary settings file")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        temporary
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))
+            .context("cannot restrict settings permissions")?;
+    }
+    temporary
+        .as_file()
+        .sync_all()
+        .context("cannot sync temporary settings file")?;
+    temporary
+        .persist(&path)
+        .map_err(|error| error.error)
+        .context("cannot replace settings file")?;
+    #[cfg(unix)]
+    if let Err(error) = fs::File::open(parent).and_then(|folder| folder.sync_all()) {
+        log::debug!("settings: cannot sync {}: {error}", parent.display());
+    }
+    Ok(())
 }
 
 fn settings_path() -> PathBuf {

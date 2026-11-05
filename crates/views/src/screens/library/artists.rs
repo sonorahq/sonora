@@ -1,12 +1,14 @@
+use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis};
 
 use gpui::{AnyElement, App, Entity, SharedString};
 use i18n::t;
 use music::SavedArtist;
-use state::{Library, LibraryPart, Origin, Playback, Shelf};
+use state::{Library, LibraryPart, Network, Origin, Playback, Shelf, Sonora};
 use ui::rank::{ESSENTIAL, HANDY};
-use ui::{Cell, ColumnSpec, Menu, Pin, TableSource, Width};
+use ui::{Cell, ColumnSpec, Menu, Pin, Sort, TableSource, Width};
 
 use crate::shared::cells::{self, DATE, NUMBER};
 use crate::shared::menus::artist_menu;
@@ -42,6 +44,7 @@ const ADDED_AT: ColumnSpec<ArtistField> = ColumnSpec {
     header: "column-date-added",
     width: Width::Fixed(DATE),
     rank: HANDY,
+    first: Sort::Descending,
     ..COLUMN
 };
 
@@ -52,6 +55,14 @@ pub(super) struct ArtistSource {
     playback: Entity<Playback>,
     shelf: Shelf,
     starred: bool,
+    heard: RefCell<Option<Heard>>,
+}
+
+/// The artists there is downloaded music of, worked out again only when the shelf's songs or the
+/// downloads change in number.
+struct Heard {
+    stamp: (usize, usize),
+    artists: HashSet<String>,
 }
 
 impl ArtistSource {
@@ -65,6 +76,7 @@ impl ArtistSource {
             playback,
             shelf,
             starred: false,
+            heard: RefCell::new(None),
         }
     }
 
@@ -87,6 +99,31 @@ impl ArtistSource {
         self.library.read(cx).state(self.shelf).artists()
     }
 
+    /// Whether there is downloaded music of an artist, on a downloaded album or playlist or in
+    /// a downloaded song of the shelf. This is what offline mode keeps the list to.
+    fn downloaded(&self, id: &str, cx: &App) -> bool {
+        let tracks = self.library.read(cx).state(self.shelf).tracks();
+        let downloads = Sonora::global(cx).downloads.read(cx);
+        let stamp = (tracks.len(), downloads.len());
+        let mut heard = self.heard.borrow_mut();
+        if heard.as_ref().is_none_or(|heard| heard.stamp != stamp) {
+            let kept = tracks
+                .iter()
+                .filter(|track| track.id.as_deref().is_some_and(|id| downloads.has(id)))
+                .flat_map(|track| &track.artist_refs)
+                .filter_map(|artist| artist.id.as_deref());
+            let artists = downloads
+                .credited()
+                .chain(kept)
+                .map(str::to_owned)
+                .collect();
+            *heard = Some(Heard { stamp, artists });
+        }
+        heard
+            .as_ref()
+            .is_some_and(|heard| heard.artists.contains(id))
+    }
+
     /// Whether the shelf lists more than the favorites, so a favorites filter has something to do.
     fn catalog(&self, cx: &App) -> bool {
         self.library.read(cx).shape(self.shelf).is_catalog()
@@ -107,6 +144,9 @@ impl TableSource for ArtistSource {
     fn matches(&self, row: usize, query: &str, cx: &App) -> bool {
         self.artists(cx).get(row).is_some_and(|artist| {
             if self.starred && !self.library.read(cx).saved_artist(&artist.id) {
+                return false;
+            }
+            if Network::downloads_only(self.shelf, cx) && !self.downloaded(&artist.id, cx) {
                 return false;
             }
             holds(&artist.name, query)
@@ -152,7 +192,7 @@ impl TableSource for ArtistSource {
     fn is_loading(&self, cx: &App) -> bool {
         self.library
             .read(cx)
-            .loading(self.shelf, LibraryPart::Artists)
+            .waiting(self.shelf, LibraryPart::Artists, cx)
     }
 
     fn pin(&self, row: usize, cx: &App) -> Option<Pin> {

@@ -76,7 +76,11 @@ impl TrackCard {
                 .child(clock(track.duration))
         });
 
+        let total = self.tracks.len();
+
         cards::track_card((self.id, place), track, &self.playback, cx)
+            .aria_position_in_set(place + 1)
+            .aria_size_of_set(total)
             .when_some(artists, Card::bare_meta)
             .when_some(length, Card::trailing)
             .when_some(self.context, |card, handler| {

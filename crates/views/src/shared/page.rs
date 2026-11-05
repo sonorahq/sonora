@@ -108,6 +108,13 @@ pub(crate) fn play(
     cx: &mut App,
 ) {
     let queued = tracks::ordered(table, cx);
+    // A row that cannot play while the network is gone stays inert, with its tooltip saying why.
+    let unreachable = queued
+        .get(display)
+        .and_then(|track| playback.read(cx).unreachable_reason(track, cx));
+    if unreachable.is_some() {
+        return;
+    }
     let from = tracks::whence(table, cx);
     playback.update(cx, |playback, cx| playback.start(queued, display, from, cx));
 }

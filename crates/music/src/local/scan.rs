@@ -286,7 +286,7 @@ fn name_portraits(looks: &[Look], readings: &[Reading]) -> HashMap<String, Strin
 
 /// Groups tracks into albums by the id each one carries, in scan order. An album is credited to
 /// the first album artist its tags name, or to the artists all of its tracks share, and takes the
-/// first release type any of its tracks names.
+/// first release type and label any of its tracks names.
 fn group_albums(parsed: &[Tagged]) -> Vec<Album> {
     let mut order: Vec<String> = Vec::new();
     let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
@@ -320,6 +320,12 @@ fn group_albums(parsed: &[Tagged]) -> Vec<Album> {
                 .iter()
                 .find_map(|&i| parsed[i].release)
                 .unwrap_or(ReleaseType::Album);
+            let label = indices
+                .iter()
+                .map(|&i| &parsed[i].label)
+                .find(|label| !label.is_empty())
+                .cloned()
+                .unwrap_or_default();
 
             Some(wire::album_from_tracks(
                 &id,
@@ -328,6 +334,7 @@ fn group_albums(parsed: &[Tagged]) -> Vec<Album> {
                 &tracks,
                 year,
                 release,
+                label,
             ))
         })
         .collect()
@@ -439,6 +446,9 @@ fn walk(
                 return;
             };
             for path in &children.files {
+                if !is_audio_file(path) {
+                    continue;
+                }
                 let found = match remembered.files.get(path) {
                     Some(known) => Found {
                         path: path.clone(),
@@ -599,6 +609,13 @@ fn folder_name(dir: &Path) -> String {
 }
 
 fn is_audio_file(path: &Path) -> bool {
+    if path
+        .file_name()
+        .is_some_and(|name| name.as_encoded_bytes().starts_with(b"._"))
+    {
+        return false;
+    }
+
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
@@ -633,6 +650,67 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_file(&database);
         (dir, Index::new(storage::Cache::at(database)))
+    }
+
+    #[test]
+    fn audio_files_exclude_appledouble_sidecars() {
+        for (name, expected) in [
+            ("track.mp3", true),
+            ("._track.mp3", false),
+            ("._track.flac", false),
+            (".hidden.mp3", true),
+            ("track._demo.mp3", true),
+            ("notes.txt", false),
+            ("track.FLAC", true),
+            ("._folder/track.mp3", true),
+        ] {
+            assert_eq!(is_audio_file(Path::new(name)), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn scans_ignore_new_and_previously_indexed_appledouble_files() {
+        let _scanning = alone();
+        let name = "sonora-scan-test-appledouble";
+        let (dir, index) = scratch(name);
+        let track = dir.join("track.flac");
+        let sidecar = dir.join("._track.flac");
+        touch(&sidecar);
+        super::super::tags::tests::flac(&track, &["TITLE=Track"]);
+
+        let roots = std::slice::from_ref(&dir);
+        let first = scan(roots, &dir, &index);
+        assert_eq!(first.tracks.len(), 1);
+        assert!(index.load().files.contains_key(&track));
+        assert!(!index.load().files.contains_key(&sidecar));
+
+        // Seed a row from the old scanner without changing the folder's modification time.
+        let database = std::env::temp_dir().join(format!("{name}-index.sqlite"));
+        let connection = rusqlite::Connection::open(&database).unwrap();
+        connection
+            .execute(
+                "INSERT INTO local_files (path, parent, mtime, size, track)
+                 SELECT ?, parent, mtime, size, track FROM local_files WHERE path = ?",
+                rusqlite::params![sidecar.to_string_lossy(), track.to_string_lossy()],
+            )
+            .unwrap();
+        let remembered = index.load();
+        assert!(remembered.files.contains_key(&sidecar));
+        assert!(remembered.unchanged(&dir, stat(&dir).unwrap().0));
+
+        let cached = scan(roots, &dir, &index);
+        assert_eq!(cached.tracks.len(), 1);
+        assert_eq!(cached.tracks[0].id, first.tracks[0].id);
+        let remembered = index.load();
+        assert!(remembered.files.contains_key(&track));
+        assert!(!remembered.files.contains_key(&sidecar));
+
+        index.distrust();
+        let rescanned = scan(roots, &dir, &index);
+        assert_eq!(rescanned.tracks.len(), 1);
+        assert_eq!(rescanned.tracks[0].id, first.tracks[0].id);
+        assert!(sidecar.exists());
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

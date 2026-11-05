@@ -3,19 +3,26 @@ use music::Track;
 #[derive(Clone, Copy, Default, PartialEq)]
 pub(crate) struct TrackSieve {
     pub duration: Option<(f32, f32)>,
-    pub explicit: bool,
+    /// Drop tracks marked explicit.
+    pub hide_explicit: bool,
     pub playable: bool,
     /// Keep only starred tracks. `keeps` cannot see the library, so the source applies it.
     pub favorites: bool,
+    /// Keep only downloaded tracks, which the source applies for the same reason.
+    pub downloaded: bool,
 }
 
 impl TrackSieve {
     pub(crate) fn active(&self) -> bool {
-        self.duration.is_some() || self.explicit || self.playable || self.favorites
+        self.duration.is_some()
+            || self.hide_explicit
+            || self.playable
+            || self.favorites
+            || self.downloaded
     }
 
     pub(super) fn keeps(&self, track: &Track) -> bool {
-        if self.explicit && !track.explicit {
+        if self.hide_explicit && track.explicit {
             return false;
         }
         if self.playable && !track.playable {
@@ -55,13 +62,15 @@ mod tests {
     fn every_axis_must_pass() {
         let sieve = TrackSieve {
             duration: Some((60., 180.)),
-            explicit: true,
+            hide_explicit: true,
             playable: true,
             favorites: false,
+            downloaded: false,
         };
 
-        assert!(sieve.keeps(&track(120, true, true)));
-        assert!(!sieve.keeps(&track(120, true, false)));
-        assert!(!sieve.keeps(&track(400, true, true)));
+        assert!(sieve.keeps(&track(120, false, true)));
+        assert!(!sieve.keeps(&track(120, true, true)));
+        assert!(!sieve.keeps(&track(120, false, false)));
+        assert!(!sieve.keeps(&track(400, false, true)));
     }
 }

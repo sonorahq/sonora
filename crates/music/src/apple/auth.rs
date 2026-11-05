@@ -6,9 +6,12 @@
 //! the reason it is isolated here. The user token is the account, and it is never logged.
 
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result, bail};
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 
 use crate::credentials;
@@ -32,9 +35,26 @@ pub(crate) const AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) 
 /// bundle it names.
 const PLAYER: &str = "https://music.apple.com/";
 
+/// The file beside the account's that keeps the last bearer token read off the page.
+const KEPT: &str = "bearer.json";
+
+/// How long before it expires a kept bearer token is read again, so a launch never starts on
+/// one about to lapse.
+const MARGIN: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+/// How long the page or its script bundle may take to arrive. They are megabytes, and a stalled
+/// one would otherwise hold the sign-in for minutes.
+const PATIENCE: Duration = Duration::from_secs(30);
+
 /// The bearer token this process is using. It is the same for every visitor and lasts months,
-/// so it is read once.
-static BEARER: OnceLock<String> = OnceLock::new();
+/// so it is read once and kept on disk for the next launch.
+static BEARER: Mutex<Option<String>> = Mutex::new(None);
+
+/// The bearer token as it is kept on disk.
+#[derive(Deserialize, Serialize)]
+struct KeptBearer {
+    token: String,
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct Credentials {
@@ -111,18 +131,73 @@ pub fn user_token(input: &str) -> Result<String> {
     Ok(token.to_owned())
 }
 
-/// The web player's bearer token: the environment's, the one already read, or one read off the
-/// page now.
+/// The web player's bearer token: the environment's, the one already read, the one the last
+/// launch kept while it has more than `MARGIN` left, or one read off the page now. Reading the
+/// page costs megabytes, so a launch with a kept token signs in without it.
 pub async fn bearer(http: &reqwest::Client) -> Result<String> {
     if let Some(token) = std::env::var(BEARER_ENV).ok().filter(|it| !it.is_empty()) {
         return Ok(token);
     }
-    if let Some(token) = BEARER.get() {
-        return Ok(token.clone());
+    if let Some(token) = held() {
+        return Ok(token);
+    }
+    if let Some(token) = kept() {
+        log::debug!("apple: using the bearer token the last launch kept");
+        *BEARER
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(token.clone());
+        return Ok(token);
     }
     let token = read_bearer(http).await?;
     log::debug!("apple: read a bearer token of {} characters", token.len());
-    Ok(BEARER.get_or_init(|| token).clone())
+    keep(&token);
+    *BEARER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(token.clone());
+    Ok(token)
+}
+
+/// Drops the bearer token in use and the kept one, after Apple turned it down, so the next
+/// `bearer` reads the page again.
+pub(crate) fn forget_bearer() {
+    *BEARER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    credentials::remove(&credentials::dir("apple").join(KEPT));
+}
+
+fn held() -> Option<String> {
+    BEARER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+/// The token the last launch kept, while it is still good for longer than `MARGIN`.
+fn kept() -> Option<String> {
+    let body = std::fs::read(credentials::dir("apple").join(KEPT)).ok()?;
+    let token = serde_json::from_slice::<KeptBearer>(&body).ok()?.token;
+    let left = expiry(&token)?.duration_since(SystemTime::now()).ok()?;
+    (left > MARGIN).then_some(token)
+}
+
+fn keep(token: &str) {
+    let body = match serde_json::to_vec(&KeptBearer {
+        token: token.to_owned(),
+    }) {
+        Ok(body) => body,
+        Err(error) => return log::warn!("apple: cannot encode the bearer token: {error}"),
+    };
+    if let Err(error) = credentials::write(&credentials::dir("apple").join(KEPT), &body) {
+        log::warn!("apple: cannot keep the bearer token: {error:#}");
+    }
+}
+
+/// When a JWT stops being accepted, read from the `exp` claim of its payload.
+fn expiry(token: &str) -> Option<SystemTime> {
+    let payload = URL_SAFE_NO_PAD.decode(token.split('.').nth(1)?).ok()?;
+    let claims: serde_json::Value = serde_json::from_slice(&payload).ok()?;
+    Some(UNIX_EPOCH + Duration::from_secs(claims.get("exp")?.as_u64()?))
 }
 
 /// Reads the token off music.apple.com: out of the page itself, or out of the script bundle the
@@ -131,6 +206,7 @@ async fn read_bearer(http: &reqwest::Client) -> Result<String> {
     let html = http
         .get(PLAYER)
         .header(reqwest::header::USER_AGENT, AGENT)
+        .timeout(PATIENCE)
         .send()
         .await
         .context("cannot reach music.apple.com")?
@@ -147,6 +223,7 @@ async fn read_bearer(http: &reqwest::Client) -> Result<String> {
     let script = http
         .get(format!("https://music.apple.com{path}"))
         .header(reqwest::header::USER_AGENT, AGENT)
+        .timeout(PATIENCE)
         .send()
         .await
         .context("cannot fetch the apple music script bundle")?

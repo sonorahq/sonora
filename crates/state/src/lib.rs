@@ -1,15 +1,19 @@
 mod artist;
 mod catalog;
+mod control;
 mod cover;
 mod detail;
 mod devices;
 mod discord;
+mod downloads;
 mod drm;
 mod equalizer;
 mod genre;
 mod history;
 mod home;
 mod library;
+mod links;
+mod listening;
 mod logging;
 mod lyrics;
 mod mosaic;
@@ -36,30 +40,42 @@ mod tags;
 mod toast;
 mod updates;
 mod usage;
+mod vault;
 mod wake;
 mod window_shape;
 
 pub use artist::{ArtistDetail, ArtistDetailEvent};
+pub use control::Control;
 pub use cover::Cover;
 pub use detail::{Collection, Detail, Header};
-pub use devices::{Devices, Steered, Upcoming};
+pub use devices::Devices;
+pub use downloads::{
+    Active, Downloads, DownloadsChanged, Pending, Progress, Remaining, Subject, downloaded,
+};
 pub use drm::{CdmState, Drm};
 pub use equalizer::{DeviceRule, Equalizer, RuleDevice, Sound};
 pub use genre::{GenreDetails, Genres};
 pub use history::{History, HistoryState};
 pub use home::Home;
 pub use library::{
-    Addition, Library, LibraryEvent, LibraryPart, LibraryState, Problem, Ready, Shelf,
+    Addition, CoverEdit, Leaving, Library, LibraryEvent, LibraryPart, LibraryState, Problem, Ready,
+    Shelf, cover_problem,
 };
+pub use links::{Links, Opened};
+pub use listening::{CODE_LENGTH as SESSION_CODE_LENGTH, Listening, Member as RoomMember, Room};
 pub use logging::log_file;
 pub use lyrics::{Lyrics, LyricsState};
+pub use music::connect::{Elsewhere, Repeat};
 pub use network::{Network, Reconnected};
 pub use outputs::Outputs;
 pub use overload::OutputLevel;
 pub use pins::{PinSort, Pins};
-pub use playback::{Origin, Playback, PlaybackState, Repeat, Sleep, Whence};
+pub use playback::{Origin, Playback, PlaybackState, Sleep, Unreachable, Whence};
 pub use profile::Profile;
-pub use queue::{Named, Queue, Resume, Stub};
+pub use queue::{
+    Queue, QueueKind, QueuePlacement, QueuePosition, QueueSections, QueueSlot, QueueView, Resume,
+    Stub,
+};
 pub use remote::{Remote, attach as attach_remote};
 pub use requirements::{Requirement, Requirements};
 pub use scan::Scan;
@@ -68,15 +84,16 @@ pub use search::{AlbumHit, ArtistHit, Hit, Kind, PlaylistHit, Search};
 pub use session::{Failure, ProviderInfo, Session, SessionEvent, SessionState};
 pub use settings::{
     AppSettings, ConnectName, DiscordName, FilterValue, FullscreenControlsAutohide, LYRICS_SOURCES,
-    PlayerBarLayout, Reloaded, RomanizationScripts, SYSTEM_FONT, SideTab, ThemeFamily,
+    PlayerBarLayout, Reloaded, RomanizationScripts, SYSTEM_FONT, SideTab, ThemeFamily, ThemeOffer,
     ThemeVariant, equalizer_profile_label, remember_window, window_placement,
 };
 pub use signal::{Change, Equalizing, FLOAT_BITS, Following, Signal, SignalPath};
 pub use song::SongDetail;
 pub use tags::{TagState, Tags};
 pub use toast::{Outcome, Target, Toast, ToastAction, Toasts};
-pub use updates::{Release, UpdateState, Updates};
+pub use updates::{Channel, Release, UpdateState, Updates, VERSION, updates_itself};
 pub use usage::Usage;
+pub use vault::CACHE_GB_RANGE;
 pub use wake::Wake;
 pub use window_shape::{apply_window_rounding, install_rounded_window_hook};
 
@@ -85,7 +102,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use gpui::{App, AppContext as _, Entity, Global};
+use gpui::{App, AppContext as _, Context, Entity, Global, Task};
 use music::{LyricsProvider, MusicProvider};
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
@@ -136,6 +153,20 @@ impl Io {
         self.0.spawn(future)
     }
 
+    /// Loads on tokio and applies the result on the entity's thread. The caller retains the task.
+    pub fn load<E: 'static, T: Send + 'static>(
+        &self,
+        work: impl Future<Output = Result<T>> + Send + 'static,
+        apply: impl FnOnce(&mut E, Result<T>, &mut Context<E>) + 'static,
+        cx: &mut Context<E>,
+    ) -> Task<()> {
+        let io = self.clone();
+        cx.spawn(async move |this, cx| {
+            let loaded = join(io.spawn(work)).await;
+            this.update(cx, |this, cx| apply(this, loaded, cx)).ok();
+        })
+    }
+
     pub fn spawn_blocking<F, R>(&self, func: F) -> JoinHandle<R>
     where
         F: FnOnce() -> R + Send + 'static,
@@ -147,6 +178,16 @@ impl Io {
 
 pub(crate) async fn join<T>(handle: JoinHandle<Result<T>>) -> Result<T> {
     handle.await?
+}
+
+/// Hands the free pages of the malloc heap back to the kernel after a burst of short-lived
+/// allocations. The app runs on one malloc arena, which otherwise keeps what a burst freed resident.
+/// It locks the heap while it walks it, so call it off the main thread and only once a burst is over.
+pub(crate) fn trim_heap() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    unsafe {
+        libc::malloc_trim(0);
+    }
 }
 
 /// Flattens a failed call's reason and tells `Network` about it, so one screen's failure puts
@@ -177,11 +218,15 @@ pub(crate) fn settled<T>(result: Result<T>, cx: &mut gpui::App) -> std::result::
 
 pub struct Sonora {
     pub session: Entity<Session>,
+    pub control: Entity<Control>,
     pub cover: Entity<Cover>,
     pub devices: Entity<Devices>,
+    pub downloads: Entity<Downloads>,
     pub drm: Entity<Drm>,
     pub equalizer: Entity<Equalizer>,
     pub library: Entity<Library>,
+    pub links: Entity<Links>,
+    pub listening: Entity<Listening>,
     pub history: Entity<History>,
     pub lyrics: Entity<Lyrics>,
     pub network: Entity<Network>,
@@ -225,9 +270,15 @@ pub fn init(
         settings.report_broken(cx);
         settings
     });
+    // Spotify sets up its own file cache when its session opens, which can be before Playback
+    // exists, so it hears the setting first.
+    music::vault::Vault::set_keeping(
+        settings.read(cx).keep_tracks(),
+        vault::bytes(settings.read(cx).cache_gb()),
+    );
     let session =
         cx.new(|cx| Session::new(providers, local_provider, settings.clone(), io.clone(), cx));
-    let network = cx.new(|_| Network::new(session.clone(), io.clone()));
+    let network = cx.new(|cx| Network::new(session.clone(), settings.clone(), io.clone(), cx));
     // A run that started without a network never signed out, so the account it kept is tried
     // again the moment there is one.
     session.update(cx, |_, cx| {
@@ -236,10 +287,11 @@ pub fn init(
         })
         .detach();
     });
-    // A toast can carry an Undo that acts on the account it was shown for, so none outlives it.
+    // A toast can carry an Undo that acts on the account it was shown for, so no such toast
+    // outlives it. A plain one stays, since the sign-out can be what it explains.
     cx.subscribe(&session, |_, event, cx| {
         if let SessionEvent::SignedOut = event {
-            Toasts::clear(cx);
+            Toasts::clear_account(cx);
         }
     })
     .detach();
@@ -259,6 +311,16 @@ pub fn init(
         )
     });
     let outputs = cx.new(|cx| Outputs::new(settings.clone(), playback.clone(), cx));
+    let downloads = cx.new(|cx| {
+        Downloads::new(
+            session.clone(),
+            playback.clone(),
+            &network,
+            database.clone(),
+            io.clone(),
+            cx,
+        )
+    });
     equalizer.update(cx, |equalizer, cx| {
         equalizer.follow(&playback, &outputs, cx)
     });
@@ -320,6 +382,18 @@ pub fn init(
             cx,
         )
     });
+    let listening = cx.new(|cx| {
+        Listening::new(
+            playback.clone(),
+            queue.clone(),
+            session.clone(),
+            settings.clone(),
+            io.clone(),
+            cx,
+        )
+    });
+    let links = cx.new(|cx| Links::new(session.clone(), devices.clone(), settings.clone(), cx));
+    let control = cx.new(|cx| Control::new(session.clone(), playback.clone(), library.clone(), cx));
     discord::attach(
         playback.clone(),
         settings.clone(),
@@ -332,11 +406,15 @@ pub fn init(
 
     cx.set_global(Sonora {
         session,
+        control,
         cover,
         devices,
+        downloads,
         drm,
         equalizer,
         library,
+        links,
+        listening,
         history,
         lyrics,
         network,

@@ -17,8 +17,8 @@ use symphonia::core::probe::Hint;
 
 use super::id3;
 use crate::{
-    Album, ArtistRef, LOCAL_ALBUM_PREFIX, LOCAL_ARTIST_PREFIX, LOCAL_TRACK_PREFIX, ReleaseType,
-    Track,
+    Album, ArtistRef, Credit, LOCAL_ALBUM_PREFIX, LOCAL_ARTIST_PREFIX, LOCAL_TRACK_PREFIX,
+    ReleaseType, Track,
 };
 
 const COVER_NAMES: &[&str] = &[
@@ -257,6 +257,10 @@ pub struct Tagged {
     pub year: Option<i32>,
     /// The release type the tags name, `None` when they name neither a type nor a compilation.
     pub release: Option<ReleaseType>,
+    /// The record label the tags name, empty when they name none. Not an `Option`: serde would
+    /// read a row stored without this field as `None` instead of rejecting it, so the file would
+    /// never be read again for its label.
+    pub label: String,
 }
 
 struct FallbackProbe {
@@ -269,6 +273,10 @@ struct FallbackProbe {
     disc_number: u32,
     year: Option<i32>,
     release: Vec<String>,
+    genres: Vec<String>,
+    composers: Vec<String>,
+    languages: Vec<String>,
+    label: Option<String>,
     compilation: bool,
     cover_data: Option<(Vec<u8>, String)>,
 }
@@ -338,6 +346,10 @@ fn probe_symphonia_at(path: &Path, skip: u64) -> Option<FallbackProbe> {
     let mut disc_number = 0;
     let mut year = None;
     let mut release = Vec::new();
+    let mut genres = Vec::new();
+    let mut composers = Vec::new();
+    let mut languages = Vec::new();
+    let mut label = None;
     let mut compilation = false;
     let mut cover_data = None;
 
@@ -378,6 +390,18 @@ fn probe_symphonia_at(path: &Path, skip: u64) -> Option<FallbackProbe> {
                 Some(StandardTagKey::MusicBrainzReleaseType) => {
                     release.extend(clean_val(&tag.value));
                 }
+                Some(StandardTagKey::Genre) => {
+                    genres.extend(clean_val(&tag.value));
+                }
+                Some(StandardTagKey::Composer) => {
+                    composers.extend(clean_val(&tag.value));
+                }
+                Some(StandardTagKey::Language) => {
+                    languages.extend(clean_val(&tag.value));
+                }
+                Some(StandardTagKey::Label) if label.is_none() => {
+                    label = clean_val(&tag.value);
+                }
                 Some(StandardTagKey::Compilation) => {
                     compilation |= flagged(&tag.value.to_string());
                 }
@@ -417,6 +441,10 @@ fn probe_symphonia_at(path: &Path, skip: u64) -> Option<FallbackProbe> {
         disc_number,
         year,
         release,
+        genres,
+        composers,
+        languages,
+        label,
         compilation,
         cover_data,
     })
@@ -434,7 +462,7 @@ pub fn modified_at(path: &Path) -> Option<i64> {
     }
 }
 
-/// Reads one file into a track, with the album artist, year and release type its tags claim.
+/// Reads one file into a track, with the album artist, year, release type and label its tags claim.
 /// A file naming an album artist joins that artist's album of the same name. One that names none
 /// joins the album of the same name in its own folder, so featured artists never split an album.
 /// The year comes out of the same read because it is what an album is dated by, and opening every
@@ -567,6 +595,46 @@ pub fn track_from_file(
             .and_then(|fb| release_type(fb.release.iter().map(String::as_str), fb.compilation)),
     };
 
+    let (genres, composers, languages, label) = match (tag, fallback) {
+        (Some(tag), _) => {
+            let listed = |key| clean_multiple(tag.get_strings(key));
+            (
+                listed(ItemKey::Genre),
+                listed(ItemKey::Composer),
+                listed(ItemKey::Language),
+                listed(ItemKey::Label)
+                    .into_iter()
+                    .chain(listed(ItemKey::Publisher))
+                    .next()
+                    .unwrap_or_default(),
+            )
+        }
+        (None, Some(fb)) => (
+            fb.genres,
+            fb.composers,
+            fb.languages,
+            fb.label.unwrap_or_default(),
+        ),
+        (None, None) => Default::default(),
+    };
+    // The view credits the track artists itself only while the track has no credits at all.
+    let credits = match composers.is_empty() {
+        true => Vec::new(),
+        false => track_artist_refs
+            .iter()
+            .map(|artist| Credit {
+                name: artist.name.clone(),
+                role: "Main artist".to_owned(),
+                id: artist.id.clone(),
+            })
+            .chain(composers.into_iter().map(|name| Credit {
+                name,
+                role: "Composer".to_owned(),
+                id: None,
+            }))
+            .collect(),
+    };
+
     Some(Tagged {
         track: Track {
             id: Some(track_id(path)),
@@ -585,14 +653,15 @@ pub fn track_from_file(
             explicit: false,
             track_number,
             disc_number,
-            tags: Vec::new(),
-            languages: Vec::new(),
-            credits: Vec::new(),
+            tags: genres,
+            languages: languages.iter().map(|code| language_code(code)).collect(),
+            credits,
         },
         album_artist,
         album_artists,
         year,
         release,
+        label,
     })
 }
 
@@ -605,6 +674,7 @@ pub fn album_from_tracks(
     tracks: &[Track],
     year: i32,
     release: ReleaseType,
+    label: String,
 ) -> Album {
     let artists = artist_refs
         .iter()
@@ -622,8 +692,11 @@ pub fn album_from_tracks(
         release_type: release,
         year,
         track_count: tracks.len() as u32,
-        release_date: String::new(),
-        label: String::new(),
+        release_date: match year > 0 {
+            true => year.to_string(),
+            false => String::new(),
+        },
+        label,
         copyrights: Vec::new(),
         added_at: tracks.iter().filter_map(|track| track.added_at).max(),
     }
@@ -785,6 +858,29 @@ fn release_type<'a>(
 /// Whether a flag tag such as `COMPILATION` or `TCMP` is set, which taggers write as `1`.
 fn flagged(value: &str) -> bool {
     matches!(value.trim(), "1" | "true" | "True" | "TRUE")
+}
+
+/// The two-letter code the views name a language by. Tags use three-letter ISO 639-2 codes, and a
+/// value the views do not know, such as a full name, stays as written.
+fn language_code(code: &str) -> String {
+    let short = match code.to_ascii_lowercase().as_str() {
+        "ara" => "ar",
+        "ger" | "deu" => "de",
+        "eng" => "en",
+        "spa" => "es",
+        "fre" | "fra" => "fr",
+        "hin" => "hi",
+        "ita" => "it",
+        "jpn" => "ja",
+        "kor" => "ko",
+        "por" => "pt",
+        "rus" => "ru",
+        "tur" => "tr",
+        "ukr" => "uk",
+        "chi" | "zho" => "zh",
+        _ => return code.to_owned(),
+    };
+    short.to_owned()
 }
 
 #[cfg(test)]
@@ -976,6 +1072,7 @@ mod tests {
             &[older, newer],
             2026,
             ReleaseType::Album,
+            String::new(),
         );
 
         assert_eq!(album.added_at, Some(2_000));

@@ -1,5 +1,8 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Div, SharedString, StyleRefinement, TextAlign, Window, div, svg};
+use gpui::{
+    AnyElement, App, Div, ElementId, SharedString, StyleRefinement, TextAlign, Window, div, svg,
+};
 
 use crate::label::vacant;
 use crate::metrics::Text;
@@ -19,6 +22,8 @@ pub struct Vacancy {
     icon: Option<SharedString>,
     action: Option<AnyElement>,
     compact: bool,
+    /// The id under which the label reaches screen readers, which it does only once given one.
+    spoken: Option<ElementId>,
 }
 
 impl Vacancy {
@@ -30,6 +35,7 @@ impl Vacancy {
             icon: None,
             action: None,
             compact: false,
+            spoken: None,
         }
     }
 
@@ -54,6 +60,13 @@ impl Vacancy {
         self.action = Some(action.into_any_element());
         self
     }
+
+    /// Exposes the label to screen readers as a line of text described by the detail, under the
+    /// element id `id`. Without it both are drawn but never read.
+    pub fn spoken(mut self, id: impl Into<ElementId>) -> Self {
+        self.spoken = Some(id.into());
+        self
+    }
 }
 
 impl Styled for Vacancy {
@@ -71,6 +84,7 @@ impl RenderOnce for Vacancy {
             icon,
             action,
             compact,
+            spoken,
         } = self;
 
         let theme = *cx.theme();
@@ -100,9 +114,20 @@ impl RenderOnce for Vacancy {
                         .text_color(theme.muted_foreground.opacity(GLYPH)),
                 )
             })
-            .child(match detail {
-                Some(detail) => caption(label, detail, cx).into_any_element(),
-                None => vacant(label, cx).into_any_element(),
+            .child({
+                let text = match detail.clone() {
+                    Some(detail) => caption(label.clone(), detail, cx),
+                    None => vacant(label.clone(), cx),
+                };
+                match spoken {
+                    Some(id) => text
+                        .id(id)
+                        .role(Role::Label)
+                        .aria_value(label)
+                        .when_some(detail, |this, detail| this.aria_description(detail))
+                        .into_any_element(),
+                    None => text.into_any_element(),
+                }
             })
             .when_some(action, |this, action| this.child(action));
 

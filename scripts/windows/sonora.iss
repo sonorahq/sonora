@@ -50,7 +50,7 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: deskto
 Root: HKA; Subkey: "Software\Sonora"; Flags: uninsdeletekeyifempty
 Root: HKA; Subkey: "Software\Sonora\Capabilities"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Sonora\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "{#AppName}"; Flags: uninsdeletevalue
-Root: HKA; Subkey: "Software\Sonora\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "A native music streaming client, built with Rust and GPUI"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Sonora\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "A native, familiar music streaming client"; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Sonora\Capabilities"; ValueType: string; ValueName: "ApplicationIcon"; ValueData: "{app}\{#AppExeName},0"; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "{#AppName}"; ValueData: "Software\Sonora\Capabilities"; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\Applications\{#AppExeName}"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#AppName}"; Flags: uninsdeletekey
@@ -215,12 +215,29 @@ Root: HKA; Subkey: "Software\Classes\Sonora.ape\DefaultIcon"; ValueType: string;
 Root: HKA; Subkey: "Software\Classes\Sonora.ape\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
 Root: HKA; Subkey: "Software\Classes\Applications\{#AppExeName}\SupportedTypes"; ValueType: string; ValueName: ".ape"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Sonora\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ape"; ValueData: "Sonora.ape"; Flags: uninsdeletevalue
+; sonora, which no other app claims, so Sonora owns the scheme outright
+Root: HKA; Subkey: "Software\Classes\sonora"; ValueType: string; ValueName: ""; ValueData: "URL:Sonora Link"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\sonora"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\sonora\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
+Root: HKA; Subkey: "Software\Classes\sonora\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
 ; spotify
 Root: HKA; Subkey: "Software\Sonora\Capabilities\UrlAssociations"; ValueType: string; ValueName: "spotify"; ValueData: "SonoraSpotify"; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\SonoraSpotify"; ValueType: string; ValueName: ""; ValueData: "Spotify Link"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\SonoraSpotify"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\SonoraSpotify\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
 Root: HKA; Subkey: "Software\Classes\SonoraSpotify\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
+; deezer
+Root: HKA; Subkey: "Software\Sonora\Capabilities\UrlAssociations"; ValueType: string; ValueName: "deezer"; ValueData: "SonoraDeezer"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\SonoraDeezer"; ValueType: string; ValueName: ""; ValueData: "Deezer Link"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\SonoraDeezer"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\SonoraDeezer\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
+Root: HKA; Subkey: "Software\Classes\SonoraDeezer\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
+; tidal
+Root: HKA; Subkey: "Software\Sonora\Capabilities\UrlAssociations"; ValueType: string; ValueName: "tidal"; ValueData: "SonoraTidal"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\SonoraTidal"; ValueType: string; ValueName: ""; ValueData: "TIDAL Link"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\SonoraTidal"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\SonoraTidal\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
+Root: HKA; Subkey: "Software\Classes\SonoraTidal\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
 
 ; Setup runs elevated, and a [Run] entry inherits that unless it says otherwise: postinstall
 ; entries default to runasoriginaluser, the relaunch after a silent update does not, and an

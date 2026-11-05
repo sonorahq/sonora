@@ -56,7 +56,9 @@ fn zone_of(time: &str) -> (&str, i64) {
     // `+02:00` and `+0200` both occur, so the hours are the first two digits either way.
     let (hours, minutes) = match zone.split_once(':') {
         Some((hours, minutes)) => (hours, minutes),
-        None => zone.split_at(zone.len().min(2)),
+        None => zone
+            .split_at_checked(zone.len().min(2))
+            .unwrap_or((zone, "")),
     };
     let hours: i64 = hours.parse().unwrap_or(0);
     let minutes: i64 = minutes.parse().unwrap_or(0);

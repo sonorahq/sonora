@@ -1,9 +1,12 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{App, FontWeight, IntoElement, Pixels, RenderOnce, SharedString, Window, div, px};
 use ui::{ActiveTheme as _, Text};
 
 const BADGE: Pixels = px(28.);
 
+/// A numbered list of instructions. Screen readers meet it as a list whose items carry the
+/// step's text and their place in it.
 #[derive(IntoElement)]
 pub(crate) struct Steps {
     items: Vec<SharedString>,
@@ -18,13 +21,21 @@ pub(crate) fn steps(items: impl IntoIterator<Item = impl Into<SharedString>>) ->
 impl RenderOnce for Steps {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = *cx.theme();
+        let total = self.items.len();
         div()
+            .id("steps")
+            .role(Role::List)
             .flex()
             .flex_col()
             .w_full()
             .gap_2()
             .children(self.items.into_iter().enumerate().map(|(i, text)| {
                 div()
+                    .id(("step", i))
+                    .role(Role::ListItem)
+                    .aria_label(text.clone())
+                    .aria_position_in_set(i + 1)
+                    .aria_size_of_set(total)
                     .flex()
                     .items_center()
                     .gap_3()

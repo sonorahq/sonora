@@ -33,6 +33,7 @@ impl SettingsView {
         self.row(
             t!("settings-spotify-connect"),
             Switch::new("spotify-connect", on)
+                .name(t!("settings-spotify-connect"))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_spotify_connect(!on, cx));
@@ -63,7 +64,9 @@ impl SettingsView {
 
         self.row(
             t!("settings-spotify-connect-name"),
-            picker.into_any_element(),
+            picker
+                .name(t!("settings-spotify-connect-name"))
+                .into_any_element(),
         )
     }
 

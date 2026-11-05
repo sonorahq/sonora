@@ -163,6 +163,14 @@ impl Window {
         unsafe { self.view.loadRequest(&NSURLRequest::requestWithURL(&url)) };
     }
 
+    /// Evaluates `script` in the page world, where the user script runs too.
+    pub(crate) fn run(&self, script: &str) {
+        unsafe {
+            self.view
+                .evaluateJavaScript_completionHandler(&NSString::from_str(script), None)
+        };
+    }
+
     pub(crate) fn close(&self) {
         if !self.closed() {
             self.window.close();

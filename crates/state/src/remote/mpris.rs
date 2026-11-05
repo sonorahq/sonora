@@ -6,11 +6,11 @@ use anyhow::Result;
 use futures::future;
 use gpui::{App, Task};
 use mpris_server::{LoopStatus, Metadata, PlaybackStatus, Player, Time, TrackId};
-use music::Track;
+use music::{MediaKind, Track};
 use tokio::sync::mpsc;
 
 use super::{BUS_NAME, Command, DISPLAY_NAME};
-use crate::{PlaybackState, Repeat};
+use crate::{PlaybackState, Repeat, Shelf, Sonora};
 
 /// The desktop entry a native install ships, `sonora.desktop`.
 const DESKTOP_ENTRY: &str = "sonora";
@@ -60,9 +60,9 @@ impl Controls {
         Ok(Self { updates, _server })
     }
 
-    pub fn describe(&mut self, track: Option<&Track>, cover: Option<&str>) {
+    pub fn describe(&mut self, track: Option<&Track>, cover: Option<&str>, cx: &App) {
         let metadata = match track {
-            Some(track) => metadata(track, cover),
+            Some(track) => metadata(track, cover, cx),
             None => Metadata::builder().trackid(TrackId::NO_TRACK).build(),
         };
         self.send(Update::Metadata(metadata));
@@ -200,7 +200,7 @@ async fn apply(player: &Player, update: Update) -> mpris_server::zbus::Result<()
     }
 }
 
-fn metadata(track: &Track, cover: Option<&str>) -> Metadata {
+fn metadata(track: &Track, cover: Option<&str>, cx: &App) -> Metadata {
     let artists = match track.artist_refs.is_empty() {
         true => vec![track.artists.clone()],
         false => track
@@ -217,6 +217,14 @@ fn metadata(track: &Track, cover: Option<&str>) -> Metadata {
         .length(time(track.duration))
         .build();
     metadata.set_art_url(cover);
+    if let Some(id) = &track.id {
+        let url = Sonora::global(cx)
+            .session
+            .read(cx)
+            .client_of(Shelf::of(id))
+            .and_then(|client| client.share_url(MediaKind::Track, id));
+        metadata.set_url(url);
+    }
     metadata
 }
 

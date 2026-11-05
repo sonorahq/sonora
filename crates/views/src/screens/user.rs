@@ -1,3 +1,4 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, Context, Entity, Pixels, Render, ScrollHandle, SharedString, Window, div, px,
@@ -72,6 +73,7 @@ impl UserView {
         }
 
         PageHero::new("user-hero", title)
+            .pending(user.is_none() && profile.is_loading())
             .cover(user.and_then(|user| user.avatar.clone()))
             .circle()
             .fallback(FALLBACK)
@@ -85,6 +87,7 @@ impl UserView {
         let listed = profile.playlists();
         let layout = CardGrid::layout(self.width);
 
+        let total = listed.len();
         let cards = match loading {
             true => (0..PENDING)
                 .map(|place| {
@@ -97,9 +100,12 @@ impl UserView {
                 .iter()
                 .enumerate()
                 .map(|(place, playlist)| {
-                    cards::playlist_card(("user-playlist", place), playlist, &self.playback, cx)
+                    let id = SharedString::from(format!("user-playlist-{}", playlist.id));
+                    cards::playlist_card(id, playlist, &self.playback, cx)
                         .tile(layout.card)
                         .flat()
+                        .aria_position_in_set(place + 1)
+                        .aria_size_of_set(total)
                         .into_any_element()
                 })
                 .collect::<Vec<_>>(),
@@ -110,9 +116,23 @@ impl UserView {
             .flex()
             .flex_col()
             .gap_4()
-            .child(heading(t!("user-playlists"), cx))
+            .child({
+                let label = t!("user-playlists");
+                heading(label.clone(), cx)
+                    .id("user-playlists-heading")
+                    .role(Role::Heading)
+                    .aria_level(2)
+                    .aria_label(label)
+            })
             .when(empty, |this| {
-                this.child(vacant(t!("user-playlists-empty"), cx))
+                let label = t!("user-playlists-empty");
+                this.child(
+                    div()
+                        .id("user-playlists-empty")
+                        .role(Role::Status)
+                        .aria_label(label.clone())
+                        .child(vacant(label, cx)),
+                )
             })
             .when(!empty, |this| {
                 this.child(
@@ -148,6 +168,7 @@ impl UserView {
                     let id = id.clone();
                     profile.update(cx, |profile, cx| profile.open(&id, cx));
                 },
+                cx,
             )
             .size_full()
             .into_any_element(),
@@ -158,7 +179,14 @@ impl UserView {
 impl Render for UserView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(failure) = self.failure(cx) {
-            return div().flex().flex_col().size_full().child(failure);
+            return div()
+                .id("user-failure")
+                .role(Role::Alert)
+                .flex()
+                .flex_col()
+                .size_full()
+                .child(failure)
+                .into_any_element();
         }
 
         let theme = *cx.theme();
@@ -168,18 +196,23 @@ impl Render for UserView {
             self.width = room;
         }
 
-        div().flex().flex_col().size_full().child(
-            Scroller::new("user-page", &self.scrollbar)
-                .bottom_inset(crate::chrome::Chrome::bottom(cx))
-                .p(pad)
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_8()
-                        .child(self.header(cx))
-                        .child(self.playlists(cx)),
-                ),
-        )
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(
+                Scroller::new("user-page", &self.scrollbar)
+                    .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .p(pad)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_8()
+                            .child(self.header(cx))
+                            .child(self.playlists(cx)),
+                    ),
+            )
+            .into_any_element()
     }
 }

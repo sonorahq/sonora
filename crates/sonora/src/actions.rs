@@ -44,6 +44,7 @@ pub fn register(lingers: bool, cx: &mut App) {
                 let history = Sonora::global(cx).history.clone();
                 history.update(cx, |history, cx| history.refresh(cx));
             }
+            at if !at.refreshes() => {}
             at => {
                 let shelf = match at {
                     Destination::Local(_) => Shelf::Local,

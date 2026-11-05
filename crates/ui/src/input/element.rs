@@ -1,8 +1,8 @@
 use gpui::prelude::*;
 use gpui::{
-    App, Bounds, Context, CursorStyle, Element, ElementInputHandler, Entity, GlobalElementId,
-    InspectorElementId, LayoutId, MouseButton, PaintQuad, Pixels, Point, ShapedLine, Style,
-    TextRun, UnderlineStyle, Window, div, fill, point, px, relative, size, svg,
+    App, Bounds, ContentMask, Context, CursorStyle, Element, ElementInputHandler, Entity,
+    GlobalElementId, InspectorElementId, LayoutId, MouseButton, PaintQuad, Pixels, Point,
+    ShapedLine, Style, TextRun, UnderlineStyle, Window, div, fill, point, px, relative, size, svg,
 };
 
 use i18n::t;
@@ -11,7 +11,7 @@ use crate::button::Button;
 use crate::glass::{blurring, glass};
 use crate::input::{
     CARET, CARET_LINES, Copy, Cut, INPUT_CONTEXT, Input, Paste, SelectAll, clamp_offset,
-    clamp_range, masked_text,
+    clamp_range, masked_text, primary_paste, span,
 };
 use crate::menu::{Menu, MenuItem};
 use crate::popup::Popup;
@@ -155,10 +155,31 @@ impl Element for Text {
         let line = window
             .text_system()
             .shape_line(text, font_size, &runs, None);
-        let left = match input.end {
-            true => bounds.left() + (bounds.size.width - line.width - CARET).max(Pixels::ZERO),
-            false => bounds.left(),
+        // Text wider than the field scrolls under it, by just enough to keep the caret in sight,
+        // so what is cut off is on the side the caret is not. Deleting never leaves a blank tail
+        // while there is text to fill it.
+        let room = (bounds.size.width - CARET).max(Pixels::ZERO);
+        let overflow = (line.width - room).max(Pixels::ZERO);
+        let caret_x = line.x_for_index(cursor);
+        let mut scroll = input.scroll.min(overflow);
+        if caret_x - scroll > room {
+            scroll = caret_x - room;
+        }
+        if caret_x < scroll {
+            scroll = caret_x;
+        }
+        let left = match (overflow > Pixels::ZERO, input.end) {
+            (true, _) => bounds.left() - scroll,
+            (false, true) => {
+                bounds.left() + (bounds.size.width - line.width - CARET).max(Pixels::ZERO)
+            }
+            (false, false) => bounds.left(),
         };
+        let scroll = match overflow > Pixels::ZERO {
+            true => scroll,
+            false => Pixels::ZERO,
+        };
+        self.input.update(cx, |input, _| input.scroll = scroll);
 
         let (selection, caret) = match selected.is_empty() {
             true => (
@@ -176,10 +197,7 @@ impl Element for Text {
             ),
             false => (
                 Some(fill(
-                    Bounds::from_corners(
-                        point(left + line.x_for_index(selected.start), bounds.top()),
-                        point(left + line.x_for_index(selected.end), bounds.bottom()),
-                    ),
+                    span(&line, selected, left, bounds),
                     theme.selection.opacity(0.4),
                 )),
                 None,
@@ -212,27 +230,29 @@ impl Element for Text {
         );
 
         let focused = focus.is_focused(window);
-        if focused && let Some(selection) = painted.selection.take() {
-            window.paint_quad(selection);
-        }
-
         let Some(line) = painted.line.take() else {
             return;
         };
         let origin = painted.origin;
-        line.paint(
-            origin,
-            window.line_height(),
-            gpui::TextAlign::Left,
-            None,
-            window,
-            cx,
-        )
-        .ok();
-
-        if focused && let Some(caret) = painted.caret.take() {
-            window.paint_quad(caret);
-        }
+        // text scrolled under the field stays inside the text's own box, clear of the icon and
+        // the buttons beside it
+        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            if focused && let Some(selection) = painted.selection.take() {
+                window.paint_quad(selection);
+            }
+            line.paint(
+                origin,
+                window.line_height(),
+                gpui::TextAlign::Left,
+                None,
+                window,
+                cx,
+            )
+            .ok();
+            if focused && let Some(caret) = painted.caret.take() {
+                window.paint_quad(caret);
+            }
+        });
 
         self.input.update(cx, |input, _| {
             input.last_layout = (!input.content.is_empty()).then_some(line);
@@ -309,6 +329,27 @@ impl Render for Input {
         });
 
         div()
+            // The focus handle doubles as the element id, since every field
+            // owns one and it stays stable for the life of the field.
+            .id(&self.focus_handle)
+            .role(match self.masked {
+                true => gpui::accesskit::Role::PasswordInput,
+                false => gpui::accesskit::Role::TextInput,
+            })
+            .map(|this| match self.name.as_ref() {
+                Some(key) => this
+                    .aria_label(i18n::lookup(key, None))
+                    .when(!self.hint.is_empty(), |this| {
+                        this.aria_placeholder(self.placeholder())
+                    }),
+                None => this.when(!self.hint.is_empty(), |this| {
+                    this.aria_label(self.placeholder())
+                }),
+            })
+            .when_some(
+                (!self.masked && !self.content.is_empty()).then(|| self.content.clone()),
+                |this, value| this.aria_value(value),
+            )
             .flex()
             .flex_1()
             .items_center()
@@ -328,7 +369,12 @@ impl Render for Input {
             .when_else(
                 self.tucked,
                 |this| this.w_full(),
-                |this| this.border_1().border_color(theme.border),
+                |this| {
+                    this.border_1().border_color(match self.invalid {
+                        true => theme.danger,
+                        false => theme.border,
+                    })
+                },
             )
             .overflow_hidden()
             .key_context(INPUT_CONTEXT)
@@ -360,6 +406,9 @@ impl Render for Input {
             .on_action(cx.listener(Self::show_character_palette))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_mouse_down))
+            .when(primary_paste(), |this| {
+                this.on_mouse_down(MouseButton::Middle, cx.listener(Self::on_mouse_down))
+            })
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))

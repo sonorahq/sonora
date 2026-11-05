@@ -2,7 +2,7 @@ mod layout;
 
 use std::cell::Cell as StdCell;
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use gpui::prelude::*;
@@ -13,15 +13,18 @@ use gpui::{
     Window, actions, div, point, px, svg,
 };
 
+use i18n::t;
+
 use crate::artwork::{PREFETCH_REACH, Prefetch};
 use crate::filters::FilterChange;
-use crate::glass::{blurring, popover_surface};
-use crate::menu::Menu;
+use crate::glass::{bar_surface, blurring, popover_surface};
+use crate::menu::{Menu, MenuItem};
 use crate::metrics::{snapped, text_width};
 use crate::pin::{Pin, Pinnable};
 use crate::popup::Popup;
 use crate::skeleton::Skeleton;
 use crate::theme::ActiveTheme as _;
+use crate::tooltip::{Perch, Tipped as _};
 use crate::{Filter, SortAxis};
 
 pub use layout::{ColumnSpec, Layout, Sort, Sorting, Width, rank};
@@ -108,7 +111,26 @@ pub trait TableSource: 'static {
 
     fn context_menu_will_open(&self, _rows: &[usize], _cx: &App) {}
 
+    /// A key naming the item on `row` across a rebuild, such as a track id. With one, an open
+    /// context menu survives a rebuild that still holds every item it was opened on.
+    fn row_key(&self, _row: usize, _cx: &App) -> Option<SharedString> {
+        None
+    }
+
     fn pin(&self, _row: usize, _cx: &App) -> Option<Pin> {
+        None
+    }
+
+    /// Text shown over the whole row the moment the pointer reaches it, following the pointer
+    /// for as long as it stays.
+    fn tip(&self, _row: usize, _cx: &App) -> Option<SharedString> {
+        None
+    }
+
+    /// What a screen reader calls the row, such as a track's title and artist. The cells draw
+    /// text no reader can reach, so a source that leaves this `None` has rows announced as
+    /// nothing but their place in the list.
+    fn name(&self, _row: usize, _cx: &App) -> Option<SharedString> {
         None
     }
 
@@ -148,9 +170,10 @@ pub trait TableSource: 'static {
     }
 
     /// The skeleton rows to draw while the source has no rows yet, so the page keeps the
-    /// height it is about to have. `None` leaves the table empty while it waits.
-    fn pending(&self, _cx: &App) -> Option<Pending> {
-        None
+    /// height it is about to have. A loading source fills the viewport by default, and `None`
+    /// leaves the table empty while it waits.
+    fn pending(&self, cx: &App) -> Option<Pending> {
+        self.is_loading(cx).then_some(Pending::Screen)
     }
 }
 
@@ -176,6 +199,7 @@ pub struct TableDelegate<S: TableSource> {
     sort: Option<(S::Field, Sort)>,
     query: String,
     order: Vec<usize>,
+    locked: Option<&'static [&'static str]>,
 }
 
 impl<S: TableSource> TableDelegate<S> {
@@ -203,6 +227,7 @@ impl<S: TableSource> TableDelegate<S> {
             sort: None,
             query: String::new(),
             order: Vec::new(),
+            locked: None,
         };
         delegate.reorder(cx);
         delegate
@@ -239,6 +264,13 @@ impl<S: TableSource> TableDelegate<S> {
 
     pub fn source_mut(&mut self) -> &mut S {
         &mut self.source
+    }
+
+    /// Lets the listener hide and show columns from a right-click on the head. The `locked` keys
+    /// never appear in that menu. A change emits `TableEvent::LayoutChanged` for the owner to save.
+    pub fn with_column_menu(mut self, locked: &'static [&'static str]) -> Self {
+        self.locked = Some(locked);
+        self
     }
 
     pub fn with_sort(mut self, field: S::Field, direction: Sort, cx: &App) -> Self {
@@ -412,10 +444,13 @@ impl<S: TableSource> TableDelegate<S> {
         self.reorder(cx);
     }
 
-    pub fn toggles(&self) -> Vec<Toggle> {
+    /// The columns the listener can show or hide. A column the source has nothing for is left
+    /// out, since showing it would draw nothing.
+    pub fn toggles(&self, cx: &App) -> Vec<Toggle> {
         self.source
             .columns()
             .iter()
+            .filter(|spec| self.source.populated(spec.field, cx))
             .map(|spec| Toggle {
                 key: spec.key,
                 label: spec.label(),
@@ -424,13 +459,32 @@ impl<S: TableSource> TableDelegate<S> {
             .collect()
     }
 
+    /// The toggles the head's column menu offers, which is none unless the owner opted in
+    /// with `with_column_menu`.
+    fn choices(&self, cx: &App) -> Vec<Toggle> {
+        let Some(locked) = self.locked else {
+            return Vec::new();
+        };
+        self.toggles(cx)
+            .into_iter()
+            .filter(|toggle| !locked.contains(&toggle.key))
+            .collect()
+    }
+
+    /// Steps a column through its first order, the reverse, then unsorted.
     pub fn cycle(&mut self, column: &str, cx: &App) {
+        let first = self
+            .source
+            .columns()
+            .iter()
+            .find(|spec| spec.key == column)
+            .map_or(Sort::Ascending, |spec| spec.first);
         let next = match self.sorting() {
-            Some(current) if current.column == column => match current.order {
-                Sort::Ascending => Some(Sort::Descending),
-                Sort::Descending => None,
+            Some(current) if current.column == column => match current.order == first {
+                true => Some(first.reversed()),
+                false => None,
             },
-            _ => Some(Sort::Ascending),
+            _ => Some(first),
         };
         self.set_sorting(
             next.map(|order| Sorting {
@@ -441,12 +495,14 @@ impl<S: TableSource> TableDelegate<S> {
         );
     }
 
-    pub fn sortables(&self) -> Vec<SortAxis> {
+    /// The columns the rows can be sorted by. A column the source has nothing for is left out,
+    /// as it is from the table.
+    pub fn sortables(&self, cx: &App) -> Vec<SortAxis> {
         let active = self.sorting();
         self.source
             .columns()
             .iter()
-            .filter(|spec| spec.sortable)
+            .filter(|spec| spec.sortable && self.source.populated(spec.field, cx))
             .map(|spec| SortAxis {
                 key: spec.key,
                 label: spec.label(),
@@ -584,15 +640,54 @@ struct Sizing {
     widths: Vec<Pixels>,
 }
 
+/// The context menu a table has open: the rows it was opened on, where, and the keys of those
+/// rows when the source names them.
+#[derive(Clone)]
+struct OpenMenu {
+    rows: Vec<usize>,
+    at: Point<Pixels>,
+    keys: Option<Vec<SharedString>>,
+}
+
+impl OpenMenu {
+    fn new<S: TableSource>(rows: Vec<usize>, at: Point<Pixels>, source: &S, cx: &App) -> Self {
+        let keys = rows.iter().map(|row| source.row_key(*row, cx)).collect();
+        Self { rows, at, keys }
+    }
+
+    /// The same menu over the rows that now hold its items, or `None` once one of them is gone
+    /// or the source names no rows.
+    fn kept<S: TableSource>(self, source: &S, cx: &App) -> Option<Self> {
+        let keys = self.keys?;
+        let wanted: HashSet<&SharedString> = keys.iter().collect();
+        let mut found: HashMap<SharedString, usize> = HashMap::with_capacity(keys.len());
+        for row in 0..source.rows(cx) {
+            if let Some(key) = source.row_key(row, cx).filter(|key| wanted.contains(key)) {
+                found.entry(key).or_insert(row);
+            }
+        }
+        let rows = keys
+            .iter()
+            .map(|key| found.get(key).copied())
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self {
+            rows,
+            at: self.at,
+            keys: Some(keys),
+        })
+    }
+}
+
 pub struct TableState<S: TableSource> {
     delegate: TableDelegate<S>,
     viewport: Viewport,
     corners: Corners<Pixels>,
     focus: FocusHandle,
     scroll: Option<ScrollHandle>,
-    context_menu: Option<(Vec<usize>, Point<Pixels>)>,
+    context_menu: Option<OpenMenu>,
     moving: Option<(usize, usize)>,
     sizing: Option<Sizing>,
+    column_menu: Option<Point<Pixels>>,
 }
 
 impl<S: TableSource> EventEmitter<TableEvent> for TableState<S> {}
@@ -614,6 +709,7 @@ impl<S: TableSource> TableState<S> {
             context_menu: None,
             moving: None,
             sizing: None,
+            column_menu: None,
         }
     }
 
@@ -811,9 +907,14 @@ impl<S: TableSource> TableState<S> {
         cx.notify();
     }
 
+    /// Reads the rows again after the source changed. An open context menu follows its items
+    /// to their new rows, and closes when the source names no rows or one of the items left.
     pub fn rebuild(&mut self, cx: &mut Context<Self>) {
-        self.context_menu = None;
         self.delegate.rebuild(cx);
+        self.context_menu = self
+            .context_menu
+            .take()
+            .and_then(|open| open.kept(&self.delegate.source, cx));
         cx.notify();
     }
 
@@ -883,6 +984,35 @@ impl<S: TableSource> TableState<S> {
         cx.notify();
     }
 
+    fn toggle_column(&mut self, key: &str, cx: &mut Context<Self>) {
+        let mut layout = self.delegate.layout.clone();
+        layout.toggle(key);
+        self.delegate.set_layout(layout, cx);
+        cx.emit(TableEvent::LayoutChanged);
+        cx.notify();
+    }
+
+    fn column_menu(&self, at: Point<Pixels>, cx: &mut Context<Self>) -> Popup {
+        let items: Vec<MenuItem> = self
+            .delegate
+            .choices(cx)
+            .into_iter()
+            .map(|toggle| {
+                let key = toggle.key;
+                MenuItem::new(key, toggle.label)
+                    .selected(toggle.visible)
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_column(key, cx)))
+            })
+            .collect();
+
+        Popup::new(at, Menu::new("table-columns").items(items))
+            .sticky()
+            .on_close(cx.listener(|this, _, _, cx| {
+                this.column_menu = None;
+                cx.notify();
+            }))
+    }
+
     fn finish_column_drag(&mut self, cx: &mut Context<Self>) {
         self.sizing = None;
         let Some((from, to)) = self.moving.take() else {
@@ -902,6 +1032,7 @@ impl<S: TableSource> TableState<S> {
 
     fn header(&self, head: Pixels, top: Corners<Pixels>, cx: &mut Context<Self>) -> Div {
         let theme = *cx.theme();
+        let table = cx.entity().downgrade();
         let last = self.delegate.columns.len().saturating_sub(1);
         let heads: Vec<_> = self
             .delegate
@@ -950,7 +1081,12 @@ impl<S: TableSource> TableState<S> {
             .h(head)
             .when_else(
                 blurring(cx),
-                |this| popover_surface(this, cx),
+                // The menu material is nearly opaque, so a see-through window takes the
+                // player bar's thin fill instead and the head stays as clear as the page.
+                |this| match theme.transparent {
+                    true => bar_surface(this, cx),
+                    false => popover_surface(this, cx),
+                },
                 |this| this.bg(theme.table_head),
             )
             .rounded_tl(top.top_left)
@@ -958,6 +1094,19 @@ impl<S: TableSource> TableState<S> {
             .border_b_1()
             .border_color(theme.table_row_border)
             .text_color(theme.table_head_foreground)
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    if this.delegate.choices(cx).is_empty() {
+                        return;
+                    }
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    this.context_menu = None;
+                    this.column_menu = Some(event.position);
+                    cx.notify();
+                }),
+            )
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseUpEvent, _, cx| this.finish_column_drag(cx)),
@@ -971,6 +1120,14 @@ impl<S: TableSource> TableState<S> {
                     let dragged = self.moving.is_some_and(|(from, _)| from == ix);
                     div()
                         .id(("head", ix))
+                        .role(gpui::accesskit::Role::ColumnHeader)
+                        .aria_label(header.clone())
+                        .when_some(direction, |this, direction| {
+                            this.aria_description(match direction {
+                                Sort::Ascending => t!("table-sorted-ascending"),
+                                Sort::Descending => t!("table-sorted-descending"),
+                            })
+                        })
                         .relative()
                         .flex()
                         .flex_none()
@@ -993,6 +1150,14 @@ impl<S: TableSource> TableState<S> {
                                         this.toggle_sort(ix, cx);
                                     }),
                                 )
+                                // the header sorts on mouse up rather than on click, so it
+                                // offers screen readers no click action unless it adds one
+                                .on_a11y_action(gpui::accesskit::Action::Click, {
+                                    let table = table.clone();
+                                    move |_, _, cx| {
+                                        table.update(cx, |this, cx| this.toggle_sort(ix, cx)).ok();
+                                    }
+                                })
                         })
                         .when(movable, |this| {
                             this.on_drag_move(cx.listener(
@@ -1055,6 +1220,9 @@ impl<S: TableSource> TableState<S> {
         let last = (first + self.viewport.rows(row_height)).min(count);
         let bottom = self.corners.bottom_left.max(self.corners.bottom_right);
         let marked = &self.delegate.marked;
+        // Focus stays on the table while the arrow keys walk its rows, so the row they reached
+        // claims the focus a screen reader reports.
+        let caret = self.delegate.selected;
 
         let mut rows: Vec<AnyElement> = (first..last)
             .map(|display| {
@@ -1078,7 +1246,16 @@ impl<S: TableSource> TableState<S> {
                     .collect();
 
                 div()
-                    .id(("row", display))
+                    .id(("row", row))
+                    .role(gpui::accesskit::Role::Row)
+                    .when_some(self.delegate.source.name(row, cx), |this, name| {
+                        this.aria_label(name)
+                    })
+                    .when(caret == Some(row), |this| this.aria_active_descendant())
+                    .aria_selected(selected)
+                    .aria_row_index(display)
+                    .aria_position_in_set(display + 1)
+                    .aria_size_of_set(count)
                     .group(ROW_GROUP)
                     .absolute()
                     .top(head + row_height * display as f32)
@@ -1100,6 +1277,9 @@ impl<S: TableSource> TableState<S> {
                         this.hover(move |style| style.bg(theme.table_hover))
                     })
                     .when_some(self.delegate.source.pin(row, cx), Pinnable::pin)
+                    .when_some(self.delegate.source.tip(row, cx), |this, text| {
+                        this.tip_label(text, Perch::Follow)
+                    })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, event: &MouseDownEvent, window, cx| {
@@ -1133,7 +1313,13 @@ impl<S: TableSource> TableState<S> {
                                 window.focus(&this.focus.clone(), cx);
                                 window.prevent_default();
                                 cx.stop_propagation();
-                                this.context_menu = Some((rows, event.position));
+                                this.column_menu = None;
+                                this.context_menu = Some(OpenMenu::new(
+                                    rows,
+                                    event.position,
+                                    &this.delegate.source,
+                                    cx,
+                                ));
                                 cx.notify();
                             }
                         }),
@@ -1259,8 +1445,9 @@ impl<S: TableSource> Render for TableState<S> {
         let height = self.height(head, row, self.delegate.row_count().max(placeholders));
         let pinned = snapped(self.viewport.top.clamp(Pixels::ZERO, height - head), window);
         let top = unpinned(self.corners, pinned);
-        // With Blur UI on the rows pass behind the head and it frosts them in the material of a
-        // context menu. Without it nothing passes behind the head, so it needs nothing behind it
+        // With Blur UI on the rows pass behind the head and it frosts them, in the material of a
+        // context menu on an opaque window and the player bar's thin glass on a see-through one.
+        // Without it nothing passes behind the head, so it needs nothing behind it
         // either: on a see-through window it is the page plus its own tint, the same glass as
         // the rest. An opaque window keeps the page painted under it, which is what the
         // head's own alpha has always been mixed against.
@@ -1270,13 +1457,14 @@ impl<S: TableSource> Render for TableState<S> {
             true => pinned,
             false => pinned + head,
         };
-        let context_menu = self.context_menu.clone().and_then(|(rows, position)| {
+        let column_menu = self.column_menu.map(|at| self.column_menu(at, cx));
+        let context_menu = self.context_menu.clone().and_then(|open| {
             let visible = self.delegate.visible();
             self.delegate
                 .source
-                .context_menu(&rows, &visible, cx)
+                .context_menu(&open.rows, &visible, cx)
                 .map(|menu| {
-                    Popup::new(position, menu).on_close(cx.listener(|this, _, _, cx| {
+                    Popup::new(open.at, menu).on_close(cx.listener(|this, _, _, cx| {
                         this.context_menu = None;
                         cx.notify();
                     }))
@@ -1284,6 +1472,11 @@ impl<S: TableSource> Render for TableState<S> {
         });
 
         div()
+            // The table has to be a node for the row the arrow keys reached to claim focus.
+            .id("table")
+            .role(gpui::accesskit::Role::Table)
+            .aria_row_count(self.delegate.row_count())
+            .aria_column_count(self.delegate.columns.len())
             .key_context(TABLE_CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::select_next))
@@ -1345,6 +1538,7 @@ impl<S: TableSource> Render for TableState<S> {
                     .child(self.header(head, top, cx)),
             )
             .when_some(context_menu, |this, menu| this.child(menu))
+            .when_some(column_menu, |this, menu| this.child(menu))
     }
 }
 
@@ -1455,7 +1649,7 @@ impl<S: TableSource> Listing for Entity<TableState<S>> {
     }
 
     fn sortables(&self, cx: &App) -> Vec<SortAxis> {
-        self.read(cx).delegate().sortables()
+        self.read(cx).delegate().sortables(cx)
     }
 
     fn cycle_sort(&self, column: &str, cx: &mut App) {
@@ -1468,7 +1662,7 @@ impl<S: TableSource> Listing for Entity<TableState<S>> {
     }
 
     fn toggles(&self, cx: &App) -> Vec<Toggle> {
-        self.read(cx).delegate().toggles()
+        self.read(cx).delegate().toggles(cx)
     }
 
     fn row_count(&self, cx: &App) -> usize {

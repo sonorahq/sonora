@@ -1,3 +1,7 @@
+use std::fs::File;
+use std::io::{self, Read as _};
+use std::path::Path;
+
 use gpui::prelude::*;
 use gpui::{AnyElement, ClipboardItem, Context, PathPromptOptions, SharedString, div};
 use i18n::t;
@@ -39,6 +43,7 @@ impl EqualizerView {
                     .count(count)
                     .detail(t!("equalizer-filter-limit", max = MAX_FILTERS))
             }
+            Err(Refused::TooLarge) => Toast::new(Outcome::Failed, "equalizer-import-too-large"),
             Err(Refused::Nothing(skipped)) if skipped.is_empty() => {
                 Toast::new(Outcome::Failed, "equalizer-import-nothing")
             }
@@ -80,7 +85,7 @@ impl EqualizerView {
             let read = cx
                 .background_spawn({
                     let path = path.clone();
-                    async move { std::fs::read(path) }
+                    async move { read_capped(&path) }
                 })
                 .await;
             this.update(cx, |this, cx| match read {
@@ -211,6 +216,16 @@ fn reasons(skipped: &[Skipped]) -> String {
         lines.push(t!("equalizer-skipped-more", count = skipped.len() - REASONS).to_string());
     }
     lines.join("\n")
+}
+
+/// The file at `path` read up to one byte past `apo::MAX_TEXT`, enough for the import to refuse
+/// an oversized file without holding all of it.
+fn read_capped(path: &Path) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    File::open(path)?
+        .take(apo::MAX_TEXT as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 fn reason_text(reason: &Reason) -> SharedString {

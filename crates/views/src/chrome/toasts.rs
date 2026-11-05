@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     Context, DispatchPhase, Entity, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
@@ -48,9 +49,6 @@ pub struct ToastStack {
     measured: Rc<RefCell<HashMap<usize, Pixels>>>,
     hovered: bool,
     swipe: Option<Swipe>,
-    /// How tall the strip over the player bar stands. The stack clips at the strip's top, so a
-    /// toast slides out from under the strip rather than across it.
-    strip: Pixels,
 }
 
 /// One toast on screen, kept after the toast is dismissed for as long as it takes to leave.
@@ -102,15 +100,6 @@ impl ToastStack {
             measured: Rc::new(RefCell::new(HashMap::new())),
             hovered: false,
             swipe: None,
-            strip: Pixels::ZERO,
-        }
-    }
-
-    /// Takes the height of the strip over the player bar, which the stack hangs above.
-    pub(crate) fn set_strip(&mut self, strip: Pixels, cx: &mut Context<Self>) {
-        if self.strip != strip {
-            self.strip = strip;
-            cx.notify();
         }
     }
 
@@ -188,8 +177,7 @@ impl ToastStack {
             }
         }
         if flung {
-            self.toasts
-                .update(cx, |toasts, cx| toasts.dismiss(swipe.id, cx));
+            Toasts::discard(swipe.id, cx);
         }
         self.hold(cx);
     }
@@ -368,6 +356,7 @@ impl ToastStack {
                 card.layer_translate(point(px(sway), px(drop)))
             })
             .when_some(toast.name.clone(), Toast::strong)
+            .when(toast.single_line, Toast::single_line)
             .when_some(
                 toast
                     .detail
@@ -375,20 +364,23 @@ impl ToastStack {
                     .or_else(|| toast.note.as_ref().map(|key| i18n::lookup(key, None))),
                 Toast::detail,
             )
-            .when(
-                toast
-                    .action
-                    .as_ref()
-                    .is_some_and(|action| action.target.is_some()),
-                |card| card.action_icon("icons/external-link.svg"),
-            )
+            .when_some(toast.action.as_ref(), |card, action| {
+                match (&action.url, &action.target) {
+                    (Some(_), _) => card.action_icon("icons/square-arrow-out-up-right.svg"),
+                    (None, Some(_)) => card.action_icon("icons/external-link.svg"),
+                    (None, None) => card,
+                }
+            })
             .map(|card| match toast.outcome {
                 Outcome::Plain => card,
                 Outcome::Done => card.icon("icons/circle-check.svg"),
                 Outcome::Info => card.icon("icons/info.svg"),
                 Outcome::Warning => card.icon("icons/triangle-alert.svg"),
                 Outcome::Failed => card.icon("icons/octagon-x.svg"),
-                Outcome::Loading => card.loading(),
+                Outcome::Loading => match toast.progress {
+                    Some(done) => card.progress(done),
+                    None => card.loading(),
+                },
             })
             .on_measure({
                 let measured = self.measured.clone();
@@ -427,12 +419,9 @@ impl ToastStack {
                     this.grab(id, event, cx)
                 }),
             )
-            .on_dismiss({
-                let toasts = toasts.clone();
-                move |_, _, cx| toasts.update(cx, |this, cx| this.dismiss(id, cx))
-            })
+            .on_dismiss(move |_, _, cx| Toasts::discard(id, cx))
             .when_some(toast.target.clone().map(destination), |card, dest| {
-                card.on_open(move |_, _, cx| navigate(dest.clone(), cx))
+                card.on_open(move |_, cx| navigate(dest.clone(), cx))
             });
         let card = match toast.cancel.clone() {
             Some(cancel) => {
@@ -449,6 +438,9 @@ impl ToastStack {
                 action.run(cx);
                 if let Some(target) = action.target.clone() {
                     navigate(destination(target), cx);
+                }
+                if let Some(url) = &action.url {
+                    cx.open_url(url);
                 }
                 toasts.update(cx, |this, cx| this.dismiss(id, cx));
             }),
@@ -525,12 +517,11 @@ impl Render for ToastStack {
             .map(|slot| self.card(slot, now, cx))
             .collect();
 
-        // The stack hangs from the top of the player bar, or of the strip over it, and clips
-        // there, so a toast entering or leaving slides out from under them rather than across.
+        // The stack hangs from the top of the player bar and clips there, so a toast entering or
+        // leaving slides out from under it rather than across.
         div()
             .absolute()
             .bottom(relative(1.))
-            .mb(self.strip)
             .left_0()
             .right_0()
             .h(window.viewport_size().height)
@@ -544,6 +535,7 @@ impl Render for ToastStack {
             .child(
                 div()
                     .id("toast-stack")
+                    .role(Role::Log)
                     .relative()
                     .occlude()
                     .w(theme.font_size * WIDTH)
@@ -645,5 +637,6 @@ fn destination(target: Target) -> Destination {
         Target::Artist(id) => Destination::Artist(id),
         Target::Playlist(id) => Destination::Playlist(id),
         Target::PlaybackSettings => Destination::Settings(SettingsPage::Playback),
+        Target::ProviderSettings => Destination::Settings(SettingsPage::Providers),
     }
 }

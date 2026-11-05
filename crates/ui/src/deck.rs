@@ -14,11 +14,12 @@ type Draw = Box<dyn Fn(usize, &mut Window, &mut App) -> AnyElement>;
 type Measure = Box<dyn Fn(Pixels, &mut Window, &mut App)>;
 
 /// A run of rows of known heights inside a scrolling region, of which only the ones in view are
-/// built. Rows within `PREFETCH_REACH` of the view are laid out unseen as well, so their covers
-/// are loading before they scroll in. The element takes the extent of the whole run, so the region scrolls and its
-/// scrollbar measures as if every row were there, and it finds the rows on screen from its own
-/// bounds and the region's clip while it is laid out, so it is never a frame behind the scroll
-/// and needs nothing measured by its caller. `across` turns the run sideways for a rail.
+/// built. Rows within `PREFETCH_REACH` of the view are laid out unseen as well, one of them per
+/// frame in turn, so their covers are loading before they scroll in. The element takes the extent
+/// of the whole run, so the region scrolls and its scrollbar measures as if every row were there,
+/// and it finds the rows on screen from its own bounds and the region's clip while it is laid
+/// out, so it is never a frame behind the scroll and needs nothing measured by its caller.
+/// `across` turns the run sideways for a rail.
 pub struct Deck {
     id: ElementId,
     style: StyleRefinement,
@@ -143,7 +144,7 @@ impl Element for Deck {
 
     fn prepaint(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
@@ -214,8 +215,10 @@ impl Element for Deck {
             element.prepaint_at(origin, window, cx);
             built.push(element);
         }
-        for index in near.filter(|index| !shown.contains(index)) {
-            prefetch(draw(index, window, cx), window, cx);
+        let unseen: Vec<usize> = near.filter(|index| !shown.contains(index)).collect();
+        if !unseen.is_empty() {
+            let turn = next_turn(id, window);
+            prefetch(draw(unseen[turn % unseen.len()], window, cx), window, cx);
         }
         built
     }
@@ -234,6 +237,19 @@ impl Element for Deck {
             element.paint(window, cx);
         }
     }
+}
+
+/// Counts the frames a deck has prefetched on, so each frame picks the next unseen row. Building
+/// every unseen row on every frame cost as much as the rows on screen, and the covers they ask
+/// for queue behind a handful of load slots anyway.
+fn next_turn(id: Option<&GlobalElementId>, window: &mut Window) -> usize {
+    let Some(id) = id else {
+        return 0;
+    };
+    window.with_element_state::<usize, _>(id, |turn, _| {
+        let turn = turn.unwrap_or_default();
+        (turn, turn.wrapping_add(1))
+    })
 }
 
 fn tops(rows: &[Pixels], gap: Pixels) -> Vec<Pixels> {

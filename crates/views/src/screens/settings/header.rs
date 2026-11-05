@@ -61,6 +61,7 @@ impl Render for SettingsHeader {
             chosen.and_then(|chosen| SettingsTab::ALL.iter().position(|tab| *tab == chosen));
 
         let tabs = TabBar::new("settings-tabs")
+            .name(i18n::lookup("nav-settings", None))
             .max_w_full()
             .blurred()
             .reveal(shown)

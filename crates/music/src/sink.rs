@@ -334,12 +334,12 @@ impl Paced {
         if self.output.failed() {
             return Err(self.disconnected());
         }
-        self.output.sink().play();
+        self.output.play();
         Ok(())
     }
 
     pub fn pause(&self) {
-        self.output.sink().pause();
+        self.output.pause();
     }
 
     pub fn set_volume(&self, gain: f32) {
@@ -429,6 +429,13 @@ impl Paced {
         self.output.rate()
     }
 
+    /// Has a direct output run at the rate a track made at `rate` Hz plays best at, as the track
+    /// starts being heard, when following each track's rate is on. Every packet is resampled to
+    /// the device's rate either way, so a device that refuses, or a shared one, changes nothing.
+    pub fn follow_rate(&self, rate: u32) {
+        output::follow_track_rate(rate);
+    }
+
     /// Waits until there is room for another packet.
     pub fn drain(&mut self) -> Result<(), Gone> {
         while self.full() {
@@ -489,7 +496,8 @@ impl Paced {
 /// This is what an engine that could not open a device at all waits on. A machine whose only
 /// device has gone, a Bluetooth headset that dropped its link, has nothing to reopen on and
 /// nothing else asks the system again, so without the watch playback stays silent until the app
-/// restarts. The watch ends when the engine listening on `notify` is gone.
+/// restarts. The watch ends when the engine listening on `notify` is gone, so the caller has to
+/// keep that engine alive while it waits, and an engine's audio thread does that by staying up.
 ///
 /// A device that is present is not enough: ALSA always names a default one, and without the
 /// sound server's plugin it never opens. Reporting it anyway would restart the engine every poll,

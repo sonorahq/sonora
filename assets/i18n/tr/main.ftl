@@ -37,7 +37,6 @@ nav-pinned = Sabitlenenler
 nav-unpin = Sabitlemeyi kaldır
 nav-pin-hint = Sabitlemek için buraya bırak
 library-liked-songs = Favoriler
-library-play-liked-songs = Çal
 library-no-songs = Henüz favori yok
 library-no-albums = Henüz kaydedilmiş albüm yok
 library-no-playlists = Henüz çalma listesi yok
@@ -51,10 +50,14 @@ library-no-catalog-albums = Albüm bulunamadı
 library-no-catalog-artists = Sanatçı bulunamadı
 library-no-matches = Eşleşme yok
 library-not-loaded = Kitaplığın yüklenemedi
+library-scanning = Klasörlerine bakılıyor…
+library-scanning-found = Klasörlerine bakılıyor… şimdiye dek { $found }
+library-scanning-progress = Müziğin okunuyor… { $read } / { $found }
 library-part-not-loaded = Kitaplığının bu bölümü yüklenemedi
 library-local-unconfigured = Yerel kitaplığını yapılandır
 
 # app menu
+app-refresh = Yenile
 app-sign-out = Oturumu Kapat
 app-quit = Çık
 app-settings = Ayarlar…
@@ -93,23 +96,30 @@ column-year = Yıl
 column-tracks = Parçalar
 
 # track menu
-menu-add-to-playlist = Çalma listesine ekle
-menu-add-tracks-to-playlist = { $count } parçayı çalma listesine ekle
 menu-new-playlist = Yeni çalma listesi
+menu-import-playlist = Çalma listesini içe aktar…
 menu-edit-tags = Etiketleri düzenle
 menu-no-playlists = Çalma listesi yok
+menu-search-playlists = Çalma listesi ara
 menu-add-to-library = Favorilere ekle
-menu-add-tracks-to-library = { $count } parçayı favorilere ekle
 menu-remove-from-library = Favorilerden çıkar
-menu-remove-tracks-from-library = { $count } parçayı favorilerden çıkar
 menu-remove-from-playlist = Çalma listesinden çıkar
 menu-remove-tracks-from-playlist = { $count } parçayı çalma listesinden çıkar
 menu-remove-from-history = Geçmişten kaldır
 menu-remove-tracks-from-history = { $count } parçayı geçmişten kaldır
+menu-delete-track-file = Parça dosyasını sil
+menu-delete-track-files = { $count } parça dosyasını sil
+menu-download = İndir
+menu-remove-download = İndirmeyi kaldır
+menu-downloading = İndiriliyor. Durdurmak için tıkla
 menu-play-next = Sıradaki olarak çal
 menu-play-tracks-next = { $count } parçayı sıradaki olarak çal
 menu-add-to-queue = Sıraya ekle
 menu-add-tracks-to-queue = { $count } parçayı sıraya ekle
+menu-play-last = En son çal
+menu-play-tracks-last = { $count ->
+   *[other] { $count } parçayı en son çal
+}
 menu-song-radio = Şarkı radyosuna git
 menu-go-to-album = Albüme git
 menu-go-to-artist = Sanatçıya git
@@ -120,8 +130,9 @@ menu-copy = Kopyala
 menu-paste = Yapıştır
 menu-select-all = Tümünü seç
 menu-remove-from-queue = Sıradan çıkar
-menu-rename-playlist = Çalma listesini yeniden adlandır
+menu-edit-playlist = Çalma listesini düzenle
 menu-delete-playlist = Çalma listesini sil
+menu-export-playlist = Çalma listesini dışa aktar…
 menu-add-playlist-to-library = Kitaplığa ekle
 menu-remove-playlist-from-library = Kitaplıktan çıkar
 menu-make-playlist-public = Herkese açık yap
@@ -131,7 +142,12 @@ menu-play-artist = Sanatçıyı çal
 # playlist editor
 playlist-name-placeholder = Çalma listesi adı
 playlist-create-title = Çalma listesi oluştur
-playlist-rename-title = Çalma listesini yeniden adlandır
+playlist-edit-title = Çalma listesini düzenle
+playlist-cover-choose = Resim seç
+playlist-cover-remove = Kapağı kaldır
+playlist-cover-unopenable = Sonora bu dosyayı açamıyor
+playlist-cover-too-large = Bu resim 40 MB’tan büyük
+playlist-cover-not-a-picture = Bu dosya JPEG, PNG veya WebP resmi değil
 playlist-delete-title = Çalma listesini sil
 playlist-delete-confirm = “{ $name }” silinsin mi? Bu işlem geri alınamaz.
 playlist-again-title = Yeniden eklensin mi?
@@ -172,15 +188,20 @@ confirm-remove-playlists =
         [one] Bu çalma listesi kitaplığından çıkarılsın mı?
        *[other] { $count } çalma listesi kitaplığından çıkarılsın mı?
     }
+confirm-delete-track-files-title = Parça dosyaları silinsin mi?
+confirm-delete-track-files = Dosyalar diskten kalıcı olarak silinir. Bu işlem geri alınamaz.
 
 # queue panel
 queue-title = Sıra
 queue-history = Geçmiş
 queue-now-playing = Şimdi çalıyor
 queue-from = Kaynak
+queue-from-radio = { $name } radyosu
+queue-next-in-queue = Sıradaki
 queue-up-next = Sırada
 queue-reset = Sıfırla
 queue-clear = Temizle
+queue-added-by = Ekleyen: { $name }
 queue-empty = Sıran boş
 queue-similar = Benzer parçalar
 queue-radio = Benzer parçaları kendiliğinden çal
@@ -199,6 +220,30 @@ player-previous = Önceki parça
 player-next = Sonraki parça
 player-fullscreen = Tam ekran
 player-fullscreen-leave = Tam ekrandan çık
+devices-this-computer = Bu bilgisayar
+devices-jam-join = Jam'e katıl…
+devices-jam-join-title = Jam'e katıl
+devices-jam-join-detail = Bir arkadaşının paylaştığı bağlantıyı yapıştır
+devices-jam-paste = Yapıştır
+devices-jam-link-hint = Jam bağlantısı
+devices-jam-start = Jam başlat
+devices-jam-copy = Jam bağlantısını kopyala
+devices-jam-code-menu = QR kodunu göster
+devices-jam-code-title = { $host } ile Jam'e katılmak için tara
+devices-jam-code-title-anonymous = Jam'e katılmak için tara
+devices-jam-code-close = Kapat
+devices-jam-leave = Jam'den ayrıl
+devices-jam-end = Jam'i bitir
+devices-jam-more = +{ $count }
+devices-jam-host = Ev sahibi
+devices-jam-you = Sen
+devices-jam-remove = Çıkar
+devices-jam-invite-title = { $host } ile Jam'e katılmak ister misin?
+devices-jam-invite-title-anonymous = Bu Jam'e katılmak ister misin?
+devices-jam-invite-detail = { $count ->
+   *[other] Bu Jam'de zaten { $count } kişi var.
+}
+devices-jam-invite-join = Katıl
 fullscreen-artwork = Kapak
 
 # filters
@@ -213,9 +258,10 @@ filter-album = Albüm parçalarını süz
 filter-reset = Süzgeçleri sıfırla
 filter-duration = Süre
 filter-year = Yıl
-filter-explicit = Yalnızca müstehcen
+filter-hide-explicit = Müstehcenleri gizle
 filter-playable = Yalnızca çalınabilir
 filter-favorites = Yalnızca favoriler
+filter-downloaded = İndirilenler
 filter-owned = Senin
 
 # view
@@ -223,7 +269,6 @@ view-list = Liste
 view-cards = Izgara
 
 # toolbar
-tool-columns = Sütunlar
 tool-sort = Sırala
 tool-filters = Süzgeçler
 
@@ -241,6 +286,7 @@ login-problem-refused = Spotify oturum açma isteğini geri çevirdi. Biraz bekl
 login-problem-premium = Sonora, Spotify Premium üzerinden yayın yapar ve bu hesapta Premium yok. Sürdürmek için Premium bir hesapla oturum aç.
 login-sign-in = { $provider } ile oturum aç
 login-connect-cookies = Çerezleri elle yapıştır
+login-cookie-open = { $provider } sitesini aç
 login-cookie-submit = Sürdür
 login-cookie-hint = Cookie istek başlığını buraya yapıştır
 login-cookie-step-1 = music.youtube.com adresini aç ve oturumunun açık olduğundan emin ol. En iyi sonucu gizli pencerede alırsın.
@@ -248,6 +294,16 @@ login-cookie-step-2 = F12'ye bas, Network sekmesini aç ve sayfayı yeniden yük
 login-cookie-step-3 = "browse" ya da "next" adlı herhangi bir isteği seç.
 login-cookie-step-4 = Headers içinde Request Headers altındaki Cookie'yi bul, sağ tıklayıp değerini kopyala.
 login-cookie-step-note = SAPISID ve __Secure-3PAPISID dahil olmak üzere değerin tamamını yapıştırdığından emin ol.
+login-cookie-header-title = Oturum açmayı bitirmek için { $provider } çerezlerini yapıştır
+login-cookie-apple-step-3 = { $site } adresine giden herhangi bir isteği seç.
+login-cookie-apple-note = { $cookie } dahil olmak üzere değerin tamamını yapıştırdığından emin ol.
+login-cookie-named-title = Oturum açmayı bitirmek için { $provider } çerezini yapıştır
+login-cookie-named-hint = Çerez değerini buraya yapıştır
+login-cookie-named-step-1 = { $site } adresini aç ve oturumunun açık olduğundan emin ol.
+login-cookie-named-step-2 = F12'ye bas, Firefox'ta Storage, Chrome'da Application sekmesini aç.
+login-cookie-named-step-3 = Cookies bölümünü genişlet, { $site } adresini seç ve { $cookie } adlı çerezi bul.
+login-cookie-named-step-4 = Değerine çift tıklayıp kopyala.
+login-cookie-named-note = Yalnızca { $cookie } değeri yeterli. Network sekmesinden kopyalanan Cookie başlığının tamamı da işe yarar.
 login-window-title = { $provider } oturumu aç
 login-use = { $provider } kullan
 login-guest-title = Konuk modu
@@ -263,11 +319,11 @@ login-password-hint = Parola
 login-server-submit = Bağlan
 login-account-title = Bir hesap seç
 login-account-detail = Bu oturumda birden çok Google hesabı açık. Sonora'nın kullanacağı hesabı seç.
+login-choose-title = { $provider } oturumu aç
+login-choose-detail = { $provider } için oturum açma yolunu seç.
 
 # album and playlist pages
 detail-playlist = Çalma listesi
-detail-play-album = Albümü çal
-detail-play-playlist = Çalma listesini çal
 
 # play button
 play-pause = Duraklat
@@ -280,7 +336,6 @@ artist-monthly-listeners =
     { $count ->
        *[other] { $value } aylık dinleyici
     }
-artist-play = Şimdi çal
 artist-popular = Popüler
 artist-popular-eyebrow = Bu sanatçıyı keşfet
 artist-popular-empty = Bu sanatçıdan çalınacak bir şey henüz yok
@@ -293,6 +348,11 @@ artist-filter-all = Tümü
 artist-filter-albums = Albümler
 artist-filter-singles = Tekliler
 artist-filter-eps = EP'ler
+artist-appears-on = Yer aldığı yayınlar
+album-also-like = Bunları da sevebilirsin
+album-tab-albums = Albümler
+album-tab-artists = Sanatçılar
+album-label = ℗ { $label }
 
 # user profile page
 user-eyebrow = Profil
@@ -319,10 +379,19 @@ release-meta = { $year } • { $kind }
 # home page
 home-quick-picks = Hızlı seçimler
 home-quick-picks-empty = Birkaç şarkı beğen, burada görünsünler
+home-recently-added = Son eklenenler
+home-recently-played = Son çalınanlar
+home-playlists = Çalma listeleri
+home-favorite-albums = Favori albümler
+home-artists = Sanatçılar
+home-collection-albums = Koleksiyonundaki albümler
 
 # search page
 search-placeholder = Ne dinlemek istersin?
 search-browse = Tümüne göz at
+search-submit = Ara
+search-recent = Son aramalar
+search-forget = Geçmişten kaldır
 genre-empty = Burada henüz gösterilecek bir şey yok
 search-best-match = En iyi eşleşme
 search-no-matches = Eşleşme yok
@@ -342,7 +411,6 @@ kind-playlist = Çalma listesi
 
 # song page
 song-eyebrow = Şarkı
-song-play = Şarkıyı çal
 song-view-album = Albümü gör
 song-loading = Şarkı bilgileri yükleniyor…
 song-about = Bu şarkı hakkında
@@ -395,6 +463,11 @@ count-tracks =
        *[other] { $count } parça
     }
 
+# running times
+runtime-seconds = { $seconds } sn
+runtime-minutes = { $minutes } dk { $seconds } sn
+runtime-hours = { $hours } sa { $minutes } dk
+
 # dates
 date-just-now = Az önce
 date-minute-ago = Bir dakika önce
@@ -418,18 +491,93 @@ month-12 = Ara
 
 # settings
 settings-search = Ayarlarda ara
+settings-search-results = Arama sonuçları
+# where a search result lives: a drill-in page under the page it opens from
+settings-result-place = { $parent } › { $page }
+settings-page-providers = Servisler
+settings-page-appearance = Görünüm
+settings-page-player-bar = Oynatıcı çubuğu
+settings-player-bar-layout = Düzen
+settings-player-bar-layout-detail = Parça bilgisini, çalma denetimlerini ve ilerleme çubuğunu yerleştir
+settings-player-bar-classic = Klasik
+settings-player-bar-compact = Kompakt
+settings-player-bar-centered = Ortalanmış
+settings-player-bar-surface = Yüzey
+settings-player-bar-transparent = Saydam oynatıcı çubuğu
+settings-player-bar-transparent-detail = Sayfalar ve kenar çubukları buzlu oynatıcı çubuğunun altından kaysın
+settings-player-bar-transparent-needs-blur = Sayfaların buzlu oynatıcı çubuğunun altından kayması için Arayüz bulanıklığını aç
+settings-page-now-playing = Şimdi çalıyor
+settings-page-lyrics = Şarkı sözleri
+settings-page-playback = Çalma
+settings-page-sound = Ses
+settings-page-storage = Depolama
+settings-page-discord = Discord
+settings-page-scrobbling = Scrobble
+settings-page-general = Genel
+settings-page-about = Hakkında
+settings-tab-integrations = Entegrasyonlar
+settings-about-name = Sonora
+settings-page-lyrics-sources = Şarkı sözü kaynakları
+settings-page-music-folders = Müzik klasörleri
+settings-group-services = Yayın servisleri
+settings-group-local-files = Yerel dosyalar
+settings-group-background = Arka plan
+settings-group-controls = Denetimler
+settings-group-display = Görüntü
+settings-group-sources = Kaynaklar
+settings-group-lyrics-order = Öncelik
+settings-group-playing = Çalma
+settings-group-cache = Çalınan parçalar
+settings-group-downloads = İndirmeler
+settings-group-protected = Korumalı çalma
+settings-group-output = Çıkış
+settings-group-status = Durum
+settings-group-startup = Açılış
+settings-group-context-menus = Bağlam menüleri
+key-ctrl = Ctrl
+key-super = Super
+key-alt = Alt
+key-shift = Shift
+key-escape = Esc
+key-enter = Enter
+key-space = Boşluk
+key-tab = Tab
+key-backspace = Backspace
+key-delete = Delete
+settings-lyrics-sources = Şarkı sözü kaynakları
+settings-local-folder-count = { $count ->
+   *[other] { $count } klasör
+    }
+settings-local-folder-none = Henüz klasör yok
+settings-license-short = GPL-3.0 ya da sonrası
 settings-theme = Tema
 settings-theme-detail = Uygulamanın renk paletini seç
 settings-opacity = Saydamlık
 settings-opacity-detail = Uygulama arka planının saydamlığını ayarla
 settings-opacity-value = { $percent }%
 settings-theme-folder = Yapılandırmayı aç
+settings-theme-unavailable = Bu tema yalnızca uyarlanabilir tema kapalıyken uygulanabilir
 settings-adaptive = Uyarlanabilir tema
 settings-adaptive-detail = Paleti, çalan albümün kapağıyla renklendir
+settings-ambient = Ortam arka planı
+settings-ambient-detail = Şimdi çalıyor ekranını kapaktan alınan renklerle doldur
+settings-ambient-motion = Ortam hareketi
+settings-ambient-motion-detail = Ortam renklerini sabit tutmak yerine yavaşça kaydır
 settings-visualizer = Görselleştirici
 settings-visualizer-detail = Tam ekran kapağın arkasında spektrum çubukları göster
+settings-visualizer-style-none = Kapalı
+settings-visualizer-style-bars = Çubuklar
+settings-visualizer-style-wave = Dalga
+settings-visualizer-style-both = Çubuklar ve dalga
+settings-visualizer-absolute = Ses düzeyini yok say
+settings-visualizer-absolute-detail = Sonora ne kadar yüksek çalarsa çalsın spektrumu parçanın kendi düzeyinde çiz
+settings-preview-title = Şarkı adı
+settings-preview-artist = Sanatçı
+settings-preview-album = Albüm
 settings-fullscreen-controls-autohide = Tam ekran denetimlerini gizle
 settings-fullscreen-controls-autohide-detail = Tam ekranda bir süre işlem yapılmayınca çalma denetimlerini soldur
+settings-os-fullscreen = Sistemin tam ekranını kullan
+settings-os-fullscreen-detail = Şimdi çalıyor, F11'deki gibi tüm ekranı kaplasın
 settings-icons = Simge paketi
 settings-icons-detail = Arayüzün kullandığı simge setini seç
 settings-motion = Hareketi azalt
@@ -449,6 +597,7 @@ settings-font-detail = Temel metin boyutu, diğer her şey buna göre ölçeklen
 settings-font-value = { $size } px
 settings-startup = Açılışta göster
 settings-startup-detail = Sonora'nın açılışta gösterdiği ekran
+settings-startup-no-guest = Konuk modunda kullanılamaz
 settings-entries = Kenar çubuğu girdileri
 settings-entries-detail = Kenar çubuğunda listelenen bölümler
 settings-entries-pick = Girdileri seç
@@ -475,6 +624,19 @@ settings-controls-side = Denetimlerin yönü
 settings-controls-side-detail = Denetimlerin başlık çubuğunun hangi ucunda duracağı
 settings-close-to-tray = Kapatınca çalmayı sürdür
 settings-close-to-tray-detail = Penceresi kapandıktan sonra Sonora'yı sistem tepsisinde tut ve çalmayı sürdür
+settings-tray-icon = Sistem tepsisinde göster
+settings-tray-icon-detail = Sistem tepsisine çalma denetimleri olan bir simge koy
+settings-spotify-connect = Spotify cihazı olarak göster
+settings-spotify-connect-name = Cihaz adı
+settings-spotify-connect-name-detail = Spotify uygulamalarının cihaz listesinde Sonora'nın görünen adı
+settings-spotify-connect-name-sonora = Sonora
+settings-spotify-connect-name-both = Sonora (bilgisayar adı)
+settings-spotify-connect-name-computer = Bilgisayar adı
+settings-spotify-connect-name-custom = Özel
+settings-spotify-connect-custom = Özel ad
+settings-spotify-connect-custom-detail = Gösterilecek ad. Boş bırakılırsa Sonora ve bilgisayarın adı kullanılır
+settings-spotify-connect-custom-hint = Cihaz adı
+settings-spotify-connect-detail = Sonora'yı Spotify uygulamalarının cihaz seçicisinde listele, böylece onu telefonundan denetleyebilirsin ve Spotify ne çaldığını gösterir
 settings-discord = Discord'da göster
 settings-discord-detail = Dinlediğin parçayı Discord profilinde göster
 settings-discord-name = Durum adı
@@ -491,9 +653,15 @@ settings-discord-badge = Servis rozetini göster
 settings-discord-badge-detail = Durumu, parçanın geldiği servisin küçük bir simgesiyle işaretle
 settings-discord-anonymous = Ayrıntıları gizle
 settings-discord-anonymous-detail = Başlık, sanatçı ya da kapak olmadan yalnızca müzik çaldığını bildir
+settings-discord-hide-on-connect = Spotify Connect sırasında gizle
+settings-discord-hide-on-connect-detail = Sonora Spotify cihazı olarak çalarken ya da başka bir cihaz çalarken durumu Spotify'ın kendisine bırak
 settings-discord-buttons = Düğmeler
 settings-discord-buttons-detail = Durumun altında arkadaşlarının açabileceği bağlantılar: biri parçanın kendi servisine, biri Sonora'ya
 settings-discord-buttons-pick = Düğmeleri seç
+settings-discord-preview-listening = { $name } dinliyor
+settings-discord-preview-music = Müzik
+settings-discord-preview-elapsed = { $time } geçti
+settings-discord-preview-listen-on = { $provider } üzerinde dinle
 # the Discord status when the track is left out of it
 discord-listening = Müzik dinliyor
 get-sonora = Sonora'yı edin
@@ -504,13 +672,106 @@ settings-normalisation = Ses düzeyini eşitle
 settings-normalisation-detail = Parçaları tutarlı bir ses düzeyinde tutar
 settings-gapless = Boşluksuz çalma
 settings-gapless-detail = Bir parçayı, albüm nasıl kurgulandıysa öyle, araya boşluk koymadan diğerine bağlar
+settings-keep-tracks = Çalınan parçaları sakla
+settings-keep-tracks-detail = Çaldıklarını bu bilgisayara kilitli olarak saklar, böylece yeniden çalınca hiçbir şey indirilmez. Kapatmak bunları siler, indirmelerine dokunmaz. Spotify değişikliği Sonora'nın bir sonraki açılışında uygular
+settings-cache-size = Önbellek boyutu
+settings-cache-size-detail = Çaldığın parçaların kaplayabileceği alan. En uzun süre önce çalınanlar önce yer açar ve indirmeler buna sayılmaz
+settings-cache-size-value = { $count } GB
+settings-cache-used = Kullanılan alan
+settings-cache-used-detail = Çalındıktan sonra saklanan parçaların bu bilgisayarda kapladığı alan. Temizlemek indirmelerine dokunmaz
+settings-cache-clear = Temizle
+settings-downloads-used = Kullanılan alan
+settings-downloads-used-detail = İndirdiğin şarkıların bu bilgisayarda kapladığı alan
+settings-offline-mode = Çevrimdışı mod
+settings-offline-mode-detail = Yalnızca indirdiklerini göster ve çal
+settings-downloads-remove = Tümünü kaldır
+settings-size-gb = { $size } GB
+settings-size-mb = { $size } MB
+settings-size-measuring = Ölçülüyor…
+settings-stream-quality = Yayın kalitesi
+settings-stream-quality-detail = Yüksek düzeyler daha iyi duyulur ve daha çok veri kullanır. Aboneliğin ya da parça daha azını sunuyorsa bir alt düzey çalar
+settings-stream-quality-hi-res = Hi-res
+settings-stream-quality-lossless = Kayıpsız
+settings-stream-quality-high = Yüksek
+settings-stream-quality-normal = Normal
+settings-stream-quality-low = Düşük
+settings-stream-quality-flac = FLAC, { $depth } bit { $rate } kHz
+settings-stream-quality-flac-up-to = FLAC, en fazla { $depth } bit { $rate } kHz
+settings-stream-quality-lossy = { $codec }, { $kbps } kbps
+settings-stream-quality-lossy-up-to = { $codec }, en fazla { $kbps } kbps
+settings-stream-format = Yayın biçimi
+settings-stream-format-detail = Sunucunun her parçayı göndermeden önce dönüştürdüğü biçim
+settings-stream-format-original = Özgün
+settings-stream-format-mp3 = MP3
+settings-stream-format-opus = Opus
+settings-stream-format-aac = AAC
+settings-stream-bitrate = En yüksek bit hızı
+settings-stream-bitrate-detail = Sunucu bundan yüksek olan her şeyi bu hıza düşürür
+settings-stream-bitrate-unlimited = Sınır yok
+settings-stream-bitrate-value = { $kbps } kbps
+settings-stream-bitrate-hourly = Saatte yaklaşık { $megabytes } MB
+settings-stream-bitrate-unlimited-detail = Her dosya kendi bit hızında
+settings-output-device = Çıkış cihazı
+settings-output-device-detail = Sonora'nın çaldığı ses cihazı
+settings-output-device-system = Sistem varsayılanı
+settings-output-device-missing = Kayıtlı cihaz (bağlı değil)
+settings-output-device-direct = Doğrudan donanıma
+settings-sample-rate = Örnekleme hızı
+settings-sample-rate-detail = Cihazın çalıştığı hız. Sonora her parçayı buna dönüştürür
+settings-sample-rate-value = { $khz } kHz
+settings-sample-rate-change = Değiştir
+settings-buffer = Arabellek boyutu
+settings-buffer-detail = Sonora'nın cihaza tek seferde verdiği ses miktarı
+settings-output-idle = Çalmıyor
+settings-output-device-loading = Cihazlar yükleniyor…
+settings-output-failed = Cihaz desteklenmiyor
+settings-output-failed-detail = Hata: { $error }
+settings-signal-source = Kaynak
+settings-signal-normalized = Ses düzeyi
+settings-signal-gain = { $db } dB
+settings-signal-resampled = Yeniden örnekleme
+settings-signal-khz = { $khz } kHz
+settings-signal-kbps = { $kbps } kbps
+settings-signal-bits = { $depth } bit
+settings-signal-source-detail = { $rate } · { $quality }
 settings-sleep = Uyku zamanlayıcısı
 settings-sleep-detail = Belirlenen sürenin sonunda müziğin kendiliğinden durmasını sağlar, böylece seni uyutabilir
+settings-stay-awake = Çalarken uyanık kal
+settings-stay-awake-detail = Çalarken uykuyu engelle ve Şimdi çalıyor açıkken ekranı açık tut
 settings-sleep-configure = Ayarla…
 settings-sleep-off = Kapalı
 settings-sleep-end-of-track = Parçanın sonunda
 settings-sleep-minutes = { $count } dk
+settings-widevine = Widevine modülü
+settings-widevine-detail = Apple Music parçaları şifrelidir ve Google'ın Widevine modülünü gerektirir. Sonora, onayınla Google'dan indirdiği modülü, yoksa buradaki bir tarayıcının kopyasını kullanır.
+settings-widevine-none = Apple Music parçaları şifrelidir ve Google'ın Widevine modülünü gerektirir. Buradaki hiçbir tarayıcıda yok, bu yüzden Sonora onayınla modülü Google'dan indirebilir.
+settings-widevine-looking = Aranıyor…
+settings-widevine-asking = Yanıtın bekleniyor
+settings-widevine-fetching = İndiriliyor…
+settings-widevine-installing = Kuruluyor…
+settings-widevine-installed = Bir tarayıcıda bulundu
+settings-widevine-fetched = Google'dan indirildi
+settings-widevine-missing = Kurulu değil
+settings-widevine-configured = Ortam tarafından ayarlandı
+settings-widevine-fetch = İndir
+settings-widevine-uninstall = Kaldır
+confirm-uninstall-widevine-title = Widevine modülü kaldırılsın mı?
+confirm-uninstall-widevine = Sonora, Google'dan indirdiği kopyayı siler. Apple Music parçaları, modül yeniden indirilene kadar çalmaz.
+confirm-remove-downloads-title = Tüm indirmeler kaldırılsın mı?
+confirm-remove-downloads = İndirdiğin her şarkı, her servisten, bu bilgisayardan silinir. Yeniden indirene kadar internetten çalınırlar.
+widevine-prompt-title = Widevine modülü
+widevine-prompt-wanted = Apple Music parçaları şifrelidir ve Google'ın Widevine modülünü gerektirir. Bu bilgisayardaki hiçbir tarayıcıda yok. Sonora, Chrome'un kurduğu dosyanın aynısını Google'ın sunucularından indirip kendi klasöründe saklayabilir.
+widevine-prompt-replace = Apple Music parçaları şifrelidir ve Google'ın Widevine modülünü gerektirir. Bu bilgisayardaki bir tarayıcıda var, ama Sonora onun yerine Google'ın kendi kopyasını, Chrome'un kurduğu dosyanın aynısını indirip kendi klasöründe saklayarak kullanabilir.
+widevine-prompt-downloading = İndiriliyor…
+widevine-prompt-terms = { $version } sürümü indirildi. Kurmak, Google'ın modüle ilişkin koşullarını kabul etmek demektir:
+widevine-prompt-installing = Kuruluyor…
+widevine-prompt-download = İndir
+widevine-prompt-later = Şimdi değil
+widevine-prompt-accept = Kabul et ve kur
+widevine-prompt-decline = Reddet
 settings-equalizer = Ekolayzer
+settings-equalizer-detail = Sesi bir hazır ayarla ya da kendi eğrinle biçimlendirir
+settings-equalizer-preset-detail = Hazır bir ses ya da kendi profillerinden biri
 settings-equalizer-custom = Özel
 settings-equalizer-flat = Düz
 settings-equalizer-bass-boost = Bas yükseltme
@@ -524,6 +785,127 @@ settings-equalizer-classical = Klasik
 settings-equalizer-electronic = Elektronik
 settings-equalizer-acoustic = Akustik
 settings-equalizer-loudness = Loudness
+equalizer-advanced = Gelişmiş
+equalizer-simple = Basit
+equalizer-sound = Ses
+equalizer-profile-default = Varsayılan
+equalizer-profile-new = Profil { $number }
+equalizer-profile-pasted = Yapıştırılan profil
+equalizer-profile-name-hint = Profil adı
+equalizer-save-as = Profil olarak kaydet
+equalizer-rename = Profili yeniden adlandır
+equalizer-delete = Profili sil
+equalizer-delete-confirm = “{ $name }” silinsin mi? Bu işlem geri alınamaz.
+equalizer-undo = Geri al
+equalizer-redo = Yinele
+equalizer-bass = Bas
+equalizer-treble = Tiz
+equalizer-tone-reset = 0 dB'ye sıfırla
+equalizer-preamp = Ön kazanç
+equalizer-preamp-auto = Otomatik
+equalizer-preamp-manual = Elle
+equalizer-decibels = dB
+equalizer-decibels-value = { $db } dB
+equalizer-hertz = Hz
+equalizer-q = Q
+equalizer-octaves = okt
+equalizer-no-gain = —
+equalizer-filters = Filtreler
+equalizer-no-filters = Henüz filtre yok. Bir tane ekle, yukarıdan bir hazır ayar seç ya da bir profil içe aktar.
+equalizer-add-filter = Filtre ekle
+equalizer-remove-filter = Filtreyi kaldır
+equalizer-kind-peak = Tepe
+equalizer-kind-low-shelf = Alçak raf
+equalizer-kind-high-shelf = Yüksek raf
+equalizer-kind-low-pass = Alçak geçiren
+equalizer-kind-high-pass = Yüksek geçiren
+equalizer-kind-notch = Çentik
+equalizer-kind-band-pass = Bant geçiren
+equalizer-kind-all-pass = Tüm geçiren
+equalizer-transfer = İçe ve dışa aktar
+equalizer-import = İçe aktar
+equalizer-export = Dışa aktar
+equalizer-import-file = Dosya içe aktar…
+equalizer-paste = Yapıştır
+equalizer-copy = Kopyala
+equalizer-export-file = Dosyaya aktar…
+equalizer-imported = { $name } içe aktarıldı
+equalizer-imported-skipped = { $name } içe aktarıldı, { $count ->
+        [one] bir satır
+       *[other] { $count } satır
+    } atlandı
+equalizer-import-nothing = İçe aktarılacak ekolayzer ayarı bulunamadı
+equalizer-import-too-many = İçe aktarılmadı: { $count ->
+        [one] bir filtre açık
+       *[other] { $count } filtre açık
+    }, bu bir profilin alabileceğinden fazla
+equalizer-import-too-large = İçe aktarılmadı: metin 1 MB'tan büyük, bir ekolayzer profili için fazla büyük
+equalizer-filter-limit =Bir profil en fazla { $max } filtre alır.
+equalizer-paste-empty = Panoda metin yok
+equalizer-copied = Profil Equalizer APO metni olarak kopyalandı
+equalizer-exported = Profil dışa aktarıldı
+equalizer-dialog-failed = Dosya penceresi açılamadı
+equalizer-file-unreadable = Dosya okunamadı
+equalizer-file-unwritable = Dosya yazılamadı
+equalizer-value-refused = Önceki değer korundu
+equalizer-skipped-line = Satır { $line }: { $reason }
+equalizer-skipped-more = ve { $count ->
+        [one] bir tane daha
+       *[other] { $count } tane daha
+    }
+equalizer-skip-unknown-type = bilinmeyen filtre türü { $name }
+equalizer-skip-unreadable = Sonora'nın okuyabildiği bir filtre değil
+equalizer-skip-no-frequency = frekans yok
+equalizer-skip-no-gain = kazanç yok
+equalizer-skip-no-width = Q ya da bant genişliği yok
+equalizer-skip-expression = ifade olarak yazılmış bir değer
+equalizer-skip-no-preamp = ön kazanç bir sayı değil
+equalizer-skip-unsupported = { $name } desteklenmiyor
+equalizer-rules = Cihaz kuralları
+equalizer-rule-other = Diğer tüm cihazlar
+equalizer-rule-playing = Şimdi çalıyor
+equalizer-rule-disconnected = Bağlı değil
+equalizer-rule-replaces = Kendi kuralının yerini alır
+equalizer-rule-choose-device = Bir cihaz seç
+equalizer-rule-choose-sound = Bir ses seç
+equalizer-rule-add = Kural ekle
+equalizer-rule-remove = Kuralı kaldır
+equalizer-output-port = { $device } · { $port }
+signal-path-codec-alac = ALAC
+signal-path-codec-pcm = PCM
+signal-path-codec-other = Diğer kodek
+equalizer-invalid-frequency = Frekans { $low } ile { $high } Hz arasında olmalı
+equalizer-invalid-gain = Kazanç { $low } ile { $high } dB arasında olmalı
+equalizer-invalid-q = Q { $low } ile { $high } arasında olmalı
+equalizer-invalid-octaves = Bant genişliği { $low } ile { $high } oktav arasında olmalı
+equalizer-invalid-shelf-octaves = Raf filtresi bant genişliği değil, Q alır
+equalizer-invalid-preamp = Ön kazanç { $low } ile { $high } dB arasında olmalı
+equalizer-overload = { $db } dB kırpılma
+equalizer-overload-slight = 0,1 dB'den az kırpılma
+equalizer-graph-preamp = { $db } dB
+equalizer-lower-preamp = Ön kazancı düşür
+equalizer-level = Düzey
+equalizer-status-bit-perfect = Bit-perfect
+equalizer-status-bit-perfect-detail = Sonora'dan bit-perfect
+equalizer-status-server = Ses sunucusu ardından bunu { $khz } kHz'e dönüştürür
+equalizer-status-altered = Bit-perfect değil, nedeni:
+equalizer-status-separator = {", "}
+equalizer-status-more = +{ $count }
+equalizer-status-equalized = EQ
+equalizer-status-volume = Ses düzeyi
+equalizer-status-normalized = Eşitlendi
+equalizer-status-rate = { $from } → { $to } kHz
+equalizer-status-bits = { $from } → { $to } bit
+equalizer-status-float = Float → { $to } bit
+equalizer-status-channels = { $from ->
+    [1] Mono
+    [2] Stereo
+   *[other] { $from } kanal
+} → { $to ->
+    [1] mono
+    [2] stereo
+   *[other] { $to } kanal
+}
 settings-panel-lyrics-size = Şarkı sözü boyutu (panel)
 settings-panel-lyrics-size-detail = Yan paneldeki şarkı sözü metninin, temel yazı boyutuna eklenen boyutu
 settings-fullscreen-lyrics-size = Şarkı sözü boyutu (tam ekran)
@@ -531,13 +913,35 @@ settings-fullscreen-lyrics-size-detail = Tam ekran oynatıcıdaki şarkı sözü
 settings-lyrics-size-value = { $size }%
 settings-lyrics-for-local-files = Yerel dosyalar için şarkı sözleri
 settings-lyrics-for-local-files-detail = Şarkı sözlerini internetten getirmek için yerel dosyaların üstverisini kullan
+settings-artwork-for-local-files = Yerel dosyalar için kapak
+settings-artwork-for-local-files-detail = Discord durumun için Deezer'da kapak bulmak üzere yerel dosyaların üstverisini kullan
 settings-karaoke-lyrics = Karaoke şarkı sözleri
 settings-karaoke-lyrics-detail = Zamanlama varsa şarkı sözlerini sözcük sözcük vurgula
 settings-blur-lyrics = Etkin olmayan sözleri bulanıklaştır
 settings-blur-lyrics-detail = Şarkı sözü panelinde gelecek ve geçmiş satırları bulanıklaştır
+settings-lyrics-sample-first = Rastgele veri
+settings-lyrics-sample-second = Komik metni tam buraya koy
+settings-lyrics-sample-japanese = ここに面白い文章を入れてください
+settings-lyrics-sample-romanized = koko ni omoshiroi bunshou o irete kudasai
+settings-lyrics-sample-fourth = Umarım bu Japonca doğrudur
+settings-lyrics-sample-fifth = Beşinci satır
 settings-romanized-lyrics = Latin harfli şarkı sözleri
 settings-romanized-lyrics-detail = Seçilen yazı sistemleri için yerel olarak üretilen okunuşu göster
 settings-romanization-writing-systems = Yazı sistemleri
+settings-lyrics-priority = Servis önceliği
+settings-lyrics-providers-detail = Şarkı sözü aranacak servisleri seç
+settings-lyrics-providers-selected = { $count ->
+   *[other] { $count } seçili
+    }
+settings-lyrics-provider-local = Yerel dosyalar
+settings-lyrics-provider-subsonic = Subsonic
+settings-lyrics-provider-spotify = Spotify
+settings-lyrics-provider-youtube = YouTube Music
+settings-lyrics-provider-apple-music = Apple Music
+settings-lyrics-provider-musixmatch = Musixmatch
+settings-lyrics-provider-lrclib = LRCLIB
+settings-lyrics-provider-kugou = Kugou
+settings-lyrics-provider-netease = NetEase
 settings-romanization-japanese = Japonca
 settings-romanization-chinese = Çince
 settings-romanization-korean = Korece
@@ -548,18 +952,46 @@ settings-romanization-other = Diğer yazı sistemleri
 settings-group-window = Pencere
 settings-group-text = Metin
 settings-group-motion = Hareket
+settings-group-streaming = Yayın
+settings-group-spotify-connect = Spotify Connect
 settings-adaptive-menu = Uyarlanabilir bağlam menüsü
 settings-adaptive-menu-detail = Satırın zaten gösterdiği albüm ya da sanatçı gibi girdileri dışarıda bırakır
 settings-accounts = Hesapları yönet
 settings-accounts-detail = Bu cihazın çalabileceği servisler
 settings-provider-current = Bu servisten çalıyor
+settings-provider-sign-in = Oturum aç
+settings-profile-account = { $provider } · { $account }
 settings-sign-out = Oturumu kapat
+settings-lastfm = Last.fm
+settings-lastfm-detail = Sonora, kendi Last.fm API hesabın üzerinden scrobble yapar. Bir tane oluştur, sonra anahtarı ve gizli anahtarı buraya yapıştır.
+settings-librefm = Libre.fm
+settings-listenbrainz = ListenBrainz
+settings-listenbrainz-detail = ListenBrainz ayarlar sayfandan bir kullanıcı jetonu yapıştır.
+settings-maloja = Maloja
+settings-maloja-detail = Sonora'yı Maloja sunucuna yönlendir ve API anahtarlarından birini yapıştır.
+settings-scrobble-off = Bağlı değil
+settings-scrobble-on = Bağlı
+settings-scrobble-waiting = Tarayıcın bekleniyor…
+settings-scrobble-as = { $name } olarak scrobble yapılıyor
+settings-scrobble-failed = Bağlanılamadı
+settings-scrobble-connect = Bağlan
+settings-scrobble-disconnect = Bağlantıyı kes
+settings-scrobble-title = { $service } hesabını bağla
+settings-scrobble-request = API anahtarı al
+settings-scrobble-token-request = Jeton al
+settings-scrobble-key = API anahtarı
+settings-scrobble-secret = API gizli anahtarı
+settings-scrobble-token = Kullanıcı jetonu
+settings-scrobble-server = Sunucu adresi
 settings-local-folder = Müzik klasörleri
 settings-local-folder-empty = Yapılandırılmadı
 settings-choose-folder = Klasör seç…
 settings-add-folder = Klasör ekle
 settings-remove-folder = Klasörü kaldır
 settings-rescan = Yeniden tara
+settings-scan-walking = Taranıyor…
+settings-scan-progress = { $percent }%
+settings-scan-done = { $seconds } saniyede bitti
 settings-version = Sürüm
 settings-version-detail = Çalıştırdığın sonora yapısı
 settings-license = Lisans
@@ -576,6 +1008,7 @@ settings-notice = Copyright © 2026 Sonora Contributors. Sonora kesinlikle hiçb
 theme-system = Sistem
 theme-dark = Koyu
 theme-light = Açık
+theme-unavailable = { $name } (kullanılamıyor)
 
 # corners
 corners-square = Köşeli
@@ -595,29 +1028,106 @@ saver-fps = { $fps } FPS
 
 toast-playlist-created = Çalma listesi oluşturuldu
 toast-playlist-renamed = Çalma listesi yeniden adlandırıldı
+toast-playlist-updated = Çalma listesi güncellendi
+toast-playlist-cover-changed = Çalma listesinin kapağı değişti
+toast-playlist-cover-removed = Çalma listesinin kapağı kaldırıldı
 toast-playlist-deleted = Çalma listesi silindi
+toast-local-delete-failed = Bazı parça dosyaları silinemedi
 toast-playlist-added = Çalma listesi kitaplığına eklendi
 toast-playlist-removed = Çalma listesi kitaplığından çıkarıldı
 toast-playlist-visibility = Çalma listesinin görünürlüğü değişti
 toast-track-added = { $name } listesine eklendi
 toast-track-removed = { $name } listesinden çıkarıldı
+toast-track-removed-unnamed = Çalma listesinden çıkarıldı
 toast-playlist-failed = Bu değişiklik kaydedilemedi
 toast-playlist-busy = Başka bir değişiklik hâlâ sürüyor
 toast-playlist-signed-out = Çalma listelerini değiştirmek için oturum aç
+toast-playlist-imported = { $name } içe aktarıldı
+toast-playlist-imported-partly = { $name } içe aktarıldı, kitaplığında olmayan { $count ->
+        [one] bir şarkı
+       *[other] { $count } şarkı
+    } dışarıda bırakıldı
+toast-playlist-import-empty = { $name } içindeki şarkıların hiçbiri kitaplığında yok
+toast-playlist-exported = Çalma listesi dışa aktarıldı
+toast-file-dialog-failed = Dosya penceresi açılamadı
 toast-queued-track = { $name } sıraya eklendi
 toast-next-track = Sırada { $name } çalacak
+toast-last-track = { $name } en son çalacak
 toast-queued-album = Albüm sıraya eklendi
 toast-next-album = Sırada albüm çalacak
+toast-last-album = Albüm en son çalacak
 toast-queued-playlist = Çalma listesi sıraya eklendi
 toast-next-playlist = Sırada çalma listesi çalacak
+toast-last-playlist = Çalma listesi en son çalacak
 toast-queued-artist = Sanatçı sıraya eklendi
 toast-next-artist = Sırada sanatçı çalacak
+toast-last-artist = Sanatçı en son çalacak
 toast-queue-failed = Bu, sıraya eklenemedi
-toast-keys-refused = Spotify bu hesaba çalma anahtarları vermiyor
+toast-queue-local-elsewhere = Yerel dosyalar başka bir cihazda sıraya eklenemez
+toast-queued-tracks = { $count } parça sıraya eklendi
+toast-next-tracks = Sırada { $count } parça çalacak
+toast-last-tracks = { $count } parça en son çalacak
+toast-queue-cleared = Sıra temizlendi
+toast-queue-removed-track = { $name } sıradan çıkarıldı
+toast-queue-removed-tracks = { $count } parça sıradan çıkarıldı
+toast-sleep-ended = Uyku zamanlayıcısı bitti
+toast-radio-failed = { $name } için radyo başlatılamadı
+toast-similar-failed = { $name } için benzer parça bulunamadı
+toast-open-failed = { $name } açılamadı
+toast-open-unsupported = { $name }, Sonora'nın çalabildiği bir ses dosyası değil
+toast-open-all-failed = { $count } dosya açılamadı
+toast-open-some-failed = Bazı dosyalar açılamadı
+toast-keys-error = Çalma anahtarı hatası
+toast-keys-refused = Spotify çalışmayabilir
+toast-why = Neden?
 toast-sign-in-to-play = { $name } yalnızca oturum açmış dinleyicilere yayınlanır
+toast-restore-failed = { $name } oturumu yeniden açılamadı, Sonora onsuz devam etti
 toast-track-unplayable = { $name } çalınamadı
+toast-playback-stopped = Arka arkaya birkaç parça çalınamadığı için çalma durdu
+toast-widevine-failed = Çalma başarısız oldu
+toast-widevine-borrowed = Widevine'ı güncellemeyi dene
+toast-open-settings = Ayarlar
+toast-throttled = { $name } şimdilik çalmayı sınırlıyor. Birazdan yeniden denenecek
+toast-still-throttled = { $name } hâlâ çalmayı sınırlıyor. Yeniden denemek için Çal'a bas
 toast-library-add-failed = { $name } kitaplığına eklenemedi
 toast-library-remove-failed = { $name } kitaplığından çıkarılamadı
+toast-library-added = Kitaplığına eklendi
+toast-library-removed = Kitaplığından çıkarıldı
+toast-library-removed-one = { $name } kitaplığından çıkarıldı
+toast-library-songs-removed = { $count ->
+        [one] Bir şarkı
+       *[other] { $count } şarkı
+    } kitaplığından çıkarıldı
+toast-library-albums-removed = { $count ->
+        [one] Bir albüm
+       *[other] { $count } albüm
+    } kitaplığından çıkarıldı
+toast-playlists-removed = { $count ->
+        [one] Bir çalma listesi
+       *[other] { $count } çalma listesi
+    } kitaplığından çıkarıldı
+toast-favorite-removed = { $name } favorilerinden çıkarıldı
+toast-favorite-songs-removed = { $count ->
+        [one] Bir şarkı
+       *[other] { $count } şarkı
+    } favorilerinden çıkarıldı
+toast-favorite-albums-removed = { $count ->
+        [one] Bir albüm
+       *[other] { $count } albüm
+    } favorilerinden çıkarıldı
+toast-favorite-artists-removed = { $count ->
+        [one] Bir sanatçı
+       *[other] { $count } sanatçı
+    } favorilerinden çıkarıldı
+toast-tracks-removed = { $count ->
+        [one] Bir şarkı
+       *[other] { $count } şarkı
+    } { $name } listesinden çıkarıldı
+toast-tracks-removed-unnamed = { $count ->
+        [one] Bir şarkı
+       *[other] { $count } şarkı
+    } çalma listesinden çıkarıldı
+toast-unpinned = Sabitleme kaldırıldı: { $name }
 
 # lyrics
 lyrics-title = Şarkı sözleri
@@ -628,6 +1138,7 @@ lyrics-instrumental = Bu şarkı enstrümantal
 lyrics-failed = Şarkı sözü servisine ulaşılamadı
 lyrics-follow = Şarkıyı yeniden takip et
 lyrics-source = Şarkı sözleri kaynağı: { $source }
+lyrics-source-local = Şarkı sözleri yerel dosyadan
 lyrics-writers = Yazan: { $writers }
 
 update-available = Sonora { $version } çıktı
@@ -637,6 +1148,18 @@ update-notes = Yenilikler
 update-now = Güncelle
 update-working = Güncelleme indiriliyor…
 update-failed = Güncelleme kurulamadı. Yayınlar sayfasından yeniden dene.
+update-never = Güncellemeleri denetleme
+notice-never = Bir daha gösterme
+requirement-audio-bridge-title = Sonora ses sunucuna ulaşamıyor
+requirement-audio-bridge = { $server ->
+    [pulseaudio] PulseAudio çalışıyor ama ALSA'nın ona giden bir yolu yok, bu yüzden çaldığın hiçbir şey duyulmuyor. pulseaudio-alsa paketini kur ve Sonora'yı yeniden başlat.
+   *[pipewire] PipeWire çalışıyor ama ALSA'nın ona giden bir yolu yok, bu yüzden çaldığın hiçbir şey duyulmuyor. pipewire-alsa paketini kur ve Sonora'yı yeniden başlat.
+}
+requirement-audio-output-title = Ses çıkışı yok
+requirement-audio-output = Sonora ses cihazını açamadı, bu yüzden çaldığın hiçbir şey duyulmuyor. Bir cihazın bağlı olduğunu ve başka bir uygulamanın onu kullanmadığını denetle.
+requirement-web-engine-title = Tarayıcıyla oturum açma kullanılamıyor
+requirement-web-engine = YouTube Music, Deezer ya da Apple Music için tarayıcı penceresinde oturum açmak üzere webkit2gtk-4.1 paketini kur. O zamana kadar çerezlerini yapıştır.
+requirement-help = Neyi kurmalı
 settings-check-updates = Güncellemeleri denetle
 settings-check-updates-detail = Açılışta GitHub'a bir kez daha yeni bir sürüm çıktı mı diye sor. Sonora güncellemeyi yalnızca Windows'ta kendi kurar; diğer yerlerde nelerin değiştiğini gösterir
 settings-log = Günlük dosyası
@@ -650,6 +1173,9 @@ tags-sheet-album = Albüm
 tags-sheet-details = Ayrıntılar
 tags-title = Başlık
 tags-artist = Sanatçı
+tags-artists = Sanatçılar
+tags-add-artist = Sanatçı ekle
+tags-remove-artist = Bu sanatçıyı kaldır
 tags-track = Parça numarası
 tags-track-total = Yayındaki parça sayısı
 tags-disc = Disk numarası
@@ -664,10 +1190,98 @@ tags-isrc = ISRC
 tags-comment = Yorum
 toast-tags-saved = { $name } için etiketler kaydedildi
 toast-tags-failed = Etiketler kaydedilemedi
+toast-output-select-failed = { $name } seçilemedi
+toast-output-default-failed = Sistem varsayılanı cihaz seçilemedi
+
 nav-pin = Sabitle
 toast-library-pin-failed = Spotify'daki sabitleme güncellenemedi.
+toast-jam-unreadable = Bu bağlantı katılabileceğin bir Jam'e götürmüyor.
+toast-jam-needs-connect = Jam'e katılmak için ayarlarda “Spotify cihazı olarak göster” seçeneğini aç
+toast-jam-failed = Jam başlatılamadı ya da Jam'e katılınamadı.
+toast-jam-ended = Jam bitti
+toast-jam-left = Jam'den ayrıldın
+toast-jam-leave-failed = Jam bitirilemedi ya da Jam'den ayrılınamadı.
 nav-nothing-pinned = Burada bir şey yok
 nav-pins-alphabetical = Alfabetik
 nav-pins-kind = Türe göre
 nav-show-full-library = Tüm kitaplığı göster
 nav-return-top = Başa dön
+
+# trouble
+trouble-offline = Bağlantı yok
+trouble-offline-detail = İnternet bağlantını denetleyip yeniden dene.
+trouble-not-loaded = Yüklenemedi
+trouble-retry = Yeniden dene
+toast-offline = Bağlantı yok. Bağlantı gelene kadar internetten hiçbir şey çalınmaz.
+toast-offline-unsupported = { $name }, indirmeleri yalnızca çevrimiçiyken çalar.
+toast-offline-mode = Çevrimdışısın. Bu şarkıyı internetten çalmak için çevrimiçi ol.
+offline-title = Çevrimdışısın.
+offline-go-online = Çevrimiçi ol
+toast-download-failed = İndirilecek parçalar listelenemedi.
+toast-percent = { $percent }%
+toast-download-cancelled = { $name } indirmesi iptal edildi
+toast-downloads-cancelled = { $count ->
+   *[other] { $count } parçanın indirmesi iptal edildi
+}
+toast-settings-broken = Değişiklikleri kaydetmek için settings.json dosyasındaki { $name }. satırı düzelt
+toast-tray-unavailable = Simgeyi koyacak bir sistem tepsisi yok
+toast-undo = Geri al
+toast-link-copied = Bağlantı kopyalandı
+toast-link-sign-in = Bu bağlantıyı açmak için { $name } oturumu aç
+toast-link-unreadable = Bu bağlantı Sonora'nın açabileceği bir yere götürmüyor
+toast-code-copied = Kod kopyalandı
+menu-copy-link-none = Bunun paylaşılacak bir bağlantısı yok
+menu-copy-link-local = Yerel sanatçıların ve çalma listelerinin bağlantısı yok
+toast-settings-save-failed = Ayarlar kaydedilemedi
+toast-settings-overwritten = settings.json diskte değişti, bu yüzden son değişikliğin kaydedilmedi
+toast-widevine-download-failed = Widevine indirilemedi
+toast-widevine-install-failed = Widevine kurulamadı
+toast-widevine-remove-failed = Widevine kaldırılamadı
+toast-library-scanned = { $count ->
+    [one] Kitaplık tarandı, bir şarkı bulundu
+   *[other] Kitaplık tarandı, { $count } şarkı bulundu
+}
+toast-scan-failed = Müzik klasörlerin taranamadı
+toast-folder-removed = { $name } kaldırıldı
+toast-folder-missing = { $name } artık diskte yok
+toast-history-removed = { $count ->
+    [one] Geçmişten kaldırıldı
+   *[other] { $count } şarkı geçmişten kaldırıldı
+}
+toast-history-remove-failed = Bir şarkı geçmişten kaldırılamadı
+toast-history-restore-failed = Geçmiş geri yüklenemedi
+toast-history-clear-failed = Geçmiş temizlenemedi
+
+# power
+wake-reason = Müzik çalıyor
+
+toast-sample-plain = Etkinlik oluşturuldu
+toast-sample-done = Kitaplığına kaydedildi
+toast-sample-info = Etkinlikten 10 dakika önce gel.
+toast-sample-warning = Oturumun beş dakika içinde sona erecek
+toast-sample-failed = Sunucuya ulaşılamadı
+toast-sample-loading = Parçaların yükleniyor
+toast-sample-event = Etkinlik oluşturuldu
+toast-sample-event-detail = 3 Aralık Pazar, 09:00
+toast-sample-delete = { $name } silindi
+toast-sample-undo = Geri al
+toast-sample-cancel = Vazgeç
+toast-sample-undone = Geri alındı
+toast-sample-queued = { $name } sıraya eklendi
+toast-sample-long = Bu bildirim diğerlerinden çok daha fazlasını söylüyor, bu yüzden metin kapatma düğmesini kartın dışına itmeden ikinci, belki de üçüncü satıra geçmek zorunda
+toast-sample-saving = { $name } kaydediliyor
+toast-sample-saved = { $name } kaydedildi
+toast-sample-save-failed = { $name } kaydedilemedi
+toast-sample-save-failed-detail = Sunucu 503 Service Unavailable yanıtını verdi
+toast-sample-lasting = Bu, sen kapatana kadar kalır
+toast-sample-burst = Bildirim { $name }
+
+# Frequency response graph
+response-graph-hz = { $value } Hz
+response-graph-khz = { $value } kHz
+response-graph-db = { $value } dB
+response-graph-readout = { $frequency } · { $direction ->
+        [up] +{ $gain }
+        [down] -{ $gain }
+       *[flat] { $gain }
+    } dB

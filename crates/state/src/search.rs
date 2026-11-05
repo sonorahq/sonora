@@ -79,11 +79,12 @@ impl Hit {
     }
 }
 
+/// What the provider answered a search with, before it is ranked against the library.
 #[derive(Default)]
-struct Catalog {
-    tracks: Vec<Track>,
-    albums: Vec<Album>,
-    playlists: Vec<Playlist>,
+pub(crate) struct Catalog {
+    pub(crate) tracks: Vec<Track>,
+    pub(crate) albums: Vec<Album>,
+    pub(crate) playlists: Vec<Playlist>,
 }
 
 impl Catalog {
@@ -119,6 +120,9 @@ struct Scored {
     hit: Hit,
 }
 
+/// A search against the provider and the library, ranked into hits as the answers land. The
+/// search page holds two: one for the results of a submitted query and one that suggests hits
+/// while the query is typed.
 pub struct Search {
     query: String,
     served: Option<String>,
@@ -151,7 +155,7 @@ impl Search {
                 this.query.clear();
                 this.ask(&pending, cx);
             }
-            SessionEvent::Reconnected | SessionEvent::LocalChanged => {}
+            SessionEvent::Reconnected | SessionEvent::WentOffline | SessionEvent::LocalChanged => {}
         })
         .detach();
 
@@ -355,7 +359,10 @@ impl Search {
     }
 }
 
-fn rank(
+/// The hits for `asked`, best first: the provider's `catalog` and what the library holds that
+/// fits, artists drawn from both. The command line ranks with this too, so it finds what the
+/// search page finds.
+pub(crate) fn rank(
     library: &[Track],
     albums: &[Album],
     playlists: &[Playlist],
@@ -722,18 +729,7 @@ mod tests {
                 .collect(),
             album: album.to_owned(),
             album_id: Some(album.to_owned()),
-            cover: None,
-            duration: Duration::ZERO,
-            added_at: None,
-            added_by: None,
-            playcount: None,
-            popularity: 0,
-            explicit: false,
-            track_number: 0,
-            disc_number: 0,
-            tags: Vec::new(),
-            languages: Vec::new(),
-            credits: Vec::new(),
+            ..Default::default()
         }
     }
 

@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 use ytmusic::{AudioStream, YtMusic};
 
 use crate::aac::Aac;
@@ -19,6 +20,7 @@ use crate::audio::Trimmed;
 use crate::engine::{self, Fetch, Loudness};
 use crate::stream::{PREROLL, Plain, Reader, Source, Stream};
 use crate::trim::{self, Trim};
+use crate::vault::{Recording, Shelf};
 use crate::youtube::segments::Segments;
 use crate::{Encoding, Offer, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Quality};
 
@@ -83,6 +85,7 @@ impl PlaybackFactory for Factory {
             YouTube {
                 api: self.api.clone(),
                 ceiling: ceiling(config.quality),
+                shelf: config.vault.as_ref().map(|vault| vault.shelf("youtube")),
             },
             config,
         )
@@ -93,6 +96,18 @@ struct YouTube {
     api: Arc<YtMusic>,
     /// The highest bitrate a stream is chosen at, in bits per second, or `None` for the best.
     ceiling: Option<u32>,
+    /// Where played tracks are kept, so playing one again asks YouTube for nothing.
+    shelf: Option<Shelf>,
+}
+
+/// What the stream host said about a track, kept beside it in the vault so a kept track plays
+/// with the same length, loudness and signal path as a fresh one.
+#[derive(Serialize, Deserialize)]
+struct Facts {
+    loudness_db: Option<f32>,
+    duration_ms: Option<u64>,
+    codec: String,
+    kbps: u32,
 }
 
 impl Source for AudioStream {
@@ -110,13 +125,20 @@ impl Fetch for YouTube {
         "yt"
     }
 
+    fn shelf(&self) -> Option<&Shelf> {
+        self.shelf.as_ref()
+    }
+
     /// Opens the stream and waits for the preroll, giving a stalled attempt one more go before
     /// failing. Only a timeout is retried, since a refusal from the stream host is as final the
     /// second time.
     async fn load(&self, id: &str) -> Result<Loaded> {
+        if let Some(loaded) = self.recall(id).await {
+            return Ok(loaded);
+        }
         let mut attempt = 1;
         loop {
-            match attempt_open(&self.api, id, self.ceiling).await {
+            match attempt_open(&self.api, id, self.ceiling, self.shelf.as_ref()).await {
                 Err(error) if attempt < ATTEMPTS && error.is::<tokio::time::error::Elapsed>() => {
                     log::warn!("playback: {id} stalled, trying again: {error:#}");
                     attempt += 1;
@@ -147,6 +169,11 @@ impl Fetch for YouTube {
 
     async fn downloaded(&self, loaded: &Loaded) {
         loaded.stream.finished().await;
+    }
+
+    fn progress(&self, loaded: &Loaded) -> Option<f32> {
+        let total = loaded.stream.total().filter(|total| *total > 0)?;
+        Some(loaded.stream.arrived() as f32 / total as f32)
     }
 
     /// A fragmented stream opened unseekable cannot move, so a seek opens a second decoder
@@ -197,23 +224,72 @@ impl Fetch for YouTube {
     }
 }
 
-/// Opens the stream and waits for the preroll, each under its own deadline.
-async fn attempt_open(api: &Arc<YtMusic>, id: &str, ceiling: Option<u32>) -> Result<Loaded> {
+impl YouTube {
+    /// The track from the vault, when it was kept at the quality asked for. Nothing here
+    /// reaches YouTube, so a kept track needs no player request and no token.
+    async fn recall(&self, id: &str) -> Option<Loaded> {
+        let kept = self
+            .shelf
+            .as_ref()?
+            .find(id, &variant(self.ceiling))
+            .await?;
+        let facts = serde_json::from_slice::<Facts>(&kept.facts)
+            .inspect_err(|error| {
+                log::warn!("playback: the kept facts of {id} do not read: {error}")
+            })
+            .ok()?;
+        let stream = Stream::pulling(kept.source, Some(kept.length), Plain)
+            .primed()
+            .await
+            .inspect_err(|error| log::warn!("playback: the kept copy of {id} broke: {error:#}"))
+            .ok()?;
+        let (segments, edit) = front(&stream);
+        log::debug!("playback: {id} started from the vault");
+        Some(Loaded {
+            stream,
+            segments: segments.map(Arc::new),
+            edit,
+            loudness_db: facts.loudness_db,
+            duration: facts.duration_ms.map(Duration::from_millis),
+            encoding: served(&facts.codec, facts.kbps),
+        })
+    }
+}
+
+/// Opens the stream and waits for the preroll, each under its own deadline. With a shelf, the
+/// track is kept in the vault once all of it has arrived.
+async fn attempt_open(
+    api: &Arc<YtMusic>,
+    id: &str,
+    ceiling: Option<u32>,
+    shelf: Option<&Shelf>,
+) -> Result<Loaded> {
     let started = Instant::now();
     let (format, audio) = tokio::time::timeout(PATIENCE, api.open_audio_within(id, ceiling))
         .await
         .context("stream metadata timed out")??;
     let total = audio.total();
+    let audio = match shelf {
+        Some(shelf) => {
+            let facts = Facts {
+                loudness_db: format.loudness_db,
+                duration_ms: format.duration.map(|duration| duration.as_millis() as u64),
+                codec: format.codec.clone(),
+                kbps: format.bitrate / 1000,
+            };
+            shelf.keep(
+                id,
+                &variant(ceiling),
+                move || serde_json::to_vec(&facts).ok(),
+                audio,
+            )
+        }
+        None => Recording::through(audio),
+    };
     let stream = tokio::time::timeout(PATIENCE, Stream::pulling(audio, total, Plain).primed())
         .await
         .context("stream preroll timed out")??;
-    let (segments, edit) = stream
-        .with(|_, spool| {
-            // The index and the edit list sit at the front, inside what the preroll waited for.
-            let front = spool.bytes(0..spool.len().min(PREROLL)).unwrap_or_default();
-            (Segments::read(&front), trim::from_mp4(&front))
-        })
-        .unwrap_or_default();
+    let (segments, edit) = front(&stream);
     log::debug!(
         "playback: {id} started, itag {} {} {} kbps, {:.1} MiB, {} segments, in {:?}",
         format.itag,
@@ -239,6 +315,22 @@ async fn attempt_open(api: &Arc<YtMusic>, id: &str, ceiling: Option<u32>) -> Res
         duration: format.duration,
         encoding: served(&format.codec, format.bitrate / 1000),
     })
+}
+
+/// The segment index and the edit list, which sit at the front of the file inside what the
+/// preroll waited for.
+fn front(stream: &Stream) -> (Option<Segments>, Option<Trim>) {
+    stream
+        .with(|_, spool| {
+            let front = spool.bytes(0..spool.len().min(PREROLL)).unwrap_or_default();
+            (Segments::read(&front), trim::from_mp4(&front))
+        })
+        .unwrap_or_default()
+}
+
+/// What tells two kept copies of one track apart: the bitrate ceiling it was fetched under.
+fn variant(ceiling: Option<u32>) -> String {
+    ceiling.map_or_else(|| "best".to_owned(), |ceiling| ceiling.to_string())
 }
 
 /// The bitrate ceiling a level stands for, in bits per second. Each sits between two streams,

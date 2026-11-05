@@ -15,7 +15,6 @@ use crate::theme::ActiveTheme as _;
 const BAR: Pixels = px(6.);
 const REACH: Pixels = px(2.);
 const THUMB_INSET: Pixels = px(4.);
-const REACHED: Pixels = px(0.5);
 const MIN_THUMB: Pixels = px(24.);
 const TRACK_INSET: Pixels = px(4.);
 const LINGER: Duration = Duration::from_secs(2);
@@ -562,14 +561,16 @@ impl Render for Scrollbar {
         let hidden = self.maximum.unwrap_or_else(|| target.hidden());
         let offset = target.offset().min(hidden);
 
-        if self.following && (self.glide.goal(&self.scroll).y - offset).abs() < REACHED {
-            self.following = false;
-        }
         if offset != self.seen {
             self.seen = offset;
             if !self.following {
                 self.wake(cx);
             }
+        }
+        // A followed glide lets go only once it has landed and its landing has been seen above,
+        // so neither the creep toward the goal nor the final step reads as the reader scrolling.
+        if self.following && !self.glide.gliding() {
+            self.following = false;
         }
 
         if viewport <= Pixels::ZERO || hidden <= Pixels::ZERO {
@@ -598,7 +599,14 @@ impl Render for Scrollbar {
         let marker = theme.metrics.control;
 
         div()
-            .id("scrollbar")
+            // The entity id keeps every bar distinct, since ids alone would
+            // collide the moment two bars share a parent.
+            .id(("scrollbar", cx.entity_id()))
+            .role(gpui::accesskit::Role::ScrollBar)
+            .aria_orientation(gpui::accesskit::Orientation::Vertical)
+            .aria_numeric_value(f64::from(progress))
+            .aria_min_numeric_value(0.)
+            .aria_max_numeric_value(1.)
             .occlude()
             .absolute()
             .top(self.track_inset + self.track_top)
@@ -629,7 +637,7 @@ impl Render for Scrollbar {
             )
             .child(
                 div()
-                    .id("scrollbar-thumb")
+                    .id(("scrollbar-thumb", cx.entity_id()))
                     .absolute()
                     .top(travel * progress)
                     .right(THUMB_INSET + REACH)

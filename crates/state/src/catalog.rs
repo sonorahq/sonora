@@ -185,6 +185,12 @@ impl CatalogSource {
         self.artists.load(id, self.backend.artist(id)).await
     }
 
+    /// Drops the cached artist and the rest of their page, so the next read asks the provider.
+    pub(crate) async fn invalidate_artist(&self, id: &str) {
+        self.artists.invalidate(id).await;
+        self.catalogues.invalidate(id).await;
+    }
+
     pub(crate) fn peek_artist_catalogue(&self, id: &str) -> Option<Arc<ArtistCatalogue>> {
         self.catalogues.peek(id)
     }
@@ -272,8 +278,31 @@ impl CatalogSource {
         self.genres.load(id, self.backend.genre(id)).await
     }
 
+    pub(crate) async fn invalidate_genre(&self, id: &str) {
+        self.genres.invalidate(id).await;
+    }
+
     pub(crate) fn peek_song(&self, id: &str) -> Option<Arc<SongPage>> {
         self.songs.peek(id)
+    }
+
+    /// Drops the cached song page, with the album and artist it was built from, so the next
+    /// read asks the provider for all three.
+    pub(crate) async fn invalidate_song(&self, id: &str) {
+        if let Some(page) = self.songs.peek(id) {
+            if let Some(album) = page.track.album_id.as_deref() {
+                self.albums.invalidate(album).await;
+            }
+            if let Some(artist) = page
+                .track
+                .artist_refs
+                .first()
+                .and_then(|first| first.id.as_deref())
+            {
+                self.artist_profiles.invalidate(artist).await;
+            }
+        }
+        self.songs.invalidate(id).await;
     }
 
     pub(crate) async fn song(&self, id: &str) -> Result<Arc<SongPage>> {
@@ -368,13 +397,12 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, atomic::AtomicBool};
-    use std::time::Duration;
 
     use anyhow::anyhow;
     use async_trait::async_trait;
     use music::{
         Album, AlbumDetail, Artist, ArtistProfile, ArtistRef, GenreDetail, Playlist,
-        PlaylistDetail, ReleaseType, Track,
+        PlaylistDetail, Track,
     };
 
     use super::{CatalogBackend, CatalogCache, CatalogSource};
@@ -431,18 +459,9 @@ mod tests {
                 }],
                 album: "Album".to_owned(),
                 album_id: Some("album".to_owned()),
-                cover: None,
-                duration: Duration::ZERO,
-                added_at: None,
-                added_by: None,
-                playcount: None,
-                popularity: 0,
-                explicit: false,
                 track_number: 1,
                 disc_number: 1,
-                tags: Vec::new(),
-                languages: Vec::new(),
-                credits: Vec::new(),
+                ..Default::default()
             }
         }
 
@@ -451,17 +470,7 @@ mod tests {
                 album: Album {
                     id: id.to_owned(),
                     name: format!("{}:{id}", self.label),
-                    artists: String::new(),
-                    artist_refs: Vec::new(),
-                    cover: None,
-                    cover_large: None,
-                    release_type: ReleaseType::Album,
-                    year: 0,
-                    track_count: 0,
-                    release_date: String::new(),
-                    label: String::new(),
-                    copyrights: Vec::new(),
-                    added_at: None,
+                    ..Default::default()
                 },
                 tracks: Vec::new(),
             }
@@ -472,18 +481,9 @@ mod tests {
                 playlist: Playlist {
                     id: id.to_owned(),
                     name: format!("{}:{id}", self.label),
-                    owner: String::new(),
-                    owner_id: String::new(),
-                    owned: false,
-                    collaborative: false,
-                    blend: false,
-                    public: false,
-                    cover: None,
-                    track_count: 0,
-                    modified_at: None,
+                    ..Default::default()
                 },
-                tracks: Vec::new(),
-                continuation: None,
+                ..Default::default()
             }
         }
     }
@@ -494,11 +494,7 @@ mod tests {
             self.count("artist", id);
             Ok(Artist {
                 name: format!("{}:{id}", self.label),
-                cover_large: None,
-                biography: None,
-                monthly_listeners: None,
-                top_tracks: Vec::new(),
-                albums: Vec::new(),
+                ..Default::default()
             })
         }
 
@@ -509,8 +505,7 @@ mod tests {
             }
             Ok(ArtistProfile {
                 name: format!("{}:{id}", self.label),
-                cover_large: None,
-                biography: None,
+                ..Default::default()
             })
         }
 

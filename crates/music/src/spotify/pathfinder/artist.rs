@@ -10,6 +10,7 @@ use crate::{Album, ArtistRef, ReleaseType};
 pub(crate) struct Overview {
     pub(crate) name: String,
     pub(crate) cover_large: Option<String>,
+    pub(crate) banner: Option<String>,
     pub(crate) biography: Option<String>,
     pub(crate) monthly_listeners: Option<u64>,
     pub(crate) tracks: Vec<(String, Option<u64>)>,
@@ -27,6 +28,8 @@ struct PathArtist {
     profile: Profile,
     #[serde(default)]
     visuals: Visuals,
+    #[serde(rename = "headerImage")]
+    header: Option<Header>,
     discography: Option<Discography>,
     stats: Option<Stats>,
 }
@@ -124,6 +127,26 @@ struct Cover {
     sources: Vec<Image>,
 }
 
+/// The banner over an artist page. It sits beside `visuals` rather than in it, and its sources
+/// give a largest size instead of an exact one.
+#[derive(Deserialize)]
+struct Header {
+    data: Option<HeaderImage>,
+}
+
+#[derive(Deserialize)]
+struct HeaderImage {
+    #[serde(default)]
+    sources: Vec<HeaderSource>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HeaderSource {
+    url: String,
+    max_width: Option<u32>,
+}
+
 #[derive(Deserialize)]
 struct Image {
     height: u32,
@@ -200,7 +223,23 @@ fn overview(data: Data, artist_id: &str) -> Result<Overview> {
 
     Ok(Overview {
         name: artist.profile.name,
-        cover_large: cover(&artist.visuals.avatar.sources, true),
+        cover_large: artist
+            .visuals
+            .avatar
+            .sources
+            .iter()
+            .max_by_key(|image| image.height)
+            .map(|image| image.url.clone()),
+        banner: artist
+            .header
+            .and_then(|header| header.data)
+            .and_then(|image| {
+                image
+                    .sources
+                    .into_iter()
+                    .max_by_key(|source| source.max_width)
+            })
+            .map(|source| source.url),
         biography: artist
             .profile
             .biography
@@ -305,7 +344,7 @@ mod tests {
         let overview = overview(data, "artist").unwrap();
 
         assert_eq!(overview.name, "Artist");
-        assert_eq!(overview.cover_large.as_deref(), Some("header"));
+        assert_eq!(overview.cover_large.as_deref(), Some("large"));
         assert_eq!(overview.biography.as_deref(), Some("About"));
         assert_eq!(overview.monthly_listeners, Some(1_900_430));
         assert_eq!(

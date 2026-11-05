@@ -25,7 +25,7 @@ const SECRET_MD5: &str = "7ebf40da848f4a0fb3cc56ddbe6c2d09";
 
 /// The last secret the extraction above produced, kept so a bundle redesign degrades to a
 /// warning instead of killing playback.
-const SECRET_FALLBACK: &[u8; 16] = b"g4el58wc0zvf9na1";
+pub(crate) const FALLBACK: Secret = *b"g4el58wc0zvf9na1";
 
 /// The 16-byte master secret shared by every track.
 pub type Secret = [u8; 16];
@@ -128,7 +128,7 @@ pub async fn secret(http: &reqwest::Client) -> Secret {
             log::warn!(
                 "deezer: cannot extract the stream secret ({error:#}); using the last known one"
             );
-            *SECRET_FALLBACK
+            FALLBACK
         }
     }
 }

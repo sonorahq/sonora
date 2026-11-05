@@ -23,6 +23,9 @@ fi
 
 # Generate cargo-sources
 echo "==> Generating cargo-sources.json..."
-flatpak-cargo-generator -o cargo-sources.json ../Cargo.lock
+# cargo-generator.py patches how the generator inherits workspace dependencies, so it runs on the
+# interpreter the installed generator runs on.
+python="$(sed -n '1s/^#!//p' "$(command -v flatpak-cargo-generator)")"
+$python cargo-generator.py -o cargo-sources.json ../Cargo.lock
 
 echo "==> Preparation complete!"

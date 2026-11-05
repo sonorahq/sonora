@@ -1,21 +1,26 @@
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use gpui::Decorations;
+use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{AnyElement, Window, div};
+use gpui::{AnyElement, App, Window, div};
 use gpui::{
     AnyView, Context, Entity, EventEmitter, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Render,
 };
 use ui::TrafficLightControls;
 use ui::WindowControls;
-use ui::{ActiveTheme as _, Button};
+use ui::{ActiveTheme as _, Button, Spin};
 
 use crate::chrome::SidebarRight;
+use crate::chrome::downloads::DownloadsButton;
 use input::Refresh;
 use router::Navigation;
 use state::{AppSettings, Sonora};
 
 const SYSTEM_ZOOMS: bool = cfg!(target_os = "windows");
+
+/// Tells whether the page a refresh reloaded is still waiting for its data.
+pub(crate) type Busy = Box<dyn Fn(&App) -> bool>;
 
 /// The height of AppKit's traffic-light buttons, which the bar centres them by.
 #[cfg(target_os = "macos")]
@@ -70,6 +75,12 @@ pub(crate) struct TitleBar {
     settings: Entity<AppSettings>,
     options: TitleBarOptions,
     grabbed: bool,
+    /// Set by a refresh and dropped once the page has its data or the user moves on, so the
+    /// refresh button turns for exactly that long.
+    busy: Option<Busy>,
+    /// The refresh icon's turn, which springs back to rest once `busy` is gone.
+    spin: Spin,
+    downloads: Entity<DownloadsButton>,
 }
 
 impl EventEmitter<TitleBarEvent> for TitleBar {}
@@ -79,14 +90,27 @@ impl TitleBar {
         let navigation = router::trail(cx);
         let settings = Sonora::global(cx).settings.clone();
 
-        cx.observe(&navigation, |_, _, cx| cx.notify()).detach();
+        cx.observe(&navigation, |this, _, cx| {
+            this.busy = None;
+            cx.notify();
+        })
+        .detach();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
         Self {
             navigation,
             settings,
             options: TitleBarOptions::default(),
             grabbed: false,
+            busy: None,
+            spin: Spin::default(),
+            downloads: cx.new(DownloadsButton::new),
         }
+    }
+
+    /// Turns the refresh button until `busy` says the reloaded page has its data.
+    pub fn refreshing(&mut self, busy: Busy, cx: &mut Context<Self>) {
+        self.busy = Some(busy);
+        cx.notify();
     }
 
     pub fn set_options(&mut self, options: TitleBarOptions, cx: &mut Context<Self>) {
@@ -97,14 +121,26 @@ impl TitleBar {
         cx.notify();
     }
 
-    fn history(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn history(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.busy.as_ref().is_some_and(|busy| !busy(cx)) {
+            self.busy = None;
+        }
+        match self.busy.is_some() {
+            true => self.spin.start(),
+            false => self.spin.stop(),
+        }
+        let turn = self.spin.turn(window, cx);
         let hover = cx.theme().sidebar_accent;
         let navigation = self.navigation.read(cx);
         let (can_back, can_forward) = (navigation.can_go_back(), navigation.can_go_forward());
+        let refreshes = navigation.current().refreshes();
         let back = self.navigation.clone();
         let forward = self.navigation.clone();
 
         div()
+            .id("titlebar-history")
+            .role(Role::Toolbar)
+            .aria_label(i18n::lookup("nav-history", None))
             .flex()
             .flex_none()
             .items_center()
@@ -145,17 +181,20 @@ impl TitleBar {
                         forward.update(cx, |navigation, cx| navigation.forward(cx))
                     }),
             )
-            .child(
-                Button::new("history-refresh")
-                    .ghost()
-                    .icon("icons/refresh-cw.svg")
-                    .tooltip("app-refresh")
-                    .size_8()
-                    .px_0()
-                    .hover(move |style| style.bg(hover))
-                    .active(move |style| style.bg(hover))
-                    .on_click(|_, window, cx| window.dispatch_action(Box::new(Refresh), cx)),
-            )
+            .when(refreshes, |history| {
+                history.child(
+                    Button::new("history-refresh")
+                        .ghost()
+                        .icon("icons/refresh-cw.svg")
+                        .turned(turn)
+                        .tooltip("app-refresh")
+                        .size_8()
+                        .px_0()
+                        .hover(move |style| style.bg(hover))
+                        .active(move |style| style.bg(hover))
+                        .on_click(|_, window, cx| window.dispatch_action(Box::new(Refresh), cx)),
+                )
+            })
     }
 
     fn lyrics_toggle(&self, open: bool, cx: &mut Context<Self>) -> impl IntoElement {
@@ -174,6 +213,7 @@ impl TitleBar {
                         false => "icons/panel-right-open.svg",
                     })
                     .tooltip("nav-sidebar-right")
+                    .aria_expanded(open)
                     .on_click(
                         cx.listener(|_, _, _, cx| cx.emit(TitleBarEvent::ToggleSidebarRight)),
                     ),
@@ -199,6 +239,7 @@ impl TitleBar {
                     .small()
                     .icon(icon)
                     .tooltip("nav-sidebar")
+                    .aria_expanded(self.options.sidebar_open)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(TitleBarEvent::ToggleSidebar))),
             )
     }
@@ -234,6 +275,8 @@ impl Render for TitleBar {
         let radius: Option<Pixels> = None;
 
         div()
+            .id("title-bar")
+            .role(Role::Banner)
             .flex()
             .items_center()
             .w_full()
@@ -298,7 +341,17 @@ impl Render for TitleBar {
                     .min_w_0()
                     .gap_1()
                     .items_center()
-                    .when(navigation, |this| this.child(self.history(cx)))
+                    .when(navigation, |this| this.child(self.history(window, cx)))
+                    .child(div().flex_1())
+                    .when(navigation, |this| {
+                        this.child(
+                            div()
+                                .flex_none()
+                                .occlude()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .child(self.downloads.clone()),
+                        )
+                    })
                     .children(content)
                     .pr_3(),
             )

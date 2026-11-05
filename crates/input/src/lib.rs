@@ -30,6 +30,7 @@ actions!(
         PowerbarConfirm,
         PowerbarNextCategory,
         PowerbarPrevCategory,
+        ShowMembers,
         CloseWindow,
         MinimizeWindow,
         ZoomWindow,
@@ -71,6 +72,7 @@ fn shared() -> Vec<KeyBinding> {
         "{WORKSPACE_CONTEXT} && !{INPUT_CONTEXT} && !{MENU_CONTEXT} && !{FORM_CONTEXT} && !{TABLE_CONTEXT} && !{SEARCH_CONTEXT}"
     );
     let results = format!("{SEARCH_CONTEXT} && !{INPUT_CONTEXT}");
+    let typing = format!("{SEARCH_CONTEXT} > {INPUT_CONTEXT}");
 
     vec![
         KeyBinding::new("down", SelectNext, table),
@@ -93,6 +95,7 @@ fn shared() -> Vec<KeyBinding> {
         KeyBinding::new("right", SelectRight, Some(&results)),
         KeyBinding::new("enter", Activate, Some(&results)),
         KeyBinding::new("escape", Deselect, Some(&results)),
+        KeyBinding::new("enter", Submit, Some(&typing)),
         KeyBinding::new("down", SelectNext, menu),
         KeyBinding::new("up", SelectPrevious, menu),
         KeyBinding::new("tab", SelectNext, menu),

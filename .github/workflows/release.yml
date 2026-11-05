@@ -4,6 +4,13 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+  # nightly.yml builds main through here. The input is the nightly's version number, and its
+  # presence publishes the build as the nightly prerelease instead of a tagged release.
+  workflow_call:
+    inputs:
+      nightly:
+        type: string
+        required: true
 
 concurrency:
   group: release-${{ github.ref }}
@@ -46,11 +53,14 @@ jobs:
       - name: name the artifact
         id: meta
         shell: bash
+        env:
+          NIGHTLY: ${{ inputs.nightly }}
         run: |
           case "$GITHUB_REF" in
             refs/tags/*) version="$GITHUB_REF_NAME" ;;
             *) version="${GITHUB_SHA:0:7}" ;;
           esac
+          if [ -n "$NIGHTLY" ]; then version=nightly; fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: system dependencies
@@ -74,8 +84,17 @@ jobs:
           key: ${{ matrix.target }}
           cache-targets: false
           cache-on-failure: true
+      # A nightly compiles its label in as the version the app shows. Other builds leave the
+      # variable unset, since an empty one would still count as set.
       - name: build
-        run: cargo build --release --locked --package sonora --target ${{ matrix.target }}
+        shell: bash
+        env:
+          NIGHTLY: ${{ inputs.nightly }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          if [ -n "$NIGHTLY" ]; then export SONORA_VERSION="$NIGHTLY"; fi
+          cargo build --release --locked --package sonora --target "$TARGET"
 
       - name: sccache stats
         if: always()
@@ -118,11 +137,12 @@ jobs:
         shell: pwsh
         env:
           VERSION: ${{ steps.meta.outputs.version }}
+          NIGHTLY: ${{ inputs.nightly }}
           TARGET: ${{ matrix.target }}
           SONORA_ARCH: ${{ matrix.arch }}
           SONORA_SETUP: ${{ matrix.setup }}
         run: |
-          $number = $env:VERSION.TrimStart("v")
+          $number = if ($env:NIGHTLY) { $env:NIGHTLY } else { $env:VERSION.TrimStart("v") }
           if ($number -notmatch '^\d+\.\d+\.\d+([.-][0-9A-Za-z.-]+)?$') {
             $number = "0.0.0"
           }
@@ -147,6 +167,8 @@ jobs:
       - name: name the artifact
         id: meta
         shell: bash
+        env:
+          NIGHTLY: ${{ inputs.nightly }}
         run: |
           case "$GITHUB_REF" in
             refs/tags/*)
@@ -159,6 +181,11 @@ jobs:
               number="0.0.0"
               ;;
           esac
+          # The bundle version has to stay numeric, so a nightly carries the release it follows.
+          if [ -n "$NIGHTLY" ]; then
+            version=nightly
+            number="${NIGHTLY%%-*}"
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "number=$number" >> "$GITHUB_OUTPUT"
 
@@ -283,6 +310,8 @@ jobs:
       - name: name the artifact
         id: meta
         shell: bash
+        env:
+          NIGHTLY: ${{ inputs.nightly }}
         run: |
           case "$GITHUB_REF" in
             refs/tags/*)
@@ -296,14 +325,21 @@ jobs:
               ;;
           esac
 
-          # Only a stable tag embeds where to update from. GitHub's latest release never points
-          # at a prerelease, so a beta would be offered an older stable build, and an untagged
-          # build would be offered a release it was never cut from.
+          # Only a stable tag or a nightly embeds where to update from. GitHub's latest release
+          # never points at a prerelease, so a beta would be offered an older stable build, and
+          # an untagged build would be offered a release it was never cut from. A nightly follows
+          # the nightly prerelease through its tag instead.
+          zsync="gh-releases-zsync|${GITHUB_REPOSITORY%/*}|${GITHUB_REPOSITORY#*/}"
           update=""
           case "$number" in
             "" | *-*) ;;
-            *) update="gh-releases-zsync|${GITHUB_REPOSITORY%/*}|${GITHUB_REPOSITORY#*/}|latest|sonora-*-$ARCH.AppImage.zsync" ;;
+            *) update="$zsync|latest|sonora-*-$ARCH.AppImage.zsync" ;;
           esac
+          if [ -n "$NIGHTLY" ]; then
+            version=nightly
+            number="$NIGHTLY"
+            update="$zsync|nightly|sonora-*-$ARCH.AppImage.zsync"
+          fi
 
           {
             echo "version=$version"
@@ -375,6 +411,10 @@ jobs:
             --desktop-file desktop/sonora.desktop \
             --icon-file assets/linux/sonora.svg
 
+          # appimagetool makes the image's own icon only from a PNG or XPM in the top level of the
+          # AppDir, and linuxdeploy puts the SVG there.
+          cp assets/linux/icons/hicolor/256x256/apps/sonora.png AppDir/sonora.png
+
           # The Vulkan loader has to be the host's: it is what finds the host's ICD, and a loader
           # this old paired with a current driver is how an AppImage stops starting.
           rm -f AppDir/usr/lib/libvulkan.so.1*
@@ -442,8 +482,10 @@ jobs:
           if-no-files-found: error
 
   # Build flatpak, see: https://github.com/flatpak/flatpak-github-actions
+  # A nightly skips the Flatpak, since the one repository it publishes to is the stable channel.
   flatpak:
     name: "Flatpak (${{ matrix.variant.arch }})"
+    if: ${{ !inputs.nightly }}
     strategy:
       fail-fast: false
       matrix:
@@ -603,19 +645,7 @@ jobs:
       - name: stage the licenses
         env:
           VERSION: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          mkdir -p licenses
-          cp COPYING licenses/LICENSE
-          cp THIRD-PARTY.md licenses/THIRD-PARTY.md
-          cp assets/fonts/LICENSE.txt licenses/LICENSE.Inter
-          mkdir -p licenses/icons
-          cp assets/icons/LICENSE licenses/icons/LICENSE
-          for licence in assets/icons/*/LICENSE; do
-            pack="$(basename "$(dirname "$licence")")"
-            cp "$licence" "licenses/icons/LICENSE.$pack"
-          done
-          tar -czf "dist/sonora-$VERSION-licenses.tar.gz" -C licenses .
+        run: ./scripts/licenses-tarball.sh "dist/sonora-$VERSION-licenses.tar.gz"
 
       - name: checksums
         run: cd dist && shasum -a 256 * > SHA256SUMS
@@ -637,6 +667,90 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: true
 
+  # The nightly prerelease is one release whose assets every nightly replaces. Its tag moves to a
+  # commit on top of the main it built, which adds nix/nightly.json so the flake at that tag
+  # installs the binaries beside it.
+  nightly:
+    needs: [build, bundle, appimage]
+    if: ${{ inputs.nightly }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: stage the licenses
+        run: ./scripts/licenses-tarball.sh dist/sonora-nightly-licenses.tar.gz
+
+      - name: checksums
+        run: cd dist && shasum -a 256 * > SHA256SUMS
+
+      - name: record the assets for the flake
+        env:
+          NIGHTLY: ${{ inputs.nightly }}
+        run: |
+          set -euo pipefail
+          sri() { echo "sha256-$(openssl dgst -sha256 -binary "dist/$1" | base64 -w0)"; }
+          jq -n \
+            --arg version "$NIGHTLY" \
+            --arg x86_64_linux "$(sri sonora-nightly-x86_64-unknown-linux-gnu)" \
+            --arg aarch64_linux "$(sri sonora-nightly-aarch64-unknown-linux-gnu)" \
+            --arg aarch64_darwin "$(sri sonora-nightly-macos.dmg)" \
+            '{
+              version: $version,
+              tag: "nightly",
+              assets: {
+                "x86_64-linux": { target: "x86_64-unknown-linux-gnu", hash: $x86_64_linux },
+                "aarch64-linux": { target: "aarch64-unknown-linux-gnu", hash: $aarch64_linux },
+                "aarch64-darwin": { target: "macos", hash: $aarch64_darwin }
+              }
+            }' > nix/nightly.json
+          cat nix/nightly.json
+
+      - name: move the nightly tag
+        env:
+          NIGHTLY: ${{ inputs.nightly }}
+        run: |
+          set -euo pipefail
+          git add nix/nightly.json
+          git \
+            -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "chore(nix): point the flake at nightly $NIGHTLY"
+          git push --force origin HEAD:refs/tags/nightly
+
+      # Replacing the assets in place rather than recreating the release keeps watchers from
+      # being notified of a new release every night.
+      - name: publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NIGHTLY: ${{ inputs.nightly }}
+        run: |
+          set -euo pipefail
+          commit="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
+          {
+            printf 'Sonora %s, built from [`%s`](%s) on `main`.\n\n' "$NIGHTLY" "${GITHUB_SHA:0:7}" "$commit"
+            printf 'A nightly build has not been through the testing a release gets. '
+            printf 'Report what breaks in the issues and mention that it is the nightly.\n'
+          } > notes.md
+          if gh release view nightly > /dev/null 2>&1; then
+            gh release upload nightly dist/* --clobber
+            gh release edit nightly --prerelease --title "Nightly $NIGHTLY" --notes-file notes.md
+          else
+            gh release create nightly dist/* \
+              --verify-tag \
+              --prerelease \
+              --latest=false \
+              --title "Nightly $NIGHTLY" \
+              --notes-file notes.md
+          fi
+
   announce:
     needs: release
     if: startsWith(github.ref, 'refs/tags/')
@@ -644,3 +758,94 @@ jobs:
     secrets: inherit
     with:
       tag: ${{ github.ref_name }}
+
+  # The nightly built before a release still carries the previous version number.
+  # Building the nightly again right away keeps nightly users from running behind the release.
+  refresh-nightly:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: dispatch the nightly
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run nightly.yml --repo "$GITHUB_REPOSITORY" --ref main
+
+  # sonora-bin is rendered from aur/sonora-bin/PKGBUILD on every stable release, so the AUR
+  # repository only ever holds what this job pushed. It needs AUR_SSH_KEY, the key nightly.yml
+  # pushes sonora-nightly-bin with, since one AUR account maintains both.
+  aur:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: system dependencies
+        run: pacman -Syu --noconfirm --needed git openssh
+
+      - uses: actions/checkout@v5
+
+      - name: render and build the PKGBUILD
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          base="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          curl -fsSL "$base/releases/download/$TAG/SHA256SUMS" > sums
+          sum() { awk -v file="$1" '$2 == file { print $1 }' sums; }
+          source="$(curl -fsSL "$base/archive/refs/tags/$TAG.tar.gz" | sha256sum | cut -d ' ' -f 1)"
+          x86_64="$(sum "sonora-$TAG-x86_64-unknown-linux-gnu")"
+          aarch64="$(sum "sonora-$TAG-aarch64-unknown-linux-gnu")"
+          test -n "$x86_64"
+          test -n "$aarch64"
+
+          mkdir package
+          sed \
+            -e "s/@PKGVER@/${TAG#v}/" \
+            -e "s/@SHA256_SOURCE@/$source/" \
+            -e "s/@SHA256_X86_64@/$x86_64/" \
+            -e "s/@SHA256_AARCH64@/$aarch64/" \
+            aur/sonora-bin/PKGBUILD > package/PKGBUILD
+          if grep -n '@[A-Z0-9_]*@' package/PKGBUILD; then exit 1; fi
+
+          # A package build downloads every source and checks it against its sum, so a PKGBUILD
+          # that would fail for users never reaches the AUR. makepkg refuses to run as root, and
+          # -d skips installing the runtime dependencies the build itself does not need.
+          useradd -m builder
+          chown -R builder package
+          su builder -c 'cd package && makepkg -f -d --noconfirm && makepkg --printsrcinfo > .SRCINFO'
+          cat package/.SRCINFO
+
+      - name: push to the AUR
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          # The AUR's published ed25519 host key. ssh reads its known_hosts from the passwd home,
+          # which in a job container is not $HOME, so the file is named explicitly.
+          echo "aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN" \
+            > ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+
+          git clone -q ssh://aur@aur.archlinux.org/sonora-bin.git aur-repo
+          cp package/PKGBUILD package/.SRCINFO aur-repo/
+          cd aur-repo
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "::notice::the AUR package is already at ${TAG#v}"
+            exit 0
+          fi
+          git \
+            -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "upgpkg: sonora-bin ${TAG#v}-1"
+          git push origin HEAD:master

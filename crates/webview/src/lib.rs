@@ -62,7 +62,8 @@ pub struct Target {
     pub proof: Vec<String>,
     pub title: String,
     /// A user agent the window presents instead of the backend's default, when the provider
-    /// needs one that matches the engine the backend drives.
+    /// needs one that matches the engine the backend drives. A scripted window without one
+    /// presents the engine's own agent.
     pub agent: Option<String>,
     /// Javascript to run in every page the window loads, before the page's own scripts. A window
     /// with one is a scripted window and is never shown.
@@ -132,6 +133,28 @@ impl Page {
             window,
             retried: false,
         })
+    }
+
+    /// Reads the cookies of a scripted page and leaves it open, so one page can answer many times.
+    /// Every read that finishes comes back as `Cookies` whatever it holds, and `Pending` means a
+    /// read is still out. Call it every few hundred milliseconds or faster.
+    pub fn peek(&mut self) -> Poll {
+        if self.window.closed() {
+            return Poll::Closed;
+        }
+        match self.window.fetch() {
+            Some(cookies) => Poll::Cookies(header(&cookies, &self.target.domain)),
+            None => Poll::Pending,
+        }
+    }
+
+    /// Runs `script` in the page that is loaded now, in the same world as the target's own script.
+    /// Nothing comes back, so a script that has an answer leaves it in a cookie for [`peek`]. A
+    /// page that has not finished setting up yet drops the call.
+    ///
+    /// [`peek`]: Self::peek
+    pub fn run(&self, script: &str) {
+        self.window.run(script);
     }
 
     /// Checks where the window is. Call it every few hundred milliseconds until it stops answering

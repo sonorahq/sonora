@@ -205,18 +205,17 @@ fn cover(album: &AlbumMessage) -> Option<String> {
     wire::image_url(smallest.file_id())
 }
 
+/// The largest cover Spotify lists, which is 640 pixels for nearly every album.
 fn cover_large(album: &AlbumMessage) -> Option<String> {
-    const HEADER: i32 = 300;
-
-    let images = album.cover_group.as_ref()?.image.iter();
-    let usable: Vec<_> = images.filter(|image| image.has_file_id()).collect();
-    let picked = usable
+    let largest = album
+        .cover_group
+        .as_ref()?
+        .image
         .iter()
-        .filter(|image| image.width() >= HEADER)
-        .min_by_key(|image| image.width())
-        .or_else(|| usable.iter().max_by_key(|image| image.width()))?;
+        .filter(|image| image.has_file_id())
+        .max_by_key(|image| wire::image_width(image))?;
 
-    wire::image_url(picked.file_id())
+    wire::image_url(largest.file_id())
 }
 
 fn non_empty(value: Option<&str>) -> Option<&str> {

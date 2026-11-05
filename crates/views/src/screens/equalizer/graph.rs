@@ -1,7 +1,8 @@
 use std::time::{Duration, Instant};
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{App, Context, Entity, EventEmitter, Pixels, Render, Task, Window};
+use gpui::{App, Context, Entity, EventEmitter, Pixels, Render, Task, Window, div};
 use i18n::t;
 use music::Level;
 use music::equalizer::{
@@ -35,9 +36,10 @@ const SPECTRUM_RISE: Duration = Duration::from_millis(700);
 /// About how far apart the spectrum's reads arrive. The levels glide from one read to the next
 /// over this long, by the clock, so a read that comes late does not jolt them.
 const SPECTRUM_GLIDE: Duration = Duration::from_millis(16);
-/// How often the spectrum redraws at most, sixty times a second whatever the screen's rate, since
-/// each redraw rebuilds the page around it.
-const SPECTRUM_FRAME: Duration = Duration::from_micros(16_667);
+/// How long the spectrum waits to redraw between reads while it rises or glides. It is twice the
+/// read tick, so a read arriving on time redraws it first and cancels the wait, and the wait adds
+/// no frame of its own while reads keep coming.
+const SPECTRUM_FRAME: Duration = Duration::from_micros(33_333);
 /// How tall the graph is in cover sizes, with the room of a wide window, and with less.
 const GRAPH_TALL: f32 = 2.8;
 const GRAPH_SHORT: f32 = 2.;
@@ -478,23 +480,42 @@ impl Render for EqualizerGraph {
         let axes = ResponseAxes::new(low as f32..=high as f32, -span..=span)
             .expect("the graph's axes are valid");
 
-        ResponseGraph::new(&self.graph.state, axes)
+        let filters = curve.filters().len();
+
+        // The plot draws on a canvas that screen readers cannot see into, so its box stands in
+        // as one image that says how many filters shape the sound and where the preamp sits.
+        div()
+            .id("equalizer-graph")
+            .role(Role::Image)
+            .aria_label(t!("equalizer-graph"))
+            .aria_description(t!(
+                "equalizer-graph-detail",
+                count = filters,
+                db = figure(preamp, 1)
+            ))
             .size_full()
-            .response(points)
-            .nodes(nodes)
-            .reference(
-                preamp as f32,
-                t!("equalizer-graph-preamp", db = figure(preamp, 1)),
+            .child(
+                ResponseGraph::new(&self.graph.state, axes)
+                    .size_full()
+                    .response(points)
+                    .nodes(nodes)
+                    .reference(
+                        preamp as f32,
+                        t!("equalizer-graph-preamp", db = figure(preamp, 1)),
+                    )
+                    .bypassed(!on)
+                    .reshape(advanced)
+                    .on_edit(
+                        cx.listener(|this, edit: &GraphEdit, _, cx| this.graph_edit(edit, cx)),
+                    ),
             )
-            .bypassed(!on)
-            .reshape(advanced)
-            .on_edit(cx.listener(|this, edit: &GraphEdit, _, cx| this.graph_edit(edit, cx)))
     }
 }
 
 /// The spectrum of what plays, a view of its own that the screen lays under the graph. It redraws
-/// at most every `SPECTRUM_FRAME` while it moves, which leaves the graph over it and the rest of
-/// the page cached.
+/// as each read arrives, in the same frame as the output meter, and between reads at most every
+/// `SPECTRUM_FRAME` while it still rises or glides. The graph over it and the rest of the page
+/// stay cached.
 pub(super) struct EqualizerSpectrum {
     state: ResponseGraphState,
     levels: Vec<Level>,
@@ -504,7 +525,7 @@ pub(super) struct EqualizerSpectrum {
     arrived: Instant,
     /// When the spectrum last arrived after none, which its rise counts from.
     since: Option<Instant>,
-    /// The wait for the next redraw, while one is due.
+    /// The wait for the next redraw between reads, while one is due.
     frame: Option<Task<()>>,
 }
 
@@ -516,7 +537,8 @@ impl EqualizerSpectrum {
                 this.from = this.shown(cx);
                 this.arrived = Instant::now();
                 this.levels = levels.to_vec();
-                this.redraw(cx);
+                this.frame = None;
+                cx.notify();
             }
         })
         .detach();

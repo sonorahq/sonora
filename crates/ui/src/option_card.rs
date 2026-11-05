@@ -6,6 +6,9 @@ use gpui::{
 
 use std::time::Duration;
 
+use i18n::t;
+
+use crate::button::Button;
 use crate::menu::Menu;
 use crate::metrics::Text;
 use crate::motion::{HoverFade, mix};
@@ -61,6 +64,8 @@ pub struct OptionCard {
     dashed: bool,
     tooltip: Option<SharedString>,
     on_click: Option<Click>,
+    /// The tooltip key and handler of the trash button in the thumbnail's corner.
+    delete: Option<(SharedString, Click)>,
 }
 
 impl OptionCard {
@@ -80,6 +85,7 @@ impl OptionCard {
             dashed: false,
             tooltip: None,
             on_click: None,
+            delete: None,
         }
     }
 
@@ -159,6 +165,17 @@ impl OptionCard {
         self.on_click = Some(Box::new(handler));
         self
     }
+
+    /// Puts a trash button in the bottom right corner of the thumbnail, named by the tooltip
+    /// `key`, for an option the user can remove. It works while the card is disabled too.
+    pub fn on_delete(
+        mut self,
+        key: impl Into<SharedString>,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.delete = Some((key.into(), Box::new(handler)));
+        self
+    }
 }
 
 impl Styled for OptionCard {
@@ -190,6 +207,7 @@ impl RenderOnce for OptionCard {
             dashed,
             tooltip,
             on_click,
+            delete,
         } = self;
 
         let theme = *cx.theme();
@@ -203,6 +221,20 @@ impl RenderOnce for OptionCard {
             false => 0.,
         };
         let rest = theme.secondary.opacity(FILL);
+        // The card reads as one radio of its set, or as a button when it is dashed and adds or
+        // opens something. Its tooltip names a card without a label and otherwise follows the
+        // detail, since it says why a disabled card cannot be chosen.
+        let hint = tooltip.as_ref().map(|key| i18n::lookup(key, None));
+        let name = label.clone().or_else(|| hint.clone());
+        let about = [detail.clone(), hint.filter(|_| label.is_some())]
+            .into_iter()
+            .flatten()
+            .map(|part| part.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let variants_name = label
+            .as_ref()
+            .map(|label| t!("option-variants", name = label.to_string()));
 
         let frame = div()
             .relative()
@@ -245,9 +277,40 @@ impl RenderOnce for OptionCard {
                             false => theme.foreground,
                         }),
                 )
+            })
+            // the button keeps its press to itself so the card under it is not chosen too
+            .when_some(delete, |this, (key, handler)| {
+                let corner = theme.metrics.pad / 2.;
+                this.child(
+                    div()
+                        .absolute()
+                        .right(corner)
+                        .bottom(corner)
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(
+                            Button::new((id.clone(), "delete"))
+                                .ghost()
+                                .small()
+                                .icon("icons/trash-2.svg")
+                                .tooltip(key)
+                                .on_click(move |event, window, cx| {
+                                    cx.stop_propagation();
+                                    handler(event, window, cx);
+                                }),
+                        ),
+                )
             });
 
         let mut card = base
+            .role(match dashed {
+                true => gpui::accesskit::Role::Button,
+                false => gpui::accesskit::Role::RadioButton,
+            })
+            .when_some(name, |this, name| this.aria_label(name))
+            .when(!about.is_empty(), |this| this.aria_description(about))
+            .when(!dashed, |this| {
+                this.aria_toggled(gpui::accesskit::Toggled::from(selected))
+            })
             .flex()
             .flex_col()
             .items_center()
@@ -297,11 +360,14 @@ impl RenderOnce for OptionCard {
                             Some(Variants::Menu { key, group, menu }) => Popover::new(key, group)
                                 .max_w_full()
                                 .face(line)
+                                .when_some(variants_name, Popover::name)
                                 .menu((*menu).top(relative(1.)).mt(MENU_GAP).left_0())
                                 .commands()
                                 .into_any_element(),
                             Some(Variants::Ask(handler)) => div()
                                 .id((id.clone(), "variants"))
+                                .role(gpui::accesskit::Role::Button)
+                                .when_some(variants_name, |this, name| this.aria_label(name))
                                 .max_w_full()
                                 .cursor_pointer()
                                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

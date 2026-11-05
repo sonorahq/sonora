@@ -10,22 +10,23 @@ use crate::shared::confirm::{Confirm, Kind};
 use crate::shared::menus::{ItemMenu, new_playlist_menu};
 use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Entity, FontWeight, MouseButton, Pixels, Point, Render, ScrollHandle,
-    SharedString, WeakEntity, Window, div, point, px, relative,
+    AnyElement, App, Context, ElementId, Entity, FontWeight, MouseButton, Pixels, Point, Render,
+    ScrollHandle, SharedString, WeakEntity, Window, div, point, px, relative,
 };
 use i18n::t;
 use music::{Shape, Track};
 use router::{Destination, LibraryTab, navigate};
 use state::{
-    Addition, AppSettings, Library, LibraryPart, LibraryState, Origin, Playback, Scan, Shelf,
-    Sonora,
+    Addition, AppSettings, DownloadsChanged, Library, LibraryPart, LibraryState, Network, Origin,
+    Playback, Scan, Shelf, Sonora,
 };
 use ui::{
     ActiveTheme as _, Button, Card, Deck, FilterChange, LEADING, Mode, Pinnable, Popovers, Popup,
     Scrollbar, Scroller, Sort, SortAxis, TableDelegate, TableEvent, TableSource, TableState, Text,
-    Toggle, Vacancy, Viewport, heading, quantize, runtime, scrolled, snapped, table,
+    Vacancy, Viewport, heading, quantize, runtime, scrolled, snapped, table,
 };
 
 use crate::shared::album_grid::{AlbumGrid, CardGrid};
@@ -177,8 +178,9 @@ impl Tracks for ShelfTracks {
     }
 }
 
+/// Whether a section is still waiting for rows.
 fn loading(library: &Entity<Library>, shelf: Shelf, section: Section, cx: &App) -> bool {
-    library.read(cx).loading(shelf, section.part())
+    library.read(cx).waiting(shelf, section.part(), cx)
 }
 
 pub struct LibraryView {
@@ -238,6 +240,7 @@ impl LibraryView {
 
         let songs = cx.new(|cx| {
             let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(id));
+            crate::shared::tracks::follow_downloads(cx);
             let from = origin(shelf);
             let source = TrackSource::new(
                 LIBRARY_COLUMNS,
@@ -252,9 +255,11 @@ impl LibraryView {
             .from(move |_| Some(from.clone()))
             .with_liked(library.clone())
             .starrable(shelf)
+            .shelved(shelf)
             .table(cx.weak_entity());
-            let mut delegate =
-                TableDelegate::new(source, width, cx).with_sort(TrackField::AddedAt, RECENT, cx);
+            let mut delegate = TableDelegate::new(source, width, cx)
+                .with_column_menu(&PINNED)
+                .with_sort(TrackField::AddedAt, RECENT, cx);
             let (layout, sorting) = stored(Section::Songs, cx);
             delegate.set_layout(layout, cx);
             if let Some(sorting) = sorting {
@@ -266,8 +271,9 @@ impl LibraryView {
             let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(id));
             let menu = ItemMenu::new(playlist_scrollbar, cx);
             let source = AlbumSource::shelved(library.clone(), playback.clone(), menu, shelf);
-            let mut delegate =
-                TableDelegate::new(source, width, cx).with_sort(AlbumField::AddedAt, RECENT, cx);
+            let mut delegate = TableDelegate::new(source, width, cx)
+                .with_column_menu(&PINNED)
+                .with_sort(AlbumField::AddedAt, RECENT, cx);
             let (layout, sorting) = stored(Section::Albums, cx);
             delegate.set_layout(layout, cx);
             if let Some(sorting) = sorting {
@@ -277,11 +283,9 @@ impl LibraryView {
         });
         let playlists = cx.new(|cx| {
             let source = PlaylistSource::shelved(library.clone(), playback.clone(), shelf);
-            let mut delegate = TableDelegate::new(source, width, cx).with_sort(
-                PlaylistField::Modified,
-                RECENT,
-                cx,
-            );
+            let mut delegate = TableDelegate::new(source, width, cx)
+                .with_column_menu(&PINNED)
+                .with_sort(PlaylistField::Modified, RECENT, cx);
             let (layout, sorting) = stored(Section::Playlists, cx);
             delegate.set_layout(layout, cx);
             if let Some(sorting) = sorting {
@@ -291,8 +295,9 @@ impl LibraryView {
         });
         let artists = cx.new(|cx| {
             let source = ArtistSource::shelved(library.clone(), playback.clone(), shelf);
-            let mut delegate =
-                TableDelegate::new(source, width, cx).with_sort(ArtistField::AddedAt, RECENT, cx);
+            let mut delegate = TableDelegate::new(source, width, cx)
+                .with_column_menu(&PINNED)
+                .with_sort(ArtistField::AddedAt, RECENT, cx);
             let (layout, sorting) = stored(Section::Artists, cx);
             delegate.set_layout(layout, cx);
             if let Some(sorting) = sorting {
@@ -304,6 +309,27 @@ impl LibraryView {
         cx.observe(&library, |this, _, cx| {
             this.rebuild(cx);
             this.restore(cx);
+            cx.notify();
+        })
+        .detach();
+        // The Downloaded filter follows downloads as they land, and not each redraw of their
+        // progress, which would drop the open menu and the selection every time.
+        let downloads = Sonora::global(cx).downloads.clone();
+        cx.subscribe(&downloads, |this, _, _: &DownloadsChanged, cx| {
+            let kept = Network::downloads_only(this.shelf, cx);
+            for table in this.tables() {
+                if kept || table.narrowed(cx) {
+                    table.rebuild(cx);
+                }
+            }
+            this.cards_dirty = true;
+            cx.notify();
+        })
+        .detach();
+
+        // Offline mode keeps the shelf to its downloads, so turning it on or off filters again.
+        cx.observe(&Network::global(cx), |this, _, cx| {
+            this.rebuild(cx);
             cx.notify();
         })
         .detach();
@@ -452,26 +478,6 @@ impl LibraryView {
         self.library.read(cx).shape(self.shelf)
     }
 
-    fn column_toggles(&self, cx: &App) -> Vec<Toggle> {
-        self.table(self.section)
-            .toggles(cx)
-            .into_iter()
-            .filter(|toggle| !PINNED.contains(&toggle.key))
-            .collect()
-    }
-
-    fn switch_column(&mut self, key: &str, cx: &mut Context<Self>) {
-        if PINNED.contains(&key) {
-            return;
-        }
-
-        let mut layout = self.table(self.section).layout(cx);
-        layout.toggle(key);
-        self.table(self.section).set_layout(layout, cx);
-        self.persist(self.section, cx);
-        cx.notify();
-    }
-
     fn persist(&mut self, section: Section, cx: &mut Context<Self>) {
         let key = section.key(self.shelf);
         page::store(&self.settings.clone(), self.table(section), key, key, cx);
@@ -512,7 +518,11 @@ impl LibraryView {
             ),
         };
         let shape = self.library.read(cx).shape(self.shelf);
-        Some(Vacancy::new(caption).icon(self.section.glyph(shape)))
+        Some(
+            Vacancy::new(caption)
+                .spoken("library-scanning")
+                .icon(self.section.glyph(shape)),
+        )
     }
 
     fn note(&self, cx: &App) -> Option<Vacancy> {
@@ -522,12 +532,26 @@ impl LibraryView {
         if loading(&self.library, self.shelf, self.section, cx) {
             return None;
         }
+        // Offline mode lists only what was downloaded, and with nothing there it says why.
+        if Network::downloads_only(self.shelf, cx) {
+            let table = self.table(self.section);
+            return match (table.row_count(cx), table.filtering(cx)) {
+                (0, false) => Some(trouble::offline()),
+                (0, true) => {
+                    Some(Vacancy::new(t!("library-no-matches")).spoken("library-no-matches"))
+                }
+                _ => None,
+            };
+        }
+        if loading(&self.library, self.shelf, self.section, cx) {
+            return None;
+        }
         let library = self.library.read(cx);
         let table = self.table(self.section);
         match library.state(self.shelf) {
             LibraryState::Loading => return None,
             LibraryState::Failed(reason) => {
-                return Some(self.lost("library-lost", t!("library-not-loaded"), reason));
+                return Some(self.lost("library-lost", t!("library-not-loaded"), reason, cx));
             }
             _ if table.row_count(cx) > 0 => return None,
             _ => {}
@@ -537,25 +561,35 @@ impl LibraryView {
         let shape = library.shape(self.shelf);
 
         Some(match (table.filtering(cx), problem) {
-            (true, _) => Vacancy::new(t!("library-no-matches")),
-            (false, Some(reason)) => {
-                self.lost("library-part-lost", t!("library-part-not-loaded"), reason)
-            }
+            (true, _) => Vacancy::new(t!("library-no-matches")).spoken("library-no-matches"),
+            (false, Some(reason)) => self.lost(
+                "library-part-lost",
+                t!("library-part-not-loaded"),
+                reason,
+                cx,
+            ),
             (false, None) => {
                 Vacancy::new(i18n::lookup(self.section.vacancy(self.shelf, shape), None))
+                    .spoken("library-vacancy")
                     .icon(self.section.glyph(shape))
             }
         })
     }
 
     /// The state a shelf that did not load shows, with a button that loads it again.
-    fn lost(&self, id: &'static str, label: SharedString, reason: &str) -> Vacancy {
+    fn lost(&self, id: &'static str, label: SharedString, reason: &str, cx: &App) -> Vacancy {
         let library = self.library.clone();
         let shelf = self.shelf;
 
-        trouble::lost(id, label, Some(reason), move |_, _, cx| {
-            library.update(cx, |library, cx| library.refresh(shelf, cx));
-        })
+        trouble::lost(
+            id,
+            label,
+            Some(reason),
+            move |_, _, cx| {
+                library.update(cx, |library, cx| library.refresh(shelf, cx));
+            },
+            cx,
+        )
     }
 
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -634,7 +668,6 @@ impl LibraryView {
                     .gap_2()
                     .child(HeroPlayButton::listed(
                         "play-library",
-                        t!("library-play-liked-songs"),
                         self.tracks(),
                         self.playback.clone(),
                     ))
@@ -812,6 +845,47 @@ impl LibraryView {
         }
     }
 
+    /// Whether the shown section is still loading its first rows, the one time the page draws
+    /// skeletons in place of its cards.
+    fn waiting(&self, cx: &App) -> bool {
+        loading(&self.library, self.shelf, self.section, cx)
+            && self.table(self.section).row_count(cx) == 0
+    }
+
+    /// Skeleton cards laid out like the deck that will replace them, enough rows to fill the
+    /// window. Artists get round ones, like their cards.
+    fn pending_cards(&self, window: &Window, cx: &App) -> AnyElement {
+        let inset = cx.theme().metrics.inset;
+        let room = cells::content_width(window, page::reserved(inset), cx);
+        let layout = CardGrid::layout(room);
+        let gap = deck_gap(window);
+        let tile = Card::tile_height(layout.card, window, cx);
+        let rows = (window.viewport_size().height / (tile + gap))
+            .ceil()
+            .max(1.) as usize;
+        let circle = self.section == Section::Artists;
+
+        Scroller::new("library-cards", &self.card_scrollbar)
+            .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .py(inset)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .px(inset)
+                    .gap(gap)
+                    .children((0..rows).map(|row| {
+                        CardGrid::new(room).children((0..layout.columns).map(move |column| {
+                            Card::skeleton(("library-pending", row * layout.columns + column))
+                                .tile(layout.card)
+                                .when(circle, Card::circle)
+                                .into_any_element()
+                        }))
+                    })),
+            )
+            .into_any_element()
+    }
+
     fn cards(&mut self, window: &Window, cx: &App) -> AnyElement {
         let theme = *cx.theme();
         let inset = theme.metrics.inset;
@@ -909,7 +983,7 @@ impl LibraryView {
 
                                 div()
                                     .px(inset)
-                                    .children(label.map(|label| head(label, cx)))
+                                    .children(label.map(|label| head(*display, label, cx)))
                                     .into_any_element()
                             }
                             DeckRow::Cards(cards) => {
@@ -963,9 +1037,16 @@ impl LibraryView {
         let pin = track.pin();
         let context = track.clone();
         let view = self.me.clone();
+        let total = listing.read(cx).delegate().row_count();
+        let id: ElementId = match &track.id {
+            Some(id) => SharedString::from(format!("library-track-{id}")).into(),
+            None => ("library-track", display).into(),
+        };
 
         Some(
-            Card::new(("library-track", display), SharedString::from(track.name))
+            Card::new(id, SharedString::from(track.name))
+                .aria_position_in_set(display + 1)
+                .aria_size_of_set(total)
                 .tile(card)
                 .cover(track.cover)
                 .when_some(pin, Pinnable::pin)
@@ -1018,15 +1099,19 @@ impl LibraryView {
         cx: &App,
     ) -> Option<AnyElement> {
         let playlist = self.playlists.read(cx).delegate().source().at(row, cx)?;
+        let total = self.playlists.read(cx).delegate().row_count();
         let build = match self.shelf.local() {
             true => cards::imported_playlist_card,
             false => cards::playlist_card,
         };
+        let id = SharedString::from(format!("library-playlist-{}", playlist.id));
 
         Some(
-            build(("library-playlist", display), &playlist, &self.playback, cx)
+            build(id, &playlist, &self.playback, cx)
                 .tile(card)
                 .flat()
+                .aria_position_in_set(display + 1)
+                .aria_size_of_set(total)
                 .into_any_element(),
         )
     }
@@ -1039,11 +1124,15 @@ impl LibraryView {
         cx: &App,
     ) -> Option<AnyElement> {
         let artist = self.artists.read(cx).delegate().source().at(row, cx)?;
+        let total = self.artists.read(cx).delegate().row_count();
+        let id = SharedString::from(format!("library-artist-{}", artist.id));
 
         Some(
-            cards::artist_card(("library-artist", display), &artist, &self.playback, cx)
+            cards::artist_card(id, &artist, &self.playback, cx)
                 .tile(card)
                 .flat()
+                .aria_position_in_set(display + 1)
+                .aria_size_of_set(total)
                 .into_any_element(),
         )
     }
@@ -1075,9 +1164,12 @@ impl Render for LibraryView {
                     .source()
                     .menu()
                     .for_track(&track, cx),
-                LibraryMenu::Background => new_playlist_menu(cx.listener(|this, _, window, cx| {
-                    this.create_playlist(window, cx);
-                })),
+                LibraryMenu::Background => new_playlist_menu(
+                    self.shelf,
+                    cx.listener(|this, _, window, cx| {
+                        this.create_playlist(window, cx);
+                    }),
+                ),
             };
             Popup::new(position, menu).on_close(cx.listener(|this, _, _, cx| {
                 this.context_menu = None;
@@ -1107,6 +1199,7 @@ impl Render for LibraryView {
                 .child(self.table(self.section).element())
                 .when_some(note, |this, note| this.child(note))
                 .into_any_element(),
+            (_, Mode::Grid) if note.is_none() && self.waiting(cx) => self.pending_cards(window, cx),
             (_, Mode::Grid) => match note {
                 Some(note) => note.size_full().into_any_element(),
                 None => self.cards(window, cx),
@@ -1186,18 +1279,9 @@ impl Tooled for LibraryView {
     }
 
     fn tools(&self, cx: &App) -> Vec<AnyElement> {
-        let columned = self.me.clone();
         let filtered = self.me.clone();
         let sorted = self.me.clone();
         let viewed = self.me.clone();
-
-        let columns = matches!(self.mode(), Mode::List).then(|| {
-            tools::columns(&self.popovers, self.column_toggles(cx), move |key, cx| {
-                columned
-                    .update(cx, |view, cx| view.switch_column(key, cx))
-                    .ok();
-            })
-        });
 
         let created = self.me.clone();
         let create = (self.section == Section::Playlists).then(|| {
@@ -1214,9 +1298,25 @@ impl Tooled for LibraryView {
                 .into_any_element()
         });
 
+        let import = (self.section == Section::Playlists && self.shelf.local()).then(|| {
+            Button::new("import-playlist")
+                .icon("icons/file-music.svg")
+                .tooltip("menu-import-playlist")
+                .small()
+                .ghost()
+                .on_click(|_, _, cx| local::import_playlist(cx))
+                .into_any_element()
+        });
+
         let mut tools = Vec::new();
         tools.extend(create);
-        tools.extend(columns);
+        tools.extend(import);
+        let switchable = !self.section.listing();
+        tools.extend(switchable.then(|| {
+            tools::views(&self.popovers, self.mode(), move |mode, cx| {
+                viewed.update(cx, |view, cx| view.set_mode(mode, cx)).ok();
+            })
+        }));
         // A section keeps its funnel while anything is narrowed, even once the axes have gone
         // with the rows, or an empty result would lock the filter that emptied it in place.
         let table = self.table(self.section);
@@ -1240,12 +1340,6 @@ impl Tooled for LibraryView {
             },
             cx,
         ));
-        let switchable = !self.section.listing();
-        tools.extend(switchable.then(|| {
-            tools::views(&self.popovers, self.mode(), move |mode, cx| {
-                viewed.update(cx, |view, cx| view.set_mode(mode, cx)).ok();
-            })
-        }));
         tools
     }
 }
@@ -1309,8 +1403,12 @@ fn deck_row(rows: &[DeckRow], key: DeckKey) -> Option<usize> {
     })
 }
 
-fn head(label: SharedString, cx: &App) -> AnyElement {
-    heading(label, cx)
+fn head(display: usize, label: SharedString, cx: &App) -> AnyElement {
+    heading(label.clone(), cx)
+        .id(("library-group", display))
+        .role(Role::Heading)
+        .aria_level(2)
+        .aria_label(label)
         .w_full()
         .pt_2()
         .line_height(relative(LEADING))

@@ -14,17 +14,35 @@ use serde_json::{Value, json};
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 
+use crate::cover::{self, CoverLimits};
 use crate::deezer::{decrypt, wire};
 use crate::engine::Loudness;
 use crate::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, ArtistRef, Encoding, HomeFeed,
-    MediaKind, MusicApi, Offer, Playlist, PlaylistDetail, Quality, SUGGESTIONS, SavedArtist, Track,
-    UserProfile, distinct_covers, escape,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, ArtistRef, Encoding, Genre,
+    GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Offer, Playlist,
+    PlaylistDetail, Quality, SUGGESTIONS, SavedArtist, Track, UserProfile, distinct_covers, escape,
 };
 
 const GATEWAY: &str = "https://www.deezer.com/ajax/gw-light.php";
 const PUBLIC: &str = "https://api.deezer.com";
 const MEDIA: &str = "https://media.deezer.com/v1/get_url";
+/// Trades the `arl` cookie for the short-lived bearer token the newer Deezer hosts take.
+const ARL_LOGIN: &str = "https://auth.deezer.com/login/arl?jo=p&rto=c&i=c";
+/// Where the web app uploads a playlist picture, answering a token that names it.
+const PICTURE_UPLOAD: &str = "https://upload.deezer.com/v2/playlist/picture";
+/// Deezer's GraphQL endpoint, which the web app edits a playlist's picture through.
+const PIPE: &str = "https://pipe.deezer.com/api";
+/// The web app redraws every playlist picture as a 1200 pixel JPEG before it uploads one.
+const COVER_LIMITS: CoverLimits = CoverLimits {
+    side: 1200,
+    bytes: 4 * 1024 * 1024,
+};
+const SET_PICTURE: &str = "mutation UpdatePlaylist($input: PlaylistUpdateMutationInput!) { \
+    updatePlaylist(input: $input) { playlist { id } } }";
+const RESET_PICTURE: &str = "mutation ResetDefaultPlaylistCover($input: ResetDefaultPlaylistCoverInput!) { \
+    resetDefaultPlaylistCover(input: $input) { __typename \
+    ... on ResetDefaultPlaylistCoverMutationOutput { playlist { id } } \
+    ... on ResetDefaultPlaylistCoverMutationError { playlistNotFound userIsNotPlaylistOwner isLovedTracksPlaylist } } }";
 
 /// The audio formats `get_url` knows, best first. The license decides which ones come back.
 const FORMATS: [&str; 3] = ["FLAC", "MP3_320", "MP3_128"];
@@ -60,12 +78,50 @@ const LIBRARY_PAGE: u32 = 2000;
 /// How many releases an artist page asks for. Deezer answers this many in one page, and even
 /// Bach comes to fewer than five hundred.
 const DISCOGRAPHY: u32 = 1000;
+/// How many top tracks playing an artist starts with, which is all the public api ranks.
+const TOP_SONGS: u32 = 100;
+/// The page sizes for releases and their embedded songs while building an artist's queue.
+const WHOLE_RELEASES: u32 = 100;
+const RELEASE_SONGS: u32 = 1000;
 
 const PORTRAIT_LIMIT: usize = 24;
 /// How many related artists lend their albums to a thin rail, and how many albums each
 /// lends.
 const SIMILAR_ARTISTS: usize = 6;
 const SIMILAR_RELEASES: usize = 2;
+
+/// The page `page.get` lists every channel on, sorted into categories, genres and podcasts.
+const EXPLORE: &str = "channels/explore";
+
+/// The card kinds Sonora draws, which `page.get` is told it may answer for each layout. A
+/// layout or kind left out here never comes back, and a page told nothing answers no sections.
+const CARDS: [&str; 7] = [
+    "album",
+    "artist",
+    "channel",
+    "flow",
+    "playlist",
+    "smarttracklist",
+    "track",
+];
+/// The layouts that may hold cards of any kind.
+const GRIDS: [&str; 9] = [
+    "grid",
+    "grid-preview-one",
+    "grid-preview-two",
+    "horizontal-grid",
+    "item-highlight",
+    "large-card",
+    "long-card-horizontal-grid",
+    "slideshow",
+    "small-horizontal-grid",
+];
+/// The layouts that only list tracks.
+const LISTS: [&str; 2] = ["horizontal-list", "list"];
+
+/// How many times a Flow is asked for tracks when its page opens. Each answer holds about a
+/// dozen, drawn afresh every time.
+const FLOW_ROUNDS: usize = 4;
 
 /// The public api allows fifty calls per five seconds from one address, so calls leave one
 /// at a time this far apart. A call above the limit waits for its slot instead of being
@@ -103,6 +159,9 @@ struct Session {
     /// The `checkForm` token every later gateway call carries.
     api_token: String,
     license_token: String,
+    /// Where in `FORMATS` the best format the plan covers sits. It stays 0, every format, when
+    /// the account says nothing about its plan.
+    plan: usize,
 }
 
 #[derive(Clone)]
@@ -122,6 +181,9 @@ struct Inner {
     /// Artist portraits already looked up, so a search that ranks the same artists on
     /// every keystroke does not spend the quota on them again.
     portraits: Mutex<HashMap<String, String>>,
+    /// The Flow cards a page has shown, by playlist id. No call describes a Flow on its own, so
+    /// its page takes the name and picture from here.
+    flows: Mutex<HashMap<String, Playlist>>,
 }
 
 /// A track's audio as it starts to arrive, with the key that decrypts it and what the gateway
@@ -129,6 +191,9 @@ struct Inner {
 pub struct Opened {
     pub response: reqwest::Response,
     pub key: decrypt::Secret,
+    /// The id the stream belongs to, which differs from the one asked for when Deezer
+    /// substitutes another release of the same recording. The key is derived from it.
+    pub effective_id: String,
     pub duration: Option<Duration>,
     /// The gateway's `GAIN`. Despite the name it is the track's integrated loudness rather than
     /// an adjustment, and it lands within about a decibel of Apple's LUFS for the same
@@ -140,6 +205,27 @@ impl DeezerClient {
     /// Signs in with an `arl` cookie: fetches the user data (which validates the cookie) and
     /// the stream secret. An invalid or expired arl answers a user id of 0.
     pub async fn connect(arl: &str) -> Result<Self> {
+        let client = Self::unopened(arl)?;
+        client.ping().await?;
+        client.refresh().await?;
+        if client.inner.session.read().await.profile.id.is_empty() {
+            bail!("the arl was refused; sign in to deezer.com again");
+        }
+        let secret = decrypt::secret(&client.inner.http).await;
+        // set once here, before the client is cloned anywhere
+        client.inner.secret.set(secret).ok();
+        Ok(client)
+    }
+
+    /// A client for `arl` that has not reached Deezer, holding the last known stream secret. It
+    /// can derive the key of a downloaded track and do nothing else until it connects.
+    pub fn offline(arl: &str) -> Result<Self> {
+        let client = Self::unopened(arl)?;
+        client.inner.secret.set(decrypt::FALLBACK).ok();
+        Ok(client)
+    }
+
+    fn unopened(arl: &str) -> Result<Self> {
         let http = reqwest::Client::builder()
             .user_agent("Mozilla/5.0 (X11; Linux x86_64; rv:142.0) Gecko/20100101 Firefox/142.0")
             .build()
@@ -157,20 +243,14 @@ impl DeezerClient {
                     },
                     api_token: String::new(),
                     license_token: String::new(),
+                    plan: 0,
                 }),
                 secret: OnceLock::new(),
                 slot: Mutex::new(Instant::now()),
                 portraits: Mutex::new(HashMap::new()),
+                flows: Mutex::new(HashMap::new()),
             }),
         };
-        client.ping().await?;
-        client.refresh().await?;
-        if client.inner.session.read().await.profile.id.is_empty() {
-            bail!("the arl was refused; sign in to deezer.com again");
-        }
-        let secret = decrypt::secret(&client.inner.http).await;
-        // set once here, before the client is cloned anywhere
-        client.inner.secret.set(secret).ok();
         Ok(client)
     }
 
@@ -210,15 +290,113 @@ impl DeezerClient {
         let license_token = wire::text(&user["OPTIONS"], &["license_token"])
             .unwrap_or_default()
             .to_owned();
+        let plan = plan(&user["OPTIONS"]);
         let mut session = self.inner.session.write().await;
         session.profile = profile;
         session.api_token = api_token;
         session.license_token = license_token;
+        session.plan = plan;
         Ok(())
+    }
+
+    /// The format a track is first offered in at `quality` on this account's plan, which is the
+    /// one it streams as unless the track lacks it.
+    pub async fn served(&self, quality: Quality) -> &'static str {
+        let plan = self.inner.session.read().await.plan;
+        let first = FORMATS.len() - formats_from(quality).len();
+        FORMATS[first.max(plan).min(FORMATS.len() - 1)]
     }
 
     async fn user_id(&self) -> String {
         self.inner.session.read().await.profile.id.clone()
+    }
+
+    /// A bearer token for `auth.deezer.com`'s newer hosts, minted from the `arl`. It lives a
+    /// few minutes, so each use asks for a fresh one.
+    async fn jwt(&self) -> Result<String> {
+        let answer: Value = self
+            .inner
+            .http
+            .post(ARL_LOGIN)
+            .header("Cookie", format!("arl={}", self.inner.arl))
+            .header("Accept", "application/json")
+            .header("Content-Length", "0")
+            .send()
+            .await
+            .context("cannot reach deezer's login")?
+            .error_for_status()
+            .context("deezer refused the arl login")?
+            .json()
+            .await
+            .context("deezer's login answered no json")?;
+        wire::text(&answer, &["jwt"])
+            .filter(|jwt| !jwt.is_empty())
+            .map(str::to_owned)
+            .context("deezer's login answered no token")
+    }
+
+    /// Uploads a JPEG as a playlist picture and answers the token `updatePlaylist` takes.
+    async fn upload_picture(&self, jwt: &str, jpeg: Vec<u8>) -> Result<String> {
+        let boundary = format!("sonora{:016x}", fastrand::u64(..));
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"cover.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend_from_slice(&jpeg);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let answer: Value = self
+            .inner
+            .http
+            .post(PICTURE_UPLOAD)
+            .bearer_auth(jwt)
+            .header(
+                "Content-Type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(body)
+            .send()
+            .await
+            .context("cannot reach deezer's upload")?
+            .error_for_status()
+            .context("deezer refused the picture")?
+            .json()
+            .await
+            .context("deezer's upload answered no json")?;
+        match &answer["error"] {
+            Value::Object(map) if !map.is_empty() => bail!("deezer refused the picture: {map:?}"),
+            Value::Array(list) if !list.is_empty() => bail!("deezer refused the picture: {list:?}"),
+            _ => {}
+        }
+        wire::text(&answer, &["results"])
+            .filter(|token| !token.is_empty())
+            .map(str::to_owned)
+            .context("deezer's upload answered no picture")
+    }
+
+    /// Runs one GraphQL mutation on `pipe.deezer.com` and fails on any error it reports.
+    async fn pipe(&self, jwt: &str, query: &str, input: Value) -> Result<Value> {
+        let answer: Value = self
+            .inner
+            .http
+            .post(PIPE)
+            .bearer_auth(jwt)
+            .header("Origin", "https://www.deezer.com")
+            .json(&json!({ "query": query, "variables": { "input": input } }))
+            .send()
+            .await
+            .context("cannot reach deezer's pipe")?
+            .error_for_status()
+            .context("deezer's pipe refused the request")?
+            .json()
+            .await
+            .context("deezer's pipe answered no json")?;
+        if let Some(errors) = answer["errors"]
+            .as_array()
+            .filter(|errors| !errors.is_empty())
+        {
+            bail!("deezer's pipe reported {errors:?}");
+        }
+        Ok(answer)
     }
 
     /// A gateway call with the current api token. One retry with a refreshed token when the
@@ -435,6 +613,116 @@ impl DeezerClient {
             .collect())
     }
 
+    /// One page of the web player's own layout, such as `home` or `channels/metal`, as
+    /// `page.get` answers it with the cards Sonora draws.
+    async fn page(&self, page: &str) -> Result<Value> {
+        let mut support = serde_json::Map::new();
+        for layout in GRIDS {
+            support.insert(layout.to_owned(), json!(CARDS));
+        }
+        for layout in LISTS {
+            support.insert(layout.to_owned(), json!(["track"]));
+        }
+        support.insert("filterable-grid".to_owned(), json!(["flow"]));
+        self.gw(
+            "page.get",
+            json!({ "PAGE": page, "VERSION": "2.5", "SUPPORT": support, "LANG": "en" }),
+        )
+        .await
+        .with_context(|| format!("cannot load the deezer page {page}"))
+    }
+
+    /// A page's title and the shelves on it. The Flow cards among them are remembered, so a
+    /// Flow's own page can name it.
+    async fn shelves(&self, page: &str) -> Result<(String, Vec<GenreSection>)> {
+        let results = self.page(page).await?;
+        let title = wire::text(&results, &["title"])
+            .unwrap_or_default()
+            .to_owned();
+        let user_id = self.user_id().await;
+        let sections = wire::sections(&results, &user_id, &title);
+        let mut flows = lock(&self.inner.flows);
+        for item in sections.iter().flat_map(|section| &section.items) {
+            if let GenreItem::Playlist(playlist) = item
+                && playlist.id.starts_with(wire::FLOW)
+            {
+                flows.insert(playlist.id.clone(), playlist.clone());
+            }
+        }
+        drop(flows);
+        Ok((title, sections))
+    }
+
+    /// A smart tracklist with its tracks, such as a daily mix or the weekly discovery.
+    async fn smart_tracklist(&self, smart_id: &str) -> Result<PlaylistDetail> {
+        let results = self
+            .gw(
+                "deezer.pageSmartTracklist",
+                json!({ "SMARTTRACKLIST_ID": smart_id, "start": 0, "nb": LIBRARY_PAGE }),
+            )
+            .await
+            .with_context(|| format!("cannot load the smart tracklist {smart_id}"))?;
+        let tracks = results
+            .get("SONGS")
+            .map(wire::track_list)
+            .unwrap_or_default();
+        let mut playlist = wire::smart_tracklist(&results["DATA"])
+            .with_context(|| format!("cannot read the smart tracklist {smart_id}"))?;
+        playlist.track_count = tracks.len() as u32;
+        if playlist.cover.is_none() {
+            playlist.cover = tracks.iter().find_map(|track| track.cover.clone());
+        }
+        Ok(PlaylistDetail {
+            playlist,
+            tracks,
+            continuation: None,
+        })
+    }
+
+    /// A stretch of the Flow with config `config`. Deezer deals a Flow out a dozen tracks at a
+    /// time and never the same way twice, so it is asked `FLOW_ROUNDS` times at once and the
+    /// tracks dealt more than once are kept once. It fails only when every round does.
+    async fn flow(&self, config: &str) -> Result<PlaylistDetail> {
+        let user_id = self.user_id().await;
+        let body = json!({ "user_id": user_id, "config_id": config });
+        let rounds = futures::future::join_all(
+            (0..FLOW_ROUNDS).map(|_| self.gw("radio.getUserRadio", body.clone())),
+        )
+        .await;
+        let mut seen = HashSet::new();
+        let mut tracks = Vec::new();
+        let mut failure = None;
+        for round in rounds {
+            match round {
+                Ok(results) => tracks.extend(
+                    wire::track_list(&results)
+                        .into_iter()
+                        .filter(|track| seen.insert(track.id.clone())),
+                ),
+                Err(error) => failure = Some(error),
+            }
+        }
+        if let (true, Some(error)) = (tracks.is_empty(), failure) {
+            return Err(error.context(format!("cannot load the flow {config}")));
+        }
+        let id = format!("{}{config}", wire::FLOW);
+        let known = lock(&self.inner.flows).get(&id).cloned();
+        let mut playlist = match known {
+            Some(playlist) => playlist,
+            None => wire::flow(&json!({ "id": config }))
+                .with_context(|| format!("cannot read the flow {config}"))?,
+        };
+        playlist.track_count = tracks.len() as u32;
+        if playlist.cover.is_none() {
+            playlist.cover = tracks.iter().find_map(|track| track.cover.clone());
+        }
+        Ok(PlaylistDetail {
+            playlist,
+            tracks,
+            continuation: None,
+        })
+    }
+
     /// The full gateway record of one track: metadata plus the `TRACK_TOKEN` playback needs.
     /// A region-locked track comes with a `FALLBACK` record of another release of the same
     /// song, and that one is what plays.
@@ -488,11 +776,11 @@ impl DeezerClient {
                         .context("cannot stream the deezer track")?
                         .error_for_status()
                         .context("the deezer cdn refused the stream")?;
-                    let secret = self.inner.secret.get().copied().unwrap_or_default();
-                    let key = decrypt::track_key(&effective_id, &secret);
+                    let key = self.track_key(&effective_id);
                     return Ok(Opened {
                         response,
                         key,
+                        effective_id,
                         duration,
                         loudness,
                     });
@@ -502,6 +790,12 @@ impl DeezerClient {
             }
         }
         Err(last.context("the deezer track has no playable stream"))
+    }
+
+    /// The Blowfish key of the stream with id `effective_id`, which needs nothing from the network.
+    pub fn track_key(&self, effective_id: &str) -> decrypt::Secret {
+        let secret = self.inner.secret.get().copied().unwrap_or_default();
+        decrypt::track_key(effective_id, &secret)
     }
 
     /// One `get_url` attempt for one format. None when the license does not cover it.
@@ -536,7 +830,11 @@ impl DeezerClient {
 
 #[async_trait]
 impl MusicApi for DeezerClient {
+    /// No link for a smart tracklist or a Flow, since Deezer makes each for one listener.
     fn share_url(&self, kind: MediaKind, id: &str) -> Option<String> {
+        if id.starts_with(wire::SMART) || id.starts_with(wire::FLOW) {
+            return None;
+        }
         let kind = match kind {
             MediaKind::Track => "track",
             MediaKind::Album => "album",
@@ -577,6 +875,7 @@ impl MusicApi for DeezerClient {
                 .or_else(|| detail.get("picture_big"))
                 .and_then(Value::as_str)
                 .map(str::to_owned),
+            banner: None,
             biography: None,
             monthly_listeners: wire::number(&detail, &["nb_fan"]),
             top_tracks: top.map(|page| wire::track_list(&page)).unwrap_or_default(),
@@ -593,6 +892,102 @@ impl MusicApi for DeezerClient {
                 })
                 .unwrap_or_default(),
         })
+    }
+
+    /// Keeps Deezer's top hundred first, then ranks the artist's releases by song rank.
+    /// If the gateway fails, playback keeps the songs already read.
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        let top_path = format!(
+            "/artist/{}/top?limit={TOP_SONGS}",
+            escape::component(artist_id)
+        );
+        let mut discography = json!({
+            "art_id": artist_id,
+            "discography_mode": "all",
+            "filter_role_id": [0],
+            "nb": WHOLE_RELEASES,
+            "nb_songs": RELEASE_SONGS,
+            "start": 0,
+        });
+        let (top, first) = tokio::join!(
+            self.public(&top_path),
+            self.gw("album.getDiscography", discography.clone()),
+        );
+        let mut tracks = wire::track_list(&top.context("cannot load the artist's top tracks")?);
+        let mut answer = first;
+        let mut start = 0;
+        let mut seen = HashSet::new();
+        let mut ranked = Vec::new();
+        loop {
+            let releases = match answer {
+                Ok(releases) => releases,
+                Err(error) => {
+                    log::warn!("deezer: cannot read the songs of artist {artist_id}: {error:#}");
+                    break;
+                }
+            };
+            let Some(releases) = releases["data"].as_array() else {
+                break;
+            };
+            let mut fresh = false;
+            for release in releases {
+                let Some(id) = wire::id(&release["ALB_ID"]) else {
+                    continue;
+                };
+                if !seen.insert(id.clone()) {
+                    continue;
+                }
+                fresh = true;
+                let songs = &release["SONGS"];
+                ranked.extend(
+                    songs["data"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|song| {
+                            Some((
+                                wire::number(song, &["RANK_SNG"]).unwrap_or(0),
+                                wire::track(song)?,
+                            ))
+                        }),
+                );
+                let mut offset = songs["data"].as_array().map_or(0, Vec::len);
+                let total = wire::number(songs, &["total"]).unwrap_or(offset as u64);
+                while (offset as u64) < total {
+                    let path = format!(
+                        "/album/{}/tracks?index={offset}&limit={RELEASE_SONGS}",
+                        escape::component(&id)
+                    );
+                    let page = match self.public(&path).await {
+                        Ok(page) => page,
+                        Err(error) => {
+                            log::warn!("deezer: cannot read more songs of album {id}: {error:#}");
+                            break;
+                        }
+                    };
+                    let Some(songs) = page["data"].as_array().filter(|songs| !songs.is_empty())
+                    else {
+                        break;
+                    };
+                    offset += songs.len();
+                    ranked.extend(songs.iter().filter_map(|song| {
+                        Some((
+                            wire::number(song, &["rank"]).unwrap_or(0),
+                            wire::track(song)?,
+                        ))
+                    }));
+                }
+            }
+            if !fresh || releases.len() < WHOLE_RELEASES as usize {
+                break;
+            }
+            start += releases.len();
+            discography["start"] = json!(start);
+            answer = self.gw("album.getDiscography", discography.clone()).await;
+        }
+        ranked.sort_by_key(|(rank, _)| std::cmp::Reverse(*rank));
+        tracks.extend(ranked.into_iter().map(|(_, track)| track));
+        Ok(crate::artist_songs(tracks, artist_id))
     }
 
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
@@ -732,6 +1127,34 @@ impl MusicApi for DeezerClient {
         bail!("deezer cannot change a playlist's visibility")
     }
 
+    async fn set_playlist_cover(&self, playlist_id: &str, image: Option<&[u8]>) -> Result<()> {
+        let jwt = self.jwt().await?;
+        match image {
+            Some(image) => {
+                let jpeg = cover::square_jpeg(image, COVER_LIMITS)?;
+                let picture = self.upload_picture(&jwt, jpeg).await?;
+                self.pipe(
+                    &jwt,
+                    SET_PICTURE,
+                    json!({ "playlistId": playlist_id, "picture": picture }),
+                )
+                .await
+                .context("cannot attach the picture")?;
+            }
+            None => {
+                let answer = self
+                    .pipe(&jwt, RESET_PICTURE, json!({ "playlistId": playlist_id }))
+                    .await
+                    .context("cannot reset the picture")?;
+                let reset = &answer["data"]["resetDefaultPlaylistCover"];
+                if reset["__typename"] != "ResetDefaultPlaylistCoverMutationOutput" {
+                    bail!("deezer would not reset the picture: {reset}");
+                }
+            }
+        }
+        Ok(())
+    }
+
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
         self.gw(
             "playlist.addSongs",
@@ -764,8 +1187,8 @@ impl MusicApi for DeezerClient {
 
     async fn set_album_saved(&self, album_id: &str, saved: bool) -> Result<()> {
         let method = match saved {
-            true => "favorite_album.add",
-            false => "favorite_album.remove",
+            true => "album.addFavorite",
+            false => "album.deleteFavorite",
         };
         self.favorite(method, "ALB_ID", album_id).await
     }
@@ -883,7 +1306,14 @@ impl MusicApi for DeezerClient {
         })
     }
 
+    /// A playlist, or a smart tracklist or Flow wearing a playlist's id.
     async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail> {
+        if let Some(smart_id) = playlist_id.strip_prefix(wire::SMART) {
+            return self.smart_tracklist(smart_id).await;
+        }
+        if let Some(config) = playlist_id.strip_prefix(wire::FLOW) {
+            return self.flow(config).await;
+        }
         // the gateway, not the public api: only it can see the user's private playlists
         let results = self
             .gw(
@@ -994,8 +1424,31 @@ impl MusicApi for DeezerClient {
             .collect())
     }
 
+    /// The web player's home page, shelf for shelf.
     async fn home(&self) -> Result<HomeFeed> {
-        Ok(HomeFeed::default())
+        let (_, sections) = self.shelves("home").await?;
+        Ok(HomeFeed {
+            sections,
+            ..HomeFeed::default()
+        })
+    }
+
+    async fn genres(&self) -> Result<Vec<Genre>> {
+        let page = self.page(EXPLORE).await?;
+        let mut seen = HashSet::new();
+        Ok(wire::explore(&page)
+            .into_iter()
+            .filter(|genre| seen.insert(genre.id.clone()))
+            .collect())
+    }
+
+    /// A channel page, whose id is the path `page.get` opens it by.
+    async fn genre(&self, genre_id: &str) -> Result<GenreDetail> {
+        if !genre_id.starts_with("channels/") {
+            bail!("{genre_id} is not a deezer channel");
+        }
+        let (name, sections) = self.shelves(genre_id).await?;
+        Ok(GenreDetail { name, sections })
     }
 }
 
@@ -1004,6 +1457,28 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Where in `FORMATS` the best format a plan covers sits, from the `OPTIONS` of
+/// `deezer.getUserData`. A level the options do not mention counts as covered, so an account
+/// that says nothing about its plan is asked for every format.
+fn plan(options: &Value) -> usize {
+    let covers = |keys: [&str; 2]| {
+        let flags = keys
+            .iter()
+            .filter_map(|key| options.get(key))
+            .filter_map(|value| value.as_bool().or_else(|| value.as_u64().map(|on| on != 0)))
+            .collect::<Vec<_>>();
+        flags.is_empty() || flags.contains(&true)
+    };
+    match (
+        covers(["web_lossless", "mobile_lossless"]),
+        covers(["web_hq", "mobile_hq"]),
+    ) {
+        (true, _) => 0,
+        (false, true) => 1,
+        (false, false) => 2,
+    }
 }
 
 /// The formats to try for a level, from its own down to the lowest.

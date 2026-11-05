@@ -1,8 +1,9 @@
 use std::rc::Rc;
 
+use gpui::accesskit::{Role, Toggled};
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Div, ElementId, SharedString, Window, div};
-use ui::{ActiveTheme as _, Button, Room, TabBar};
+use ui::{ActiveTheme as _, Button, OptionCard, Room, TabBar};
 
 use super::SettingsView;
 
@@ -11,12 +12,15 @@ type Pick<T> = Rc<dyn Fn(&T, &mut Window, &mut App)>;
 
 /// One row of a group: the label and optional explanation at the start, the control at the end.
 /// It stands at least one list row tall, with no inset, so labels line up with group headings.
+/// The label and explanation are text in the accessibility tree, but nothing ties them to the
+/// control, so the caller names a switch, picker or segmented control after the row as well.
 #[derive(IntoElement)]
 pub(crate) struct Row {
     title: SharedString,
     detail: Option<SharedString>,
     control: AnyElement,
     disabled: bool,
+    yielding: bool,
 }
 
 impl Row {
@@ -26,10 +30,19 @@ impl Row {
             detail: None,
             control,
             disabled: false,
+            yielding: false,
         }
     }
 
-    /// Adds a muted explanation below the label, wrapping within the space beside the control.
+    /// Lets the control give up width before the label does, for a text field that still works
+    /// narrowed while a cut label says nothing.
+    pub(crate) fn yielding(mut self) -> Self {
+        self.yielding = true;
+        self
+    }
+
+    /// Adds a muted explanation below the label. It wraps well short of the control, so a long
+    /// one never runs up against a switch or picker.
     pub(crate) fn detail(mut self, detail: SharedString) -> Self {
         self.detail = Some(detail);
         self
@@ -49,6 +62,7 @@ impl RenderOnce for Row {
             detail,
             control,
             disabled,
+            yielding,
         } = self;
         let theme = *cx.theme();
 
@@ -61,20 +75,39 @@ impl RenderOnce for Row {
             .when(disabled, |this| this.text_color(theme.muted_foreground))
             .child(
                 div()
-                    .flex_1()
-                    .min_w_0()
+                    .map(|this| match yielding {
+                        true => this.flex_none(),
+                        false => this.flex_1().min_w_0(),
+                    })
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(div().truncate().child(title))
+                    .child(
+                        ui::spoken(
+                            SharedString::from(format!("settings-row-{title}")),
+                            title.clone(),
+                        )
+                        .truncate(),
+                    )
                     .children(detail.map(|detail| {
                         div()
+                            .id(SharedString::from(format!("settings-row-detail-{title}")))
+                            .role(Role::Paragraph)
+                            .aria_label(detail.clone())
+                            .pr_8()
                             .text_size(theme.text(ui::Text::Small))
                             .text_color(theme.muted_foreground)
                             .child(detail)
                     })),
             )
-            .child(div().flex_none().child(control))
+            .child(
+                div()
+                    .map(|this| match yielding {
+                        true => this.flex_1().min_w_0().flex().justify_end(),
+                        false => this.flex_none(),
+                    })
+                    .child(control),
+            )
     }
 }
 
@@ -82,6 +115,11 @@ impl SettingsView {
     /// A plain row: the label and the control.
     pub(super) fn row(&self, title: SharedString, control: AnyElement) -> AnyElement {
         Row::new(title, control).into_any_element()
+    }
+
+    /// A row whose control narrows before its label is cut, for a text field.
+    pub(super) fn yielding_row(&self, title: SharedString, control: AnyElement) -> AnyElement {
+        Row::new(title, control).yielding().into_any_element()
     }
 
     /// A row whose choice is drawn as option cards: the label on a row of its own, then the
@@ -96,6 +134,22 @@ impl SettingsView {
             .into_any_element()
     }
 }
+
+/// What an option card says to screen readers. The card draws its name but puts nothing in the
+/// accessibility tree by itself, so each settings page announces its cards through this.
+pub(super) trait Announced: StatefulInteractiveElement + Sized {
+    /// Announces the card as the radio button at `place` among `count` options, named `name`
+    /// and checked while `chosen`.
+    fn choice(self, name: SharedString, chosen: bool, place: usize, count: usize) -> Self {
+        self.role(Role::RadioButton)
+            .aria_label(name)
+            .aria_toggled(Toggled::from(chosen))
+            .aria_position_in_set(place + 1)
+            .aria_size_of_set(count)
+    }
+}
+
+impl Announced for OptionCard {}
 
 /// A choice between a few options as one segmented control, each option a segment with its
 /// label and the `chosen` one lit. `pick` hears the option a click lands on.

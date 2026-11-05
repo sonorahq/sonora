@@ -19,13 +19,19 @@ pub struct Picker {
     key: &'static str,
     group: Popovers,
     face: Face,
+    /// What a screen reader calls the trigger, read before the current choice.
+    name: Option<SharedString>,
     /// A small element drawn before the current choice on the trigger.
     leading: Option<AnyElement>,
     tooltip: Option<&'static str>,
     above: bool,
     tint: Option<Hsla>,
+    /// The colour of the status dot over the trigger's icon, `None` for no dot.
+    status: Option<Hsla>,
     selected: bool,
     small: bool,
+    /// Draws a labelled trigger without its outline, like the icon buttons around it.
+    ghost: bool,
     width: Pixels,
     left: bool,
     sticky: bool,
@@ -48,12 +54,15 @@ impl Picker {
             key,
             group: group.clone(),
             face: Face::Label(current.into()),
+            name: None,
             leading: None,
             tooltip: None,
             above: false,
             tint: None,
+            status: None,
             selected: false,
             small: true,
+            ghost: false,
             width: Self::REGULAR,
             left: false,
             sticky: false,
@@ -81,6 +90,13 @@ impl Picker {
         }
     }
 
+    /// Names the trigger for screen readers after the setting it changes, so the current choice
+    /// is read as its description rather than as its name.
+    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
     /// Draws `leading` before the current choice on the trigger, as the menu's items may draw
     /// one before theirs.
     pub fn leading(mut self, leading: impl IntoElement) -> Self {
@@ -104,8 +120,20 @@ impl Picker {
         self
     }
 
+    /// Marks the trigger with a dot of `color` over its icon's top left corner.
+    pub fn status(mut self, color: Hsla) -> Self {
+        self.status = Some(color);
+        self
+    }
+
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// Drops the outline of a labelled trigger, for one that sits among ghost buttons.
+    pub fn ghost(mut self) -> Self {
+        self.ghost = true;
         self
     }
 
@@ -180,12 +208,15 @@ impl RenderOnce for Picker {
             key,
             group,
             face,
+            name,
             leading,
             tooltip,
             above,
             tint,
+            status,
             selected,
             small,
+            ghost,
             width,
             left,
             sticky,
@@ -216,12 +247,15 @@ impl RenderOnce for Picker {
         };
         let button = button
             .when(small, Button::small)
+            .when(ghost, Button::ghost)
+            .when_some(name.clone(), Button::name)
             .when_some(leading, Button::leading)
             .when_some(tooltip, |button, key| match above {
                 true => button.tooltip_above(key),
                 false => button.tooltip(key),
             })
             .when_some(tint, Button::tint)
+            .when_some(status, Button::status)
             .disabled(disabled);
 
         let menu = menu.unwrap_or_else(|| {
@@ -239,11 +273,11 @@ impl RenderOnce for Picker {
                 None => menu,
             }
         });
-        let menu = menu.items(items).top(drop).when_else(
-            left,
-            |menu| menu.left_0(),
-            |menu| menu.right_0(),
-        );
+        let menu = menu
+            .items(items)
+            .top(drop)
+            .when_some(name, Menu::name)
+            .when_else(left, |menu| menu.left_0(), |menu| menu.right_0());
 
         let mut popover = Popover::new(key, group)
             .button(button)

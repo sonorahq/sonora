@@ -287,15 +287,11 @@ fn artists(artists: &Artists) -> (String, Vec<ArtistRef>) {
     (names, refs)
 }
 
+/// The smallest cover for a list row, or with `large` the largest Spotify lists, which is 640
+/// pixels for nearly every album.
 fn cover(sources: &[Image], large: bool) -> Option<String> {
-    const HEADER: u32 = 300;
-
     let source = match large {
-        true => sources
-            .iter()
-            .filter(|source| source.height >= HEADER)
-            .min_by_key(|source| source.height)
-            .or_else(|| sources.iter().max_by_key(|source| source.height)),
+        true => sources.iter().max_by_key(|source| source.height),
         false => sources.iter().min_by_key(|source| source.height),
     }?;
     non_empty(&source.url).map(str::to_owned)

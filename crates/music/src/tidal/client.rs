@@ -11,11 +11,15 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use futures::stream::{self, StreamExt as _};
+use md5::{Digest as _, Md5};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
+use crate::cover::{self, CoverLimits};
 use crate::engine::Loudness;
 use crate::tidal::auth::{self, Credentials, Lane};
 use crate::tidal::manifest::Manifest;
@@ -94,6 +98,14 @@ const SIMILAR_RELEASES: usize = 2;
 /// How many times a playlist write is run while it finds the playlist stale, and how much
 /// longer each wait between runs is, so a write that followed the last within moments finds
 /// Tidal caught up. Three runs wait three seconds at most.
+/// What Tidal's own apps upload as a picture: a square JPEG of at most 1280 pixels.
+const COVER_LIMITS: CoverLimits = CoverLimits {
+    side: 1280,
+    bytes: 4 * 1024 * 1024,
+};
+/// How many times an uploaded artwork is looked at while Tidal processes it.
+const ARTWORK_POLLS: u32 = 25;
+const ARTWORK_POLL: Duration = Duration::from_millis(800);
 const EDIT_ATTEMPTS: u32 = 3;
 const EDIT_SETTLE: Duration = Duration::from_secs(1);
 /// How many tracks one write adds to a playlist, so a long addition goes in a few pieces
@@ -102,6 +114,8 @@ const ADD_CHUNK: usize = 100;
 
 /// How many artist lookups run at once, for portraits and for an album's recommendations.
 const LOOKUPS: usize = 4;
+/// The page size for Tidal's ranked artist songs.
+const ARTIST_TRACKS: usize = 1000;
 /// How many tracks a station asks for.
 const RADIO: &str = "100";
 /// How many results a search asks for.
@@ -117,9 +131,10 @@ const CONNECT: Duration = Duration::from_secs(10);
 const STALL: Duration = Duration::from_secs(20);
 
 /// The sub-statuses of a `401` that are about the token rather than one thing it asked for: a
-/// token whose session Tidal has ended, an invalid one, and an expired one. A `401` naming none
-/// of them is renewed once too, but only these, or no sub-status at all, end the session.
-const TOKEN_TROUBLE: [u64; 3] = [6004, 11002, 11003];
+/// token whose session Tidal has ended, a missing or invalid one, and an expired one. Only these,
+/// or no sub-status at all, renew the token. Any other `401` on a resource, such as 4005 for a
+/// track Tidal will not play here, is that resource's own refusal.
+const TOKEN_TROUBLE: [u64; 4] = [6004, 11001, 11002, 11003];
 
 /// Held while a token is renewed, by every session in the process. Two sessions holding the
 /// same refresh token then never spend it at once, and the second picks up the first's renewal.
@@ -316,10 +331,12 @@ impl TidalClient {
             .await
     }
 
-    /// One call, answered with its response once it succeeds. Any `401` renews the token and
-    /// asks once more, and so does a call Tidal asks to be slowed down. A `401` that is about
-    /// the session after renewing moves an app client session to the device client and asks
-    /// again, and after that it is the sign-in being gone.
+    /// One call, answered with its response once it succeeds. A `401` about the token renews
+    /// it and asks once more, and so does a call Tidal asks to be slowed down. A `401` about one
+    /// resource, such as a track not playable in the listener's country, comes back as the
+    /// call's error without touching the token. A `401` that is still about the session after
+    /// renewing moves an app client session to the device client and asks again, and after
+    /// that it is the sign-in being gone.
     async fn exchange(
         &self,
         method: Method,
@@ -375,25 +392,21 @@ impl TidalClient {
             }
             let refusal: Value = response.json().await.unwrap_or(Value::Null);
             let sub_status = wire::number(&refusal, "subStatus").unwrap_or(0);
-            if status == StatusCode::UNAUTHORIZED {
+            let session =
+                scope == Scope::Session || sub_status == 0 || TOKEN_TROUBLE.contains(&sub_status);
+            if status == StatusCode::UNAUTHORIZED && session {
                 if rejected.is_none() {
                     rejected = Some(token);
                     continue;
                 }
-                let session = scope == Scope::Session
-                    || sub_status == 0
-                    || TOKEN_TROUBLE.contains(&sub_status);
-                if session {
-                    if !demoted && self.inner.credentials.read().await.lane == Lane::App {
-                        demoted = true;
-                        rejected = Some(token);
-                        continue;
-                    }
-                    self.inner.revoked.store(true, Ordering::Relaxed);
-                    return Err(SignInFailure(SignInProblem::Credentials)).with_context(|| {
-                        format!("tidal refused the session for {}", path_of(url))
-                    });
+                if !demoted && self.inner.credentials.read().await.lane == Lane::App {
+                    demoted = true;
+                    rejected = Some(token);
+                    continue;
                 }
+                self.inner.revoked.store(true, Ordering::Relaxed);
+                return Err(SignInFailure(SignInProblem::Credentials))
+                    .with_context(|| format!("tidal refused the session for {}", path_of(url)));
             }
             let message = wire::text(&refusal, "userMessage").unwrap_or("no reason given");
             if auth::transient(status) {
@@ -517,6 +530,97 @@ impl TidalClient {
                 done => return done,
             }
         }
+    }
+
+    /// Uploads a JPEG as an artwork and answers its id once Tidal has processed it. The file
+    /// goes to the storage link Tidal hands out, with no token, and Tidal checks it by its MD5.
+    async fn upload_artwork(&self, jpeg: Vec<u8>) -> Result<String> {
+        let digest = Md5::digest(&jpeg);
+        let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+        let created: Value = self
+            .call(
+                Method::POST,
+                &format!("{OPENAPI}/artworks"),
+                &[],
+                Payload::Json(&json!({
+                    "data": {
+                        "type": "artworks",
+                        "attributes": {
+                            "mediaType": "IMAGE",
+                            "sourceFile": { "md5Hash": hex, "size": jpeg.len() },
+                        },
+                    },
+                })),
+                None,
+            )
+            .await
+            .context("cannot create the artwork")?
+            .json()
+            .await
+            .context("cannot read the created artwork")?;
+        let id = created
+            .pointer("/data/id")
+            .and_then(Value::as_str)
+            .context("the created artwork has no id")?
+            .to_owned();
+        let link = created
+            .pointer("/data/attributes/sourceFile/uploadLink")
+            .context("the created artwork has no upload link")?;
+        let href = link["href"]
+            .as_str()
+            .context("the upload link has no address")?;
+        let method = link
+            .pointer("/meta/method")
+            .and_then(Value::as_str)
+            .and_then(|method| method.parse().ok())
+            .unwrap_or(Method::PUT);
+        let mut upload = self
+            .inner
+            .http
+            .request(method, href)
+            .header(reqwest::header::CONTENT_TYPE, "image/jpeg");
+        let signed = link.pointer("/meta/headers").and_then(Value::as_object);
+        if !signed.is_some_and(|headers| headers.contains_key("content-md5")) {
+            upload = upload.header("Content-MD5", STANDARD.encode(digest));
+        }
+        // The body sets its own length, and a second one would break the signature.
+        for (name, value) in signed.into_iter().flatten() {
+            if let Some(value) = value.as_str()
+                && !name.eq_ignore_ascii_case("content-length")
+            {
+                upload = upload.header(name.as_str(), value);
+            }
+        }
+        let sent = upload
+            .body(jpeg)
+            .send()
+            .await
+            .context("cannot upload the artwork")?;
+        let status = sent.status();
+        if !status.is_success() {
+            let body = sent.text().await.unwrap_or_default();
+            bail!("tidal's storage refused the artwork with {status}: {body}");
+        }
+
+        for _ in 0..ARTWORK_POLLS {
+            let artwork = self
+                .read(
+                    OPENAPI,
+                    &format!("/artworks/{}", escape::component(&id)),
+                    &[],
+                )
+                .await?;
+            let state = artwork
+                .pointer("/data/attributes/sourceFile/status/technicalFileStatus")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            match state {
+                "OK" => return Ok(id),
+                "ERROR" | "DELETED" => bail!("tidal could not process the artwork: {state}"),
+                _ => tokio::time::sleep(ARTWORK_POLL).await,
+            }
+        }
+        bail!("tidal took too long to process the artwork")
     }
 
     /// Takes every copy of a track out of a playlist, naming each by the id of its row rather
@@ -1022,6 +1126,7 @@ impl MusicApi for TidalClient {
         Ok(Artist {
             name: wire::text(&detail, "name").unwrap_or_default().to_owned(),
             cover_large: wire::image(wire::text(&detail, "picture"), wire::PORTRAIT_LARGE),
+            banner: None,
             biography,
             monthly_listeners: None,
             top_tracks: top.map(|page| wire::track_list(&page)).unwrap_or_default(),
@@ -1044,6 +1149,15 @@ impl MusicApi for TidalClient {
             top_tracks: Vec::new(),
             appears_on: wire::distinct(appears_on.unwrap_or_default()),
         })
+    }
+
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        let path = format!("/artists/{}/toptracks", escape::component(artist_id));
+        let tracks = self
+            .all(&path, &[], ARTIST_TRACKS, wire::track_list)
+            .await
+            .context("cannot load the artist's tracks")?;
+        Ok(crate::artist_songs(tracks, artist_id))
     }
 
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
@@ -1229,6 +1343,32 @@ impl MusicApi for TidalClient {
         )
         .await
         .context("cannot change the playlist's visibility")?;
+        Ok(())
+    }
+
+    /// Points the playlist's cover art at a freshly uploaded artwork, or at none, which Tidal
+    /// takes as going back to its own cover.
+    async fn set_playlist_cover(&self, playlist_id: &str, image: Option<&[u8]>) -> Result<()> {
+        let data = match image {
+            Some(image) => {
+                let jpeg = cover::square_jpeg(image, COVER_LIMITS)?;
+                let artwork = self.upload_artwork(jpeg).await?;
+                json!([{ "type": "artworks", "id": artwork }])
+            }
+            None => json!([]),
+        };
+        self.call(
+            Method::PATCH,
+            &format!(
+                "{OPENAPI}/playlists/{}/relationships/coverArt",
+                escape::component(playlist_id)
+            ),
+            &[],
+            Payload::Json(&json!({ "data": data })),
+            None,
+        )
+        .await
+        .context("cannot change the playlist's cover")?;
         Ok(())
     }
 

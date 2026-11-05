@@ -4,13 +4,15 @@ use i18n::t;
 use state::FullscreenControlsAutohide;
 use ui::{ActiveTheme as _, Levels, OptionCard, Switch, Visualizer, VisualizerStyle};
 
-use super::rows::{grid, segmented};
+use super::rows::{Announced as _, grid, segmented};
 use super::{Group, Row, SettingsView, Slot};
 
 /// How large the cross on the Off card draws.
 const GLYPH: Pixels = px(18.);
 /// How much of a visualizer card's height its spectrum takes.
 const SPECTRUM: f32 = 0.8;
+/// How thick a card's border is, which the spectrum sits inside.
+const EDGE: Pixels = px(1.);
 /// The band levels a visualizer card draws, a spectrum caught at one moment.
 const STILL: [f32; 16] = [
     0.42, 0.66, 0.84, 0.7, 0.5, 0.58, 0.76, 0.6, 0.44, 0.52, 0.64, 0.46, 0.34, 0.4, 0.28, 0.22,
@@ -43,6 +45,7 @@ impl SettingsView {
         self.row(
             t!("settings-ambient"),
             Switch::new("ambient", on)
+                .name(t!("settings-ambient"))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_ambient(!on, cx));
@@ -58,6 +61,7 @@ impl SettingsView {
         Row::new(
             t!("settings-ambient-motion"),
             Switch::new("ambient-motion", on)
+                .name(t!("settings-ambient-motion"))
                 .disabled(disabled)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
@@ -75,39 +79,55 @@ impl SettingsView {
         let theme = *cx.theme();
         let chosen = self.settings.read(cx).visualizer_style();
         let height = theme.metrics.list_row * 1.5;
+        // the card clips only to a rectangle, so the spectrum cuts itself to the inside of the
+        // card's rounded border
+        let corner = (theme.radius - EDGE).max(Pixels::ZERO);
 
         grid(VisualizerStyle::ALL.len() as u16, window, cx)
-            .children(VisualizerStyle::ALL.map(|style| {
-                let thumb = match style.shown() {
-                    false => div()
-                        .size_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            svg()
-                                .path(icons::path("icons/x.svg"))
-                                .size(GLYPH)
-                                .text_color(theme.muted_foreground),
-                        ),
-                    true => div().size_full().flex().flex_col().justify_end().child(
-                        Visualizer::new(still(), height * SPECTRUM)
-                            .style_kind(style)
-                            .tint(theme.foreground)
-                            .behind(theme.secondary)
-                            .w_full(),
-                    ),
-                };
-                OptionCard::new(style.id())
-                    .thumb(thumb)
-                    .label(style.label())
-                    .selected(style == chosen)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.settings
-                            .update(cx, |settings, cx| settings.set_visualizer_style(style, cx));
-                        cx.notify();
-                    }))
-            }))
+            .children(
+                VisualizerStyle::ALL
+                    .into_iter()
+                    .enumerate()
+                    .map(|(place, style)| {
+                        let thumb = match style.shown() {
+                            false => div()
+                                .size_full()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    svg()
+                                        .path(icons::path("icons/x.svg"))
+                                        .size(GLYPH)
+                                        .text_color(theme.muted_foreground),
+                                ),
+                            true => div().size_full().flex().flex_col().justify_end().child(
+                                Visualizer::new(still(), height * SPECTRUM)
+                                    .style_kind(style)
+                                    .tint(theme.foreground)
+                                    .behind(theme.secondary)
+                                    .corner_radius(corner)
+                                    .w_full(),
+                            ),
+                        };
+                        OptionCard::new(style.id())
+                            .choice(
+                                style.label(),
+                                style == chosen,
+                                place,
+                                VisualizerStyle::ALL.len(),
+                            )
+                            .thumb(thumb)
+                            .label(style.label())
+                            .selected(style == chosen)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.settings.update(cx, |settings, cx| {
+                                    settings.set_visualizer_style(style, cx)
+                                });
+                                cx.notify();
+                            }))
+                    }),
+            )
             .into_any_element()
     }
 
@@ -117,6 +137,7 @@ impl SettingsView {
         self.row(
             t!("settings-visualizer-absolute"),
             Switch::new("visualizer-absolute", on)
+                .name(t!("settings-visualizer-absolute"))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_visualizer_absolute(!on, cx));
@@ -143,7 +164,9 @@ impl SettingsView {
 
         self.row(
             t!("settings-fullscreen-controls-autohide"),
-            picker.into_any_element(),
+            picker
+                .name(t!("settings-fullscreen-controls-autohide"))
+                .into_any_element(),
         )
     }
 
@@ -153,6 +176,7 @@ impl SettingsView {
         self.row(
             t!("settings-os-fullscreen"),
             Switch::new("os-fullscreen", on)
+                .name(t!("settings-os-fullscreen"))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_os_fullscreen(!on, cx));
