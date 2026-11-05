@@ -948,6 +948,7 @@ pub struct Artwork {
     accent: bool,
     soft: bool,
     overlay: bool,
+    fit: ObjectFit,
     interactivity: Interactivity,
 }
 
@@ -964,6 +965,7 @@ impl Artwork {
             overlay: false,
             fallback: FALLBACK_ICON.into(),
             accent: false,
+            fit: ObjectFit::Cover,
             interactivity: Interactivity::new(),
         }
     }
@@ -1012,6 +1014,13 @@ impl Artwork {
 
     /// Draws nothing while the image loads or after it fails, for a cover stacked over another
     /// that already shows, so neither the skeleton nor the placeholder hides it.
+    /// Keeps the whole image inside the square instead of cropping it to fill, for art whose
+    /// edges matter, as in the full-size cover view.
+    pub fn contain(mut self) -> Self {
+        self.fit = ObjectFit::Contain;
+        self
+    }
+
     pub fn overlay(mut self) -> Self {
         self.overlay = true;
         self
@@ -1047,6 +1056,7 @@ impl RenderOnce for Artwork {
             accent,
             soft,
             overlay,
+            fit,
             interactivity,
         } = self;
         let theme = *cx.theme();
@@ -1135,7 +1145,7 @@ impl RenderOnce for Artwork {
                                 .image_cache(&cache)
                                 .w(size)
                                 .h(tall)
-                                .object_fit(ObjectFit::Cover)
+                                .object_fit(fit)
                                 .rounded(rounded)
                                 .with_fallback(placeholder),
                         ),
