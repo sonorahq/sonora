@@ -461,7 +461,8 @@ fn place(
 
 /// Puts one part's rows, or its failure, onto the shelf. A part arriving in pages passes here
 /// once per page, so the rows already there stay and the new ones go behind them. A track the
-/// provider cannot play is left out, so the songs list and its count hold only what plays.
+/// provider cannot play is left out. Cached local files remain visible while their folder is
+/// unavailable, with playback disabled until it can be read again.
 fn extend(state: &mut LibraryState, landed: Landed) {
     if !matches!(state, LibraryState::Ready(_)) {
         *state = LibraryState::Ready(Ready::default());
@@ -478,11 +479,11 @@ fn extend(state: &mut LibraryState, landed: Landed) {
     } = ready;
     let part = landed.part();
     match landed {
-        Landed::Tracks(result) => tracks.extend(
-            take(part, result, problems)
-                .into_iter()
-                .filter(|track| track.playable),
-        ),
+        Landed::Tracks(result) => {
+            tracks.extend(take(part, result, problems).into_iter().filter(|track| {
+                track.playable || track.id.as_deref().is_some_and(music::is_local_id)
+            }))
+        }
         Landed::Playlists(result) => playlists.extend(take(part, result, problems)),
         Landed::Albums(result) => albums.extend(take(part, result, problems)),
         Landed::Artists(result) => artists.extend(take(part, result, problems)),

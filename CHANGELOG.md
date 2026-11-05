@@ -34,6 +34,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Keep playlists, favorites and play history linked when a uniquely matching local file moves within the music folders.
+- Refresh the player, queue and lyrics after local tags change, and keep the local queue across restarts.
+- Keep cached songs visible when a music folder is unavailable and report unreadable files and folders.
+- Notice local file changes made within the same second as a previous scan.
+
 - Switching from Offline to Guest mode shows the streaming provider’s Home instead of local music.
 
 - Refreshing Home picks up music files added or removed outside Sonora.

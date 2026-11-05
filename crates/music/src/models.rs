@@ -64,6 +64,15 @@ pub struct Credit {
     pub id: Option<String>,
 }
 
+/// Diagnostics and exact file moves discovered by a local library scan.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScanReport {
+    pub issues: Vec<String>,
+    pub moved: Vec<(String, String)>,
+    pub moved_albums: Vec<(String, String)>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Track {
     pub id: Option<String>,

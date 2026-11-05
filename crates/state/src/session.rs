@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,7 +9,7 @@ use i18n::t;
 use music::link::Linked;
 use music::{
     Capabilities, Catalog, MusicApi, MusicProvider, PlaybackFactory, PromptSink, ProviderSession,
-    Shape, SignIn, SignInFailure, SignInProblem, SignInPrompt, UserProfile,
+    ScanReport, Shape, SignIn, SignInFailure, SignInProblem, SignInPrompt, Track, UserProfile,
 };
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -132,6 +133,9 @@ pub struct Session {
     local_provider: Arc<dyn MusicProvider>,
     local_folders: Vec<PathBuf>,
     local_client: Option<Arc<dyn MusicApi>>,
+    /// The latest local metadata and exact move aliases, applied to already queued songs.
+    local_tracks: HashMap<String, Track>,
+    local_report: ScanReport,
     local_catalog: Option<Arc<CatalogSource>>,
     local_playback: Option<Arc<dyn PlaybackFactory>>,
     local_capabilities: Capabilities,
@@ -188,6 +192,8 @@ impl Session {
             local_provider,
             local_folders,
             local_client: None,
+            local_tracks: HashMap::new(),
+            local_report: ScanReport::default(),
             local_catalog: None,
             local_playback,
             local_capabilities: Capabilities::NONE,
@@ -252,6 +258,18 @@ impl Session {
 
     pub fn local_client(&self) -> Option<Arc<dyn MusicApi>> {
         self.local_client.clone()
+    }
+
+    /// Updated metadata for an indexed file, following an exact move when its old path is gone.
+    pub(crate) fn refreshed_local_track(&self, id: &str) -> Option<&Track> {
+        self.local_tracks.get(id).or_else(|| {
+            let moved = self
+                .local_report
+                .moved
+                .iter()
+                .find(|(from, _)| from == id)?;
+            self.local_tracks.get(&moved.1)
+        })
     }
 
     /// The client serving a shelf, if that shelf has a provider right now.
@@ -390,6 +408,14 @@ impl Session {
     pub fn provider_slug(&self) -> Option<&'static str> {
         let provider = &self.providers[self.active?];
         Some(provider.slug())
+    }
+
+    /// The scope that owns the saved play queue, including a local-only run.
+    pub(crate) fn playback_slug(&self) -> Option<&'static str> {
+        match self.local_only {
+            true => Some(self.local_slug()),
+            false => self.provider_slug(),
+        }
     }
 
     /// The host to try when checking whether the network is back. It is the active provider's
@@ -1148,6 +1174,8 @@ impl Session {
                 settings.set_local_folders(Vec::new(), cx)
             });
             self.local_client = None;
+            self.local_tracks.clear();
+            self.local_report = ScanReport::default();
             self.local_catalog = None;
             self.local_capabilities = Capabilities::NONE;
             self.local_task = None;
@@ -1159,7 +1187,6 @@ impl Session {
         let provider = self.local_provider.clone();
         let chosen = folders.clone();
         let io = self.io.clone();
-        let counting = self.scan_asked;
         self.scanning = true;
         cx.notify();
         self.local_task = Some(cx.spawn(async move |this, cx| {
@@ -1167,15 +1194,9 @@ impl Session {
             let (_tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
             let signed_in = join(io.spawn(async move {
                 let session = provider.sign_in(SignIn::Path(folders), prompt, rx).await?;
-                let songs = match counting {
-                    true => session
-                        .api
-                        .all_tracks()
-                        .await
-                        .map_or(0, |tracks| tracks.len()),
-                    false => 0,
-                };
-                anyhow::Ok((session, songs))
+                let tracks = session.api.all_tracks().await?;
+                let report = session.api.scan_report();
+                anyhow::Ok((session, tracks, report))
             }))
             .await;
 
@@ -1183,26 +1204,39 @@ impl Session {
                 this.scanning = false;
                 let asked = std::mem::take(&mut this.scan_asked);
                 match signed_in {
-                    Ok((session, songs)) => {
+                    Ok((session, tracks, report)) => {
+                        let songs = tracks.len();
                         this.local_folders = chosen.clone();
                         this.settings
                             .update(cx, |settings, cx| settings.set_local_folders(chosen, cx));
+                        this.local_tracks = tracks
+                            .into_iter()
+                            .filter_map(|track| Some((track.id.clone()?, track)))
+                            .collect();
+                        this.local_report = report;
+                        if !this.local_report.issues.is_empty() {
+                            Toasts::post(
+                                Toast::new(Outcome::Warning, "toast-scan-issues")
+                                    .count(this.local_report.issues.len())
+                                    .detail(this.local_report.issues.join("\n"))
+                                    .open("settings-local-folder", Target::ProviderSettings),
+                                cx,
+                            );
+                        }
                         this.local_signed_in(session, cx);
-                        if asked {
+                        if asked && this.local_report.issues.is_empty() {
                             Scan::global(cx).update(cx, |scan, cx| scan.finished(songs, cx));
                         }
                     }
                     Err(error) => {
                         log::warn!("session: cannot update local music folders: {error:#}");
-                        if asked {
-                            Toasts::with_detail(
-                                Outcome::Failed,
-                                "toast-scan-failed",
-                                None,
-                                format!("{error:#}"),
-                                cx,
-                            );
-                        }
+                        Toasts::with_detail(
+                            Outcome::Failed,
+                            "toast-scan-failed",
+                            None,
+                            format!("{error:#}"),
+                            cx,
+                        );
                         cx.notify();
                     }
                 }

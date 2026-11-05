@@ -1438,3 +1438,8 @@ response-graph-readout = { $frequency } · { $direction ->
 login-offline-title = Offline
 login-offline-detail = Listen to music on your computer. Choose a local folder to fill Home, Search, and your library with your music.
 login-offline-guest-detail = Just want to stream without signing in? Choose Guest mode instead. Offline uses only your local files.
+
+toast-scan-issues = { $count ->
+    [one] One music file or folder could not be read
+   *[other] { $count } music files or folders could not be read
+}

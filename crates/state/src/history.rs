@@ -279,7 +279,8 @@ impl History {
         cx.subscribe(&session, |this, _, event, cx| match event {
             SessionEvent::SignedIn | SessionEvent::Reconnected => this.refresh(cx),
             SessionEvent::SignedOut => this.reset(cx),
-            SessionEvent::WentOffline | SessionEvent::LocalChanged => {}
+            SessionEvent::LocalChanged => this.refresh(cx),
+            SessionEvent::WentOffline => {}
         })
         .detach();
         cx.subscribe(&playback, |this, _, event, cx| match event {

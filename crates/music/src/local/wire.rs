@@ -250,6 +250,12 @@ fn numbered(stem: &str) -> Option<String> {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Tagged {
     pub track: Track,
+    /// Hash of the complete file for unambiguous move recovery; older indexes fill it on scan.
+    #[serde(default)]
+    pub fingerprint: Option<String>,
+    /// Whether audio or tags were readable, as distinct from filename-only fallback metadata.
+    #[serde(default)]
+    pub readable: bool,
     /// The album artist the tags name, `None` when they name none.
     pub album_artist: Option<String>,
     /// The individual album artists, empty when no album artist is tagged.
@@ -501,6 +507,7 @@ pub fn track_from_file(
     // hand-rolled reader skips a frame it doesn't understand by its declared size alone, so it
     // can still recover the other, perfectly well-formed frames around it.
     let lenient = tag.is_none().then(|| id3::read(path)).flatten();
+    let readable = tagged.is_some() || fallback.is_some() || lenient.is_some();
 
     let (inferred_title, inferred_artist) = infer_from_stem(&file_stem(path));
 
@@ -657,6 +664,8 @@ pub fn track_from_file(
             languages: languages.iter().map(|code| language_code(code)).collect(),
             credits,
         },
+        fingerprint: None,
+        readable,
         album_artist,
         album_artists,
         year,

@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
 use crate::progress;
-use crate::{Album, ReleaseType, SavedArtist, Track};
+use crate::{Album, ReleaseType, SavedArtist, ScanReport, Track};
 
 use super::index::{Changes, Index, Remembered};
 use super::wire::{self, Tagged};
@@ -12,6 +14,8 @@ const SEPARATORS: [char; 8] = ['-', '–', '—', '.', '_', '·', ':', ' '];
 
 /// How many threads read tags at once. Past this a spinning disk seeks more than it reads.
 const MAX_READERS: usize = 8;
+/// Working buffer for exact file fingerprints, independent of the size of a music file.
+const HASH_BUFFER: usize = 64 * 1024;
 
 const AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "m4a", "mp4", "aac", "ogg", "oga", "opus", "wav", "aiff", "aif", "aifc", "wv",
@@ -24,6 +28,7 @@ pub struct Scanned {
     pub albums: Vec<Album>,
     pub artists: Vec<SavedArtist>,
     pub portraits: HashMap<String, String>,
+    pub report: ScanReport,
 }
 
 /// One file the walk turned up. A file in a folder whose time has not moved is taken on trust:
@@ -81,12 +86,25 @@ pub fn scan(roots: &[PathBuf], cache_dir: &Path, index: &Index) -> Scanned {
     let mut files = Vec::new();
     let mut folders = Vec::new();
     let mut reached = Vec::new();
+    let mut unavailable = Vec::new();
     for root in roots {
-        if root.is_dir() {
-            reached.push(root.clone());
-            walk(root, &remembered, &mut files, &mut folders, &progress);
-        }
+        reached.push(root.clone());
+        walk(
+            root,
+            &remembered,
+            &mut files,
+            &mut folders,
+            &progress,
+            &mut unavailable,
+        );
     }
+    let failed = |path: &Path| {
+        unavailable
+            .iter()
+            .any(|(folder, _)| path.starts_with(folder))
+    };
+    files.retain(|file| !failed(&file.path));
+    folders.retain(|folder| !failed(&folder.path));
     let found = files.len();
     // Every folder is looked at again for an artist portrait, so the count covers both passes
     // and the percentage does not sit at full while the second one runs.
@@ -96,17 +114,74 @@ pub fn scan(roots: &[PathBuf], cache_dir: &Path, index: &Index) -> Scanned {
         return scanned;
     }
 
-    let readings = read_tags(&files, &remembered, roots, cache_dir, &progress);
+    let issues = Mutex::new(Vec::new());
+    let mut readings = read_tags(&files, &remembered, roots, cache_dir, &progress, &issues);
+    for (path, known) in remembered.files.iter().filter(|(path, _)| failed(path)) {
+        let mut tagged = known.tagged.clone();
+        tagged.track.playable = false;
+        readings.push(Reading {
+            path: path.clone(),
+            mtime: known.mtime,
+            size: known.size,
+            tagged,
+            fresh: false,
+        });
+    }
+    readings.sort_by(|a, b| a.path.cmp(&b.path));
     let read = started.elapsed();
     if !progress.live() {
         return scanned;
     }
 
-    let looks = look_for_portraits(&folders, &remembered, &readings, &progress);
+    let mut looks = look_for_portraits(&folders, &remembered, &readings, &progress);
+    for (path, seen) in remembered.folders.iter().filter(|(path, _)| failed(path)) {
+        looks.push(Look {
+            path: path.clone(),
+            mtime: seen.mtime,
+            portrait: seen.portrait.clone(),
+            fresh: false,
+        });
+    }
+    looks.sort_by(|a, b| a.path.cmp(&b.path));
     if !progress.live() {
         return scanned;
     }
 
+    scanned.report.moved = moved_files(&remembered, &readings, &reached);
+    let by_id: HashMap<&str, &Track> = readings
+        .iter()
+        .filter_map(|reading| Some((reading.tagged.track.id.as_deref()?, &reading.tagged.track)))
+        .collect();
+    let existing_albums: HashSet<&str> = readings
+        .iter()
+        .filter_map(|reading| reading.tagged.track.album_id.as_deref())
+        .collect();
+    let mut albums: HashMap<String, HashSet<String>> = HashMap::new();
+    for (from, to) in &scanned.report.moved {
+        let previous = wire::path_from_track_id(from).and_then(|path| remembered.files.get(path));
+        if let (Some(previous), Some(current)) = (previous, by_id.get(to.as_str()))
+            && let (Some(from), Some(to)) = (&previous.tagged.track.album_id, &current.album_id)
+            && from != to
+            && !existing_albums.contains(from.as_str())
+        {
+            albums.entry(from.clone()).or_default().insert(to.clone());
+        }
+    }
+    scanned.report.moved_albums = albums
+        .into_iter()
+        .filter_map(|(from, to)| {
+            (to.len() == 1).then(|| (from, to.into_iter().next().expect("one album")))
+        })
+        .collect();
+    scanned.report.issues = unavailable.into_iter().map(|(_, issue)| issue).collect();
+    let issues = issues
+        .into_inner()
+        .unwrap_or_else(|error| error.into_inner());
+    let failed_files: Vec<PathBuf> = issues.iter().map(|(path, _)| path.clone()).collect();
+    scanned
+        .report
+        .issues
+        .extend(issues.into_iter().map(|(_, issue)| issue));
     let changes = Changes::between(&remembered, &readings, &looks, &reached);
     let opened = readings.iter().filter(|reading| reading.fresh).count();
     scanned.portraits = name_portraits(&looks, &readings);
@@ -114,7 +189,16 @@ pub fn scan(roots: &[PathBuf], cache_dir: &Path, index: &Index) -> Scanned {
     scanned.albums = group_albums(&parsed);
     scanned.artists = group_artists(&parsed, &scanned.portraits, &scanned.albums);
     scanned.tracks = parsed.into_iter().map(|tagged| tagged.track).collect();
-    index.save(&changes);
+    match index.keep_moves(&mut scanned.report) {
+        Ok(()) => {
+            index.save(&changes);
+            index.retry(&failed_files);
+        }
+        Err(error) => scanned
+            .report
+            .issues
+            .push(format!("cannot save file moves: {error:#}")),
+    }
 
     log::debug!(
         "local: scanned {found} files and {} folders in {}ms \
@@ -139,9 +223,10 @@ fn read_tags(
     roots: &[PathBuf],
     cache_dir: &Path,
     progress: &progress::Scan,
+    issues: &Mutex<Vec<(PathBuf, String)>>,
 ) -> Vec<Reading> {
     spread(files, progress, |found| {
-        let reading = match found.known {
+        let mut reading = match found.known {
             true => remembered.files.get(&found.path).map(|known| Reading {
                 path: found.path.clone(),
                 mtime: found.mtime,
@@ -157,6 +242,48 @@ fn read_tags(
                 fresh: true,
             }),
         };
+        if reading.is_none() {
+            issues
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push((
+                    found.path.clone(),
+                    format!("cannot read audio file {}", found.path.display()),
+                ));
+            reading = remembered.files.get(&found.path).map(|known| {
+                let mut tagged = known.tagged.clone();
+                tagged.track.playable = false;
+                Reading {
+                    path: found.path.clone(),
+                    mtime: known.mtime,
+                    size: known.size,
+                    tagged,
+                    fresh: false,
+                }
+            });
+        }
+        if let Some(reading) = reading.as_mut()
+            && reading.tagged.fingerprint.is_none()
+            && reading.tagged.track.playable
+        {
+            match fingerprint(&reading.path) {
+                Ok(hash) => {
+                    reading.tagged.fingerprint = Some(hash);
+                    reading.fresh = true;
+                }
+                Err(error) => {
+                    issues
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .push((
+                            reading.path.clone(),
+                            format!("cannot read {}: {error}", reading.path.display()),
+                        ));
+                    reading.tagged.track.playable = false;
+                    reading.fresh = false;
+                }
+            }
+        }
         progress.read();
         reading
     })
@@ -181,6 +308,7 @@ fn read_one(path: &Path, roots: &[PathBuf], cache_dir: &Path) -> Option<Tagged> 
         album_hint.as_deref(),
         cache_dir,
     )
+    .filter(|tagged| tagged.readable)
 }
 
 /// Runs `work` over every item, a contiguous chunk to a thread, and returns what it kept in the
@@ -429,9 +557,24 @@ fn walk(
     files: &mut Vec<Found>,
     folders: &mut Vec<Folder>,
     progress: &progress::Scan,
+    unavailable: &mut Vec<(PathBuf, String)>,
 ) {
     let Some((mtime, _)) = stat(dir) else {
+        unavailable.push((
+            dir.to_path_buf(),
+            format!("cannot access folder {}", dir.display()),
+        ));
         return;
+    };
+    let listing = match std::fs::read_dir(dir) {
+        Ok(listing) => listing,
+        Err(error) => {
+            unavailable.push((
+                dir.to_path_buf(),
+                format!("cannot read folder {}: {error}", dir.display()),
+            ));
+            return;
+        }
     };
     let known = remembered.unchanged(dir, mtime);
     folders.push(Folder {
@@ -458,6 +601,10 @@ fn walk(
                     },
                     None => {
                         let Some((mtime, size)) = stat(path) else {
+                            unavailable.push((
+                                path.clone(),
+                                format!("cannot access file {}", path.display()),
+                            ));
                             continue;
                         };
                         Found {
@@ -474,15 +621,22 @@ fn walk(
                 if !progress.live() {
                     return;
                 }
-                walk(child, remembered, files, folders, progress);
+                walk(child, remembered, files, folders, progress, unavailable);
             }
         }
         false => {
-            let Ok(read) = std::fs::read_dir(dir) else {
-                return;
+            let read = match listing.collect::<Result<Vec<_>, _>>() {
+                Ok(read) => read,
+                Err(error) => {
+                    unavailable.push((
+                        dir.to_path_buf(),
+                        format!("cannot read folder {}: {error}", dir.display()),
+                    ));
+                    return;
+                }
             };
             let mut here: Vec<(PathBuf, bool)> = read
-                .filter_map(|entry| entry.ok())
+                .into_iter()
                 .map(|entry| {
                     let path = entry.path();
                     let folder = is_folder(&entry, &path);
@@ -495,9 +649,13 @@ fn walk(
                     return;
                 }
                 if folder {
-                    walk(&path, remembered, files, folders, progress);
+                    walk(&path, remembered, files, folders, progress, unavailable);
                 } else if is_audio_file(&path) {
                     let Some((mtime, size)) = stat(&path) else {
+                        unavailable.push((
+                            path.clone(),
+                            format!("cannot access file {}", path.display()),
+                        ));
                         continue;
                     };
                     let known = remembered
@@ -527,8 +685,8 @@ fn is_folder(entry: &std::fs::DirEntry, path: &Path) -> bool {
     }
 }
 
-/// When a path was last written, as whole seconds since the epoch, and how big it is. Seconds
-/// are enough: a file written twice inside one second is rare, and its size moves with it.
+/// Modification time at filesystem precision and file size. Keeping subsecond precision makes
+/// an immediate rescan notice a rename or edit made in the same second as the preceding scan.
 fn stat(path: &Path) -> Option<(i64, u64)> {
     let metadata = std::fs::metadata(path).ok()?;
     let mtime = metadata
@@ -536,8 +694,8 @@ fn stat(path: &Path) -> Option<(i64, u64)> {
         .ok()?
         .duration_since(UNIX_EPOCH)
         .ok()?
-        .as_secs() as i64;
-    Some((mtime, metadata.len()))
+        .as_nanos();
+    Some((i64::try_from(mtime).ok()?, metadata.len()))
 }
 
 fn dated(name: &str) -> (String, Option<i32>) {
@@ -621,6 +779,62 @@ fn is_audio_file(path: &Path) -> bool {
         .is_some_and(|extension| {
             AUDIO_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str())
         })
+}
+
+/// Hashes exact file contents; names and directories do not affect move matching.
+fn fingerprint(path: &Path) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut digest = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut buffer = [0u8; HASH_BUFFER];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok(digest
+        .finish()
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+/// Matches a missing indexed file only to one new, byte-identical file in the scanned roots.
+fn moved_files(
+    remembered: &Remembered,
+    readings: &[Reading],
+    roots: &[PathBuf],
+) -> Vec<(String, String)> {
+    let here: HashSet<&Path> = readings
+        .iter()
+        .map(|reading| reading.path.as_path())
+        .collect();
+    let mut old: HashMap<&str, Vec<&Path>> = HashMap::new();
+    for (path, known) in &remembered.files {
+        if !here.contains(path.as_path())
+            && roots.iter().any(|root| path.starts_with(root))
+            && let Some(hash) = known.tagged.fingerprint.as_deref()
+        {
+            old.entry(hash).or_default().push(path);
+        }
+    }
+    let mut new: HashMap<&str, Vec<&Path>> = HashMap::new();
+    for reading in readings {
+        if !remembered.files.contains_key(&reading.path)
+            && let Some(hash) = reading.tagged.fingerprint.as_deref()
+        {
+            new.entry(hash).or_default().push(&reading.path);
+        }
+    }
+    old.into_iter()
+        .filter_map(|(hash, from)| {
+            let to = new.get(hash)?;
+            (from.len() == 1 && to.len() == 1)
+                .then(|| (wire::track_id(from[0]), wire::track_id(to[0])))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -760,6 +974,7 @@ mod tests {
             &mut found,
             &mut folders,
             &crate::progress::start(),
+            &mut Vec::new(),
         );
 
         let paths: Vec<PathBuf> = found.into_iter().map(|file| file.path).collect();

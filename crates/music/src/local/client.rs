@@ -10,7 +10,8 @@ use crate::cover::{self, CoverLimits};
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, Genre, GenreDetail, GenreItem,
     GenreSection, HomeFeed, ImportedPlaylist, LOCAL_GENRE_PREFIX, MediaKind, MusicApi, Playlist,
-    PlaylistDetail, SUGGESTIONS, SavedArtist, Track, TrackTags, UserProfile, distinct_covers,
+    PlaylistDetail, SUGGESTIONS, SavedArtist, ScanReport, Track, TrackTags, UserProfile,
+    distinct_covers,
 };
 
 use super::index::Index;
@@ -72,7 +73,46 @@ impl LocalClient {
         }
     }
 
+    /// Resolves a known move only while the old path has no current indexed track.
+    fn current_id(&self, id: &str) -> String {
+        let scanned = self.scanned.read().unwrap();
+        if scanned
+            .tracks
+            .iter()
+            .any(|track| track.id.as_deref() == Some(id))
+        {
+            return id.to_owned();
+        }
+        scanned
+            .report
+            .moved
+            .iter()
+            .find(|(from, to)| {
+                from == id
+                    && scanned
+                        .tracks
+                        .iter()
+                        .any(|track| track.id.as_deref() == Some(to))
+            })
+            .map_or_else(|| id.to_owned(), |(_, to)| to.clone())
+    }
+
+    /// Keeps old album links usable after an entire folder-based album moves.
+    fn current_album_id(&self, id: &str) -> String {
+        let scanned = self.scanned.read().unwrap();
+        if scanned.albums.iter().any(|album| album.id == id) {
+            return id.to_owned();
+        }
+        scanned
+            .report
+            .moved_albums
+            .iter()
+            .find(|(from, to)| from == id && scanned.albums.iter().any(|album| album.id == *to))
+            .map_or_else(|| id.to_owned(), |(_, to)| to.clone())
+    }
+
     fn listed(&self, ids: &[String]) -> Vec<Track> {
+        let ids: Vec<String> = ids.iter().map(|id| self.current_id(id)).collect();
         let scanned = self.scanned.read().unwrap();
         ids.iter()
             .filter_map(|id| {
@@ -197,6 +237,10 @@ fn playlist_from(stored: Stored, tracks: &[Track]) -> Playlist {
 
 #[async_trait]
 impl MusicApi for LocalClient {
+    fn scan_report(&self) -> ScanReport {
+        self.scanned.read().unwrap().report.clone()
+    }
+
     fn share_url(&self, kind: MediaKind, id: &str) -> Option<String> {
         match kind {
             MediaKind::Track => {
@@ -313,20 +357,23 @@ impl MusicApi for LocalClient {
     }
 
     async fn set_track_saved(&self, track_id: &str, saved: bool) -> Result<()> {
-        self.store.set_starred(Starred::Tracks, track_id, saved)
+        self.store
+            .set_starred(Starred::Tracks, &self.current_id(track_id), saved)
     }
 
     async fn track_tags(&self, track_id: &str) -> Result<TrackTags> {
-        let path = wire::path_from_track_id(track_id)
+        let track_id = self.current_id(track_id);
+        let path = wire::path_from_track_id(&track_id)
             .ok_or_else(|| anyhow!("{track_id} is not a local track id"))?;
         tags::read(path)
     }
 
     async fn set_track_tags(&self, track_id: &str, updated: TrackTags) -> Result<()> {
-        let path = wire::path_from_track_id(track_id)
+        let track_id = self.current_id(track_id);
+        let path = wire::path_from_track_id(&track_id)
             .ok_or_else(|| anyhow!("{track_id} is not a local track id"))?;
         let year_changed = tags::read(path)?.year != updated.year;
-        let album_tracks = year_changed.then(|| self.album_track_paths(track_id));
+        let album_tracks = year_changed.then(|| self.album_track_paths(&track_id));
 
         tags::write(path, &updated)?;
         let mut written = vec![path.to_path_buf()];
@@ -343,11 +390,12 @@ impl MusicApi for LocalClient {
     }
 
     async fn track(&self, track_id: &str) -> Result<Track> {
+        let track_id = self.current_id(track_id);
         let scanned = self.scanned.read().unwrap();
         scanned
             .tracks
             .iter()
-            .find(|track| track.id.as_deref() == Some(track_id))
+            .find(|track| track.id.as_deref() == Some(track_id.as_str()))
             .cloned()
             .ok_or_else(|| anyhow!("cannot find local track {track_id}"))
     }
@@ -427,11 +475,11 @@ impl MusicApi for LocalClient {
     }
 
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
-        self.store.add(playlist_id, track_id)
+        self.store.add(playlist_id, &self.current_id(track_id))
     }
 
     async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
-        self.store.remove(playlist_id, track_id)
+        self.store.remove(playlist_id, &self.current_id(track_id))
     }
 
     async fn import_playlist(&self, path: &Path) -> Result<ImportedPlaylist> {
@@ -489,7 +537,8 @@ impl MusicApi for LocalClient {
     }
 
     async fn set_album_saved(&self, album_id: &str, saved: bool) -> Result<()> {
-        self.store.set_starred(Starred::Albums, album_id, saved)
+        self.store
+            .set_starred(Starred::Albums, &self.current_album_id(album_id), saved)
     }
 
     async fn saved_artists(&self) -> Result<Vec<SavedArtist>> {
@@ -518,6 +567,7 @@ impl MusicApi for LocalClient {
     }
 
     async fn album(&self, album_id: &str) -> Result<AlbumDetail> {
+        let album_id = self.current_album_id(album_id);
         let album = self
             .scanned
             .read()
@@ -529,12 +579,12 @@ impl MusicApi for LocalClient {
             .ok_or_else(|| anyhow!("cannot find local album {album_id}"))?;
         Ok(AlbumDetail {
             album,
-            tracks: self.album_songs(album_id),
+            tracks: self.album_songs(&album_id),
         })
     }
 
     async fn album_tracks(&self, album_id: &str) -> Result<Vec<Track>> {
-        Ok(self.album_songs(album_id))
+        Ok(self.album_songs(&self.current_album_id(album_id)))
     }
 
     /// The other albums carrying the page's artist credit. Nothing here knows one artist
@@ -915,6 +965,7 @@ mod tests {
             albums: vec![],
             portraits: HashMap::new(),
             artists: vec![],
+            report: ScanReport::default(),
         };
 
         let client = LocalClient::new(scanned, db.clone(), index);

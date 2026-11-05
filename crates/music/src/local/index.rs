@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::ScanReport;
 use anyhow::{Context as _, Result};
 use rusqlite::{Connection, params};
 use storage::Cache;
@@ -116,14 +117,29 @@ impl Index {
     /// read as the folder having left. Writing a file in place moves no folder's time, so this
     /// is the only thing that tells the next scan to look again.
     pub fn forget(&self, paths: &[PathBuf]) {
+        self.invalidate(paths, true);
+    }
+
+    /// Retries failed files on the next walk without losing their last readable metadata.
+    pub fn retry(&self, paths: &[PathBuf]) {
+        self.invalidate(paths, false);
+    }
+
+    /// Invalidates ancestor listings atomically, optionally dropping edited file records too.
+    fn invalidate(&self, paths: &[PathBuf], files: bool) {
+        if paths.is_empty() {
+            return;
+        }
         let dropped = (|| -> Result<()> {
             let mut connection = self.cache.open()?;
             let transaction = connection.transaction()?;
             {
                 let mut file = transaction.prepare("DELETE FROM local_files WHERE path = ?")?;
-                for path in paths {
-                    file.execute(params![text(path)])
-                        .context("cannot drop a file from the index")?;
+                if files {
+                    for path in paths {
+                        file.execute(params![text(path)])
+                            .context("cannot drop a file from the index")?;
+                    }
                 }
             }
             // Native folder pickers may retain a trailing separator. Compare paths as paths,
@@ -156,6 +172,39 @@ impl Index {
         if let Err(error) = dropped {
             log::warn!("local: cannot forget an edited file: {error:#}");
         }
+    }
+
+    /// Keeps move aliases durable before replacing old index rows, so a failed state write retries.
+    pub fn keep_moves(&self, report: &mut ScanReport) -> Result<()> {
+        let mut kept = self
+            .cache
+            .read("local-file-moves", |value| {
+                serde_json::from_str::<ScanReport>(value)
+            })?
+            .transpose()?
+            .unwrap_or_default();
+        for (moves, fresh) in [
+            (&mut kept.moved, &report.moved),
+            (&mut kept.moved_albums, &report.moved_albums),
+        ] {
+            for (from, to) in fresh {
+                for (_, target) in moves.iter_mut() {
+                    if target == from {
+                        *target = to.clone();
+                    }
+                }
+                moves.retain(|(source, _)| source != from);
+                moves.push((from.clone(), to.clone()));
+            }
+            moves.retain(|(from, to)| from != to);
+        }
+        if !report.moved.is_empty() || !report.moved_albums.is_empty() {
+            self.cache
+                .write("local-file-moves", &serde_json::to_string(&kept)?, 0)?;
+        }
+        report.moved = kept.moved;
+        report.moved_albums = kept.moved_albums;
+        Ok(())
     }
 
     fn read(&self) -> Result<Remembered> {
