@@ -16,6 +16,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   each track's own sample rate on Linux and macOS.
 - Swipe two fingers sideways on a touchpad to go back or forward a page.
 - A quick flick on a touchpad under Wayland keeps the page scrolling for a moment after your fingers lift.
+- You can rate songs with stars from the player, the right-click menu and every song list once you turn on Star ratings in Settings. Ratings are retained when several songs were rated at the same time.
 
 ### Changed
 

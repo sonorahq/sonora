@@ -112,6 +112,26 @@ pub enum Report {
 
 #[async_trait]
 pub trait MusicApi: Send + Sync {
+    /// Rating playlist ids and their values in half-stars. Providers with folders can
+    /// preserve their native layout while sharing the track reads and writes.
+    async fn rating_playlists(&self) -> Result<Vec<(String, u8)>> {
+        Ok(self
+            .playlists()
+            .await?
+            .into_iter()
+            .filter_map(|playlist| {
+                let value = playlist.rating()?;
+                Some((playlist.id, value))
+            })
+            .collect())
+    }
+
+    /// Creates storage for one rating; the default uses an unambiguous playlist name.
+    async fn create_rating_playlist(&self, rating: u8) -> Result<String> {
+        self.create_playlist(&format!("Sonora Rating {:.1}", f64::from(rating) / 2.))
+            .await
+    }
+
     fn alive(&self) -> bool {
         true
     }
@@ -342,6 +362,18 @@ pub trait MusicApi: Send + Sync {
     }
 
     async fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>>;
+
+    /// Track ids and addition times without requiring song metadata. Used for rating storage;
+    /// the default reuses the full track listing when a provider has no lighter read.
+    async fn playlist_entries(&self, playlist_id: &str) -> Result<Vec<(String, Option<i64>)>> {
+        Ok(self
+            .playlist_tracks(playlist_id)
+            .await?
+            .into_iter()
+            .filter_map(|track| Some((track.id?, track.added_at)))
+            .collect())
+    }
+
     async fn playlist_covers(&self, playlist_id: &str, wanted: usize) -> Result<Vec<String>>;
     /// The station seeded by `track_id`, from its start or from `from`, a continuation an
     /// earlier call answered with. The continuation that comes back fetches the next stretch,

@@ -38,6 +38,14 @@ impl LibrespotClient {
 
 #[async_trait]
 impl MusicApi for LibrespotClient {
+    async fn rating_playlists(&self) -> Result<Vec<(String, u8)>> {
+        playlists::rating_playlists(&self.session).await
+    }
+
+    async fn create_rating_playlist(&self, rating: u8) -> Result<String> {
+        playlists::create_rating_playlist(&self.session, rating).await
+    }
+
     fn alive(&self) -> bool {
         !self.session.is_invalid()
     }
@@ -168,6 +176,10 @@ impl MusicApi for LibrespotClient {
 
     async fn playlist_covers(&self, playlist_id: &str, wanted: usize) -> Result<Vec<String>> {
         playlists::covers(&self.session, playlist_id, wanted).await
+    }
+
+    async fn playlist_entries(&self, playlist_id: &str) -> Result<Vec<(String, Option<i64>)>> {
+        playlists::entries(&self.session, playlist_id).await
     }
 
     async fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>> {

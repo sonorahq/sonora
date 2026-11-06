@@ -981,6 +981,8 @@ impl Savable for SavedArtist {
 }
 
 pub enum LibraryEvent {
+    /// A streaming library refresh was requested, including changes from another client.
+    Refreshing,
     PlaylistGone(String),
     /// A playlist an Undo brought back into the library after `PlaylistGone` took it out.
     PlaylistBack(String),
@@ -3071,6 +3073,7 @@ impl Library {
     /// can be snapshotted.
     pub fn refresh(&mut self, shelf: Shelf, cx: &mut Context<Self>) {
         if shelf == Shelf::Streaming {
+            cx.emit(LibraryEvent::Refreshing);
             self.sync_pin_targets(cx);
         }
         let held = self.held_mut(shelf);
@@ -3088,7 +3091,10 @@ impl Library {
     pub fn reload(&mut self, shelf: Shelf, cx: &mut Context<Self>) {
         self.held_mut(shelf).stale.clear();
         match shelf {
-            Shelf::Streaming => self.sync_pin_targets(cx),
+            Shelf::Streaming => {
+                cx.emit(LibraryEvent::Refreshing);
+                self.sync_pin_targets(cx);
+            }
             Shelf::Local if !self.session.read(cx).local_paths().is_empty() => {
                 self.rescan_local(false, cx);
                 return;

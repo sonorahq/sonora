@@ -110,6 +110,18 @@ pub struct Playlist {
     pub modified_at: Option<i64>,
 }
 
+impl Playlist {
+    /// The half-star value of a Sonora rating playlist on a service without rating folders.
+    /// Followed playlists and unrelated names are left alone.
+    pub fn rating(&self) -> Option<u8> {
+        let name = self
+            .name
+            .strip_prefix("Sonora Rating ")
+            .filter(|_| self.owned)?;
+        (1..=10).find(|rating| name == format!("{:.1}", f64::from(*rating) / 2.))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReleaseType {
     #[default]

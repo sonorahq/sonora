@@ -18,6 +18,7 @@ use crate::shared::confirm::Confirm;
 use crate::shared::local;
 use crate::shared::pins::Pinned as _;
 use crate::shared::playlist_editor::{Edit, PlaylistEditor};
+use crate::shared::rating::rating;
 use crate::shared::tag_editor::TagEditor;
 
 /// The narrowest the menu of one song, album, artist or playlist gets, which is wide enough for
@@ -195,12 +196,16 @@ impl ItemMenu {
         cx: &App,
     ) -> Menu {
         let library = Sonora::global(cx).library.clone();
+        let ratings = Sonora::global(cx).ratings.read(cx);
         let playlists: Vec<Playlist> = library
             .read(cx)
             .state(shelf)
             .playlists()
             .iter()
             .filter(|playlist| playlist.owned || playlist.collaborative)
+            .filter(|playlist| {
+                !ratings.is_rating_playlist(&playlist.id) && playlist.rating().is_none()
+            })
             .cloned()
             .collect();
         let ids = match &addition {
@@ -393,6 +398,8 @@ impl ItemMenu {
                     .disabled(),
             ),
         };
+        let rated = (!many && !imported && Sonora::global(cx).ratings.read(cx).enabled(cx))
+            .then(|| track.clone());
         let album = match (many, columns.album, track.album_id.clone()) {
             (true, _, _) | (false, true, _) => None,
             (false, false, Some(id)) if Some(id.as_str()) == current_album => None,
@@ -499,7 +506,9 @@ impl ItemMenu {
         let tiles = track_tiles(tracks, &ids, shelf, imported, pinnable, cx);
 
         sections(
-            item_shell("track-context-menu", tiles)
+            Menu::new("track-context-menu")
+                .min_w(ITEM_MENU_WIDTH)
+                .header(Tiles(tiles, rated))
                 .relative()
                 .when(many, |menu| menu.min_w(SELECTION_MENU_WIDTH)),
             vec![
@@ -570,7 +579,7 @@ fn item_shell(id: &'static str, tiles: Vec<Tile>) -> Menu {
     let menu = Menu::new(id).min_w(ITEM_MENU_WIDTH);
     match tiles.is_empty() {
         true => menu,
-        false => menu.header(Tiles(tiles)),
+        false => menu.header(Tiles(tiles, None)),
     }
 }
 
@@ -638,18 +647,35 @@ impl FluentBuilder for Tile {}
 /// the favorites, the download and the pin. The tiles share the row evenly, only a tile that is on
 /// has a fill, and they leave the menu open when picked unless they hand off to a dialog.
 #[derive(IntoElement)]
-struct Tiles(Vec<Tile>);
+struct Tiles(Vec<Tile>, Option<Track>);
 
 impl RenderOnce for Tiles {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = *cx.theme();
         let tucked = ui::tucked(theme.radius, window);
-        div()
+        let hover = window.use_state(cx, |_, _| None::<u8>);
+        let preview = self.1.as_ref().and_then(|track| {
+            Sonora::global(cx)
+                .ratings
+                .read(cx)
+                .preview_like(track.id.as_deref()?, *hover.read(cx))
+        });
+        let stars = rating("menu-rating", self.1.as_ref(), None, false)
+            .map(|stars| stars.stars_only(hover));
+        let tiles = div()
             .flex()
             .flex_row()
             .w_full()
             .gap_1()
             .children(self.0.into_iter().map(|tile| {
+                let tile = match (tile.id, preview) {
+                    ("tile-favorite", Some(saved)) => Tile {
+                        on_click: tile.on_click,
+                        closes: tile.closes,
+                        ..heart_tile(saved)
+                    },
+                    _ => tile,
+                };
                 let Tile {
                     id,
                     icon,
@@ -691,7 +717,15 @@ impl RenderOnce for Tiles {
                             click(window, cx);
                         })
                     })
-            }))
+            }));
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(tiles)
+            .when_some(stars, |header, stars| {
+                header.child(div().flex().justify_center().child(stars))
+            })
     }
 }
 
