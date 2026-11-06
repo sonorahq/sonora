@@ -917,6 +917,8 @@ equalizer-status-channels = { $from ->
     [2] estéreo
    *[other] { $to } canais
 }
+settings-lyrics = Mostrar letras
+settings-lyrics-detail = Desative para ocultar as letras em todo lugar e parar de buscá-las
 settings-panel-lyrics-size = Tamanho da letra (painel)
 settings-panel-lyrics-size-detail = Tamanho do texto da letra no painel lateral, além do tamanho base da fonte
 settings-fullscreen-lyrics-size = Tamanho da letra (tela cheia)

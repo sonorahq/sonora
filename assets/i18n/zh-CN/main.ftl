@@ -917,6 +917,8 @@ equalizer-status-channels = { $from ->
     [2] 立体声
    *[other] { $to } 声道
 }
+settings-lyrics = 显示歌词
+settings-lyrics-detail = 关闭后将在所有位置隐藏歌词，并停止查找歌词
 settings-panel-lyrics-size = 歌词大小（面板）
 settings-panel-lyrics-size-detail = 侧边面板中歌词文字的大小，基于基础字体大小
 settings-fullscreen-lyrics-size = 歌词大小（全屏）

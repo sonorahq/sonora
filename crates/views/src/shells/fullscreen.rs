@@ -142,9 +142,19 @@ impl FullscreenView {
         let library = Sonora::global(cx).library.clone();
         cx.observe(&library, |_, _, cx| cx.notify()).detach();
         let settings = Sonora::global(cx).settings.clone();
-        cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+        cx.observe(&settings, |this, settings, cx| {
+            if this.panel == Some(SideTab::Lyrics) && !settings.read(cx).lyrics_enabled() {
+                this.panel = None;
+                this.over_pill = false;
+            }
+            cx.notify();
+        })
+        .detach();
         let panel = settings.read(cx).fullscreen_tab();
-        let shown = panel.unwrap_or(SideTab::Lyrics);
+        let shown = panel.unwrap_or(match settings.read(cx).lyrics_enabled() {
+            true => SideTab::Lyrics,
+            false => SideTab::Queue,
+        });
         let aside = cx.new(|cx| Aside::new(queue.clone(), playback.clone(), shown, cx));
         aside.update(cx, |aside, _| aside.strip());
         let me = cx.entity_id();
@@ -954,6 +964,7 @@ impl FullscreenView {
     fn pill(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         let frosted = ambient::shown(cx);
+        let lyrics = self.settings.read(cx).lyrics_enabled();
         let gap = px(PILL_GAP);
         let linger = cx.listener(|this: &mut Self, hovering: &bool, _, cx| {
             this.over_pill = *hovering;
@@ -989,26 +1000,32 @@ impl FullscreenView {
                     .name(t!("fullscreen-panels"))
                     .when(frosted, TabBar::blurred)
                     .rounded(theme.radius + gap)
-                    .items([
-                        tab(
-                            "fullscreen-artwork-tab",
-                            "icons/disc-3.svg",
-                            "fullscreen-artwork",
-                            None,
-                        ),
-                        tab(
-                            "fullscreen-lyrics",
-                            "icons/mic-vocal.svg",
-                            "lyrics-title",
-                            Some(SideTab::Lyrics),
-                        ),
-                        tab(
-                            "fullscreen-queue",
-                            "icons/list-music.svg",
-                            "queue-title",
-                            Some(SideTab::Queue),
-                        ),
-                    ]),
+                    .items(
+                        [
+                            Some(tab(
+                                "fullscreen-artwork-tab",
+                                "icons/disc-3.svg",
+                                "fullscreen-artwork",
+                                None,
+                            )),
+                            lyrics.then(|| {
+                                tab(
+                                    "fullscreen-lyrics",
+                                    "icons/mic-vocal.svg",
+                                    "lyrics-title",
+                                    Some(SideTab::Lyrics),
+                                )
+                            }),
+                            Some(tab(
+                                "fullscreen-queue",
+                                "icons/list-music.svg",
+                                "queue-title",
+                                Some(SideTab::Queue),
+                            )),
+                        ]
+                        .into_iter()
+                        .flatten(),
+                    ),
             )
     }
 

@@ -17,6 +17,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Swipe two fingers sideways on a touchpad to go back or forward a page.
 - A quick flick on a touchpad under Wayland keeps the page scrolling for a moment after your fingers lift.
 - An artist's page links to the songs of theirs you have in your Favorites, so you can see and play them together, and take one out with the X that appears when you point at it.
+- Turn off Show lyrics in the lyrics settings to hide the lyrics buttons in the player bar and
+  Now playing, and stop Sonora looking lyrics up.
 
 ### Changed
 

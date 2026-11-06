@@ -918,6 +918,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } can.
 }
+settings-lyrics = Mostra i testi
+settings-lyrics-detail = Disattiva per nascondere i testi ovunque e smettere di cercarli
 settings-panel-lyrics-size = Dimensione testi (pannello)
 settings-panel-lyrics-size-detail = Dimensione del testo nel pannello laterale, oltre alla dimensione base del carattere
 settings-fullscreen-lyrics-size = Dimensione testi (schermo intero)

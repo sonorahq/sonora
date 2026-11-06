@@ -84,13 +84,15 @@ pub(in crate::screens::settings) fn preview(
             .then(|| settings.romanization_scripts()),
     };
     let sizes = verse_sizes(false, settings.fullscreen_lyrics_scale(), &theme);
+    let on = settings.lyrics_enabled();
     let sheet = div()
         .relative()
         .w_full()
         .h(height)
         .bg(theme.background)
         .children(field)
-        .child(lines(look, sizes, height, theme));
+        .child(lines(look, sizes, height, theme))
+        .when(!on, |sheet| sheet.opacity(super::DIMMED));
 
     Some(super::framed(sheet, cx).into_any_element())
 }
