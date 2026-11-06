@@ -404,6 +404,11 @@ artist-popular-eyebrow = Explore this artist
 artist-popular-empty = Nothing to play from this artist yet
 artist-popular-more = Show all
 artist-popular-less = Show less
+artist-favorite-songs = Your favorite songs
+artist-favorite-songs-count = { $count ->
+    [one] { $count } song in your Favorites
+   *[other] { $count } songs in your Favorites
+}
 artist-releases = Releases
 artist-releases-more = Show all
 artist-releases-less = Show less
