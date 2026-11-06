@@ -76,6 +76,31 @@ pub fn rank_with_priority(
         .collect()
 }
 
+/// The hits worth offering from a search the listener typed by hand, best first. A manual
+/// search exists because the track's own title and artist matched nothing, so the identity
+/// check of [`rank`] would throw every answer away: the listener is the judge of what fits,
+/// and only empty sheets and noise are dropped here. [`score`] still orders what came back,
+/// so an answer naming the searched title and artist stands ahead of one that does not.
+pub fn candidates(query: &LyricsQuery, hits: Vec<LyricsHit>) -> Vec<LyricsHit> {
+    let mut scored: Vec<(i64, LyricsHit)> = hits
+        .into_iter()
+        .filter(|hit| !hit.lyrics.is_empty() && !low_quality(&hit.lyrics))
+        .map(|hit| (score(query, &hit), hit))
+        .collect();
+    scored.sort_by(|(left_score, left), (right_score, right)| {
+        right_score
+            .cmp(left_score)
+            .then_with(|| left.source.cmp(right.source))
+            .then_with(|| left.title.cmp(&right.title))
+    });
+    let mut seen = HashSet::new();
+    scored
+        .into_iter()
+        .map(|(_, hit)| hit)
+        .filter(|hit| seen.insert(fingerprint(&hit.lyrics)))
+        .collect()
+}
+
 pub fn reshape(hits: &mut [LyricsHit]) {
     let Some(guide) = hits
         .iter()
@@ -600,6 +625,77 @@ mod tests {
         assert!(alike("Jaded", "Jaded - Single"));
         assert!(alike("Jaded (Remastered 2024)", "Jaded"));
         assert!(alike("Love Story", "Love Story (Taylor's Version)"));
+    }
+
+    #[test]
+    fn a_manual_search_keeps_a_matching_original_language_title() {
+        let query = LyricsQuery {
+            title: "夜に駆ける".to_owned(),
+            artist: "YOASOBI".to_owned(),
+            album: None,
+            duration: Duration::from_secs(261),
+            track: None,
+        };
+
+        let ranked = candidates(&query, vec![hit("夜に駆ける", "YOASOBI", 261, true)]);
+
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].title, "夜に駆ける");
+    }
+
+    #[test]
+    fn a_manual_search_keeps_a_mismatched_hit_for_the_listener_to_judge() {
+        // The point of searching by hand is finding what the track's own title cannot: the
+        // answer that does not match the query must still be offered, behind what does.
+        let query = query();
+        let near = hit("Jaded", "Spiritbox", 263, true);
+        let far = hit("Different Song", "Someone Else", 200, true);
+
+        let ranked = candidates(&query, vec![far, near]);
+
+        assert_eq!(ranked.len(), 2);
+        assert_eq!(ranked[0].title, "Jaded");
+        assert_eq!(ranked[1].title, "Different Song");
+    }
+
+    #[test]
+    fn a_manual_search_drops_empty_sheets_and_noise() {
+        let mut empty = hit("Jaded", "Spiritbox", 263, false);
+        empty.lyrics = Lyrics::plain(String::new());
+        let mut noisy = hit("Jaded", "Spiritbox", 263, true);
+        let Lyrics::Synced { lines } = &noisy.lyrics else {
+            unreachable!()
+        };
+        let mut lines = lines.to_vec();
+        for text in ["AAAAAAA!", "BBBBBBB!", "CCCCCCC!"] {
+            let mut shouted = line(1, 2, text);
+            shouted.words = Some(vec![LyricsWord {
+                start: Duration::from_secs(1),
+                end: Duration::from_secs(2),
+                text: text.to_owned(),
+            }]);
+            lines.push(shouted);
+        }
+        noisy.lyrics = Lyrics::Synced {
+            lines: lines.into(),
+        };
+
+        let ranked = candidates(
+            &query(),
+            vec![empty, noisy, hit("Jaded", "Spiritbox", 263, true)],
+        );
+
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].title, "Jaded");
+    }
+
+    #[test]
+    fn a_manual_search_collapses_twin_uploads() {
+        let hits = vec![
+            hit("Jaded", "Spiritbox", 263, true),
+            hit("Jaded", "Spiritbox", 263, true),
+        ];
+        assert_eq!(candidates(&query(), hits).len(), 1);
     }
 
     #[test]

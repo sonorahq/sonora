@@ -7500,6 +7500,7 @@ dependencies = [
  "dirs",
  "log",
  "rusqlite",
+ "tempfile",
 ]
 
 [[package]]

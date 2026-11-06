@@ -175,6 +175,12 @@ impl LyricsProvider for Kugou {
         SOURCE
     }
 
+    /// This catalogue looks lyrics up by title and artist, so it can answer a search the
+    /// listener typed by hand.
+    fn text_search(&self) -> bool {
+        true
+    }
+
     async fn search(&self, query: &LyricsQuery) -> Result<Vec<LyricsHit>> {
         let wanted = format!("{} {}", query.artist, query.title);
         let songs = shortlist(self.songs(&wanted).await?, query.duration);
