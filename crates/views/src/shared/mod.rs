@@ -5,6 +5,7 @@ pub(crate) mod ambient;
 pub(crate) mod cards;
 pub(crate) mod cells;
 pub(crate) mod confirm;
+pub(crate) mod cover_viewer;
 pub(crate) mod device_code;
 pub(crate) mod device_menu;
 pub(crate) mod equalizer;

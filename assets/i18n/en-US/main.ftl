@@ -185,6 +185,13 @@ playlist-cover-remove = Remove cover
 playlist-cover-unopenable = Sonora can't open this file
 playlist-cover-too-large = This picture is larger than 40 MB
 playlist-cover-not-a-picture = This file is not a JPEG, PNG or WebP picture
+
+# cover viewer
+cover-view = View cover
+cover-zoom-in = Zoom in
+cover-zoom-out = Zoom out
+cover-zoom-fit = Fit to window
+
 playlist-delete-title = Delete playlist
 playlist-delete-confirm = Delete “{ $name }”? This cannot be undone.
 playlist-again-title = Add it again?
