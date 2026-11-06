@@ -8,7 +8,7 @@ use gpui::{
     Window, div, px, relative, svg,
 };
 use i18n::t;
-use music::{AccountChoice, SignIn, SignInPrompt};
+use music::{AccountChoice, Choosing, SignIn, SignInPrompt};
 use router::{Destination, SettingsPage, navigate};
 use state::{Failure, Scan, SessionState, Sonora};
 use ui::{
@@ -305,7 +305,9 @@ impl SettingsView {
         let signed_out = matches!(session.state(), SessionState::SignedOut);
         let guest = !session.authenticated();
         let waiting = match session.state() {
-            SessionState::Authorizing(prompt) => !matches!(prompt, Some(SignInPrompt::Accounts(_))),
+            SessionState::Authorizing(prompt) => {
+                !matches!(prompt, Some(SignInPrompt::Accounts(..)))
+            }
             _ => false,
         };
         let loading = session.is_pending();
@@ -864,10 +866,11 @@ impl SettingsView {
 
     pub(super) fn account_modal(
         &self,
+        what: Choosing,
         accounts: Vec<AccountChoice>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        AccountPicker::new(accounts)
+        AccountPicker::new(what, accounts)
             .on_pick(cx.listener(|this, id: &SharedString, _, cx| {
                 let id = id.to_string();
                 this.session
