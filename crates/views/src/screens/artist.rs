@@ -1026,9 +1026,7 @@ impl ArtistView {
 
     /// Opens the listener's favorites for this artist without adding songs to the page.
     fn favorites_link(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let detail = self.detail.read(cx);
-        let artist = detail.artist()?;
-        let id = detail.id()?;
+        let id = self.detail.read(cx).id()?;
         let count = Sonora::global(cx)
             .library
             .read(cx)
@@ -1043,11 +1041,7 @@ impl ArtistView {
                 .child(
                     Button::new("artist-favorites")
                         .icon("icons/heart.svg")
-                        .label(t!(
-                            "artist-favorite-songs-count",
-                            count = count,
-                            artist = artist.name.as_str()
-                        ))
+                        .label(t!("artist-favorite-songs-count", count = count))
                         .trailing("icons/chevron-right.svg")
                         .ghost()
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -1084,7 +1078,6 @@ impl ArtistView {
             });
         });
         let row_playback = self.playback.clone();
-        let library = Sonora::global(cx).library.clone();
         let height = snapped(cx.theme().metrics.list_row, window);
         let columns = match Chrome::room(window, cx).fits(ui::Room::Roomy) {
             true => 2,
@@ -1099,19 +1092,14 @@ impl ArtistView {
                     .children((0..columns).map(|column| {
                         let place = row * columns + column;
                         div().flex_1().min_w_0().when(place < count, |this| {
-                            let track = &tracks[place];
                             this.child(
                                 crate::shared::track_card::TrackCard::new(
-                                    SharedString::from(format!(
-                                        "artist-favorite-song-{}",
-                                        track.id.as_deref().unwrap_or(&track.name)
-                                    )),
+                                    "artist-favorite-song",
                                     place,
                                     tracks.clone(),
                                     row_playback.clone(),
                                 )
                                 .detailed(true)
-                                .with_favorites(library.clone())
                                 .start(Some(start.clone()))
                                 .render(cx),
                             )

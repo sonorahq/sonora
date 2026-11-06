@@ -406,8 +406,8 @@ artist-popular-more = Show all
 artist-popular-less = Show less
 artist-favorite-songs = Your favorite songs
 artist-favorite-songs-count = { $count ->
-    [one] You’ve favorited { $count } song by { $artist }
-   *[other] You’ve favorited { $count } songs by { $artist }
+    [one] { $count } song in your Favorites
+   *[other] { $count } songs in your Favorites
 }
 artist-releases = Releases
 artist-releases-more = Show all

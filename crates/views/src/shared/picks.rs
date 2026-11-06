@@ -299,7 +299,7 @@ impl RenderOnce for Picks {
 
                                 match &rows {
                                     Rows::Tracks(tracks) if place < tracks.len() => TrackCard::new(
-                                        (id, place),
+                                        id,
                                         place,
                                         tracks.clone(),
                                         self.playback.clone(),
