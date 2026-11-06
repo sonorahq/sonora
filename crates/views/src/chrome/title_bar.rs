@@ -44,7 +44,6 @@ pub(crate) struct TitleBarOptions {
     pub navigation: bool,
     pub sidebar_open: bool,
     pub sidebar_right: Option<bool>,
-    pub offset: Pixels,
     pub border: bool,
     pub content: Option<AnyView>,
     /// Lets the fullscreen ambient background show through behind the controls.
@@ -57,7 +56,6 @@ impl Default for TitleBarOptions {
             navigation: false,
             sidebar_open: false,
             sidebar_right: None,
-            offset: Pixels::ZERO,
             border: true,
             content: None,
             transparent: false,
@@ -262,7 +260,9 @@ impl Render for TitleBar {
             matches!(window.window_decorations(), Decorations::Client { .. }) && !window_fullscreen;
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let controls = settings.window_controls() && !window_fullscreen;
-        let inset = traffic_lights_inset(settings, height);
+        // Fullscreen hides the traffic lights, so the toggle sits as far from the left edge as
+        // the right sidebar's toggle does from the right.
+        let inset = traffic_lights_inset(settings, height).filter(|_| !window_fullscreen);
         let decorated = cfg!(not(target_os = "macos")) && controls;
         let leading = decorated && settings.controls_on_left();
         #[cfg(not(target_os = "macos"))]
@@ -328,7 +328,6 @@ impl Render for TitleBar {
                     })
                     .pr_3()
                     .gap_1()
-                    .when(offset > Pixels::ZERO, |this| this.w(offset))
                     .when(leading, |this| {
                         this.child(window_controls(true, traffic_light))
                     })
