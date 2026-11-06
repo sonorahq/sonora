@@ -16,14 +16,14 @@ use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
 use ui::{
     ActiveTheme as _, Artwork, Button, Entrance, ExplicitBadge, Fading as _, GLASS_BLUR,
-    GLASS_FILL, InlineLink, InlineLinks, Motion, Motioned as _, Popup, Rising as _, Room,
-    Scrollbar, Scrubber, ScrubberState, Springs, TabBar, Tails as _, Text, Visualizer, clock,
-    entering, snapped,
+    GLASS_FILL, Motion, Motioned as _, Popup, Rising as _, Room, Scrollbar, Scrubber,
+    ScrubberState, Springs, TabBar, Tails as _, Text, Visualizer, clock, entering, snapped,
 };
 
 use crate::chrome::{Aside, TitleBarOptions};
 use crate::shared::menus::ItemMenu;
-use crate::shared::transport::{NOTCH, fraction, like, moved, percent, transport, volume_icon};
+use crate::shared::rating::rating;
+use crate::shared::transport::{NOTCH, fraction, moved, percent, transport, volume_icon};
 use crate::shared::visualizer::VisualizerDrive;
 use crate::shared::{self, ambient};
 use crate::shells::Shell;
@@ -139,6 +139,8 @@ impl FullscreenView {
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         let cover = Sonora::global(cx).cover.clone();
         cx.observe(&cover, |_, _, cx| cx.notify()).detach();
+        let ratings = Sonora::global(cx).ratings.clone();
+        cx.observe(&ratings, |_, _, cx| cx.notify()).detach();
         let library = Sonora::global(cx).library.clone();
         cx.observe(&library, |_, _, cx| cx.notify()).detach();
         let settings = Sonora::global(cx).settings.clone();
@@ -546,7 +548,6 @@ impl FullscreenView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = *cx.theme();
-        let frosted = ambient::shown(cx);
         let shown = self.playback.read(cx).shown_track(cx);
         let track = shown.as_ref();
         let title = match track {
@@ -564,23 +565,6 @@ impl FullscreenView {
         let shadow = TEXT_SHADOW.map(|blur| {
             TextShadow::new(theme.background.opacity(TEXT_SHADOW_STRENGTH)).blur(px(blur))
         });
-        let trailing = |track: Option<&music::Track>, cx: &App| {
-            div()
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap_2()
-                .when(explicit, |this| {
-                    this.child(explicit_badge("fullscreen-explicit", track.is_some()))
-                })
-                .child(
-                    div()
-                        .flex()
-                        .flex_none()
-                        .opacity(1. - hide)
-                        .child(like(track, &self.playback, cx).when(frosted, Button::frosted)),
-                )
-        };
 
         div()
             .relative()
@@ -601,12 +585,8 @@ impl FullscreenView {
                     .bottom(px(SHADOW_BLEED)),
             )
             .child(
-                // Three-part row with equal flex sides, so the title stays truly centred:
-                // the heart and the explicit badge live in the right cell and never shift it.
-                // The left cell holds an invisible copy of the right one, so both sides floor
-                // at the same width and a long title truncates instead of pushing the heart out
-                // of the row. The room around the title comes from the row gap, since padding
-                // on a side would make that side the wider one.
+                // Equal side cells keep the title centred around its explicit badge.
+                // Ratings sit beside the artist so they leave the title its full width.
                 div()
                     .flex()
                     .items_center()
@@ -620,7 +600,9 @@ impl FullscreenView {
                             .flex_1()
                             .justify_end()
                             .invisible()
-                            .child(trailing(None, cx)),
+                            .when(explicit, |this| {
+                                this.child(explicit_badge("fullscreen-explicit-balance", false))
+                            }),
                     )
                     .child(
                         div()
@@ -653,34 +635,22 @@ impl FullscreenView {
                             .when(effects, |this| this.text_shadow(shadow))
                             .child(title),
                     )
-                    .child(div().flex().flex_1().child(trailing(track, cx))),
+                    .child(div().flex().flex_1().when(explicit, |this| {
+                        this.child(explicit_badge("fullscreen-explicit", true))
+                    })),
             )
             .when_some(track, |this, track| {
                 this.child(
-                    div().flex().w_full().min_w_0().justify_center().child(
-                        InlineLinks::new(
-                            "fullscreen-artists",
-                            track.artist_refs.iter().map(|artist| {
-                                InlineLink::new(
-                                    artist.name.clone(),
-                                    artist.id.clone().map(Into::into),
-                                )
-                            }),
-                            track.artists.clone(),
-                            shared::quiet(&theme),
-                        )
-                        .text_size(theme.text(Text::Body))
-                        .truncate()
-                        .when(effects, |this| this.text_shadow(shadow))
-                        .on_click(|id, cx| navigate(Destination::Artist(id), cx)),
-                    ),
+                    self.artists(track, "fullscreen-artists", Text::Body, hide, cx)
+                        .w_full()
+                        .justify_center()
+                        .when(effects, |this| this.text_shadow(shadow)),
                 )
             })
     }
 
     fn strip(&self, hide: f32, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
-        let frosted = ambient::shown(cx);
         let cover = ui::snapped(theme.metrics.row, window);
         let shown = self.playback.read(cx).shown_track(cx);
         let track = shown.as_ref();
@@ -758,30 +728,44 @@ impl FullscreenView {
                             )
                             .when(explicit, |this| {
                                 this.child(explicit_badge("strip-explicit", true))
-                            })
-                            .child(div().flex().flex_none().opacity(1. - hide).child(
-                                like(track, &self.playback, cx).when(frosted, Button::frosted),
-                            )),
+                            }),
                     )
                     .when_some(track, |this, track| {
-                        this.child(
-                            InlineLinks::new(
-                                "strip-artists",
-                                track.artist_refs.iter().map(|artist| {
-                                    InlineLink::new(
-                                        artist.name.clone(),
-                                        artist.id.clone().map(Into::into),
-                                    )
-                                }),
-                                track.artists.clone(),
-                                shared::quiet(&theme),
-                            )
-                            .text_size(theme.text(Text::Small))
-                            .truncate()
-                            .on_click(|id, cx| navigate(Destination::Artist(id), cx)),
-                        )
+                        this.child(self.artists(track, "strip-artists", Text::Small, hide, cx))
                     }),
             )
+    }
+
+    /// The artist line and rating control shared by the cover view and the compact strip.
+    fn artists(
+        &self,
+        track: &music::Track,
+        id: &'static str,
+        size: Text,
+        hide: f32,
+        cx: &App,
+    ) -> gpui::Div {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .min_w_0()
+            .child(
+                shared::cells::artist_links(
+                    id,
+                    track.artist_refs.clone(),
+                    track.artists.clone(),
+                    shared::quiet(cx.theme()),
+                )
+                .text_size(cx.theme().text(size))
+                .truncate(),
+            )
+            .child(div().flex_none().opacity(1. - hide).children(rating(
+                SharedString::from(format!("{id}-rating")),
+                Some(track),
+                Some(&self.playback),
+                ambient::shown(cx),
+            )))
     }
 
     fn seek(&self, cx: &mut Context<Self>) -> impl IntoElement {

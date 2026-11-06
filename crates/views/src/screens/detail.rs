@@ -173,7 +173,7 @@ impl DetailView {
                     }
                 }
             });
-            let source = source.table(cx.weak_entity());
+            let source = source.table(cx);
             let mut delegate = TableDelegate::new(source, width, cx).with_column_menu(&PINNED);
             delegate.set_layout(saved, cx);
             TableState::new(delegate, cx).follow(scroll)

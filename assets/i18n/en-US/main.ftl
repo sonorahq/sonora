@@ -1431,3 +1431,31 @@ response-graph-readout = { $frequency } · { $direction ->
         [down] -{ $gain }
        *[flat] { $gain }
     } dB
+
+# star ratings
+ratings-set = Rate { $rating } out of 5 stars
+ratings-clear = Clear rating
+ratings-change = { $previous } → { $current }
+ratings-loading = Loading or saving rating…
+ratings-retry = Could not load ratings. Click to retry.
+ratings-save-failed = Could not save your rating. Please try again.
+toast-rating-updated = Updated the rating of { $name }
+toast-rating-liked = Updated the rating of { $name } and liked the song
+toast-rating-unliked = Updated the rating of { $name } and unliked the song
+toast-rating-cleared = Cleared the rating of { $name }
+
+column-rating = Rating
+settings-star-ratings = Star ratings
+settings-star-ratings-detail = Show song star ratings stored in playlists on your music service.
+settings-half-ratings = Half-star ratings
+settings-half-ratings-detail = Select ratings in half-star steps.
+settings-rating-auto-like = Automatically like rated songs
+settings-rating-auto-like-detail = Like songs you rate at or above this threshold, and unlike songs you rate below it.
+ratings-threshold =
+    { $rating ->
+        [one] { $rating } star
+       *[other] { $rating } stars
+    }
+
+ratings-auto-like-off = Turn off automatic liking
+ratings-auto-like-set = Like songs rated { ratings-threshold } or higher
