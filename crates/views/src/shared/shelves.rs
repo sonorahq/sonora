@@ -257,7 +257,8 @@ impl Shelves {
                     .on_scroll_wheel({
                         let scroll = handle.clone();
                         let glide = glide.clone();
-                        move |event: &ScrollWheelEvent, window, _| {
+                        move |event: &ScrollWheelEvent, window, cx| {
+                            ui::hold_swipe(event, &scroll, cx);
                             if !sideways(event) {
                                 return;
                             }
@@ -533,7 +534,8 @@ impl Rail {
                     .overflow_x_scroll()
                     .restrict_scroll_to_axis()
                     .track_scroll(&self.scroll)
-                    .on_scroll_wheel(move |event: &ScrollWheelEvent, window, _| {
+                    .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+                        ui::hold_swipe(event, &scrolled, cx);
                         if !sideways(event) {
                             return;
                         }

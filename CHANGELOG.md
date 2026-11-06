@@ -14,6 +14,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to hardware, and picking one there keeps every other app off it.
 - Turn on Match sample rate in the sound settings to have a Direct to hardware device follow
   each track's own sample rate on Linux and macOS.
+- Swipe two fingers sideways on a touchpad to go back or forward a page.
+- A quick flick on a touchpad under Wayland keeps the page scrolling for a moment after your fingers lift.
 
 ### Changed
 
