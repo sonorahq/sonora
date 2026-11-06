@@ -9,6 +9,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Create and edit Navidrome smart playlists in the app: the playlists menu offers New smart
+  playlist on a Navidrome library, and an owned playlist's menu opens Smart rules, with
+  nested match groups, every field and operator the server knows, and a warning when a
+  synced file can overwrite an edit.
+
 - Drag the playing song from the player bar onto a playlist, Pinned or the queue.
 - Play directly to hardware on macOS. Every output device is listed a second time under Direct
   to hardware, and picking one there keeps every other app off it.

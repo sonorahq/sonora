@@ -47,6 +47,7 @@ impl SubsonicProvider {
             .await
             .context("cannot reach the subsonic server")?;
         let covers = client.takes_playlist_covers().await;
+        let smart = client.takes_smart_playlists().await;
         auth::store(&auth::Credentials {
             server,
             username,
@@ -62,6 +63,7 @@ impl SubsonicProvider {
             capabilities: Capabilities {
                 transcode: true,
                 playlist_covers: covers,
+                smart_playlists: smart,
                 ..Capabilities::ALL
             },
         })
@@ -89,6 +91,7 @@ impl SubsonicProvider {
                 capabilities: Capabilities {
                     transcode: true,
                     playlist_covers: client.takes_playlist_covers().await,
+                    smart_playlists: client.takes_smart_playlists().await,
                     ..Capabilities::ALL
                 },
                 profile,
