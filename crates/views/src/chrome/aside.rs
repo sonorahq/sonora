@@ -53,7 +53,9 @@ const ACTIVE_VERSE_GROWTH: Pixels = px(2.);
 const FULLSCREEN_VERSE_GROWTH: Pixels = px(3.);
 /// How much larger than the lane text unsynced lyrics are set, while staying below a synced verse.
 const PLAIN_LYRICS_GROWTH: f32 = 1.15;
-const LYRICS_HORIZONTAL_INSET_REM: f32 = 1.5;
+/// The sheet's and a verse's padding on both sides, plus the extra trailing padding a wrapped
+/// verse takes, so no row runs into it.
+const LYRICS_HORIZONTAL_INSET_REM: f32 = 2.;
 // The largest window fullscreen lyrics keep their own size in. A larger one grows them by its
 // share of this one, so a verse keeps its size relative to the window.
 const LYRICS_FRAME: Size<Pixels> = size(px(1152.), px(648.));
@@ -1418,13 +1420,21 @@ impl Aside {
                             false => group.into_any_element(),
                         }
                     });
-                    // The hover tint sits on the content rather than the row, so it ends where
-                    // the words do instead of running the width of the sheet.
+                    // The hover tint sits on the content rather than the row, so a one-row verse
+                    // ends it where the words do. A wrapped verse spans the row instead of
+                    // ending at its longest row.
+                    let spans_row = wrapped.is_some_and(|plan| plan.text.len() > 1);
                     let content = div()
                         .flex()
                         .flex_col()
                         .gap_1()
                         .min_w_0()
+                        .when(spans_row, |this| {
+                            match hugs_end(line.voice, sung.mirrored) {
+                                true => this.w_full().pl_4(),
+                                false => this.w_full().pr_4(),
+                            }
+                        })
                         .px_2()
                         .py_1()
                         .rounded(theme.radius)
@@ -3275,7 +3285,7 @@ fn has_right_to_left(text: &str) -> bool {
 mod tests {
     use std::time::Duration;
 
-    use music::{LyricsLane, LyricsLine, LyricsWord, Voice};
+    use music::{LyricsLane, LyricsLine, LyricsWord};
     use ui::Springs;
 
     use super::{
@@ -3387,19 +3397,13 @@ mod tests {
                 start: Duration::from_secs(2),
                 end: Some(Duration::from_secs(5)),
                 text: "first".to_owned(),
-                romanized: None,
-                words: None,
-                secondary: Vec::new(),
-                voice: Voice::Lead,
+                ..Default::default()
             },
             LyricsLine {
                 start: Duration::from_secs(12),
                 end: Some(Duration::from_secs(15)),
                 text: "second".to_owned(),
-                romanized: None,
-                words: None,
-                secondary: Vec::new(),
-                voice: Voice::Lead,
+                ..Default::default()
             },
         ];
 
@@ -3417,23 +3421,18 @@ mod tests {
                 start: Duration::from_secs(2),
                 end: Some(Duration::from_secs(12)),
                 text: "first".to_owned(),
-                romanized: None,
                 words: Some(vec![LyricsWord {
                     start: Duration::from_secs(2),
                     end: Duration::from_secs(5),
                     text: "first".to_owned(),
                 }]),
-                secondary: Vec::new(),
-                voice: Voice::Lead,
+                ..Default::default()
             },
             LyricsLine {
                 start: Duration::from_secs(12),
                 end: Some(Duration::from_secs(15)),
                 text: "second".to_owned(),
-                romanized: None,
-                words: None,
-                secondary: Vec::new(),
-                voice: Voice::Lead,
+                ..Default::default()
             },
         ];
 
@@ -3559,12 +3558,12 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(3)),
             text: "(E)".to_owned(),
-            romanized: None,
             words: Some(vec![LyricsWord {
                 start: Duration::from_secs(2),
                 end: Duration::from_secs(3),
                 text: "(E)".to_owned(),
             }]),
+            ..Default::default()
         };
 
         assert!(!secondary_karaoke_visible(
@@ -3595,14 +3594,12 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(8)),
             text: "Wake me up inside".to_owned(),
-            romanized: None,
             words: Some(vec![LyricsWord {
                 start: Duration::from_secs(2),
                 end: Duration::from_secs(8),
                 text: "Wake me up inside".to_owned(),
             }]),
-            secondary: Vec::new(),
-            voice: Voice::Lead,
+            ..Default::default()
         };
 
         assert!(!primary_karaoke_visible(
@@ -3633,14 +3630,12 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(5)),
             text: "line".to_owned(),
-            romanized: None,
             words: Some(vec![LyricsWord {
                 start: Duration::from_secs(2),
                 end: Duration::from_secs(5),
                 text: "line".to_owned(),
             }]),
-            secondary: Vec::new(),
-            voice: Voice::Lead,
+            ..Default::default()
         };
 
         assert!(primary_karaoke_visible(&line, true, Duration::from_secs(8)));
@@ -3652,14 +3647,12 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(8)),
             text: "Wake me up inside".to_owned(),
-            romanized: None,
             words: Some(vec![LyricsWord {
                 start: Duration::from_secs(2),
                 end: Duration::from_secs(8),
                 text: "Wake me up inside".to_owned(),
             }]),
-            secondary: Vec::new(),
-            voice: Voice::Lead,
+            ..Default::default()
         };
         let fade = Motion::Control.span();
 
@@ -3687,14 +3680,12 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(8)),
             text: "Wake me up inside".to_owned(),
-            romanized: None,
             words: Some(vec![LyricsWord {
                 start: Duration::from_secs(2),
                 end: Duration::from_secs(8),
                 text: "Wake me up inside".to_owned(),
             }]),
-            secondary: Vec::new(),
-            voice: Voice::Lead,
+            ..Default::default()
         };
 
         assert!(!background_line_singing(
@@ -3725,10 +3716,7 @@ mod tests {
             start: Duration::from_secs(2),
             end: Some(Duration::from_secs(5)),
             text: "line".to_owned(),
-            romanized: None,
-            words: None,
-            secondary: Vec::new(),
-            voice: Voice::Lead,
+            ..Default::default()
         };
 
         assert!(line_has_passed(&line, Duration::from_secs(8)));

@@ -19,6 +19,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Search lists the artists your service finds for what you typed, so an artist turns up even when none of their songs or albums do.
+- The Members panel centres the faces, the count and the Session buttons, names you as You, and shows a person without a picture by their initial.
 - The fullscreen background now folds the cover's colours into one another in slow soft waves instead of drifting blurred spots, and shows a strong second colour from the art.
 - Tooltips open in the same place next to their button or title every time, instead of wherever the pointer stopped.
 - On a narrow album or playlist page, Download, Like and Shuffle move into the More menu instead of running off the edge.
@@ -26,14 +28,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Hover a page title cut short by the window to read it in full.
 - In fullscreen, the volume slider rises in and shows the level for as long as you point at it.
 - Lyrics still to be sung and the artist name in fullscreen take on the colour behind them instead of a flat grey.
-- The highlight on a hovered lyric line or instrumental break ends where its words or notes end.
+- The highlight on a hovered lyric line or instrumental break ends where its words or notes end, and spans the sheet when the line wraps.
 - The title and artist in fullscreen carry a lighter shadow.
 - Switching between the cover, lyrics and queue in fullscreen eases the new tab in the way settings pages do.
 - Song, album, artist and playlist menus open with a row of buttons to like, add to the library, download and pin, filled in while they are on, and the download button shows how far a download has got. Playlists sit under Add to playlist, and a checked playlist takes the song out again.
 - The device picker in the equalizer's device rules lists devices the way the output picker does, with sound card outputs grouped and Direct to hardware devices in their own submenu.
+- A song's right-click menu lists Go to artist, Go to album, Go to song radio and View details directly again instead of under Go to.
 
 ### Fixed
 
+- On macOS, scrolling and clicks no longer lag behind in fullscreen and with lyrics open.
 - Horizontal card rows scroll all the way to the page edges, including album recommendations.
 - Removing an Apple Music song or album from the library takes its like off right away, the way Apple does.
 - Playing or shuffling an artist queues their songs beyond the Popular section, with popular songs first.
@@ -56,6 +60,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Fullscreen controls stay visible while you hover over the tabs after switching between lyrics and queue.
 - Signing in to Apple Music without an active subscription shows a short error and a link to check the account in the browser.
 - Lyrics that follow along with a song use less CPU by laying out only the lines near the screen.
+- The visualizer falls as soon as you pause instead of holding still for a moment first.
 
 ## [0.47.0] - 2026-11-02
 

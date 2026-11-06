@@ -199,15 +199,8 @@ impl Store {
                     cover: row.get(8)?,
                     duration: std::time::Duration::from_millis(duration.max(0) as u64),
                     added_at: Some(played_at / 1_000),
-                    added_by: None,
-                    playcount: None,
-                    popularity: 0,
                     explicit: row.get(10)?,
-                    track_number: 0,
-                    disc_number: 0,
-                    tags: Vec::new(),
-                    languages: Vec::new(),
-                    credits: Vec::new(),
+                    ..Default::default()
                 })
             })
             .context("cannot read listening history")?;

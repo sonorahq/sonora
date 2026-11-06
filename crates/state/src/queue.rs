@@ -210,16 +210,8 @@ fn hydrate(stub: Stub) -> Track {
         album_id: stub.album_id,
         cover: stub.cover,
         duration: Duration::from_secs_f32(stub.seconds.max(0.)),
-        added_at: None,
-        added_by: None,
-        playcount: None,
-        popularity: 0,
         explicit: stub.explicit,
-        track_number: 0,
-        disc_number: 0,
-        tags: Vec::new(),
-        languages: Vec::new(),
-        credits: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -1383,22 +1375,8 @@ mod tests {
             id: Some(id.to_owned()),
             name: id.to_owned(),
             playable: true,
-            artists: String::new(),
-            artist_refs: Vec::new(),
-            album: String::new(),
-            album_id: None,
-            cover: None,
             duration: Duration::from_secs(180),
-            added_at: None,
-            added_by: None,
-            playcount: None,
-            popularity: 0,
-            explicit: false,
-            track_number: 0,
-            disc_number: 0,
-            tags: Vec::new(),
-            languages: Vec::new(),
-            credits: Vec::new(),
+            ..Default::default()
         }
     }
 

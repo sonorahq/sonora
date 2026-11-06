@@ -16,7 +16,7 @@
 use std::time::Instant;
 
 use gpui::prelude::*;
-use gpui::{App, Context, Hsla, Pixels, Render, Rgba, Task, Window, div};
+use gpui::{App, Context, Hsla, Pixels, Render, Rgba, Task, WeakEntity, Window, div};
 use state::Sonora;
 use ui::{ActiveTheme as _, CoverPalette, Theme};
 
@@ -31,6 +31,16 @@ const SHADE: f32 = 0.55;
 /// Time constant of the exponential ease onto a new palette, in seconds. The
 /// field lands within a few percent of the target after about three of these.
 const WASH: f32 = 0.8;
+/// How many times a second the drifting field is redrawn. The drift is slow enough that 30 frames
+/// read as smooth, and every frame repaints the whole window through the shader.
+const DRIFT_RATE: f32 = 30.;
+/// How early a display tick may come and still count as the next drift frame, in seconds. It keeps
+/// the frames on a steady share of the ticks, every second one at 60 Hz and every fourth at 120.
+const DRIFT_SLACK: f32 = 0.004;
+/// How many times smaller across each side the field behind the window is drawn before it is
+/// stretched back over it. Nothing in it is sharper than a heavy blur, so the stretch does not show,
+/// and the shader runs on a sixteenth of the pixels.
+const FIELD_SHRINK: f32 = 4.;
 
 /// The flowing colour field. One sits behind the whole window in fullscreen, and a preview can
 /// hold another of its own made with `Ambient::framed`.
@@ -38,6 +48,8 @@ pub(crate) struct Ambient {
     started: Instant,
     stepped: Instant,
     painted: Option<[Hsla; COLORS]>,
+    /// Whether a wait for the next drift frame is already running.
+    pacing: bool,
     /// The palette of the cover a framed field follows, `None` for the one behind the window.
     framed: Option<Sampled>,
 }
@@ -62,6 +74,7 @@ impl Ambient {
             started: now,
             stepped: now,
             painted: None,
+            pacing: false,
             framed: None,
         }
     }
@@ -112,6 +125,18 @@ impl Ambient {
             None => *cx.theme(),
             Some(sampled) => adaptive::stage(sampled.palette, cx),
         }
+    }
+
+    /// Asks for the next drift frame `DRIFT_RATE` times a second. It counts display ticks rather
+    /// than running a timer of its own, since a timer is never in phase with the refresh and slow
+    /// motion would land on one vsync, skip the next and double the one after, which reads as a
+    /// twitch.
+    fn pace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pacing {
+            return;
+        }
+        self.pacing = true;
+        wait_for_drift(cx.entity().downgrade(), Instant::now(), window);
     }
 
     /// Eases the painted colours one frame toward `target` and returns them.
@@ -206,12 +231,9 @@ impl Render for Ambient {
         // or the setting of its own is enough to stop it.
         let animates =
             ui::motion::animates(cx) && Sonora::global(cx).settings.read(cx).ambient_motion();
-        // The drift asks for the next frame off the display's own clock rather than a timer of
-        // its own. A timer is never in phase with the refresh, so slow motion lands on one
-        // vsync, skips the next and doubles the one after, which reads as a twitch.
         let elapsed = match animates {
             true => {
-                window.request_animation_frame();
+                self.pace(window, cx);
                 self.started.elapsed().as_secs_f32()
             }
             false => 0.,
@@ -230,21 +252,55 @@ impl Render for Ambient {
             Some(_) => None,
         };
 
+        let waves = ui::Waves::new(layered(colors).map(shaded))
+            .stage(shaded(Hsla {
+                a: 1.,
+                ..theme.background
+            }))
+            .time(elapsed);
+
         div()
             .id("ambient")
             .absolute()
             .inset_0()
             .opacity(clarity)
-            .child(
-                ui::Waves::new(layered(colors).map(shaded))
-                    .stage(shaded(Hsla {
-                        a: 1.,
-                        ..theme.background
-                    }))
-                    .time(elapsed)
-                    .when_some(radius, ui::Waves::corner_radius),
-            )
+            .map(|this| match self.framed {
+                // A preview is small enough to draw at full size.
+                Some(_) => this.child(waves),
+                None => {
+                    let viewport = window.viewport_size();
+                    this.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .w((viewport.width / FIELD_SHRINK).ceil())
+                            .h((viewport.height / FIELD_SHRINK).ceil())
+                            .layer_scale(FIELD_SHRINK)
+                            .layer_scale_origin(gpui::point(0., 0.))
+                            .child(waves.when_some(
+                                radius.map(|radius| radius / FIELD_SHRINK),
+                                ui::Waves::corner_radius,
+                            )),
+                    )
+                }
+            })
     }
+}
+
+/// Waits out display ticks until the next drift frame is due, then redraws `field`.
+fn wait_for_drift(field: WeakEntity<Ambient>, drawn: Instant, window: &mut Window) {
+    window.on_next_frame(move |window, cx| {
+        if drawn.elapsed().as_secs_f32() < 1. / DRIFT_RATE - DRIFT_SLACK {
+            return wait_for_drift(field, drawn, window);
+        }
+        field
+            .update(cx, |field, cx| {
+                field.pacing = false;
+                cx.notify();
+            })
+            .ok();
+    });
 }
 
 /// Whether the ambient background is on. Fullscreen reads it for the frosted

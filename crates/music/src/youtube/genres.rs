@@ -20,7 +20,6 @@ const LEADING: [&str; 2] = [FROM_LIBRARY, "Recaps"];
 const STAND_IN: usize = 10;
 /// A shelf of music videos: Sonora plays audio only, so it is left out.
 const VIDEOS: &str = "Music videos for you";
-const QUICK_PICKS_LIMIT: usize = 15;
 /// How many lots of shelves the home feed is followed for; the web client stops around here.
 const PAGES: usize = 8;
 const CATEGORIES: &str = "FEmusic_moods_and_genres";
@@ -106,9 +105,7 @@ fn gather(answer: &Value, feed: &mut HomeFeed) {
     for shelf in parse::find_renderers(answer, "musicCarouselShelfRenderer") {
         match shelf_title(shelf).as_deref() {
             Some(LISTEN_AGAIN) => feed.listen_again = items(shelf),
-            Some(QUICK_PICKS) => {
-                feed.quick_picks = Some(tracks(shelf).into_iter().take(QUICK_PICKS_LIMIT).collect())
-            }
+            Some(QUICK_PICKS) => feed.quick_picks = Some(tracks(shelf)),
             Some(VIDEOS) => {}
             _ => {
                 if let Some(section) = section(shelf) {

@@ -133,11 +133,8 @@ menu-play-tracks-last = { $count ->
     [one] Tocar { $count } faixa por último
    *[other] Tocar { $count } faixas por último
 }
-menu-go-to = Ir para
-menu-artist = Artista
-menu-album = Álbum
-menu-radio = Rádio
-menu-details = Detalhes
+menu-song-radio = Ir para a rádio da música
+menu-go-to-album = Ir para o álbum
 menu-go-to-artist = Ir para o artista
 menu-view-details = Ver detalhes
 menu-copy-link = Copiar link

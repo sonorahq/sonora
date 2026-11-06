@@ -106,6 +106,8 @@ pub struct Search<'a> {
     pub albums: Relation<'a>,
     #[serde(deserialize_with = "loose")]
     pub playlists: Relation<'a>,
+    #[serde(deserialize_with = "loose")]
+    pub artists: Relation<'a>,
     #[serde(rename = "library-artists", deserialize_with = "loose")]
     pub library_artists: Relation<'a>,
 }
@@ -978,8 +980,8 @@ pub fn artist_profile(value: &Resource) -> Option<ArtistProfile> {
     })
 }
 
-/// One artist out of a similar-artists view: an id to open and a face for the rail's
-/// artists tab.
+/// One catalog artist with an id to open and a face, out of a similar-artists view or an
+/// artist search.
 pub fn similar_artist(value: &Resource) -> Option<SavedArtist> {
     let attributes = value.attributes.as_ref()?;
     Some(SavedArtist {
