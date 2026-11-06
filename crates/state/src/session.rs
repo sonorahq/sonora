@@ -427,6 +427,18 @@ impl Session {
         )
     }
 
+    /// Tears the live session down and opens the stored sign-in again, after a change to what
+    /// the stored account reads — the Subsonic library it is scoped to. The library, search,
+    /// genres and home all reload on the sign-in that follows, and nothing the old client
+    /// answered can arrive afterwards.
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        if self.is_pending() || self.active.is_none() {
+            return;
+        }
+        self.release(cx);
+        self.restore(cx);
+    }
+
     /// Opens the active provider's stored sign-in. One that cannot be opened hands over to the
     /// next provider with an account stored and then to a guest session, so the sign-in page
     /// comes up only when there is nothing at all to carry on with.

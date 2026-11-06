@@ -51,8 +51,13 @@ impl SubsonicLyrics {
             .signature
             .clone()
             .unwrap_or_else(|| auth::sign(&stored.username, &stored.password));
-        let client =
-            SubsonicClient::new(stored.server, stored.username, stored.password, &signature)?;
+        let client = SubsonicClient::new(
+            stored.server,
+            stored.username,
+            stored.password,
+            &signature,
+            stored.library.as_ref().map(|library| library.id),
+        )?;
         *held = Some((identity, client.clone()));
         Ok(Some(client))
     }

@@ -16,8 +16,8 @@ use state::{
     Sleep, Sonora,
 };
 use ui::{
-    ActiveTheme as _, Card, Deck, Dismiss, Input, Lazy, Popovers, Scrollbar, ScrubberState,
-    Vacancy, faint, snapped, upper,
+    Activate, ActiveTheme as _, Card, Deck, Dismiss, Input, Lazy, Popovers, Scrollbar,
+    ScrubberState, SelectNext, SelectPrevious, Vacancy, faint, snapped, upper,
 };
 
 use crate::chrome::{Chrome, OutputPicker};
@@ -65,6 +65,7 @@ const STORAGE_POLL: Duration = Duration::from_secs(2);
 enum Slot {
     Accounts,
     LocalFolder,
+    SubsonicLibrary,
     Folders,
     Theme,
     Adaptive,
@@ -283,6 +284,18 @@ pub struct SettingsView {
     /// session tears the old provider down and brings the new one up, which reports nothing
     /// active in between.
     chosen: Option<&'static str>,
+    /// Whether the Subsonic library picker is up.
+    library_picker: bool,
+    /// The libraries the picker lists, once the server has answered.
+    libraries: Option<Vec<music::subsonic::Library>>,
+    /// Why the libraries could not be read, when they could not.
+    libraries_error: Option<String>,
+    /// The read of the server's libraries, dropped when the picker closes.
+    library_task: Option<Task<()>>,
+    /// The row the picker's keyboard cursor is on.
+    library_cursor: usize,
+    /// The option list's scroll position, moved to follow the cursor.
+    library_scroll: ScrollHandle,
     languages: SearchPopup,
     typefaces: SearchPopup,
     typeface_faced: RefCell<HashSet<SharedString>>,
@@ -442,6 +455,12 @@ impl SettingsView {
             grabbed: false,
             sign_in_running: false,
             chosen: None,
+            library_picker: false,
+            libraries: None,
+            libraries_error: None,
+            library_task: None,
+            library_cursor: 0,
+            library_scroll: ScrollHandle::new(),
             scrobbling,
             scrobble_first: cx.new(|cx| Input::new("settings-scrobble-key", cx)),
             scrobble_second: cx.new(|cx| Input::new("settings-scrobble-secret", cx)),
@@ -535,7 +554,7 @@ impl SettingsView {
     /// The groups a page shows, in order.
     fn groups(&self, page: SettingsPage, cx: &App) -> Vec<Group> {
         match page {
-            SettingsPage::Providers => self.accounts_groups(),
+            SettingsPage::Providers => self.accounts_groups(cx),
             SettingsPage::Appearance => self.appearance_groups(),
             SettingsPage::PlayerBar => self.player_bar_groups(),
             SettingsPage::NowPlaying => self.now_playing_groups(cx),
@@ -709,6 +728,10 @@ impl SettingsView {
                     true => t!("settings-local-folder-empty"),
                     false => SharedString::default(),
                 },
+            ),
+            Slot::SubsonicLibrary => (
+                t!("settings-subsonic-library"),
+                t!("settings-subsonic-library-detail"),
             ),
             Slot::Theme => (t!("settings-theme"), t!("settings-theme-detail")),
             Slot::Adaptive => (t!("settings-adaptive"), t!("settings-adaptive-detail")),
@@ -946,6 +969,7 @@ impl SettingsView {
             Slot::TrayIcon => self.tray_icon_row(cx),
             Slot::Accounts => div().into_any_element(),
             Slot::LocalFolder => self.local_folder_row(cx),
+            Slot::SubsonicLibrary => self.subsonic_library_row(cx),
             Slot::Folders => self.folders(cx),
             Slot::Theme | Slot::Icons | Slot::Corners => div().into_any_element(),
             Slot::Adaptive => self.adaptive_row(cx),
@@ -1377,7 +1401,8 @@ impl Render for SettingsView {
         let dialog = taken
             || sign_in_for.is_some()
             || self.scrobble_prompt.is_some()
-            || theme_delete.is_some();
+            || theme_delete.is_some()
+            || self.library_picker;
         match (dialog, self.grabbed) {
             (true, false) => {
                 window.focus(&self.focus, cx);
@@ -1414,6 +1439,11 @@ impl Render for SettingsView {
                 cx.propagate();
             }
         }))
+        // the library picker's keyboard: arrows walk the cursor, enter chooses; a closed
+        // picker passes every one of these on untouched
+        .on_action(cx.listener(|this, _: &SelectNext, _, cx| this.library_walk(1, cx)))
+        .on_action(cx.listener(|this, _: &SelectPrevious, _, cx| this.library_walk(-1, cx)))
+        .on_action(cx.listener(|this, _: &Activate, _, cx| this.library_activate(cx)))
         .when_some(accounts, |this, accounts| {
             this.child(self.account_modal(accounts, cx).into_any_element())
         })
@@ -1433,6 +1463,9 @@ impl Render for SettingsView {
             this.child(self.sign_in_prompt(slug, provider, cx).into_any_element())
         })
         .when_some(theme_delete, |this, modal| this.child(modal))
+        .when(self.library_picker, |this| {
+            this.child(self.library_modal(cx).into_any_element())
+        })
     }
 }
 
