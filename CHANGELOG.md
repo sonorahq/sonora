@@ -16,6 +16,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   each track's own sample rate on Linux and macOS.
 - Swipe two fingers sideways on a touchpad to go back or forward a page.
 - A quick flick on a touchpad under Wayland keeps the page scrolling for a moment after your fingers lift.
+- Browse, play and manage your favorite songs from an artist’s page.
 
 ### Changed
 
