@@ -1,9 +1,9 @@
 use std::rc::Rc;
 
 use ui::{
-    ActiveTheme as _, Card, Deck, DraggedPin, Edge, MenuItem, Panel, Picker, Pin, PinKind,
-    Pinnable as _, Popup, SNUG, Scroller, Shield, Side, Spot, Tabs, Text, Vacancy, drop_gap,
-    drop_into, drop_marker,
+    ActiveTheme as _, Card, Deck, DraggedPin, Edge, Menu, MenuItem, Panel, Picker, Pin, PinKind,
+    Pinnable as _, Popover, Popup, SNUG, Scroller, Shield, Side, Spot, Tabs, Text, Vacancy,
+    drop_gap, drop_into, drop_marker,
 };
 
 use gpui::accesskit::Role;
@@ -13,13 +13,14 @@ use gpui::{
     Pixels, Point, Render, ScrollHandle, SharedString, svg,
 };
 use gpui::{Window, div, px};
-use music::Shape;
+use music::{Shape, SignIn};
 use router::{
     Destination, LibraryTab, NavEntry, Navigation, NavigationEvent, SettingsPage, navigate,
     open_settings,
 };
 use state::{
-    AppSettings, Leaving, Library, Origin, PinSort, Pins, Playback, Session, Shelf, Sonora,
+    AppSettings, Leaving, Library, Origin, PinSort, Pins, Playback, Session, SessionState, Shelf,
+    Sonora,
 };
 
 use crate::shared::menus::{ItemMenu, item_menu};
@@ -280,6 +281,14 @@ impl SidebarLeft {
         for (index, (entry, _, destination)) in NAV.iter().enumerate() {
             if entry.is_some_and(|entry| !self.settings.read(cx).nav_shown(entry.id())) {
                 continue;
+            }
+            if entry.is_none()
+                && self
+                    .settings
+                    .read(cx)
+                    .nav_shown(NavEntry::ProviderSwitcher.id())
+            {
+                rows.push(self.provider_switcher(cx));
             }
             let group = Group::of(destination);
             if group == Some(Group::Library) && !stocked {
@@ -697,6 +706,128 @@ impl SidebarLeft {
                 (id != target && library.is_editable(&id)).then_some(Leaving::Playlist(id))
             }
         }
+    }
+
+    /// The row that switches between signed-in providers and guest mode, or opens the providers
+    /// settings page.
+    fn provider_switcher(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
+        let accent = theme.sidebar_accent;
+        let tint = theme.muted_foreground;
+
+        let session = self.session.read(cx);
+        let signed_out = matches!(session.state(), SessionState::SignedOut);
+        let loading = session.is_pending();
+        let providers: Vec<_> = session.providers().collect();
+        let active_info = providers.iter().find(|info| info.active);
+        let is_guest = !signed_out
+            && active_info.is_some_and(|info| match loading {
+                true => info.guest,
+                false => !session.authenticated() || info.guest,
+            });
+
+        let (label, logo): (SharedString, &'static str) = match (signed_out, is_guest, active_info)
+        {
+            (false, true, _) => (
+                i18n::lookup("login-guest-title", None),
+                "icons/hat-glasses.svg",
+            ),
+            (false, false, Some(info)) => {
+                (info.name.into(), crate::shared::provider_logo(info.slug))
+            }
+            _ => (
+                i18n::lookup("settings-provider-none", None),
+                "icons/music.svg",
+            ),
+        };
+
+        let name = i18n::lookup("nav-switch-provider", None);
+        let button = nav_row(
+            "nav-provider-switcher",
+            "nav-provider-switcher",
+            tint,
+            accent,
+        )
+        .name(name.clone())
+        .label(label)
+        .icon(logo)
+        .trailing("icons/chevrons-up-down.svg")
+        .tooltip("nav-switch-provider")
+        .w_full();
+
+        let guest = providers
+            .iter()
+            .find(|info| {
+                info.options
+                    .iter()
+                    .any(|option| matches!(option, SignIn::Anonymous))
+            })
+            .map(|guest| {
+                let slug = guest.slug;
+                let stored = guest.guest;
+                let active = guest.active && is_guest;
+                let session = self.session.clone();
+
+                MenuItem::new(
+                    "switch-provider-guest",
+                    i18n::lookup("login-guest-title", None),
+                )
+                .icon("icons/hat-glasses.svg")
+                .checked(active)
+                .on_click(move |_, _, cx| {
+                    if active {
+                        return;
+                    }
+                    match stored {
+                        true => session.update(cx, |session, cx| session.switch(slug, cx)),
+                        false => session.update(cx, |session, cx| {
+                            session.sign_in(slug, SignIn::Anonymous, cx)
+                        }),
+                    }
+                })
+            });
+
+        let accounts: Vec<_> = providers
+            .iter()
+            .filter(|info| info.stored && !info.guest)
+            .map(|account| {
+                let slug = account.slug;
+                let active = account.active && !signed_out && !is_guest;
+                let session = self.session.clone();
+
+                MenuItem::new(format!("switch-provider-{slug}"), account.name)
+                    .icon(crate::shared::provider_logo(slug))
+                    .checked(active)
+                    .on_click(move |_, _, cx| {
+                        session.update(cx, |session, cx| session.switch(slug, cx));
+                    })
+            })
+            .collect();
+        let has_choices = !accounts.is_empty() || guest.is_some();
+
+        let menu = Menu::new("sidebar-provider-menu")
+            .name(name)
+            .items(accounts)
+            .when_some(guest, Menu::item)
+            .when(has_choices, |menu| {
+                menu.item(MenuItem::separator("provider-switcher-sep"))
+            })
+            .item(
+                MenuItem::new(
+                    "manage-providers",
+                    i18n::lookup("nav-manage-providers", None),
+                )
+                .icon("icons/settings.svg")
+                .on_click(move |_, _, cx| {
+                    navigate(Destination::Settings(SettingsPage::Providers), cx);
+                }),
+            );
+
+        Popover::new("sidebar-provider-switcher", self.popovers.clone())
+            .button(button)
+            .menu(menu)
+            .commands()
+            .into_any_element()
     }
 
     fn persist(&self, cx: &mut Context<Self>) {
