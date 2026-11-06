@@ -142,6 +142,9 @@ pub enum SessionCommand {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum QueueCommand {
+    /// Returns a read-only snapshot of the queue, without changing playback. Stands for
+    /// `sonora queue`
+    Snapshot,
     /// Queues items after the ones queued by hand. Stands for `sonora add <items>`
     Add(Vec<Item>),
     /// Queues items right after the current track. Stands for `sonora play-next <items>`

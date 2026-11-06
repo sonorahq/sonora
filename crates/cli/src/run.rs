@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use crate::args;
 use crate::commands::{Format, Kind, Local, Repeat, Request};
-use crate::wire::{self, Failure, Reply, Value};
+use crate::wire::{self, Failure, QueueEntryKind, Reply, Value};
 
 /// The running Sonora refused the command, or the exchange broke.
 const FAILED: u8 = 1;
@@ -140,6 +140,7 @@ fn show(value: &Value) -> String {
                 ]
             }),
         ),
+        Value::Queue(queue) => show_queue(queue),
         Value::Session(None) => String::new(),
         Value::Session(Some(session)) => format!(
             "{} on {}{}\n{}",
@@ -154,6 +155,50 @@ fn show(value: &Value) -> String {
     }
 }
 
+/// The queue for a person: each section headed, one track per line in play order, with the
+/// tracks queued by hand and the recommendations marked.
+fn show_queue(queue: &wire::QueueSnapshot) -> String {
+    if queue.previous.is_empty() && queue.current.is_none() && queue.upcoming.is_empty() {
+        return "Queue is empty.".to_owned();
+    }
+    let line = |entry: &wire::QueueEntry| {
+        let track = &entry.track;
+        let mark = match entry.kind {
+            QueueEntryKind::Context => String::new(),
+            QueueEntryKind::Queued => " [queued]".to_owned(),
+            QueueEntryKind::Suggested => " [suggested]".to_owned(),
+        };
+        format!(
+            "{} - {} ({}) {}{}",
+            track.title,
+            track.artists.join(", "),
+            track.album,
+            clock(track.duration),
+            mark
+        )
+    };
+    let mut lines = Vec::new();
+    if !queue.previous.is_empty() {
+        lines.push("Previous:".to_owned());
+        lines.extend(queue.previous.iter().map(line));
+    }
+    if let Some(current) = &queue.current {
+        lines.push("Now playing:".to_owned());
+        lines.push(line(current));
+    }
+    if !queue.upcoming.is_empty() {
+        lines.push("Up next:".to_owned());
+        lines.extend(queue.upcoming.iter().map(line));
+    }
+    if queue.truncated {
+        lines.push(format!(
+            "(only the {} most recent previous and next upcoming tracks are shown)",
+            wire::QUEUE_LIMIT
+        ));
+    }
+    lines.join("\n")
+}
+
 /// A queried value for a script, as one line of JSON without the envelope around it.
 fn json(value: &Value) -> String {
     let printed = match value {
@@ -165,6 +210,7 @@ fn json(value: &Value) -> String {
         Value::Provider(slug) => serde_json::to_string(slug),
         Value::Hits(hits) => serde_json::to_string(hits),
         Value::Session(session) => serde_json::to_string(session),
+        Value::Queue(queue) => serde_json::to_string(queue),
     };
     printed.unwrap_or_default()
 }
@@ -226,5 +272,58 @@ fn describe(failure: &Failure) -> String {
         Failure::SignInFailed(name) => format!("{name} did not sign in"),
         Failure::Busy => "a sign-in is already on its way; try again in a moment".to_owned(),
         Failure::NothingFound(query) => format!("nothing found for '{query}'"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wire::{QueueEntry, QueueSnapshot, Track};
+
+    fn entry(title: &str, kind: QueueEntryKind) -> QueueEntry {
+        QueueEntry {
+            track: Track {
+                id: Some(title.to_owned()),
+                title: title.to_owned(),
+                artists: vec!["artist".to_owned()],
+                album: "album".to_owned(),
+                cover: Some("cover".to_owned()),
+                duration: 125,
+            },
+            kind,
+        }
+    }
+
+    #[test]
+    fn an_empty_queue_prints_as_empty_in_both_formats() {
+        let value = Value::Queue(QueueSnapshot::default());
+        assert_eq!(show(&value), "Queue is empty.");
+        assert_eq!(
+            json(&value),
+            "{\"previous\":[],\"current\":null,\"upcoming\":[],\"truncated\":false}"
+        );
+    }
+
+    #[test]
+    fn a_queue_prints_in_order_with_its_kinds_marked() {
+        let value = Value::Queue(QueueSnapshot::bounded(
+            vec![entry("before", QueueEntryKind::Context)],
+            Some(entry("now", QueueEntryKind::Context)),
+            vec![
+                entry("by-hand", QueueEntryKind::Queued),
+                entry("similar", QueueEntryKind::Suggested),
+            ],
+        ));
+        let text = show(&value);
+        let order: Vec<_> = ["before", "now", "by-hand", "similar"]
+            .iter()
+            .map(|title| text.find(title).unwrap())
+            .collect();
+        assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{text}");
+        assert!(text.contains("[queued]"), "{text}");
+        assert!(text.contains("[suggested]"), "{text}");
+        let printed = json(&value);
+        assert!(printed.contains("\"cover\":\"cover\""), "{printed}");
+        assert!(printed.contains("\"duration\":125"), "{printed}");
     }
 }
