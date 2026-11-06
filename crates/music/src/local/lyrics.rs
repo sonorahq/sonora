@@ -51,6 +51,9 @@ impl LyricsProvider for LocalLyrics {
             album: query.album.clone(),
             duration: Some(query.duration),
             writers: Vec::new(),
+            origin: None,
+            contributors: Vec::new(),
+            expires: None,
         }])
     }
 }

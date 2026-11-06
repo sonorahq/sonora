@@ -39,7 +39,7 @@ impl SpotifyLyrics {
         Self::new(auth::AuthConfig::from_env())
     }
 
-    async fn session(&self) -> Result<Option<Session>> {
+    pub(super) async fn session(&self) -> Result<Option<Session>> {
         let mut held = self.connection.lock().await;
         let file = self.config.file();
         let modified = match std::fs::metadata(&file).and_then(|metadata| metadata.modified()) {

@@ -144,6 +144,9 @@ fn hit(found: Found) -> Option<LyricsHit> {
             .duration
             .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok()),
         writers: Vec::new(),
+        origin: None,
+        contributors: Vec::new(),
+        expires: None,
     })
 }
 
