@@ -25,6 +25,7 @@ pub mod netease;
 pub mod output;
 pub mod potoken;
 pub mod progress;
+mod redact;
 pub mod scrobble;
 mod sink;
 mod spectrum;
@@ -59,6 +60,7 @@ pub use models::{
     SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
 };
 pub use output::{Server as SoundServer, missing_bridge};
+pub use redact::redact;
 pub use spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";
