@@ -10,7 +10,7 @@ use music::{LyricsLine, LyricsWord, RomanizedText, WritingSystem};
 use state::RomanizationScripts;
 use ui::{ActiveTheme as _, Theme};
 
-use crate::chrome::{VerseLook, verse, verse_sizes};
+use crate::chrome::{VerseLook, verse, verse_gap, verse_sizes};
 use crate::screens::settings::{Layout, SettingsView};
 
 /// How tall the preview stands for its width.
@@ -103,6 +103,7 @@ pub(in crate::screens::settings) fn preview(
 fn lines(look: Look, sizes: (Pixels, Pixels), height: Pixels, theme: Theme) -> Div {
     let lines = sample();
     let (size, lane) = sizes;
+    let gap = verse_gap(size);
     let position = lines[SUNG_LINE].start + SUNG.mul_f32(STILL);
     let verse_at = |index: usize| {
         let sung = index == SUNG_LINE;
@@ -138,11 +139,11 @@ fn lines(look: Look, sizes: (Pixels, Pixels), height: Pixels, theme: Theme) -> D
                 .left_0()
                 .right_0()
                 .bottom(height - anchor)
-                .pb_4()
+                .pb(gap)
                 .px(theme.metrics.inset)
                 .flex()
                 .flex_col()
-                .gap_4()
+                .gap(gap)
                 .children((SUNG_LINE - AROUND..SUNG_LINE).map(verse_at)),
         )
         .child(
@@ -154,7 +155,7 @@ fn lines(look: Look, sizes: (Pixels, Pixels), height: Pixels, theme: Theme) -> D
                 .px(theme.metrics.inset)
                 .flex()
                 .flex_col()
-                .gap_4()
+                .gap(gap)
                 .children((SUNG_LINE..lines.len()).map(verse_at)),
         )
 }

@@ -51,6 +51,10 @@ const AHEAD: f32 = 0.6;
 const REVEAL: f32 = 0.6;
 const ACTIVE_VERSE_GROWTH: Pixels = px(2.);
 const FULLSCREEN_VERSE_GROWTH: Pixels = px(3.);
+/// Space between phrases, relative to the resting verse size.
+const VERSE_GAP: f32 = 0.6;
+/// Vertical room around each phrase, relative to its resting text size.
+const VERSE_PADDING: f32 = 0.15;
 /// How much larger than the lane text unsynced lyrics are set, while staying below a synced verse.
 const PLAIN_LYRICS_GROWTH: f32 = 1.15;
 /// The sheet's and a verse's padding on both sides, plus the extra trailing padding a wrapped
@@ -1023,6 +1027,8 @@ impl Aside {
             }
         };
         let (verse, lane_size) = verse_sizes(self.titled, scale, &theme);
+        let line_height = active_verse_size(verse) * ui::LEADING;
+        let phrase_gap = verse_gap(verse);
         let sung = Sung {
             karaoke: karaoke_effects,
             lane: lane_size,
@@ -1359,7 +1365,7 @@ impl Aside {
                                 &line.secondary,
                                 romanization_scripts,
                                 lane_size,
-                                active_verse_size(verse) * ui::LEADING,
+                                line_height,
                                 wrap_width,
                                 window,
                             );
@@ -1436,7 +1442,7 @@ impl Aside {
                             }
                         })
                         .px_2()
-                        .py_1()
+                        .py(verse * VERSE_PADDING)
                         .rounded(theme.radius)
                         .when(warmth > 0., |this| {
                             this.bg(theme.table_hover.opacity(warmth))
@@ -1488,7 +1494,7 @@ impl Aside {
                         .when(hugs_end(line.voice, sung.mirrored), |this| {
                             this.justify_end()
                         })
-                        .when(traded, |this| this.mt_2())
+                        .when(traded, |this| this.mt(phrase_gap * 0.5))
                         .cursor_pointer()
                         .on_mouse_down(
                             gpui::MouseButton::Left,
@@ -1497,7 +1503,7 @@ impl Aside {
                             }),
                         )
                         .text_size(verse)
-                        .line_height(active_verse_size(verse) * ui::LEADING)
+                        .line_height(line_height)
                         .text_color(tint)
                         .font_weight(FontWeight::SEMIBOLD)
                         .on_hover(cx.listener(move |this, over: &bool, _, cx| {
@@ -1673,7 +1679,7 @@ impl Aside {
             .flex()
             .flex_col()
             .items_center()
-            .gap_4()
+            .gap(phrase_gap)
             .flex_1()
             .min_h_0()
             .px_1()
@@ -2200,7 +2206,7 @@ pub(crate) fn verse(
     div()
         .w_full()
         .px_2()
-        .py_1()
+        .py(look.size * VERSE_PADDING)
         .text_size(match look.active {
             true => active_size,
             false => look.size,
@@ -2237,6 +2243,11 @@ pub(crate) fn verse_sizes(panel: bool, scale: f32, theme: &ui::Theme) -> (Pixels
         false => theme.text(Text::Title) + FULLSCREEN_VERSE_GROWTH,
     };
     (verse * scale, theme.text(Text::Body) * scale)
+}
+
+/// The gap between lyric phrases, scaled with the text in both the sheet and its preview.
+pub(crate) fn verse_gap(verse: Pixels) -> Pixels {
+    verse * VERSE_GAP
 }
 
 // a lane with no measured plan of its own, split on the spot
