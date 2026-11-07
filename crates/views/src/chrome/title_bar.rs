@@ -248,10 +248,6 @@ impl Render for TitleBar {
         let theme = cx.theme();
         let height = ui::snapped(theme.metrics.title_bar, window);
         let navigation = self.options.navigation;
-        let offset = match navigation {
-            true => self.options.offset,
-            false => Pixels::ZERO,
-        };
         let content = self.options.content.clone();
         let window_fullscreen = window.is_fullscreen();
         let settings = self.settings.read(cx);
