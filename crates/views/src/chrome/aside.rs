@@ -55,10 +55,12 @@ const FULLSCREEN_VERSE_GROWTH: Pixels = px(3.);
 const VERSE_GAP: f32 = 0.6;
 /// Vertical room around each phrase, relative to its resting text size.
 const VERSE_PADDING: f32 = 0.15;
+/// Side room around each phrase, relative to its resting text size. It is wider than
+/// `VERSE_PADDING` because the line height and the space above capitals already pad the text
+/// vertically, so the two read as equal.
+const VERSE_SIDE_PADDING: f32 = 0.45;
 /// How much larger than the lane text unsynced lyrics are set, while staying below a synced verse.
 const PLAIN_LYRICS_GROWTH: f32 = 1.15;
-/// The side padding of a phrase highlight, as a share of the theme pad.
-const VERSE_SIDE_PAD: f32 = 0.5;
 // The largest window fullscreen lyrics keep their own size in. A larger one grows them by its
 // share of this one, so a verse keeps its size relative to the window.
 const LYRICS_FRAME: Size<Pixels> = size(px(1152.), px(648.));
@@ -1079,10 +1081,8 @@ impl Aside {
             self.pin_verse(focus, window, cx);
         }
 
-        let verse_pad = theme.metrics.pad * VERSE_SIDE_PAD;
-        // The text keeps the same distance from the panel edges whatever the highlight padding is.
-        let sheet_padding =
-            (theme.metrics.inset - theme.metrics.pad * 0.5 - verse_pad).max(Pixels::ZERO);
+        let verse_pad = verse * VERSE_SIDE_PADDING;
+        let sheet_padding = theme.metrics.pad * 0.75;
         let wrap_size = active_verse_size(verse);
         let scroll = self.verse_bar.read(cx).scroll().clone();
         let (nudges, presentation) = {
@@ -2196,7 +2196,7 @@ pub(crate) fn verse(
 
     div()
         .w_full()
-        .px_2()
+        .px(look.size * VERSE_SIDE_PADDING)
         .py(look.size * VERSE_PADDING)
         .text_size(match look.active {
             true => active_size,
