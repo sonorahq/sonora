@@ -176,7 +176,9 @@ impl DetailView {
             let source = source.table(cx.weak_entity());
             let mut delegate = TableDelegate::new(source, width, cx).with_column_menu(&PINNED);
             delegate.set_layout(saved, cx);
-            TableState::new(delegate, cx).follow(scroll)
+            TableState::new(delegate, cx)
+                .follow(scroll.clone())
+                .with_scrollbar(&scrollbar)
         });
 
         cx.observe(&detail, |this, detail, cx| {

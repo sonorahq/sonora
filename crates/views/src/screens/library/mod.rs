@@ -265,7 +265,9 @@ impl LibraryView {
             if let Some(sorting) = sorting {
                 delegate.set_sorting(sorting, cx);
             }
-            TableState::new(delegate, cx).follow(scroll.clone())
+            TableState::new(delegate, cx)
+                .follow(scroll.clone())
+                .with_scrollbar(&scrollbar)
         });
         let albums = cx.new(|cx| {
             let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(id));
@@ -279,7 +281,9 @@ impl LibraryView {
             if let Some(sorting) = sorting {
                 delegate.set_sorting(sorting, cx);
             }
-            TableState::new(delegate, cx).follow(scroll.clone())
+            TableState::new(delegate, cx)
+                .follow(scroll.clone())
+                .with_scrollbar(&scrollbar)
         });
         let playlists = cx.new(|cx| {
             let source = PlaylistSource::shelved(library.clone(), playback.clone(), shelf);
@@ -291,7 +295,9 @@ impl LibraryView {
             if let Some(sorting) = sorting {
                 delegate.set_sorting(sorting, cx);
             }
-            TableState::new(delegate, cx).follow(scroll.clone())
+            TableState::new(delegate, cx)
+                .follow(scroll.clone())
+                .with_scrollbar(&scrollbar)
         });
         let artists = cx.new(|cx| {
             let source = ArtistSource::shelved(library.clone(), playback.clone(), shelf);
@@ -303,7 +309,9 @@ impl LibraryView {
             if let Some(sorting) = sorting {
                 delegate.set_sorting(sorting, cx);
             }
-            TableState::new(delegate, cx).follow(scroll)
+            TableState::new(delegate, cx)
+                .follow(scroll.clone())
+                .with_scrollbar(&scrollbar)
         });
 
         cx.observe(&library, |this, _, cx| {
