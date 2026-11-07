@@ -53,6 +53,8 @@ const ACTIVE_VERSE_GROWTH: Pixels = px(2.);
 const FULLSCREEN_VERSE_GROWTH: Pixels = px(3.);
 /// How much larger than the lane text unsynced lyrics are set, while staying below a synced verse.
 const PLAIN_LYRICS_GROWTH: f32 = 1.15;
+/// The side padding of a phrase highlight, as a share of the theme pad.
+const VERSE_SIDE_PAD: f32 = 0.5;
 // The largest window fullscreen lyrics keep their own size in. A larger one grows them by its
 // share of this one, so a verse keeps its size relative to the window.
 const LYRICS_FRAME: Size<Pixels> = size(px(1152.), px(648.));
@@ -1071,7 +1073,10 @@ impl Aside {
             self.pin_verse(focus, window, cx);
         }
 
-        let sheet_padding = (theme.metrics.inset - theme.metrics.pad * 1.5).max(Pixels::ZERO);
+        let verse_pad = theme.metrics.pad * VERSE_SIDE_PAD;
+        // The text keeps the same distance from the panel edges whatever the highlight padding is.
+        let sheet_padding =
+            (theme.metrics.inset - theme.metrics.pad * 0.5 - verse_pad).max(Pixels::ZERO);
         let wrap_size = active_verse_size(verse);
         let scroll = self.verse_bar.read(cx).scroll().clone();
         let (nudges, presentation) = {
@@ -1088,7 +1093,7 @@ impl Aside {
         };
         let row_width = scroll.bounds().size.width - sheet_padding * 2.;
         // Both voices and wrapped phrases share the same inset from either panel edge.
-        let wrap_width = (row_width - theme.metrics.pad * 2.).max(Pixels::ZERO);
+        let wrap_width = (row_width - verse_pad * 2.).max(Pixels::ZERO);
         if self.lyrics_wrap_width != Some(wrap_width) || self.lyrics_wrap_size != Some(wrap_size) {
             self.lyrics_wrap_width = Some(wrap_width);
             self.lyrics_wrap_size = Some(wrap_size);
@@ -1201,7 +1206,7 @@ impl Aside {
                             verse,
                             &theme,
                         )
-                        .px(theme.metrics.pad)
+                        .px(verse_pad)
                         .rounded(theme.radius)
                         .when(notes_touch.warmth > 0., |this| {
                             this.bg(theme.table_hover.opacity(notes_touch.warmth))
@@ -1422,7 +1427,7 @@ impl Aside {
                         .flex_col()
                         .gap_1()
                         .min_w_0()
-                        .px(theme.metrics.pad)
+                        .px(verse_pad)
                         .when(spans_row, |this| this.w_full())
                         .py_1()
                         .rounded(theme.radius)
@@ -1546,7 +1551,7 @@ impl Aside {
                                 .role(Role::Paragraph)
                                 .aria_label(SharedString::from(text.clone()))
                                 .w_full()
-                                .px(theme.metrics.pad)
+                                .px(verse_pad)
                                 .flex()
                                 .flex_col()
                                 .gap_1()
@@ -1622,7 +1627,7 @@ impl Aside {
             };
             let note = div()
                 .w_full()
-                .px(theme.metrics.pad)
+                .px(verse_pad)
                 .pt_2()
                 .flex()
                 .flex_col()
