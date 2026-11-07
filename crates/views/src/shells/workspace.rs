@@ -176,13 +176,10 @@ impl Workspace {
 
 impl Shell for Workspace {
     fn title_bar(&self, content: Option<AnyView>, cx: &App) -> TitleBarOptions {
-        let sidebar = self.sidebar.read(cx);
-
         TitleBarOptions {
             navigation: true,
-            sidebar_open: sidebar.is_open(),
+            sidebar_open: self.sidebar.read(cx).is_open(),
             sidebar_right: Some(self.sidebar_right.read(cx).is_open()),
-            offset: sidebar.occupied_width(),
             border: true,
             content,
             transparent: false,
