@@ -27,8 +27,8 @@ impl Binimum {
         }
     }
 
-    /// Searches with an optional album constraint; editions may be named differently in the
-    /// catalogue, so the caller can retry without it while keeping the recording metadata.
+    /// Searches the catalogue by title, artist and length, narrowed to `album` when given. The
+    /// catalogue may name an album edition differently, so a caller can retry without it.
     async fn find(&self, query: &LyricsQuery, album: Option<&str>) -> Result<Vec<Match>> {
         let duration = query.duration.as_secs().to_string();
         let mut params = vec![
