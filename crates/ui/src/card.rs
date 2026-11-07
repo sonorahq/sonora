@@ -68,6 +68,8 @@ pub struct Card {
     chosen: bool,
     tucked: bool,
     action: Option<AnyElement>,
+    /// Whether the hover action takes no room until the card is hovered.
+    collapsed: bool,
     drag_start: Option<DragStart>,
     menu: Option<Summon>,
 }
@@ -105,6 +107,7 @@ impl Card {
             chosen: false,
             tucked: false,
             action: None,
+            collapsed: false,
             drag_start: None,
             menu: None,
         }
@@ -160,6 +163,14 @@ impl Card {
 
     pub fn action(mut self, action: impl IntoElement) -> Self {
         self.action = Some(action.into_any_element());
+        self
+    }
+
+    /// Shows an action on hover like `action`, but it takes no room until then, so the trailing
+    /// content only moves aside while the card is hovered.
+    pub fn collapsed_action(mut self, action: impl IntoElement) -> Self {
+        self.action = Some(action.into_any_element());
+        self.collapsed = true;
         self
     }
 
@@ -330,6 +341,7 @@ impl RenderOnce for Card {
             chosen,
             tucked,
             action,
+            collapsed,
             drag_start,
             menu,
         } = self;
@@ -613,8 +625,12 @@ impl RenderOnce for Card {
                 div()
                     .id("card-action")
                     .flex_none()
-                    .invisible()
-                    .group_hover(CARD_GROUP, |style| style.visible())
+                    .map(|this| match collapsed {
+                        true => this.hidden().group_hover(CARD_GROUP, |style| style.flex()),
+                        false => this
+                            .invisible()
+                            .group_hover(CARD_GROUP, |style| style.visible()),
+                    })
                     .child(action)
             }));
 

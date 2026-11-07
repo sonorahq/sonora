@@ -1077,6 +1077,16 @@ impl ArtistView {
                 playback.start(queued.as_ref().clone(), place, from.clone(), cx)
             });
         });
+        let library = Sonora::global(cx).library.clone();
+        let listed = tracks.clone();
+        let remove: crate::shared::track_card::RemoveHandler = Rc::new(move |place, cx| {
+            let Some(track) = listed.get(place).cloned() else {
+                return;
+            };
+            library.update(cx, |library, cx| {
+                library.save_tracks(vec![track], false, cx)
+            });
+        });
         let row_playback = self.playback.clone();
         let height = snapped(cx.theme().metrics.list_row, window);
         let columns = match Chrome::room(window, cx).fits(ui::Room::Roomy) {
@@ -1101,6 +1111,7 @@ impl ArtistView {
                                 )
                                 .detailed(true)
                                 .start(Some(start.clone()))
+                                .remove("menu-remove-from-library", remove.clone())
                                 .render(cx),
                             )
                         })
