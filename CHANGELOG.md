@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Fullscreen controls start hiding after one second of inactivity, with the same smooth cover transition.
+
 ### Fixed
 
 - Apple Music lyrics can be found when the album has a different edition name in the lyrics catalogue.
