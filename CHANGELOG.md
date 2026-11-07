@@ -10,6 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - On macOS, Widevine is also found in registered browsers that have been renamed or moved.
+- The back, forward and refresh buttons sit at the start of the page again instead of next to the sidebar toggle.
 
 ## [0.48.0] - 2026-11-07
 
