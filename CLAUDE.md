@@ -116,6 +116,22 @@ Clippy is clean, `--all-targets` included, and stays that way. Boxed callback fi
 module-local `type` alias rather than a `type_complexity` warning. The one `#[allow]` is
 `reversed_empty_ranges` on the `clamp_range("abc", &(2..1))` test in `crates/ui/src/input/mod.rs`.
 
+## Patching gpui
+
+`gpui` comes from the `sonorahq/gpui` fork, pinned by `rev`. To change it, clone the fork into
+the ignored `vendor/gpui` (never a submodule), branch off `master`, and point Cargo at it while
+you work:
+
+```toml
+[patch."https://github.com/sonorahq/gpui"]
+gpui = { path = "vendor/gpui/crates/gpui" }
+gpui_platform = { path = "vendor/gpui/crates/gpui_platform" }
+```
+
+Run `cargo fmt` and `cargo clippy` inside `vendor/gpui` too. Once the fork's change is merged,
+drop the `[patch]`, move both `rev`s to the merge commit and let `Cargo.lock` follow. A `[patch]`
+is never committed.
+
 ## Code style
 
 - Every type and every function whose behaviour is not obvious from its name carries a `///`

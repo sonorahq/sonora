@@ -116,15 +116,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Fshi skedarin e këngës
 menu-delete-track-files = Fshi { $count } skedarë këngësh
 menu-download = Shkarko
-menu-download-tracks = { $count ->
-    [one] Shkarko { $count } këngë
-   *[other] Shkarko { $count } këngë
-}
 menu-remove-download = Hiq shkarkimin
-menu-remove-downloads = { $count ->
-    [one] Hiq { $count } shkarkim
-   *[other] Hiq { $count } shkarkime
-}
 menu-downloading = Duke shkarkuar. Kliko për ta ndalur
 menu-play-next = Luaj të radhës
 menu-play-tracks-next = { $count ->
@@ -141,11 +133,8 @@ menu-play-tracks-last = { $count ->
     [one] Luaj { $count } këngë të fundit
    *[other] Luaj { $count } këngë të fundit
 }
-menu-go-to = Shko te
-menu-artist = Artisti
-menu-album = Albumi
-menu-radio = Radio
-menu-details = Detajet
+menu-song-radio = Shko te radio e këngës
+menu-go-to-album = Shko te albumi
 menu-go-to-artist = Shko te artisti
 menu-view-details = Shiko detajet
 menu-copy-link = Kopjo lidhjen
@@ -928,6 +917,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kan.
 }
+settings-lyrics = Shfaq tekstet
+settings-lyrics-detail = Çaktivizoje për t'i fshehur tekstet kudo dhe për të ndaluar kërkimin e tyre
 settings-panel-lyrics-size = Madhësia e teksteve (panel)
 settings-panel-lyrics-size-detail = Madhësia e tekstit të teksteve në panelin anësor, mbi madhësinë bazë të shkronjave
 settings-fullscreen-lyrics-size = Madhësia e teksteve (ekran i plotë)

@@ -1,8 +1,9 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
+use std::ffi::OsStr;
 use std::hash::{Hash, Hasher};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::picture::{MimeType, Picture, PictureType};
@@ -46,6 +47,9 @@ const ARTIST_NAMES: &[&str] = &[
     "cover.png",
     "cover.webp",
 ];
+
+/// The cache folder that pictures taken out of tags are copied into, named by their hash.
+const EMBEDDED_COVERS: &str = "local-covers";
 
 /// The credit of an album whose tracks name no album artist and share no artist either.
 const VARIOUS_ARTISTS: &str = "Various Artists";
@@ -557,7 +561,7 @@ pub fn track_from_file(
         .or_else(|| lenient.as_ref().and_then(|l| l.disc_number))
         .unwrap_or(0);
 
-    let mut cover = extract_cover(tag, path, cache_dir);
+    let mut cover = extract_cover(tag, cache_dir);
     if cover.is_none()
         && let Some(ref fb) = fallback
         && let Some((ref data, ref mime)) = fb.cover_data
@@ -741,7 +745,7 @@ pub(super) fn artists(tag: &Tag) -> Vec<String> {
 
 /// The folder an untagged track's album is keyed by. A disc folder such as `CD1` or `Disc 2`
 /// stands for the album folder above it, so a multi-disc rip still makes one album.
-fn album_folder(path: &Path) -> &Path {
+pub(super) fn album_folder(path: &Path) -> &Path {
     let Some(dir) = path.parent() else {
         return path;
     };
@@ -767,37 +771,73 @@ fn file_stem(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-pub fn folder_cover(dir: &Path) -> Option<String> {
-    beside(dir, COVER_NAMES)
+/// The album art beside a track: its own folder's, or the album folder's above a disc folder
+/// such as `CD1`. Each folder is listed, so a capitalised `Cover.jpg` counts too.
+pub fn art_beside(path: &Path) -> Option<String> {
+    let dir = path.parent()?;
+    let album = album_folder(path);
+    folder_cover(dir).or_else(|| (album != dir).then(|| folder_cover(album)).flatten())
 }
 
-pub fn artist_cover(dir: &Path) -> Option<String> {
-    beside(dir, ARTIST_NAMES)
+/// The album art among the files of `dir`, found from one listing of it.
+fn folder_cover(dir: &Path) -> Option<String> {
+    let images: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.file_name().is_some_and(is_art))
+        .collect();
+    cover_among(&images)
 }
 
-fn beside(dir: &Path, names: &[&str]) -> Option<String> {
+/// Whether a file of this name could be a folder's album art or artist portrait, ignoring case.
+pub(super) fn is_art(name: &OsStr) -> bool {
+    let name = name.to_string_lossy();
+    COVER_NAMES
+        .iter()
+        .chain(ARTIST_NAMES)
+        .any(|known| name.eq_ignore_ascii_case(known))
+}
+
+/// The album art among a folder's `images`, by the first of [`COVER_NAMES`] one of them matches.
+pub(super) fn cover_among(images: &[PathBuf]) -> Option<String> {
+    among(images, COVER_NAMES)
+}
+
+/// The artist portrait among a folder's `images`, by the first of [`ARTIST_NAMES`] one matches.
+pub(super) fn portrait_among(images: &[PathBuf]) -> Option<String> {
+    among(images, ARTIST_NAMES)
+}
+
+fn among(images: &[PathBuf], names: &[&str]) -> Option<String> {
     names
         .iter()
-        .map(|name| dir.join(name))
-        .find(|candidate| candidate.is_file())
-        .map(|candidate| format!("file://{}", candidate.display()))
+        .find_map(|name| {
+            images.iter().find(|image| {
+                image
+                    .file_name()
+                    .is_some_and(|file| file.to_string_lossy().eq_ignore_ascii_case(name))
+            })
+        })
+        .map(|image| format!("file://{}", image.display()))
 }
 
-fn extract_cover(tag: Option<&Tag>, path: &Path, cache_dir: &Path) -> Option<String> {
+/// Whether `cover` is a picture taken out of a file's own tags, as opposed to art found in its
+/// folder. Only those are kept with the file's tags, since folder art can change without the file.
+pub(super) fn is_embedded(cover: &str, cache_dir: &Path) -> bool {
+    let prefix = format!("file://{}", cache_dir.join(EMBEDDED_COVERS).display());
+    cover.starts_with(&prefix)
+}
+
+/// The picture in a file's tag, the front cover first, copied into the cache.
+fn extract_cover(tag: Option<&Tag>, cache_dir: &Path) -> Option<String> {
     let picture = tag.and_then(|tag| {
         tag.pictures()
             .iter()
             .find(|picture| picture.pic_type() == PictureType::CoverFront)
             .or_else(|| tag.pictures().first())
-    });
-
-    if let Some(picture) = picture
-        && let Some(cached) = cache_picture(picture, cache_dir)
-    {
-        return Some(cached);
-    }
-
-    path.parent().and_then(folder_cover)
+    })?;
+    cache_picture(picture, cache_dir)
 }
 
 fn cache_picture(picture: &Picture, cache_dir: &Path) -> Option<String> {
@@ -833,7 +873,7 @@ fn cache_image_data(data: &[u8], media_type_or_ext: &str, cache_dir: &Path) -> O
     data.hash(&mut hasher);
     let hash = hasher.finish();
 
-    let dir = cache_dir.join("local-covers");
+    let dir = cache_dir.join(EMBEDDED_COVERS);
     std::fs::create_dir_all(&dir).ok()?;
     let dest = dir.join(format!("{hash:016x}.{extension}"));
     if !dest.exists() {

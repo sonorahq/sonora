@@ -414,6 +414,9 @@ pub struct MenuItem {
     label: SharedString,
     detail: Option<AnyElement>,
     selected: bool,
+    /// Whether a keyboard cursor the owner tracks rests on the row. It paints the row like a
+    /// selected one but leaves out the check.
+    highlighted: bool,
     checked: bool,
     disabled: bool,
     separator: bool,
@@ -439,6 +442,7 @@ impl MenuItem {
             label: label.into(),
             detail: None,
             selected: false,
+            highlighted: false,
             checked: false,
             face: None,
             disabled: false,
@@ -465,12 +469,20 @@ impl MenuItem {
         self
     }
 
+    /// Marks the row the owner's own keyboard cursor is on, for a searchable list that keeps
+    /// its cursor outside the menu. Unlike `selected`, it draws no check.
+    pub fn highlighted(mut self, highlighted: bool) -> Self {
+        self.highlighted = highlighted;
+        self
+    }
+
     pub fn separator(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
             label: SharedString::default(),
             detail: None,
             selected: false,
+            highlighted: false,
             checked: false,
             disabled: true,
             separator: true,
@@ -832,6 +844,7 @@ impl RenderOnce for Menu {
                 label,
                 detail,
                 selected,
+                highlighted,
                 checked,
                 disabled,
                 separator,
@@ -905,7 +918,7 @@ impl RenderOnce for Menu {
                     |this| this.text_color(theme.muted_foreground).cursor_default(),
                     |this| this.cursor_pointer(),
                 )
-                .when(selected || cursor == Some(place), |this| {
+                .when(selected || highlighted || cursor == Some(place), |this| {
                     this.bg(theme.secondary_active)
                 })
                 .when(!disabled, |this| {
@@ -1146,6 +1159,7 @@ impl RenderOnce for Menu {
         let chrome = snapped(theme.metrics.title_bar, window);
         let mut overrides = overrides;
         let width = overrides.size.width.take();
+        let floor = overrides.min_size.width.take();
         let ceiling = overrides.max_size.height.take();
         let right = overrides.inset.left.is_none() && overrides.inset.right.is_some();
         let corner = match (right, above) {
@@ -1203,6 +1217,7 @@ impl RenderOnce for Menu {
             .key_context(MENU_CONTEXT)
             .when_some(keys, |this, keys| keys.bind(this))
             .when_some(width, |this, width| this.w(width))
+            .when_some(floor, |this, floor| this.min_w(floor))
             .when_some(ceiling, |this, ceiling| this.max_h(ceiling))
             .when_some(hover_guard, |this, guard| {
                 this.on_hover(move |hovered, window, cx| {
@@ -1285,6 +1300,17 @@ impl RenderOnce for Menu {
         } else {
             menu.into_any_element()
         }
+    }
+}
+
+/// Closes the open menu the way Escape would. A control drawn inside a menu calls it before it
+/// opens a dialog, so the menu does not stay on screen over the dialog.
+pub fn close_menu(window: &mut Window, cx: &mut App) {
+    let close = cx
+        .try_global::<Escape>()
+        .and_then(|escape| escape.0.borrow_mut().take());
+    if let Some(close) = close {
+        close(&(), window, cx);
     }
 }
 

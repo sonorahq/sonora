@@ -78,7 +78,7 @@ const SHADOW_BLEED: f32 = TEXT_SHADOW[1] * 3.;
 const DOCK_BLUR: Pixels = px(8.);
 /// Below this the dock's blur is not worth a layer of its own.
 const DOCK_BLUR_LEAST: Pixels = px(0.05);
-const REST: Duration = Duration::from_millis(1500);
+const REST: Duration = Duration::from_millis(1000);
 const WAKE_DEBOUNCE: Duration = Duration::from_millis(400);
 /// How far the level bubble stands off the volume track, clear of the thumb that is wider than it.
 const VOLUME_BUBBLE_LIFT: Pixels = px(18.);
@@ -142,9 +142,19 @@ impl FullscreenView {
         let library = Sonora::global(cx).library.clone();
         cx.observe(&library, |_, _, cx| cx.notify()).detach();
         let settings = Sonora::global(cx).settings.clone();
-        cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+        cx.observe(&settings, |this, settings, cx| {
+            if this.panel == Some(SideTab::Lyrics) && !settings.read(cx).lyrics_enabled() {
+                this.panel = None;
+                this.over_pill = false;
+            }
+            cx.notify();
+        })
+        .detach();
         let panel = settings.read(cx).fullscreen_tab();
-        let shown = panel.unwrap_or(SideTab::Lyrics);
+        let shown = panel.unwrap_or(match settings.read(cx).lyrics_enabled() {
+            true => SideTab::Lyrics,
+            false => SideTab::Queue,
+        });
         let aside = cx.new(|cx| Aside::new(queue.clone(), playback.clone(), shown, cx));
         aside.update(cx, |aside, _| aside.strip());
         let me = cx.entity_id();
@@ -205,6 +215,7 @@ impl FullscreenView {
             position: 0.,
             velocity: 0.,
         };
+        self.unpark();
         self.last_pos = None;
         match shown {
             true => self.stir(cx),
@@ -213,9 +224,15 @@ impl FullscreenView {
         cx.notify();
     }
 
+    /// Selects the fullscreen panel and restarts the controls' idle timer.
     fn show(&mut self, panel: Option<SideTab>, cx: &mut Context<Self>) {
         if panel != self.panel && !cx.reduce_motion() {
             self.switch = Some(Entrance::start());
+        }
+        if panel.is_some() != self.panel.is_some() {
+            // The pill changes parents between the cover and panel layouts, so its old
+            // hover listener cannot report a leave after it is removed.
+            self.over_pill = false;
         }
         self.panel = panel;
         self.settings
@@ -301,6 +318,18 @@ impl FullscreenView {
             || self.pending.is_some()
             || self.context_menu.is_some()
             || Sonora::global(cx).devices.read(cx).invite().is_some()
+    }
+
+    /// Clears hover state when the fullscreen view opens or closes. Its elements report their
+    /// current hover state when they are mounted again.
+    fn unpark(&mut self) {
+        self.over_zone = false;
+        self.over_panel = false;
+        self.over_pill = false;
+        self.over_transport = false;
+        self.over_leave = false;
+        self.over_volume = false;
+        self.over_seek = None;
     }
 
     /// Follows the pointer in and out of the window, once a frame. A hover flag clears on an
@@ -935,6 +964,7 @@ impl FullscreenView {
     fn pill(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         let frosted = ambient::shown(cx);
+        let lyrics = self.settings.read(cx).lyrics_enabled();
         let gap = px(PILL_GAP);
         let linger = cx.listener(|this: &mut Self, hovering: &bool, _, cx| {
             this.over_pill = *hovering;
@@ -970,26 +1000,32 @@ impl FullscreenView {
                     .name(t!("fullscreen-panels"))
                     .when(frosted, TabBar::blurred)
                     .rounded(theme.radius + gap)
-                    .items([
-                        tab(
-                            "fullscreen-artwork-tab",
-                            "icons/disc-3.svg",
-                            "fullscreen-artwork",
-                            None,
-                        ),
-                        tab(
-                            "fullscreen-lyrics",
-                            "icons/mic-vocal.svg",
-                            "lyrics-title",
-                            Some(SideTab::Lyrics),
-                        ),
-                        tab(
-                            "fullscreen-queue",
-                            "icons/list-music.svg",
-                            "queue-title",
-                            Some(SideTab::Queue),
-                        ),
-                    ]),
+                    .items(
+                        [
+                            Some(tab(
+                                "fullscreen-artwork-tab",
+                                "icons/disc-3.svg",
+                                "fullscreen-artwork",
+                                None,
+                            )),
+                            lyrics.then(|| {
+                                tab(
+                                    "fullscreen-lyrics",
+                                    "icons/mic-vocal.svg",
+                                    "lyrics-title",
+                                    Some(SideTab::Lyrics),
+                                )
+                            }),
+                            Some(tab(
+                                "fullscreen-queue",
+                                "icons/list-music.svg",
+                                "queue-title",
+                                Some(SideTab::Queue),
+                            )),
+                        ]
+                        .into_iter()
+                        .flatten(),
+                    ),
             )
     }
 
@@ -1249,7 +1285,6 @@ impl Shell for FullscreenView {
             navigation: false,
             sidebar_open: false,
             sidebar_right: None,
-            offset: Pixels::ZERO,
             border: false,
             content: None,
             transparent: ambient::shown(cx),

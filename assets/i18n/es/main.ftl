@@ -116,15 +116,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Eliminar archivo de pista
 menu-delete-track-files = Eliminar { $count } archivos de pista
 menu-download = Descargar
-menu-download-tracks = { $count ->
-    [one] Descargar { $count } pista
-   *[other] Descargar { $count } pistas
-}
 menu-remove-download = Quitar la descarga
-menu-remove-downloads = { $count ->
-    [one] Quitar { $count } descarga
-   *[other] Quitar { $count } descargas
-}
 menu-downloading = Descargando. Haz clic para detener
 menu-play-next = Reproducir a continuación
 menu-play-tracks-next = { $count ->
@@ -141,11 +133,8 @@ menu-play-tracks-last = { $count ->
     [one] Reproducir { $count } pista al final
    *[other] Reproducir { $count } pistas al final
 }
-menu-go-to = Ir a
-menu-artist = Artista
-menu-album = Álbum
-menu-radio = Radio
-menu-details = Detalles
+menu-song-radio = Ir a la radio de la canción
+menu-go-to-album = Ir al álbum
 menu-go-to-artist = Ir al artista
 menu-view-details = Ver detalles
 menu-copy-link = Copiar enlace
@@ -928,6 +917,8 @@ equalizer-status-channels = { $from ->
     [2] estéreo
    *[other] { $to } can.
 }
+settings-lyrics = Mostrar letras
+settings-lyrics-detail = Desactívalo para ocultar las letras en todas partes y dejar de buscarlas
 settings-panel-lyrics-size = Tamaño del panel letra (panel)
 settings-panel-lyrics-size-detail = Tamaño del texto de la letra en el panel lateral comparado con el tamaño de fuente base
 settings-fullscreen-lyrics-size = Tamaño de la letra en pantalla completa

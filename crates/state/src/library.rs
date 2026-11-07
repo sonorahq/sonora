@@ -1631,6 +1631,22 @@ impl Library {
         }
     }
 
+    /// Favorites credited to this artist, including collaborations, without cloning the library.
+    pub fn favorites_by_artist<'a>(
+        &'a self,
+        artist_id: &'a str,
+    ) -> impl Iterator<Item = &'a Track> {
+        self.favorites(artist_id)
+            .into_iter()
+            .flat_map(|favorites| favorites.tracks)
+            .filter(move |track| {
+                track
+                    .artist_refs
+                    .iter()
+                    .any(|artist| artist.id.as_deref() == Some(artist_id))
+            })
+    }
+
     pub fn saved(&self, track_id: &str) -> bool {
         self.favorites(track_id).is_some_and(|favorites| {
             favorites
@@ -1691,10 +1707,16 @@ impl Library {
     ) {
         let gone = Gone::LibraryTrack(track.clone());
         track.stamp_added();
-        self.set_in_library(MediaKind::Track, present, gone, cx, move |ready| {
-            ready.tracks.retain(|known| known.id != track.id);
-            if present {
-                ready.tracks.insert(0, track);
+        self.set_in_library(MediaKind::Track, present, gone, cx, move |this, shelf| {
+            if let Some(ready) = this.held_mut(shelf).ready_mut() {
+                ready.tracks.retain(|known| known.id != track.id);
+                if present {
+                    ready.tracks.insert(0, track);
+                    return;
+                }
+            }
+            if !present {
+                this.set_saved(track, false);
             }
         });
     }
@@ -1707,25 +1729,33 @@ impl Library {
     ) {
         let gone = Gone::LibraryAlbum(album.clone());
         album.stamp_added();
-        self.set_in_library(MediaKind::Album, present, gone, cx, move |ready| {
-            ready.albums.retain(|known| known.id != album.id);
-            if present {
-                ready.albums.insert(0, album);
+        self.set_in_library(MediaKind::Album, present, gone, cx, move |this, shelf| {
+            if let Some(ready) = this.held_mut(shelf).ready_mut() {
+                ready.albums.retain(|known| known.id != album.id);
+                if present {
+                    ready.albums.insert(0, album);
+                    return;
+                }
+            }
+            if !present {
+                this.set_album_saved(album, false);
             }
         });
     }
 
     /// Asks the provider to put one item into its library or take it out, and applies
-    /// `place` to the shelf's pages once it agrees, so they follow without a reload. A second
-    /// ask about the same item while the first is out is dropped. A removal is reported with
-    /// an Undo that puts `gone` back, and removals in the same turn share one toast.
+    /// `place` once it agrees, so the shelf's pages follow without a reload. A favorite on a
+    /// `Catalog::Editable` provider is a mark on the library item, so `place` also drops the
+    /// favorite of an item that left. A second ask about the same item while the first is out
+    /// is dropped. A removal is reported with an Undo that puts `gone` back, and removals in the
+    /// same turn share one toast.
     fn set_in_library(
         &mut self,
         kind: MediaKind,
         present: bool,
         gone: Gone,
         cx: &mut Context<Self>,
-        place: impl FnOnce(&mut Ready) + 'static,
+        place: impl FnOnce(&mut Self, Shelf) + 'static,
     ) {
         let Some(id) = gone.id().map(str::to_owned) else {
             return;
@@ -1750,9 +1780,7 @@ impl Library {
                 this.pending_library.remove(&answered);
                 match result {
                     Ok(()) => {
-                        if let Some(ready) = this.held_mut(shelf).ready_mut() {
-                            place(ready);
-                        }
+                        place(this, shelf);
                         match sweep {
                             Some(sweep) => this.answer(sweep, Some(gone), cx),
                             None => Toasts::show(Outcome::Done, "toast-library-added", cx),
@@ -1882,15 +1910,8 @@ impl Library {
                     Playlist {
                         id,
                         name,
-                        owner: String::new(),
-                        owner_id: String::new(),
                         owned: true,
-                        collaborative: false,
-                        blend: false,
-                        public: false,
-                        cover: None,
-                        track_count: 0,
-                        modified_at: None,
+                        ..Default::default()
                     }
                 }))
             },

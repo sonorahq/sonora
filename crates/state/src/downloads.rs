@@ -543,7 +543,7 @@ impl Downloads {
         Some(PlaylistDetail {
             playlist: playlist.clone(),
             tracks: set.tracks.clone(),
-            continuation: None,
+            ..Default::default()
         })
     }
 

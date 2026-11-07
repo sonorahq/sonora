@@ -110,13 +110,7 @@ menu-remove-tracks-from-history = { $count }曲を履歴から削除
 menu-delete-track-file = 曲ファイルを削除
 menu-delete-track-files = { $count }個の曲ファイルを削除
 menu-download = ダウンロード
-menu-download-tracks = { $count ->
-   *[other] { $count }曲をダウンロード
-}
 menu-remove-download = ダウンロードを削除
-menu-remove-downloads = { $count ->
-   *[other] { $count }件のダウンロードを削除
-}
 menu-downloading = ダウンロード中。クリックで停止
 menu-play-next = 次に再生
 menu-play-tracks-next = { $count }曲を次に再生
@@ -126,11 +120,8 @@ menu-play-last = 最後に再生
 menu-play-tracks-last = { $count ->
    *[other] { $count }曲を最後に再生
 }
-menu-go-to = 移動
-menu-artist = アーティスト
-menu-album = アルバム
-menu-radio = ラジオ
-menu-details = 詳細
+menu-song-radio = 曲のラジオを開く
+menu-go-to-album = アルバムを表示
 menu-go-to-artist = アーティストを表示
 menu-view-details = 詳細を表示
 menu-copy-link = リンクをコピー
@@ -887,6 +878,8 @@ equalizer-status-channels = { $from ->
     [2] ステレオ
    *[other] { $to }ch
 }
+settings-lyrics = 歌詞を表示
+settings-lyrics-detail = オフにすると、すべての場所で歌詞を非表示にし、歌詞の検索も停止します
 settings-panel-lyrics-size = 歌詞のサイズ（パネル）
 settings-panel-lyrics-size-detail = サイドパネルの歌詞の文字サイズ。基準のフォントサイズに対する倍率
 settings-fullscreen-lyrics-size = 歌詞のサイズ（フルスクリーン）

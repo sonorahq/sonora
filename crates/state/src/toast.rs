@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -133,8 +134,14 @@ impl Toast {
         self
     }
 
+    /// Adds a second line. It goes through [`music::redact`] first, since the detail is often an
+    /// error that names the url it failed on, and people share screenshots of toasts.
     pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
-        self.detail = Some(detail.into());
+        let detail = detail.into();
+        self.detail = Some(match music::redact(&detail) {
+            Cow::Borrowed(_) => detail,
+            Cow::Owned(clean) => clean.into(),
+        });
         self
     }
 

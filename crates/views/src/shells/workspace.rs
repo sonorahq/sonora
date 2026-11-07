@@ -13,7 +13,7 @@ use ui::{
 
 use crate::chrome::{
     AppNotice, Chrome, JamCode, JamJoin, PlayerBar, SessionCode, SessionJoin, SidebarLeft,
-    SidebarRight, TitleBarOptions, ToastStack,
+    SidebarRight, SwipeCue, TitleBarOptions, ToastStack,
 };
 use crate::shared::confirm::Confirm;
 use crate::shared::menus::CardMenu;
@@ -42,6 +42,7 @@ pub(crate) struct Workspace {
     session_code: Entity<SessionCode>,
     toasts: Entity<ToastStack>,
     notice: Entity<AppNotice>,
+    swipe_cue: Entity<SwipeCue>,
     content: AnyView,
     /// A screen's own header, floated over the top of the page and outside its transition.
     /// The page pads itself to start beneath it.
@@ -83,6 +84,7 @@ impl Workspace {
             session_code: cx.new(SessionCode::new),
             toasts: cx.new(ToastStack::new),
             notice: cx.new(AppNotice::new),
+            swipe_cue: cx.new(SwipeCue::new),
             content,
             header: None,
             cached: true,
@@ -174,13 +176,10 @@ impl Workspace {
 
 impl Shell for Workspace {
     fn title_bar(&self, content: Option<AnyView>, cx: &App) -> TitleBarOptions {
-        let sidebar = self.sidebar.read(cx);
-
         TitleBarOptions {
             navigation: true,
-            sidebar_open: sidebar.is_open(),
+            sidebar_open: self.sidebar.read(cx).is_open(),
             sidebar_right: Some(self.sidebar_right.read(cx).is_open()),
-            offset: sidebar.occupied_width(),
             border: true,
             content,
             transparent: false,
@@ -319,6 +318,14 @@ impl Render for Workspace {
                             .ml(overlay_width)
                             .when(overlay, |this| this.overflow_hidden())
                             .when(covered, |this| this.hidden())
+                            // A two-finger swipe across the page steps through its history,
+                            // as in a browser.
+                            .on_scroll_wheel({
+                                let cue = self.swipe_cue.clone();
+                                move |event, window, cx| {
+                                    cue.update(cx, |cue, cx| cue.follow(event, window, cx));
+                                }
+                            })
                             .child(
                                 div()
                                     .relative()
@@ -367,7 +374,8 @@ impl Render for Workspace {
                                                 .child(header),
                                         )
                                     }),
-                            ),
+                            )
+                            .child(self.swipe_cue.clone()),
                     )
                     .child(self.sidebar_right.clone())
                     .when(overlay, |this| this.child(self.sidebar.clone())),

@@ -116,15 +116,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = 删除歌曲文件
 menu-delete-track-files = 删除 { $count } 个歌曲文件
 menu-download = 下载
-menu-download-tracks = { $count ->
-    [one] 下载 { $count } 首歌曲
-   *[other] 下载 { $count } 首歌曲
-}
 menu-remove-download = 移除下载
-menu-remove-downloads = { $count ->
-    [one] 移除 { $count } 个下载
-   *[other] 移除 { $count } 个下载
-}
 menu-downloading = 正在下载。点击停止
 menu-play-next = 下一首播放
 menu-play-tracks-next = { $count ->
@@ -141,11 +133,8 @@ menu-play-tracks-last = { $count ->
     [one] 最后播放 { $count } 首歌曲
    *[other] 最后播放 { $count } 首歌曲
 }
-menu-go-to = 前往
-menu-artist = 歌手
-menu-album = 专辑
-menu-radio = 电台
-menu-details = 详情
+menu-song-radio = 前往歌曲电台
+menu-go-to-album = 前往专辑
 menu-go-to-artist = 前往歌手
 menu-view-details = 查看详情
 menu-copy-link = 复制链接
@@ -928,6 +917,8 @@ equalizer-status-channels = { $from ->
     [2] 立体声
    *[other] { $to } 声道
 }
+settings-lyrics = 显示歌词
+settings-lyrics-detail = 关闭后将在所有位置隐藏歌词，并停止查找歌词
 settings-panel-lyrics-size = 歌词大小（面板）
 settings-panel-lyrics-size-detail = 侧边面板中歌词文字的大小，基于基础字体大小
 settings-fullscreen-lyrics-size = 歌词大小（全屏）

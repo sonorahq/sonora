@@ -1,6 +1,8 @@
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, DragMoveEvent, Pixels, Point, Render, SharedString, Window, div};
+use gpui::{
+    AnyElement, App, Context, DragMoveEvent, Pixels, Point, Render, SharedString, Window, div,
+};
 use i18n::t;
 use music::WritingSystem;
 use router::{Destination, SettingsPage, navigate};
@@ -24,8 +26,12 @@ pub(super) struct DraggedSource {
 }
 
 impl SettingsView {
-    pub(super) fn lyrics_groups(&self) -> Vec<Group> {
-        vec![
+    pub(super) fn lyrics_groups(&self, cx: &App) -> Vec<Group> {
+        let mut groups = vec![Group::untitled().rows([Slot::Lyrics])];
+        if !self.settings.read(cx).lyrics_enabled() {
+            return groups;
+        }
+        groups.push(
             Group::new("settings-group-display", "icons/mic-vocal.svg").rows([
                 Slot::Karaoke,
                 Slot::BlurLyrics,
@@ -33,9 +39,27 @@ impl SettingsView {
                 Slot::PanelLyricsSize,
                 Slot::FullscreenLyricsSize,
             ]),
+        );
+        groups.push(
             Group::new("settings-group-sources", "icons/list-music.svg")
                 .rows([Slot::LyricsSources, Slot::LyricsForLocal]),
-        ]
+        );
+        groups
+    }
+
+    pub(super) fn lyrics_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).lyrics_enabled();
+
+        self.row(
+            t!("settings-lyrics"),
+            Switch::new("lyrics-enabled", on)
+                .name(t!("settings-lyrics"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.set_lyrics_enabled(!on, cx));
+                }))
+                .into_any_element(),
+        )
     }
 
     pub(super) fn lyrics_sources_groups(&self) -> Vec<Group> {

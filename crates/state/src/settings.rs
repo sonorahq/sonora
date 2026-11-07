@@ -417,6 +417,8 @@ struct Values {
     /// Set once Subsonic has been added to a list saved before it existed, so a user who turns it
     /// off afterwards is not given it back.
     subsonic_lyrics_offered: bool,
+    /// Whether lyrics show anywhere and are looked up at all.
+    lyrics_enabled: bool,
     lyrics_providers: Vec<String>,
     /// Every known lyrics source, the preferred one first. Lyrics of the same kind from two
     /// sources go to the one listed higher.
@@ -620,6 +622,7 @@ impl Default for Values {
             stream_quality: Quality::default().id().to_owned(),
             local_lyrics_offered: false,
             subsonic_lyrics_offered: false,
+            lyrics_enabled: true,
             lyrics_provider_priority: lyrics_priority(&[]),
             // Kugou and NetEase, the last two, start switched off.
             lyrics_providers: LYRICS_SOURCES[..7]
@@ -1098,6 +1101,10 @@ impl AppSettings {
         Quality::from_id(&self.values.stream_quality).unwrap_or_default()
     }
 
+    pub fn lyrics_enabled(&self) -> bool {
+        self.values.lyrics_enabled
+    }
+
     pub fn lyrics_providers(&self) -> &[String] {
         &self.values.lyrics_providers
     }
@@ -1216,14 +1223,20 @@ impl AppSettings {
         self.state.sidebar_right_open
     }
 
+    /// The queue stands in for the lyrics while they are turned off.
     pub fn sidebar_right_tab(&self) -> SideTab {
-        self.state.sidebar_right_tab
+        match self.state.sidebar_right_tab {
+            SideTab::Lyrics if !self.lyrics_enabled() => SideTab::Queue,
+            tab => tab,
+        }
     }
 
     /// The panel the fullscreen view last showed beside the cover, or `None` when it showed the
-    /// artwork alone.
+    /// artwork alone, or while lyrics are turned off.
     pub fn fullscreen_tab(&self) -> Option<SideTab> {
-        self.state.fullscreen_tab
+        self.state
+            .fullscreen_tab
+            .filter(|tab| *tab != SideTab::Lyrics || self.lyrics_enabled())
     }
 
     pub fn shuffle(&self) -> bool {
@@ -1665,6 +1678,11 @@ impl AppSettings {
 
     pub fn set_artwork_for_local_files(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.values.artwork_for_local_files = enabled;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_lyrics_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.lyrics_enabled = enabled;
         self.schedule_save(cx);
     }
 

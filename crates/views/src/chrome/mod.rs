@@ -9,13 +9,14 @@ mod session;
 mod sessions_button;
 mod sidebar_left;
 mod sidebar_right;
+mod swipe_cue;
 mod theme_invite;
 mod title_bar;
 mod toasts;
 mod toolbar;
 pub(crate) mod tools;
 
-pub(crate) use aside::{Aside, VerseLook, verse, verse_sizes};
+pub(crate) use aside::{Aside, VerseLook, verse, verse_gap, verse_sizes};
 pub(crate) use jam::{JamCode, JamInvite, JamJoin};
 pub(crate) use members::Members;
 pub(crate) use notice::AppNotice;
@@ -24,6 +25,7 @@ pub(crate) use player_bar::PlayerBar;
 pub(crate) use session::{SessionCode, SessionJoin};
 pub(crate) use sidebar_left::SidebarLeft;
 pub(crate) use sidebar_right::SidebarRight;
+pub(crate) use swipe_cue::SwipeCue;
 pub(crate) use theme_invite::ThemeInvite;
 #[cfg(target_os = "macos")]
 pub use title_bar::traffic_lights;

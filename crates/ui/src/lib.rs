@@ -46,6 +46,7 @@ mod shader;
 mod shield;
 mod skeleton;
 mod spinner;
+mod swipe;
 mod switch;
 mod table;
 mod tabs;
@@ -99,7 +100,7 @@ pub use label::{
 pub use layout::{ALWAYS, MIN_CONTENT, ROOMY, Room, SNUG, VAST, WIDE};
 pub use lazy::Lazy;
 pub use level_meter::LevelMeter;
-pub use menu::{MENU_CONTEXT, Menu, MenuItem, MenuSearch, SubmenuState};
+pub use menu::{MENU_CONTEXT, Menu, MenuItem, MenuSearch, SubmenuState, close_menu};
 pub use metrics::{LEADING, Metrics, Rounding, Text, snapped, tucked};
 pub use modal::{Modal, corners};
 pub use motion::{
@@ -133,6 +134,7 @@ pub use separator::Separator;
 pub use shield::Shield;
 pub use skeleton::{Initials, Skeleton};
 pub use spinner::{Spin, Spinner};
+pub use swipe::{hold_swipe, swipe_pull, swiped};
 pub use switch::Switch;
 pub use table::{
     Activate, Cell, ColumnSpec, Deselect, Layout, Listing, Pending, ROW_GROUP, Remove, SelectNext,

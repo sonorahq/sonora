@@ -119,15 +119,7 @@ menu-delete-track-files = { $count ->
    *[other] Supprimer les fichiers de { $count } titres
 }
 menu-download = Télécharger
-menu-download-tracks = { $count ->
-    [one] Télécharger { $count } titre
-   *[other] Télécharger { $count } titres
-}
 menu-remove-download = Supprimer le téléchargement
-menu-remove-downloads = { $count ->
-    [one] Supprimer { $count } téléchargement
-   *[other] Supprimer { $count } téléchargements
-}
 menu-downloading = Téléchargement en cours. Cliquer pour arrêter
 menu-play-next = Lire juste après
 menu-play-tracks-next = { $count ->
@@ -144,11 +136,8 @@ menu-play-tracks-last = { $count ->
     [one] Lire { $count } titre en dernier
    *[other] Lire { $count } titres en dernier
 }
-menu-go-to = Aller à
-menu-artist = Artiste
-menu-album = Album
-menu-radio = Radio
-menu-details = Détails
+menu-song-radio = Ouvrir la radio du titre
+menu-go-to-album = Aller à l'album
 menu-go-to-artist = Aller à l'artiste
 menu-view-details = Voir les détails
 menu-copy-link = Copier le lien
@@ -932,6 +921,8 @@ equalizer-status-channels = { $from ->
     [2] stéréo
    *[other] { $to } canaux
 }
+settings-lyrics = Afficher les paroles
+settings-lyrics-detail = Désactivez pour masquer les paroles partout et ne plus les rechercher
 settings-panel-lyrics-size = Taille des paroles (panneau)
 settings-panel-lyrics-size-detail = Taille du texte des paroles dans le panneau latéral, en plus de la taille de base
 settings-fullscreen-lyrics-size = Taille des paroles (plein écran)
