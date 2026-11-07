@@ -917,6 +917,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kan.
 }
+settings-lyrics = Shfaq tekstet
+settings-lyrics-detail = Çaktivizoje për t'i fshehur tekstet kudo dhe për të ndaluar kërkimin e tyre
 settings-panel-lyrics-size = Madhësia e teksteve (panel)
 settings-panel-lyrics-size-detail = Madhësia e tekstit të teksteve në panelin anësor, mbi madhësinë bazë të shkronjave
 settings-fullscreen-lyrics-size = Madhësia e teksteve (ekran i plotë)

@@ -917,6 +917,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } ch
 }
+settings-lyrics = Tampilkan lirik
+settings-lyrics-detail = Matikan untuk menyembunyikan lirik di mana pun dan berhenti mencarinya
 settings-panel-lyrics-size = Ukuran lirik (panel)
 settings-panel-lyrics-size-detail = Ukuran teks lirik pada panel samping, di atas ukuran font dasar
 settings-fullscreen-lyrics-size = Ukuran lirik (layar penuh)

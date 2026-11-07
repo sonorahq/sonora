@@ -205,9 +205,13 @@ impl PlayerBar {
 
     fn side_buttons(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
-        let (open, tab) = {
+        let (open, tab, lyrics) = {
             let settings = self.settings.read(cx);
-            (settings.sidebar_right_open(), settings.sidebar_right_tab())
+            (
+                settings.sidebar_right_open(),
+                settings.sidebar_right_tab(),
+                settings.lyrics_enabled(),
+            )
         };
 
         let button = move |id: &'static str, icon: &'static str, hint: &'static str, side| {
@@ -238,12 +242,14 @@ impl PlayerBar {
             .flex_none()
             .items_center()
             .gap_1()
-            .child(button(
-                "player-lyrics",
-                "icons/mic-vocal.svg",
-                "lyrics-title",
-                SideTab::Lyrics,
-            ))
+            .when(lyrics, |this| {
+                this.child(button(
+                    "player-lyrics",
+                    "icons/mic-vocal.svg",
+                    "lyrics-title",
+                    SideTab::Lyrics,
+                ))
+            })
             .child(button(
                 "player-queue",
                 "icons/list-music.svg",

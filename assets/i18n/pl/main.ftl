@@ -947,6 +947,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kan.
 }
+settings-lyrics = Pokazuj teksty utworów
+settings-lyrics-detail = Wyłącz, aby ukryć teksty utworów w całej aplikacji i przestać ich szukać
 settings-panel-lyrics-size = Rozmiar tekstu utworu (panel)
 settings-panel-lyrics-size-detail = Rozmiar wierszy tekstu utworu w panelu bocznym ponad bazowy rozmiar czcionki
 settings-fullscreen-lyrics-size = Rozmiar tekstu utworu (pełny ekran)

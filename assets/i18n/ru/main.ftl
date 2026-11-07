@@ -976,6 +976,8 @@ equalizer-status-channels = { $from ->
     [2] стерео
    *[other] { $to } кан.
 }
+settings-lyrics = Показывать тексты песен
+settings-lyrics-detail = Выключите, чтобы скрыть тексты песен везде и перестать их искать
 settings-panel-lyrics-size = Размер текста песни (панель)
 settings-panel-lyrics-size-detail = Размер строк текста песни на боковой панели поверх базового размера шрифта
 settings-fullscreen-lyrics-size = Размер текста песни (полный экран)
