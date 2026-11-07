@@ -40,6 +40,7 @@ pub struct Lyrics {
     /// Answers found since the last save, written together once lookups go quiet.
     unsaved: Vec<Unsaved>,
     providers: Vec<Arc<dyn LyricsProvider>>,
+    /// Whether lyrics are on at all. While off, nothing is looked up and the sheet stays empty.
     enabled: bool,
     enabled_providers: Vec<String>,
     /// The order of the sources the answer on show was ranked by. A new order looks the track
