@@ -65,6 +65,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Lyrics that follow along with a song use less CPU by laying out only the lines near the screen.
 - The visualizer falls as soon as you pause instead of holding still for a moment first.
 - The log file you attach to a bug report and the error details in notifications no longer show sign-in tokens, your Subsonic or Navidrome login, your YouTube account name and email, or your home folder.
+- Local albums show a cover.jpg or folder.jpg from their folder however its name is capitalised, from the album folder above a CD1 or Disc 2 folder, and as soon as you add or rename it.
 
 ## [0.47.0] - 2026-11-02
 

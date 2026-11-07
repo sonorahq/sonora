@@ -16,10 +16,11 @@ pub struct Known {
     pub tagged: Tagged,
 }
 
-/// What the last scan learned about one folder. `portrait` is what `wire::artist_cover` answered
-/// for it, `None` meaning it had none rather than that nobody looked.
+/// What the last scan learned about one folder: its album art and, when it is named after an
+/// artist, their portrait. `None` means the folder had none rather than that nobody looked.
 pub struct Seen {
     pub mtime: i64,
+    pub cover: Option<String>,
     pub portrait: Option<String>,
 }
 
@@ -98,7 +99,7 @@ impl Index {
             .open()
             .and_then(|connection| {
                 connection
-                    .execute("DELETE FROM local_folders", [])
+                    .execute("DELETE FROM local_dirs", [])
                     .context("cannot clear the folder index")
             })
             .context("cannot open the cache");
@@ -119,7 +120,7 @@ impl Index {
         let dropped = (|| -> Result<()> {
             let connection = self.cache.open()?;
             let mut file = connection.prepare("DELETE FROM local_files WHERE path = ?")?;
-            let mut folder = connection.prepare("DELETE FROM local_folders WHERE path = ?")?;
+            let mut folder = connection.prepare("DELETE FROM local_dirs WHERE path = ?")?;
             for path in paths {
                 file.execute(params![text(path)])
                     .context("cannot drop a file from the index")?;
@@ -179,7 +180,7 @@ impl Index {
         }
 
         let mut folders = connection
-            .prepare("SELECT path, parent, mtime, portrait FROM local_folders")
+            .prepare("SELECT path, parent, mtime, cover, portrait FROM local_dirs")
             .context("cannot read the folder index")?;
         let rows = folders
             .query_map([], |row| {
@@ -188,10 +189,11 @@ impl Index {
                     row.get::<_, String>(1)?,
                     row.get::<_, i64>(2)?,
                     row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
                 ))
             })
             .context("cannot read the folder index")?;
-        for (path, parent, mtime, portrait) in rows.filter_map(Result::ok) {
+        for (path, parent, mtime, cover, portrait) in rows.filter_map(Result::ok) {
             let path = PathBuf::from(path);
             remembered
                 .children
@@ -199,7 +201,14 @@ impl Index {
                 .or_default()
                 .folders
                 .push(path.clone());
-            remembered.folders.insert(path, Seen { mtime, portrait });
+            remembered.folders.insert(
+                path,
+                Seen {
+                    mtime,
+                    cover,
+                    portrait,
+                },
+            );
         }
 
         for children in remembered.children.values_mut() {
@@ -215,7 +224,7 @@ impl Index {
             .transaction()
             .context("cannot start the index write")?;
         forget_rows(&transaction, "local_files", &changes.gone_files)?;
-        forget_rows(&transaction, "local_folders", &changes.gone_folders)?;
+        forget_rows(&transaction, "local_dirs", &changes.gone_folders)?;
         write_files(&transaction, &changes.files)?;
         write_folders(&transaction, &changes.folders)?;
         transaction.commit().context("cannot commit the index")?;
@@ -266,6 +275,7 @@ impl Changes {
                 look.path.clone(),
                 Seen {
                     mtime: look.mtime,
+                    cover: look.cover.clone(),
                     portrait: look.portrait.clone(),
                 },
             ));
@@ -333,8 +343,8 @@ fn write_files(connection: &Connection, files: &[(PathBuf, Known)]) -> Result<()
 fn write_folders(connection: &Connection, folders: &[(PathBuf, Seen)]) -> Result<()> {
     let mut insert = connection
         .prepare(
-            "INSERT OR REPLACE INTO local_folders (path, parent, mtime, portrait) \
-             VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO local_dirs (path, parent, mtime, cover, portrait) \
+             VALUES (?, ?, ?, ?, ?)",
         )
         .context("cannot record a folder")?;
     for (path, seen) in folders {
@@ -343,6 +353,7 @@ fn write_folders(connection: &Connection, folders: &[(PathBuf, Seen)]) -> Result
                 text(path),
                 text(parent(path)),
                 seen.mtime,
+                seen.cover,
                 seen.portrait
             ])
             .context("cannot record a folder")?;
