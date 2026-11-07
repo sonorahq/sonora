@@ -349,6 +349,10 @@ impl MusicPlayer for Engine {
         self.set_gain(gain);
     }
 
+    fn set_initial_gain(&self, gain: f32) {
+        self.volume.reset(gain);
+    }
+
     fn spectrum(&self) -> Option<Spectrum> {
         Some(self.spectrum())
     }

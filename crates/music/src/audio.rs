@@ -1,6 +1,6 @@
 use std::num::NonZero;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use rodio::source::SeekError;
@@ -13,20 +13,38 @@ pub const RAMP: Duration = Duration::from_millis(25);
 /// The loudest sample an integer device takes: the largest `f32` below one, since one itself
 /// overflows a 24-bit sample and wraps to the far end of the scale.
 const FULL_SCALE: f32 = 1. - f32::EPSILON / 2.;
+/// Gain targets and a silent starting level, shared with the audio callback.
+struct Gain {
+    target: AtomicU32,
+    initial: AtomicU32,
+    reset: AtomicBool,
+}
+
 #[derive(Clone)]
-pub struct Volume(Arc<AtomicU32>);
+pub struct Volume(Arc<Gain>);
 
 impl Volume {
     pub fn new(gain: f32) -> Self {
-        Self(Arc::new(AtomicU32::new(gain.to_bits())))
+        Self(Arc::new(Gain {
+            target: AtomicU32::new(gain.to_bits()),
+            initial: AtomicU32::new(gain.to_bits()),
+            reset: AtomicBool::new(false),
+        }))
     }
 
     pub fn set(&self, gain: f32) {
-        self.0.store(gain.to_bits(), Ordering::Relaxed);
+        self.0.target.store(gain.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Sets the starting gain for a paused output, without interpolating from its old gain.
+    pub fn reset(&self, gain: f32) {
+        self.set(gain);
+        self.0.initial.store(gain.to_bits(), Ordering::Relaxed);
+        self.0.reset.store(true, Ordering::Release);
     }
 
     fn get(&self) -> f32 {
-        f32::from_bits(self.0.load(Ordering::Relaxed))
+        f32::from_bits(self.0.target.load(Ordering::Relaxed))
     }
 }
 
@@ -230,6 +248,11 @@ impl<I: Source> Iterator for Chained<I> {
             self.unscaled = self.tap.absolute();
             let requested = self.volume.get().max(0.0);
 
+            if self.volume.0.reset.swap(false, Ordering::Acquire) {
+                self.current = f32::from_bits(self.volume.0.initial.load(Ordering::Relaxed));
+                self.target = self.current;
+                self.frames_left = 0;
+            }
             if requested.to_bits() != self.target.to_bits() {
                 self.target = requested;
                 self.frames_left = self.ramp_frames;
