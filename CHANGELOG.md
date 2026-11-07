@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Scrollbars stay faintly visible at rest and fade smoothly when they wake or settle.
 - Fullscreen controls start hiding after one second of inactivity, with the same smooth cover transition.
 
 ### Fixed
