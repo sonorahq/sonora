@@ -78,7 +78,7 @@ const SHADOW_BLEED: f32 = TEXT_SHADOW[1] * 3.;
 const DOCK_BLUR: Pixels = px(8.);
 /// Below this the dock's blur is not worth a layer of its own.
 const DOCK_BLUR_LEAST: Pixels = px(0.05);
-const REST: Duration = Duration::from_millis(1500);
+const REST: Duration = Duration::from_millis(1000);
 const WAKE_DEBOUNCE: Duration = Duration::from_millis(400);
 /// How far the level bubble stands off the volume track, clear of the thumb that is wider than it.
 const VOLUME_BUBBLE_LIFT: Pixels = px(18.);
