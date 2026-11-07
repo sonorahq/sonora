@@ -85,7 +85,7 @@ const HAZE_STEP: Pixels = px(0.25);
 const SPARE_MARGIN: f32 = 0.25;
 // How far a verse sinks while it is held.
 const PRESSED: f32 = 0.955;
-// The widest a line of lyrics is set, in multiples of its own size. Left to fill
+// The widest a line of lyrics is set, in multiples of its size at 100%. Left to fill
 // a fullscreen panel, a lead verse and a background one end up at opposite edges.
 const REACH: f32 = 24.;
 // What a sheet settling on the best answer comes in through: it blurs and fades
@@ -1015,13 +1015,14 @@ impl Aside {
             )
         };
         let karaoke_effects = karaoke_lyrics && effects();
+        let frame_scale = match self.titled {
+            true => 1.,
+            false => lyrics_frame_scale(window.viewport_size()),
+        };
         let scale = match self.titled {
             true => self.settings.read(cx).panel_lyrics_scale(),
-            false => {
-                self.settings.read(cx).fullscreen_lyrics_scale()
-                    * lyrics_frame_scale(window.viewport_size())
-            }
-        };
+            false => self.settings.read(cx).fullscreen_lyrics_scale(),
+        } * frame_scale;
         let (verse, lane_size) = verse_sizes(self.titled, scale, &theme);
         let sung = Sung {
             karaoke: karaoke_effects,
@@ -1076,7 +1077,8 @@ impl Aside {
             self.pin_verse(focus, window, cx);
         }
 
-        let reach = verse * REACH;
+        // Keep the sheet's edges at their 100% positions when the text size changes.
+        let reach = verse_sizes(self.titled, frame_scale, &theme).0 * REACH;
         let wrap_size = active_verse_size(verse);
         let scroll = self.verse_bar.read(cx).scroll().clone();
         let (nudges, presentation) = {
