@@ -9347,6 +9347,8 @@ dependencies = [
  "flate2",
  "libc",
  "log",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "reqwest 0.13.4",
  "serde_json",
  "sha2",

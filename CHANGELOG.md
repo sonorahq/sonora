@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- On macOS, Widevine is also found in registered browsers that have been renamed or moved.
+
 ## [0.48.0] - 2026-11-07
 
 ### Added
