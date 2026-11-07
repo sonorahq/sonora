@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-11-07
+
 ### Added
 
 - Drag the playing song from the player bar onto a playlist, Pinned or the queue.
@@ -37,6 +39,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Song, album, artist and playlist menus open with a row of buttons to like, add to the library, download and pin, filled in while they are on, and the download button shows how far a download has got. Playlists sit under Add to playlist, and a checked playlist takes the song out again.
 - The device picker in the equalizer's device rules lists devices the way the output picker does, with sound card outputs grouped and Direct to hardware devices in their own submenu.
 - A song's right-click menu lists Go to artist, Go to album, Go to song radio and View details directly again instead of under Go to.
+- Quick picks from YouTube Music show every song YouTube suggests instead of the first 15.
+- A YouTube Music artist page shows a blurred wash of the artist's portrait behind the header instead of the same picture twice.
+- Search suggestions open without a heading above them.
 
 ### Fixed
 
@@ -66,6 +71,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Signing in to Apple Music without an active subscription shows a short error and a link to check the account in the browser.
 - Lyrics that follow along with a song use less CPU by laying out only the lines near the screen.
 - The visualizer falls as soon as you pause instead of holding still for a moment first.
+- Pointing at the leave fullscreen button no longer highlights the queue rows behind it.
+- The language and font pickers no longer show a check on the row you move to with the arrow keys.
+- In fullscreen on macOS, the sidebar toggle on the left of the title bar sits as close to the edge as the one on the right.
 - The log file you attach to a bug report and the error details in notifications no longer show sign-in tokens, your Subsonic or Navidrome login, your YouTube account name and email, or your home folder.
 - Local albums show a cover.jpg or folder.jpg from their folder however its name is capitalised, from the album folder above a CD1 or Disc 2 folder, and as soon as you add or rename it.
 
@@ -2546,7 +2554,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.47.0...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.48.0...HEAD
+[0.48.0]: https://github.com/sonorahq/sonora/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/sonorahq/sonora/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/sonorahq/sonora/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/sonorahq/sonora/compare/v0.44.2...v0.45.0
