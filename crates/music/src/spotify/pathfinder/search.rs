@@ -4,9 +4,12 @@ use serde::Deserialize;
 
 use super::album::release_type;
 use super::query;
-use crate::{Album, ArtistRef, Playlist};
+use crate::{Album, ArtistRef, Playlist, SavedArtist};
 
 const ALBUMS: &str = "searchAlbums";
+/// The search page's own query, which answers artists among every other kind. The shared hash
+/// service does not list `searchArtists`, so artists come from here.
+const DESKTOP: &str = "searchDesktop";
 const PLAYLISTS: &str = "searchPlaylists";
 const ALBUM_PREFIX: &str = "spotify:album:";
 const ARTIST_PREFIX: &str = "spotify:artist:";
@@ -58,6 +61,51 @@ struct WireAlbum {
     artists: Artists,
     #[serde(rename = "coverArt", default)]
     cover: Artwork,
+}
+
+#[derive(Deserialize)]
+struct ArtistSearch {
+    #[serde(rename = "searchV2")]
+    search: Option<ArtistResults>,
+}
+
+#[derive(Deserialize)]
+struct ArtistResults {
+    #[serde(default)]
+    artists: ArtistHits,
+}
+
+#[derive(Default, Deserialize)]
+struct ArtistHits {
+    #[serde(default)]
+    items: Vec<ArtistHit>,
+}
+
+#[derive(Deserialize)]
+struct ArtistHit {
+    data: Option<ArtistEntity>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "__typename")]
+enum ArtistEntity {
+    Artist(WireArtist),
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Deserialize)]
+struct WireArtist {
+    #[serde(default)]
+    uri: String,
+    profile: Option<Profile>,
+    visuals: Option<Visuals>,
+}
+
+#[derive(Deserialize)]
+struct Visuals {
+    #[serde(rename = "avatarImage")]
+    avatar: Option<Artwork>,
 }
 
 #[derive(Deserialize)]
@@ -189,11 +237,52 @@ pub(crate) async fn playlists(session: &Session, term: &str) -> Result<Vec<Playl
         .collect())
 }
 
+/// The artists Spotify finds for `term`, read from the search page's whole answer with the
+/// optional sections turned off.
+pub(crate) async fn artists(session: &Session, term: &str) -> Result<Vec<SavedArtist>> {
+    let Some(term) = wanted(term) else {
+        return Ok(Vec::new());
+    };
+    let mut asked = variables(term);
+    asked["numberOfTopResults"] = 1.into();
+    asked["includeAudiobooks"] = false.into();
+    asked["includeArtistHasConcertsField"] = false.into();
+    asked["includePreReleases"] = false.into();
+    asked["includeAlbumPreReleases"] = false.into();
+    asked["includeAuthors"] = false.into();
+    asked["includeEpisodeContentRatingsV2"] = false.into();
+    let data = query::<ArtistSearch>(session, DESKTOP, asked).await?;
+    let results = data
+        .search
+        .context("searchDesktop Pathfinder response has no search")?;
+
+    Ok(results
+        .artists
+        .items
+        .into_iter()
+        .filter_map(artist)
+        .collect())
+}
+
+fn artist(hit: ArtistHit) -> Option<SavedArtist> {
+    let ArtistEntity::Artist(artist) = hit.data? else {
+        return None;
+    };
+    let face = artist.visuals.and_then(|visuals| visuals.avatar);
+
+    Some(SavedArtist {
+        id: trimmed(&artist.uri, ARTIST_PREFIX)?,
+        name: artist.profile?.name,
+        cover: face.and_then(|face| cover(&face.sources, false)),
+        added_at: None,
+    })
+}
+
 fn album(hit: AlbumHit) -> Option<Album> {
     let AlbumEntity::Album(album) = hit.data? else {
         return None;
     };
-    let (names, refs) = artists(album.artists);
+    let (names, refs) = credits(album.artists);
     let year = album.date.map(|date| date.year).unwrap_or_default();
 
     Some(Album {
@@ -243,7 +332,7 @@ fn playlist(hit: PlaylistHit, username: &str) -> Option<Playlist> {
     })
 }
 
-fn artists(artists: Artists) -> (String, Vec<ArtistRef>) {
+fn credits(artists: Artists) -> (String, Vec<ArtistRef>) {
     let refs: Vec<_> = artists
         .items
         .into_iter()

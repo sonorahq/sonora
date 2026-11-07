@@ -40,6 +40,8 @@ pub struct Lyrics {
     /// Answers found since the last save, written together once lookups go quiet.
     unsaved: Vec<Unsaved>,
     providers: Vec<Arc<dyn LyricsProvider>>,
+    /// Whether lyrics are on at all. While off, nothing is looked up and the sheet stays empty.
+    enabled: bool,
     enabled_providers: Vec<String>,
     /// The order of the sources the answer on show was ranked by. A new order looks the track
     /// up again, from what is held, so the source now ranked first is the one shown.
@@ -74,11 +76,14 @@ impl Lyrics {
         cx.observe(&queue, |this, _, cx| this.prefetch(cx)).detach();
         cx.observe(&settings, |this, settings, cx| {
             let settings = settings.read(cx);
+            let on = settings.lyrics_enabled();
             let enabled = settings.lyrics_providers();
             let priority = settings.lyrics_provider_priority();
-            if enabled == this.enabled_providers && priority == this.priority {
+            if on == this.enabled && enabled == this.enabled_providers && priority == this.priority
+            {
                 return;
             }
+            this.enabled = on;
             this.enabled_providers = enabled.to_vec();
             this.priority = priority;
             this.task = None;
@@ -88,6 +93,7 @@ impl Lyrics {
             this.follow(cx);
         })
         .detach();
+        let enabled = settings.read(cx).lyrics_enabled();
         let enabled_providers = settings.read(cx).lyrics_providers().to_vec();
         let priority = settings.read(cx).lyrics_provider_priority();
         let store = Sheets::new(storage::Cache::standard());
@@ -107,6 +113,7 @@ impl Lyrics {
             store,
             unsaved: Vec::new(),
             providers,
+            enabled,
             enabled_providers,
             priority,
             playback,
@@ -161,6 +168,9 @@ impl Lyrics {
     }
 
     fn follow(&mut self, cx: &mut Context<Self>) {
+        if !self.enabled {
+            return self.forget(cx);
+        }
         let shown = self.playback.read(cx).shown_track(cx);
         let Some(track) = shown.as_ref() else {
             return self.forget(cx);
@@ -334,7 +344,7 @@ impl Lyrics {
     }
 
     fn prefetch(&mut self, cx: &mut Context<Self>) {
-        if self.task.is_some() {
+        if !self.enabled || self.task.is_some() {
             return;
         }
         let queue = self.playback.read(cx).shown_queue(cx);

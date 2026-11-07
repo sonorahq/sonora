@@ -137,7 +137,8 @@ impl RenderOnce for Rail {
             .track_scroll(&scroll)
             // A touchpad already moves smoothly. A wheel jumps a whole step, which the glide
             // eases out.
-            .on_scroll_wheel(move |event: &ScrollWheelEvent, window, _| {
+            .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+                crate::hold_swipe(event, &wheeled, cx);
                 match event.delta.precise() {
                     true => gliding.jump(&wheeled, wheeled.offset()),
                     false if event.delta.pixel_delta(LINE).x != Pixels::ZERO => {

@@ -1631,6 +1631,22 @@ impl Library {
         }
     }
 
+    /// Favorites credited to this artist, including collaborations, without cloning the library.
+    pub fn favorites_by_artist<'a>(
+        &'a self,
+        artist_id: &'a str,
+    ) -> impl Iterator<Item = &'a Track> {
+        self.favorites(artist_id)
+            .into_iter()
+            .flat_map(|favorites| favorites.tracks)
+            .filter(move |track| {
+                track
+                    .artist_refs
+                    .iter()
+                    .any(|artist| artist.id.as_deref() == Some(artist_id))
+            })
+    }
+
     pub fn saved(&self, track_id: &str) -> bool {
         self.favorites(track_id).is_some_and(|favorites| {
             favorites

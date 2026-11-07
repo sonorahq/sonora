@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -6,7 +7,7 @@ use env_logger::{Env, Logger, Target};
 use log::{Log, Metadata, Record};
 
 const CONSOLE: &str = "warn,symphonia=error,lofty=error,discord_rich_presence=error";
-const DISK: &str = "warn,symphonia=error,lofty=error,discord_rich_presence=error,sonora=debug,ui=debug,music=debug,ytmusic=debug,state::potoken=debug";
+const DISK: &str = "warn,symphonia=error,lofty=error,discord_rich_presence=error,sonora=debug,sonora::memory=info,ui=debug,music=debug,ytmusic=debug,state::potoken=debug";
 const FILTER: &str = "SONORA_LOG";
 const PREVIOUS: &str = "sonora.log.1";
 const LIMIT: u64 = 16 * 1024 * 1024;
@@ -42,7 +43,7 @@ pub fn init() {
         ),
     };
 
-    if log::set_boxed_logger(logger).is_ok() {
+    if log::set_boxed_logger(Box::new(Redacted(logger))).is_ok() {
         log::set_max_level(level);
     }
     catch_panics();
@@ -97,6 +98,40 @@ impl Write for Capped {
 
     fn flush(&mut self) -> io::Result<()> {
         self.file.flush()
+    }
+}
+
+/// Passes every record on with [`music::redact`] applied to its message, so neither the terminal
+/// nor the file Sonora asks people to attach to a bug report carries a token, an account name or
+/// the home folder. This covers the lines other crates write as well as Sonora's own.
+struct Redacted(Box<dyn Log>);
+
+impl Log for Redacted {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        self.0.enabled(metadata)
+    }
+
+    fn log(&self, record: &Record) {
+        if !self.0.enabled(record.metadata()) {
+            return;
+        }
+        let text = record.args().to_string();
+        match music::redact(&text) {
+            Cow::Borrowed(_) => self.0.log(record),
+            Cow::Owned(clean) => self.0.log(
+                &Record::builder()
+                    .args(format_args!("{clean}"))
+                    .metadata(record.metadata().clone())
+                    .module_path(record.module_path())
+                    .file(record.file())
+                    .line(record.line())
+                    .build(),
+            ),
+        }
+    }
+
+    fn flush(&self) {
+        self.0.flush();
     }
 }
 

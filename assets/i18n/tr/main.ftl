@@ -120,11 +120,8 @@ menu-play-last = En son çal
 menu-play-tracks-last = { $count ->
    *[other] { $count } parçayı en son çal
 }
-menu-go-to = Git
-menu-artist = Sanatçı
-menu-album = Albüm
-menu-radio = Radyo
-menu-details = Ayrıntılar
+menu-song-radio = Şarkı radyosuna git
+menu-go-to-album = Albüme git
 menu-go-to-artist = Sanatçıya git
 menu-view-details = Ayrıntıları gör
 menu-copy-link = Bağlantıyı kopyala
@@ -909,6 +906,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kanal
 }
+settings-lyrics = Şarkı sözlerini göster
+settings-lyrics-detail = Şarkı sözlerini her yerde gizlemek ve aramayı durdurmak için kapatın
 settings-panel-lyrics-size = Şarkı sözü boyutu (panel)
 settings-panel-lyrics-size-detail = Yan paneldeki şarkı sözü metninin, temel yazı boyutuna eklenen boyutu
 settings-fullscreen-lyrics-size = Şarkı sözü boyutu (tam ekran)
