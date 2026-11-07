@@ -1285,6 +1285,7 @@ impl Shell for FullscreenView {
             navigation: false,
             sidebar_open: false,
             sidebar_right: None,
+            offset: Pixels::ZERO,
             border: false,
             content: None,
             transparent: ambient::shown(cx),
