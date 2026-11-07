@@ -1,0 +1,18 @@
+{
+  "version": "0.48.0-nightly.20261107",
+  "tag": "nightly",
+  "assets": {
+    "x86_64-linux": {
+      "target": "x86_64-unknown-linux-gnu",
+      "hash": "sha256-VgrWd6WugXgzWHosHvIEpZypKc3GtpmK1bhcRl5Pc0w="
+    },
+    "aarch64-linux": {
+      "target": "aarch64-unknown-linux-gnu",
+      "hash": "sha256-e3tMRD5SX8oG2Tre9bWkAuVs2p/f1UxSS4nILjLDP04="
+    },
+    "aarch64-darwin": {
+      "target": "macos",
+      "hash": "sha256-n+ErFSRlBZci6Zm4gmpHj7bOs22bG9Fl/QBYruT5Q5k="
+    }
+  }
+}
