@@ -60,6 +60,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The highlighted row in search suggestions follows the panel's rounded corners instead of bulging into them.
 - In fullscreen with the controls set to autohide, they no longer stay up after switching between
   the cover view and the lyrics or queue while the cursor rests inside the window.
+- Opening Sonora with a paused song no longer keeps your computer from sleeping, and media
+  controls show it as paused instead of playing.
 - Fullscreen controls stay visible while you hover over the tabs after switching between lyrics and queue.
 - Signing in to Apple Music without an active subscription shows a short error and a link to check the account in the browser.
 - Lyrics that follow along with a song use less CPU by laying out only the lines near the screen.
