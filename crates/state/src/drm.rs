@@ -3,7 +3,7 @@
 //! Sonora ships no Widevine module: Google publishes nothing anyone may redistribute. It does
 //! what Kodi does instead. A copy a browser on the machine already has is used as it lies.
 //! Nothing is looked for until the current provider is one whose tracks need the module, so a
-//! Spotify or YouTube run never touches a browser folder. With none found, the user is asked
+//! YouTube or Spotify OAuth run never touches a browser folder. With none found, the user is asked
 //! whether to download it from Google, shown Google's terms out of the downloaded archive, and
 //! asked again before it is installed into Sonora's own store. Settings offers the same
 //! download beside a browser's copy, since that copy can be one the host cannot open. A

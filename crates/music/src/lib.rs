@@ -4,6 +4,7 @@ pub mod artwork;
 mod audio;
 pub mod binimum;
 mod calendar;
+mod cenc;
 pub mod connect;
 pub mod cover;
 pub mod credentials;

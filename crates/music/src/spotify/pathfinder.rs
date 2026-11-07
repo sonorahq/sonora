@@ -1,7 +1,8 @@
+use crate::spotify::session::Session;
 use anyhow::{Context as _, Result, bail};
 use bytes::Bytes;
 use http::{Method, Request, header};
-use librespot_core::{Session, spclient::CLIENT_TOKEN};
+use librespot_core::spclient::CLIENT_TOKEN;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
@@ -80,7 +81,6 @@ async fn send<T: DeserializeOwned>(
     }))
     .with_context(|| format!("cannot encode {operation} Pathfinder request"))?;
     let token = session
-        .login5()
         .auth_token()
         .await
         .context("cannot obtain Spotify access token")?;

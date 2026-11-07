@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Sign into Spotify with an sp_dc cookie to play tracks on free accounts.
+
 ## [0.48.0] - 2026-11-07
 
 ### Added

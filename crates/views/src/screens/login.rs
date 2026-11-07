@@ -208,7 +208,11 @@ impl LoginView {
                 let (suffix, label, action, primary) = match method {
                     SignIn::Default => (
                         "",
-                        t!("login-sign-in", provider = provider),
+                        if slug == "spotify" {
+                            t!("login-spotify-premium")
+                        } else {
+                            t!("login-sign-in", provider = provider)
+                        },
                         LoginAction::SignIn(method.clone()),
                         true,
                     ),

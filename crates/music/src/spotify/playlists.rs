@@ -1,14 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::spotify::session::Session;
 use anyhow::{Context as _, Result, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
 use http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue, Method, Request};
+use librespot_core::SpotifyId;
 use librespot_core::spclient::CLIENT_TOKEN;
-use librespot_core::{Session, SpotifyId};
 use librespot_protocol::playlist4_external::{
     Add, ChangeInfo, CreateListReply, Delta, Item, ItemAttributes, ItemAttributesPartialState,
     ListAttributeKind, ListAttributes, ListAttributesPartialState, ListChanges, Op, Rem,
@@ -113,7 +114,6 @@ pub async fn set_cover(session: &Session, playlist_id: &str, image: Option<&[u8]
 /// Sends a JPEG to Spotify's image upload host and answers the token that names it.
 async fn upload_image(session: &Session, jpeg: Vec<u8>) -> Result<String> {
     let token = session
-        .login5()
         .auth_token()
         .await
         .context("cannot obtain Spotify access token")?;
@@ -457,10 +457,16 @@ pub async fn rootlist_page(session: &Session, from: usize, length: usize) -> Res
         "/playlist/v2/user/{}/rootlist?decorate=revision,attributes,length,owner,capabilities,status_code&from={from}&length={length}",
         escape::component(&session.username())
     );
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::ACCEPT,
+        http::HeaderValue::from_static("application/x-protobuf"),
+    );
     let reply = paced(|| {
+        let headers = headers.clone();
         session
             .spclient()
-            .request(&Method::GET, &endpoint, None, None)
+            .request(&Method::GET, &endpoint, Some(headers), None)
     })
     .await?;
     Ok(reply.to_vec())

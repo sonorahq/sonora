@@ -1,7 +1,7 @@
-//! An Apple Music track that decrypts as it is read, over bytes that are still arriving.
+//! An CENC audio track that decrypts as it is read, over bytes that are still arriving.
 //!
 //! The waiting, the seeking and the splice are [`crate::stream`]'s, the same spool every other
-//! provider streams through. What is Apple's own is the [`Cenc`] body: each `moof`/`mdat` pair
+//! provider streams through. What is CENC-specific is the [`Cenc`] body: each `moof`/`mdat` pair
 //! is indexed as it completes, and a sample is handed to the CDM the moment a reader asks for
 //! the bytes it covers. CENC is size preserving and every sample carries its own IV, so
 //! decryption happens in place and in any order, and playback starts on the first fragment
@@ -104,10 +104,11 @@ pub struct Entry {
     pub into: Duration,
 }
 
-/// The encrypted half of an Apple Music track: what has been accounted for, and the keys that
+/// The encrypted half of an CENC audio track: what has been accounted for, and the keys that
 /// turn it into sound.
 #[derive(Default)]
 pub struct Cenc {
+    protection: Option<(Vec<u8>, Vec<u8>)>,
     /// One past the end of the init segment, once `moov` has arrived whole.
     init_end: Option<usize>,
     /// What the init segment said about each encrypted track, which every later fragment is
@@ -180,8 +181,14 @@ impl Cenc {
                     if self.samples.is_empty() {
                         self.reserve(spool.announced(), samples.len(), next - self.walked);
                     }
-                    self.seals
-                        .resize(self.samples.len() + samples.len(), Seal::Encrypted);
+                    for sample in &samples {
+                        let seal = if sample.iv.is_empty() {
+                            Seal::Clear
+                        } else {
+                            Seal::Encrypted
+                        };
+                        self.seals.push(seal);
+                    }
                     self.samples.extend(samples);
                     self.walked = next;
                 }
@@ -227,7 +234,7 @@ impl Cenc {
             return false;
         };
         log::debug!(
-            "apple: init segment is {} bytes, {} encrypted track(s)",
+            "cenc: init segment is {} bytes, {} encrypted track(s)",
             init.end,
             init.tracks.len()
         );
@@ -235,12 +242,16 @@ impl Cenc {
         // moves forward, so nothing reads the sample entry again.
         cenc::unlock(&mut front, &init);
         if let Err(error) = spool.write_at(0, &front) {
-            log::warn!("apple: cannot relabel the sample entry: {error}");
+            log::warn!("cenc: cannot relabel the sample entry: {error}");
             return false;
         }
         self.walked = init.end;
         self.init_end = Some(init.end);
         self.timescale = init.timescale;
+        self.protection = init
+            .pssh
+            .zip(init.key_id)
+            .map(|(pssh, key)| (pssh, key.to_vec()));
         self.tracks = init.tracks;
         true
     }
@@ -283,7 +294,7 @@ impl Cenc {
             License::Pending => return Err(io::Error::other("the track has no license loaded")),
             License::Released => {
                 log::error!(
-                    "apple: sample {index} of {} is still encrypted after the license was released",
+                    "cenc: sample {index} of {} is still encrypted after the license was released",
                     self.samples.len()
                 );
                 return Err(io::Error::other(
@@ -306,7 +317,7 @@ impl Cenc {
         let took = began.elapsed();
         if let Err(error) = spool.write_at(span.start, bytes) {
             self.seals[index] = Seal::Lost;
-            log::error!("apple: cannot keep the cleartext of sample {index}: {error}");
+            log::error!("cenc: cannot keep the cleartext of sample {index}: {error}");
             return Err(error);
         }
         self.seals[index] = Seal::Clear;
@@ -399,13 +410,16 @@ impl Body for Cenc {
     }
 }
 
-/// One Apple Music track being downloaded and decrypted. Clones share the download, the license
+/// One CENC audio track being downloaded and decrypted. Clones share the download, the license
 /// and the index, so a track can be lined up behind the one playing and read twice without
 /// paying for any of it twice.
 #[derive(Clone)]
 pub struct Media(Stream<Cenc>);
 
 impl Media {
+    pub(crate) fn protection(&self) -> Option<(Vec<u8>, Vec<u8>)> {
+        self.0.with(|cenc, _| cenc.protection.clone())?
+    }
     /// Starts pulling the encrypted file from `source`, which is `total` bytes long when that is
     /// known. Nothing can be decrypted until [`license`](Self::license) supplies the keys, so
     /// the license exchange can run while the body is arriving.
@@ -447,7 +461,7 @@ impl Media {
             }
             let passed = tokio::task::spawn_blocking(move || clear_rest(&weak)).await;
             if let Err(error) = passed {
-                log::warn!("apple: the decrypt pass stopped: {error}");
+                log::warn!("cenc: the decrypt pass stopped: {error}");
             }
         });
     }
@@ -478,7 +492,7 @@ impl Media {
             .with(|cenc, spool| (cenc.samples.len(), spool.len()))
             .unwrap_or_default();
         log::info!(
-            "apple: prebuffer ready, {} KiB in, {samples} samples indexed",
+            "cenc: prebuffer ready, {} KiB in, {samples} samples indexed",
             indexed / 1024
         );
         Ok(())
@@ -555,13 +569,13 @@ fn clear_rest(weak: &WeakStream<Cenc>) {
             Some(Ok(Pass::Finished(keys))) => {
                 drop(keys);
                 log::info!(
-                    "apple: decrypted the {count} samples left in {:.1}s, license released",
+                    "cenc: decrypted the {count} samples left in {:.1}s, license released",
                     began.elapsed().as_secs_f32()
                 );
                 return;
             }
             Some(Err(error)) => {
-                log::warn!("apple: cannot decrypt ahead, keeping the license: {error}");
+                log::warn!("cenc: cannot decrypt ahead, keeping the license: {error}");
                 return;
             }
             None => return,
@@ -583,7 +597,7 @@ mod tests {
             samples: vec![Sample {
                 start: 16,
                 len: 16,
-                iv: [0; 16],
+                iv: [0; 16].as_slice().into(),
                 subs: Default::default(),
             }],
             seals: vec![Seal::Encrypted],

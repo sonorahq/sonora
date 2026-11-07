@@ -828,7 +828,11 @@ impl SettingsView {
         let (id, label) = match &method {
             SignIn::Default => (
                 format!("connect-{slug}"),
-                t!("login-sign-in", provider = provider),
+                if slug == "spotify" {
+                    t!("login-spotify-premium")
+                } else {
+                    t!("login-sign-in", provider = provider)
+                },
             ),
             SignIn::Anonymous => (format!("connect-{slug}-guest"), t!("login-guest-use")),
             SignIn::Secret => (

@@ -12,7 +12,7 @@ use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 
 use crate::apple::auth::{self, AGENT};
-use crate::apple::progressive::Media;
+use crate::cenc::Media;
 use crate::vault::{Recording, Shelf};
 use crate::{Encoding, Offer, Quality};
 use widevine::{self, Cdm};

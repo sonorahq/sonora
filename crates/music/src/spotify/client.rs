@@ -2,10 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::connect::Connect;
+use crate::spotify::session::Session;
 use crate::{MediaKind, MusicApi, escape};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use librespot_core::Session;
 use librespot_protocol::playlist4_external::SelectedListContent as RootList;
 use protobuf::Message as _;
 
@@ -22,12 +22,16 @@ const MADE_FOR_YOU: &str = "0JQ5DAt0tbjZptfcdMSKl3";
 
 pub struct LibrespotClient {
     session: Session,
-    connect: Arc<Connect>,
+    connect: Option<Arc<Connect>>,
 }
 
 impl LibrespotClient {
-    pub fn new(session: Session) -> Self {
-        let connect = Arc::new(crate::spotify::connect::open(session.clone()));
+    pub fn new(session: impl Into<Session>) -> Self {
+        let session = session.into();
+        let connect = session
+            .web()
+            .is_none()
+            .then(|| Arc::new(crate::spotify::connect::open(session.native().clone())));
         Self { session, connect }
     }
 
@@ -43,7 +47,7 @@ impl MusicApi for LibrespotClient {
     }
 
     fn connect(&self) -> Option<Arc<Connect>> {
-        Some(self.connect.clone())
+        self.connect.clone()
     }
 
     fn cover_at(&self, cover: &str, size: CoverSize) -> Option<String> {

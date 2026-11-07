@@ -69,11 +69,16 @@ pub struct Encrypted {
 /// encrypted track needs.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Init {
+    /// Widevine init data and default content key id, when carried by the file itself.
+    pub pssh: Option<Vec<u8>>,
+    pub key_id: Option<[u8; 16]>,
     /// One past the last byte of `moov`, which is where the first fragment starts.
     pub end: usize,
     /// Offsets of the `enca` boxes, so they can be relabelled `mp4a` once the samples under
     /// them are cleartext.
     pub entries: Vec<usize>,
+    /// Entry-count offsets of duplicate AAC descriptions that become equivalent after decrypting.
+    pub duplicate_descriptions: Vec<usize>,
     pub tracks: Vec<Encrypted>,
     /// Ticks per second of the media timeline, from `mdhd`. Every fragment's decode time is in
     /// these, so without it a position cannot be turned into a place in the file.
@@ -89,7 +94,8 @@ pub type Runs = SmallVec<[(u32, u32); 2]>;
 pub struct Sample {
     pub start: usize,
     pub len: usize,
-    pub iv: [u8; 16],
+    /// Keep the original length: the CDM distinguishes eight-byte and sixteen-byte IVs.
+    pub iv: SmallVec<[u8; 16]>,
     /// `(clear, encrypted)` byte runs. Empty means the whole sample is encrypted.
     pub subs: Runs,
 }
@@ -217,8 +223,17 @@ pub fn read_init(data: &[u8]) -> Option<Init> {
     };
 
     let mut init = Init {
+        pssh: children(data, moov.body, moov.end)
+            .find(|(_, bx)| {
+                &bx.kind == b"pssh"
+                    && bx.body + 20 <= bx.end
+                    && data.get(bx.body + 4..bx.body + 20) == Some(&crate::SYSTEM_ID)
+            })
+            .map(|(at, bx)| data[at..bx.end].to_vec()),
+        key_id: None,
         end: moov.end,
         entries: Vec::new(),
+        duplicate_descriptions: Vec::new(),
         tracks: Vec::new(),
         timescale: 0,
     };
@@ -230,6 +245,9 @@ pub fn read_init(data: &[u8]) -> Option<Init> {
         let Some(stsd) = descendant(data, trak.body, trak.end, b"stsd") else {
             continue;
         };
+        if duplicate_aac_descriptions(data, stsd) {
+            init.duplicate_descriptions.push(stsd.body + 4);
+        }
         // stsd body: version and flags, an entry count, then the sample entries.
         for (at, entry) in children(data, stsd.body + 8, stsd.end) {
             if &entry.kind != ENCA {
@@ -237,11 +255,79 @@ pub fn read_init(data: &[u8]) -> Option<Init> {
             }
             // An audio sample entry carries 28 bytes of its own before its children.
             let iv_size = iv_size(data, entry.body + 28, entry.end).unwrap_or(16);
+            if let Some(tenc) = descendant(data, entry.body + 28, entry.end, b"tenc")
+                && tenc.body + 24 <= tenc.end
+            {
+                init.key_id = data
+                    .get(tenc.body + 8..tenc.body + 24)
+                    .and_then(|bytes| bytes.try_into().ok());
+            }
             init.entries.push(at);
             init.tracks.push(Encrypted { track, iv_size });
         }
     }
     Some(init)
+}
+
+/// Some streams describe identical encrypted and clear AAC separately. Once decrypted, one
+/// description suffices. Require matching audio headers and complete ES descriptors before
+/// hiding the duplicates from decoders that only accept one description.
+fn duplicate_aac_descriptions(data: &[u8], stsd: Bx) -> bool {
+    if stsd.body + 8 > stsd.end {
+        return false;
+    }
+    let Some(count) = be32(data, stsd.body + 4).map(|count| count as usize) else {
+        return false;
+    };
+    if count < 2 || count > (stsd.end - stsd.body - 8) / 36 {
+        return false;
+    }
+    let mut at = stsd.body + 8;
+    let mut first = None;
+    for _ in 0..count {
+        let Some(entry) = read(data, at).filter(|entry| entry.end <= stsd.end) else {
+            return false;
+        };
+        let Some(description) = aac_description(data, entry) else {
+            return false;
+        };
+        if let Some(first) = first {
+            if first != description {
+                return false;
+            }
+        } else {
+            first = Some(description);
+        }
+        at = entry.end;
+    }
+    at == stsd.end
+}
+
+fn aac_description(data: &[u8], entry: Bx) -> Option<(&[u8], &[u8])> {
+    if entry.body + 28 > entry.end || (&entry.kind != ENCA && &entry.kind != MP4A) {
+        return None;
+    }
+    let header = data.get(entry.body..entry.body + 28)?;
+    if &entry.kind == ENCA {
+        let sinf = child(data, entry.body + 28, entry.end, b"sinf")?;
+        let frma = child(data, sinf.body, sinf.end, b"frma")?;
+        if data.get(frma.body..frma.end)? != MP4A {
+            return None;
+        }
+    }
+    let mut at = entry.body + 28;
+    let mut esds = None;
+    while at < entry.end {
+        let bx = read(data, at).filter(|bx| bx.end <= entry.end)?;
+        if &bx.kind == b"esds" {
+            if esds.is_some() {
+                return None;
+            }
+            esds = data.get(bx.body..bx.end);
+        }
+        at = bx.end;
+    }
+    Some((header, esds?))
 }
 
 /// The track id out of `tkhd`, whose layout depends on its own version byte.
@@ -280,11 +366,17 @@ fn iv_size(data: &[u8], body: usize, end: usize) -> Option<u8> {
 }
 
 /// Relabels every `enca` sample entry as `mp4a`, so a decoder reads the now cleartext track as
-/// plain AAC. Only the four-byte kind changes, so every offset in the file survives.
+/// plain AAC. Equivalent duplicate descriptions are exposed as one; their bytes remain as
+/// padding in `stsd`, so every box size and file offset survives.
 pub fn unlock(buf: &mut [u8], init: &Init) {
     for at in &init.entries {
         if let Some(kind) = buf.get_mut(at + 4..at + 8) {
             kind.copy_from_slice(MP4A);
+        }
+    }
+    for at in &init.duplicate_descriptions {
+        if let Some(count) = buf.get_mut(*at..at + 4) {
+            count.copy_from_slice(&1u32.to_be_bytes());
         }
     }
 }
@@ -400,21 +492,26 @@ fn read_traf(
         return Vec::new();
     };
 
-    let (ivs, mut subs) = child(data, traf.body, traf.end, b"senc")
-        .map(|senc| read_senc(data, &senc, encrypted.iv_size, run.sizes.len()))
-        .unwrap_or_default();
-    if ivs.is_empty() && encrypted.iv_size != 0 {
-        log::warn!("cenc: a fragment carries no per-sample ivs");
-        return Vec::new();
-    }
+    let senc_box = child(data, traf.body, traf.end, b"senc");
+    let (ivs, mut subs) = match senc_box {
+        Some(senc) => {
+            let parsed = read_senc(data, &senc, encrypted.iv_size, run.sizes.len());
+            if parsed.0.is_empty() && encrypted.iv_size != 0 {
+                log::warn!("cenc: a fragment carries no per-sample ivs");
+                return Vec::new();
+            }
+            parsed
+        }
+        None => (Vec::new(), Vec::new()),
+    };
 
     let mut samples = Vec::with_capacity(run.sizes.len());
     let mut at = start;
-    let mut iv = [0u8; 16];
+    let mut iv = SmallVec::new();
     for (index, len) in run.sizes.iter().copied().enumerate() {
         let len = len as usize;
         if let Some(found) = ivs.get(index) {
-            iv = *found;
+            iv = found.clone();
         }
         let end = at.saturating_add(len);
         if end > mdat.end {
@@ -425,7 +522,7 @@ fn read_traf(
             samples.push(Sample {
                 start: origin + at,
                 len,
-                iv,
+                iv: iv.clone(),
                 subs: subs.get_mut(index).map(std::mem::take).unwrap_or_default(),
             });
         }
@@ -521,7 +618,7 @@ fn read_trun(data: &[u8], trun: &Bx, tfhd: &Tfhd) -> Option<Trun> {
 }
 
 /// Per-sample IVs and subsample runs out of a `senc` box.
-type Senc = (Vec<[u8; 16]>, Vec<Runs>);
+type Senc = (Vec<SmallVec<[u8; 16]>>, Vec<Runs>);
 
 /// Reads `senc` against the IV size `tenc` declared, and against the other sizes in use when
 /// that does not account for the box exactly. A wrong size produces IVs that are silently
@@ -563,9 +660,7 @@ fn fit_senc(raw: &[u8], iv_size: u8, count: usize, subsampled: bool) -> Option<S
     for _ in 0..count {
         if iv_size > 0 {
             let size = usize::from(iv_size).min(16);
-            let mut iv = [0u8; 16];
-            iv[..size].copy_from_slice(raw.get(at..at + size)?);
-            ivs.push(iv);
+            ivs.push(SmallVec::from_slice(raw.get(at..at + size)?));
             at += usize::from(iv_size);
         }
         match subsampled {
@@ -606,7 +701,9 @@ mod tests {
     /// An `enca` sample entry with a `tenc` declaring `iv_size`, inside the boxes `read_init`
     /// walks to reach it.
     fn init_segment(track: u32, iv_size: u8) -> Vec<u8> {
-        let tenc = boxed(b"tenc", &[0, 0, 0, 0, 0, 0, 1, iv_size, 0]);
+        let mut encryption = vec![0, 0, 0, 0, 0, 0, 1, iv_size];
+        encryption.extend_from_slice(&[5; 16]);
+        let tenc = boxed(b"tenc", &encryption);
         let schi = boxed(b"schi", &tenc);
         let sinf = boxed(b"sinf", &schi);
         let mut entry = vec![0u8; 28];
@@ -628,8 +725,17 @@ mod tests {
         tkhd_body.extend_from_slice(&[0u8; 60]);
         let tkhd = boxed(b"tkhd", &tkhd_body);
         let trak = boxed(b"trak", &joined(&[tkhd, mdia]));
-        let moov = boxed(b"moov", &trak);
+        let moov = boxed(b"moov", &joined(&[trak, crate::pssh(&[5; 16])]));
         joined(&[boxed(b"ftyp", b"isom"), moov])
+    }
+
+    #[test]
+    fn reads_embedded_widevine_init_and_key_id() {
+        let bytes = init_segment(1, 8);
+        let init = read_init(&bytes).unwrap();
+        assert_eq!(init.key_id, Some([5; 16]));
+        assert_eq!(init.pssh, Some(crate::pssh(&[5; 16])));
+        assert!(read_init(&bytes[..bytes.len() - 1]).is_none());
     }
 
     /// One fragment: a `moof` carrying `senc` and `trun` for `sizes`, then the `mdat` holding
@@ -712,6 +818,81 @@ mod tests {
         assert_eq!(read_init(&data).unwrap().end, init.end);
     }
 
+    fn duplicate_aac_init(second_config: &[u8], second_channels: u8) -> Vec<u8> {
+        let description = |encrypted: bool, config: &[u8], channels: u8| {
+            let mut header = vec![0u8; 28];
+            header[17] = channels;
+            header.extend_from_slice(&boxed(b"esds", config));
+            if encrypted {
+                header.extend_from_slice(&boxed(b"sinf", &boxed(b"frma", MP4A)));
+            }
+            boxed(if encrypted { ENCA } else { MP4A }, &header)
+        };
+        let mut stsd = vec![0, 0, 0, 0, 0, 0, 0, 2];
+        stsd.extend_from_slice(&description(true, &[0, 0, 0, 0, 0x12, 0x10], 2));
+        stsd.extend_from_slice(&description(false, second_config, second_channels));
+        boxed(b"moov", &boxed(b"trak", &boxed(b"stsd", &stsd)))
+    }
+
+    #[test]
+    fn exposes_equivalent_aac_descriptions_as_one_without_moving_bytes() {
+        let mut data = duplicate_aac_init(&[0, 0, 0, 0, 0x12, 0x10], 2);
+        let init = read_init(&data).unwrap();
+        assert_eq!(init.duplicate_descriptions.len(), 1);
+        let before = data.clone();
+        unlock(&mut data, &init);
+        let count = init.duplicate_descriptions[0];
+        assert_eq!(be32(&data, count), Some(1));
+        assert_eq!(data.len(), before.len());
+        for (at, (&old, &new)) in before.iter().zip(&data).enumerate() {
+            if old != new {
+                assert!(
+                    (count..count + 4).contains(&at)
+                        || init
+                            .entries
+                            .iter()
+                            .any(|entry| (entry + 4..entry + 8).contains(&at))
+                );
+            }
+        }
+        assert_eq!(read_init(&data).unwrap().end, init.end);
+    }
+
+    #[test]
+    fn keeps_distinct_aac_configurations_and_headers() {
+        for (config, channels) in [
+            (&[0, 0, 0, 0, 0x12, 0x11][..], 2),
+            (&[0, 0, 0, 0, 0x12, 0x10][..], 1),
+        ] {
+            let mut data = duplicate_aac_init(config, channels);
+            let init = read_init(&data).unwrap();
+            assert!(init.duplicate_descriptions.is_empty());
+            let stsd = descendant(&data, 0, data.len(), b"stsd").unwrap();
+            unlock(&mut data, &init);
+            assert_eq!(be32(&data, stsd.body + 4), Some(2));
+        }
+    }
+
+    #[test]
+    fn duplicate_descriptions_tolerate_truncation_and_reject_incomplete_entries() {
+        let data = duplicate_aac_init(&[0, 0, 0, 0, 0x12, 0x10], 2);
+        let init = read_init(&data).unwrap();
+        for end in 0..data.len() {
+            let mut short = data[..end].to_vec();
+            assert!(read_init(&short).is_none());
+            unlock(&mut short, &init);
+        }
+        let mut malformed = data;
+        let stsd = descendant(&malformed, 0, malformed.len(), b"stsd").unwrap();
+        malformed[stsd.body + 4..stsd.body + 8].copy_from_slice(&3u32.to_be_bytes());
+        assert!(
+            read_init(&malformed)
+                .unwrap()
+                .duplicate_descriptions
+                .is_empty()
+        );
+    }
+
     #[test]
     fn finds_every_sample_of_a_fragment() {
         let ivs = [[1u8; 16], [2u8; 16], [3u8; 16]];
@@ -734,8 +915,8 @@ mod tests {
         assert_eq!(parsed.timescale, 44_100);
         assert_eq!(samples.len(), 3);
         assert_eq!(samples[0].len, 10);
-        assert_eq!(samples[0].iv, [1u8; 16]);
-        assert_eq!(samples[2].iv, [3u8; 16]);
+        assert_eq!(samples[0].iv.as_slice(), &[1u8; 16]);
+        assert_eq!(samples[2].iv.as_slice(), &[3u8; 16]);
         assert_eq!(samples[1].start, samples[0].end());
         // Every sample must point at its own bytes, which the builder filled with its index.
         for (index, sample) in samples.iter().enumerate() {
@@ -787,7 +968,7 @@ mod tests {
         let (ivs, subs) = read_senc(&data, &senc, 16, 2);
         assert_eq!(ivs.len(), 2);
         assert_eq!(ivs[0][..8], [9u8; 8]);
-        assert_eq!(ivs[0][8..], [0u8; 8], "a short iv is zero padded");
+        assert_eq!(ivs[0].len(), 8, "the CDM needs the original IV length");
         assert_eq!(subs, vec![Runs::new(), Runs::new()]);
     }
 
@@ -802,7 +983,8 @@ mod tests {
         let data = boxed(b"senc", &senc_body);
         let senc = read(&data, 0).unwrap();
         let (ivs, subs) = read_senc(&data, &senc, 16, 1);
-        assert_eq!(ivs, vec![[7u8; 16]]);
+        assert_eq!(ivs.len(), 1);
+        assert_eq!(ivs[0].as_slice(), &[7u8; 16]);
         assert_eq!(subs, vec![Runs::from_slice(&[(16u32, 64u32)])]);
     }
 
@@ -827,5 +1009,47 @@ mod tests {
         let data = boxed(b"trun", &trun_body);
         let trun = read(&data, 0).unwrap();
         assert!(read_trun(&data, &trun, &Tfhd::default()).is_none());
+    }
+
+    #[test]
+    fn unencrypted_fragment_without_senc_preserves_samples_with_empty_iv() {
+        let sizes = &[10u32, 20u32];
+        let mut tfhd_body = vec![0, 0, 0, 0];
+        tfhd_body.extend_from_slice(&1u32.to_be_bytes()); // track 1
+        let tfhd = boxed(b"tfhd", &tfhd_body);
+
+        let mut trun_body = vec![0, 0, 0x02, 0x01]; // flags: data-offset-present + sample-size-present
+        trun_body.extend_from_slice(&(sizes.len() as u32).to_be_bytes());
+        let offset_at = trun_body.len();
+        trun_body.extend_from_slice(&0u32.to_be_bytes());
+        for size in sizes {
+            trun_body.extend_from_slice(&size.to_be_bytes());
+        }
+        let trun = boxed(b"trun", &trun_body);
+        let trun_len = trun.len();
+
+        let mut moof = boxed(b"moof", &boxed(b"traf", &joined(&[tfhd, trun])));
+        let offset = (moof.len() + 8) as u32;
+        let at = moof.len() - trun_len + 8 + offset_at;
+        moof[at..at + 4].copy_from_slice(&offset.to_be_bytes());
+
+        let payload = vec![0u8; 30];
+        let window = joined(&[moof, boxed(b"mdat", &payload)]);
+
+        let tracks = vec![Encrypted {
+            track: 1,
+            iv_size: 16,
+        }];
+        let step = read_fragment(&window, 0, &tracks);
+        match step {
+            Step::Fragment { samples, .. } => {
+                assert_eq!(samples.len(), 2);
+                assert!(samples[0].iv.is_empty());
+                assert!(samples[1].iv.is_empty());
+                assert_eq!(samples[0].len, 10);
+                assert_eq!(samples[1].len, 20);
+            }
+            _ => panic!("expected fragment"),
+        }
     }
 }

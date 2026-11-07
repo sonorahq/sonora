@@ -5,10 +5,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::spotify::session::Session;
 use anyhow::{Context as _, Result, bail};
 use bytes::Bytes;
 use http::{Method, Request, header};
-use librespot_core::Session;
 use serde::{Deserialize, Serialize};
 
 use crate::escape;

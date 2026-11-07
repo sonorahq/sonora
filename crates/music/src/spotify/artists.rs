@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
-use librespot_core::{Session, SpotifyUri};
+use librespot_core::SpotifyUri;
 use librespot_protocol::extended_metadata::{BatchedEntityRequest, EntityRequest, ExtensionQuery};
 use librespot_protocol::extension_kind::ExtensionKind;
 use librespot_protocol::metadata::{Artist as ArtistMessage, Image};
