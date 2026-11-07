@@ -47,6 +47,9 @@ impl SidebarRight {
             this.tab = SideTab::Queue;
             this.aside
                 .update(cx, |aside, cx| aside.show(SideTab::Queue, cx));
+            settings.update(cx, |settings, cx| {
+                settings.set_sidebar_right_tab(SideTab::Queue, cx)
+            });
             cx.notify();
         })
         .detach();
