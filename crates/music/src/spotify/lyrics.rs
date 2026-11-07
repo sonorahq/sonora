@@ -1,10 +1,11 @@
 use std::time::SystemTime;
 
+use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{Method, Request, header};
-use librespot_core::{Session, spclient::CLIENT_TOKEN};
+use librespot_core::spclient::CLIENT_TOKEN;
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
@@ -41,7 +42,12 @@ impl SpotifyLyrics {
 
     async fn session(&self) -> Result<Option<Session>> {
         let mut held = self.connection.lock().await;
-        let file = self.config.file();
+        let cookie = super::web::Web::stored(&self.config);
+        let file = if cookie {
+            self.config.cache_dir.join("web-cookie")
+        } else {
+            self.config.file()
+        };
         let modified = match std::fs::metadata(&file).and_then(|metadata| metadata.modified()) {
             Ok(modified) => modified,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -57,16 +63,23 @@ impl SpotifyLyrics {
             return Ok(Some(connection.session.clone()));
         }
         *held = None;
-        let Some(session) = auth::restore(&self.config).await? else {
-            return Ok(None);
+        let session = if cookie {
+            let web =
+                super::web::Web::open(&self.config, &super::web::Web::read(&self.config)?).await?;
+            Session::cookie(web.session().await?, web)
+        } else {
+            let Some(session) = auth::restore(&self.config).await? else {
+                return Ok(None);
+            };
+            session.into()
         };
         // Restore can refresh the credential file itself.
         let modified = std::fs::metadata(file)?.modified()?;
         *held = Some(Connection {
             modified,
-            session: session.clone(),
+            session: session.clone().into(),
         });
-        Ok(Some(session))
+        Ok(Some(session.into()))
     }
 }
 
@@ -143,7 +156,6 @@ struct Syllable {
 
 pub async fn lyrics(session: &Session, track_id: &str) -> Result<Option<Lyrics>> {
     let token = session
-        .login5()
         .auth_token()
         .await
         .context("cannot obtain Spotify access token")?;

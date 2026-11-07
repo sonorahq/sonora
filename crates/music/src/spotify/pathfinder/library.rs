@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
+use crate::spotify::session::Session;
 use anyhow::{Context as _, Result, ensure};
-use librespot_core::Session;
 use serde::Deserialize;
 use serde_json::{Value, json};
 

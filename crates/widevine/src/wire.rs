@@ -5,15 +5,15 @@
 //! sends one answer before any request, saying whether the module opened. Its payload is the
 //! host's [`VERSION`], so an app that finds a different build on disk refuses to talk to it.
 //!
-//! A decrypt payload is the 16 byte IV, the key id length as a `u32` and the key id, the
-//! subsample count as a `u32` and that many clear and cipher `u32` pairs, then the sample to the
-//! end of the frame. Its answer is the cleartext, exactly as long as the sample.
+//! A decrypt payload is the IV length as a byte and the IV, the key id length as a `u32` and
+//! the key id, the subsample count as a `u32` and that many clear and cipher `u32` pairs, then
+//! the sample to the end of the frame. Its answer is the cleartext, exactly as long as the sample.
 
 use std::io::{self, Read, Write};
 
 /// What a host says it is in its first answer. Both sides are the same executable, so this only
 /// differs when the file was replaced under a running app.
-pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "/1");
+pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "/2");
 
 /// The largest payload either side accepts. A license or a sample is far smaller, so a length
 /// past this means the two sides are out of step.
@@ -58,18 +58,25 @@ pub fn take_header(from: &mut impl Read) -> io::Result<(u8, usize)> {
 }
 
 /// The length of a decrypt payload for these parts.
-pub fn decrypt_len(key_id: &[u8], subs: &[(u32, u32)], sample: &[u8]) -> usize {
-    16 + 4 + key_id.len() + 4 + subs.len() * 8 + sample.len()
+pub fn decrypt_len(iv: &[u8], key_id: &[u8], subs: &[(u32, u32)], sample: &[u8]) -> usize {
+    1 + iv.len() + 4 + key_id.len() + 4 + subs.len() * 8 + sample.len()
 }
 
 /// Writes a decrypt payload without gathering it into one buffer first.
 pub fn put_decrypt(
     to: &mut impl Write,
-    iv: &[u8; 16],
+    iv: &[u8],
     key_id: &[u8],
     subs: &[(u32, u32)],
     sample: &[u8],
 ) -> io::Result<()> {
+    if !matches!(iv.len(), 8 | 16) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid CENC IV length",
+        ));
+    }
+    to.write_all(&[iv.len() as u8])?;
     to.write_all(iv)?;
     to.write_all(&(key_id.len() as u32).to_le_bytes())?;
     to.write_all(key_id)?;
@@ -91,7 +98,11 @@ pub struct Decrypt<'a> {
 /// Splits a decrypt payload, filling `subs` with the flattened subsample counts. `None` when the
 /// payload is shorter than the lengths inside it say.
 pub fn split_decrypt<'a>(payload: &'a [u8], subs: &mut Vec<u32>) -> Option<Decrypt<'a>> {
-    let (iv, rest) = payload.split_at_checked(16)?;
+    let (&iv_len, rest) = payload.split_first()?;
+    if !matches!(iv_len, 8 | 16) {
+        return None;
+    }
+    let (iv, rest) = rest.split_at_checked(usize::from(iv_len))?;
     let (key_len, rest) = rest.split_at_checked(4)?;
     let key_len = u32::from_le_bytes(key_len.try_into().ok()?) as usize;
     let (key_id, rest) = rest.split_at_checked(key_len)?;
@@ -107,4 +118,41 @@ pub fn split_decrypt<'a>(payload: &'a [u8], subs: &mut Vec<u32>) -> Option<Decry
             .map(|&word| u32::from_le_bytes(word)),
     );
     Some(Decrypt { iv, key_id, sample })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decrypt_frames_preserve_both_iv_lengths() {
+        for length in [8, 16] {
+            let iv = vec![9; length];
+            let key = [3; 16];
+            let pairs = [(4, 12)];
+            let sample = [7; 16];
+            let mut frame = Vec::new();
+            put_decrypt(&mut frame, &iv, &key, &pairs, &sample).unwrap();
+            assert_eq!(frame.len(), decrypt_len(&iv, &key, &pairs, &sample));
+            let mut subs = Vec::new();
+            let decoded = split_decrypt(&frame, &mut subs).unwrap();
+            assert_eq!(decoded.iv, iv);
+            assert_eq!(decoded.key_id, key);
+            assert_eq!(decoded.sample, sample);
+            assert_eq!(subs, [4, 12]);
+            for end in 0..frame.len() - sample.len() {
+                assert!(split_decrypt(&frame[..end], &mut subs).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn refuses_invalid_iv_lengths() {
+        for length in [0, 7, 9, 15, 17] {
+            let mut frame = Vec::new();
+            assert!(put_decrypt(&mut frame, &vec![0; length], &[], &[], &[]).is_err());
+            assert!(frame.is_empty());
+            assert!(split_decrypt(&[length as u8; 64], &mut Vec::new()).is_none());
+        }
+    }
 }

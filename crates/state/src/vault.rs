@@ -26,9 +26,10 @@ pub(crate) const CACHE_GB: u32 = 2;
 pub const CACHE_GB_RANGE: (u32, u32) = (1, 64);
 /// What a keychain error says when the desktop has no Secret Service at all, rather than one
 /// that is locked, busy or declined. Only these count as having no keychain to ask.
-const NO_SERVICE: [&str; 3] = [
+const NO_SERVICE: [&str; 4] = [
     "org.freedesktop.DBus.Error.ServiceUnknown",
     "org.freedesktop.DBus.Error.NameHasNoOwner",
+    "org.freedesktop.zbus.Error: The name is not activatable",
     "address error",
 ];
 
@@ -185,4 +186,33 @@ fn write_file(master: &[u8]) -> Result<()> {
 /// the cache alone never carries the key with it. The downloads share the data folder.
 fn key_file() -> Option<PathBuf> {
     Some(dirs::data_local_dir()?.join("sonora").join("vault.key"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::no_service;
+
+    #[test]
+    fn recognizes_unavailable_secret_service() {
+        for message in [
+            "org.freedesktop.DBus.Error.ServiceUnknown",
+            "org.freedesktop.DBus.Error.NameHasNoOwner",
+            "DBus error service error org.freedesktop.zbus.Error: The name is not activatable",
+        ] {
+            let error = anyhow::anyhow!(message).context("cannot read credentials");
+            assert!(no_service(&error), "{message}");
+        }
+    }
+
+    #[test]
+    fn does_not_replace_a_temporarily_unavailable_keychain() {
+        for message in [
+            "org.freedesktop.Secret.Error.IsLocked",
+            "org.freedesktop.DBus.Error.AccessDenied",
+            "org.freedesktop.DBus.Error.NoReply",
+            "org.freedesktop.zbus.Error: connection closed",
+        ] {
+            assert!(!no_service(&anyhow::anyhow!(message)), "{message}");
+        }
+    }
 }

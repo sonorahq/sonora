@@ -1,5 +1,5 @@
+use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
-use librespot_core::Session;
 
 use crate::Track;
 use crate::spotify::collection;

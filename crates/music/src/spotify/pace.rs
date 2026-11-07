@@ -1,9 +1,10 @@
 use std::time::{Duration, Instant};
 
+use crate::spotify::session::Session;
 use bytes::Bytes;
 use http::Request;
+use librespot_core::Error;
 use librespot_core::error::ErrorKind;
-use librespot_core::{Error, Session};
 
 /// How long a refused request waits before it asks librespot's limiter again. The limiter
 /// frees a slot every tenth of a second, so this stays short.
@@ -36,6 +37,19 @@ where
 
 /// Sends a request built by hand through librespot's HTTP client, pacing it as `paced` does.
 pub(crate) async fn send(session: &Session, request: Request<Bytes>) -> Result<Bytes, Error> {
+    if let Some(web) = session.web() {
+        let (parts, body) = request.into_parts();
+        return web
+            .request_url(
+                parts.method,
+                &parts.uri.to_string(),
+                parts.headers,
+                Some(body.to_vec()),
+            )
+            .await
+            .map(Bytes::from)
+            .map_err(Error::unavailable);
+    }
     let (parts, body) = request.into_parts();
     paced(|| {
         let mut request = Request::new(body.clone());

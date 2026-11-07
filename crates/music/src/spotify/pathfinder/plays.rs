@@ -1,5 +1,5 @@
+use crate::spotify::session::Session;
 use anyhow::{Context as _, Result, anyhow};
-use librespot_core::Session;
 use serde::Deserialize;
 
 use super::query;

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
-use librespot_core::Session;
 use librespot_protocol::extension_kind::ExtensionKind;
 use librespot_protocol::metadata::Album as AlbumMessage;
 use librespot_protocol::metadata::album::Type as AlbumType;

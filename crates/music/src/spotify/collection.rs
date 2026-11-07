@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
-use librespot_core::Session;
 use librespot_protocol::entity_extension_data::EntityExtensionData;
 use librespot_protocol::extended_metadata::{BatchedEntityRequest, EntityRequest, ExtensionQuery};
 use librespot_protocol::extension_kind::ExtensionKind;

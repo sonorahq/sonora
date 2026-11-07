@@ -19,9 +19,9 @@ use rodio::Source as _;
 
 use crate::aac::Aac;
 use crate::apple::client::AppleClient;
-use crate::apple::progressive::{Cenc, Media};
 use crate::apple::stream;
 use crate::audio::Trimmed;
+use crate::cenc::{Cenc, Media};
 use crate::engine::{self, Fetch, Loudness};
 use crate::stream::Reader;
 use crate::trim;

@@ -15,7 +15,6 @@ mod auth;
 mod client;
 mod links;
 mod playback;
-mod progressive;
 mod recommend;
 mod stream;
 mod wire;
@@ -31,8 +30,8 @@ use crate::{
     Shape, SignIn, SignInFailure, SignInProblem, SignInPrompt, WebSignIn,
 };
 
+pub use crate::cenc::Media;
 pub use client::AppleClient;
-pub use progressive::Media;
 
 /// The account token a run without a window uses: whatever `SONORA_APPLE_MEDIA_USER_TOKEN`
 /// names, or the one the sign-in window stored.

@@ -174,10 +174,14 @@ mod host {
             &self,
             sample: &mut [u8],
             key_id: &[u8],
-            iv: &[u8; 16],
+            iv: &[u8],
             subs: &[(u32, u32)],
         ) -> Result<()> {
-            let len = wire::decrypt_len(key_id, subs, sample);
+            anyhow::ensure!(
+                matches!(iv.len(), 8 | 16),
+                "a CENC IV must be 8 or 16 bytes"
+            );
+            let len = wire::decrypt_len(iv, key_id, subs, sample);
             let fitted = self
                 .link
                 .send(wire::DECRYPT, len, |to| {
@@ -600,7 +604,7 @@ mod host {
             &self,
             _sample: &mut [u8],
             _key_id: &[u8],
-            _iv: &[u8; 16],
+            _iv: &[u8],
             _subs: &[(u32, u32)],
         ) -> Result<()> {
             bail!("this build carries no widevine host")

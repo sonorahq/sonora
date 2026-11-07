@@ -303,7 +303,7 @@ fn clear(cache: &Cache, folder: &Path) {
 
 /// The id this install goes by on Spotify's device list. A new one each launch would leave a
 /// stale Sonora behind every time, so the first one is kept next to the credentials.
-fn device_id(dir: &Path) -> String {
+pub(super) fn device_id(dir: &Path) -> String {
     let file = dir.join("device-id");
     let kept = std::fs::read_to_string(&file)
         .map(|id| id.trim().to_owned())

@@ -1,10 +1,10 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
 use http::header::{ACCEPT, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue, Method};
-use librespot_core::Session;
 
 use crate::spotify::pace::paced;
 use crate::spotify::pb::{Reader, Value, Writer, text};

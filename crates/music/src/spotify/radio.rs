@@ -1,5 +1,6 @@
+use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
-use librespot_core::{Session, SpotifyUri};
+use librespot_core::SpotifyUri;
 use serde::Deserialize;
 
 use crate::Track;
