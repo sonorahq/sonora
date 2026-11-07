@@ -63,7 +63,9 @@ impl HistoryView {
             .with_history(history.clone())
             .with_liked(Sonora::global(cx).library.clone())
             .table(cx.weak_entity());
-            TableState::new(TableDelegate::new(source, width, cx), cx).follow(scroll)
+            TableState::new(TableDelegate::new(source, width, cx), cx)
+                .follow(scroll.clone())
+                .with_scrollbar(&scrollbar)
         });
 
         cx.observe(&history, |this, _, cx| {

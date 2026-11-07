@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Show the current song in song-list scrollbars, with a marker that jumps to it.
+
 ### Changed
 
 - Scrollbars stay faintly visible at rest and fade smoothly when they wake or settle.

@@ -684,6 +684,7 @@ pub struct TableState<S: TableSource> {
     corners: Corners<Pixels>,
     focus: FocusHandle,
     scroll: Option<ScrollHandle>,
+    scrollbar: Option<Entity<crate::Scrollbar>>,
     context_menu: Option<OpenMenu>,
     moving: Option<(usize, usize)>,
     sizing: Option<Sizing>,
@@ -706,6 +707,7 @@ impl<S: TableSource> TableState<S> {
             corners: Corners::default(),
             focus: cx.focus_handle(),
             scroll: None,
+            scrollbar: None,
             context_menu: None,
             moving: None,
             sizing: None,
@@ -713,8 +715,15 @@ impl<S: TableSource> TableState<S> {
         }
     }
 
+    /// Follows the scroll position used to keep the selected row in view.
     pub fn follow(mut self, scroll: ScrollHandle) -> Self {
         self.scroll = Some(scroll);
+        self
+    }
+
+    /// Tracks the scrollbar to mark the currently playing row.
+    pub fn with_scrollbar(mut self, scrollbar: &Entity<crate::Scrollbar>) -> Self {
+        self.scrollbar = Some(scrollbar.clone());
         self
     }
 
@@ -1458,6 +1467,11 @@ impl<S: TableSource> Render for TableState<S> {
             false => pinned + head,
         };
         let column_menu = self.column_menu.map(|at| self.column_menu(at, cx));
+        let playing = self
+            .delegate
+            .order
+            .iter()
+            .position(|row| self.delegate.source.playing(*row, cx));
         let context_menu = self.context_menu.clone().and_then(|open| {
             let visible = self.delegate.visible();
             self.delegate
@@ -1472,6 +1486,19 @@ impl<S: TableSource> Render for TableState<S> {
         });
 
         div()
+            .when_some(self.scrollbar.clone(), |this, bar| {
+                let scroll = bar.read(cx).scroll().clone();
+                this.on_children_prepainted(move |bounds, _, cx| {
+                    let position = playing.and_then(|display| {
+                        bounds.first().map(|bounds| {
+                            let top =
+                                bounds.top() - masked - scroll.bounds().top() - scroll.offset().y;
+                            top + head + row * (display as f32 + 0.5)
+                        })
+                    });
+                    bar.update(cx, |bar, cx| bar.set_table_marker(position, cx));
+                })
+            })
             // The table has to be a node for the row the arrow keys reached to claim focus.
             .id("table")
             .role(gpui::accesskit::Role::Table)

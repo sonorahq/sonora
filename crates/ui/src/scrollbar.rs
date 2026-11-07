@@ -12,8 +12,10 @@ use gpui::{
 use crate::glide::Glide;
 use crate::motion::Springs;
 use crate::theme::ActiveTheme as _;
+use crate::tooltip::{Perch, Tipped as _};
 
 const BAR: Pixels = px(6.);
+const CONTENT_MARKER: Pixels = px(12.);
 const REACH: Pixels = px(2.);
 const THUMB_INSET: Pixels = px(4.);
 const MIN_THUMB: Pixels = px(24.);
@@ -138,6 +140,7 @@ pub struct Scrollbar {
     awake: bool,
     hovered: bool,
     always_visible: bool,
+    marker: Option<Pixels>,
     track_inset: Pixels,
     track_top: Pixels,
     track_bottom: Pixels,
@@ -160,6 +163,7 @@ impl Scrollbar {
             awake: false,
             hovered: false,
             always_visible: false,
+            marker: None,
             track_inset: Pixels::ZERO,
             track_top: Pixels::ZERO,
             track_bottom: Pixels::ZERO,
@@ -184,6 +188,24 @@ impl Scrollbar {
         let mut scrollbar = Self::new(ScrollHandle::new());
         scrollbar.list = Some(list);
         scrollbar
+    }
+
+    /// Highlights a table row at its unscrolled content position.
+    pub fn set_table_marker(&mut self, position: Option<Pixels>, cx: &mut Context<Self>) {
+        if self.marker == position {
+            return;
+        }
+        self.marker = position;
+        cx.notify();
+    }
+
+    /// Clears the marker when a shared region stops displaying a table.
+    pub fn clear_table_marker(&mut self, cx: &mut Context<Self>) {
+        if self.marker.is_none() {
+            return;
+        }
+        self.marker = None;
+        cx.notify();
     }
 
     pub fn always_visible(mut self) -> Self {
@@ -639,6 +661,40 @@ impl Render for Scrollbar {
                     this.moved(offset, cx);
                 }),
             )
+            .when_some(self.marker, |this, position| {
+                this.child(deferred(
+                    div()
+                        .id("scrollbar-current-row")
+                        .absolute()
+                        .top(
+                            (track * (position / content).clamp(0., 1.) - CONTENT_MARKER / 2.)
+                                .clamp(Pixels::ZERO, (track - CONTENT_MARKER).max(Pixels::ZERO)),
+                        )
+                        .right(THUMB_INSET + REACH)
+                        .w(BAR)
+                        .h(CONTENT_MARKER)
+                        .rounded(theme.radius.min(CONTENT_MARKER / 3.))
+                        .bg(theme.primary)
+                        .cursor_pointer()
+                        .role(gpui::accesskit::Role::Button)
+                        .aria_label(i18n::lookup("queue-now-playing", None))
+                        .tip("queue-now-playing", Perch::Below)
+                        .hover(move |style| style.bg(theme.primary_hover))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                                window.prevent_default();
+                                cx.stop_propagation();
+                                this.stirred();
+                                this.aim(
+                                    -(position - viewport / 2.).clamp(Pixels::ZERO, hidden),
+                                    window,
+                                );
+                                cx.notify();
+                            }),
+                        ),
+                ))
+            })
             .child(
                 div()
                     .id(("scrollbar-thumb", cx.entity_id()))

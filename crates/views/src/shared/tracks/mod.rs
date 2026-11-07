@@ -507,20 +507,30 @@ impl TrackSource {
         )
     }
 
-    /// The row's `Playback::control` when it holds the current track. A track listed twice
-    /// counts only at its first row.
+    /// The play state when this row holds the current local or remote track. A track listed
+    /// twice counts only at its first row.
     pub(crate) fn now_playing(&self, row: usize, cx: &App) -> Option<bool> {
         let playback = self.playback.read(cx);
-        let current = playback.track()?.id.as_deref()?;
+        let (current, control) = match playback.steered(cx) {
+            Some(remote) => (
+                remote.state.track.as_ref()?.id.clone(),
+                Some(remote.state.playing),
+            ),
+            None => (
+                playback.track()?.id.as_deref()?.to_owned(),
+                playback.control(),
+            ),
+        };
+        let control = control?;
         let tracks = self.provider.tracks(cx);
-        if tracks.get(row)?.id.as_deref() != Some(current) {
+        if tracks.get(row)?.id.as_deref() != Some(current.as_str()) {
             return None;
         }
         let sole = tracks
             .iter()
-            .position(|track| track.id.as_deref() == Some(current))?;
+            .position(|track| track.id.as_deref() == Some(current.as_str()))?;
 
-        (sole == row).then(|| playback.control()).flatten()
+        (sole == row).then_some(control)
     }
 
     pub(crate) fn at(&self, row: usize, cx: &App) -> Option<Track> {
