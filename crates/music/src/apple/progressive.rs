@@ -12,8 +12,9 @@
 //! all of it inside the CDM rather than on the way to its host process, so one second of audio
 //! costs about seventy, well inside what the output has queued.
 //!
-//! The track is spooled in memory rather than to a file, because samples are decrypted in place
-//! and cleartext must never reach the disk.
+//! Encrypted catalog tracks are spooled in memory rather than to a file, because samples are
+//! decrypted in place and cleartext must never reach the disk. Unencrypted uploaded tracks carry
+//! no DRM and spool directly to disk.
 //!
 //! Once the download is complete, a background pass decrypts every sample no read has reached
 //! and then gives the license back. The CDM lives in a host process that exits when no track
@@ -108,6 +109,9 @@ pub struct Entry {
 /// turn it into sound.
 #[derive(Default)]
 pub struct Cenc {
+    /// Whether this track is an unencrypted uploaded track rather than a CENC stream. Kept as a
+    /// flag on `Cenc` to avoid boxing `Fetch::Source`.
+    plain: bool,
     /// One past the end of the init segment, once `moov` has arrived whole.
     init_end: Option<usize>,
     /// What the init segment said about each encrypted track, which every later fragment is
@@ -362,8 +366,12 @@ impl Cenc {
 
 impl Body for Cenc {
     /// Everything below the walk is either framing or a sample whose IV is known. Once the body
-    /// is complete there is nothing more coming, so whatever is left is served as it is.
+    /// is complete there is nothing more coming, so whatever is left is served as it is. Plain
+    /// uploads expose the whole spool as it arrives.
     fn limit(&mut self, spool: &mut Spool, complete: bool) -> usize {
+        if self.plain {
+            return spool.len();
+        }
         self.index(spool);
         match complete {
             true => spool.len(),
@@ -372,12 +380,16 @@ impl Body for Cenc {
     }
 
     fn tail(&self) -> u64 {
-        TAIL
+        match self.plain {
+            true => 0,
+            false => TAIL,
+        }
     }
 
-    /// Samples are decrypted in place, so the whole track stays in memory.
+    /// Samples are decrypted in place, so the whole track stays in memory. Uploaded plain tracks
+    /// are not secret and spool to disk.
     fn confidential(&self) -> bool {
-        true
+        !self.plain
     }
 
     /// Decrypts every sample overlapping the range that is not cleartext yet. Bytes outside any
@@ -417,6 +429,21 @@ impl Media {
     pub(crate) fn progress(&self) -> Option<f32> {
         let total = self.0.total().filter(|total| *total > 0)?;
         Some(self.0.arrived() as f32 / total as f32)
+    }
+
+    /// Starts pulling an unencrypted uploaded track from `source` and waits for its preroll.
+    pub(crate) async fn plain(source: impl Source, total: Option<u64>) -> Result<Self> {
+        Stream::pulling(
+            source,
+            total,
+            Cenc {
+                plain: true,
+                ..Cenc::default()
+            },
+        )
+        .primed()
+        .await
+        .map(Self)
     }
 
     /// Hands the track its content keys. Until this lands, a read that needs a sample fails
@@ -487,6 +514,16 @@ impl Media {
     /// Waits until the download has ended, whether it finished or broke.
     pub async fn finished(&self) {
         self.0.finished().await;
+    }
+
+    /// Whether the track is an unencrypted upload rather than a CENC stream.
+    pub fn is_plain(&self) -> bool {
+        self.0.with(|cenc, _| cenc.plain).unwrap_or(false)
+    }
+
+    /// The total byte length of the track, when the server announced one or the download finished.
+    pub fn total(&self) -> Option<u64> {
+        self.0.total()
     }
 
     /// A cursor over the whole track.

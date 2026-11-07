@@ -22,6 +22,7 @@ const RETRY_DELAY: Duration = Duration::from_secs(3);
 const SWITCH_DEBOUNCE: Duration = Duration::from_secs(1);
 const MAX_START_DRIFT_SECONDS: u64 = 2;
 const MAX_TEXT_UTF16_UNITS: usize = 128;
+const MAX_IMAGE_UTF16_UNITS: usize = 300;
 /// What the status says when it names the music rather than a service.
 const MUSIC: &str = "Music";
 /// Where the Sonora button sends a friend who presses it.
@@ -301,11 +302,10 @@ impl Discord {
         }))
     }
 
-    /// Cover art for the track. The provider's own art is used only when it is public, since
-    /// Discord fetches the image through its own proxy, so a path on disk is unreachable and a
-    /// self-hosted url would hand over the credentials that fetch it. Without it, and when
-    /// `lookup` allows, the cover is one found by name, and a search not yet made is left in
-    /// `wanted` for `look_up`.
+    /// Cover art for the track. The provider's own art is used only when it is public and within
+    /// Discord's image length limit; URLs longer than the limit are skipped in favour of the name
+    /// lookup. Without it, and when `lookup` allows, the cover is one found by name, and a search
+    /// not yet made is left in `wanted` for `look_up`.
     fn artwork(
         &mut self,
         track: &Track,
@@ -321,7 +321,10 @@ impl Discord {
                     .and_then(|album| self.cover.read(cx).large_for(album))
                     .map(str::to_owned)
                     .or_else(|| track.cover.clone())
-                    .filter(|cover| cover.starts_with("https://"))
+                    .filter(|cover| {
+                        cover.starts_with("https://")
+                            && cover.encode_utf16().count() <= MAX_IMAGE_UTF16_UNITS
+                    })
             })
             .flatten();
         if own.is_some() || !lookup {
