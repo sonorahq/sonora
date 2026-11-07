@@ -44,7 +44,6 @@ pub(crate) struct TitleBarOptions {
     pub navigation: bool,
     pub sidebar_open: bool,
     pub sidebar_right: Option<bool>,
-    pub offset: Pixels,
     pub border: bool,
     pub content: Option<AnyView>,
     /// Lets the fullscreen ambient background show through behind the controls.
@@ -57,7 +56,6 @@ impl Default for TitleBarOptions {
             navigation: false,
             sidebar_open: false,
             sidebar_right: None,
-            offset: Pixels::ZERO,
             border: true,
             content: None,
             transparent: false,
@@ -250,10 +248,6 @@ impl Render for TitleBar {
         let theme = cx.theme();
         let height = ui::snapped(theme.metrics.title_bar, window);
         let navigation = self.options.navigation;
-        let offset = match navigation {
-            true => self.options.offset,
-            false => Pixels::ZERO,
-        };
         let sidebar_right = self
             .options
             .sidebar_right
@@ -339,7 +333,6 @@ impl Render for TitleBar {
                         false => this.pr_3(),
                     })
                     .gap_1()
-                    .when(offset > Pixels::ZERO, |this| this.w(offset))
                     .when(leading, |this| {
                         this.child(window_controls(true, traffic_light))
                     })
