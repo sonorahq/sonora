@@ -53,9 +53,6 @@ const ACTIVE_VERSE_GROWTH: Pixels = px(2.);
 const FULLSCREEN_VERSE_GROWTH: Pixels = px(3.);
 /// How much larger than the lane text unsynced lyrics are set, while staying below a synced verse.
 const PLAIN_LYRICS_GROWTH: f32 = 1.15;
-/// The sheet's and a verse's padding on both sides, plus the extra trailing padding a wrapped
-/// verse takes, so no row runs into it.
-const LYRICS_HORIZONTAL_INSET_REM: f32 = 2.;
 // The largest window fullscreen lyrics keep their own size in. A larger one grows them by its
 // share of this one, so a verse keeps its size relative to the window.
 const LYRICS_FRAME: Size<Pixels> = size(px(1152.), px(648.));
@@ -85,9 +82,6 @@ const HAZE_STEP: Pixels = px(0.25);
 const SPARE_MARGIN: f32 = 0.25;
 // How far a verse sinks while it is held.
 const PRESSED: f32 = 0.955;
-// The widest a line of lyrics is set, in multiples of its size at 100%. Left to fill
-// a fullscreen panel, a lead verse and a background one end up at opposite edges.
-const REACH: f32 = 24.;
 // What a sheet settling on the best answer comes in through: it blurs and fades
 // on the way, once, on a curve that is the same going in as coming out.
 const RESOLVE_BLUR: f32 = 0.2;
@@ -1077,8 +1071,7 @@ impl Aside {
             self.pin_verse(focus, window, cx);
         }
 
-        // Keep the sheet's edges at their 100% positions when the text size changes.
-        let reach = verse_sizes(self.titled, frame_scale, &theme).0 * REACH;
+        let sheet_padding = (theme.metrics.inset - theme.metrics.pad * 1.5).max(Pixels::ZERO);
         let wrap_size = active_verse_size(verse);
         let scroll = self.verse_bar.read(cx).scroll().clone();
         let (nudges, presentation) = {
@@ -1093,10 +1086,9 @@ impl Aside {
             (true, true) => self.lagged(&scroll, presentation, verse, nudges),
             _ => Drag::default(),
         };
-        let inset = window.rem_size() * LYRICS_HORIZONTAL_INSET_REM;
-        let wrap_width = (scroll.bounds().size.width - inset)
-            .min(reach - inset)
-            .max(px(0.));
+        let row_width = scroll.bounds().size.width - sheet_padding * 2.;
+        // Both voices and wrapped phrases share the same inset from either panel edge.
+        let wrap_width = (row_width - theme.metrics.pad * 2.).max(Pixels::ZERO);
         if self.lyrics_wrap_width != Some(wrap_width) || self.lyrics_wrap_size != Some(wrap_size) {
             self.lyrics_wrap_width = Some(wrap_width);
             self.lyrics_wrap_size = Some(wrap_size);
@@ -1209,7 +1201,7 @@ impl Aside {
                             verse,
                             &theme,
                         )
-                        .px_2()
+                        .px(theme.metrics.pad)
                         .rounded(theme.radius)
                         .when(notes_touch.warmth > 0., |this| {
                             this.bg(theme.table_hover.opacity(notes_touch.warmth))
@@ -1222,7 +1214,6 @@ impl Aside {
                                 this.aria_selected(true)
                             })
                             .w_full()
-                            .max_w(reach)
                             .flex()
                             .cursor_pointer()
                             .child(glyphs)
@@ -1431,13 +1422,8 @@ impl Aside {
                         .flex_col()
                         .gap_1()
                         .min_w_0()
-                        .when(spans_row, |this| {
-                            match hugs_end(line.voice, sung.mirrored) {
-                                true => this.w_full().pl_4(),
-                                false => this.w_full().pr_4(),
-                            }
-                        })
-                        .px_2()
+                        .px(theme.metrics.pad)
+                        .when(spans_row, |this| this.w_full())
                         .py_1()
                         .rounded(theme.radius)
                         .when(warmth > 0., |this| {
@@ -1485,7 +1471,6 @@ impl Aside {
                         .aria_position_in_set(index + 1)
                         .aria_size_of_set(lines.len())
                         .w_full()
-                        .max_w(reach)
                         .flex()
                         .when(hugs_end(line.voice, sung.mirrored), |this| {
                             this.justify_end()
@@ -1561,8 +1546,7 @@ impl Aside {
                                 .role(Role::Paragraph)
                                 .aria_label(SharedString::from(text.clone()))
                                 .w_full()
-                                .max_w(reach)
-                                .px_2()
+                                .px(theme.metrics.pad)
                                 .flex()
                                 .flex_col()
                                 .gap_1()
@@ -1638,8 +1622,7 @@ impl Aside {
             };
             let note = div()
                 .w_full()
-                .max_w(reach)
-                .px_2()
+                .px(theme.metrics.pad)
                 .pt_2()
                 .flex()
                 .flex_col()
@@ -1675,10 +1658,11 @@ impl Aside {
             .flex()
             .flex_col()
             .items_center()
+            .when(shown, |this| this.items_start())
             .gap_4()
             .flex_1()
             .min_h_0()
-            .px_1()
+            .px(sheet_padding)
             .pt(over)
             .pb(under)
             .when(effects(), |this| {
@@ -3083,7 +3067,7 @@ fn adrift(
         .w_full()
         .flex()
         .flex_col()
-        .items_center()
+        .items_start()
         .child(
             row.top(grid)
                 .layer_translate(gpui::point(px(0.), shift - grid)),
