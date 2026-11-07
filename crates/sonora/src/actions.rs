@@ -2,11 +2,12 @@ use gpui::{App, Context, Menu, MenuItem, OsAction};
 use i18n::t;
 use input::{
     CloseWindow, DecreaseFontSize, Hide, HideOthers, IncreaseFontSize, MinimizeWindow,
-    OpenSettings, Quit, Redo, Refresh, ResetFontSize, ShowAll, SignOut, SongNext, SongPrevious,
+    OpenSettings, Quit, Redo, Refresh, ResetFontSize, ShowAll, SignOut,SeekBackward5, SeekForward5, SongNext, SongPrevious,
     TogglePlayback, ToggleRepeat, ToggleShuffle, Undo, ZoomWindow,
 };
 use router::Destination;
 use state::{AppSettings, Equalizer, Shelf, Sonora};
+use std::time::Duration;
 use ui::{ActiveTheme as _, Copy, Cut, Look, Paste, SelectAll, Theme};
 
 /// How far one font size shortcut moves the size, the same step as the buttons in Settings.
@@ -71,6 +72,32 @@ pub fn register(lingers: bool, cx: &mut App) {
         let playback = Sonora::global(cx).playback.clone();
         playback.update(cx, |playback, cx| playback.next(cx));
     });
+
+   cx.on_action(|_: &SeekForward5, cx: &mut App| {
+    let playback = Sonora::global(cx).playback.clone();
+
+    playback.update(cx, |playback, cx| {
+        let step = Duration::from_secs(5);
+
+        playback.seek(
+            playback.position().saturating_add(step),
+            cx,
+        );
+    });
+});
+
+cx.on_action(|_: &SeekBackward5, cx: &mut App| {
+    let playback = Sonora::global(cx).playback.clone();
+
+    playback.update(cx, |playback, cx| {
+        let step = Duration::from_secs(5);
+
+        playback.seek(
+            playback.position().saturating_sub(step),
+            cx,
+        );
+    });
+});
 
     cx.on_action(|_: &ToggleShuffle, cx: &mut App| {
         let playback = Sonora::global(cx).playback.clone();
