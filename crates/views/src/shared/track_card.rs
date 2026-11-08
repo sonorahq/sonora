@@ -4,12 +4,13 @@ use gpui::prelude::*;
 use gpui::{App, Entity, MouseDownEvent, SharedString, Window, div};
 use music::Track;
 use state::Playback;
-use ui::{ActiveTheme as _, Card, Text, clock, tabular};
+use ui::{ActiveTheme as _, Button, Card, Text, clock, tabular};
 
 use crate::shared::cards;
 
 pub(crate) type ContextHandler = Rc<dyn Fn(usize, &MouseDownEvent, &mut Window, &mut App)>;
 pub(crate) type StartHandler = Rc<dyn Fn(usize, &mut App)>;
+pub(crate) type RemoveHandler = Rc<dyn Fn(usize, &mut App)>;
 
 pub(crate) struct TrackCard {
     id: &'static str,
@@ -19,6 +20,8 @@ pub(crate) struct TrackCard {
     detailed: bool,
     context: Option<ContextHandler>,
     start: Option<StartHandler>,
+    /// The Fluent key naming the remove button, and what it does with the track's place.
+    remove: Option<(&'static str, RemoveHandler)>,
 }
 
 impl TrackCard {
@@ -36,6 +39,7 @@ impl TrackCard {
             detailed: false,
             context: None,
             start: None,
+            remove: None,
         }
     }
 
@@ -51,6 +55,13 @@ impl TrackCard {
 
     pub(crate) fn start(mut self, start: Option<StartHandler>) -> Self {
         self.start = start;
+        self
+    }
+
+    /// Adds an X that appears on hover and pushes the duration aside only then. `tooltip` is the
+    /// Fluent key that names it.
+    pub(crate) fn remove(mut self, tooltip: &'static str, remove: RemoveHandler) -> Self {
+        self.remove = Some((tooltip, remove));
         self
     }
 
@@ -76,6 +87,19 @@ impl TrackCard {
                 .child(clock(track.duration))
         });
 
+        let remove = self.remove.map(|(tooltip, remove)| {
+            Button::new("track-card-remove")
+                .ghost()
+                .small()
+                .icon("icons/x.svg")
+                .tooltip(tooltip)
+                .tint(theme.muted_foreground)
+                .on_click(move |_, _, cx| {
+                    cx.stop_propagation();
+                    remove(place, cx);
+                })
+        });
+
         let total = self.tracks.len();
 
         cards::track_card((self.id, place), track, &self.playback, cx)
@@ -83,6 +107,7 @@ impl TrackCard {
             .aria_size_of_set(total)
             .when_some(artists, Card::bare_meta)
             .when_some(length, Card::trailing)
+            .when_some(remove, Card::collapsed_action)
             .when_some(self.context, |card, handler| {
                 card.menu(move |event, window, cx| handler(place, event, window, cx))
             })

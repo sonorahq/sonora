@@ -200,7 +200,12 @@ impl SettingsView {
             async { music::subsonic::libraries().await },
             |this, result, cx| {
                 match result {
-                    Ok(libraries) => this.libraries = Some(libraries),
+                    Ok(libraries) => {
+                        let rows =
+                            library_rows(&libraries, music::subsonic::selected_library().as_ref());
+                        this.library_cursor = rows.iter().position(|row| row.selected).unwrap_or(0);
+                        this.libraries = Some(libraries);
+                    }
                     Err(error) => this.libraries_error = Some(format!("{error:#}")),
                 }
                 cx.notify();

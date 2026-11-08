@@ -531,6 +531,7 @@ async fn engine_loop<F: Fetch>(
                                     at: position,
                                     playing: wanted,
                                 }).ok();
+                                announce_paused(&events, wanted, &mut announcing);
                                 queue_segue(&jobs, &mut waiting);
                             }
                             None => {
@@ -640,6 +641,7 @@ async fn engine_loop<F: Fetch>(
                         at: hold,
                         playing: wanted,
                     }).ok();
+                    announce_paused(&events, wanted, &mut announcing);
                     queue_segue(&jobs, &mut waiting);
                     continue;
                 }
@@ -724,6 +726,22 @@ fn moved(event: PlaybackEvent, to: Duration) -> PlaybackEvent {
         PlaybackEvent::Paused { id, .. } => PlaybackEvent::Paused { id, at: to },
         PlaybackEvent::Seeked { id, .. } => PlaybackEvent::Seeked { id, at: to },
         held => held,
+    }
+}
+
+/// Sends a paused load's announcement as soon as the decoder has the track. The audio thread
+/// writes nothing while paused, so waiting for the first write would leave the app in `Loading`
+/// until play is pressed.
+fn announce_paused(
+    events: &UnboundedSender<PlaybackEvent>,
+    wanted: bool,
+    announcing: &mut Option<PlaybackEvent>,
+) {
+    if wanted {
+        return;
+    }
+    if let Some(event) = announcing.take() {
+        events.send(event).ok();
     }
 }
 

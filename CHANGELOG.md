@@ -7,6 +7,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Nightly updates reuse released executables after a stable release, so they become available sooner.
+
+## [0.48.1] - 2026-11-08
+
+### Changed
+
+- Lyrics line spacing scales with the text size for a more balanced layout.
+- Fullscreen controls start hiding after one second of inactivity, with the same smooth cover transition.
+
+### Fixed
+
+- Opening an artist's favorite songs no longer crashes when a song appears under the pointer.
+- Back and forward buttons stay beside the sidebar toggle with enough space between them.
+- App and tray icons stay sharp at more display scales, and Linux windows show the Sonora icon without desktop integration.
+- Lyrics keep equal left and right insets at every window and text size.
+- Apple Music lyrics can be found when the album has a different edition name in the lyrics catalogue.
+- Lyrics sources retry when their cached answers cannot be shown, and newly found lyrics stay available after restarting.
+- On macOS, Widevine is also found in registered browsers that have been renamed or moved.
+
+## [0.48.0] - 2026-11-07
+
 ### Added
 
 - Pick which Navidrome library a Subsonic account browses from the account's settings.
@@ -15,9 +38,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to hardware, and picking one there keeps every other app off it.
 - Turn on Match sample rate in the sound settings to have a Direct to hardware device follow
   each track's own sample rate on Linux and macOS.
+- Swipe two fingers sideways on a touchpad to go back or forward a page.
+- A quick flick on a touchpad under Wayland keeps the page scrolling for a moment after your fingers lift.
+- An artist's page links to the songs of theirs you have in your Favorites, so you can see and play them together, and take one out with the X that appears when you point at it.
+- Turn off Show lyrics in the lyrics settings to hide the lyrics buttons in the player bar and
+  Now playing, and stop Sonora looking lyrics up.
 
 ### Changed
 
+- Search lists the artists your service finds for what you typed, so an artist turns up even when none of their songs or albums do.
 - The Members panel centres the faces, the count and the Session buttons, names you as You, and shows a person without a picture by their initial.
 - The fullscreen background now folds the cover's colours into one another in slow soft waves instead of drifting blurred spots, and shows a strong second colour from the art.
 - Tooltips open in the same place next to their button or title every time, instead of wherever the pointer stopped.
@@ -26,14 +55,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Hover a page title cut short by the window to read it in full.
 - In fullscreen, the volume slider rises in and shows the level for as long as you point at it.
 - Lyrics still to be sung and the artist name in fullscreen take on the colour behind them instead of a flat grey.
-- The highlight on a hovered lyric line or instrumental break ends where its words or notes end.
+- The highlight on a hovered lyric line or instrumental break ends where its words or notes end, and spans the sheet when the line wraps.
 - The title and artist in fullscreen carry a lighter shadow.
 - Switching between the cover, lyrics and queue in fullscreen eases the new tab in the way settings pages do.
 - Song, album, artist and playlist menus open with a row of buttons to like, add to the library, download and pin, filled in while they are on, and the download button shows how far a download has got. Playlists sit under Add to playlist, and a checked playlist takes the song out again.
 - The device picker in the equalizer's device rules lists devices the way the output picker does, with sound card outputs grouped and Direct to hardware devices in their own submenu.
+- A song's right-click menu lists Go to artist, Go to album, Go to song radio and View details directly again instead of under Go to.
+- Quick picks from YouTube Music show every song YouTube suggests instead of the first 15.
+- A YouTube Music artist page shows a blurred wash of the artist's portrait behind the header instead of the same picture twice.
+- Search suggestions open without a heading above them.
 
 ### Fixed
 
+- On macOS, scrolling and clicks no longer lag behind in fullscreen and with lyrics open.
 - Horizontal card rows scroll all the way to the page edges, including album recommendations.
 - Removing an Apple Music song or album from the library takes its like off right away, the way Apple does.
 - Playing or shuffling an artist queues their songs beyond the Popular section, with popular songs first.
@@ -53,10 +87,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The highlighted row in search suggestions follows the panel's rounded corners instead of bulging into them.
 - In fullscreen with the controls set to autohide, they no longer stay up after switching between
   the cover view and the lyrics or queue while the cursor rests inside the window.
+- Opening Sonora with a paused song no longer keeps your computer from sleeping, and media
+  controls show it as paused instead of playing.
 - Fullscreen controls stay visible while you hover over the tabs after switching between lyrics and queue.
 - Signing in to Apple Music without an active subscription shows a short error and a link to check the account in the browser.
 - Lyrics that follow along with a song use less CPU by laying out only the lines near the screen.
 - The visualizer falls as soon as you pause instead of holding still for a moment first.
+- Pointing at the leave fullscreen button no longer highlights the queue rows behind it.
+- The language and font pickers no longer show a check on the row you move to with the arrow keys.
+- In fullscreen on macOS, the sidebar toggle on the left of the title bar sits as close to the edge as the one on the right.
+- The log file you attach to a bug report and the error details in notifications no longer show sign-in tokens, your Subsonic or Navidrome login, your YouTube account name and email, or your home folder.
+- Local albums show a cover.jpg or folder.jpg from their folder however its name is capitalised, from the album folder above a CD1 or Disc 2 folder, and as soon as you add or rename it.
 
 ## [0.47.0] - 2026-11-02
 
@@ -2535,7 +2576,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.47.0...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.48.1...HEAD
+[0.48.1]: https://github.com/sonorahq/sonora/compare/v0.48.0...v0.48.1
+[0.48.0]: https://github.com/sonorahq/sonora/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/sonorahq/sonora/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/sonorahq/sonora/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/sonorahq/sonora/compare/v0.44.2...v0.45.0
