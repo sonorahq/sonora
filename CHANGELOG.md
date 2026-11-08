@@ -14,8 +14,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to hardware, and picking one there keeps every other app off it.
 - Turn on Match sample rate in the sound settings to have a Direct to hardware device follow
   each track's own sample rate on Linux and macOS.
-- Genre pages on Subsonic and Navidrome show all of a genre's albums, songs and artists, not only
-  the first 50 albums.
+- Genre pages on Subsonic and Navidrome show all of a genre's albums and songs along with credited
+  artists, not only the first 50 albums.
 
 ### Changed
 

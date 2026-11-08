@@ -1217,11 +1217,14 @@ impl SubsonicClient {
             .get(url)
             .send()
             .await
+            .map_err(reqwest::Error::without_url)
             .with_context(|| format!("cannot load the genre {genre_id}"))?
             .error_for_status()
+            .map_err(reqwest::Error::without_url)
             .with_context(|| format!("the server refused the genre {genre_id}"))?
             .json()
             .await
+            .map_err(reqwest::Error::without_url)
             .with_context(|| format!("the genre {genre_id} answered no json"))?;
         let response = &answer["subsonic-response"];
         if response["status"].as_str() != Some("ok") {
