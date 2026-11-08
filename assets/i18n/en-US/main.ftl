@@ -127,6 +127,7 @@ smart-rules-create-title = New smart playlist
 smart-rules-edit-title = Smart rules
 smart-rules-name-placeholder = Playlist name
 smart-rules-loading = Reading the rules from the server…
+smart-rules-saving = Saving…
 smart-rules-failed-title = The rules could not be read
 smart-rules-match-all = Match all
 smart-rules-match-any = Match any
@@ -154,6 +155,15 @@ smart-rules-order-desc = Descending
 smart-rules-order-toggle = Sort direction
 smart-rules-limit-label = Limit
 smart-rules-limit-placeholder = All matches
+smart-rules-problem-empty-group = The group holds no rules
+smart-rules-problem-missing-field = The condition names no field
+smart-rules-problem-range = A range takes a lower and an upper bound
+smart-rules-problem-days = A day count takes a number
+smart-rules-problem-playlist = A playlist rule takes a playlist
+smart-rules-problem-truth = The rule takes a truth value
+smart-rules-problem-compared = The value does not fit the rule
+smart-rules-problem-boolean = A boolean field takes a truth value
+smart-rules-problem-bad-order = The order is asc or desc
 menu-import-playlist = Import playlist…
 menu-edit-tags = Edit tags
 menu-no-playlists = No playlists
@@ -191,11 +201,8 @@ menu-play-tracks-last = { $count ->
     [one] Play { $count } track last
    *[other] Play { $count } tracks last
 }
-menu-go-to = Go to
-menu-artist = Artist
-menu-album = Album
-menu-radio = Radio
-menu-details = Details
+menu-song-radio = Go to song radio
+menu-go-to-album = Go to album
 menu-go-to-artist = Go to artist
 menu-view-details = View details
 menu-copy-link = Copy link
@@ -441,6 +448,11 @@ artist-popular-eyebrow = Explore this artist
 artist-popular-empty = Nothing to play from this artist yet
 artist-popular-more = Show all
 artist-popular-less = Show less
+artist-favorite-songs = Your favorite songs
+artist-favorite-songs-count = { $count ->
+    [one] { $count } song in your Favorites
+   *[other] { $count } songs in your Favorites
+}
 artist-releases = Releases
 artist-releases-more = Show all
 artist-releases-less = Show less
@@ -1042,6 +1054,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } ch
 }
+settings-lyrics = Show lyrics
+settings-lyrics-detail = Turn off to hide lyrics everywhere and stop looking them up
 settings-panel-lyrics-size = Text size in the panel
 settings-panel-lyrics-size-detail = Size of the lyrics text in the side panel, on top of the base font size
 settings-fullscreen-lyrics-size = Text size in Now playing

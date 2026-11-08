@@ -106,7 +106,7 @@ impl HttpClient for Client {
                     outgoing = outgoing.body(body);
                 }
 
-                let incoming = outgoing.send().await?;
+                let incoming = outgoing.send().await.map_err(reqwest::Error::without_url)?;
                 let status = incoming.status();
                 let is_image = incoming
                     .headers()

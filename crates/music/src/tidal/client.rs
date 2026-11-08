@@ -1608,6 +1608,11 @@ impl MusicApi for TidalClient {
         Ok(wire::distinct(wire::release_list(&found)))
     }
 
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        let found = self.search_kind(query, "ARTISTS", "artists").await?;
+        Ok(wire::artist_list(&found))
+    }
+
     async fn search_playlists(&self, query: &str) -> Result<Vec<Playlist>> {
         let found = self.search_kind(query, "PLAYLISTS", "playlists").await?;
         let user_id = self.user_id().await;

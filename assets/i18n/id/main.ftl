@@ -133,11 +133,8 @@ menu-play-tracks-last = { $count ->
     [one] Putar { $count } lagu terakhir
    *[other] Putar { $count } lagu terakhir
 }
-menu-go-to = Buka
-menu-artist = Artis
-menu-album = Album
-menu-radio = Radio
-menu-details = Detail
+menu-song-radio = Buka radio lagu
+menu-go-to-album = Buka album
 menu-go-to-artist = Buka artis
 menu-view-details = Lihat detail
 menu-copy-link = Salin tautan
@@ -920,6 +917,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } ch
 }
+settings-lyrics = Tampilkan lirik
+settings-lyrics-detail = Matikan untuk menyembunyikan lirik di mana pun dan berhenti mencarinya
 settings-panel-lyrics-size = Ukuran lirik (panel)
 settings-panel-lyrics-size-detail = Ukuran teks lirik pada panel samping, di atas ukuran font dasar
 settings-fullscreen-lyrics-size = Ukuran lirik (layar penuh)

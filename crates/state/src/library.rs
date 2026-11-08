@@ -1656,6 +1656,22 @@ impl Library {
         }
     }
 
+    /// Favorites credited to this artist, including collaborations, without cloning the library.
+    pub fn favorites_by_artist<'a>(
+        &'a self,
+        artist_id: &'a str,
+    ) -> impl Iterator<Item = &'a Track> {
+        self.favorites(artist_id)
+            .into_iter()
+            .flat_map(|favorites| favorites.tracks)
+            .filter(move |track| {
+                track
+                    .artist_refs
+                    .iter()
+                    .any(|artist| artist.id.as_deref() == Some(artist_id))
+            })
+    }
+
     pub fn saved(&self, track_id: &str) -> bool {
         self.favorites(track_id).is_some_and(|favorites| {
             favorites
@@ -1973,14 +1989,17 @@ impl Library {
 
     /// Makes a smart playlist from a name and its rules. The provider answers with the new
     /// playlist, which joins the shelf like any other.
-    pub fn create_smart_playlist(
+    pub fn create_smart_playlist<F>(
         &mut self,
         name: String,
         rules: music::SmartRules,
         shelf: Shelf,
+        on_done: F,
         cx: &mut Context<Self>,
-    ) {
-        self.mutate_playlist(
+    ) where
+        F: FnOnce(&mut Self, bool, &mut Context<Self>) + 'static,
+    {
+        self.mutate_playlist_result(
             PlaylistMutation {
                 action: "create smart playlist",
                 done: Some("toast-playlist-created"),
@@ -2003,19 +2022,23 @@ impl Library {
                     }
                 }))
             },
-            |this, created: music::SmartPlaylist, cx| {
-                this.insert_playlist(
-                    Playlist {
-                        id: created.id,
-                        name: created.name,
-                        owner: created.owner,
-                        owned: created.owned,
-                        public: created.public,
-                        track_count: created.track_count,
-                        ..Default::default()
-                    },
-                    cx,
-                );
+            |this, result, cx| match result {
+                Ok(created) => {
+                    this.insert_playlist(
+                        Playlist {
+                            id: created.id,
+                            name: created.name,
+                            owner: created.owner,
+                            owned: created.owned,
+                            public: created.public,
+                            track_count: created.track_count,
+                            ..Default::default()
+                        },
+                        cx,
+                    );
+                    on_done(this, true, cx);
+                }
+                Err(()) => on_done(this, false, cx),
             },
             cx,
         );
@@ -2024,12 +2047,15 @@ impl Library {
     /// Saves the fields a rules editor changed. Only the `Some` fields leave the app, so a
     /// name the editor did not touch stays as it is. The playlist's cached pages go stale:
     /// new rules make a different track list.
-    pub fn save_smart_playlist(
+    pub fn save_smart_playlist<F>(
         &mut self,
         id: String,
         update: music::SmartPlaylistUpdate,
+        on_done: F,
         cx: &mut Context<Self>,
-    ) {
+    ) where
+        F: FnOnce(&mut Self, bool, &mut Context<Self>) + 'static,
+    {
         // An editor whose rules were read under another account must not write them here:
         // the same playlist id on a new account is a different playlist's rules.
         let epoch = self.epochs[Shelf::of(&id).slot()];
@@ -2040,10 +2066,11 @@ impl Library {
         if !fresh {
             log::warn!("library: refusing a smart playlist save from a stale editor");
             Toasts::show(Outcome::Failed, "toast-playlist-failed", cx);
+            on_done(self, false, cx);
             return;
         }
         let changed = id.clone();
-        self.mutate_playlist(
+        self.mutate_playlist_result(
             PlaylistMutation {
                 action: "edit smart playlist",
                 done: Some("toast-playlist-updated"),
@@ -2053,26 +2080,30 @@ impl Library {
                 shelf: Shelf::of(&id),
             },
             move |client| async move { client.update_smart_playlist(&id, update).await },
-            move |this, saved: music::SmartPlaylist, cx| {
-                let name = saved.name.clone();
-                let public = saved.public;
-                let track_count = saved.track_count;
-                this.amend_playlist(
-                    &changed,
-                    |playlist| {
-                        playlist.name = name;
-                        playlist.public = public;
-                        playlist.track_count = track_count;
-                    },
-                    cx,
-                );
-                if let Some(editing) = &mut this.smart_editing
-                    && editing.id == changed
-                {
-                    editing.outcome = Ok(saved);
+            move |this, result, cx| match result {
+                Ok(saved) => {
+                    let name = saved.name.clone();
+                    let public = saved.public;
+                    let track_count = saved.track_count;
+                    this.amend_playlist(
+                        &changed,
+                        |playlist| {
+                            playlist.name = name;
+                            playlist.public = public;
+                            playlist.track_count = track_count;
+                        },
+                        cx,
+                    );
+                    if let Some(editing) = &mut this.smart_editing
+                        && editing.id == changed
+                    {
+                        editing.outcome = Ok(saved);
+                    }
+                    cx.emit(LibraryEvent::PlaylistChanged(changed.clone()));
+                    cx.emit(LibraryEvent::SmartPlaylistReady(changed));
+                    on_done(this, true, cx);
                 }
-                cx.emit(LibraryEvent::PlaylistChanged(changed.clone()));
-                cx.emit(LibraryEvent::SmartPlaylistReady(changed));
+                Err(()) => on_done(this, false, cx),
             },
             cx,
         );
@@ -3030,6 +3061,30 @@ impl Library {
         T: Send + 'static,
         A: FnOnce(&mut Self, T, &mut Context<Self>) + 'static,
     {
+        self.mutate_playlist_result(
+            mutation_info,
+            mutation,
+            |this, result, cx| {
+                if let Ok(outcome) = result {
+                    on_done(this, outcome, cx);
+                }
+            },
+            cx,
+        )
+    }
+
+    fn mutate_playlist_result<F, R, T, A>(
+        &mut self,
+        mutation_info: PlaylistMutation,
+        mutation: F,
+        on_result: A,
+        cx: &mut Context<Self>,
+    ) where
+        F: FnOnce(Arc<dyn MusicApi>) -> R + Send + 'static,
+        R: Future<Output = anyhow::Result<T>> + Send + 'static,
+        T: Send + 'static,
+        A: FnOnce(&mut Self, Result<T, ()>, &mut Context<Self>) + 'static,
+    {
         let PlaylistMutation {
             action,
             done,
@@ -3041,11 +3096,13 @@ impl Library {
         if self.playlist_task.is_some() {
             log::warn!("library: cannot {action} while another change is running");
             Toasts::show(Outcome::Failed, "toast-playlist-busy", cx);
+            on_result(self, Err(()), cx);
             return;
         }
         let Some(client) = self.session.read(cx).client_of(shelf) else {
             log::warn!("library: cannot {action} while signed out");
             Toasts::show(Outcome::Failed, "toast-playlist-signed-out", cx);
+            on_result(self, Err(()), cx);
             return;
         };
         let catalog = invalidated
@@ -3064,7 +3121,7 @@ impl Library {
                 this.playlist_task = None;
                 match result {
                     Ok(outcome) => {
-                        on_done(this, outcome, cx);
+                        on_result(this, Ok(outcome), cx);
                         match (done, name) {
                             (Some(done), Some(name)) => {
                                 Toasts::linked(Outcome::Done, done, name, target, cx)
@@ -3083,6 +3140,7 @@ impl Library {
                         for id in invalidated {
                             cx.emit(LibraryEvent::PlaylistChanged(id));
                         }
+                        on_result(this, Err(()), cx);
                     }
                 }
                 cx.notify();

@@ -12,7 +12,7 @@ use gpui::{
 };
 use i18n::t;
 use music::{
-    Condition, FieldKind, Operand, OperandShape, Operator, Playlist, Rule, RuleGroup,
+    Condition, FieldKind, Operand, OperandShape, Operator, Playlist, Problem, Rule, RuleGroup,
     SmartPlaylistUpdate, SmartRules, field_kind, parse_number,
 };
 use state::{LibraryEvent, SessionEvent, Shelf, Sonora};
@@ -23,6 +23,7 @@ use ui::{
 
 /// What the editor is doing: making a new smart playlist, or changing the rules of one the
 /// provider already has.
+#[derive(Clone)]
 pub(crate) enum SmartEdit {
     Create { shelf: Shelf },
     Rules { playlist: Playlist },
@@ -67,6 +68,7 @@ pub(crate) struct SmartPlaylistEditor {
     /// save. The editor warns and never turns the sync off itself.
     synced: bool,
     loading: bool,
+    saving: bool,
     failed: Option<String>,
     picking: Option<Pick>,
     /// Each condition row's value fields by path key, remade from the tree after a
@@ -276,16 +278,16 @@ impl SmartPlaylistEditor {
                 });
                 Self {
                     edit: None,
-                    name: cx.new(|cx| Input::new(t!("smart-rules-name-placeholder"), cx)),
+                    name: cx.new(|cx| Input::new("smart-rules-name-placeholder", cx)),
                     rules: None,
                     synced: false,
                     loading: false,
+                    saving: false,
                     failed: None,
                     picking: None,
                     values: HashMap::new(),
-                    sort: cx.new(|cx| Input::new(t!("smart-rules-sort-placeholder"), cx).compact()),
-                    limit: cx
-                        .new(|cx| Input::new(t!("smart-rules-limit-placeholder"), cx).compact()),
+                    sort: cx.new(|cx| Input::new("smart-rules-sort-placeholder", cx).compact()),
+                    limit: cx.new(|cx| Input::new("smart-rules-limit-placeholder", cx).compact()),
                     order_asc: None,
                     popovers: Popovers::default(),
                     scroll: ScrollHandle::new(),
@@ -307,6 +309,7 @@ impl SmartPlaylistEditor {
 
     fn show(&mut self, edit: SmartEdit, window: &mut Window, cx: &mut Context<Self>) {
         self.restore = window.focused(cx);
+        self.saving = false;
         self.picking = None;
         self.values.clear();
         self.failed = None;
@@ -356,10 +359,12 @@ impl SmartPlaylistEditor {
                 if rules.group.is_empty() {
                     rules.group = RuleGroup::All(vec![blank_condition()]);
                 }
-                self.order_asc = rules.order.as_deref().and_then(|order| match order {
-                    "asc" => Some(true),
-                    "desc" => Some(false),
-                    _ => None,
+                self.order_asc = rules.order.as_deref().and_then(|order| {
+                    match order.to_ascii_lowercase().as_str() {
+                        "asc" => Some(true),
+                        "desc" => Some(false),
+                        _ => None,
+                    }
                 });
                 self.sort.update(cx, |input, cx| {
                     input.set_text(rules.sort.clone().unwrap_or_default(), cx)
@@ -398,6 +403,7 @@ impl SmartPlaylistEditor {
         self.rules = None;
         self.synced = false;
         self.loading = false;
+        self.saving = false;
         self.failed = None;
         self.picking = None;
         self.values.clear();
@@ -607,28 +613,27 @@ impl SmartPlaylistEditor {
         cx.notify();
     }
 
-    fn apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(edit) = self.edit.take() else {
+    fn apply(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.loading || self.failed.is_some() || self.saving {
+            return;
+        }
+        let Some(edit) = self.edit.clone() else {
             return;
         };
         let name = self.name.read(cx).text().trim().to_owned();
         if name.is_empty() {
             self.name
                 .update(cx, |input, cx| input.set_invalid(true, cx));
-            self.edit = Some(edit);
             return;
         }
         if !self.collect_values(true, None, cx) {
-            self.edit = Some(edit);
             return;
         }
-        let Some(rules) = self.rules.take() else {
+        let Some(rules) = &self.rules else {
             return;
         };
         let problems = rules.problems();
         if !problems.is_empty() {
-            self.rules = Some(rules);
-            self.edit = Some(edit);
             return;
         }
         let sort = self.sort.read(cx).text().trim().to_owned();
@@ -640,42 +645,75 @@ impl SmartPlaylistEditor {
                 Err(_) => {
                     self.limit
                         .update(cx, |input, cx| input.set_invalid(true, cx));
-                    self.rules = Some(rules);
-                    self.edit = Some(edit);
                     return;
                 }
             },
         };
-        let mut rules = rules;
-        rules.sort = (!sort.is_empty()).then_some(sort);
-        rules.limit = limit;
-        rules.order = self
+        let mut built_rules = rules.clone();
+        built_rules.sort = (!sort.is_empty()).then_some(sort);
+        built_rules.limit = limit;
+        built_rules.order = self
             .order_asc
             .map(|asc| if asc { "asc" } else { "desc" }.to_owned());
-        if let Some(focus) = self.restore.take() {
-            window.focus(&focus, cx);
-        }
+        self.rules = Some(built_rules.clone());
+        self.saving = true;
+
+        let editor = cx.entity().clone();
         let library = Sonora::global(cx).library.clone();
         match edit {
-            SmartEdit::Create { shelf } => library.update(cx, |library, cx| {
-                library.create_smart_playlist(name, rules, shelf, cx);
-            }),
-            SmartEdit::Rules { playlist } => {
-                let renamed = (name != playlist.name).then_some(name);
+            SmartEdit::Create { shelf } => {
                 library.update(cx, |library, cx| {
-                    library.save_smart_playlist(
-                        playlist.id,
-                        SmartPlaylistUpdate {
-                            name: renamed,
-                            rules: Some(rules),
-                            ..SmartPlaylistUpdate::default()
+                    library.create_smart_playlist(
+                        name,
+                        built_rules,
+                        shelf,
+                        move |_library, success, cx| {
+                            editor.update(cx, |this, cx| {
+                                this.saving = false;
+                                if success {
+                                    this.saved_close(cx);
+                                } else {
+                                    cx.notify();
+                                }
+                            });
                         },
                         cx,
                     );
-                })
+                });
+            }
+            SmartEdit::Rules { playlist } => {
+                let playlist_id = playlist.id.clone();
+                let renamed = (name != playlist.name).then_some(name);
+                library.update(cx, |library, cx| {
+                    library.save_smart_playlist(
+                        playlist_id,
+                        SmartPlaylistUpdate {
+                            name: renamed,
+                            rules: Some(built_rules),
+                            ..SmartPlaylistUpdate::default()
+                        },
+                        move |_library, success, cx| {
+                            editor.update(cx, |this, cx| {
+                                this.saving = false;
+                                if success {
+                                    this.saved_close(cx);
+                                } else {
+                                    cx.notify();
+                                }
+                            });
+                        },
+                        cx,
+                    );
+                });
             }
         }
         cx.notify();
+    }
+
+    fn saved_close(&mut self, cx: &mut Context<Self>) {
+        let library = Sonora::global(cx).library.clone();
+        library.update(cx, |library, cx| library.close_smart_playlist(cx));
+        self.reset(cx);
     }
 }
 
@@ -716,59 +754,57 @@ impl Render for SmartPlaylistEditor {
         let body = div().flex().flex_col().flex_1().min_h_0().gap_3();
         let body = body.child(div().flex().child(self.name.clone()));
 
-        let body = match (&self.loading, &self.failed, &self.rules) {
-            (_, Some(problem), _) => body.child(
-                Notice::new(t!("smart-rules-failed-title"), problem.clone())
-                    .failed()
-                    .icon("icons/info.svg"),
-            ),
-            (true, _, _) => body.child(
-                div()
-                    .text_sm()
-                    .text_color(theme.muted_foreground)
-                    .child(t!("smart-rules-loading")),
-            ),
-            (_, _, Some(_)) => {
-                let rows = self.row_data();
-                let mut list = div().flex().flex_col().gap_1();
-                for row in rows {
-                    list = list.child(self.row(row, cx));
-                }
-                let problems = self
-                    .rules
-                    .as_ref()
-                    .map(|rules| rules.problems())
-                    .unwrap_or_default();
-                let mut column = div()
-                    .id("smart-rules-scroll")
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .max_h(px(420.))
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .child(list);
-                if self.synced {
-                    column = column.child(
-                        Notice::new(
-                            t!("smart-rules-synced-title"),
-                            t!("smart-rules-synced-message"),
-                        )
+        let body =
+            match (&self.loading, &self.failed, &self.rules) {
+                (_, Some(problem), _) => body.child(
+                    Notice::new(t!("smart-rules-failed-title"), problem.clone())
+                        .failed()
                         .icon("icons/info.svg"),
-                    );
+                ),
+                (true, _, _) => body.child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(t!("smart-rules-loading")),
+                ),
+                (_, _, Some(_)) => {
+                    let rows = self.row_data();
+                    let mut list = div().flex().flex_col().gap_1();
+                    for row in rows {
+                        list = list.child(self.row(row, cx));
+                    }
+                    let problems = self
+                        .rules
+                        .as_ref()
+                        .map(|rules| rules.problems())
+                        .unwrap_or_default();
+                    let mut column = div()
+                        .id("smart-rules-scroll")
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .max_h(px(420.))
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll)
+                        .child(list);
+                    if self.synced {
+                        column = column.child(
+                            Notice::new(
+                                t!("smart-rules-synced-title"),
+                                t!("smart-rules-synced-message"),
+                            )
+                            .icon("icons/info.svg"),
+                        );
+                    }
+                    for problem in problems {
+                        column = column.child(div().text_sm().text_color(theme.danger).child(
+                            format!("{}: {}", problem.path, problem_text(&problem.problem)),
+                        ));
+                    }
+                    body.child(column).child(self.footer(cx))
                 }
-                for problem in problems {
-                    column = column.child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.danger)
-                            .child(format!("{}: {}", problem.path, problem.problem)),
-                    );
-                }
-                body.child(column).child(self.footer(cx))
-            }
-            _ => body,
-        };
+                _ => body,
+            };
 
         div()
             .absolute()
@@ -777,7 +813,9 @@ impl Render for SmartPlaylistEditor {
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &Dismiss, window, cx| {
                 cx.stop_propagation();
-                this.close(window, cx);
+                if !this.saving {
+                    this.close(window, cx);
+                }
             }))
             .on_action(cx.listener(|this, _: &Submit, window, cx| {
                 cx.stop_propagation();
@@ -797,18 +835,41 @@ impl Render for SmartPlaylistEditor {
                     Button::new("cancel-smart-rules")
                         .ghost()
                         .label(t!("common-cancel"))
+                        .disabled(self.saving)
                         .on_click(cx.listener(|this, _, window, cx| this.close(window, cx))),
                 )
                 .action(
                     Button::new("apply-smart-rules")
                         .primary()
-                        .label(t!("common-save"))
-                        .disabled(self.loading || self.failed.is_some())
+                        .label(if self.saving {
+                            t!("smart-rules-saving")
+                        } else {
+                            t!("common-save")
+                        })
+                        .disabled(self.loading || self.failed.is_some() || self.saving)
                         .on_click(cx.listener(|this, _, window, cx| this.apply(window, cx))),
                 )
-                .on_dismiss(cx.listener(|this, _, window, cx| this.close(window, cx))),
+                .on_dismiss(cx.listener(|this, _, window, cx| {
+                    if !this.saving {
+                        this.close(window, cx);
+                    }
+                })),
             )
             .into_any_element()
+    }
+}
+
+fn problem_text(problem: &Problem) -> SharedString {
+    match problem {
+        Problem::EmptyGroup => t!("smart-rules-problem-empty-group"),
+        Problem::MissingField => t!("smart-rules-problem-missing-field"),
+        Problem::WrongOperand(OperandShape::Range) => t!("smart-rules-problem-range"),
+        Problem::WrongOperand(OperandShape::Days) => t!("smart-rules-problem-days"),
+        Problem::WrongOperand(OperandShape::Playlist) => t!("smart-rules-problem-playlist"),
+        Problem::WrongOperand(OperandShape::Truth) => t!("smart-rules-problem-truth"),
+        Problem::WrongOperand(OperandShape::Compared) => t!("smart-rules-problem-compared"),
+        Problem::BooleanField => t!("smart-rules-problem-boolean"),
+        Problem::BadOrder => t!("smart-rules-problem-bad-order"),
     }
 }
 
@@ -1136,14 +1197,12 @@ impl SmartPlaylistEditor {
             _ => {
                 let inputs = self.values.entry(key.clone()).or_insert_with(|| RowInputs {
                     low: cx.new(|cx| {
-                        let mut input =
-                            Input::new(t!("smart-rules-value-placeholder"), cx).compact();
+                        let mut input = Input::new("smart-rules-value-placeholder", cx).compact();
                         input.set_text(low.clone(), cx);
                         input
                     }),
                     high: cx.new(|cx| {
-                        let mut input =
-                            Input::new(t!("smart-rules-value-placeholder"), cx).compact();
+                        let mut input = Input::new("smart-rules-value-placeholder", cx).compact();
                         input.set_text(high.clone(), cx);
                         input
                     }),

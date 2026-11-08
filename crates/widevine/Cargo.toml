@@ -24,6 +24,10 @@ sha2.workspace = true
 smallvec.workspace = true
 tokio = { workspace = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit.workspace = true
+objc2-foundation = { workspace = true, features = ["NSString", "NSURL"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [
   "Win32_Foundation",
