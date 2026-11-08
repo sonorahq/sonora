@@ -8,13 +8,14 @@ use std::rc::Rc;
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Context, Entity, Render, SharedString, Window, div};
 use i18n::t;
-use music::StatsPeriod;
+use music::{Ranked, StatsPeriod};
 use state::{Playback, Sonora, Stats, StatsSource};
 use ui::{ActiveTheme as _, Button, Input, RangeState, Scrollbar, Scroller, TabBar, Text};
 
 use crate::chrome::Chrome;
 use crate::shared::album_grid::CardGrid;
 use crate::shared::shelves::{Rail, STACK_GAP, section};
+use crate::shared::trouble;
 use rankings::Kind;
 
 /// How much of the secondary colour the stats tiles, rows and badges are filled with.
@@ -29,6 +30,14 @@ const BAR_OFF: f32 = 0.25;
 
 /// How many years the era of a listener's songs spans.
 const ERA: i32 = 5;
+
+/// A section's tag, its title, the badges beside the title, and its body when it has one.
+type Part = (
+    &'static str,
+    SharedString,
+    Option<AnyElement>,
+    Option<AnyElement>,
+);
 
 /// The room one stats section has, and what its rail needs to repaint the page.
 #[derive(Clone, Copy)]
@@ -151,18 +160,16 @@ impl StatsView {
 
     /// What replaces the rankings when the source failed to answer.
     fn failure(&self, cx: &mut Context<Self>) -> AnyElement {
-        div()
-            .flex()
-            .flex_col()
-            .items_start()
-            .gap(cx.theme().metrics.pad)
-            .child(ui::spoken("stats-failed", t!("stats-failed")))
-            .child(
-                Button::new("stats-retry")
-                    .label(t!("trouble-retry"))
-                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
-            )
-            .into_any_element()
+        let detail = t!("stats-failed");
+        let retry = cx.listener(|this, _, _, cx| this.refresh(cx));
+        trouble::lost(
+            "stats-lost",
+            t!("trouble-not-loaded"),
+            Some(&detail),
+            retry,
+            cx,
+        )
+        .into_any_element()
     }
 
     /// Every section of the selected source in reading order, or the stand-ins for the rankings
@@ -183,9 +190,11 @@ impl StatsView {
         }
 
         let data = stats.data();
-        let genres = data.genres.clone();
-        // Moods the app names itself are Fluent keys, and the provider's own are plain words.
-        let tags = data.tags.clone();
+        let barren = data.tracks.is_empty() && data.artists.is_empty() && data.albums.is_empty();
+        let (traits, times) = (data.traits(), data.overview.clone());
+        let (genres, tags, years) = (data.genres.clone(), data.tags.clone(), data.years.clone());
+        let (tempos, milestones) = (data.tempos.clone(), data.milestones.clone());
+        // Moods the app names itself are Fluent keys, and a provider's own are plain words.
         let moods: Vec<_> = data
             .moods
             .iter()
@@ -197,17 +206,11 @@ impl StatsView {
                 mood
             })
             .collect();
-        let years = data.years.clone();
-        let tempos = data.tempos.clone();
-        let milestones = data.milestones.clone();
-        let traits = data.traits();
-        let times = data.overview.clone();
-        let barren = data.tracks.is_empty() && data.artists.is_empty() && data.albums.is_empty();
         let rails: Vec<_> = Kind::ALL
             .iter()
             .filter_map(|kind| self.rail(*kind, layout, cx))
             .collect();
-        let years_note = self.badges(
+        let era = self.badges(
             [
                 peak_era(&years)
                     .map(|(from, to)| (t!("stats-badge-era", from = from, to = to), false)),
@@ -217,75 +220,64 @@ impl StatsView {
             ],
             cx,
         );
-        let clock = self.clock(&times, cx);
-        // The page reads from how much was listened to, to what the listening was like, to
-        // when it happened.
-        let mut sections: Vec<AnyElement> = Vec::new();
-        let style = self.style(traits, layout.width, cx);
-        sections.extend(style.map(|body| {
-            section(
-                "stats-style",
-                t!("stats-style-title"),
-                None,
-                body,
-                layout.window,
-                cx,
-            )
-        }));
-        sections.extend(rails);
-        let tempo_note = self.badges(
+        let bpm = self.badges(
             [times
                 .avg_bpm
                 .map(|bpm| (t!("stats-badge-bpm", bpm = bpm), false))],
             cx,
         );
-        let after = [
+        let terms = |tag: &'static str, title: SharedString, terms: Vec<Ranked<String>>| {
+            let body = (!terms.is_empty())
+                .then(|| self.distribution(tag, title.clone(), &terms, layout.width, cx));
+            (tag, title, None, body)
+        };
+        let (clock, note) = match self.clock(&times, cx) {
+            Some((grid, note)) => (Some(grid), note),
+            None => (None, None),
+        };
+        // The page reads from how much was listened to, to what the listening was like, to
+        // when it happened.
+        let before: Vec<Part> = vec![(
+            "stats-style",
+            t!("stats-style-title"),
+            None,
+            self.style(traits, layout.width, cx),
+        )];
+        let after: Vec<Part> = vec![
             (
                 "stats-years",
                 t!("stats-years-title"),
-                years_note,
+                era,
                 self.years(&years, cx),
             ),
             (
                 "stats-tempo",
                 t!("stats-tempo-title"),
-                tempo_note,
+                bpm,
                 self.tempo(&tempos, cx),
             ),
-        ];
-        for (tag, title, note, body) in after {
-            sections.extend(body.map(|body| section(tag, title, note, body, layout.window, cx)));
-        }
-        for (tag, title, terms) in [
-            ("stats-top-genres", t!("stats-top-genres"), genres),
-            ("stats-top-moods", t!("stats-top-moods"), moods),
-            ("stats-top-tags", t!("stats-top-tags"), tags),
-        ] {
-            if !terms.is_empty() {
-                let body = self.distribution(tag, title.clone(), &terms, layout.width, cx);
-                sections.push(section(tag, title, None, body, layout.window, cx));
-            }
-        }
-        sections.extend(clock.map(|(grid, note)| {
-            section(
-                "stats-clock",
-                t!("stats-clock-title"),
-                note,
-                grid,
-                layout.window,
-                cx,
-            )
-        }));
-        sections.extend(self.milestones(&milestones, cx).map(|body| {
-            section(
+            terms("stats-top-genres", t!("stats-top-genres"), genres),
+            terms("stats-top-moods", t!("stats-top-moods"), moods),
+            terms("stats-top-tags", t!("stats-top-tags"), tags),
+            ("stats-clock", t!("stats-clock-title"), note, clock),
+            (
                 "stats-milestones",
                 t!("stats-milestones-title"),
                 None,
-                body,
-                layout.window,
-                cx,
-            )
-        }));
+                self.milestones(&milestones),
+            ),
+        ];
+        let framed = |parts: Vec<Part>| -> Vec<AnyElement> {
+            parts
+                .into_iter()
+                .filter_map(|(tag, title, note, body)| {
+                    Some(section(tag, title, note, body?, layout.window, cx))
+                })
+                .collect()
+        };
+        let mut sections = framed(before);
+        sections.extend(rails);
+        sections.extend(framed(after));
         if barren && sections.is_empty() {
             sections.push(ui::vacant(t!("stats-empty"), cx).into_any_element());
         }

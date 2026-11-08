@@ -1,11 +1,11 @@
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Div, FontWeight, Pixels, SharedString, div, px, relative, svg,
+    AnyElement, App, Context, Div, FontWeight, Hsla, Pixels, SharedString, div, px, relative, svg,
 };
 use i18n::t;
 use music::{Milestone, Trait};
-use ui::{ActiveTheme as _, Perch, Text, Theme, Tipped as _};
+use ui::{ActiveTheme as _, Fact, Perch, Text, Theme, Tipped as _};
 
 use super::timeline::date_label;
 use super::{BAR_OFF, BAR_ON, StatsView, TILE_FILL, TILE_PAD, peak_era};
@@ -96,13 +96,9 @@ impl StatsView {
         })
     }
 
-    /// The plays of the whole history that reached a round number, oldest first.
-    pub(super) fn milestones(
-        &self,
-        milestones: &[Milestone],
-        cx: &Context<Self>,
-    ) -> Option<AnyElement> {
-        let theme = *cx.theme();
+    /// The plays of the whole history that reached a round number, oldest first, as the same
+    /// label and value rows the song page lists its details in.
+    pub(super) fn milestones(&self, milestones: &[Milestone]) -> Option<AnyElement> {
         (!milestones.is_empty()).then(|| {
             div()
                 .id("stats-milestones")
@@ -110,49 +106,16 @@ impl StatsView {
                 .aria_label(t!("stats-milestones-title"))
                 .flex()
                 .flex_col()
-                .rounded(theme.radius)
-                .bg(theme.secondary.opacity(TILE_FILL))
-                .children(milestones.iter().map(|milestone| {
+                .children(milestones.iter().enumerate().map(|(index, milestone)| {
                     let label = match milestone.number {
                         1 => t!("stats-milestone-first"),
                         count => t!("stats-milestone-nth", count = count),
                     };
-                    let date = date_label(milestone.at);
-                    div()
-                        .id(("stats-milestone", milestone.number))
-                        .role(Role::ListItem)
-                        .aria_label(SharedString::from(format!(
-                            "{label}: {} {}, {date}",
-                            milestone.title, milestone.artist
-                        )))
-                        .flex()
-                        .items_center()
-                        .gap(theme.metrics.pad * TILE_PAD)
-                        .px(theme.metrics.pad * TILE_PAD)
-                        .py(theme.metrics.pad)
-                        .child(
-                            div()
-                                .w(theme.metrics.cover)
-                                .flex_none()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(label),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .flex_1()
-                                .min_w_0()
-                                .child(div().truncate().child(milestone.title.clone()))
-                                .child(
-                                    div()
-                                        .truncate()
-                                        .text_size(theme.text(Text::Small))
-                                        .text_color(theme.muted_foreground)
-                                        .child(milestone.artist.clone()),
-                                ),
-                        )
-                        .child(ui::faint(cx).flex_none().child(date))
+                    let (title, artist) = (&milestone.title, &milestone.artist);
+                    let value = format!("{title} · {artist} · {}", date_label(milestone.at));
+                    Fact::new(label, value)
+                        .spoken(("stats-milestone", milestone.number))
+                        .striped(index % 2 == 1)
                 }))
                 .into_any_element()
         })
@@ -247,29 +210,18 @@ impl StatsView {
             .flex_col()
             .gap(theme.metrics.pad / 2.)
             .child(
-                div()
-                    .flex()
-                    .items_end()
-                    .gap(theme.metrics.pad / 8.)
-                    .h(theme.metrics.cover / 2.)
-                    .border_b_1()
-                    .border_color(theme.muted_foreground.opacity(BAR_OFF))
-                    .children(bars.into_iter().enumerate().map(
-                        |(at, (tip, count, stands_out))| {
-                            div()
-                                .id((id, at))
-                                .flex_1()
-                                .h(relative(count as f32 / most as f32))
-                                .min_h(theme.metrics.pad / 4.)
-                                .rounded_t(theme.radius / 2.)
-                                .bg(match (count, stands_out) {
-                                    (0, _) => theme.muted_foreground.opacity(BAR_OFF),
-                                    (_, true) => theme.primary,
-                                    (_, false) => theme.primary.opacity(BAR_ON),
-                                })
-                                .tip_label(tip, Perch::Above)
-                        },
-                    )),
+                floor(&theme).children(bars.into_iter().enumerate().map(
+                    |(at, (tip, count, stands_out))| {
+                        let fill = match (count, stands_out) {
+                            (0, _) => theme.muted_foreground.opacity(BAR_OFF),
+                            (_, true) => theme.primary,
+                            (_, false) => theme.primary.opacity(BAR_ON),
+                        };
+                        bar(&theme, count as f32 / most as f32, fill)
+                            .id((id, at))
+                            .tip_label(tip, Perch::Above)
+                    },
+                )),
             )
             .child(
                 div()
@@ -282,100 +234,56 @@ impl StatsView {
     }
 }
 
-/// The icon of a trait, its name and a sentence on what it means.
+/// The row that bars stand in, resting on a floor line.
+pub(super) fn floor(theme: &Theme) -> Div {
+    div()
+        .flex()
+        .items_end()
+        .gap(theme.metrics.pad / 8.)
+        .h(theme.metrics.cover / 2.)
+        .border_b_1()
+        .border_color(theme.muted_foreground.opacity(BAR_OFF))
+}
+
+/// A bar `share` as tall as the row, rounded at the top only, so that it stands on the floor.
+pub(super) fn bar(theme: &Theme, share: f32, fill: Hsla) -> Div {
+    div()
+        .flex_1()
+        .h(relative(share))
+        .min_h(theme.metrics.pad / 4.)
+        .rounded_t(theme.radius / 2.)
+        .bg(fill)
+}
+
+/// The icon of a trait, its name and a sentence on what it means. The name and the sentence are
+/// the Fluent messages `stats-trait-<slug>` and `stats-trait-<slug>-note`.
 fn wording(which: Trait) -> (&'static str, SharedString, SharedString) {
-    match which {
-        Trait::EarlyBird => (
-            "icons/sunrise.svg",
-            t!("stats-trait-early-bird"),
-            t!("stats-trait-early-bird-note"),
-        ),
-        Trait::Daytime => (
-            "icons/sun.svg",
-            t!("stats-trait-daytime"),
-            t!("stats-trait-daytime-note"),
-        ),
-        Trait::Evening => (
-            "icons/sunset.svg",
-            t!("stats-trait-evening"),
-            t!("stats-trait-evening-note"),
-        ),
-        Trait::NightOwl => (
-            "icons/moon.svg",
-            t!("stats-trait-night-owl"),
-            t!("stats-trait-night-owl-note"),
-        ),
-        Trait::Weekender => (
-            "icons/calendar-days.svg",
-            t!("stats-trait-weekender"),
-            t!("stats-trait-weekender-note"),
-        ),
-        Trait::Weekday => (
-            "icons/briefcase.svg",
-            t!("stats-trait-weekday"),
-            t!("stats-trait-weekday-note"),
-        ),
-        Trait::Explorer => (
-            "icons/compass.svg",
-            t!("stats-trait-explorer"),
-            t!("stats-trait-explorer-note"),
-        ),
-        Trait::Loyalist => (
-            "icons/heart.svg",
-            t!("stats-trait-loyalist"),
-            t!("stats-trait-loyalist-note"),
-        ),
-        Trait::Mainstream => (
-            "icons/trending-up.svg",
-            t!("stats-trait-mainstream"),
-            t!("stats-trait-mainstream-note"),
-        ),
-        Trait::Throwback => (
-            "icons/rotate-ccw-clock.svg",
-            t!("stats-trait-throwback"),
-            t!("stats-trait-throwback-note"),
-        ),
-        Trait::FreshEars => (
-            "icons/sparkles.svg",
-            t!("stats-trait-fresh-ears"),
-            t!("stats-trait-fresh-ears-note"),
-        ),
-        Trait::Collaborator => (
-            "icons/users-round-collaboration.svg",
-            t!("stats-trait-collaborator"),
-            t!("stats-trait-collaborator-note"),
-        ),
-        Trait::Superfan => (
-            "icons/star.svg",
-            t!("stats-trait-superfan"),
-            t!("stats-trait-superfan-note"),
-        ),
-        Trait::Daily => (
-            "icons/flame.svg",
-            t!("stats-trait-daily"),
-            t!("stats-trait-daily-note"),
-        ),
-        Trait::Rising => (
-            "icons/rocket.svg",
-            t!("stats-trait-rising"),
-            t!("stats-trait-rising-note"),
-        ),
-        Trait::FastLane => (
-            "icons/zap.svg",
-            t!("stats-trait-fast-lane"),
-            t!("stats-trait-fast-lane-note"),
-        ),
-        Trait::SlowBurner => (
-            "icons/snail.svg",
-            t!("stats-trait-slow-burner"),
-            t!("stats-trait-slow-burner-note"),
-        ),
-        Trait::DeepDiver => (
-            "icons/gem.svg",
-            t!("stats-trait-deep-diver"),
-            t!("stats-trait-deep-diver-note"),
-        ),
-    }
+    let (icon, slug) = match which {
+        Trait::EarlyBird => ("icons/sunrise.svg", "early-bird"),
+        Trait::Daytime => ("icons/sun.svg", "daytime"),
+        Trait::Evening => ("icons/sunset.svg", "evening"),
+        Trait::NightOwl => ("icons/moon.svg", "night-owl"),
+        Trait::Weekender => ("icons/calendar-days.svg", "weekender"),
+        Trait::Weekday => ("icons/briefcase.svg", "weekday"),
+        Trait::Explorer => ("icons/compass.svg", "explorer"),
+        Trait::Loyalist => ("icons/heart.svg", "loyalist"),
+        Trait::Mainstream => ("icons/trending-up.svg", "mainstream"),
+        Trait::DeepDiver => ("icons/gem.svg", "deep-diver"),
+        Trait::Throwback => ("icons/rotate-ccw-clock.svg", "throwback"),
+        Trait::FreshEars => ("icons/sparkles.svg", "fresh-ears"),
+        Trait::Collaborator => ("icons/users-round-collaboration.svg", "collaborator"),
+        Trait::Superfan => ("icons/star.svg", "superfan"),
+        Trait::Daily => ("icons/flame.svg", "daily"),
+        Trait::Rising => ("icons/rocket.svg", "rising"),
+        Trait::FastLane => ("icons/zap.svg", "fast-lane"),
+        Trait::SlowBurner => ("icons/snail.svg", "slow-burner"),
+    };
+    let key = format!("stats-trait-{slug}");
+    (
+        icon,
+        i18n::lookup(&key, None),
+        i18n::lookup(&format!("{key}-note"), None),
+    )
 }
 
 /// A tile of the accent colour with a large icon beside a name over a quieter sentence.

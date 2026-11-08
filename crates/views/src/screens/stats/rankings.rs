@@ -4,7 +4,7 @@ use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{AnyElement, App, ClickEvent, Context, Pixels, SharedString, Window, div};
 use i18n::t;
-use music::{Move, Ranked, Track};
+use music::{Ranked, Track};
 use router::Destination;
 use state::{Entry, Found, Origin, StatsSource};
 use ui::{Card, Corner};
@@ -46,14 +46,9 @@ impl Kind {
         }
     }
 
+    /// The heading, which is the message the tag names.
     pub(super) fn title(self) -> SharedString {
-        match self {
-            Self::Artists => t!("stats-top-artists"),
-            Self::Songs => t!("stats-top-songs"),
-            Self::Albums => t!("stats-top-albums"),
-            Self::Songwriters => t!("stats-top-songwriters"),
-            Self::Producers => t!("stats-top-producers"),
-        }
+        i18n::lookup(self.tag(), None)
     }
 }
 
@@ -166,7 +161,7 @@ impl StatsView {
         let (total, new, extras) = match kind {
             Kind::Artists => (
                 o.artists
-                    .or(listed(data.artists.len()))
+                    .or_else(|| listed(data.artists.len()))
                     .map(|count| t!("count-artists", count = count)),
                 o.new_artists,
                 vec![
@@ -176,7 +171,7 @@ impl StatsView {
             ),
             Kind::Songs => (
                 o.tracks
-                    .or(listed(data.tracks.len()))
+                    .or_else(|| listed(data.tracks.len()))
                     .map(|count| t!("count-songs", count = count)),
                 o.new_tracks,
                 vec![
@@ -195,7 +190,7 @@ impl StatsView {
             Kind::Songwriters | Kind::Producers => (None, None, Vec::new()),
             Kind::Albums => (
                 o.albums
-                    .or(listed(data.albums.len()))
+                    .or_else(|| listed(data.albums.len()))
                     .map(|count| t!("count-albums", count = count)),
                 None,
                 Vec::new(),
@@ -376,31 +371,33 @@ impl StatsView {
                         let Some(found) = found else {
                             return;
                         };
-                        match (found, play) {
+                        let origin = match (&found, play) {
                             (Found::Track(track), true) => {
-                                playback.update(cx, |playback, cx| playback.play_radio(&track, cx))
-                            }
-                            (Found::Track(track), false) => router::navigate(
-                                Destination::Song(track.id.unwrap_or_default().into()),
-                                cx,
-                            ),
-                            (Found::Artist(artist), false) => {
-                                router::navigate(Destination::Artist(artist.id.into()), cx)
-                            }
-                            (Found::Album(album), false) => {
-                                router::navigate(Destination::Album(album.id.into()), cx)
+                                return playback
+                                    .update(cx, |playback, cx| playback.play_radio(track, cx));
                             }
                             (Found::Artist(artist), true) => {
-                                let origin = Origin::artist(artist.id).named(artist.name);
-                                playback
-                                    .update(cx, |playback, cx| playback.toggle_origin(&origin, cx))
+                                Origin::artist(artist.id.clone()).named(artist.name.clone())
                             }
                             (Found::Album(album), true) => {
-                                let origin = Origin::album(album.id).named(album.name);
-                                playback
-                                    .update(cx, |playback, cx| playback.toggle_origin(&origin, cx))
+                                Origin::album(album.id.clone()).named(album.name.clone())
                             }
-                        }
+                            (_, false) => {
+                                return router::navigate(
+                                    match found {
+                                        Found::Track(track) => {
+                                            Destination::Song(track.id.unwrap_or_default().into())
+                                        }
+                                        Found::Artist(artist) => {
+                                            Destination::Artist(artist.id.into())
+                                        }
+                                        Found::Album(album) => Destination::Album(album.id.into()),
+                                    },
+                                    cx,
+                                );
+                            }
+                        };
+                        playback.update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
                     },
                     cx,
                 );
@@ -409,12 +406,12 @@ impl StatsView {
     }
 }
 
-/// What the source knows of a ranked item: its place, plays, how its place moved and how popular
+/// What the source knows of a ranked item: its place, plays, whether it is new and how popular
 /// the song is. A source that ranks by affinity alone has no plays, and none are invented.
 struct Standing {
     rank: usize,
     count: Option<usize>,
-    moved: Option<Move>,
+    fresh: bool,
     popularity: u32,
 }
 
@@ -422,7 +419,7 @@ fn standing<T>(rank: usize, ranked: &Ranked<T>, popularity: u32) -> Standing {
     Standing {
         rank,
         count: ranked.count,
-        moved: ranked.moved,
+        fresh: ranked.fresh,
         popularity,
     }
 }
@@ -430,7 +427,7 @@ fn standing<T>(rank: usize, ranked: &Ranked<T>, popularity: u32) -> Standing {
 impl Standing {
     /// The word that marks an item as new to the ranking. A rank that only moved has none.
     fn movement(&self) -> Option<SharedString> {
-        (self.moved == Some(Move::New)).then(|| t!("stats-rank-new"))
+        self.fresh.then(|| t!("stats-rank-new"))
     }
 
     /// Lays the standing over the card's artwork: the place, with how it moved, in the top left,

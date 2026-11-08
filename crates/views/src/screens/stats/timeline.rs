@@ -8,6 +8,7 @@ use music::StatsPeriod;
 use state::StatsSource;
 use ui::{ActiveTheme as _, Button, InfoCard, RangeScrubber, TabBar, Text};
 
+use super::insights::{bar, floor};
 use super::{BAR_OFF, BAR_ON, StatsView};
 
 const EPOCH: Date = Date::constant(1970, 1, 1);
@@ -90,7 +91,7 @@ impl StatsView {
         if stats.source() == StatsSource::Provider {
             return;
         }
-        let Some((from, to)) = stats.dates().or(stats.bounds()) else {
+        let Some((from, to)) = stats.dates().or_else(|| stats.bounds()) else {
             return;
         };
         for (field, seconds) in [(&self.start, from), (&self.end, to)] {
@@ -253,26 +254,18 @@ impl StatsView {
         let theme = *cx.theme();
         let density = self.stats.read(cx).density();
         let most = density.iter().copied().max().unwrap_or_default().max(1);
-        div()
-            .flex()
-            .items_end()
-            .gap(theme.metrics.pad / 8.)
-            .h(theme.metrics.cover / 2.)
-            .border_b_1()
-            .border_color(theme.muted_foreground.opacity(BAR_OFF))
-            .children(density.iter().enumerate().map(|(index, count)| {
-                let at = (index as f32 + 0.5) / density.len() as f32;
-                let covered = (selection.0..=selection.1).contains(&at);
-                div()
-                    .flex_1()
-                    .h(relative(*count as f32 / most as f32))
-                    .min_h(theme.metrics.pad / 4.)
-                    .rounded_t(theme.radius / 2.)
-                    .bg(match covered {
-                        true => theme.primary.opacity(BAR_ON),
-                        false => theme.muted_foreground.opacity(BAR_OFF),
-                    })
-            }))
+        floor(&theme).children(density.iter().enumerate().map(|(index, count)| {
+            let at = (index as f32 + 0.5) / density.len() as f32;
+            let covered = (selection.0..=selection.1).contains(&at);
+            bar(
+                &theme,
+                *count as f32 / most as f32,
+                match covered {
+                    true => theme.primary.opacity(BAR_ON),
+                    false => theme.muted_foreground.opacity(BAR_OFF),
+                },
+            )
+        }))
     }
 
     /// Marks the busiest day and the longest streak of the whole history under the scrubber, so
@@ -425,7 +418,7 @@ impl StatsView {
         }
         let current = {
             let stats = self.stats.read(cx);
-            stats.dates().or(stats.bounds())
+            stats.dates().or_else(|| stats.bounds())
         };
         let same = |(from, to): (i64, i64)| {
             current.is_some_and(|(now_from, now_to)| {

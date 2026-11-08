@@ -530,25 +530,21 @@ count-songs =
         [one] { $count } song
        *[other] { $count } songs
     }
-count-artists =
-    { $count ->
-        [one] { $count } artist
-       *[other] { $count } artists
+count-artists = { $count ->
+    [one] { $count } artist
+   *[other] { $count } artists
     }
-count-albums =
-    { $count ->
-        [one] { $count } album
-       *[other] { $count } albums
+count-albums = { $count ->
+    [one] { $count } album
+   *[other] { $count } albums
     }
-count-plays =
-    { $count ->
-        [one] { $count } play
-       *[other] { $count } plays
+count-plays = { $count ->
+    [one] { $count } play
+   *[other] { $count } plays
     }
-count-days =
-    { $count ->
-        [one] { $count } day
-       *[other] { $count } days
+count-days = { $count ->
+    [one] { $count } day
+   *[other] { $count } days
     }
 count-tracks =
     { $count ->

@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use crate::spotify::{collection, pb};
 use crate::{
-    Board, Descriptors, ListeningStats, Move, Overview, Ranked, SavedArtist, StatsPeriod, Track,
+    Board, Descriptors, ListeningStats, Overview, Ranked, SavedArtist, StatsPeriod, Track,
     album_of, compare,
 };
 
@@ -63,18 +63,9 @@ pub(crate) async fn stats(session: &Session, period: StatsPeriod) -> Result<List
     );
     let mut metadata = metadata?;
     let mut years = Vec::new();
-    let mut descriptors = descriptors.unwrap_or_else(|error| {
-        log::warn!("stats: cannot read Spotify track descriptors: {error:#}");
-        HashMap::new()
-    });
-    let features = features.unwrap_or_else(|error| {
-        log::warn!("stats: cannot read Spotify audio features: {error:#}");
-        HashMap::new()
-    });
-    let credited = credited.unwrap_or_else(|error| {
-        log::warn!("stats: cannot read Spotify credits: {error:#}");
-        HashMap::new()
-    });
+    let mut descriptors = optional("descriptors", descriptors);
+    let features = optional("audio features", features);
+    let credited = optional("credits", credited);
     let mut feeling = Board::default();
     let (mut songwriters, mut producers) = (Board::default(), Board::default());
     let mut genres = Board::default();
@@ -82,12 +73,10 @@ pub(crate) async fn stats(session: &Session, period: StatsPeriod) -> Result<List
     let mut albums = Board::default();
     let mut tracks = Vec::new();
     for uri in uris {
-        let Some((mut track, release)) = metadata.remove(&uri) else {
+        let Some((mut track, year)) = metadata.remove(&uri) else {
             continue;
         };
-        if let Some(year) = release.year {
-            years.push(year);
-        }
+        years.extend(year);
         if let Some(found) = uri
             .strip_prefix("spotify:track:")
             .and_then(|id| features.get(id))
@@ -153,19 +142,15 @@ pub(crate) async fn stats(session: &Session, period: StatsPeriod) -> Result<List
     overview.artists = Some(totals.1).filter(|total| *total > 0);
     overview.recent_share = recent(&years);
     if let Some((tracks_before, artists_before)) = &before {
-        compare(&mut tracks, tracks_before, |track| {
+        compare(&mut tracks, tracks_before.clone(), |track| {
             track.id.clone().unwrap_or_default()
         });
-        compare(&mut artists, artists_before, |artist| artist.id.clone());
+        compare(&mut artists, artists_before.clone(), |artist| {
+            artist.id.clone()
+        });
         // What is new against the broader window is what the listener has newly taken to.
-        let new_in = |moves: Vec<Option<Move>>| {
-            moves
-                .into_iter()
-                .filter(|moved| *moved == Some(Move::New))
-                .count()
-        };
-        overview.new_tracks = Some(new_in(tracks.iter().map(|row| row.moved).collect()));
-        overview.new_artists = Some(new_in(artists.iter().map(|row| row.moved).collect()));
+        overview.new_tracks = Some(tracks.iter().filter(|row| row.fresh).count());
+        overview.new_artists = Some(artists.iter().filter(|row| row.fresh).count());
     }
     // Moods read from the audio say more than a song's descriptor words. Those words stay as tags
     // beside them, and stand in as the moods when the analysis is missing.
@@ -191,13 +176,20 @@ pub(crate) async fn stats(session: &Session, period: StatsPeriod) -> Result<List
     })
 }
 
-/// When a song came out.
-struct Release {
-    year: Option<i32>,
+/// What a read that only adds detail gives: its answer, or an empty one with a warning when it
+/// failed, so that the rankings still show.
+fn optional<T: Default>(what: &str, result: Result<T>) -> T {
+    result.unwrap_or_else(|error| {
+        log::warn!("stats: cannot read Spotify {what}: {error:#}");
+        T::default()
+    })
 }
 
-/// Reads the songs with the release year that the same metadata carries.
-async fn released(session: &Session, uris: &[String]) -> Result<HashMap<String, (Track, Release)>> {
+/// Reads the songs with the release year, where it is known, that the same metadata carries.
+async fn released(
+    session: &Session,
+    uris: &[String],
+) -> Result<HashMap<String, (Track, Option<i32>)>> {
     let entities = collection::extended(session, uris, ExtensionKind::TRACK_V4)
         .await
         .context("cannot read track metadata")?;
@@ -205,12 +197,9 @@ async fn released(session: &Session, uris: &[String]) -> Result<HashMap<String, 
         .into_iter()
         .filter_map(|entity| {
             let message = TrackMessage::parse_from_bytes(&entity.extension_data.value).ok()?;
-            let album = &message.album;
-            let release = Release {
-                year: Some(album.date.year()).filter(|year| *year > 0),
-            };
+            let year = Some(message.album.date.year()).filter(|year| *year > 0);
             let track = collection::track_from(&entity.entity_uri, &message);
-            Some((entity.entity_uri, (track, release)))
+            Some((entity.entity_uri, (track, year)))
         })
         .collect())
 }

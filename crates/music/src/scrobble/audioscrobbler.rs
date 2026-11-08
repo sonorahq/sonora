@@ -232,57 +232,53 @@ impl Service for AudioScrobbler {
         }
         if let Some((Ok(before), plays_before @ Some(1..))) = before {
             let key = |name: &str, artist: &str| format!("{name}\u{1}{artist}");
-            let names = |rows: &[Ranked<SavedArtist>]| -> Vec<String> {
-                rows.iter().map(|row| row.item.name.clone()).collect()
-            };
-            compare(&mut charts.artists, &names(&before.artists), |artist| {
-                artist.name.clone()
-            });
-            let songs: Vec<_> = before
-                .tracks
-                .iter()
-                .map(|row| key(&row.item.name, &row.item.artists))
-                .collect();
-            compare(&mut charts.tracks, &songs, |track| {
-                key(&track.name, &track.artists)
-            });
-            let records: Vec<_> = before
-                .albums
-                .iter()
-                .map(|row| key(&row.item.name, &row.item.artists))
-                .collect();
-            compare(&mut charts.albums, &records, |album| {
-                key(&album.name, &album.artists)
-            });
+            compare(
+                &mut charts.artists,
+                before.artists.iter().map(|row| row.item.name.clone()),
+                |artist| artist.name.clone(),
+            );
+            compare(
+                &mut charts.tracks,
+                before
+                    .tracks
+                    .iter()
+                    .map(|row| key(&row.item.name, &row.item.artists)),
+                |track| key(&track.name, &track.artists),
+            );
+            compare(
+                &mut charts.albums,
+                before
+                    .albums
+                    .iter()
+                    .map(|row| key(&row.item.name, &row.item.artists)),
+                |album| key(&album.name, &album.artists),
+            );
             overview.change = overview
                 .plays
                 .zip(plays_before)
                 .map(|(now, was)| ((now as i64 - was as i64) * 100 / was as i64) as i32);
         }
-        let mut lifetime = match info {
-            Ok(info) => {
-                let user = info.get("user").unwrap_or(&info);
-                Overview {
-                    plays: number(user, "playcount"),
-                    artists: number(user, "artist_count"),
-                    tracks: number(user, "track_count"),
-                    albums: number(user, "album_count"),
-                    since: registered(user),
-                    ..Default::default()
-                }
-            }
-            Err(error) => {
-                log::debug!("stats: cannot load Last.fm lifetime totals: {error:#}");
-                Overview::default()
-            }
-        };
-        lifetime.plays_per_day = lifetime
-            .plays
-            .zip(lifetime.since)
-            .and_then(|(plays, since)| {
+        let user = info
+            .as_ref()
+            .ok()
+            .map(|info| info.get("user").unwrap_or(info));
+        overview.since = user.and_then(registered);
+        if let (None, Some(user)) = (dates, user) {
+            // The window is the whole account, so its totals are the account's.
+            let plays = number(user, "playcount");
+            let per_day = plays.zip(overview.since).and_then(|(plays, since)| {
                 let days = (jiff::Timestamp::now().as_second() - since) as f32 / 86_400.;
                 (days >= 1.).then(|| plays as f32 / days)
             });
+            overview = Overview {
+                plays,
+                artists: number(user, "artist_count"),
+                tracks: number(user, "track_count"),
+                albums: number(user, "album_count"),
+                plays_per_day: per_day,
+                ..overview
+            };
+        }
         let genres = tags
             .map(|tags| {
                 rows(&tags, "toptags", "tag")
@@ -292,26 +288,12 @@ impl Service for AudioScrobbler {
                     .collect()
             })
             .unwrap_or_default();
-        if dates.is_none() {
-            // The window is the whole account, so one set of figures says it all.
-            overview = Overview {
-                plays: lifetime.plays,
-                tracks: lifetime.tracks,
-                artists: lifetime.artists,
-                albums: lifetime.albums,
-                since: lifetime.since,
-                plays_per_day: lifetime.plays_per_day,
-                ..overview
-            };
-            lifetime = Overview::default();
-        }
         Ok(ListeningStats {
             artists: charts.artists,
             tracks: charts.tracks,
             albums: charts.albums,
             genres,
             overview,
-            lifetime,
             ..Default::default()
         })
     }
@@ -384,16 +366,7 @@ impl AudioScrobbler {
         let reads = milestone_numbers(total)
             .into_iter()
             .map(|number| async move {
-                let page = (total - number + 1).to_string();
-                let query = [
-                    ("user", account.name.as_str()),
-                    ("limit", "1"),
-                    ("page", page.as_str()),
-                ];
-                let recent = self
-                    .read("user.getRecentTracks", &query, account)
-                    .await
-                    .ok()?;
+                let recent = self.recent(account, "1", total - number + 1, None).await?;
                 // A song playing right now leads every page and has no date, so it is skipped.
                 let track = rows(&recent, "recenttracks", "track")
                     .into_iter()
@@ -501,54 +474,49 @@ impl AudioScrobbler {
         })
     }
 
-    /// How many plays there are between two dates, or ever. The recent tracks of a range say so
-    /// in their first page.
-    async fn plays_between(&self, account: &Account, range: (i64, i64)) -> Option<usize> {
-        let (from, to) = (range.0.to_string(), range.1.to_string());
-        let query = [
+    /// One page of the recent tracks, newest first, optionally within a range of dates.
+    async fn recent(
+        &self,
+        account: &Account,
+        limit: &str,
+        page: usize,
+        dates: Option<(i64, i64)>,
+    ) -> Option<Value> {
+        let page = page.to_string();
+        let (from, to) = dates
+            .map(|(from, to)| (from.to_string(), to.to_string()))
+            .unzip();
+        let mut query = vec![
             ("user", account.name.as_str()),
-            ("limit", "1"),
-            ("from", from.as_str()),
-            ("to", to.as_str()),
+            ("limit", limit),
+            ("page", page.as_str()),
         ];
-        let recent = self
-            .read("user.getRecentTracks", &query, account)
+        query.extend(from.as_deref().map(|from| ("from", from)));
+        query.extend(to.as_deref().map(|to| ("to", to)));
+        self.read("user.getRecentTracks", &query, account)
             .await
-            .ok()?;
-        attr_total(&recent, "recenttracks")
+            .ok()
+    }
+
+    /// How many plays there are between two dates, which the first page of a range says.
+    async fn plays_between(&self, account: &Account, range: (i64, i64)) -> Option<usize> {
+        attr_total(
+            &self.recent(account, "1", 1, Some(range)).await?,
+            "recenttracks",
+        )
     }
 
     /// How many plays there are between two dates (or ever), and the start times of the latest
-    /// of them, newest first.
+    /// of them, newest first. Every page is asked for at once, since the first only says how
+    /// many there are, and a page past the end comes back empty.
     async fn activity(
         &self,
         account: &Account,
         dates: Option<(i64, i64)>,
     ) -> Option<(usize, Vec<i64>)> {
-        let (from, to) = dates
-            .map(|(from, to)| (from.to_string(), to.to_string()))
-            .unzip();
-        let page = |number: usize| {
-            let (from, to) = (from.as_deref(), to.as_deref());
-            async move {
-                let number = number.to_string();
-                let mut query = vec![
-                    ("user", account.name.as_str()),
-                    ("limit", ACTIVITY_PAGE),
-                    ("page", number.as_str()),
-                ];
-                query.extend(from.map(|from| ("from", from)));
-                query.extend(to.map(|to| ("to", to)));
-                self.read("user.getRecentTracks", &query, account)
-                    .await
-                    .ok()
-            }
-        };
-        // Every page is asked for at once, since the first only says how many there are. A page
-        // past the end comes back empty.
-        let mut chunks = futures::future::join_all((1..=ACTIVITY_PAGES).map(page))
-            .await
-            .into_iter();
+        let pages =
+            (1..=ACTIVITY_PAGES).map(|page| self.recent(account, ACTIVITY_PAGE, page, dates));
+        let mut chunks = futures::future::join_all(pages).await.into_iter();
         let first = chunks.next()??;
         let plays = attr_total(&first, "recenttracks")?;
         let times = std::iter::once(first)
@@ -556,8 +524,7 @@ impl AudioScrobbler {
             .flat_map(|chunk| {
                 rows(&chunk, "recenttracks", "track")
                     .into_iter()
-                    .filter_map(|play| number(play.get("date")?, "uts"))
-                    .filter_map(|at| i64::try_from(at).ok())
+                    .filter_map(|play| number_of(play.get("date")?, "uts"))
                     .collect::<Vec<_>>()
             })
             .collect();

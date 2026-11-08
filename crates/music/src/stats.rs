@@ -20,17 +20,8 @@ pub struct Ranked<T> {
     pub count: Option<usize>,
     /// The source's own page for the item, when it has no matching catalogue id.
     pub external_url: Option<String>,
-    /// How the item's rank moved against what the source compares it to, when it compares.
-    pub moved: Option<Move>,
-}
-
-/// How an item's rank moved between two lists.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Move {
-    New,
-    Up(usize),
-    Down(usize),
-    Same,
+    /// Whether the item is absent from the list the source compares it to, where it compares.
+    pub fresh: bool,
 }
 
 impl<T> Ranked<T> {
@@ -39,7 +30,7 @@ impl<T> Ranked<T> {
             item,
             count,
             external_url: None,
-            moved: None,
+            fresh: false,
         }
     }
 
@@ -168,8 +159,6 @@ pub struct ListeningStats {
     pub density: Vec<usize>,
     /// The figures of the selected period.
     pub overview: Overview,
-    /// The figures of the whole account, for a source that keeps them apart from the period.
-    pub lifetime: Overview,
 }
 
 /// A play that reached a round number in the listener's whole history.
@@ -243,13 +232,11 @@ impl ListeningStats {
         });
         let total: usize = o.clock.iter().sum();
         let weekend: usize = o.clock.iter().skip(5 * 24).sum();
-        let days = (total > 0)
-            .then(|| match weekend * 100 / total {
-                40.. => Some(Trait::Weekender),
-                ..=15 => Some(Trait::Weekday),
-                _ => None,
-            })
-            .flatten();
+        let days = match (total > 0).then(|| weekend * 100 / total) {
+            Some(40..) => Some(Trait::Weekender),
+            Some(..=15) => Some(Trait::Weekday),
+            _ => None,
+        };
         // Without a record of plays or a window to compare with, how many different artists the
         // top songs spread over says as much: many suggest exploring, a few suggest devotion.
         let mut leads: HashMap<String, usize> = HashMap::new();
@@ -282,10 +269,7 @@ impl ListeningStats {
             (_, Some(..=2012)) => Some(Trait::Throwback),
             _ => None,
         };
-        let collaborator = o
-            .collab_share
-            .filter(|share| *share >= 40)
-            .map(|_| Trait::Collaborator);
+        let collaborator = (o.collab_share >= Some(40)).then_some(Trait::Collaborator);
         // One artist taking a quarter of the plays, or of the top songs where there are no plays.
         let by_plays = self
             .artists
@@ -295,21 +279,13 @@ impl ListeningStats {
             .map(|(top, plays)| top * 100 / plays);
         let by_songs =
             (listed > 0).then(|| leads.values().max().copied().unwrap_or_default() * 100 / listed);
-        let superfan = by_plays
-            .or(by_songs)
-            .filter(|share| *share >= 25)
-            .map(|_| Trait::Superfan);
-        let daily = o
-            .streak
-            .filter(|(from, to)| {
-                to.since((jiff::Unit::Day, *from))
-                    .is_ok_and(|span| span.get_days() >= 6)
-            })
-            .map(|_| Trait::Daily);
-        let rising = o
-            .change
-            .filter(|change| *change >= 15)
-            .map(|_| Trait::Rising);
+        let superfan = (by_plays.or(by_songs) >= Some(25)).then_some(Trait::Superfan);
+        let week = o.streak.is_some_and(|(from, to)| {
+            to.since((jiff::Unit::Day, from))
+                .is_ok_and(|span| span.get_days() >= 6)
+        });
+        let daily = week.then_some(Trait::Daily);
+        let rising = (o.change >= Some(15)).then_some(Trait::Rising);
         let tempo = o.avg_bpm.and_then(|bpm| match bpm {
             125.. => Some(Trait::FastLane),
             ..=100 => Some(Trait::SlowBurner),
@@ -383,17 +359,15 @@ impl<T> Board<T> {
     }
 }
 
-/// Marks each row as new, up, down or the same against `before`, the keys of the list it is
-/// compared with in rank order.
-pub fn compare<T>(rows: &mut [Ranked<T>], before: &[String], key: impl Fn(&T) -> String) {
-    for (rank, row) in rows.iter_mut().enumerate() {
-        let was = before.iter().position(|earlier| *earlier == key(&row.item));
-        row.moved = Some(match was {
-            None => Move::New,
-            Some(was) if was > rank => Move::Up(was - rank),
-            Some(was) if was < rank => Move::Down(rank - was),
-            Some(_) => Move::Same,
-        });
+/// Marks each row that is absent from `before`, the keys of the list it is compared with.
+pub fn compare<T>(
+    rows: &mut [Ranked<T>],
+    before: impl IntoIterator<Item = String>,
+    key: impl Fn(&T) -> String,
+) {
+    let known: HashSet<String> = before.into_iter().collect();
+    for row in rows {
+        row.fresh = !known.contains(&key(&row.item));
     }
 }
 

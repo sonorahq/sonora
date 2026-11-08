@@ -64,8 +64,8 @@ pub use output::{Server as SoundServer, missing_bridge};
 pub use redact::redact;
 pub use spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
 pub use stats::{
-    Board, Descriptors, ListeningStats, Milestone, Move, Overview, Ranked, StatsPeriod, Trait,
-    album_key, album_of, compare, credits, milestone_numbers, tag_key,
+    Board, Descriptors, ListeningStats, Milestone, Overview, Ranked, StatsPeriod, Trait, album_key,
+    album_of, compare, credits, milestone_numbers, tag_key,
 };
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";

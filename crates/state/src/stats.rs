@@ -7,7 +7,7 @@ use futures::StreamExt as _;
 use gpui::{App, Context, Entity, Task};
 use music::scrobble::{self, Service};
 use music::{
-    Album, Board, CoverSize, Descriptors, ListeningStats, Milestone, MusicApi, Overview, Ranked,
+    Album, Board, CoverSize, Descriptors, ListeningStats, Milestone, MusicApi, Overview,
     SavedArtist, StatsPeriod, Track, album_key, album_of, compare, credits, milestone_numbers,
     tag_key,
 };
@@ -105,39 +105,39 @@ impl Entry {
     fn adopt(&self, found: &Found, data: &mut ListeningStats) {
         match (self, found) {
             (Self::Artist { name }, Found::Artist(found)) => {
-                let rows = data.artists.iter_mut();
-                for row in rows.filter(|row| row.item.id.is_empty() && same(&row.item.name, name)) {
-                    let cover = found.cover.clone().or(row.item.cover.take());
-                    row.item = SavedArtist {
-                        cover,
-                        ..found.clone()
-                    };
+                for row in &mut data.artists {
+                    if row.item.id.is_empty() && same(&row.item.name, name) {
+                        let cover = found.cover.clone().or_else(|| row.item.cover.take());
+                        row.item = SavedArtist {
+                            cover,
+                            ..found.clone()
+                        };
+                    }
                 }
             }
             (Self::Track { title, artist }, Found::Track(found)) => {
-                let rows = data.tracks.iter_mut();
-                for row in rows.filter(|row| {
-                    row.item.id.is_none() && named(&row.item.name, &row.item.artists, title, artist)
-                }) {
-                    let cover = found.cover.clone().or(row.item.cover.take());
-                    row.item = Track {
-                        cover,
-                        ..found.clone()
-                    };
+                for row in &mut data.tracks {
+                    let item = &mut row.item;
+                    if item.id.is_none() && named(&item.name, &item.artists, title, artist) {
+                        let cover = found.cover.clone().or_else(|| item.cover.take());
+                        *item = Track {
+                            cover,
+                            ..found.clone()
+                        };
+                    }
                 }
             }
             (Self::Album { title, artist }, Found::Album(found)) => {
-                let rows = data.albums.iter_mut();
-                for row in rows.filter(|row| {
-                    row.item.id.is_empty()
-                        && named(&row.item.name, &row.item.artists, title, artist)
-                }) {
-                    let chart = row.item.cover.take();
-                    row.item = Album {
-                        cover: found.cover.clone().or(chart.clone()),
-                        cover_large: found.cover_large.clone().or(chart),
-                        ..found.clone()
-                    };
+                for row in &mut data.albums {
+                    let item = &mut row.item;
+                    if item.id.is_empty() && named(&item.name, &item.artists, title, artist) {
+                        let chart = item.cover.take();
+                        *item = Album {
+                            cover: found.cover.clone().or_else(|| chart.clone()),
+                            cover_large: found.cover_large.clone().or(chart),
+                            ..found.clone()
+                        };
+                    }
                 }
             }
             _ => {}
@@ -502,6 +502,8 @@ impl Stats {
                 Ok(data)
             },
             move |this, result, cx| {
+                // Each artist is asked for once, in rank order, so the top cards fill first.
+                let mut seen = HashSet::new();
                 let missing: Vec<_> = result
                     .as_ref()
                     .map(|data| {
@@ -509,9 +511,9 @@ impl Stats {
                             .iter()
                             .chain(&data.producers)
                             .map(|ranked| ranked.item.id.clone())
-                            .filter(|id| !this.log.portraits.contains_key(id))
-                            .collect::<HashSet<_>>()
-                            .into_iter()
+                            .filter(|id| {
+                                !this.log.portraits.contains_key(id) && seen.insert(id.clone())
+                            })
                             .collect()
                     })
                     .unwrap_or_default();
@@ -627,7 +629,7 @@ impl Stats {
                     // The milestones and the history belong to the whole account, so a range
                     // keeps the ones read before it.
                     data.milestones = this.log.scrobbled_milestones.clone();
-                    this.since = data.overview.since.or(data.lifetime.since).or(this.since);
+                    this.since = data.overview.since.or(this.since);
                 }
                 if let (Ok(data), Some(client)) = (&result, client) {
                     let data = data.clone();
@@ -967,7 +969,7 @@ fn prepare_covers(tracks: &mut [Track], client: Option<&dyn MusicApi>) {
             let url = large.entry(cover.clone()).or_insert_with(|| {
                 client
                     .cover_at(cover, CoverSize::Large)
-                    .unwrap_or(cover.clone())
+                    .unwrap_or_else(|| cover.clone())
             });
             *cover = url.clone();
         }
@@ -1105,30 +1107,24 @@ fn compare_with(data: &mut ListeningStats, before: &ListeningStats) {
         return;
     };
     let named = |id: &str, name: &str| if id.is_empty() { name } else { id }.to_owned();
-    let keys = |rows: &[Ranked<SavedArtist>]| -> Vec<String> {
-        rows.iter()
-            .map(|row| named(&row.item.id, &row.item.name))
-            .collect()
-    };
-    compare(&mut data.artists, &keys(&before.artists), |artist| {
-        named(&artist.id, &artist.name)
-    });
-    let songs: Vec<_> = before
-        .tracks
-        .iter()
-        .map(|row| row.item.id.clone().unwrap_or_default())
-        .collect();
-    compare(&mut data.tracks, &songs, |track| {
-        track.id.clone().unwrap_or_default()
-    });
-    let albums: Vec<_> = before
-        .albums
-        .iter()
-        .map(|row| named(&row.item.id, &row.item.name))
-        .collect();
-    compare(&mut data.albums, &albums, |album| {
-        named(&album.id, &album.name)
-    });
+    let artist = |artist: &SavedArtist| named(&artist.id, &artist.name);
+    let song = |track: &Track| track.id.clone().unwrap_or_default();
+    let album = |album: &Album| named(&album.id, &album.name);
+    compare(
+        &mut data.artists,
+        before.artists.iter().map(|row| artist(&row.item)),
+        artist,
+    );
+    compare(
+        &mut data.tracks,
+        before.tracks.iter().map(|row| song(&row.item)),
+        song,
+    );
+    compare(
+        &mut data.albums,
+        before.albums.iter().map(|row| album(&row.item)),
+        album,
+    );
     let now = data.overview.plays.unwrap_or_default();
     data.overview.change = Some(((now as i64 - was as i64) * 100 / was as i64) as i32);
 }
