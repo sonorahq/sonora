@@ -170,9 +170,9 @@ impl SettingsView {
     /// The stored choice names itself without asking the server, so the row is never blank
     /// waiting on a network answer.
     pub(super) fn subsonic_library_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let value: SharedString = match music::subsonic::selected_library() {
-            Some(library) => match library.name.filter(|name| !name.is_empty()) {
-                Some(name) => SharedString::from(name),
+        let value: SharedString = match &self.selected_library {
+            Some(library) => match library.name.as_deref().filter(|name| !name.is_empty()) {
+                Some(name) => SharedString::from(name.to_owned()),
                 None => t!("settings-subsonic-library-unnamed", id = library.id),
             },
             None => t!("settings-subsonic-library-all"),
@@ -195,14 +195,14 @@ impl SettingsView {
         self.libraries = None;
         self.libraries_error = None;
         self.library_cursor = 0;
+        self.selected_library = music::subsonic::selected_library();
         let io = Io::global(cx);
         self.library_task = Some(io.load(
             async { music::subsonic::libraries().await },
             |this, result, cx| {
                 match result {
                     Ok(libraries) => {
-                        let rows =
-                            library_rows(&libraries, music::subsonic::selected_library().as_ref());
+                        let rows = library_rows(&libraries, this.selected_library.as_ref());
                         this.library_cursor = rows.iter().position(|row| row.selected).unwrap_or(0);
                         this.libraries = Some(libraries);
                     }
@@ -227,11 +227,11 @@ impl SettingsView {
     /// around it when the Subsonic account is the one in use. A stored account that is not in
     /// use picks the scope up when it next signs in.
     fn choose_library(&mut self, choice: Option<music::subsonic::Library>, cx: &mut Context<Self>) {
-        if music::subsonic::selected_library() == choice {
+        if self.selected_library == choice {
             self.close_library_picker(cx);
             return;
         }
-        if let Err(error) = music::subsonic::select_library(choice) {
+        if let Err(error) = music::subsonic::select_library(choice.clone()) {
             log::warn!("settings: cannot keep the library choice: {error:#}");
             Toasts::post(
                 Toast::new(Outcome::Failed, "toast-subsonic-library-failed"),
@@ -239,6 +239,7 @@ impl SettingsView {
             );
             return;
         }
+        self.selected_library = choice;
         self.close_library_picker(cx);
         if self.session.read(cx).provider_slug() == Some("subsonic") {
             self.session.update(cx, |session, cx| session.reload(cx));
@@ -312,7 +313,7 @@ impl SettingsView {
         let Some(libraries) = &self.libraries else {
             return;
         };
-        let count = library_rows(libraries, music::subsonic::selected_library().as_ref()).len();
+        let count = library_rows(libraries, self.selected_library.as_ref()).len();
         if count == 0 {
             return;
         }
@@ -332,7 +333,7 @@ impl SettingsView {
         let Some(libraries) = &self.libraries else {
             return;
         };
-        let rows = library_rows(libraries, music::subsonic::selected_library().as_ref());
+        let rows = library_rows(libraries, self.selected_library.as_ref());
         let Some(row) = rows.get(self.library_cursor) else {
             return;
         };
@@ -385,8 +386,7 @@ impl SettingsView {
                 )
                 .into_any_element(),
             (Some(libraries), _) => {
-                let selected = music::subsonic::selected_library();
-                let options = library_rows(libraries, selected.as_ref());
+                let options = library_rows(libraries, self.selected_library.as_ref());
                 let count = options.len();
                 let rows = options.into_iter().enumerate().map(|(position, row)| {
                     let choice = row.choice.clone();

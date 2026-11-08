@@ -297,6 +297,8 @@ pub struct SettingsView {
     library_cursor: usize,
     /// The option list's scroll position, moved to follow the cursor.
     library_scroll: ScrollHandle,
+    /// The currently selected Subsonic library, cached to avoid repeated credential reads on the UI thread.
+    selected_library: Option<music::subsonic::Library>,
     languages: SearchPopup,
     typefaces: SearchPopup,
     typeface_faced: RefCell<HashSet<SharedString>>,
@@ -462,6 +464,7 @@ impl SettingsView {
             library_task: None,
             library_cursor: 0,
             library_scroll: ScrollHandle::new(),
+            selected_library: music::subsonic::selected_library(),
             scrobbling,
             scrobble_first: cx.new(|cx| Input::new("settings-scrobble-key", cx)),
             scrobble_second: cx.new(|cx| Input::new("settings-scrobble-secret", cx)),
@@ -505,6 +508,9 @@ impl SettingsView {
         // a device plugged in since the list was read is only found by asking again
         if page.tab() == SettingsTab::Playback {
             self.outputs.update(cx, |outputs, cx| outputs.refresh(cx));
+        }
+        if page == SettingsPage::Providers || page.tab() == SettingsTab::Providers {
+            self.selected_library = music::subsonic::selected_library();
         }
         self.clear_search(cx);
         cx.notify();

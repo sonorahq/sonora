@@ -481,6 +481,18 @@ impl MusicApi for SubsonicClient {
             Ok(songs) => songs.into_iter().map(|song| self.song(song)).collect(),
             Err(_) => Vec::new(),
         };
+        let keep_held = |tracks: &mut Vec<Track>| {
+            if let Some(held) = &scoped {
+                tracks.retain(|track| {
+                    track
+                        .album_id
+                        .as_deref()
+                        .is_some_and(|album| held.contains(album))
+                });
+            }
+        };
+        keep_held(&mut top_tracks);
+
         if top_tracks.is_empty()
             && let Ok(similar) = self
                 .client
@@ -502,14 +514,7 @@ impl MusicApi for SubsonicClient {
                 .into_iter()
                 .map(|song| self.song(song))
                 .collect();
-        }
-        if let Some(held) = &scoped {
-            top_tracks.retain(|track| {
-                track
-                    .album_id
-                    .as_deref()
-                    .is_some_and(|album| held.contains(album))
-            });
+            keep_held(&mut top_tracks);
         }
 
         let albums = detail
@@ -1115,7 +1120,16 @@ impl MusicApi for SubsonicClient {
     async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
         let found = self
             .client
-            .search3(query, Some(30), None, Some(0), None, Some(0), None, None)
+            .search3(
+                query,
+                Some(30),
+                None,
+                Some(0),
+                None,
+                Some(0),
+                None,
+                self.folder().as_deref(),
+            )
             .await
             .map_err(bare)
             .context("cannot search artists")?;
@@ -1630,6 +1644,7 @@ mod tests {
         client.all_artists().await.unwrap();
         client.search("megalomaniac").await.unwrap();
         client.search_albums("megalomaniac").await.unwrap();
+        client.search_artists("megalomaniac").await.unwrap();
         client.home().await.unwrap();
         client.genre("Rock").await.unwrap();
         client.genre_cover("Rock").await.unwrap();
@@ -1641,7 +1656,7 @@ mod tests {
         // random songs after the similar-songs call fails its parse.
         let expected = [
             ("getStarred2", 3),
-            ("search3", 3),
+            ("search3", 4),
             ("getAlbumList2", 5),
             ("getArtists", 1),
             ("getRandomSongs", 2),
@@ -1687,6 +1702,7 @@ mod tests {
         client.all_artists().await.unwrap();
         client.search("megalomaniac").await.unwrap();
         client.search_albums("megalomaniac").await.unwrap();
+        client.search_artists("megalomaniac").await.unwrap();
         client.home().await.unwrap();
         client.genre("Rock").await.unwrap();
         client.genre_cover("Rock").await.unwrap();
