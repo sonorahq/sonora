@@ -143,7 +143,7 @@ fn sheet(entry: StructuredLyrics) -> Option<Lyrics> {
                             .iter()
                             .find(|&agent| cue.agent_id.to_owned().unwrap() == agent.id);
 
-                        if agent?.role == "main" {
+                        if agent.is_none_or(|_| agent.is_some_and(|a| a.role != "voice")) {
                             Voice::Lead
                         } else {
                             Voice::Counter
