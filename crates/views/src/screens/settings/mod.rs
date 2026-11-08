@@ -127,6 +127,7 @@ enum Slot {
     DiscordButtons,
     ArtworkForLocal,
     Scrobble(usize),
+    ScrobbleSpotify,
     Startup,
     Entries,
     Language,
@@ -922,6 +923,10 @@ impl SettingsView {
                 t!("settings-discord-buttons-detail"),
             ),
             Slot::Scrobble(index) => self.scrobble_meta(index, cx)?,
+            Slot::ScrobbleSpotify => (
+                t!("settings-scrobble-spotify"),
+                t!("settings-scrobble-spotify-detail"),
+            ),
             Slot::Version => (t!("settings-version"), t!("settings-version-detail")),
             Slot::Updates => (
                 t!("settings-check-updates"),
@@ -1030,6 +1035,7 @@ impl SettingsView {
                 true => self.scrobble_row(index, cx),
                 false => div().into_any_element(),
             },
+            Slot::ScrobbleSpotify => self.scrobble_spotify_row(cx),
             Slot::Version => self.version_row(),
             Slot::Updates => self.updates_row(cx),
             Slot::Channel => self.channel_row(cx),

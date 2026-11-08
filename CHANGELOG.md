@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A switch in the scrobbling settings stops Spotify plays from being scrobbled, for accounts where Spotify already scrobbles to Last.fm.
+
 ### Changed
 
 - Nightly updates reuse released executables after a stable release, so they become available sooner.

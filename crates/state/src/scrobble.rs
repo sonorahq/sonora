@@ -267,8 +267,9 @@ impl Scrobbling {
             return;
         };
 
+        let muted = self.muted(cx);
         for row in &self.rows {
-            if !row.live() {
+            if muted || !row.live() {
                 continue;
             }
             let (service, account, play) = (row.service.clone(), row.account.clone(), play.clone());
@@ -336,8 +337,9 @@ impl Scrobbling {
             });
         }
 
+        let muted = self.muted(cx);
         for row in &mut self.rows {
-            if row.sent || !row.live() {
+            if muted || row.sent || !row.live() {
                 continue;
             }
             row.sent = true;
@@ -355,6 +357,18 @@ impl Scrobbling {
                 }
             });
         }
+    }
+
+    /// Whether the current track is a Spotify play the user asked not to submit to the linked
+    /// services, because Spotify scrobbles it on its own. The provider itself still hears it.
+    fn muted(&self, cx: &App) -> bool {
+        let settings = self.settings.read(cx);
+        let spotify = self
+            .current
+            .as_deref()
+            .is_some_and(|id| !music::is_local_id(id))
+            && settings.provider() == "spotify";
+        spotify && !settings.scrobble_spotify()
     }
 
     /// Sends the provider the current track's state at the last position heard.

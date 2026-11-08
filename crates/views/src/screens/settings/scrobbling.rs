@@ -19,7 +19,30 @@ impl SettingsView {
     /// One row per scrobbling service, in the order `music::scrobble` lists them.
     pub(super) fn scrobbling_groups(&self, cx: &App) -> Vec<Group> {
         let services = self.scrobbling.read(cx).rows().len();
-        vec![Group::untitled().rows((0..services).map(Slot::Scrobble))]
+        vec![
+            Group::untitled().rows(
+                (0..services)
+                    .map(Slot::Scrobble)
+                    .chain([Slot::ScrobbleSpotify]),
+            ),
+        ]
+    }
+
+    /// The switch that keeps Spotify plays out of the linked services, for people whose Spotify
+    /// account already scrobbles to Last.fm.
+    pub(super) fn scrobble_spotify_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).scrobble_spotify();
+
+        self.row(
+            t!("settings-scrobble-spotify"),
+            Switch::new("scrobble-spotify", on)
+                .name(t!("settings-scrobble-spotify"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.set_scrobble_spotify(!on, cx));
+                }))
+                .into_any_element(),
+        )
     }
 
     /// A service's name and where its link stands, which the row shows and a search reads.

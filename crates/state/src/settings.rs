@@ -435,6 +435,9 @@ struct Values {
     close_to_tray: bool,
     tray_icon: bool,
     stay_awake: bool,
+    /// Whether plays of Spotify tracks go to the linked scrobbling services. Spotify can scrobble
+    /// to Last.fm itself, and with both on every listen is counted twice.
+    scrobble_spotify: bool,
     language: String,
     #[serde(default = "system_font")]
     font: String,
@@ -638,6 +641,7 @@ impl Default for Values {
             close_to_tray: true,
             tray_icon: true,
             stay_awake: true,
+            scrobble_spotify: true,
             language: i18n::AUTO.to_owned(),
             font: system_font(),
             startup: DEFAULT_STARTUP.to_owned(),
@@ -1183,6 +1187,11 @@ impl AppSettings {
     /// Whether music keeps the system awake and, in fullscreen, the display.
     pub fn stay_awake(&self) -> bool {
         self.values.stay_awake
+    }
+
+    /// Whether Spotify plays are submitted to the linked scrobbling services.
+    pub fn scrobble_spotify(&self) -> bool {
+        self.values.scrobble_spotify
     }
 
     /// Every linked scrobbling account, keyed by its service slug.
@@ -1783,6 +1792,11 @@ impl AppSettings {
 
     pub fn set_stay_awake(&mut self, stay_awake: bool, cx: &mut Context<Self>) {
         self.values.stay_awake = stay_awake;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_scrobble_spotify(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.scrobble_spotify = enabled;
         self.schedule_save(cx);
     }
 
