@@ -64,6 +64,8 @@ pub(crate) struct SmartPlaylistEditor {
     name: Entity<Input>,
     /// The working tree; `None` while the provider's answer is still out.
     rules: Option<SmartRules>,
+    /// Whether the playlist had rules when opened (`false` for ordinary playlists).
+    had_rules: bool,
     /// The opened playlist syncs from a file, so the provider's next scan can overwrite a
     /// save. The editor warns and never turns the sync off itself.
     synced: bool,
@@ -211,6 +213,12 @@ fn blank_condition() -> Rule {
     })
 }
 
+/// An ordinary playlist that had no rules starts from one blank condition. If the user
+/// leaves that placeholder untouched, a name-only save must not overwrite manual tracks.
+fn is_untouched_placeholder(rules: &SmartRules) -> bool {
+    *rules == SmartRules::new(RuleGroup::All(vec![blank_condition()]))
+}
+
 /// The operand's spelling for a fresh text field, or its pair for a range.
 fn operand_texts(value: &Operand) -> (String, String) {
     match value {
@@ -280,6 +288,7 @@ impl SmartPlaylistEditor {
                     edit: None,
                     name: cx.new(|cx| Input::new("smart-rules-name-placeholder", cx)),
                     rules: None,
+                    had_rules: false,
                     synced: false,
                     loading: false,
                     saving: false,
@@ -313,6 +322,7 @@ impl SmartPlaylistEditor {
         self.picking = None;
         self.values.clear();
         self.failed = None;
+        self.had_rules = false;
         self.synced = false;
         self.order_asc = None;
         self.sort.update(cx, |input, cx| input.set_text("", cx));
@@ -355,6 +365,7 @@ impl SmartPlaylistEditor {
         match editing.outcome {
             Ok(smart) => {
                 self.synced = smart.synced;
+                self.had_rules = smart.rules.is_some();
                 let mut rules = smart.rules.unwrap_or_default();
                 if rules.group.is_empty() {
                     rules.group = RuleGroup::All(vec![blank_condition()]);
@@ -401,6 +412,7 @@ impl SmartPlaylistEditor {
     fn reset(&mut self, cx: &mut Context<Self>) {
         self.edit = None;
         self.rules = None;
+        self.had_rules = false;
         self.synced = false;
         self.loading = false;
         self.saving = false;
@@ -667,14 +679,21 @@ impl SmartPlaylistEditor {
                         name,
                         built_rules,
                         shelf,
-                        move |_library, success, cx| {
-                            editor.update(cx, |this, cx| {
-                                this.saving = false;
-                                if success {
-                                    this.saved_close(cx);
-                                } else {
-                                    cx.notify();
-                                }
+                        move |library, success, cx| {
+                            if success {
+                                library.close_smart_playlist(cx);
+                            }
+                            let editor = editor.downgrade();
+                            cx.defer(move |cx| {
+                                editor
+                                    .update(cx, |this, cx| {
+                                        this.saving = false;
+                                        match success {
+                                            true => this.reset(cx),
+                                            false => cx.notify(),
+                                        }
+                                    })
+                                    .ok();
                             });
                         },
                         cx,
@@ -684,22 +703,40 @@ impl SmartPlaylistEditor {
             SmartEdit::Rules { playlist } => {
                 let playlist_id = playlist.id.clone();
                 let renamed = (name != playlist.name).then_some(name);
+                let update_rules = if !self.had_rules && is_untouched_placeholder(&built_rules) {
+                    None
+                } else {
+                    Some(built_rules)
+                };
+                let update = SmartPlaylistUpdate {
+                    name: renamed,
+                    rules: update_rules,
+                    ..SmartPlaylistUpdate::default()
+                };
+                if update.is_empty() {
+                    library.update(cx, |library, cx| library.close_smart_playlist(cx));
+                    self.reset(cx);
+                    return;
+                }
                 library.update(cx, |library, cx| {
                     library.save_smart_playlist(
                         playlist_id,
-                        SmartPlaylistUpdate {
-                            name: renamed,
-                            rules: Some(built_rules),
-                            ..SmartPlaylistUpdate::default()
-                        },
-                        move |_library, success, cx| {
-                            editor.update(cx, |this, cx| {
-                                this.saving = false;
-                                if success {
-                                    this.saved_close(cx);
-                                } else {
-                                    cx.notify();
-                                }
+                        update,
+                        move |library, success, cx| {
+                            if success {
+                                library.close_smart_playlist(cx);
+                            }
+                            let editor = editor.downgrade();
+                            cx.defer(move |cx| {
+                                editor
+                                    .update(cx, |this, cx| {
+                                        this.saving = false;
+                                        match success {
+                                            true => this.reset(cx),
+                                            false => cx.notify(),
+                                        }
+                                    })
+                                    .ok();
                             });
                         },
                         cx,
@@ -708,12 +745,6 @@ impl SmartPlaylistEditor {
             }
         }
         cx.notify();
-    }
-
-    fn saved_close(&mut self, cx: &mut Context<Self>) {
-        let library = Sonora::global(cx).library.clone();
-        library.update(cx, |library, cx| library.close_smart_playlist(cx));
-        self.reset(cx);
     }
 }
 
