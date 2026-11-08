@@ -293,6 +293,7 @@ impl Render for LyricsSearch {
                 },
                 SearchState::Unsupported => status("lyrics-search-unsupported", cx),
                 SearchState::Offline => status("lyrics-search-offline", cx),
+                SearchState::Unanswered => status("lyrics-search-unanswered", cx),
                 SearchState::Failed(reason) => status_text(reason.clone().into(), cx),
                 SearchState::Idle => status("lyrics-search-start", cx),
             });
@@ -310,6 +311,17 @@ impl Render for LyricsSearch {
                     .icon("icons/undo-2.svg")
                     .label(t!("lyrics-search-reset"))
                     .on_click(cx.listener(|this, _, window, cx| this.unbind(window, cx))),
+            );
+        }
+        if self.previewed.is_some() && matches!(state, SearchState::Ready) {
+            modal = modal.action(
+                Button::new("back-to-lyrics-results")
+                    .outline()
+                    .label(t!("lyrics-search-back"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.previewed = None;
+                        cx.notify();
+                    })),
             );
         }
         modal = match self.previewed.clone() {

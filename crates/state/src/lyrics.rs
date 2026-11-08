@@ -32,6 +32,8 @@ pub enum SearchState {
     /// online.
     Unsupported,
     Offline,
+    /// Every enabled source failed to answer.
+    Unanswered,
     Failed(String),
 }
 
@@ -331,7 +333,7 @@ impl Lyrics {
                     Ok(answered) => {
                         crate::Network::reached(cx);
                         match answered.is_empty() {
-                            true => SearchState::Failed("no lyrics source answered".to_owned()),
+                            true => SearchState::Unanswered,
                             false => SearchState::Ready,
                         }
                     }

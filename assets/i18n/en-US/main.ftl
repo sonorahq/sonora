@@ -1274,6 +1274,8 @@ lyrics-search-current = Using the lyrics you picked from { $source }
 lyrics-search-reset = Reset to automatic
 lyrics-search-unsupported = No enabled lyrics source can search by title and artist
 lyrics-search-offline = You are offline
+lyrics-search-unanswered = No lyrics source answered
+lyrics-search-back = Back to matches
 lyrics-choice-save-failed = Could not save that match; it will last until Sonora quits
 lyrics-choice-drop-failed = Could not remove that match; it will be back when Sonora restarts
 
