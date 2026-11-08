@@ -224,7 +224,6 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = [
     "connect",
     "rustls-tls-native-roots",
 ] }
-time = { version = "0.3.55", features = ["parsing"] }
 
 [patch.crates-io]
 librespot-audio = { git = "https://github.com/sonorahq/librespot", rev = "84f551d4afc7823ef12b6b02d09e34e2ddaccf99" }

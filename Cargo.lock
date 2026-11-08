@@ -4539,7 +4539,6 @@ dependencies = [
  "storage",
  "symphonia",
  "tempfile",
- "time",
  "tokio",
  "widevine",
  "windows 0.62.2",
