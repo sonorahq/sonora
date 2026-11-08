@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Nightly updates reuse released executables after a stable release, so they become available sooner.
+
 ## [0.48.1] - 2026-11-08
 
 ### Changed

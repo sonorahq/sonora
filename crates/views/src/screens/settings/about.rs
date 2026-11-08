@@ -78,7 +78,7 @@ impl SettingsView {
     pub(super) fn version_row(&self) -> AnyElement {
         self.row(
             t!("settings-version"),
-            ui::spoken("settings-version-value", state::VERSION).into_any_element(),
+            ui::spoken("settings-version-value", state::version()).into_any_element(),
         )
     }
 

@@ -298,6 +298,17 @@
                   ''
                     runHook preInstall
                     install -Dm755 "$src" "$out/bin/sonora"
+                    ${lib.optionalString (tag == "nightly") ''
+                      mkdir -p "$out/lib/sonora"
+                      cp ${
+                        pkgs.writeText "sonora-build.json" (
+                          builtins.toJSON {
+                            inherit version;
+                            channel = "nightly";
+                          }
+                        )
+                      } "$out/lib/sonora/build.json"
+                    ''}
                     install -Dm444 ${./assets/linux/sonora.desktop} \
                       "$out/share/applications/sonora.desktop"
                     install -Dm444 ${./assets/linux/sonora.svg} \
