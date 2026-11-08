@@ -639,22 +639,26 @@ impl Devices {
         self.redraw(cx);
     }
 
-    /// The collection the other device plays from, named when this app can tell: an album by the
-    /// song playing from it, a playlist by the library. `None` while it plays no collection.
+    /// The album, playlist or other collection the other device is playing from. `None` when
+    /// nothing plays or the song was queued by hand. The name comes from the song for an album and
+    /// from the library for a playlist, so it can be missing.
     pub(crate) fn origin(&self, cx: &App) -> Option<Origin> {
-        let (origin, name) = match self.elsewhere()?.state.context.as_ref()? {
+        let state = &self.elsewhere()?.state;
+        let playing = state.track.as_ref().filter(|row| !row.queued)?;
+        let (origin, name) = match state.context.as_ref()? {
             Collection::Album(id) => (
                 Origin::album(id),
-                self.queue_tracks(QueuePosition::Current)
+                self.listed
+                    .get(&playing.id)
                     .filter(|track| track.album_id.as_ref() == Some(id))
-                    .map(|track| track.album),
+                    .map(|track| track.album.as_str()),
             ),
             Collection::Playlist(id) => (
                 Origin::playlist(id),
                 self.library
                     .read(cx)
                     .playlist(id)
-                    .map(|playlist| playlist.name.clone()),
+                    .map(|playlist| playlist.name.as_str()),
             ),
             Collection::Saved => (Origin::saved(), None),
             Collection::Radio(id) => (Origin::radio(id), None),
