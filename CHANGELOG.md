@@ -14,6 +14,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Opening an artist's favorite songs no longer crashes when a song appears under the pointer.
 - App and tray icons stay sharp at more display scales, and Linux windows show the Sonora icon without desktop integration.
 - Lyrics keep equal left and right insets at every window and text size.
 - Apple Music lyrics can be found when the album has a different edition name in the lyrics catalogue.
