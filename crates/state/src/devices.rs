@@ -639,6 +639,32 @@ impl Devices {
         self.redraw(cx);
     }
 
+    /// The collection the other device plays from, named when this app can tell: an album by the
+    /// song playing from it, a playlist by the library. `None` while it plays no collection.
+    pub(crate) fn origin(&self, cx: &App) -> Option<Origin> {
+        let (origin, name) = match self.elsewhere()?.state.context.as_ref()? {
+            Collection::Album(id) => (
+                Origin::album(id),
+                self.queue_tracks(QueuePosition::Current)
+                    .filter(|track| track.album_id.as_ref() == Some(id))
+                    .map(|track| track.album),
+            ),
+            Collection::Playlist(id) => (
+                Origin::playlist(id),
+                self.library
+                    .read(cx)
+                    .playlist(id)
+                    .map(|playlist| playlist.name.clone()),
+            ),
+            Collection::Saved => (Origin::saved(), None),
+            Collection::Radio(id) => (Origin::radio(id), None),
+        };
+        Some(match name {
+            Some(name) => origin.named(name),
+            None => origin,
+        })
+    }
+
     /// Resolves the active song, history and upcoming tracks through one cache and task.
     /// Missing metadata is retried on the next song, with bounded batches for queue reads.
     fn list(&mut self, cx: &mut Context<Self>) {
