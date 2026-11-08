@@ -142,7 +142,7 @@ reqwest = { version = "0.13", default-features = false, features = [
   "form",
   "json",
   "query",
-  "rustls",
+  "rustls-no-provider",
 ] }
 qrcodegen = "1"
 raw-window-handle = "0.6"
