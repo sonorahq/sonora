@@ -82,3 +82,6 @@ windows-sys = { workspace = true, features = [
 [build-dependencies]
 embed.workspace = true
 winresource.workspace = true
+
+[lints]
+workspace = true

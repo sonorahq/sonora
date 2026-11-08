@@ -475,7 +475,7 @@ pub(crate) fn faces(
     size: Pixels,
     spread: f32,
     window: &Window,
-    theme: Theme,
+    theme: &Theme,
 ) -> Div {
     let shown = members.len().min(limit);
     let more = members.len().saturating_sub(limit);
@@ -540,7 +540,7 @@ pub(crate) fn faces(
 pub(crate) fn badge(
     id: impl Into<ElementId>,
     label: SharedString,
-    theme: Theme,
+    theme: &Theme,
 ) -> impl IntoElement {
     ui::spoken(id, label)
         .flex_none()

@@ -375,7 +375,7 @@ fn ordered(version: &str) -> Option<(u64, u64, u64, u64)> {
     let (core, rest) = version
         .trim()
         .split_once(['-', '+'])
-        .unwrap_or((version.trim(), ""));
+        .unwrap_or_else(|| (version.trim(), ""));
     let mut parts = core.split('.').map(|part| part.parse::<u64>().ok());
     let date = rest
         .strip_prefix("nightly.")

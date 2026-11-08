@@ -592,7 +592,6 @@ impl Render for Scrollbar {
         let jump = target.clone();
         let drag = target.clone();
         let started = target.clone();
-        let released = target;
         let owner = cx.entity_id();
         let hover_guard = self.hover_guard.clone();
         let anchor = self.middle_scroll.map(|middle| middle.origin);
@@ -659,13 +658,13 @@ impl Render for Scrollbar {
                     .on_mouse_up(
                         MouseButton::Left,
                         cx.listener({
-                            let released = released.clone();
+                            let released = target.clone();
                             move |_, _, _, _| released.drag_ended()
                         }),
                     )
                     .on_mouse_up_out(
                         MouseButton::Left,
-                        cx.listener(move |_, _, _, _| released.drag_ended()),
+                        cx.listener(move |_, _, _, _| target.drag_ended()),
                     )
                     .on_drag(
                         Grab {

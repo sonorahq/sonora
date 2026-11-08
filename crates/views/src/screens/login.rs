@@ -280,10 +280,9 @@ impl LoginView {
             cancel,
             failure,
         } = column;
-        let options: Vec<&SignIn> = options
+        let options = options
             .iter()
-            .filter(|option| !matches!(option, SignIn::Anonymous))
-            .collect();
+            .filter(|option| !matches!(option, SignIn::Anonymous));
 
         div()
             .flex()

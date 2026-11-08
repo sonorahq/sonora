@@ -266,7 +266,7 @@ impl Home {
             .filter(|picks| picks.starts_with(&self.picks));
         held |= !grown || (feed.quick_picks.is_some() && quick_picks.is_none());
 
-        self.pending = held.then_some(feed.clone());
+        self.pending = held.then_some(feed);
         self.take(
             HomeFeed {
                 listen_again,

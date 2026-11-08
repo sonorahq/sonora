@@ -170,7 +170,7 @@ rodio = { version = "0.22", default-features = false, features = [
     "experimental",
 ] }
 rtrb = "0.4"
-rusqlite = { version = "0.41" }
+rusqlite = { version = "0.40" }
 # Pinned exactly: a young crate, and the decoder every HE-AAC stream goes through.
 rusty_aac = { version = "=1.1.2", default-features = false }
 rustfft = "6.4"
@@ -235,6 +235,21 @@ librespot-oauth = { git = "https://github.com/sonorahq/librespot", rev = "84f551
 librespot-playback = { git = "https://github.com/sonorahq/librespot", rev = "84f551d4afc7823ef12b6b02d09e34e2ddaccf99" }
 librespot-protocol = { git = "https://github.com/sonorahq/librespot", rev = "84f551d4afc7823ef12b6b02d09e34e2ddaccf99" }
 rodio = { git = "https://github.com/RustAudio/rodio", rev = "880aaba54b00aead53651ed1ccbdb672d1375a95" }
+
+[workspace.lints.clippy]
+redundant_clone = "warn"
+needless_collect = "warn"
+dbg_macro = "warn"
+empty_drop = "warn"
+cloned_instead_of_copied = "warn"
+flat_map_option = "warn"
+inefficient_to_string = "warn"
+set_contains_or_insert = "warn"
+branches_sharing_code = "warn"
+collection_is_never_read = "warn"
+large_stack_frames = "warn"
+or_fun_call = "warn"
+large_types_passed_by_value = "warn"
 
 [profile.release]
 lto = "thin"
