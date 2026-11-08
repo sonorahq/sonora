@@ -625,7 +625,7 @@ impl SmartPlaylistEditor {
         cx.notify();
     }
 
-    fn apply(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.loading || self.failed.is_some() || self.saving {
             return;
         }
@@ -714,8 +714,7 @@ impl SmartPlaylistEditor {
                     ..SmartPlaylistUpdate::default()
                 };
                 if update.is_empty() {
-                    library.update(cx, |library, cx| library.close_smart_playlist(cx));
-                    self.reset(cx);
+                    self.close(window, cx);
                     return;
                 }
                 library.update(cx, |library, cx| {
