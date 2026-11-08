@@ -180,7 +180,9 @@ rustls = { version = "0.23", default-features = false, features = [
 ] }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
-serde_norway = "0.9"
+serde-saphyr = { version = "2.1", default-features = false, features = [
+    "deserialize",
+] }
 sha2 = "0.11"
 smallvec = { version = "1.16", features = ["union"] }
 souvlaki = "0.9"
