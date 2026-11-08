@@ -84,7 +84,7 @@ modules:
 
       # Install Desktop File and AppData Metainfo
       - install -d /app/share/applications /app/share/metainfo
-      - sed 's/^Icon=sonora$/Icon=io.github.nolight132.sonora/' assets/linux/sonora.desktop > /app/share/applications/io.github.nolight132.sonora.desktop
+      - sed -e 's/^Icon=sonora$/Icon=io.github.nolight132.sonora/' -e 's/^StartupWMClass=sonora$/StartupWMClass=io.github.nolight132.sonora/' assets/linux/sonora.desktop > /app/share/applications/io.github.nolight132.sonora.desktop
       - sed -e "s/@VERSION@/$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)/" -e "s/@DATE@/$(date -I)/" flatpak/io.github.nolight132.sonora.metainfo.xml > /app/share/metainfo/io.github.nolight132.sonora.metainfo.xml
 
       # Install licenses

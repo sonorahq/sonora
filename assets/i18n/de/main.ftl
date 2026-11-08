@@ -133,11 +133,8 @@ menu-play-tracks-last = { $count ->
     [one] { $count } Track als Letztes spielen
    *[other] { $count } Tracks als Letztes spielen
 }
-menu-go-to = Gehe zu
-menu-artist = Künstler
-menu-album = Album
-menu-radio = Radio
-menu-details = Details
+menu-song-radio = Song-Radio öffnen
+menu-go-to-album = Zum Album
 menu-go-to-artist = Zum Künstler
 menu-view-details = Details anzeigen
 menu-copy-link = Link kopieren
@@ -920,6 +917,8 @@ equalizer-status-channels = { $from ->
     [2] Stereo
    *[other] { $to } Kanäle
 }
+settings-lyrics = Lyrics anzeigen
+settings-lyrics-detail = Ausschalten, um Lyrics überall auszublenden und nicht mehr danach zu suchen
 settings-panel-lyrics-size = Lyricsgröße (panel)
 settings-panel-lyrics-size-detail = Größe des Lyrics-Textes in der Seitenleiste, auf der Basis der Basis-Schriftgröße
 settings-fullscreen-lyrics-size = Lyricsgröße (fullscreen)

@@ -25,6 +25,7 @@ pub mod netease;
 pub mod output;
 pub mod potoken;
 pub mod progress;
+mod redact;
 pub mod scrobble;
 mod sink;
 mod spectrum;
@@ -60,6 +61,7 @@ pub use models::{
     WritingSystem,
 };
 pub use output::{Server as SoundServer, missing_bridge};
+pub use redact::redact;
 pub use spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";
@@ -368,6 +370,13 @@ pub trait MusicApi: Send + Sync {
     }
 
     async fn search_playlists(&self, _query: &str) -> Result<Vec<Playlist>> {
+        Ok(Vec::new())
+    }
+
+    /// The artists the provider finds for `query`, best match first. A provider without an
+    /// artist search keeps the default of none, and search then names only the artists behind
+    /// the songs and albums it found.
+    async fn search_artists(&self, _query: &str) -> Result<Vec<SavedArtist>> {
         Ok(Vec::new())
     }
 

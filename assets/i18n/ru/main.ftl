@@ -145,11 +145,8 @@ menu-play-tracks-last = { $count ->
     [few] Воспроизвести { $count } трека в конце
    *[other] Воспроизвести { $count } треков в конце
 }
-menu-go-to = Перейти
-menu-artist = Исполнитель
-menu-album = Альбом
-menu-radio = Радио
-menu-details = Подробнее
+menu-song-radio = Радио по треку
+menu-go-to-album = Перейти к альбому
 menu-go-to-artist = Перейти к исполнителю
 menu-view-details = Подробнее
 menu-copy-link = Копировать ссылку
@@ -979,6 +976,8 @@ equalizer-status-channels = { $from ->
     [2] стерео
    *[other] { $to } кан.
 }
+settings-lyrics = Показывать тексты песен
+settings-lyrics-detail = Выключите, чтобы скрыть тексты песен везде и перестать их искать
 settings-panel-lyrics-size = Размер текста песни (панель)
 settings-panel-lyrics-size-detail = Размер строк текста песни на боковой панели поверх базового размера шрифта
 settings-fullscreen-lyrics-size = Размер текста песни (полный экран)

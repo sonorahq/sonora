@@ -157,11 +157,8 @@ menu-play-tracks-last = { $count ->
     [one] Play { $count } track last
    *[other] Play { $count } tracks last
 }
-menu-go-to = Go to
-menu-artist = Artist
-menu-album = Album
-menu-radio = Radio
-menu-details = Details
+menu-song-radio = Go to song radio
+menu-go-to-album = Go to album
 menu-go-to-artist = Go to artist
 menu-view-details = View details
 menu-copy-link = Copy link
@@ -407,6 +404,11 @@ artist-popular-eyebrow = Explore this artist
 artist-popular-empty = Nothing to play from this artist yet
 artist-popular-more = Show all
 artist-popular-less = Show less
+artist-favorite-songs = Your favorite songs
+artist-favorite-songs-count = { $count ->
+    [one] { $count } song in your Favorites
+   *[other] { $count } songs in your Favorites
+}
 artist-releases = Releases
 artist-releases-more = Show all
 artist-releases-less = Show less
@@ -1008,6 +1010,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } ch
 }
+settings-lyrics = Show lyrics
+settings-lyrics-detail = Turn off to hide lyrics everywhere and stop looking them up
 settings-panel-lyrics-size = Text size in the panel
 settings-panel-lyrics-size-detail = Size of the lyrics text in the side panel, on top of the base font size
 settings-fullscreen-lyrics-size = Text size in Now playing

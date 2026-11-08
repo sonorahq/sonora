@@ -8,7 +8,6 @@ use super::{Art, Event, Shown};
 
 const ID: &str = "sonora";
 const ICON_NAME: &str = "sonora";
-const PNG: &[u8] = include_bytes!("../../../../assets/tray/sonora.png");
 /// Flatpak writes this file into every sandbox it starts.
 const FLATPAK_INFO: &str = "/.flatpak-info";
 const WATCHER: &str = "org.kde.StatusNotifierWatcher";
@@ -22,25 +21,29 @@ pub struct Icon {
 
 impl Icon {
     pub fn new(sender: UnboundedSender<Event>) -> Option<Self> {
-        let pixmap = match image::load_from_memory(PNG) {
-            Ok(image) => {
-                let image = image.into_rgba8();
-                let (width, height) = image.dimensions();
-                let mut data = image.into_raw();
-                for pixel in data.as_chunks_mut::<4>().0 {
-                    pixel.rotate_right(1);
+        let pixmap = crate::assets::LINUX_ICONS
+            .iter()
+            .filter(|(size, _)| *size <= 64)
+            .filter_map(|(_, png)| match image::load_from_memory(png) {
+                Ok(image) => {
+                    let image = image.into_rgba8();
+                    let (width, height) = image.dimensions();
+                    let mut data = image.into_raw();
+                    for pixel in data.as_chunks_mut::<4>().0 {
+                        pixel.rotate_right(1);
+                    }
+                    Some(ksni::Icon {
+                        width: width as i32,
+                        height: height as i32,
+                        data,
+                    })
                 }
-                vec![ksni::Icon {
-                    width: width as i32,
-                    height: height as i32,
-                    data,
-                }]
-            }
-            Err(error) => {
-                log::warn!("tray: cannot decode the tray icon: {error:#}");
-                Vec::new()
-            }
-        };
+                Err(error) => {
+                    log::warn!("tray: cannot decode the tray icon: {error:#}");
+                    None
+                }
+            })
+            .collect();
         let item = Item {
             sender,
             pixmap,

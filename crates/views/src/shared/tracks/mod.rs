@@ -857,24 +857,10 @@ mod fixture {
     pub(super) fn track(seconds: u64, explicit: bool, playable: bool) -> Track {
         Track {
             id: Some("id".to_owned()),
-            name: String::new(),
             playable,
-            artists: String::new(),
-            artist_refs: Vec::new(),
-            album: String::new(),
-            album_id: None,
-            cover: None,
             duration: Duration::from_secs(seconds),
-            added_at: None,
-            added_by: None,
-            playcount: None,
-            popularity: 0,
             explicit,
-            track_number: 0,
-            disc_number: 0,
-            tags: Vec::new(),
-            languages: Vec::new(),
-            credits: Vec::new(),
+            ..Default::default()
         }
     }
 }

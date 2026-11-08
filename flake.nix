@@ -145,6 +145,7 @@
               "sonora"
             ];
             doCheck = false;
+            dontCargoUseSystemLibs = true;
 
             nativeBuildInputs =
               with pkgs;

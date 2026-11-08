@@ -1406,6 +1406,23 @@ impl MusicApi for DeezerClient {
             .collect())
     }
 
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        let page = self
+            .public(&format!(
+                "/search/artist?q={}&limit=30",
+                escape::component(query)
+            ))
+            .await
+            .context("cannot search deezer artists")?;
+        Ok(page
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(wire::saved_artist)
+            .collect())
+    }
+
     async fn search_playlists(&self, query: &str) -> Result<Vec<Playlist>> {
         let page = self
             .public(&format!(

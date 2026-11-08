@@ -48,7 +48,7 @@ impl Item {
         }
     }
 
-    /// The item's menu. A track's carries the playlist and Go to submenus, whose state
+    /// The item's menu. A track's carries the playlist and artist submenus, whose state
     /// `menus` holds; the rest need only the playback.
     pub(crate) fn menu(
         &self,
@@ -75,7 +75,6 @@ pub(crate) struct TrackColumns {
 #[derive(Clone)]
 pub(crate) struct ItemMenu {
     playlist_submenu: SubmenuState,
-    go_to_submenu: SubmenuState,
     artist_submenu: SubmenuState,
     playlist_scrollbar: Entity<Scrollbar>,
     playlist_search: MenuSearch,
@@ -85,7 +84,6 @@ impl ItemMenu {
     pub fn new(playlist_scrollbar: Entity<Scrollbar>, cx: &mut App) -> Self {
         Self {
             playlist_submenu: SubmenuState::default(),
-            go_to_submenu: SubmenuState::default(),
             artist_submenu: SubmenuState::default(),
             playlist_scrollbar,
             playlist_search: MenuSearch::new("menu-search-playlists", cx),
@@ -95,7 +93,6 @@ impl ItemMenu {
     pub fn reset(&self, cx: &App) {
         self.playlist_submenu.reset();
         self.playlist_search.reset();
-        self.go_to_submenu.reset();
         self.artist_submenu.reset();
         self.playlist_scrollbar
             .read(cx)
@@ -382,7 +379,7 @@ impl ItemMenu {
             (false, true) => {
                 let track = track.clone();
                 Some(
-                    MenuItem::new("song-radio", t!("menu-radio"))
+                    MenuItem::new("song-radio", t!("menu-song-radio"))
                         .icon("icons/radio.svg")
                         .on_click(move |_, _, cx| {
                             let playback = Sonora::global(cx).playback.clone();
@@ -391,7 +388,7 @@ impl ItemMenu {
                 )
             }
             (false, false) => Some(
-                MenuItem::new("song-radio", t!("menu-radio"))
+                MenuItem::new("song-radio", t!("menu-song-radio"))
                     .icon("icons/radio.svg")
                     .disabled(),
             ),
@@ -400,12 +397,12 @@ impl ItemMenu {
             (true, _, _) | (false, true, _) => None,
             (false, false, Some(id)) if Some(id.as_str()) == current_album => None,
             (false, false, Some(id)) => Some(
-                MenuItem::new("go-to-album", t!("menu-album"))
+                MenuItem::new("go-to-album", t!("menu-go-to-album"))
                     .icon("icons/disc-3.svg")
                     .on_click(move |_, _, cx| navigate(Destination::Album(id.clone().into()), cx)),
             ),
             (false, false, None) => Some(
-                MenuItem::new("go-to-album", t!("menu-album"))
+                MenuItem::new("go-to-album", t!("menu-go-to-album"))
                     .icon("icons/disc-3.svg")
                     .disabled(),
             ),
@@ -422,14 +419,14 @@ impl ItemMenu {
         let artist = match (many, columns.artists, artists.len()) {
             (true, _, _) | (false, true, _) => None,
             (false, false, 0) => Some(
-                MenuItem::new("go-to-artist", t!("menu-artist"))
+                MenuItem::new("go-to-artist", t!("menu-go-to-artist"))
                     .icon("icons/user.svg")
                     .disabled(),
             ),
             (false, false, 1) => {
                 let id = artists[0].1.clone();
                 Some(
-                    MenuItem::new("go-to-artist", t!("menu-artist"))
+                    MenuItem::new("go-to-artist", t!("menu-go-to-artist"))
                         .icon("icons/user.svg")
                         .on_click(move |_, _, cx| {
                             navigate(Destination::Artist(id.clone().into()), cx)
@@ -446,7 +443,7 @@ impl ItemMenu {
                         })
                     }));
                 Some(
-                    MenuItem::new("go-to-artist", t!("menu-artist"))
+                    MenuItem::new("go-to-artist", t!("menu-go-to-artist"))
                         .icon("icons/user.svg")
                         .submenu(artist_menu, self.artist_submenu.clone()),
                 )
@@ -456,33 +453,16 @@ impl ItemMenu {
         let details = match (many, track.id.clone()) {
             (true, _) => None,
             (false, Some(id)) => Some(
-                MenuItem::new("view-details", t!("menu-details"))
+                MenuItem::new("view-details", t!("menu-view-details"))
                     .icon("icons/info.svg")
                     .on_click(move |_, _, cx| navigate(Destination::Song(id.clone().into()), cx)),
             ),
             (false, None) => Some(
-                MenuItem::new("view-details", t!("menu-details"))
+                MenuItem::new("view-details", t!("menu-view-details"))
                     .icon("icons/info.svg")
                     .disabled(),
             ),
         };
-
-        let destinations: Vec<MenuItem> = artist
-            .into_iter()
-            .chain(album)
-            .chain(radio)
-            .chain(details)
-            .collect();
-        let go_to = (!destinations.is_empty()).then(|| {
-            MenuItem::new("go-to", t!("menu-go-to"))
-                .icon("icons/square-arrow-out-up-right.svg")
-                .submenu(
-                    Menu::new("go-to-submenu")
-                        .w(gpui::px(200.))
-                        .items(destinations),
-                    self.go_to_submenu.clone(),
-                )
-        });
 
         let pinnable = (!many).then(|| track.pin()).flatten();
         let edit = (!many && imported).then(|| {
@@ -525,7 +505,8 @@ impl ItemMenu {
             vec![
                 add_to_playlist.into_iter().chain(library_action).collect(),
                 vec![next, queue, last],
-                go_to
+                album.into_iter().chain(artist).chain(radio).collect(),
+                details
                     .into_iter()
                     .chain(edit)
                     .chain(copy)
@@ -1277,7 +1258,7 @@ pub(crate) fn pinned_artist(pin: &Pin) -> SavedArtist {
         id: pin.id.clone(),
         name: pin.title.clone(),
         cover: pin.cover.clone(),
-        added_at: None,
+        ..Default::default()
     }
 }
 

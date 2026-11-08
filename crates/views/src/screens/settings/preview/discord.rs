@@ -82,8 +82,6 @@ const BUTTON_RADIUS: Pixels = px(8.);
 const BUTTON_GAP: Pixels = px(8.);
 /// How far through the track the card starts, as a share of its length, before it counts on.
 const START_SHARE: f32 = 0.3;
-/// How much of the card shows while Discord presence is disabled.
-const DIMMED: f32 = 0.4;
 /// What the status calls itself when the setting names Sonora, Discord's name for the app.
 const SONORA: &str = "Sonora";
 
@@ -267,7 +265,7 @@ pub(in crate::screens::settings) fn preview(
                 .justify_center()
                 .p(SURFACE_PAD)
                 .bg(cx.theme().background)
-                .child(card.when(!on, |card| card.opacity(DIMMED))),
+                .child(card.when(!on, |card| card.opacity(super::DIMMED))),
             cx,
         )
         .into_any_element(),

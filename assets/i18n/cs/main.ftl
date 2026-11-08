@@ -142,11 +142,8 @@ menu-play-tracks-last = { $count ->
     [few] Přehrát { $count } skladby jako poslední
    *[other] Přehrát { $count } skladeb jako poslední
 }
-menu-go-to = Přejít na
-menu-artist = Interpret
-menu-album = Album
-menu-radio = Rádio
-menu-details = Podrobnosti
+menu-song-radio = Přejít na rádio skladby
+menu-go-to-album = Přejít na album
 menu-go-to-artist = Přejít na interpreta
 menu-view-details = Zobrazit podrobnosti
 menu-copy-link = Kopírovat odkaz
@@ -946,6 +943,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kan.
 }
+settings-lyrics = Zobrazovat texty písní
+settings-lyrics-detail = Vypnutím skryjete texty písní všude a přestanou se vyhledávat
 settings-panel-lyrics-size = Velikost textu (panel)
 settings-panel-lyrics-size-detail = Velikost textu písně v postranním panelu nad základní velikostí písma
 settings-fullscreen-lyrics-size = Velikost textu (celá obrazovka)
