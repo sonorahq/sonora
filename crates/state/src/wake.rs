@@ -246,7 +246,6 @@ async fn acquire(
     want: Want,
 ) -> Result<ashpd::desktop::Request<()>, NotHeld> {
     use ashpd::desktop::inhibit::{InhibitFlags, InhibitOptions, InhibitProxy};
-    use ashpd::enumflags2::BitFlag;
 
     if proxy.is_none() {
         match InhibitProxy::new().await {
@@ -262,10 +261,10 @@ async fn acquire(
     };
     let mut flags = InhibitFlags::empty();
     if want.system {
-        flags.insert(InhibitFlags::Suspend);
+        flags |= InhibitFlags::SUSPEND;
     }
     if want.display {
-        flags.insert(InhibitFlags::Idle);
+        flags |= InhibitFlags::IDLE;
     }
     let reason = i18n::t!("wake-reason");
     let options = InhibitOptions::default().set_reason(reason.as_ref());

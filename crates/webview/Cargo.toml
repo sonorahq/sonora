@@ -11,17 +11,22 @@ log.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 block2.workspace = true
 objc2.workspace = true
-objc2-app-kit = { workspace = true, features = ["NSWindow", "NSView", "NSGraphics", "NSScreen"] }
+objc2-app-kit = { workspace = true, features = [
+    "NSWindow",
+    "NSView",
+    "NSGraphics",
+    "NSScreen",
+] }
 objc2-foundation = { workspace = true, features = [
-  "NSArray",
-  "NSDate",
-  "NSEnumerator",
-  "NSGeometry",
-  "NSHTTPCookie",
-  "NSString",
-  "NSURL",
-  "NSURLRequest",
-  "objc2-core-foundation",
+    "NSArray",
+    "NSDate",
+    "NSEnumerator",
+    "NSGeometry",
+    "NSHTTPCookie",
+    "NSString",
+    "NSURL",
+    "NSURLRequest",
+    "objc2-core-foundation",
 ] }
 objc2-web-kit.workspace = true
 

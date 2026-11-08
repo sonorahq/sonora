@@ -234,7 +234,10 @@ fn signature(form: &[(String, String)], secret: &str) -> String {
         base.push_str(value);
     }
     base.push_str(secret);
-    format!("{:x}", Md5::digest(base.as_bytes()))
+    Md5::digest(base.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn parameter(request: &str, name: &str) -> Option<String> {

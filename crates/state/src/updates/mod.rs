@@ -344,7 +344,12 @@ async fn download(
     }
     drop(file);
 
-    if format!("{:x}", hasher.finalize()) != expected {
+    let checksum: String = hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    if checksum != expected {
         std::fs::remove_file(&path).ok();
         anyhow::bail!("the update does not match its checksum");
     }
