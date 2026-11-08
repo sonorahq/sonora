@@ -13,9 +13,9 @@ use crate::spotify::{
     albums, artists, collection, collection2, pathfinder, playlists, profiles, radio, search, wire,
 };
 use crate::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, CoverSize, Genre,
-    GenreDetail, GenreItem, GenreSection, HomeFeed, Playlist, PlaylistDetail, SUGGESTIONS,
-    SavedArtist, Track, UserDetail, UserProfile,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, CoverSize,
+    Descriptors, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed, ListeningStats, Playlist,
+    PlaylistDetail, SUGGESTIONS, SavedArtist, StatsPeriod, Track, UserDetail, UserProfile,
 };
 
 const MADE_FOR_YOU: &str = "0JQ5DAt0tbjZptfcdMSKl3";
@@ -61,6 +61,25 @@ impl MusicApi for LibrespotClient {
             "https://open.spotify.com/{kind}/{}",
             escape::component(id)
         ))
+    }
+
+    async fn descriptors(&self, ids: &[String]) -> Result<HashMap<String, Descriptors>> {
+        let uris: Vec<_> = ids.iter().map(|id| format!("spotify:track:{id}")).collect();
+        let found = pathfinder::descriptors(&self.session, &uris).await?;
+        Ok(found
+            .into_iter()
+            .filter_map(|(uri, found)| {
+                Some((uri.strip_prefix("spotify:track:")?.to_owned(), found))
+            })
+            .collect())
+    }
+
+    fn stats_periods(&self) -> &'static [StatsPeriod] {
+        &[StatsPeriod::Weeks, StatsPeriod::Months, StatsPeriod::Year]
+    }
+
+    async fn stats(&self, period: StatsPeriod) -> Result<ListeningStats> {
+        pathfinder::stats(&self.session, period).await
     }
 
     async fn profile(&self) -> Result<UserProfile> {

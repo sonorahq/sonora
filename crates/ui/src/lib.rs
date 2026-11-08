@@ -67,7 +67,7 @@ pub use artwork::{
 };
 pub use button::{Button, SMALL_INSET};
 pub use card::CARD_GROUP;
-pub use card::Card;
+pub use card::{Card, Corner};
 pub use checkbox::Checkbox;
 pub use controls::WindowControls;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]

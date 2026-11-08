@@ -30,6 +30,7 @@ pub mod scrobble;
 mod sink;
 mod spectrum;
 pub mod spotify;
+mod stats;
 mod stream;
 pub mod subsonic;
 pub mod tidal;
@@ -62,6 +63,10 @@ pub use models::{
 pub use output::{Server as SoundServer, missing_bridge};
 pub use redact::redact;
 pub use spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
+pub use stats::{
+    Board, Descriptors, ListeningStats, Milestone, Move, Overview, Ranked, StatsPeriod, Trait,
+    album_key, album_of, compare, credits, milestone_numbers, tag_key,
+};
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";
 pub const LOCAL_ALBUM_PREFIX: &str = "local-album:";
@@ -222,6 +227,21 @@ pub trait MusicApi: Send + Sync {
     /// that keeps no cross-device history keeps the default and answers with nothing.
     async fn recently_played(&self) -> Result<Vec<Track>> {
         Ok(Vec::new())
+    }
+
+    /// The periods this provider can rank from its own listening data. Empty means unsupported.
+    fn stats_periods(&self) -> &'static [StatsPeriod] {
+        &[]
+    }
+
+    /// Genres and moods for tracks by id, for the tracks the provider describes.
+    async fn descriptors(&self, _track_ids: &[String]) -> Result<HashMap<String, Descriptors>> {
+        Ok(HashMap::new())
+    }
+
+    /// Personal rankings across devices, in the provider's order; counts may be unavailable.
+    async fn stats(&self, _period: StatsPeriod) -> Result<ListeningStats> {
+        anyhow::bail!("this provider does not expose listening stats")
     }
 
     async fn playlists(&self) -> Result<Vec<Playlist>>;

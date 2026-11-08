@@ -701,6 +701,7 @@ impl DetailView {
                 tile: card,
                 columns,
                 tabs,
+                note: None,
             },
             window,
             cx,

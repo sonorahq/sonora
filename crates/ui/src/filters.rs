@@ -16,6 +16,7 @@ use crate::time::clock;
 const TRACK: f32 = 0.5;
 const THUMB: f32 = 1.5;
 const HIT: f32 = 2.;
+const STOP_WIDTH: Pixels = px(1.);
 /// How far one screen reader step moves a handle of a range without stops, as a share of its
 /// length.
 const STEP: f32 = 0.05;
@@ -198,6 +199,7 @@ pub struct RangeScrubber {
     active: Rc<Cell<Handle>>,
     value: (f32, f32),
     stops: Rc<[f32]>,
+    lock_high: bool,
     filled: Hsla,
     empty: Hsla,
     thumb: Hsla,
@@ -218,6 +220,7 @@ impl RangeScrubber {
             active: state.active.clone(),
             value: (value.0.clamp(0., 1.), value.1.clamp(0., 1.)),
             stops: Rc::from(Vec::new()),
+            lock_high: false,
             filled: gpui::white(),
             empty: gpui::black(),
             thumb: gpui::white(),
@@ -229,6 +232,12 @@ impl RangeScrubber {
 
     pub fn stops(mut self, stops: Vec<f32>) -> Self {
         self.stops = Rc::from(stops);
+        self
+    }
+
+    /// Fixes the high endpoint in place while the low endpoint selects a bounded window.
+    pub fn lock_high(mut self) -> Self {
+        self.lock_high = true;
         self
     }
 
@@ -281,6 +290,7 @@ impl RenderOnce for RangeScrubber {
             active,
             value,
             stops,
+            lock_high,
             filled,
             empty,
             thumb,
@@ -303,7 +313,7 @@ impl RenderOnce for RangeScrubber {
             let stops = stops.clone();
             move |event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
                 let share = snap(state.share_at(event.position.x, pad), &stops);
-                let near = match (share - value.0).abs() <= (share - value.1).abs() {
+                let near = match lock_high || (share - value.0).abs() <= (share - value.1).abs() {
                     true => Handle::Low,
                     false => Handle::High,
                 };
@@ -405,8 +415,25 @@ impl RenderOnce for RangeScrubber {
                                     .right(relative(1. - value.1.max(value.0)))
                                     .bg(filled),
                             )
+                            .when(!stops.is_empty(), |track| {
+                                let height = pad * 1.5;
+                                track.children(stops.iter().copied().map(|stop| {
+                                    div()
+                                        .absolute()
+                                        .top((line - height) / 2.)
+                                        .left(relative(stop))
+                                        .ml(Pixels::ZERO - STOP_WIDTH / 2.)
+                                        .w(STOP_WIDTH)
+                                        .h(height)
+                                        .rounded_full()
+                                        .bg(thumb.opacity(0.6))
+                                }))
+                            })
                             .child(knob(Handle::Low, low_value))
-                            .child(knob(Handle::High, high_value)),
+                            .child(match lock_high {
+                                true => handle(value.1, line, pin, thumb).into_any_element(),
+                                false => knob(Handle::High, high_value).into_any_element(),
+                            }),
                     )
                     .child(
                         canvas(move |b, _, _| bounds.set(b), |_, _, _, _| {})

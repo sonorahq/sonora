@@ -313,6 +313,7 @@ fn open_window(cx: &mut App) {
         links: _,
         listening: _,
         history: _,
+        stats: _,
         lyrics: _,
         network: _,
         outputs: _,

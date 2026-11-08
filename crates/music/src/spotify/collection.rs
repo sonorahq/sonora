@@ -65,7 +65,7 @@ pub(crate) async fn metadata(session: &Session, uris: &[String]) -> Result<HashM
 pub(crate) async fn extended(
     session: &Session,
     uris: &[String],
-    kind: ExtensionKind,
+    kind: impl Into<EnumOrUnknown<ExtensionKind>>,
 ) -> Result<Vec<EntityExtensionData>> {
     let mut entities = Vec::with_capacity(uris.len());
     batched(session, uris, kind, BATCH, |batch| {
@@ -84,10 +84,11 @@ pub(crate) async fn extended(
 pub(crate) async fn batched(
     session: &Session,
     uris: &[String],
-    kind: ExtensionKind,
+    kind: impl Into<EnumOrUnknown<ExtensionKind>>,
     batch: usize,
     mut take: impl FnMut(Vec<EntityExtensionData>) -> Result<()>,
 ) -> Result<()> {
+    let kind = kind.into();
     for uris in uris.chunks(batch.max(1)) {
         let request = BatchedEntityRequest {
             entity_request: uris
@@ -95,7 +96,7 @@ pub(crate) async fn batched(
                 .map(|uri| EntityRequest {
                     entity_uri: uri.clone(),
                     query: vec![ExtensionQuery {
-                        extension_kind: EnumOrUnknown::new(kind),
+                        extension_kind: kind,
                         ..Default::default()
                     }],
                     ..Default::default()
@@ -116,7 +117,7 @@ pub(crate) async fn batched(
     Ok(())
 }
 
-fn track_from(uri: &str, track: &TrackMessage) -> Track {
+pub(crate) fn track_from(uri: &str, track: &TrackMessage) -> Track {
     let (artists, artist_refs) = artists_from(&track.artist);
 
     Track {

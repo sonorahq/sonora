@@ -20,6 +20,7 @@ gpui.workspace = true
 i18n.workspace = true
 icons.workspace = true
 image.workspace = true
+jiff.workspace = true
 log.workspace = true
 moka.workspace = true
 music.workspace = true

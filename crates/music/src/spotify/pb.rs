@@ -124,6 +124,16 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// Reads packed protobuf enum values from a length-delimited field.
+pub(crate) fn varints(bytes: &[u8]) -> Result<Vec<u64>> {
+    let mut reader = Reader::new(bytes);
+    let mut values = Vec::new();
+    while reader.at < reader.bytes.len() {
+        values.push(reader.varint()?);
+    }
+    Ok(values)
+}
+
 pub(crate) fn text(bytes: &[u8]) -> Result<String> {
     Ok(std::str::from_utf8(bytes)
         .context("field is not utf-8")?

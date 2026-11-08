@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Stats page for Spotify, Last.fm or your recorded plays, with your top artists, songs and albums, genres, moods, release years, a listening clock, milestones and a summary of your listening style, over a window or any dates you pick.
+
 ### Changed
 
 - Lyrics line spacing scales with the text size for a more balanced layout.

@@ -29,12 +29,23 @@ const PLAY_FILL: f32 = 0.55;
 const SCRIM_RATIO: f32 = 0.45;
 const SCRIM_MIN: Pixels = px(14.);
 const TIGHT: Pixels = px(2.);
+const BADGE_INSET: Pixels = px(6.);
+const BADGE_PAD: Pixels = px(7.);
+const BADGE_HEIGHT: Pixels = px(20.);
 
 pub const CARD_GROUP: &str = "card";
 
 type Press = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 type Summon = Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>;
 type DragStart = Rc<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>;
+
+/// A corner of a card's artwork that a badge can sit in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Corner {
+    TopLeft,
+    BottomLeft,
+    BottomRight,
+}
 
 #[derive(IntoElement)]
 pub struct Card {
@@ -72,6 +83,7 @@ pub struct Card {
     collapsed: bool,
     drag_start: Option<DragStart>,
     menu: Option<Summon>,
+    badges: Vec<(Corner, SharedString)>,
 }
 
 impl Card {
@@ -110,6 +122,7 @@ impl Card {
             collapsed: false,
             drag_start: None,
             menu: None,
+            badges: Vec::new(),
         }
     }
 
@@ -224,6 +237,13 @@ impl Card {
 
     pub fn weight(mut self, weight: FontWeight) -> Self {
         self.weight = Some(weight);
+        self
+    }
+
+    /// Lays a small frosted label over a corner of the artwork. A badge in the bottom right
+    /// steps aside while the play button shows there.
+    pub fn badge(mut self, corner: Corner, label: impl Into<SharedString>) -> Self {
+        self.badges.push((corner, label.into()));
         self
     }
 
@@ -344,6 +364,7 @@ impl RenderOnce for Card {
             collapsed,
             drag_start,
             menu,
+            badges,
         } = self;
 
         let theme = *cx.theme();
@@ -376,6 +397,7 @@ impl RenderOnce for Card {
                 .when(accent, Artwork::accent)
                 .into_any_element(),
         };
+        let has_play = play.is_some();
         let leading = match play {
             None => leading,
             Some(play) => {
@@ -476,6 +498,45 @@ impl RenderOnce for Card {
                     .size(art)
                     .child(leading)
                     .child(control)
+                    .into_any_element()
+            }
+        };
+
+        let leading = match badges.is_empty() {
+            true => leading,
+            false => {
+                let frosted = blurring(cx);
+                div()
+                    .relative()
+                    .flex_none()
+                    .size(art)
+                    .child(leading)
+                    .children(badges.into_iter().map(|(corner, label)| {
+                        div()
+                            .absolute()
+                            .map(|this| match corner {
+                                Corner::TopLeft => this.top(BADGE_INSET).left(BADGE_INSET),
+                                Corner::BottomLeft => this.bottom(BADGE_INSET).left(BADGE_INSET),
+                                Corner::BottomRight => this.bottom(BADGE_INSET).right(BADGE_INSET),
+                            })
+                            .when(
+                                corner == Corner::BottomRight && has_play && !playing,
+                                |this| this.group_hover(CARD_GROUP, |style| style.invisible()),
+                            )
+                            .h(BADGE_HEIGHT)
+                            .min_w(BADGE_HEIGHT)
+                            .px(BADGE_PAD)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_full()
+                            .bg(theme.overlay)
+                            .text_color(theme.overlay_foreground)
+                            .text_size(theme.text(Text::Small))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .when(frosted, |this| this.backdrop_blur(GLASS_BLUR))
+                            .child(label)
+                    }))
                     .into_any_element()
             }
         };

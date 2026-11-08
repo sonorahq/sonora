@@ -20,16 +20,18 @@ pub enum NavEntry {
     Search,
     Library,
     History,
+    Stats,
     Local,
     Pins,
 }
 
 impl NavEntry {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Home,
         Self::Search,
         Self::Library,
         Self::History,
+        Self::Stats,
         Self::Local,
         Self::Pins,
     ];
@@ -40,6 +42,7 @@ impl NavEntry {
             Self::Search => "search",
             Self::Library => "library",
             Self::History => "history",
+            Self::Stats => "stats",
             Self::Local => "local",
             Self::Pins => "sidebar-pins",
         }
@@ -51,6 +54,7 @@ impl NavEntry {
             Self::Search => "nav-search",
             Self::Library => "nav-library",
             Self::History => "nav-history",
+            Self::Stats => "nav-stats",
             Self::Local => "nav-local",
             Self::Pins => "nav-pinned",
         }
@@ -62,6 +66,7 @@ pub enum Screen {
     Home,
     Search,
     History,
+    Stats,
     Songs,
     Albums,
     Playlists,
@@ -70,7 +75,7 @@ pub enum Screen {
 }
 
 impl Screen {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Home,
         Self::Search,
         Self::Songs,
@@ -79,6 +84,7 @@ impl Screen {
         Self::Playlists,
         Self::Imported,
         Self::History,
+        Self::Stats,
     ];
 
     pub fn id(self) -> &'static str {
@@ -86,6 +92,7 @@ impl Screen {
             Self::Home => "home",
             Self::Search => "search",
             Self::History => "history",
+            Self::Stats => "stats",
             Self::Songs => "songs",
             Self::Albums => "albums",
             Self::Playlists => "playlists",
@@ -99,6 +106,7 @@ impl Screen {
             Self::Home => "nav-home",
             Self::Search => "nav-search",
             Self::History => "nav-history",
+            Self::Stats => "nav-stats",
             Self::Songs => "nav-songs",
             Self::Albums => "nav-albums",
             Self::Playlists => "nav-playlists",
@@ -117,6 +125,7 @@ impl Screen {
             Self::Home => false,
             Self::Search => false,
             Self::History => false,
+            Self::Stats => false,
             Self::Songs => true,
             Self::Albums => true,
             Self::Playlists => true,
@@ -130,6 +139,7 @@ impl Screen {
             Self::Home => Destination::Home,
             Self::Search => Destination::Search,
             Self::History => Destination::History,
+            Self::Stats => Destination::Stats,
             Self::Songs => Destination::Library(LibraryTab::Songs),
             Self::Albums => Destination::Library(LibraryTab::Albums),
             Self::Playlists => Destination::Library(LibraryTab::Playlists),
@@ -332,6 +342,7 @@ impl SettingsTab {
 pub enum Destination {
     Home,
     History,
+    Stats,
     Library(LibraryTab),
     Local(LibraryTab),
     Album(SharedString),
