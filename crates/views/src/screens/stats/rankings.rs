@@ -59,7 +59,10 @@ impl Kind {
 
 /// What the cards of a songs rail play from.
 struct Queue {
+    /// Only the songs that can play. A chart entry the catalogue has not matched has no id.
     tracks: Rc<Vec<Track>>,
+    /// Where each ranked song sits in `tracks`, or nothing for one that is left out.
+    places: Vec<Option<usize>>,
     start: StartHandler,
 }
 
@@ -95,19 +98,29 @@ impl StatsView {
 
         let tile = CardGrid::layout(layout.width).card;
         let queue = (kind == Kind::Songs).then(|| {
-            let tracks = Rc::new(
-                data.tracks
-                    .iter()
-                    .map(|ranked| ranked.item.clone())
-                    .collect::<Vec<_>>(),
-            );
+            let mut playable = Vec::new();
+            let places = data
+                .tracks
+                .iter()
+                .map(|ranked| {
+                    ranked.item.id.is_some().then(|| {
+                        playable.push(ranked.item.clone());
+                        playable.len() - 1
+                    })
+                })
+                .collect();
+            let tracks = Rc::new(playable);
             let (playback, queued) = (self.playback.clone(), tracks.clone());
             let start: StartHandler = Rc::new(move |place, cx| {
                 playback.update(cx, |playback, cx| {
                     playback.start(queued.as_ref().clone(), place, None, cx)
                 });
             });
-            Queue { tracks, start }
+            Queue {
+                tracks,
+                places,
+                start,
+            }
         });
         let weak = cx.entity().downgrade();
         Some(self.rails[kind as usize].render(
@@ -259,10 +272,11 @@ impl StatsView {
                     ),
                     track.artists
                 );
-                let card = match (&track.id, queue) {
-                    (Some(_), Some(queue)) => TrackCard::new(
+                let seat = queue.and_then(|queue| Some((queue, (*queue.places.get(at)?)?)));
+                let card = match seat {
+                    Some((queue, place)) => TrackCard::new(
                         "stats-track-card",
-                        at,
+                        place,
                         queue.tracks.clone(),
                         self.playback.clone(),
                     )
@@ -414,7 +428,7 @@ fn standing<T>(rank: usize, ranked: &Ranked<T>, popularity: u32) -> Standing {
 }
 
 impl Standing {
-    /// Whether the item is new to the ranking, in words. A rank that moved has no words.
+    /// The word that marks an item as new to the ranking. A rank that only moved has none.
     fn movement(&self) -> Option<SharedString> {
         (self.moved == Some(Move::New)).then(|| t!("stats-rank-new"))
     }
@@ -446,9 +460,10 @@ impl Standing {
         card.description(spoken)
             .badge(Corner::TopLeft, place)
             .when(self.popularity > 0, |card| {
-                card.badge(
+                card.icon_badge(
                     Corner::BottomLeft,
-                    t!("stats-rank-popularity", score = self.popularity),
+                    "icons/flame.svg",
+                    self.popularity.to_string(),
                 )
             })
             .when_some(plays, |card, plays| card.badge(Corner::BottomRight, plays))

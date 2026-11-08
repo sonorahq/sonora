@@ -50,7 +50,7 @@ impl<T> Ranked<T> {
 }
 
 /// The figures of a listening period. A source fills in what it knows and leaves the rest empty,
-/// so the overview shows exactly the figures that exist.
+/// so a view shows exactly the figures that exist.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Overview {
     pub plays: Option<usize>,
@@ -137,14 +137,9 @@ impl Overview {
         }
         hours
     }
-
-    /// Whether there is anything to show.
-    pub fn is_empty(&self) -> bool {
-        *self == Self::default()
-    }
 }
 
-/// Personal listening for one period: ranked items and the overview figures.
+/// Personal listening for one period: the ranked items and the figures that describe them.
 #[derive(Clone, Debug, Default)]
 pub struct ListeningStats {
     pub tracks: Vec<Ranked<Track>>,

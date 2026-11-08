@@ -290,12 +290,16 @@ fn profile_bundle(javascript: &str) -> Option<String> {
     let name = "xpui-routes-profile";
     let before = javascript.split_once(&format!(":\"{name}\""))?.0;
     let id = before.rsplit([',', '{']).next()?;
-    let marker = format!("{id}:\"");
-    let hash = javascript
-        .split(&marker)
-        .skip(1)
-        .filter_map(|tail| tail.split_once('"').map(|p| p.0))
-        .find(|value| value.len() == 8 && value.bytes().all(|b| b.is_ascii_hexdigit()))?;
+    // An entry of the map follows a comma or the opening brace, so a longer id that merely ends
+    // in these digits is not taken for it.
+    let hash = [',', '{'].into_iter().find_map(|before| {
+        let marker = format!("{before}{id}:\"");
+        javascript
+            .split(&marker)
+            .skip(1)
+            .filter_map(|tail| tail.split_once('"').map(|p| p.0))
+            .find(|value| value.len() == 8 && value.bytes().all(|b| b.is_ascii_hexdigit()))
+    })?;
     Some(format!("{name}.{hash}.js"))
 }
 

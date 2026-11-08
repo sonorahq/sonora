@@ -28,7 +28,7 @@ const LASTFM_BATCH: usize = 50;
 /// someone listens at.
 const ACTIVITY_PAGE: &str = "200";
 const ACTIVITY_PAGES: usize = 4;
-/// How many of those slices are asked about at once.
+/// How many slices of the account's history are asked about at once.
 const DENSITY_AT_ONCE: usize = 8;
 /// How many slices the account's history is cut into to show when it was played.
 const SLICES: usize = 24;
@@ -54,6 +54,8 @@ pub struct AudioScrobbler {
     /// How many listens one `track.scrobble` carries. One means the server only implements the
     /// single unindexed form, which is what GNU FM does.
     batch: usize,
+    /// Whether the service reads personal rankings between any two dates.
+    dated: bool,
 }
 
 pub const LASTFM: AudioScrobbler = AudioScrobbler {
@@ -63,6 +65,7 @@ pub const LASTFM: AudioScrobbler = AudioScrobbler {
     signup: Some("https://www.last.fm/api/account/create"),
     link: Link::Keys,
     batch: LASTFM_BATCH,
+    dated: true,
 };
 
 pub const LIBREFM: AudioScrobbler = AudioScrobbler {
@@ -72,6 +75,7 @@ pub const LIBREFM: AudioScrobbler = AudioScrobbler {
     signup: None,
     link: Link::Browser,
     batch: 1,
+    dated: false,
 };
 
 #[async_trait]
@@ -158,7 +162,7 @@ impl Service for AudioScrobbler {
     }
 
     fn stats_dated(&self) -> bool {
-        self.id == "lastfm"
+        self.dated
     }
 
     async fn history(&self, account: &Account) -> Result<ListeningStats> {

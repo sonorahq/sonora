@@ -135,11 +135,9 @@ impl StatsView {
                 let (id, label) = match candidate {
                     StatsSource::Recorded => ("recorded", t!("stats-recorded")),
                     StatsSource::Provider => ("provider", provider.clone()),
-                    StatsSource::Scrobbler("lastfm") => ("lastfm", t!("settings-lastfm")),
-                    StatsSource::Scrobbler("listenbrainz") => {
-                        ("listenbrainz", t!("settings-listenbrainz"))
+                    StatsSource::Scrobbler(id) => {
+                        (id, i18n::lookup(&format!("settings-{id}"), None))
                     }
-                    StatsSource::Scrobbler(id) => (id, SharedString::from(id)),
                 };
                 Button::new(SharedString::from(format!("stats-source-{id}")))
                     .label(label)
@@ -167,7 +165,7 @@ impl StatsView {
             .into_any_element()
     }
 
-    /// The overview and the rankings of the selected source, or whatever stands in for them
+    /// Every section of the selected source in reading order, or the stand-ins for the rankings
     /// while they load.
     fn sections(&self, layout: &Layout<'_>, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let stats = self.stats.read(cx);

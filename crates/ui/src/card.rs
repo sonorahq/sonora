@@ -32,6 +32,7 @@ const TIGHT: Pixels = px(2.);
 const BADGE_INSET: Pixels = px(6.);
 const BADGE_PAD: Pixels = px(7.);
 const BADGE_HEIGHT: Pixels = px(20.);
+const BADGE_GAP: Pixels = px(3.);
 
 pub const CARD_GROUP: &str = "card";
 
@@ -83,7 +84,7 @@ pub struct Card {
     collapsed: bool,
     drag_start: Option<DragStart>,
     menu: Option<Summon>,
-    badges: Vec<(Corner, SharedString)>,
+    badges: Vec<(Corner, Option<SharedString>, SharedString)>,
 }
 
 impl Card {
@@ -243,7 +244,18 @@ impl Card {
     /// Lays a small frosted label over a corner of the artwork. A badge in the bottom right
     /// steps aside while the play button shows there.
     pub fn badge(mut self, corner: Corner, label: impl Into<SharedString>) -> Self {
-        self.badges.push((corner, label.into()));
+        self.badges.push((corner, None, label.into()));
+        self
+    }
+
+    /// A badge with an icon before its label.
+    pub fn icon_badge(
+        mut self,
+        corner: Corner,
+        icon: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+    ) -> Self {
+        self.badges.push((corner, Some(icon.into()), label.into()));
         self
     }
 
@@ -511,7 +523,7 @@ impl RenderOnce for Card {
                     .flex_none()
                     .size(art)
                     .child(leading)
-                    .children(badges.into_iter().map(|(corner, label)| {
+                    .children(badges.into_iter().map(|(corner, icon, label)| {
                         div()
                             .absolute()
                             .map(|this| match corner {
@@ -519,22 +531,36 @@ impl RenderOnce for Card {
                                 Corner::BottomLeft => this.bottom(BADGE_INSET).left(BADGE_INSET),
                                 Corner::BottomRight => this.bottom(BADGE_INSET).right(BADGE_INSET),
                             })
-                            .when(
-                                corner == Corner::BottomRight && has_play && !playing,
-                                |this| this.group_hover(CARD_GROUP, |style| style.invisible()),
-                            )
+                            .when(corner == Corner::BottomRight && has_play, |this| {
+                                // The play button is always there while playing, and only on
+                                // hover otherwise.
+                                match playing {
+                                    true => this.invisible(),
+                                    false => {
+                                        this.group_hover(CARD_GROUP, |style| style.invisible())
+                                    }
+                                }
+                            })
                             .h(BADGE_HEIGHT)
                             .min_w(BADGE_HEIGHT)
                             .px(BADGE_PAD)
                             .flex()
                             .items_center()
                             .justify_center()
+                            .gap(BADGE_GAP)
                             .rounded_full()
                             .bg(theme.overlay)
                             .text_color(theme.overlay_foreground)
                             .text_size(theme.text(Text::Small))
                             .font_weight(FontWeight::SEMIBOLD)
                             .when(frosted, |this| this.backdrop_blur(GLASS_BLUR))
+                            .children(icon.map(|icon| {
+                                svg()
+                                    .path(icons::path(icon))
+                                    .size(theme.text(Text::Small))
+                                    .flex_none()
+                                    .text_color(theme.overlay_foreground)
+                            }))
                             .child(label)
                     }))
                     .into_any_element()

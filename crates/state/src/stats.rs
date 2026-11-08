@@ -510,6 +510,8 @@ impl Stats {
                             .chain(&data.producers)
                             .map(|ranked| ranked.item.id.clone())
                             .filter(|id| !this.log.portraits.contains_key(id))
+                            .collect::<HashSet<_>>()
+                            .into_iter()
                             .collect()
                     })
                     .unwrap_or_default();
@@ -595,7 +597,7 @@ impl Stats {
         let history = (self.log.scrobbled_density.is_empty()
             && self.log.scrobbled_milestones.is_empty())
         .then(|| (service.clone(), account.clone()));
-        // The history of the whole account is read beside the rankings, not after them.
+        // The history of the whole account is read alongside the rankings.
         if let Some((service, account)) = history {
             self.history_task = Some(io.load(
                 async move { service.history(&account).await },
@@ -605,7 +607,10 @@ impl Stats {
                         Ok(history) => {
                             this.log.scrobbled_density = history.density;
                             this.log.scrobbled_milestones = history.milestones.clone();
-                            this.data.milestones = history.milestones;
+                            // Another source may have been picked while this was read.
+                            if matches!(this.source, StatsSource::Scrobbler(_)) {
+                                this.data.milestones = history.milestones;
+                            }
                         }
                         Err(error) => log::debug!("stats: cannot load history: {error:#}"),
                     }
@@ -663,7 +668,6 @@ impl Stats {
         };
         let store = self.store.clone();
         let io = Io::global(cx);
-        let dates = self.log.dates;
         let client = self.session.read(cx).client();
         // What the log held when last read, so that a quiet read of an unchanged log stops short.
         let known = (
@@ -681,17 +685,16 @@ impl Stats {
                     }
                     prepare_covers(&mut tracks, client.as_deref());
                     let first_play = first_plays(&tracks);
-                    let data = aggregate(&tracks, &first_play, dates, &HashMap::new());
                     let milestones = milestones_of(&tracks);
                     let times: Vec<_> = tracks.iter().filter_map(|track| track.added_at).collect();
                     let history = Overview::default().timed(&times);
-                    Ok(Some((tracks, first_play, data, milestones, history)))
+                    Ok(Some((tracks, first_play, milestones, history)))
                 })
                 .await?
             },
             move |this, result, cx| match result {
                 Ok(None) => this.task = None,
-                Ok(Some((tracks, first_play, data, milestones, history))) => {
+                Ok(Some((tracks, first_play, milestones, history))) => {
                     let times = tracks.iter().filter_map(|track| track.added_at);
                     this.log.bounds = times.clone().min().zip(times.max());
                     this.log.density = this
@@ -703,6 +706,9 @@ impl Stats {
                     this.log.first_play = first_play;
                     this.log.milestones = milestones;
                     this.log.history = history;
+                    // Built from the dates selected at this point, with the descriptors and
+                    // portraits already known.
+                    let data = this.aggregated();
                     this.finish(Ok(data), "recorded plays", cx);
                     this.enrich(cx);
                 }
