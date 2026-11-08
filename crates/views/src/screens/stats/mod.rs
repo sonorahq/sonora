@@ -372,7 +372,8 @@ pub(super) fn peak_era(years: &[(i32, usize)]) -> Option<(i32, i32)> {
             .map(|(_, count)| *count)
             .sum()
     };
-    let start = (first..=last.max(first))
+    // Only windows that end by the last year with data, so the era never reaches into the future.
+    let start = (first - ERA + 1..=last - ERA + 1)
         .max_by_key(|start| held(*start))
         .filter(|start| held(*start) > 0)?;
     Some((start, start + ERA - 1))

@@ -55,8 +55,8 @@ pub use audio::Meter;
 pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
-    Contributor, CoverSize, Credit, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
-    ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsWord,
+    Contributor, CoverSize, Credit, Descriptors, Genre, GenreDetail, GenreItem, GenreSection,
+    HomeFeed, ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsWord,
     PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail, ReleaseType, RomanizedText,
     SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
 };
@@ -64,8 +64,8 @@ pub use output::{Server as SoundServer, missing_bridge};
 pub use redact::redact;
 pub use spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
 pub use stats::{
-    Board, Descriptors, ListeningStats, Milestone, Overview, Ranked, StatsPeriod, Trait, album_key,
-    album_of, compare, credits, milestone_numbers, tag_key,
+    Board, ListeningStats, Milestone, Overview, Ranked, StatsPeriod, Trait, album_key, album_of,
+    compare, credits, milestone_numbers, tag_key,
 };
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";
@@ -166,6 +166,12 @@ pub trait MusicApi: Send + Sync {
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile>;
     async fn artist_images(&self, ids: Vec<String>) -> Result<HashMap<String, String>>;
 
+    /// Genres, moods, tags and tempo for tracks by id. A track the provider does not describe is
+    /// left out, and a provider that describes none returns an empty map.
+    async fn descriptors(&self, _track_ids: &[String]) -> Result<HashMap<String, Descriptors>> {
+        Ok(HashMap::new())
+    }
+
     /// The tracks the user starred. On a `Shape::Saved` provider this is the whole songs
     /// library; on a `Shape::Catalog` one it only feeds the hearts and the favorites filter.
     async fn saved_tracks(&self) -> Result<Vec<Track>>;
@@ -232,11 +238,6 @@ pub trait MusicApi: Send + Sync {
     /// The periods this provider can rank from its own listening data. Empty means unsupported.
     fn stats_periods(&self) -> &'static [StatsPeriod] {
         &[]
-    }
-
-    /// Genres and moods for tracks by id, for the tracks the provider describes.
-    async fn descriptors(&self, _track_ids: &[String]) -> Result<HashMap<String, Descriptors>> {
-        Ok(HashMap::new())
     }
 
     /// Personal rankings across devices, in the provider's order; counts may be unavailable.

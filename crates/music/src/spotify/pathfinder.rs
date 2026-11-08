@@ -24,7 +24,7 @@ pub(crate) use plays::track;
 pub(crate) use search::{
     albums as search_albums, artists as search_artists, playlists as search_playlists,
 };
-pub(crate) use stats::{descriptors, stats};
+pub(crate) use stats::stats;
 
 const ENDPOINT: &str = "https://api-partner.spotify.com/pathfinder/v2/query";
 const APP_PLATFORM: &str = "WebPlayer";

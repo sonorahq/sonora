@@ -124,7 +124,7 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// Reads packed protobuf enum values from a length-delimited field.
+/// Reads packed protobuf varints from a length-delimited field.
 pub(crate) fn varints(bytes: &[u8]) -> Result<Vec<u64>> {
     let mut reader = Reader::new(bytes);
     let mut values = Vec::new();

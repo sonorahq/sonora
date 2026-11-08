@@ -310,13 +310,6 @@ impl ListeningStats {
     }
 }
 
-/// The genres and moods a source attaches to one track.
-#[derive(Clone, Debug, Default)]
-pub struct Descriptors {
-    pub genres: Vec<String>,
-    pub moods: Vec<String>,
-}
-
 /// Counts weighted hits per key and ranks them, keeping first-seen order between equal counts.
 pub struct Board<T> {
     slots: HashMap<String, usize>,

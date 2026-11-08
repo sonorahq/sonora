@@ -361,6 +361,11 @@ impl Stats {
             self.failed = false;
             self.loading = false;
             self.data = data.clone();
+            // The account history can land after the window was kept, so its milestones come
+            // from the log, not from the cached copy.
+            if !self.log.scrobbled_milestones.is_empty() {
+                self.data.milestones = self.log.scrobbled_milestones.clone();
+            }
             self.loaded = Some((self.source, self.period, *at));
             cx.notify();
             return;
@@ -987,7 +992,8 @@ fn aggregate(
 ) -> ListeningStats {
     let (mut songs, mut artists, mut albums) =
         (Board::default(), Board::default(), Board::default());
-    let (mut genres, mut moods) = (Board::default(), Board::default());
+    let (mut genres, mut moods, mut tags) = (Board::default(), Board::default(), Board::default());
+    let none = Descriptors::default();
     let (mut time, mut times) = (0u64, Vec::new());
     let mut new_artists = HashSet::new();
     let (mut plays, mut new_tracks) = (0, 0);
@@ -1012,11 +1018,16 @@ fn aggregate(
             }
             artists.add(key, 1, || artist);
         }
-        let (own_genres, own_moods) = match descriptors.get(id) {
-            Some(found) => (&found.genres, &found.moods),
-            None => (&track.tags, &Vec::new()),
-        };
-        for (board, names) in [(&mut genres, own_genres), (&mut moods, own_moods)] {
+        let (own_genres, own_moods, own_tags) = descriptors
+            .get(id)
+            .map_or((&track.tags, &none.moods, &none.tags), |found| {
+                (&found.genres, &found.moods, &found.tags)
+            });
+        for (board, names) in [
+            (&mut genres, own_genres),
+            (&mut moods, own_moods),
+            (&mut tags, own_tags),
+        ] {
             let mut seen = HashSet::new();
             for name in names {
                 if let Some(key) = tag_key(name).filter(|key| seen.insert(key.clone())) {
@@ -1048,6 +1059,7 @@ fn aggregate(
         albums: albums.ranked(),
         genres: genres.ranked(),
         moods: moods.ranked(),
+        tags: tags.ranked(),
         overview,
         ..Default::default()
     }

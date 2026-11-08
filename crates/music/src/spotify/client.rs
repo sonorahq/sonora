@@ -10,7 +10,8 @@ use librespot_protocol::playlist4_external::SelectedListContent as RootList;
 use protobuf::Message as _;
 
 use crate::spotify::{
-    albums, artists, collection, collection2, pathfinder, playlists, profiles, radio, search, wire,
+    albums, artists, collection, collection2, descriptors, pathfinder, playlists, profiles, radio,
+    search, wire,
 };
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, CoverSize,
@@ -64,14 +65,7 @@ impl MusicApi for LibrespotClient {
     }
 
     async fn descriptors(&self, ids: &[String]) -> Result<HashMap<String, Descriptors>> {
-        let uris: Vec<_> = ids.iter().map(|id| format!("spotify:track:{id}")).collect();
-        let found = pathfinder::descriptors(&self.session, &uris).await?;
-        Ok(found
-            .into_iter()
-            .filter_map(|(uri, found)| {
-                Some((uri.strip_prefix("spotify:track:")?.to_owned(), found))
-            })
-            .collect())
+        descriptors::read(&self.session, ids).await
     }
 
     fn stats_periods(&self) -> &'static [StatsPeriod] {
