@@ -53,6 +53,7 @@ gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "6f271bf242b34
 ] }
 http = "1.3"
 winresource = "0.1"
+x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
 windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
@@ -60,6 +61,7 @@ windows = { version = "0.62", features = [
   "Win32_System_LibraryLoader",
   "Win32_System_Registry",
   "Win32_UI_Controls",
+  "Win32_UI_HiDpi",
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }

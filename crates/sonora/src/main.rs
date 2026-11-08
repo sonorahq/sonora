@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod actions;
+#[cfg(windows)]
+mod app_icon;
 mod assets;
 mod console;
 mod dock;
@@ -13,6 +15,8 @@ mod single;
 #[cfg(windows)]
 mod thumbbar;
 mod tray;
+#[cfg(target_os = "linux")]
+mod x11_icon;
 
 use std::path::PathBuf;
 use std::process::{ExitCode, exit};
@@ -109,6 +113,8 @@ fn main() -> ExitCode {
     app.on_reopen(show_window);
 
     app.run(move |cx: &mut App| {
+        #[cfg(target_os = "macos")]
+        dock::install_icon();
         if let Err(error) = assets::Assets.load_fonts(cx) {
             log::error!("sonora: cannot load bundled fonts: {error:#}");
         }
@@ -369,13 +375,15 @@ fn open_window(cx: &mut App) {
             is_movable: true,
             is_resizable: true,
             app_owns_titlebar_drag: true,
-            app_id: Some("sonora".into()),
+            app_id: Some(assets::app_id().into()),
             window_min_size: Some(LEAST_SIZE),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             window_decorations: Some(decorations),
             ..Default::default()
         },
         |window, cx| {
+            #[cfg(target_os = "linux")]
+            x11_icon::install(window);
             window.set_rem_size(cx.theme().font_size);
             #[cfg(target_os = "windows")]
             set_corner_preference(
@@ -386,6 +394,7 @@ fn open_window(cx: &mut App) {
             state::attach_remote(handle, cx);
             #[cfg(windows)]
             if let Some(handle) = handle {
+                app_icon::install(handle);
                 thumbbar::install(window.window_handle().window_id(), handle, cx);
             }
             state::remember_window(window, cx);
