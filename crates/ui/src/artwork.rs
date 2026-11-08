@@ -1007,8 +1007,6 @@ impl Artwork {
         self
     }
 
-    /// Draws nothing while the image loads or after it fails, for a cover stacked over another
-    /// that already shows, so neither the skeleton nor the placeholder hides it.
     /// Keeps the whole image inside the square instead of cropping it to fill, for art whose
     /// edges matter, as in the full-size cover view.
     pub fn contain(mut self) -> Self {
@@ -1016,6 +1014,8 @@ impl Artwork {
         self
     }
 
+    /// Draws nothing while the image loads or after it fails, for a cover stacked over another
+    /// that already shows, so neither the skeleton nor the placeholder hides it.
     pub fn overlay(mut self) -> Self {
         self.overlay = true;
         self
