@@ -37,7 +37,6 @@ nav-pinned = Épinglés
 nav-unpin = Détacher
 nav-pin-hint = Déposer ici pour épingler
 library-liked-songs = Favoris
-library-play-liked-songs = Lire
 library-no-songs = Aucun favori pour l’instant
 library-no-albums = Aucun album enregistré pour l'instant
 library-no-playlists = Aucune playlist pour l'instant
@@ -97,26 +96,13 @@ column-year = Année
 column-tracks = Titres
 
 # track menu
-menu-add-to-playlist = Ajouter à une playlist
-menu-add-tracks-to-playlist = { $count ->
-    [one] Ajouter { $count } titre à une playlist
-   *[other] Ajouter { $count } titres à une playlist
-}
 menu-new-playlist = Nouvelle playlist
 menu-import-playlist = Importer une playlist…
 menu-edit-tags = Modifier les tags
 menu-no-playlists = Aucune playlist
 menu-search-playlists = Rechercher une playlist
 menu-add-to-library = Ajouter aux favoris
-menu-add-tracks-to-library = { $count ->
-    [one] Ajouter { $count } titre aux favoris
-   *[other] Ajouter { $count } titres aux favoris
-}
 menu-remove-from-library = Retirer des favoris
-menu-remove-tracks-from-library = { $count ->
-    [one] Retirer { $count } titre des favoris
-   *[other] Retirer { $count } titres des favoris
-}
 menu-remove-from-playlist = Retirer de la playlist
 menu-remove-tracks-from-playlist = { $count ->
     [one] Retirer { $count } titre de la playlist
@@ -133,15 +119,7 @@ menu-delete-track-files = { $count ->
    *[other] Supprimer les fichiers de { $count } titres
 }
 menu-download = Télécharger
-menu-download-tracks = { $count ->
-    [one] Télécharger { $count } titre
-   *[other] Télécharger { $count } titres
-}
 menu-remove-download = Supprimer le téléchargement
-menu-remove-downloads = { $count ->
-    [one] Supprimer { $count } téléchargement
-   *[other] Supprimer { $count } téléchargements
-}
 menu-downloading = Téléchargement en cours. Cliquer pour arrêter
 menu-play-next = Lire juste après
 menu-play-tracks-next = { $count ->
@@ -158,11 +136,8 @@ menu-play-tracks-last = { $count ->
     [one] Lire { $count } titre en dernier
    *[other] Lire { $count } titres en dernier
 }
-menu-go-to = Aller à
-menu-artist = Artiste
-menu-album = Album
-menu-radio = Radio
-menu-details = Détails
+menu-song-radio = Ouvrir la radio du titre
+menu-go-to-album = Aller à l'album
 menu-go-to-artist = Aller à l'artiste
 menu-view-details = Voir les détails
 menu-copy-link = Copier le lien
@@ -176,16 +151,6 @@ menu-delete-playlist = Supprimer la playlist
 menu-export-playlist = Exporter la playlist…
 menu-add-playlist-to-library = Ajouter à la bibliothèque
 menu-remove-playlist-from-library = Retirer de la bibliothèque
-menu-library-add = Ajouter à la bibliothèque
-menu-library-add-tracks = { $count ->
-    [one] Ajouter { $count } titre à la bibliothèque
-   *[other] Ajouter { $count } titres à la bibliothèque
-}
-menu-library-remove = Retirer de la bibliothèque
-menu-library-remove-tracks = { $count ->
-    [one] Retirer { $count } titre de la bibliothèque
-   *[other] Retirer { $count } titres de la bibliothèque
-}
 menu-make-playlist-public = Rendre publique
 menu-make-playlist-private = Rendre privée
 menu-play-artist = Lire l'artiste
@@ -370,8 +335,6 @@ login-choose-detail = Choisissez comment vous connecter à { $provider }.
 
 # album and playlist pages
 detail-playlist = Playlist
-detail-play-album = Lire l'album
-detail-play-playlist = Lire la playlist
 
 # play button
 play-pause = Pause
@@ -384,7 +347,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } auditeur mensuel
    *[other] { $value } auditeurs mensuels
 }
-artist-play = Lire maintenant
 artist-popular = Populaires
 artist-popular-eyebrow = Découvrir cet artiste
 artist-popular-empty = Rien à écouter de cet artiste pour l'instant
@@ -461,7 +423,6 @@ kind-playlist = Playlist
 
 # song page
 song-eyebrow = Titre
-song-play = Lire le titre
 song-view-album = Voir l'album
 song-loading = Chargement des informations du titre…
 song-about = À propos de ce titre
@@ -960,6 +921,8 @@ equalizer-status-channels = { $from ->
     [2] stéréo
    *[other] { $to } canaux
 }
+settings-lyrics = Afficher les paroles
+settings-lyrics-detail = Désactivez pour masquer les paroles partout et ne plus les rechercher
 settings-panel-lyrics-size = Taille des paroles (panneau)
 settings-panel-lyrics-size-detail = Taille du texte des paroles dans le panneau latéral, en plus de la taille de base
 settings-fullscreen-lyrics-size = Taille des paroles (plein écran)
@@ -1274,19 +1237,6 @@ toast-offline-mode = Vous êtes hors ligne. Passez en ligne pour écouter ce tit
 offline-title = Vous êtes hors ligne.
 offline-go-online = Passer en ligne
 toast-download-failed = Impossible de lister les titres à télécharger.
-toast-downloading = Téléchargement de { $name }
-toast-downloading-songs = { $count ->
-    [one] Téléchargement de { $count } titre
-   *[other] Téléchargement de { $count } titres
-}
-toast-downloaded = { $name } téléchargé
-toast-downloaded-songs = { $count ->
-    [one] { $count } titre téléchargé
-   *[other] { $count } titres téléchargés
-}
-toast-download-set-failed = Certains titres de { $name } n'ont pas pu être téléchargés
-toast-download-song-failed = { $name } n'a pas pu être téléchargé
-toast-download-songs-failed = Certains titres n'ont pas pu être téléchargés
 toast-percent = { $percent } %
 toast-download-cancelled = Téléchargement de { $name } annulé
 toast-downloads-cancelled = { $count ->

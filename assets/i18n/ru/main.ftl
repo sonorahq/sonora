@@ -37,7 +37,6 @@ nav-pinned = Закреплённое
 nav-unpin = Открепить
 nav-pin-hint = Перетащите сюда, чтобы закрепить
 library-liked-songs = Избранное
-library-play-liked-songs = Слушать
 library-no-songs = Пока нет избранного
 library-no-albums = Пока нет сохранённых альбомов
 library-no-playlists = Пока нет плейлистов
@@ -108,18 +107,9 @@ menu-import-playlist = Импортировать плейлист…
 menu-edit-tags = Изменить теги
 menu-no-playlists = Нет плейлистов
 menu-search-playlists = Поиск плейлиста
+menu-save-library = Медиатека
 menu-add-to-library = В избранное
-menu-add-tracks-to-library = { $count ->
-    [one] Добавить { $count } трек в избранное
-    [few] Добавить { $count } трека в избранное
-   *[other] Добавить { $count } треков в избранное
-}
 menu-remove-from-library = Убрать из избранного
-menu-remove-tracks-from-library = { $count ->
-    [one] Убрать { $count } трек из избранного
-    [few] Убрать { $count } трека из избранного
-   *[other] Убрать { $count } треков из избранного
-}
 menu-remove-from-playlist = Удалить из плейлиста
 menu-remove-tracks-from-playlist = { $count ->
     [one] Удалить { $count } трек из плейлиста
@@ -135,17 +125,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Удалить файл трека
 menu-delete-track-files = Удалить файлы треков ({ $count })
 menu-download = Скачать
-menu-download-tracks = { $count ->
-    [one] Скачать { $count } трек
-    [few] Скачать { $count } трека
-   *[other] Скачать { $count } треков
-}
 menu-remove-download = Удалить загрузку
-menu-remove-downloads = { $count ->
-    [one] Удалить { $count } загрузку
-    [few] Удалить { $count } загрузки
-   *[other] Удалить { $count } загрузок
-}
 menu-downloading = Скачивается. Щёлкните для остановки
 menu-play-next = Воспроизвести следующим
 menu-play-tracks-next = { $count ->
@@ -165,11 +145,8 @@ menu-play-tracks-last = { $count ->
     [few] Воспроизвести { $count } трека в конце
    *[other] Воспроизвести { $count } треков в конце
 }
-menu-go-to = Перейти
-menu-artist = Исполнитель
-menu-album = Альбом
-menu-radio = Радио
-menu-details = Подробнее
+menu-song-radio = Радио по треку
+menu-go-to-album = Перейти к альбому
 menu-go-to-artist = Перейти к исполнителю
 menu-view-details = Подробнее
 menu-copy-link = Копировать ссылку
@@ -183,18 +160,6 @@ menu-delete-playlist = Удалить плейлист
 menu-export-playlist = Экспортировать плейлист…
 menu-add-playlist-to-library = Добавить в медиатеку
 menu-remove-playlist-from-library = Удалить из медиатеки
-menu-library-add = Добавить в медиатеку
-menu-library-add-tracks = { $count ->
-    [one] Добавить { $count } трек в медиатеку
-    [few] Добавить { $count } трека в медиатеку
-   *[other] Добавить { $count } треков в медиатеку
-}
-menu-library-remove = Удалить из медиатеки
-menu-library-remove-tracks = { $count ->
-    [one] Удалить { $count } трек из медиатеки
-    [few] Удалить { $count } трека из медиатеки
-   *[other] Удалить { $count } треков из медиатеки
-}
 menu-make-playlist-public = Сделать публичным
 menu-make-playlist-private = Сделать приватным
 menu-play-artist = Воспроизвести исполнителя
@@ -409,8 +374,6 @@ login-choose-detail = Выберите способ входа в { $provider }.
 
 # album and playlist pages
 detail-playlist = Плейлист
-detail-play-album = Слушать альбом
-detail-play-playlist = Слушать плейлист
 
 # play button
 play-pause = Пауза
@@ -424,7 +387,6 @@ artist-monthly-listeners = { $count ->
     [few] { $value } слушателя в месяц
    *[other] { $value } слушателей в месяц
 }
-artist-play = Слушать
 artist-popular = Популярное
 artist-popular-eyebrow = Знакомство с исполнителем
 artist-popular-empty = Пока нечего слушать у этого исполнителя
@@ -504,7 +466,6 @@ kind-playlist = Плейлист
 
 # song page
 song-eyebrow = Трек
-song-play = Слушать трек
 song-view-album = Открыть альбом
 song-loading = Загружаем информацию о треке…
 song-about = О треке
@@ -763,6 +724,7 @@ settings-discord-hide-on-connect-detail = Оставлять статус сам
 settings-discord-buttons = Кнопки
 settings-discord-buttons-detail = Ссылки под статусом, которые могут открыть ваши друзья: одна на трек в его сервисе, другая на Sonora
 settings-discord-buttons-pick = Выбрать кнопки
+settings-discord-preview = Предпросмотр статуса Discord
 settings-discord-preview-listening = Слушает { $name }
 settings-discord-preview-music = Музыка
 settings-discord-preview-elapsed = Прошло { $time }
@@ -1014,6 +976,8 @@ equalizer-status-channels = { $from ->
     [2] стерео
    *[other] { $to } кан.
 }
+settings-lyrics = Показывать тексты песен
+settings-lyrics-detail = Выключите, чтобы скрыть тексты песен везде и перестать их искать
 settings-panel-lyrics-size = Размер текста песни (панель)
 settings-panel-lyrics-size-detail = Размер строк текста песни на боковой панели поверх базового размера шрифта
 settings-fullscreen-lyrics-size = Размер текста песни (полный экран)
@@ -1379,20 +1343,6 @@ toast-offline-mode = Вы офлайн. Перейдите в онлайн, чт
 offline-title = Вы офлайн.
 offline-go-online = Перейти в онлайн
 toast-download-failed = Не удалось получить список треков для скачивания.
-toast-downloading = Скачивание { $name }
-toast-downloading-songs = { $count ->
-    [one] Скачивание { $count } трека
-   *[other] Скачивание { $count } треков
-}
-toast-downloaded = Скачано: { $name }
-toast-downloaded-songs = { $count ->
-    [one] Скачан { $count } трек
-    [few] Скачано { $count } трека
-   *[other] Скачано { $count } треков
-}
-toast-download-set-failed = Не удалось скачать часть треков из { $name }
-toast-download-song-failed = Не удалось скачать { $name }
-toast-download-songs-failed = Не удалось скачать часть треков
 toast-percent = { $percent }%
 toast-download-cancelled = Отменено скачивание { $name }
 toast-downloads-cancelled = { $count ->

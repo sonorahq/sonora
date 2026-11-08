@@ -25,6 +25,7 @@ pub mod netease;
 pub mod output;
 pub mod potoken;
 pub mod progress;
+mod redact;
 pub mod scrobble;
 mod sink;
 mod spectrum;
@@ -37,7 +38,7 @@ pub mod trouble;
 pub mod vault;
 pub mod youtube;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -59,6 +60,7 @@ pub use models::{
     SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
 };
 pub use output::{Server as SoundServer, missing_bridge};
+pub use redact::redact;
 pub use spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";
@@ -69,6 +71,9 @@ pub const LOCAL_PLAYLIST_PREFIX: &str = "local-playlist:";
 /// The most recommendations a provider hands one list of an album or artist page, so a
 /// rail never asks for or draws more than this many releases or artists.
 pub const SUGGESTIONS: usize = 10;
+
+/// The duration tolerance for recognizing the same recording across releases.
+const SAME_SONG: Duration = Duration::from_secs(5);
 
 pub fn is_local_id(id: &str) -> bool {
     id.starts_with(LOCAL_TRACK_PREFIX)
@@ -145,6 +150,12 @@ pub trait MusicApi: Send + Sync {
         _known: &[Track],
     ) -> Result<ArtistCatalogue> {
         Ok(ArtistCatalogue::default())
+    }
+
+    /// The artist's songs for playback, with popular tracks first when available.
+    /// Providers extend the overview's tracks with their ranked catalogue or release order.
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        Ok(self.artist(artist_id).await?.top_tracks)
     }
 
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile>;
@@ -351,6 +362,13 @@ pub trait MusicApi: Send + Sync {
     }
 
     async fn search_playlists(&self, _query: &str) -> Result<Vec<Playlist>> {
+        Ok(Vec::new())
+    }
+
+    /// The artists the provider finds for `query`, best match first. A provider without an
+    /// artist search keeps the default of none, and search then names only the artists behind
+    /// the songs and albums it found.
+    async fn search_artists(&self, _query: &str) -> Result<Vec<SavedArtist>> {
         Ok(Vec::new())
     }
 
@@ -624,7 +642,12 @@ pub enum PlaybackEvent {
     },
     Refused,
     Gated,
-    OutputChanged,
+    /// The audio output was lost or changed, so the engine is gone. `heard` is the track being
+    /// heard and how far into it the output had played, when the engine knew. A restart resumes
+    /// there rather than where a clock that kept running during the switch would say.
+    OutputChanged {
+        heard: Option<(String, Duration)>,
+    },
     /// What the engine knows about the sound of track `id`, sent as it starts decoding it. A
     /// track queued behind the current one reports before it is heard.
     Signal {
@@ -770,7 +793,8 @@ pub enum Catalog {
     /// files and a self-hosted server.
     Fixed,
     /// A set the listener picked out of a bigger catalog, which tracks and albums are put into
-    /// and taken out of through `set_in_library`, as on Apple Music.
+    /// and taken out of through `set_in_library`, as on Apple Music. A favorite is a mark on a
+    /// library item, so taking an item out of the library takes its favorite with it.
     Editable,
 }
 
@@ -868,6 +892,8 @@ pub enum SignIn {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignInProblem {
     Premium,
+    /// Apple Music says the signed-in Apple ID has no active subscription.
+    Subscription,
     Region,
     Credentials,
     Network,
@@ -895,6 +921,7 @@ impl std::fmt::Display for SignInFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let reason = match self.0 {
             SignInProblem::Premium => "the account has no Spotify Premium",
+            SignInProblem::Subscription => "the account has no active Apple Music subscription",
             SignInProblem::Region => "the account is out of its home region",
             SignInProblem::Credentials => "the stored credentials are no longer valid",
             SignInProblem::Network => "the provider could not be reached",
@@ -1076,6 +1103,83 @@ pub fn iso_8601_to_epoch(value: Option<&str>) -> Option<i64> {
         .ok()?
         .unix_timestamp();
     Some(timestamp)
+}
+
+/// Keeps playable songs credited to the artist in their supplied order, collapsing repeat
+/// ids and matching titles of similar duration across releases. Remaster labels do not
+/// distinguish songs.
+fn artist_songs(tracks: Vec<Track>, artist_id: &str) -> Vec<Track> {
+    let mut kept: HashMap<String, Vec<Duration>> = HashMap::new();
+    let mut ids = HashSet::new();
+    tracks
+        .into_iter()
+        .filter(|track| {
+            if !track.playable {
+                return false;
+            }
+            let named = track
+                .artist_refs
+                .iter()
+                .filter_map(|artist| artist.id.as_deref());
+            named.clone().next().is_none() || named.into_iter().any(|id| id == artist_id)
+        })
+        .filter(|track| {
+            if let Some(id) = &track.id
+                && !ids.insert(id.clone())
+            {
+                return false;
+            }
+            let lengths = kept.entry(song_title(&track.name)).or_default();
+            let repeat = lengths.iter().any(|length| {
+                !length.is_zero()
+                    && !track.duration.is_zero()
+                    && length.abs_diff(track.duration) <= SAME_SONG
+            });
+            if !repeat {
+                lengths.push(track.duration);
+            }
+            !repeat
+        })
+        .collect()
+}
+
+/// A track title reduced to what tells songs apart: lowercase, without a remaster note in
+/// brackets or after a dash, and with its spacing collapsed.
+fn song_title(name: &str) -> String {
+    let lower = name.to_lowercase();
+    let mut rest = match lower.rsplit_once(" - ") {
+        Some((head, tail)) if remaster_note(tail) => head,
+        _ => lower.as_str(),
+    };
+    let mut title = String::with_capacity(rest.len());
+    while let Some(open) = rest.find(['(', '[']) {
+        let close = match rest.as_bytes()[open] {
+            b'(' => ')',
+            _ => ']',
+        };
+        let Some(length) = rest[open..].find(close) else {
+            break;
+        };
+        let end = open + length + 1;
+        title.push_str(&rest[..open]);
+        if !remaster_note(&rest[open + 1..end - 1]) {
+            title.push_str(&rest[open..end]);
+        }
+        rest = &rest[end..];
+    }
+    title.push_str(rest);
+    title.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Recognizes remaster labels without discarding version names such as live or acoustic.
+fn remaster_note(note: &str) -> bool {
+    note.contains("remaster")
+        && note.split_whitespace().all(|word| {
+            matches!(
+                word,
+                "remaster" | "remastered" | "digitally" | "digital" | "version"
+            ) || word.chars().all(|character| character.is_ascii_digit())
+        })
 }
 
 #[cfg(test)]

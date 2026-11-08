@@ -1,102 +1,55 @@
-//! The ambient background: a flowing colour field behind fullscreen, five soft
-//! blobs under a heavy blur, darkened so lyrics stay readable. `Root` owns the
-//! one entity, paints it under everything, title bar included, and paints no
-//! background of its own beneath it: the field stands in for the page and
-//! carries the window's own opacity, so a see-through window stays see-through
-//! in fullscreen.
+//! The ambient background: a flowing colour field behind fullscreen, five colours folded into
+//! one another by slow waves in the `ui::Waves` shader, darkened so lyrics stay readable. `Root`
+//! owns the one entity, paints it under everything, title bar included, and paints no
+//! background of its own beneath it. The field stands in for the page and carries the window's
+//! own opacity, so a see-through window stays see-through in fullscreen.
 //!
-//! `ambient` decides whether it is painted at all, and with it whether the
-//! fullscreen controls frost what they float over. `ambient_motion` decides
-//! whether the field drifts.
+//! `ambient` decides whether it is painted at all, and with it whether the fullscreen controls
+//! frost what they float over. `ambient_motion` decides whether the field drifts.
 //!
-//! The colours are the theme's `tint` and `tint_secondary`, which fullscreen
-//! samples off the cover whatever the adaptive theme setting says, resolved
-//! through `Theme::accent` rather than read off `Theme::selection`, which lags
-//! a track change by the length of the theme's own fade. Art with no colour
-//! leaves no tint and the stage stays neutral. `painted` eases the colours on
+//! The colours are the theme's `tint` and `tint_secondary`, which fullscreen samples off the
+//! cover whatever the adaptive theme setting says, resolved through `Theme::accent` rather than
+//! read off `Theme::selection`, which lags a track change by the length of the theme's own fade.
+//! Art with no colour leaves no tint and the stage stays neutral. `painted` eases the colours on
 //! screen toward those, so a cover change washes in rather than cuts.
 
-use std::cell::Cell;
-use std::f32::consts::TAU;
-use std::rc::Rc;
 use std::time::Instant;
 
 use gpui::prelude::*;
-use gpui::{
-    AnyElement, App, Bounds, BoxShadow, Context, Hsla, Pixels, Render, Rgba, Task, Window, canvas,
-    div, point, px,
-};
+use gpui::{App, Context, Hsla, Pixels, Render, Rgba, Task, WeakEntity, Window, div};
 use state::Sonora;
 use ui::{ActiveTheme as _, CoverPalette, Theme};
 
 use crate::shared::adaptive;
 
-/// How many blobs make up the field.
-pub(crate) const BLOBS: usize = 5;
-/// The widest blur, in device pixels, the renderer still runs at full resolution. It picks
-/// the buffer from the radius: four or less keeps every pixel, eight halves the frame, and
-/// anything wider drops to a quarter. The field is already drawn at `DOWNSCALE`, so a wider
-/// blur would shrink it a second time and the upscale would crawl over every seam. The discs
-/// carry the falloff instead.
-const BLUR_FULL: f32 = 4.;
-/// How many times smaller the field is drawn than it is shown. The layer is
-/// laid out at this fraction of the window and the compositor scales it back
-/// up with a bilinear sample, so the discs and the blur cost a sixteenth of
-/// the pixels. Nothing in the field is sharper than the blur, so the upscale
-/// shows nothing.
-const DOWNSCALE: f32 = 4.;
+/// How many colours make up the field.
+const COLORS: usize = 5;
 /// How much of itself the field keeps under the dark overlay that holds lyrics readable over
-/// it. The overlay is folded into the colours rather than painted as a sheet of its own: over
-/// an opaque stack multiplying every layer by what it lets through is the same picture, and a
-/// black sheet this strong was most of what a see-through window's alpha went on.
+/// it. The overlay is folded into the colours rather than painted as a sheet of its own, which
+/// over an opaque field is the same picture and leaves a see-through window's alpha alone.
 const SHADE: f32 = 0.55;
-
-/// One blob: base centre (fractions of the layer), diameter (fraction of the
-/// layer's smaller side), drift period in seconds, phase, drift amplitude
-/// (fractions).
-///
-/// A centre travels at 2 pi A W / T at its fastest, where A is its amplitude and W the width
-/// it drifts across. On a 2560 wide window these periods put that around 65 pixels a second,
-/// so a frame at the display rate moves a blob half a pixel. What reads as steps at this speed
-/// is not the clock but the eight bit banding underneath, which holds a contour still and then
-/// jumps it a whole band at once. The dither over the field is what deals with that.
-const SPECS: [Spec; BLOBS] = [
-    (0.22, 0.30, 1.10, 34., 0.0, 0.13, 0.10),
-    (0.80, 0.24, 1.00, 27., 1.7, 0.11, 0.13),
-    (0.52, 0.68, 1.20, 41., 3.4, 0.14, 0.09),
-    (0.12, 0.78, 0.90, 24., 5.1, 0.10, 0.12),
-    (0.85, 0.72, 0.72, 31., 2.5, 0.12, 0.11),
-];
-
-/// Concentric discs faking a radial falloff. They are what keeps the field smooth now that
-/// the blur stays narrow enough to run at full resolution, and at `DOWNSCALE` a disc costs a
-/// sixteenth of the fill it did at window size, so the stack can afford to be dense. The
-/// spacing left between them has to stay inside the blur's reach or they read as rings.
-const DISCS: usize = 24;
-/// Opacity ramp from the outermost disc to the core. The discs stack, so a disc is far
-/// fainter than the field it builds up to.
-const DISC_FAINT: f32 = 0.027;
-const DISC_STRONG: f32 = 0.079;
 /// Time constant of the exponential ease onto a new palette, in seconds. The
 /// field lands within a few percent of the target after about three of these.
 const WASH: f32 = 0.8;
-/// A framed field's blob, drawn as the blurred shadow of a circle rather than through a blur
-/// layer: how much of the blob's span the sharp circle takes, how far its blur reaches as a
-/// share of that span, and how strong its core is, which together match the stacked discs.
-const CORE: f32 = 0.5;
-const SOFT: f32 = 0.15;
-const PEAK: f32 = 0.72;
-
-/// One entry of `SPECS`.
-type Spec = (f32, f32, f32, f32, f32, f32, f32);
+/// How many times a second the drifting field is redrawn. The drift is slow enough that 30 frames
+/// read as smooth, and every frame repaints the whole window through the shader.
+const DRIFT_RATE: f32 = 30.;
+/// How early a display tick may come and still count as the next drift frame, in seconds. It keeps
+/// the frames on a steady share of the ticks, every second one at 60 Hz and every fourth at 120.
+const DRIFT_SLACK: f32 = 0.004;
+/// How many times smaller across each side the field behind the window is drawn before it is
+/// stretched back over it. Nothing in it is sharper than a heavy blur, so the stretch does not show,
+/// and the shader runs on a sixteenth of the pixels.
+const FIELD_SHRINK: f32 = 4.;
 
 /// The flowing colour field. One sits behind the whole window in fullscreen, and a preview can
 /// hold another of its own made with `Ambient::framed`.
 pub(crate) struct Ambient {
     started: Instant,
     stepped: Instant,
-    bounds: Rc<Cell<Bounds<Pixels>>>,
-    painted: Option<[Hsla; BLOBS]>,
+    painted: Option<[Hsla; COLORS]>,
+    /// Whether a wait for the next drift frame is already running.
+    pacing: bool,
     /// The palette of the cover a framed field follows, `None` for the one behind the window.
     framed: Option<Sampled>,
 }
@@ -120,15 +73,15 @@ impl Ambient {
         Self {
             started: now,
             stepped: now,
-            bounds: Rc::new(Cell::new(Bounds::default())),
             painted: None,
+            pacing: false,
             framed: None,
         }
     }
 
     /// A field for a preview that fills a frame rather than the window. It takes its colours
-    /// from the cover `follow` hands it whatever the adaptive theme says, and paints without a
-    /// blur layer, so it fills its bounds edge to edge and the frame has to round it.
+    /// from the cover `follow` hands it whatever the adaptive theme says, and leaves its corners
+    /// square for the frame to round.
     pub(crate) fn framed(cx: &mut Context<Self>) -> Self {
         Self {
             framed: Some(Sampled::default()),
@@ -174,12 +127,24 @@ impl Ambient {
         }
     }
 
+    /// Asks for the next drift frame `DRIFT_RATE` times a second. It counts display ticks rather
+    /// than running a timer of its own, since a timer is never in phase with the refresh and slow
+    /// motion would land on one vsync, skip the next and double the one after, which reads as a
+    /// twitch.
+    fn pace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pacing {
+            return;
+        }
+        self.pacing = true;
+        wait_for_drift(cx.entity().downgrade(), Instant::now(), window);
+    }
+
     /// Eases the painted colours one frame toward `target` and returns them.
     /// The step is the real time since the last frame, so a gap long enough to
     /// mean the field was off screen lands on the target outright and entering
     /// fullscreen never washes in from whatever played before. With motion off
     /// there are no frames to ease over, so the target is taken as it is.
-    fn wash(&mut self, target: [Hsla; BLOBS], animates: bool) -> [Hsla; BLOBS] {
+    fn wash(&mut self, target: [Hsla; COLORS], animates: bool) -> [Hsla; COLORS] {
         let now = Instant::now();
         let step = now.duration_since(self.stepped).as_secs_f32();
         self.stepped = now;
@@ -195,11 +160,11 @@ impl Ambient {
         painted
     }
 
-    /// Resolves the five blob colours from the theme: the cover's leading hue
+    /// Resolves the five field colours from the theme: the cover's leading hue
     /// carried from a light highlight down to a dark shadow, plus its runner-up
     /// where the art names one. Art with no colour leaves no tints behind, and
     /// then the stage is quiet neutrals.
-    pub(crate) fn colors(theme: &Theme) -> [Hsla; BLOBS] {
+    pub(crate) fn colors(theme: &Theme) -> [Hsla; COLORS] {
         let neutral = |light: f32| Hsla {
             h: 0.06,
             s: 0.12,
@@ -207,7 +172,7 @@ impl Ambient {
             a: 1.,
         };
         // A dark theme gets a dark stage; lift the floor a little so the
-        // blobs stay apart from the base.
+        // pools stay apart from the stage.
         let floor = (0.13 + theme.background.l * 0.8).clamp(0.13, 0.30);
 
         let Some(tint) = theme.tint else {
@@ -266,165 +231,76 @@ impl Render for Ambient {
         // or the setting of its own is enough to stop it.
         let animates =
             ui::motion::animates(cx) && Sonora::global(cx).settings.read(cx).ambient_motion();
-        // The drift asks for the next frame off the display's own clock rather than a timer of
-        // its own. A timer is never in phase with the refresh, so a blob that moves a fraction
-        // of a pixel per frame lands on one vsync, skips the next and doubles the one after,
-        // which reads as a twitch however slow the motion is. Cost belongs in the field below,
-        // not in the frame rate.
         let elapsed = match animates {
             true => {
-                window.request_animation_frame();
+                self.pace(window, cx);
                 self.started.elapsed().as_secs_f32()
             }
             false => 0.,
         };
         let colors = self.wash(Self::colors(&theme), animates);
         // The field stands in for the page rather than sitting on it, so it carries the
-        // window's own opacity and `Root` paints no background beneath it. One opacity thins
-        // every layer at once; a quad still adds to what it covers, which is why the blobs
-        // read a shade denser than the gaps between them.
+        // window's own opacity and `Root` paints no background beneath it.
         let clarity = match theme.transparent {
             true => theme.background.a,
             false => 1.,
         };
-        if self.framed.is_some() {
-            return self.flat(elapsed, colors, clarity, theme, window);
-        }
-        // Geometry resolves against the layer's own pixel bounds, measured a
-        // frame ago by the canvas, so the discs stay circular at any window
-        // aspect ratio. The field is laid out at a fraction of those bounds
-        // and scaled back up from the top left corner.
-        let bounds = self.bounds.get();
-        let wide = bounds.size.width.as_f32().max(1.) / DOWNSCALE;
-        let high = bounds.size.height.as_f32().max(1.) / DOWNSCALE;
-        // The field reaches into the corners the chrome rounds, and GPUI clips only to a
-        // rectangle, so the sheet takes that radius itself.
-        let radius = window_radius(window, cx);
+        // The field reaches into the corners the chrome rounds, so it takes that radius itself.
+        // A framed field leaves its corners to the frame.
+        let radius = match self.framed {
+            None => window_radius(window, cx),
+            Some(_) => None,
+        };
+
+        let waves = ui::Waves::new(layered(colors).map(shaded))
+            .stage(shaded(Hsla {
+                a: 1.,
+                ..theme.background
+            }))
+            .time(elapsed);
 
         div()
             .id("ambient")
             .absolute()
             .inset_0()
-            .overflow_hidden()
-            .when_some(radius, |this, radius| this.rounded(radius))
             .opacity(clarity)
-            .child(measure(&self.bounds))
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .when_some(radius, |this, radius| this.rounded(radius))
-                    .bg(shaded(Hsla {
-                        a: 1.,
-                        ..theme.background
-                    })),
-            )
-            // The blur spreads the blobs past any shape they could be cut to, so a rounded window
-            // fades them out toward every edge instead. The fade sits on an unblurred layer the
-            // size of the window, since a blurred one measures it from past its own blur reach.
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .when_some(radius, |this, radius| {
-                        this.fade_edges(radius * 2., radius * 2.)
-                            .fade_sides(radius * 2., radius * 2.)
-                    })
-                    .child(
+            .map(|this| match self.framed {
+                // A preview is small enough to draw at full size.
+                Some(_) => this.child(waves),
+                None => {
+                    let viewport = window.viewport_size();
+                    this.child(
                         div()
                             .absolute()
-                            .left_0()
                             .top_0()
-                            .w(px(wide))
-                            .h(px(high))
-                            .layer_scale(DOWNSCALE)
-                            .layer_scale_origin(point(0., 0.))
-                            .blur(px(BLUR_FULL / window.scale_factor()))
-                            .children(SPECS.iter().zip(colors).map(|(spec, color)| {
-                                let (x, y, grown) = drift(*spec, elapsed, wide, high);
-                                div()
-                                    .absolute()
-                                    .left(px(x - grown / 2.))
-                                    .top(px(y - grown / 2.))
-                                    .size(px(grown))
-                                    .children((0..DISCS).map(move |step| {
-                                        let fraction = 1.
-                                            - step as f32 / DISCS as f32 * (1. - 1. / DISCS as f32);
-                                        let opacity = DISC_FAINT
-                                            + step as f32 / (DISCS as f32 - 1.)
-                                                * (DISC_STRONG - DISC_FAINT);
-                                        let stepped = grown * fraction;
-                                        div()
-                                            .absolute()
-                                            .left(px((grown - stepped) / 2.))
-                                            .top(px((grown - stepped) / 2.))
-                                            .size(px(stepped))
-                                            .rounded_full()
-                                            .bg(shaded(color).opacity(opacity))
-                                    }))
-                            })),
-                    ),
-            )
-            // Every buffer the field passes through holds eight bits a channel, and a gradient
-            // this wide and this dark steps through only a few dozen of them, so its steps read
-            // as bands that slide with the blobs. The dither scatters each step over
-            // neighbouring pixels instead.
-            .child(ui::grain(window))
-            .into_any_element()
+                            .left_0()
+                            .w((viewport.width / FIELD_SHRINK).ceil())
+                            .h((viewport.height / FIELD_SHRINK).ceil())
+                            .layer_scale(FIELD_SHRINK)
+                            .layer_scale_origin(gpui::point(0., 0.))
+                            .child(waves.when_some(
+                                radius.map(|radius| radius / FIELD_SHRINK),
+                                ui::Waves::corner_radius,
+                            )),
+                    )
+                }
+            })
     }
 }
 
-impl Ambient {
-    /// The field of a framed preview, painted with no layer of its own so it is the same
-    /// picture wherever the frame sits, under a scroller's fade included. Each blob is the
-    /// blurred shadow of a circle, which falls off as smoothly as the blurred discs do. The
-    /// frame clips it only to a rectangle, so its owner covers the rounded corners.
-    fn flat(
-        &self,
-        elapsed: f32,
-        colors: [Hsla; BLOBS],
-        clarity: f32,
-        theme: Theme,
-        window: &Window,
-    ) -> AnyElement {
-        let bounds = self.bounds.get();
-        let wide = bounds.size.width.as_f32().max(1.);
-        let high = bounds.size.height.as_f32().max(1.);
-
-        div()
-            .id("ambient")
-            .absolute()
-            .inset_0()
-            .overflow_hidden()
-            .opacity(clarity)
-            .child(measure(&self.bounds))
-            .child(div().absolute().inset_0().bg(shaded(Hsla {
-                a: 1.,
-                ..theme.background
-            })))
-            .children(SPECS.iter().zip(colors).map(|(spec, color)| {
-                let (x, y, span) = drift(*spec, elapsed, wide, high);
-                let core = span * CORE;
-                // a drop shadow is cut away under its own element, so the circle stands off
-                // past the field's left edge and throws its shadow back onto the blob's place
-                let away = wide + span;
-                div()
-                    .absolute()
-                    .left(px(x - core / 2. - away))
-                    .top(px(y - core / 2.))
-                    .size(px(core))
-                    .rounded_full()
-                    .shadow(vec![BoxShadow {
-                        color: shaded(color).opacity(PEAK),
-                        offset: point(px(away), px(0.)),
-                        blur_radius: px(span * SOFT),
-                        spread_radius: px(0.),
-                        inset: false,
-                    }])
-            }))
-            .child(ui::grain(window))
-            .into_any_element()
-    }
+/// Waits out display ticks until the next drift frame is due, then redraws `field`.
+fn wait_for_drift(field: WeakEntity<Ambient>, drawn: Instant, window: &mut Window) {
+    window.on_next_frame(move |window, cx| {
+        if drawn.elapsed().as_secs_f32() < 1. / DRIFT_RATE - DRIFT_SLACK {
+            return wait_for_drift(field, drawn, window);
+        }
+        field
+            .update(cx, |field, cx| {
+                field.pacing = false;
+                cx.notify();
+            })
+            .ok();
+    });
 }
 
 /// Whether the ambient background is on. Fullscreen reads it for the frosted
@@ -444,24 +320,12 @@ fn window_radius(_window: &Window, _cx: &App) -> Option<Pixels> {
     None
 }
 
-/// A canvas that stores the bounds it is laid out at in `bounds`, which the field reads a
-/// frame later to size its blobs.
-fn measure(bounds: &Rc<Cell<Bounds<Pixels>>>) -> impl IntoElement {
-    let bounds = bounds.clone();
-    canvas(move |got, _, _| bounds.set(got), |_, _, _, _| {})
-        .absolute()
-        .size_full()
-}
-
-/// Where a blob stands `elapsed` seconds into its drift across a field `wide` by `high`, and
-/// how wide it spans, all in the field's own units.
-fn drift(spec: Spec, elapsed: f32, wide: f32, high: f32) -> (f32, f32, f32) {
-    let (base_x, base_y, size, period, phase, amp_x, amp_y) = spec;
-    let spin = TAU * elapsed / period;
-    let x = base_x + amp_x * (spin + phase).sin();
-    let y = base_y + amp_y * (spin * 0.83 + phase * 1.7).cos();
-    let span = wide.min(high) * size * (1. + 0.12 * (spin * 0.6 + phase * 2.3).sin());
-    (x * wide, y * high, span)
+/// The colours in the order the field lays them down, the runner-up last. Each pool covers the
+/// ones under it, so drawn third it sank beneath the two shadows and a cover's second colour
+/// barely showed.
+fn layered(colors: [Hsla; COLORS]) -> [Hsla; COLORS] {
+    let [base, highlight, second, shadow, deep] = colors;
+    [base, highlight, shadow, deep, second]
 }
 
 /// A colour as the dark overlay leaves it. Black at `SHADE` over an opaque colour is that

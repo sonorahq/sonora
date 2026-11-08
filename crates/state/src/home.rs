@@ -514,20 +514,8 @@ mod tests {
                 name: format!("Artist {artist}"),
                 id: Some(format!("artist-{artist}")),
             }],
-            album: String::new(),
-            album_id: None,
-            cover: None,
             duration: Duration::from_secs(180),
-            added_at: None,
-            added_by: None,
-            playcount: None,
-            popularity: 0,
-            explicit: false,
-            track_number: 0,
-            disc_number: 0,
-            tags: Vec::new(),
-            languages: Vec::new(),
-            credits: Vec::new(),
+            ..Default::default()
         }
     }
 

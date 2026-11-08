@@ -6,6 +6,7 @@ pub(crate) mod cards;
 pub(crate) mod cells;
 pub(crate) mod confirm;
 pub(crate) mod device_code;
+pub(crate) mod device_menu;
 pub(crate) mod equalizer;
 pub(crate) mod hero;
 pub(crate) mod local;
@@ -36,6 +37,9 @@ const YOUTUBE: u32 = 0xff0033;
 const DEEZER: u32 = 0xa238ff;
 const APPLE: u32 = 0xfa2d48;
 const SUBSONIC: u32 = 0xffa31a;
+/// How much of the foreground text keeps where the theme would grey it over the ambient field.
+/// The theme's grey is about that share of white over the page colour.
+const QUIET: f32 = 0.56;
 
 pub(crate) fn provider_logo(slug: &str) -> &'static str {
     match slug {
@@ -60,4 +64,11 @@ pub(crate) fn provider_brand(slug: &str, cx: &gpui::App) -> gpui::Hsla {
         "subsonic" => gpui::rgb(SUBSONIC).into(),
         _ => ui::ActiveTheme::theme(cx).foreground,
     }
+}
+
+/// The foreground at `QUIET`, in place of the theme's grey for text over the ambient field:
+/// unsung lyrics, quieter lanes and the artist line. A flat grey stands apart from the colours
+/// behind it, while translucent light takes them on.
+pub(crate) fn quiet(theme: &ui::Theme) -> gpui::Hsla {
+    theme.foreground.opacity(QUIET)
 }

@@ -84,9 +84,9 @@ fn main() -> ExitCode {
         single::Instance::Running => return ExitCode::SUCCESS,
         single::Instance::Failed => exit(1),
     }
-    // Two rustls backends are compiled in: librespot, oauth2 and ytmusic still ask for ring,
-    // while reqwest 0.13 and opensubsonic ask for aws-lc-rs. rustls refuses to guess between
-    // them, so one is picked here. A second install only means another crate got there first.
+    // reqwest is built without a crypto provider, and opensubsonic still compiles aws-lc-rs in
+    // beside ring, so rustls cannot pick one by itself. Every client uses ring from here on. A
+    // second install only means another crate got there first.
     rustls::crypto::ring::default_provider()
         .install_default()
         .ok();

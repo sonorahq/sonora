@@ -14,7 +14,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::catalog::CatalogSource;
 use crate::settings::AppSettings;
-use crate::{Io, Network, Outcome, Scan, Shelf, Toast, Toasts, join};
+use crate::{Io, Network, Outcome, Scan, Shelf, Target, Toast, Toasts, join};
 
 const HEARTBEAT: Duration = Duration::from_secs(30);
 /// How often the sign-in window is asked whether the user is through.
@@ -474,7 +474,8 @@ impl Session {
 
     /// Moves past a provider whose stored sign-in did not open, to the next provider with an
     /// account stored, or failing that to a guest session. The provider keeps its error for the
-    /// settings page, and a toast says it could not sign back in. With nowhere to go the
+    /// settings page, and a toast says it could not sign back in, or that the provider invalidated
+    /// the session when it refused the stored sign-in outright. With nowhere to go the
     /// session ends the way it always did, on the sign-in page.
     fn fall_back(&mut self, failed: usize, error: Option<&Error>, cx: &mut Context<Self>) {
         let provider = self.providers[failed].clone();
@@ -530,7 +531,11 @@ impl Session {
                     "session: {} refused its stored sign-in, falling back",
                     provider.name()
                 );
-                Toasts::about(Outcome::Failed, "toast-restore-failed", provider.name(), cx);
+                let toast = Toast::new(Outcome::Failed, "toast-session-invalidated")
+                    .name(provider.name())
+                    .open("toast-sign-in", Target::ProviderSettings)
+                    .lasting();
+                Toasts::post(toast, cx);
             }
             None => log::debug!(
                 "session: {} has nothing stored, falling back",

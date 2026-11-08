@@ -37,7 +37,6 @@ nav-pinned = Przypięte
 nav-unpin = Odepnij
 nav-pin-hint = Upuść tutaj, aby przypiąć
 library-liked-songs = Ulubione
-library-play-liked-songs = Odtwórz
 library-no-songs = Brak ulubionych
 library-no-albums = Brak zapisanych albumów
 library-no-playlists = Brak playlist
@@ -97,29 +96,14 @@ column-year = Rok
 column-tracks = Utwory
 
 # track menu
-menu-add-to-playlist = Dodaj do playlisty
-menu-add-tracks-to-playlist = { $count ->
-    [one] Dodaj { $count } utwór do playlisty
-    [few] Dodaj { $count } utwory do playlisty
-   *[other] Dodaj { $count } utworów do playlisty
-}
 menu-new-playlist = Nowa playlista
 menu-import-playlist = Importuj playlistę…
 menu-edit-tags = Edytuj tagi
 menu-no-playlists = Brak playlist
 menu-search-playlists = Szukaj playlisty
+menu-save-library = Biblioteka
 menu-add-to-library = Dodaj do ulubionych
-menu-add-tracks-to-library = { $count ->
-    [one] Dodaj { $count } utwór do ulubionych
-    [few] Dodaj { $count } utwory do ulubionych
-   *[other] Dodaj { $count } utworów do ulubionych
-}
 menu-remove-from-library = Usuń z ulubionych
-menu-remove-tracks-from-library = { $count ->
-    [one] Usuń { $count } utwór z ulubionych
-    [few] Usuń { $count } utwory z ulubionych
-   *[other] Usuń { $count } utworów z ulubionych
-}
 menu-remove-from-playlist = Usuń z playlisty
 menu-remove-tracks-from-playlist = { $count ->
     [one] Usuń { $count } utwór z playlisty
@@ -135,17 +119,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Usuń plik utworu
 menu-delete-track-files = Usuń pliki utworów ({ $count })
 menu-download = Pobierz
-menu-download-tracks = { $count ->
-    [one] Pobierz { $count } utwór
-    [few] Pobierz { $count } utwory
-   *[other] Pobierz { $count } utworów
-}
 menu-remove-download = Usuń z pobranych
-menu-remove-downloads = { $count ->
-    [one] Usuń { $count } utwór z pobranych
-    [few] Usuń { $count } utwory z pobranych
-   *[other] Usuń { $count } utworów z pobranych
-}
 menu-downloading = Pobieranie. Kliknij, aby zatrzymać
 menu-play-next = Odtwórz jako następny
 menu-play-tracks-next = { $count ->
@@ -165,11 +139,8 @@ menu-play-tracks-last = { $count ->
     [few] Odtwórz { $count } utwory na końcu
    *[other] Odtwórz { $count } utworów na końcu
 }
-menu-go-to = Przejdź do
-menu-artist = Wykonawca
-menu-album = Album
-menu-radio = Radio
-menu-details = Szczegóły
+menu-song-radio = Radio utworu
+menu-go-to-album = Przejdź do albumu
 menu-go-to-artist = Przejdź do wykonawcy
 menu-view-details = Szczegóły
 menu-copy-link = Kopiuj link
@@ -183,18 +154,6 @@ menu-delete-playlist = Usuń playlistę
 menu-export-playlist = Eksportuj playlistę…
 menu-add-playlist-to-library = Dodaj do biblioteki
 menu-remove-playlist-from-library = Usuń z biblioteki
-menu-library-add = Dodaj do biblioteki
-menu-library-add-tracks = { $count ->
-    [one] Dodaj { $count } utwór do biblioteki
-    [few] Dodaj { $count } utwory do biblioteki
-   *[other] Dodaj { $count } utworów do biblioteki
-}
-menu-library-remove = Usuń z biblioteki
-menu-library-remove-tracks = { $count ->
-    [one] Usuń { $count } utwór z biblioteki
-    [few] Usuń { $count } utwory z biblioteki
-   *[other] Usuń { $count } utworów z biblioteki
-}
 menu-make-playlist-public = Ustaw jako publiczną
 menu-make-playlist-private = Ustaw jako prywatną
 menu-play-artist = Odtwórz wykonawcę
@@ -386,8 +345,6 @@ login-choose-detail = Wybierz sposób logowania do { $provider }.
 
 # album and playlist pages
 detail-playlist = Playlista
-detail-play-album = Odtwórz album
-detail-play-playlist = Odtwórz playlistę
 
 # play button
 play-pause = Wstrzymaj
@@ -401,7 +358,6 @@ artist-monthly-listeners = { $count ->
     [few] { $value } słuchaczy miesięcznie
    *[other] { $value } słuchaczy miesięcznie
 }
-artist-play = Odtwórz
 artist-popular = Popularne
 artist-popular-eyebrow = Poznaj tego wykonawcę
 artist-popular-empty = Nie ma jeszcze czego odtworzyć u tego wykonawcy
@@ -481,7 +437,6 @@ kind-playlist = Playlista
 
 # song page
 song-eyebrow = Utwór
-song-play = Odtwórz utwór
 song-view-album = Zobacz album
 song-loading = Wczytywanie informacji o utworze…
 song-about = O utworze
@@ -740,6 +695,7 @@ settings-discord-hide-on-connect-detail = Zostaw status samemu Spotify, gdy Sono
 settings-discord-buttons = Przyciski
 settings-discord-buttons-detail = Odnośniki pod statusem, które znajomi mogą otworzyć: do utworu w jego serwisie i do Sonory
 settings-discord-buttons-pick = Wybierz przyciski
+settings-discord-preview = Podgląd statusu Discord
 settings-discord-preview-listening = Słucha { $name }
 settings-discord-preview-music = Muzyka
 settings-discord-preview-elapsed = upłynęło { $time }
@@ -991,6 +947,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kan.
 }
+settings-lyrics = Pokazuj teksty utworów
+settings-lyrics-detail = Wyłącz, aby ukryć teksty utworów w całej aplikacji i przestać ich szukać
 settings-panel-lyrics-size = Rozmiar tekstu utworu (panel)
 settings-panel-lyrics-size-detail = Rozmiar wierszy tekstu utworu w panelu bocznym ponad bazowy rozmiar czcionki
 settings-fullscreen-lyrics-size = Rozmiar tekstu utworu (pełny ekran)
@@ -1313,21 +1271,6 @@ toast-offline-mode = Jesteś offline. Przejdź do trybu online, aby streamować 
 offline-title = Jesteś offline.
 offline-go-online = Przejdź do trybu online
 toast-download-failed = Nie udało się ustalić listy utworów do pobrania.
-toast-downloading = Pobieranie { $name }
-toast-downloading-songs = { $count ->
-    [one] Pobieranie { $count } utworu
-    [few] Pobieranie { $count } utworów
-   *[other] Pobieranie { $count } utworów
-}
-toast-downloaded = Pobrano { $name }
-toast-downloaded-songs = { $count ->
-    [one] Pobrano { $count } utwór
-    [few] Pobrano { $count } utwory
-   *[other] Pobrano { $count } utworów
-}
-toast-download-set-failed = Nie udało się pobrać części utworów z { $name }
-toast-download-song-failed = Nie udało się pobrać { $name }
-toast-download-songs-failed = Nie udało się pobrać części utworów
 toast-percent = { $percent }%
 toast-download-cancelled = Anulowano pobieranie { $name }
 toast-downloads-cancelled = { $count ->

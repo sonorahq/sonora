@@ -78,6 +78,11 @@ const LIBRARY_PAGE: u32 = 2000;
 /// How many releases an artist page asks for. Deezer answers this many in one page, and even
 /// Bach comes to fewer than five hundred.
 const DISCOGRAPHY: u32 = 1000;
+/// How many top tracks playing an artist starts with, which is all the public api ranks.
+const TOP_SONGS: u32 = 100;
+/// The page sizes for releases and their embedded songs while building an artist's queue.
+const WHOLE_RELEASES: u32 = 100;
+const RELEASE_SONGS: u32 = 1000;
 
 const PORTRAIT_LIMIT: usize = 24;
 /// How many related artists lend their albums to a thin rail, and how many albums each
@@ -889,6 +894,102 @@ impl MusicApi for DeezerClient {
         })
     }
 
+    /// Keeps Deezer's top hundred first, then ranks the artist's releases by song rank.
+    /// If the gateway fails, playback keeps the songs already read.
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        let top_path = format!(
+            "/artist/{}/top?limit={TOP_SONGS}",
+            escape::component(artist_id)
+        );
+        let mut discography = json!({
+            "art_id": artist_id,
+            "discography_mode": "all",
+            "filter_role_id": [0],
+            "nb": WHOLE_RELEASES,
+            "nb_songs": RELEASE_SONGS,
+            "start": 0,
+        });
+        let (top, first) = tokio::join!(
+            self.public(&top_path),
+            self.gw("album.getDiscography", discography.clone()),
+        );
+        let mut tracks = wire::track_list(&top.context("cannot load the artist's top tracks")?);
+        let mut answer = first;
+        let mut start = 0;
+        let mut seen = HashSet::new();
+        let mut ranked = Vec::new();
+        loop {
+            let releases = match answer {
+                Ok(releases) => releases,
+                Err(error) => {
+                    log::warn!("deezer: cannot read the songs of artist {artist_id}: {error:#}");
+                    break;
+                }
+            };
+            let Some(releases) = releases["data"].as_array() else {
+                break;
+            };
+            let mut fresh = false;
+            for release in releases {
+                let Some(id) = wire::id(&release["ALB_ID"]) else {
+                    continue;
+                };
+                if !seen.insert(id.clone()) {
+                    continue;
+                }
+                fresh = true;
+                let songs = &release["SONGS"];
+                ranked.extend(
+                    songs["data"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|song| {
+                            Some((
+                                wire::number(song, &["RANK_SNG"]).unwrap_or(0),
+                                wire::track(song)?,
+                            ))
+                        }),
+                );
+                let mut offset = songs["data"].as_array().map_or(0, Vec::len);
+                let total = wire::number(songs, &["total"]).unwrap_or(offset as u64);
+                while (offset as u64) < total {
+                    let path = format!(
+                        "/album/{}/tracks?index={offset}&limit={RELEASE_SONGS}",
+                        escape::component(&id)
+                    );
+                    let page = match self.public(&path).await {
+                        Ok(page) => page,
+                        Err(error) => {
+                            log::warn!("deezer: cannot read more songs of album {id}: {error:#}");
+                            break;
+                        }
+                    };
+                    let Some(songs) = page["data"].as_array().filter(|songs| !songs.is_empty())
+                    else {
+                        break;
+                    };
+                    offset += songs.len();
+                    ranked.extend(songs.iter().filter_map(|song| {
+                        Some((
+                            wire::number(song, &["rank"]).unwrap_or(0),
+                            wire::track(song)?,
+                        ))
+                    }));
+                }
+            }
+            if !fresh || releases.len() < WHOLE_RELEASES as usize {
+                break;
+            }
+            start += releases.len();
+            discography["start"] = json!(start);
+            answer = self.gw("album.getDiscography", discography.clone()).await;
+        }
+        ranked.sort_by_key(|(rank, _)| std::cmp::Reverse(*rank));
+        tracks.extend(ranked.into_iter().map(|(_, track)| track));
+        Ok(crate::artist_songs(tracks, artist_id))
+    }
+
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
         let detail = self
             .public(&format!("/artist/{}", escape::component(artist_id)))
@@ -1302,6 +1403,23 @@ impl MusicApi for DeezerClient {
             .unwrap_or_default()
             .iter()
             .filter_map(wire::album)
+            .collect())
+    }
+
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        let page = self
+            .public(&format!(
+                "/search/artist?q={}&limit=30",
+                escape::component(query)
+            ))
+            .await
+            .context("cannot search deezer artists")?;
+        Ok(page
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(wire::saved_artist)
             .collect())
     }
 

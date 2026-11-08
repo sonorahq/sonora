@@ -703,6 +703,11 @@ impl TableSource for TrackSource {
         })
     }
 
+    fn row_key(&self, row: usize, cx: &App) -> Option<SharedString> {
+        let id = self.provider.tracks(cx).get(row)?.id.clone()?;
+        Some(id.into())
+    }
+
     fn pin(&self, row: usize, cx: &App) -> Option<Pin> {
         let tracks = self.provider.tracks(cx);
         let track = tracks.get(row)?;
@@ -821,12 +826,15 @@ fn download_mark(cell: &Cell<TrackField>, track: &Track, cx: &App) -> Option<Any
         Progress::Waiting => return None,
         Progress::Failed => (ring(Some(0.)).arrow(theme.danger), false),
     };
-    let ring = div().flex_none().child(ring);
-    // Only a landed download keeps a name, since no catalogued string says what a
-    // running or failed one is doing here.
+    // The id stays the same in every state, since the ring keeps its animation under it and a
+    // new id on landing would skip the fade. Only a landed download keeps a name, since no
+    // catalogued string says what a running or failed one is doing here.
+    let ring = div()
+        .id(("downloaded-mark", cell.row))
+        .flex_none()
+        .child(ring);
     Some(match landed {
         true => ring
-            .id(("downloaded-mark", cell.row))
             .role(Role::Image)
             .aria_label(t!("filter-downloaded"))
             .into_any_element(),
@@ -849,24 +857,10 @@ mod fixture {
     pub(super) fn track(seconds: u64, explicit: bool, playable: bool) -> Track {
         Track {
             id: Some("id".to_owned()),
-            name: String::new(),
             playable,
-            artists: String::new(),
-            artist_refs: Vec::new(),
-            album: String::new(),
-            album_id: None,
-            cover: None,
             duration: Duration::from_secs(seconds),
-            added_at: None,
-            added_by: None,
-            playcount: None,
-            popularity: 0,
             explicit,
-            track_number: 0,
-            disc_number: 0,
-            tags: Vec::new(),
-            languages: Vec::new(),
-            credits: Vec::new(),
+            ..Default::default()
         }
     }
 }

@@ -26,10 +26,13 @@ const PLACEHOLDER_LENGTH: Duration = Duration::from_secs(214);
 /// How far past a frame its corner ring reaches, as a share of the radius. It has to pass
 /// the square root of two less one for the ring to cover the corners.
 const CORNER_REACH: f32 = 0.5;
+/// How much of a preview shows while the feature it pictures is turned off.
+const DIMMED: f32 = 0.4;
 
 /// The state every preview keeps between frames, one field per preview, each owned by its file,
 /// and what they share.
 pub(super) struct Previews {
+    pub(super) now_playing: now_playing::NowPlayingPreview,
     pub(super) lyrics: lyrics::LyricsPreview,
     pub(super) sound: sound::SoundPreview,
     pub(super) discord: discord::DiscordPreview,
@@ -80,6 +83,7 @@ impl Previews {
         cx.observe(&ambient, |_, _, cx| cx.notify()).detach();
 
         Self {
+            now_playing: now_playing::NowPlayingPreview::new(cx),
             lyrics: lyrics::LyricsPreview::new(cx),
             sound: sound::SoundPreview::new(cx),
             discord: discord::DiscordPreview::new(cx),

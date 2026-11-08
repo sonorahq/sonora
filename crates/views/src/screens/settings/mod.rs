@@ -84,6 +84,7 @@ enum Slot {
     PlayerBarTransparent,
     FullscreenControlsAutohide,
     OsFullscreen,
+    Lyrics,
     Karaoke,
     BlurLyrics,
     Romanized,
@@ -109,6 +110,7 @@ enum Slot {
     OutputFailure,
     SampleRate,
     Buffer,
+    MatchRate,
     Equalizer,
     SpotifyConnect,
     SpotifyConnectName,
@@ -538,7 +540,7 @@ impl SettingsView {
             SettingsPage::Appearance => self.appearance_groups(),
             SettingsPage::PlayerBar => self.player_bar_groups(),
             SettingsPage::NowPlaying => self.now_playing_groups(cx),
-            SettingsPage::Lyrics => self.lyrics_groups(),
+            SettingsPage::Lyrics => self.lyrics_groups(cx),
             SettingsPage::Playback => self.playback_groups(cx),
             SettingsPage::Sound => self.sound_groups(cx),
             SettingsPage::Storage => self.storage_groups(cx),
@@ -621,7 +623,9 @@ impl SettingsView {
             self.lazy((page.id(), 1_usize), cx, move |this, window, cx| {
                 let previews = &this.previews;
                 match page {
-                    SettingsPage::NowPlaying => preview::now_playing::preview(this, window, cx),
+                    SettingsPage::NowPlaying => {
+                        preview::now_playing::preview(&previews.now_playing, this, window, cx)
+                    }
                     SettingsPage::Lyrics => {
                         preview::lyrics::preview(&previews.lyrics, this, window, cx)
                     }
@@ -842,6 +846,7 @@ impl SettingsView {
                 t!("settings-sample-rate-detail"),
             ),
             Slot::Buffer => (t!("settings-buffer"), t!("settings-buffer-detail")),
+            Slot::MatchRate => (t!("settings-match-rate"), t!("settings-match-rate-detail")),
             Slot::Equalizer => (
                 t!("settings-equalizer"),
                 format!(
@@ -859,6 +864,7 @@ impl SettingsView {
                 t!("settings-lyrics-priority"),
                 t!("settings-lyrics-priority-detail"),
             ),
+            Slot::Lyrics => (t!("settings-lyrics"), t!("settings-lyrics-detail")),
             Slot::Karaoke => (
                 t!("settings-karaoke-lyrics"),
                 t!("settings-karaoke-lyrics-detail"),
@@ -997,10 +1003,12 @@ impl SettingsView {
             Slot::OutputFailure => self.output_failure_row(cx),
             Slot::SampleRate => self.sample_rate_row(cx),
             Slot::Buffer => self.buffer_row(cx),
+            Slot::MatchRate => self.match_rate_row(cx),
             Slot::Widevine => self.widevine_row(cx),
             Slot::Equalizer => self.equalizer_row(cx),
             Slot::LyricsSources => self.lyrics_sources_row(cx),
             Slot::LyricsPriority => self.lyrics_priority(cx),
+            Slot::Lyrics => self.lyrics_row(cx),
             Slot::Karaoke => self.karaoke_lyrics_row(cx),
             Slot::Romanized => self.romanized_lyrics_row(cx),
             Slot::LyricsForLocal => self.lyrics_for_local_files_row(cx),

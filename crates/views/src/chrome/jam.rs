@@ -6,15 +6,15 @@ use gpui::prelude::*;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use gpui::{
-    AnyElement, App, ClipboardItem, Context, Div, ElementId, Entity, FocusHandle, Hsla, Pixels,
-    Render, SharedString, Window, div, px, rgb, svg,
+    AnyElement, App, ClipboardItem, Context, Div, ElementId, Entity, FocusHandle, FontWeight, Hsla,
+    Pixels, Render, SharedString, Window, div, px, rgb, svg,
 };
 use i18n::t;
 use music::connect::{Jam, JamMember};
 use state::{Devices, Outcome, Sonora, Toasts};
 use ui::{
     ActiveTheme as _, Avatar, Button, Dismiss, FORM_CONTEXT, Input, Modal, Qr, Submit, Text, Theme,
-    snapped,
+    single_line, snapped,
 };
 
 /// The side of the Jam's QR code. It does not scale with the theme, since a code has to stay a
@@ -40,6 +40,10 @@ const FACE_COLORS: [u32; 8] = [
 /// How much of a placeholder the person glyph fills, and how far darker than the colour it is.
 const GLYPH: f32 = 0.6;
 const GLYPH_SHADE: f32 = 0.45;
+/// How tall a placeholder's initial stands, as a part of the face, and its colour, white on
+/// every face colour whatever the theme is, so a literal like `FACE_COLORS`.
+const INITIAL: f32 = 0.45;
+const INITIAL_COLOR: u32 = 0xffffff;
 
 /// Asks whether to join the Jam a pasted link names. It shows for as long as `Devices` holds an
 /// invite, wherever the listener is in the app, and either answer hands the invite back.
@@ -256,7 +260,7 @@ impl Render for JamJoin {
                                             return;
                                         };
                                         link.update(cx, |input, cx| {
-                                            input.set_text(text.trim().to_owned(), cx);
+                                            input.set_text(single_line(text.trim()), cx);
                                             input.focus(window, cx);
                                         });
                                     }),
@@ -407,8 +411,9 @@ pub(crate) fn name(member: &JamMember) -> &str {
     }
 }
 
-/// A member's round picture at `size`, or while they have none a person glyph on the colour
-/// their id picks, so two people without pictures still tell apart.
+/// A member's round picture at `size`, or while they have none the first letter of their name
+/// on the colour their id picks, so two people without pictures still tell apart. A name with no
+/// letter to show gets a person glyph instead.
 pub(crate) fn face(member: &JamMember, size: Pixels) -> AnyElement {
     if let Some(image) = &member.image {
         return Avatar::new(Some(image.clone()))
@@ -428,13 +433,26 @@ pub(crate) fn face(member: &JamMember, size: Pixels) -> AnyElement {
         .size(size)
         .rounded_full()
         .bg(color)
-        .child(
-            svg()
-                .path(icons::path("icons/user.svg"))
-                .size(size * GLYPH)
-                .text_color(glyph),
-        )
+        .map(|this| match initial(name(member)) {
+            Some(letter) => this
+                .text_size(size * INITIAL)
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(INITIAL_COLOR))
+                .child(letter),
+            None => this.child(
+                svg()
+                    .path(icons::path("icons/user.svg"))
+                    .size(size * GLYPH)
+                    .text_color(glyph),
+            ),
+        })
         .into_any_element()
+}
+
+/// The capital of the first letter or digit in `name`, if it has one.
+fn initial(name: &str) -> Option<SharedString> {
+    let first = name.chars().find(|c| c.is_alphanumeric())?;
+    Some(first.to_uppercase().collect::<String>().into())
 }
 
 /// The placeholder colour for the person `id` names, the same one on every launch.

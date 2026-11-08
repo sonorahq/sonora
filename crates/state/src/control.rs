@@ -11,7 +11,7 @@ use cli::wire::{self, Current, Failure, Reply, SessionInfo, State, Value};
 use futures::future;
 use gpui::{App, Context, Entity, Subscription, Task};
 use music::link::Linked;
-use music::{Album, MediaKind, MusicApi, MusicProvider, Playlist, Track};
+use music::{Album, MediaKind, MusicApi, MusicProvider, Playlist, SavedArtist, Track};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::search::{self, Catalog};
@@ -27,11 +27,12 @@ const LOCAL: &str = "local";
 /// somewhere that does not go through `Playback`, such as the volume of a steered device.
 const WATCH_TICK: Duration = Duration::from_secs(1);
 
-/// What the three searches of a query answered: songs, albums and playlists.
+/// What the four searches of a query answered: songs, albums, playlists and artists.
 type Found = (
     anyhow::Result<Vec<Track>>,
     anyhow::Result<Vec<Album>>,
     anyhow::Result<Vec<Playlist>>,
+    anyhow::Result<Vec<SavedArtist>>,
 );
 
 /// Carries out what the command line asks of the running Sonora. Playback goes through
@@ -323,10 +324,11 @@ impl Control {
             let asked = query.text.clone();
             Io::global(cx).spawn(async move {
                 anyhow::Ok(
-                    future::join3(
+                    future::join4(
                         client.search(&asked),
                         client.search_albums(&asked),
                         client.search_playlists(&asked),
+                        client.search_artists(&asked),
                     )
                     .await,
                 )
@@ -358,11 +360,11 @@ impl Control {
     fn hits(
         &self,
         query: &SearchQuery,
-        (tracks, albums, playlists): Found,
+        (tracks, albums, playlists, artists): Found,
         client: &dyn MusicApi,
         cx: &mut App,
     ) -> Result<Vec<wire::Hit>, Failure> {
-        if let (Err(error), Err(_), Err(_)) = (&tracks, &albums, &playlists) {
+        if let (Err(error), Err(_), Err(_), Err(_)) = (&tracks, &albums, &playlists, &artists) {
             log::warn!("control: cannot search: {error:#}");
             noted(error, cx);
             return Err(Failure::Unfetched(query.text.clone()));
@@ -371,6 +373,7 @@ impl Control {
             tracks: tracks.unwrap_or_default(),
             albums: albums.unwrap_or_default(),
             playlists: playlists.unwrap_or_default(),
+            artists: artists.unwrap_or_default(),
         };
         let library = self.library.read(cx).state(Shelf::Streaming);
         let ranked = search::rank(
@@ -819,10 +822,20 @@ async fn fetch(
             tracks,
             origin: Some(Origin::playlist(id)),
         }),
-        Linked::Artist(id) => client.artist(&id).await.map(|artist| Batch {
-            tracks: artist.top_tracks,
-            origin: Some(Origin::artist(id).named(artist.name)),
-        }),
+        Linked::Artist(id) => {
+            let (profile, tracks) =
+                tokio::join!(client.artist_profile(&id), client.artist_tracks(&id));
+            tracks.map(|tracks| {
+                let origin = Origin::artist(id.clone());
+                Batch {
+                    tracks,
+                    origin: Some(match profile {
+                        Ok(profile) => origin.named(profile.name),
+                        Err(_) => origin,
+                    }),
+                }
+            })
+        }
         Linked::User(_) | Linked::Jam(_) | Linked::Short => {
             return Err(Missed {
                 failure: Failure::Unqueueable(link),

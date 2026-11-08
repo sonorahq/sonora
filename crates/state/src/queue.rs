@@ -210,16 +210,8 @@ fn hydrate(stub: Stub) -> Track {
         album_id: stub.album_id,
         cover: stub.cover,
         duration: Duration::from_secs_f32(stub.seconds.max(0.)),
-        added_at: None,
-        added_by: None,
-        playcount: None,
-        popularity: 0,
         explicit: stub.explicit,
-        track_number: 0,
-        disc_number: 0,
-        tags: Vec::new(),
-        languages: Vec::new(),
-        credits: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -480,13 +472,22 @@ impl Queue {
     }
 
     /// Rebuilds collection order while keeping additions and recommendations out of the source.
+    /// Shuffling mixes the hand-queued songs in with the collection, so turning shuffle off and
+    /// on again reshuffles the whole queue. Unshuffling queues every song the collection lacks
+    /// by hand again, ahead of the collection.
     fn reorder(&mut self) {
+        let shuffle = self.shuffle;
+        let known: HashSet<&str> = self.source.iter().map(|entry| entry.uid.as_str()).collect();
         let mut suggested = VecDeque::new();
         let mut manual = VecDeque::new();
         self.upcoming.retain(|entry| match entry.kind {
-            QueueKind::Context => true,
-            QueueKind::Queued => {
-                manual.push_back(entry.clone());
+            QueueKind::Context if shuffle || known.contains(entry.uid.as_str()) => true,
+            QueueKind::Queued if shuffle => true,
+            QueueKind::Context | QueueKind::Queued => {
+                manual.push_back(Entry {
+                    kind: QueueKind::Queued,
+                    ..entry.clone()
+                });
                 false
             }
             QueueKind::Suggested => {
@@ -494,8 +495,13 @@ impl Queue {
                 false
             }
         });
-        match self.shuffle {
-            true => scramble(&mut self.upcoming, &self.source, self.current.as_ref()),
+        match shuffle {
+            true => {
+                scramble(&mut self.upcoming, &self.source, self.current.as_ref());
+                for entry in &mut self.upcoming {
+                    entry.kind = QueueKind::Context;
+                }
+            }
             false => restore(&mut self.upcoming, &self.source, self.current.as_ref()),
         }
         manual.append(&mut self.upcoming);
@@ -1369,22 +1375,8 @@ mod tests {
             id: Some(id.to_owned()),
             name: id.to_owned(),
             playable: true,
-            artists: String::new(),
-            artist_refs: Vec::new(),
-            album: String::new(),
-            album_id: None,
-            cover: None,
             duration: Duration::from_secs(180),
-            added_at: None,
-            added_by: None,
-            playcount: None,
-            popularity: 0,
-            explicit: false,
-            track_number: 0,
-            disc_number: 0,
-            tags: Vec::new(),
-            languages: Vec::new(),
-            credits: Vec::new(),
+            ..Default::default()
         }
     }
 

@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use futures::{StreamExt as _, stream};
 use tokio::task::JoinSet;
 use ytmusic::YtMusic;
 
@@ -15,6 +16,8 @@ use crate::{
 };
 
 const PORTRAIT_LIMIT: usize = 24;
+/// Limits concurrent album reads while building an artist's queue.
+const ALBUM_READS: usize = 4;
 /// YouTube documents no limit for a playlist thumbnail, so this stays near what its own upload
 /// sends.
 const COVER_LIMITS: CoverLimits = CoverLimits {
@@ -96,6 +99,56 @@ impl MusicApi for YouTubeClient {
             albums: albums.into_iter().map(wire::album).collect(),
             ..ArtistCatalogue::default()
         })
+    }
+
+    /// Starts with YouTube's ranked songs, then adds album tracks newest first.
+    /// The ranked playlist is capped by YouTube, so album reads supply the remaining songs.
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        let (artist, albums) =
+            tokio::join!(self.api.artist(artist_id), self.api.discography(artist_id));
+        let mut artist = artist?;
+        self.hydrate_durations(&mut artist.top_tracks).await;
+        let mut tracks: Vec<Track> = artist
+            .top_tracks
+            .into_iter()
+            .enumerate()
+            .map(|(index, track)| wire::track(track, index as u32))
+            .collect();
+        let ranked = async {
+            match artist.songs {
+                Some(songs) => self.playlist_tracks(&songs).await,
+                None => Ok(Vec::new()),
+            }
+        };
+        let albums = match albums {
+            Ok(albums) => albums,
+            Err(error) => {
+                log::warn!("youtube: cannot read the discography of {artist_id}: {error:#}");
+                artist.albums.into_iter().chain(artist.singles).collect()
+            }
+        };
+        let mut albums: Vec<Album> = albums.into_iter().map(wire::album).collect();
+        albums.sort_by(|left, right| right.release_date.cmp(&left.release_date));
+        let releases = stream::iter(albums)
+            .map(|album| async move { (self.album_tracks(&album.id).await, album.id) })
+            .buffered(ALBUM_READS)
+            .collect::<Vec<_>>();
+        let (ranked, releases) = tokio::join!(ranked, releases);
+        match ranked {
+            Ok(ranked) => tracks.extend(ranked),
+            Err(error) => {
+                log::warn!("youtube: cannot read the songs of artist {artist_id}: {error:#}")
+            }
+        }
+        for (read, album) in releases {
+            match read {
+                Ok(songs) => tracks.extend(songs),
+                Err(error) => {
+                    log::warn!("youtube: cannot read the album {album}: {error:#}");
+                }
+            }
+        }
+        Ok(crate::artist_songs(tracks, artist_id))
     }
 
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
@@ -393,6 +446,10 @@ impl MusicApi for YouTubeClient {
             .into_iter()
             .map(wire::album)
             .collect())
+    }
+
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        subscriptions::search(&self.api, query).await
     }
 
     async fn search_playlists(&self, query: &str) -> Result<Vec<Playlist>> {

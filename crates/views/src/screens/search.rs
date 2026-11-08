@@ -9,7 +9,7 @@ use gpui::{
 };
 use i18n::t;
 use input::SEARCH_CONTEXT;
-use music::{Album, Playlist, ReleaseType, SavedArtist, Track};
+use music::{Album, Playlist, SavedArtist, Track};
 use router::{Destination, navigate};
 use ui::Input;
 
@@ -148,7 +148,6 @@ impl SearchView {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe(&genres, |_, _, cx| cx.notify()).detach();
-        genres.update(cx, |genres, cx| genres.load(cx));
         let input = cx.new(|cx| {
             Input::new("search-placeholder", cx)
                 .icon("icons/search.svg")
@@ -414,6 +413,7 @@ impl SearchView {
         let forget = me.clone();
 
         Card::new(("search-past", at), query.clone())
+            .tucked()
             .fallback("icons/rotate-ccw-clock.svg")
             .action(
                 Button::new(("search-forget", at))
@@ -439,7 +439,8 @@ impl SearchView {
             .into_any_element()
     }
 
-    /// The panel's heading and rows, with placeholder rows while the first suggestions load.
+    /// The panel's rows, with placeholder rows while the first suggestions load. The heading only
+    /// names the list for screen readers.
     fn panel_rows(&self, cx: &Context<Self>) -> AnyElement {
         let offers = self.offers(cx);
         let me = cx.entity().downgrade();
@@ -448,14 +449,17 @@ impl SearchView {
             false => t!("search-results"),
         };
         let waiting = offers.is_empty().then(|| {
-            (0..SUGGESTED_WAITING)
-                .map(|at| Card::skeleton(("search-offer-waiting", at)).into_any_element())
+            (0..SUGGESTED_WAITING).map(|at| {
+                Card::skeleton(("search-offer-waiting", at))
+                    .tucked()
+                    .into_any_element()
+            })
         });
 
         div()
             .id("search-offers")
             .role(Role::ListBox)
-            .aria_label(heading.clone())
+            .aria_label(heading)
             .flex()
             .flex_col()
             .gap_px()
@@ -465,7 +469,6 @@ impl SearchView {
                 remember(&this.typed, cx);
                 this.close_panel(cx);
             }))
-            .child(eyebrow(heading, cx).px_2().pt_1().pb_1())
             .children(waiting.into_iter().flatten())
             .children(
                 offers
@@ -883,6 +886,7 @@ impl SearchView {
         .when_some(hit.pin(), Pinnable::pin)
         .when_some(HitMenu::of(hit), |card, target| card.menu(menu(target, me)))
         .chosen(chosen)
+        .when(compact, Card::tucked)
         // The keyboard cursor stays on the container, so the chosen card claims
         // the active descendant while every card reports its seat in the list.
         .aria_position_in_set(index + 1)
@@ -1386,13 +1390,7 @@ fn album_of(hit: &AlbumHit, cx: &App) -> Album {
             artist_refs: hit.artist_refs.clone(),
             cover: hit.cover.clone(),
             cover_large: hit.cover.clone(),
-            release_type: ReleaseType::Album,
-            year: 0,
-            track_count: 0,
-            release_date: String::new(),
-            label: String::new(),
-            copyrights: Vec::new(),
-            added_at: None,
+            ..Default::default()
         })
 }
 
@@ -1406,14 +1404,8 @@ fn playlist_of(hit: &PlaylistHit, cx: &App) -> Playlist {
             id: hit.id.clone(),
             name: hit.name.clone(),
             owner: hit.owner.clone(),
-            owner_id: String::new(),
-            owned: false,
-            collaborative: false,
-            blend: false,
-            public: false,
             cover: hit.cover.clone(),
-            track_count: 0,
-            modified_at: None,
+            ..Default::default()
         })
 }
 
@@ -1428,7 +1420,7 @@ fn artist_of(hit: &ArtistHit, cx: &App) -> SavedArtist {
             id,
             name: hit.name.clone(),
             cover: hit.cover.clone(),
-            added_at: None,
+            ..Default::default()
         })
 }
 

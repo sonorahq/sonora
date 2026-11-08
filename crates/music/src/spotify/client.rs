@@ -79,6 +79,10 @@ impl MusicApi for LibrespotClient {
         artists::catalogue(&self.session, artist_id, known.to_vec()).await
     }
 
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        artists::tracks(&self.session, artist_id).await
+    }
+
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
         artists::profile(&self.session, artist_id).await
     }
@@ -184,6 +188,10 @@ impl MusicApi for LibrespotClient {
 
     async fn search_albums(&self, query: &str) -> Result<Vec<Album>> {
         pathfinder::search_albums(&self.session, query).await
+    }
+
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        pathfinder::search_artists(&self.session, query).await
     }
 
     async fn search_playlists(&self, query: &str) -> Result<Vec<Playlist>> {

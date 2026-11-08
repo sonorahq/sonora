@@ -2,7 +2,7 @@
 Type=Application
 Name=Sonora
 GenericName=Music Player
-Comment=A native music streaming client, built with Rust and GPUI
+Comment=A native, familiar music streaming client
 Icon=sonora
 Exec=sonora %U
 Terminal=false

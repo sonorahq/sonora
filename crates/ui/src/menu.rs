@@ -362,6 +362,8 @@ struct Keys {
     search: MenuSearch,
     rows: Rc<[usize]>,
     picked: Option<Action>,
+    /// Whether the picked row keeps the menu open, so Enter neither closes it nor hands focus back.
+    stays: bool,
     action: Option<Action>,
     searches: Rc<[MenuSearch]>,
     scrollbar: Option<Entity<Scrollbar>>,
@@ -373,6 +375,7 @@ impl Keys {
             search,
             rows,
             picked,
+            stays,
             action,
             searches,
             scrollbar,
@@ -390,7 +393,9 @@ impl Keys {
                     return;
                 };
                 let click = ClickEvent::default();
-                release(&searches, window, cx);
+                if !stays {
+                    release(&searches, window, cx);
+                }
                 press(&click, window, cx);
                 if let Some(action) = action.as_ref() {
                     action(&click, window, cx);
@@ -409,6 +414,9 @@ pub struct MenuItem {
     label: SharedString,
     detail: Option<AnyElement>,
     selected: bool,
+    /// Whether a keyboard cursor the owner tracks rests on the row. It paints the row like a
+    /// selected one but leaves out the check.
+    highlighted: bool,
     checked: bool,
     disabled: bool,
     separator: bool,
@@ -421,6 +429,8 @@ pub struct MenuItem {
     tooltip: Option<SharedString>,
     press: Option<Action>,
     submenu: Option<Submenu>,
+    /// Whether picking the item leaves the menu open, for a row that toggles something in place.
+    stays: bool,
 }
 
 impl FluentBuilder for MenuItem {}
@@ -432,6 +442,7 @@ impl MenuItem {
             label: label.into(),
             detail: None,
             selected: false,
+            highlighted: false,
             checked: false,
             face: None,
             disabled: false,
@@ -444,6 +455,7 @@ impl MenuItem {
             tooltip: None,
             press: None,
             submenu: None,
+            stays: false,
         }
     }
 
@@ -457,12 +469,20 @@ impl MenuItem {
         self
     }
 
+    /// Marks the row the owner's own keyboard cursor is on, for a searchable list that keeps
+    /// its cursor outside the menu. Unlike `selected`, it draws no check.
+    pub fn highlighted(mut self, highlighted: bool) -> Self {
+        self.highlighted = highlighted;
+        self
+    }
+
     pub fn separator(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
             label: SharedString::default(),
             detail: None,
             selected: false,
+            highlighted: false,
             checked: false,
             disabled: true,
             separator: true,
@@ -475,6 +495,7 @@ impl MenuItem {
             tooltip: None,
             press: None,
             submenu: None,
+            stays: false,
         }
     }
 
@@ -532,6 +553,13 @@ impl MenuItem {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.press = Some(Rc::new(handler));
+        self
+    }
+
+    /// Keeps the menu open after the item is picked, for a checked row that toggles in place.
+    /// The caller rebuilds the menu on its next render, so the check follows the new state.
+    pub fn stays_open(mut self) -> Self {
+        self.stays = true;
         self
     }
 
@@ -596,6 +624,17 @@ impl Menu {
 
     pub fn items(mut self, items: impl IntoIterator<Item = MenuItem>) -> Self {
         self.items.extend(items);
+        self
+    }
+
+    /// Puts `items` before the ones already added, with a separator after them when the menu
+    /// held anything.
+    pub fn lead(mut self, items: impl IntoIterator<Item = MenuItem>) -> Self {
+        let mut led: Vec<MenuItem> = items.into_iter().collect();
+        if !led.is_empty() && !self.items.is_empty() {
+            led.push(MenuItem::separator("lead-separator"));
+        }
+        self.items.splice(0..0, led);
         self
     }
 
@@ -752,6 +791,7 @@ impl RenderOnce for Menu {
             .and_then(|search| search.place(pickable.len()))
             .map(|place| pickable[place]);
         let picked = cursor.and_then(|place| items[place].press.clone());
+        let picked_stays = cursor.is_some_and(|place| items[place].stays);
 
         if let (Some(scrollbar), Some(guard)) = (scrollbar.as_ref(), hover_guard.clone()) {
             let outer = outer.clone();
@@ -780,7 +820,8 @@ impl RenderOnce for Menu {
             search,
             rows: pickable.into(),
             picked,
-            action: action.clone(),
+            stays: picked_stays,
+            action: action.clone().filter(|_| !picked_stays),
             searches: searches.clone(),
             scrollbar: scrollbar.clone(),
         });
@@ -804,6 +845,7 @@ impl RenderOnce for Menu {
                 label,
                 detail,
                 selected,
+                highlighted,
                 checked,
                 disabled,
                 separator,
@@ -816,6 +858,7 @@ impl RenderOnce for Menu {
                 tooltip,
                 press,
                 submenu,
+                stays,
             } = item;
 
             if let Some(content) = content {
@@ -835,8 +878,11 @@ impl RenderOnce for Menu {
                 return Separator::horizontal().mx_2().my_1().into_any_element();
             }
             let action = action.clone();
-            let press_action = action.clone();
-            let press = press.map(|press| releasing(press, &row_searches));
+            let press_action = action.clone().filter(|_| !stays);
+            let press = press.map(|press| match stays {
+                true => press,
+                false => releasing(press, &row_searches),
+            });
             let submenu_state = submenu.as_ref().map(|submenu| submenu.state.clone());
             let expanded = submenu.as_ref().map(|submenu| submenu.state.is_open());
             let has_artwork = artwork.is_some();
@@ -873,7 +919,7 @@ impl RenderOnce for Menu {
                     |this| this.text_color(theme.muted_foreground).cursor_default(),
                     |this| this.cursor_pointer(),
                 )
-                .when(selected || cursor == Some(place), |this| {
+                .when(selected || highlighted || cursor == Some(place), |this| {
                     this.bg(theme.secondary_active)
                 })
                 .when(!disabled, |this| {
@@ -1114,6 +1160,7 @@ impl RenderOnce for Menu {
         let chrome = snapped(theme.metrics.title_bar, window);
         let mut overrides = overrides;
         let width = overrides.size.width.take();
+        let floor = overrides.min_size.width.take();
         let ceiling = overrides.max_size.height.take();
         let right = overrides.inset.left.is_none() && overrides.inset.right.is_some();
         let corner = match (right, above && trigger.is_none()) {
@@ -1168,6 +1215,7 @@ impl RenderOnce for Menu {
             .key_context(MENU_CONTEXT)
             .when_some(keys, |this, keys| keys.bind(this))
             .when_some(width, |this, width| this.w(width))
+            .when_some(floor, |this, floor| this.min_w(floor))
             .when_some(ceiling, |this, ceiling| this.max_h(ceiling))
             .when_some(hover_guard, |this, guard| {
                 this.on_hover(move |hovered, window, cx| {
@@ -1250,6 +1298,17 @@ impl RenderOnce for Menu {
         } else {
             menu.into_any_element()
         }
+    }
+}
+
+/// Closes the open menu the way Escape would. A control drawn inside a menu calls it before it
+/// opens a dialog, so the menu does not stay on screen over the dialog.
+pub fn close_menu(window: &mut Window, cx: &mut App) {
+    let close = cx
+        .try_global::<Escape>()
+        .and_then(|escape| escape.0.borrow_mut().take());
+    if let Some(close) = close {
+        close(&(), window, cx);
     }
 }
 
