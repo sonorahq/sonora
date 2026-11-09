@@ -92,7 +92,9 @@ pub(super) fn cards(ui: &Ui, _cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
         Rail::new("theme-cards")
             .arrows_at(room + THUMB / 2.)
             .children(cards.into_iter().map(|card| col().py(room).child(card)))
-            .build::<Ui>(theme),
+            .build::<Ui>(theme)
+            .w_full()
+            .min_w(0.),
     )
 }
 

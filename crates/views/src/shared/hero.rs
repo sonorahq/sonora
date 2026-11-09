@@ -7,6 +7,7 @@ use std::rc::Rc;
 use i18n::t;
 use music::{Album, Track};
 use rune::{El, PointerPress, Transition, Tx, col, icon, row, text};
+use state::Origin;
 use ui::{
     Button, Cover, ExplicitBadge, MenuItem, Perch, Skeleton, Text, Theme, Tipped as _, Weight,
     font, upper,
@@ -15,7 +16,6 @@ use ui::{
 use crate::Ui;
 use crate::shared::page::rems;
 use crate::shared::tracks::TrackRows;
-use state::Origin;
 
 /// How wide the skeleton bars of a pending hero reach, for the title, the meta line and the
 /// row of actions.

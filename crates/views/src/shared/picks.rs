@@ -244,7 +244,7 @@ impl<'a> Picks<'a> {
             .gap(rems(theme, HEAD_GAP))
             .px(rems(theme, HEAD_PAD))
             .pt(rems(theme, HEAD_PAD))
-            .pb(rems(theme, HEAD_PAD_BOTTOM) + RULE)
+            .pb(rems(theme, HEAD_PAD_BOTTOM))
             .border_sides([0., 0., RULE, 0.], theme.border.color())
             .child(heading)
             .child(arrows);
@@ -269,7 +269,7 @@ impl<'a> Picks<'a> {
                 .grow(1.)
                 .shrink()
                 .min_w(0.)
-                .gap(rems(theme, ROW_GAP))
+                .gap(rems(theme, ROW_GAP).floor())
                 .children(rows);
             match column > 0 {
                 true => shell

@@ -21,8 +21,9 @@ const DETAIL_GAP: f32 = 4.;
 const DETAIL_END: f32 = 32.;
 /// How far a whole-row button reaches past the column, so its label lines up with the rows.
 const REACH: f32 = 12.;
-/// The space between an eyebrow's icon and its name.
+/// The space between an eyebrow's icon and its name, and the line it stands on.
 const EYEBROW_GAP: f32 = 8.;
+const EYEBROW_LEADING: f32 = 1.5;
 
 /// What a segmented control does with the option picked in it.
 type Pick<T> = Rc<dyn Fn(&mut Ui, T)>;
@@ -194,6 +195,7 @@ pub(crate) fn heading(theme: &Theme, key: &str, glyph: Option<&str>) -> El {
         .label(label.clone())
         .center_y()
         .gap(EYEBROW_GAP)
+        .min_h((size * EYEBROW_LEADING).round())
         .mb(theme.metrics.pad)
         .children(glyph.map(|glyph| {
             icon(icons::get(glyph), size)

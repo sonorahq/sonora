@@ -78,6 +78,9 @@ enum Numbering {
     Disc,
 }
 
+/// The shortest and longest track of a source, by where the source was and how long it was.
+type Spread = (usize, usize, Option<(f32, f32)>);
+
 /// What the rows on screen were worked out from. A change in any of it works them out again.
 #[derive(Clone, PartialEq)]
 struct Stamp {
@@ -140,7 +143,7 @@ pub(crate) struct TrackList {
     order: RefCell<Option<Rc<Order>>>,
     versions: Cell<u64>,
     /// The shortest and longest track, by where the source was and how long.
-    spread: Cell<Option<(usize, usize, Option<(f32, f32)>)>>,
+    spread: Cell<Option<Spread>>,
 }
 
 impl Default for TrackList {

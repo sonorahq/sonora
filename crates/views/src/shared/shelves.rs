@@ -12,7 +12,7 @@ use std::rc::Rc;
 
 use music::{Genre, GenreItem, GenreSection};
 use rune::{El, GrowthSpec, col, row};
-use ui::{Card, Mode, ScrollWatch, Shelf, Skeleton, Text, Theme, spoken_heading};
+use ui::{Card, Mode, ScrollWatch, Shelf, Skeleton, Text, Theme, Weight, font, spoken_heading};
 
 use crate::Ui;
 use crate::shared::album_grid::CardLayout;
@@ -33,10 +33,15 @@ const LANE_GAP: f32 = 8.;
 /// The space under a heading and between lanes side by side, in rems.
 const HEADING_GAP: f32 = 0.75;
 const LANE_SPACE: f32 = 0.5;
-/// The line height a section heading stands at.
+/// The height of a section's heading row, and the line height of its title, against the
+/// title's size: what puts the title where GPUI drew it over the rail.
 const LEADING: f32 = 1.4;
+const TITLE_LEADING: f32 = 1.35;
 /// How wide a skeleton heading stands.
 const HEADING: f32 = 140.;
+
+/// Finds a grid's genres in the window state.
+type GenresFn = Rc<dyn for<'a> Fn(&'a Ui) -> &'a [Genre]>;
 
 /// The scroll of every rail on a page, by the rail's key, kept in the screen's state so the
 /// paging arrows find where a rail stands. Rails are made the first time a view asks.
@@ -338,7 +343,7 @@ pub(crate) fn grid(
     genres: impl for<'a> Fn(&'a Ui) -> &'a [Genre] + 'static,
 ) -> El {
     let theme = &ui.theme;
-    let genres: Rc<dyn for<'a> Fn(&'a Ui) -> &'a [Genre]> = Rc::new(genres);
+    let genres: GenresFn = Rc::new(genres);
     let lanes = lanes(width);
     let count = genres(ui).len();
     let rows = count.div_ceil(lanes);
@@ -393,17 +398,11 @@ pub(crate) fn lanes(width: f32) -> usize {
 /// Deals list rows into lanes side by side.
 fn spread(columns: Vec<Vec<El>>, theme: &Theme) -> El {
     let gap = rems(theme, LANE_SPACE);
-    row()
-        .w_full()
-        .gap(gap)
-        .children(columns.into_iter().map(|column| {
-            col()
-                .grow(1.)
-                .shrink()
-                .min_w(0.)
-                .gap(gap)
-                .children(column)
-        }))
+    row().w_full().gap(gap).children(
+        columns
+            .into_iter()
+            .map(|column| col().grow(1.).shrink().min_w(0.).gap(gap).children(column)),
+    )
 }
 
 /// How tall a section's heading row stands.
@@ -416,7 +415,9 @@ fn head(theme: &Theme) -> f32 {
 /// A shelf or rail title as a level two heading, so screen readers can jump from one shelf to
 /// the next. `key` has to be unique on the page.
 fn heading(key: String, title: String, theme: &Theme) -> El {
+    let size = theme.text(Text::Title);
     spoken_heading(key, title, 2, theme)
+        .font(font(theme, Text::Title, Weight::SEMIBOLD).lh((size * TITLE_LEADING).round()))
 }
 
 /// The tile of a shelf item `width` wide, flat on the page, as a rail draws it.

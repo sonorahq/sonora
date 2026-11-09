@@ -263,7 +263,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
             }
         }
     };
-    let follow = (lines.is_some() && !state.pinned).then(|| {
+    let follow = (lines.is_some() || !state.pinned).then(|| {
         ui::perched(
             Button::new("resume-pin")
                 .secondary()
@@ -273,7 +273,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
                 .build(theme),
         )
         .key("lyrics-follow")
-        .transition(Transition::opacity().combined(Transition::offset(0., 8.)))
+        .transition(Transition::opacity())
     });
 
     col()
