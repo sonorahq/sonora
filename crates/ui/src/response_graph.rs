@@ -342,17 +342,36 @@ impl<S: 'static> ResponseGraph<S> {
         let radius = pad;
         let tiny = TextStyle::new(theme.text(Text::Tiny), 400.);
 
+        // The plot takes the presses that miss every node. It stays out of the tree: the graph
+        // is read through its nodes.
+        let mut surface = canvas(self.shape(plot, theme))
+            .pin(Some(0.), Some(0.), Some(0.), Some(0.))
+            .a11y_hidden();
+        if let Some(on_edit) = self.on_edit.clone() {
+            let axes = self.axes;
+            let reshape = self.reshape;
+            surface = surface.on_drag(move |s: &mut S, drag: &mut Drag, tx: &mut Tx| {
+                if drag.phase != Phase::Down {
+                    return;
+                }
+                let inside = drag.x >= plot[0]
+                    && drag.x <= plot[0] + plot[2]
+                    && drag.y >= plot[1]
+                    && drag.y <= plot[1] + plot[3];
+                let edit = match reshape && drag.clicks >= 2 && inside {
+                    true => GraphEdit::Add(axes.unproject([drag.x, drag.y], plot)),
+                    false => GraphEdit::Deselect,
+                };
+                on_edit(s, edit, tx);
+            });
+        }
         let mut graph = el()
             .key(self.key.clone())
             .role("group")
             .size(width, height)
             .radius(theme.radius)
             .clip_rounded(theme.radius)
-            .child(
-                canvas(self.shape(plot, theme))
-                    .pin(Some(0.), Some(0.), Some(0.), Some(0.))
-                    .a11y_hidden(),
-            );
+            .child(surface);
         if self.grid {
             graph = graph.children(self.labels(plot, theme, tiny));
         }
@@ -389,28 +408,7 @@ impl<S: 'static> ResponseGraph<S> {
             graph = graph.child(readout(node, centre, plot, radius, theme, tiny));
         }
 
-        let (Some(on_edit), true) = (self.on_edit.clone(), self.reshape) else {
-            return match self.on_edit.clone() {
-                Some(on_edit) => graph
-                    .on_press_tx(move |s: &mut S, tx: &mut Tx| on_edit(s, GraphEdit::Deselect, tx)),
-                None => graph,
-            };
-        };
-        let axes = self.axes;
-        graph.on_drag(move |s: &mut S, drag: &mut Drag, tx: &mut Tx| {
-            if drag.phase != Phase::Down {
-                return;
-            }
-            let inside = drag.x >= plot[0]
-                && drag.x <= plot[0] + plot[2]
-                && drag.y >= plot[1]
-                && drag.y <= plot[1] + plot[3];
-            let edit = match drag.clicks >= 2 && inside {
-                true => GraphEdit::Add(axes.unproject([drag.x, drag.y], plot)),
-                false => GraphEdit::Deselect,
-            };
-            on_edit(s, edit, tx);
-        })
+        graph
     }
 
     /// The spectrum, the grid lines, the area under the response, the reference level and the

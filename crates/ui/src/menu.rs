@@ -8,6 +8,7 @@ use rune::{
     Cursor, El, Key, KeyEvent, ScrollSpec, TextEdit, TextStyle, Tx, col, el, icon, row, text,
 };
 
+use crate::glass::{GLASS_BLUR, blurring, popover_fill};
 use crate::input::Input;
 use crate::label::Weight;
 use crate::metrics::{Text, tucked};
@@ -16,7 +17,6 @@ use crate::overlay::{self, Placement};
 use crate::paint::{rems, shadow_md};
 use crate::separator::Separator;
 use crate::theme::Theme;
-use crate::glass::{GLASS_BLUR, blurring, popover_fill};
 
 /// The gap a menu leaves between itself and the trigger it drops from.
 pub const TRIGGER_GAP: f32 = 4.;
@@ -226,7 +226,12 @@ impl<S: 'static> MenuItem<S> {
     /// Opens `menu` beside the row while `open`. The row calls `toggle` with true when the
     /// pointer comes to it or the Right arrow is pressed on it, and with false when the pointer
     /// moves to a sibling row or the Left arrow goes back out of the submenu.
-    pub fn submenu(mut self, menu: Menu<S>, open: bool, toggle: impl Fn(&mut S, bool) + 'static) -> Self {
+    pub fn submenu(
+        mut self,
+        menu: Menu<S>,
+        open: bool,
+        toggle: impl Fn(&mut S, bool) + 'static,
+    ) -> Self {
         self.submenu = Some(Submenu {
             menu: Box::new(menu),
             open,
@@ -383,7 +388,11 @@ impl<S: 'static> Menu<S> {
                 placed = Some(anchor.clone());
                 (anchor, placement, gap)
             }
-            (None, None) => (format!("{key}-trigger"), Placement::BottomStart, TRIGGER_GAP),
+            (None, None) => (
+                format!("{key}-trigger"),
+                Placement::BottomStart,
+                TRIGGER_GAP,
+            ),
         };
         let dismiss = self.dismiss.clone();
         let mut subs = Vec::new();
@@ -503,7 +512,9 @@ impl<S: 'static> Menu<S> {
             .w_full()
             .shrink()
             .min_h(0.)
-            .scroll(ScrollSpec { stick_bottom: false })
+            .scroll(ScrollSpec {
+                stick_bottom: false,
+            })
             .scroll_edge_fade(FADE)
             .scroll_margin(FADE)
             .child(body);
@@ -550,17 +561,19 @@ impl<S: 'static> Menu<S> {
             .tucked()
             .autofocus()
             .on_change(move |s: &mut S, _: &mut Tx| changed(s).cursor = None)
-            .on_key(move |s: &mut S, event: &KeyEvent, _: &mut Tx| match event.key {
-                Key::Down => {
-                    walk(s).walk(count, 1);
-                    true
-                }
-                Key::Up => {
-                    walk(s).walk(count, -1);
-                    true
-                }
-                _ => false,
-            });
+            .on_key(
+                move |s: &mut S, event: &KeyEvent, _: &mut Tx| match event.key {
+                    Key::Down => {
+                        walk(s).walk(count, 1);
+                        true
+                    }
+                    Key::Up => {
+                        walk(s).walk(count, -1);
+                        true
+                    }
+                    _ => false,
+                },
+            );
             if let Some((press, after)) = cursor_press {
                 field = field.on_submit(move |s: &mut S, tx: &mut Tx| {
                     press(s, tx);
@@ -656,12 +669,7 @@ fn menu_row<S: 'static>(
     }
     lead = lead.child(words);
 
-    let mark = |glyph: &str| {
-        text(glyph)
-            .font(style)
-            .color(ink.color())
-            .a11y_hidden()
-    };
+    let mark = |glyph: &str| text(glyph).font(style).color(ink.color()).a11y_hidden();
     let mut row = row()
         .key(key.clone())
         .role(match checked {
@@ -735,25 +743,27 @@ fn menu_row<S: 'static>(
     // Right goes into a submenu and Left back out of one, as the arrows walk a menu bar.
     if opens.is_some() || parent.is_some() {
         let opens = opens.clone();
-        row = row.on_key(move |s: &mut S, event: &KeyEvent, tx: &mut Tx| match event.key {
-            Key::Right => match (&opens, &first) {
-                (Some(open), Some(first)) => {
-                    open(s, true);
-                    tx.focus(first.clone(), true);
-                    true
-                }
+        row = row.on_key(
+            move |s: &mut S, event: &KeyEvent, tx: &mut Tx| match event.key {
+                Key::Right => match (&opens, &first) {
+                    (Some(open), Some(first)) => {
+                        open(s, true);
+                        tx.focus(first.clone(), true);
+                        true
+                    }
+                    _ => false,
+                },
+                Key::Left => match &parent {
+                    Some((parent_key, back)) => {
+                        back(s, false);
+                        tx.focus(parent_key.clone(), true);
+                        true
+                    }
+                    None => false,
+                },
                 _ => false,
             },
-            Key::Left => match &parent {
-                Some((parent_key, back)) => {
-                    back(s, false);
-                    tx.focus(parent_key.clone(), true);
-                    true
-                }
-                None => false,
-            },
-            _ => false,
-        });
+        );
     }
     if let Some(Submenu { menu, open, toggle }) = submenu {
         let opens = toggle.clone();

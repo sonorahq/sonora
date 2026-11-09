@@ -3083,7 +3083,7 @@ impl Store {
     }
 
     /// The active queue for every consumer, selected once from local or remote playback.
-    pub fn shown_queue(&self) -> crate::QueueView {
+    pub fn shown_queue(&self) -> crate::QueueView<'_> {
         let playing = matches!(self.playback.state(), PlaybackState::Playing);
         let remote = self.playback.steering(&self.devices);
         crate::QueueView::new(&self.queue, &self.devices, remote, playing)

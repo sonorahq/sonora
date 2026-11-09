@@ -168,3 +168,21 @@ mod more {
         println!("log2 {:?}", rt.state.log);
     }
 }
+
+mod clicks {
+    use rune::{Cx, Drag, El, Env, Runtime, Tx, col, el};
+    struct C { seen: Vec<u32> }
+    fn v(_: &C, _: &mut Cx<C>) -> El {
+        col().w(300.).h(300.).child(el().key("pad").size(200., 200.).on_drag(|s: &mut C, d: &mut Drag, _: &mut Tx| if d.phase == rune::Phase::Down { s.seen.push(d.clicks) }))
+    }
+    #[test]
+    fn count() {
+        let mut rt = Runtime::new(C { seen: vec![] }, v, (300., 300.), Env::new(true, 2.));
+        rt.frame(0.);
+        rt.pointer_down(50., 50.); rt.frame(0.016); rt.pointer_up(50., 50.); rt.frame(0.016);
+        rt.pointer_down(50., 50.); rt.frame(0.016); rt.pointer_up(50., 50.); rt.frame(0.016);
+        println!("clicks {:?}", rt.state.seen);
+        rt.pointer_down(50., 50.); rt.pointer_up(50., 50.); rt.pointer_down(50., 50.); rt.pointer_up(50., 50.); rt.frame(0.016);
+        println!("clicks {:?}", rt.state.seen);
+    }
+}

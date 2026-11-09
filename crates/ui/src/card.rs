@@ -4,6 +4,7 @@
 use rune::{Cursor, El, PointerPress, TextStyle, Tx, col, icon, row, text};
 
 use crate::button::Button;
+use crate::color::Hsla;
 use crate::explicit::ExplicitBadge;
 use crate::label::{Weight, upper};
 use crate::metrics::{LEADING, Text, tucked};
@@ -11,7 +12,6 @@ use crate::motion::{PRESS_SCALE_CARD, Springs};
 use crate::paint::{Press, rems, shadow_sm};
 use crate::skeleton::Skeleton;
 use crate::theme::{CoverFill, Theme};
-use crate::color::Hsla;
 
 /// The loading bars in place of a title and a meta line.
 const BAR_TITLE: (f32, f32) = (140., 11.);
@@ -144,7 +144,11 @@ impl Card {
 
     /// A play button over the art that the pointer brings out, showing pause while `playing`
     /// and staying out while it does.
-    pub fn play<S: 'static>(mut self, playing: bool, f: impl Fn(&mut S, &mut Tx) + 'static) -> Self {
+    pub fn play<S: 'static>(
+        mut self,
+        playing: bool,
+        f: impl Fn(&mut S, &mut Tx) + 'static,
+    ) -> Self {
         let mut press = Press::default();
         press.press_tx(f);
         self.play = Some((playing, press));
@@ -263,10 +267,7 @@ impl Card {
     }
 
     /// Opens a context menu on a secondary press, at the window point it landed on.
-    pub fn menu<S: 'static>(
-        mut self,
-        f: impl Fn(&mut S, PointerPress, &mut Tx) + 'static,
-    ) -> Self {
+    pub fn menu<S: 'static>(mut self, f: impl Fn(&mut S, PointerPress, &mut Tx) + 'static) -> Self {
         self.menu = Some(Box::new(move |e: El| e.on_secondary_press(f)));
         self
     }

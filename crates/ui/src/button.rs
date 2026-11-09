@@ -356,7 +356,10 @@ impl Button {
             self.key
         );
         let (accessible, description) = match self.name.clone() {
-            Some(name) => (Some(name), self.label.clone().or_else(|| self.detail.clone())),
+            Some(name) => (
+                Some(name),
+                self.label.clone().or_else(|| self.detail.clone()),
+            ),
             None => (
                 self.label
                     .clone()
@@ -402,10 +405,11 @@ impl Button {
         if let Some(border) = palette.border {
             button = button.border(BORDER, border.color());
         }
-        if interactive && !self.hoverless {
-            if let Some(hover) = palette.hover {
-                button = button.hover(hover.color());
-            }
+        if interactive
+            && !self.hoverless
+            && let Some(hover) = palette.hover
+        {
+            button = button.hover(hover.color());
         }
         if interactive && let Some(active) = palette.active {
             let hover = match self.hoverless {
@@ -459,7 +463,11 @@ impl Button {
                     .map(|label| measure(label, style))
                     .fold(0., f32::max)
                     .ceil();
-                slot = row().key("label-slot").w(width).justify_center().child(slot);
+                slot = row()
+                    .key("label-slot")
+                    .w(width)
+                    .justify_center()
+                    .child(slot);
             }
             button = button.child(slot);
         }
@@ -554,7 +562,9 @@ impl Button {
             Variant::Ghost => subtle(None),
             Variant::Outline => subtle(Some(theme.border)),
             Variant::Primary => solid(theme.primary, theme.primary_hover, theme.primary_foreground),
-            Variant::Destructive => solid(theme.danger, theme.danger_hover, theme.danger_foreground),
+            Variant::Destructive => {
+                solid(theme.danger, theme.danger_hover, theme.danger_foreground)
+            }
         };
         if let Some((background, hover)) = self.fill {
             palette.background = Some(background);

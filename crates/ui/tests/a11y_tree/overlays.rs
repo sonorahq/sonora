@@ -10,9 +10,8 @@ use super::support::*;
 fn popover(s: &App, _: &mut Cx<App>) -> El {
     let theme = theme();
     let mut layer = Vec::new();
-    let sub = Menu::new("more").item(
-        MenuItem::new("deep", "Deep").on_press(|s: &mut App| s.presses += 10),
-    );
+    let sub = Menu::new("more")
+        .item(MenuItem::new("deep", "Deep").on_press(|s: &mut App| s.presses += 10));
     let menu = Menu::new("file")
         .name("File")
         .item(MenuItem::new("open", "Open").on_press(|s: &mut App| s.presses += 1))
@@ -55,7 +54,10 @@ fn a_popover_opens_a_menu_of_named_items() {
 
     assert!(act(&mut rt, "file-wrap", Action::Click));
     assert!(rt.state.on);
-    assert!(rt.state.popovers.any(), "a row that stays open keeps the menu");
+    assert!(
+        rt.state.popovers.any(),
+        "a row that stays open keeps the menu"
+    );
 
     rt.state.sub = true;
     settle(&mut rt);
@@ -73,9 +75,9 @@ fn context(s: &App, _: &mut Cx<App>) -> El {
         Popup::new(
             "row-menu",
             (120., 80.),
-            Menu::new("row")
-                .name("Song")
-                .item(MenuItem::new("queue", "Add to queue").on_press(|s: &mut App| s.presses += 1)),
+            Menu::new("row").name("Song").item(
+                MenuItem::new("queue", "Add to queue").on_press(|s: &mut App| s.presses += 1),
+            ),
         )
         .on_close(|s: &mut App| s.dismissed = true)
         .build(&theme, &mut layer);
@@ -88,7 +90,10 @@ fn a_context_menu_opens_at_a_point_and_closes_on_a_pick() {
     let mut rt = mount(App::default(), context);
     let tree = rt.accessibility_json();
     assert_eq!(said(node(&tree, "row-menu")), ("menu", "Song"));
-    assert_eq!(said(node(&tree, "row-queue")), ("menu-item", "Add to queue"));
+    assert_eq!(
+        said(node(&tree, "row-queue")),
+        ("menu-item", "Add to queue")
+    );
     assert!(act(&mut rt, "row-queue", Action::Click));
     assert_eq!(rt.state.presses, 1);
     assert!(rt.state.dismissed);
@@ -97,19 +102,24 @@ fn a_context_menu_opens_at_a_point_and_closes_on_a_pick() {
 fn picker(s: &App, _: &mut Cx<App>) -> El {
     let theme = theme();
     let mut layer = Vec::new();
-    let trigger = Picker::new("quality", &s.popovers, |s: &mut App| &mut s.popovers, "High")
-        .name("Quality")
-        .item(
-            MenuItem::new("high", "High")
-                .selected(!s.on)
-                .on_press(|s: &mut App| s.on = false),
-        )
-        .item(
-            MenuItem::new("low", "Low")
-                .selected(s.on)
-                .on_press(|s: &mut App| s.on = true),
-        )
-        .build(&theme, &mut layer);
+    let trigger = Picker::new(
+        "quality",
+        &s.popovers,
+        |s: &mut App| &mut s.popovers,
+        "High",
+    )
+    .name("Quality")
+    .item(
+        MenuItem::new("high", "High")
+            .selected(!s.on)
+            .on_press(|s: &mut App| s.on = false),
+    )
+    .item(
+        MenuItem::new("low", "Low")
+            .selected(s.on)
+            .on_press(|s: &mut App| s.on = true),
+    )
+    .build(&theme, &mut layer);
     root(col().padding(40.).child(trigger), layer)
 }
 

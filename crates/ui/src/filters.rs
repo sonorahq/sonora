@@ -288,45 +288,49 @@ impl<S: 'static> RangeScrubber<S> {
             .child(knob(HIGH, high_value))
             .child(segment(1. - high, line, empty));
 
-        let mut scrubber = row()
-            .key(key.clone())
-            .role("group")
+        // The group names the pair; the surface under it takes the pointer, and stays out of
+        // the tree so it is not read as a nameless button.
+        let mut scrubber = rune::col().key(key.clone()).role("group").w_full();
+        if let Some(name) = name {
+            scrubber = scrubber.label(name);
+        }
+        let surface = row()
+            .role("none")
             .w_full()
             .h(reach)
             .center_y()
             .cursor(Cursor::Pointer)
             .child(rail);
-        if let Some(name) = name {
-            scrubber = scrubber.label(name);
-        }
         let Some(on_change) = on_change else {
-            return scrubber;
+            return scrubber.child(surface);
         };
-        scrubber.on_drag(move |s: &mut S, drag: &mut Drag, tx: &mut Tx| {
-            let travel = (drag.w - pin * 2.).max(f32::EPSILON);
-            let low_at = |x: f32| ((x - pin / 2.) / travel).clamp(0., 1.);
-            let high_at = |x: f32| ((x - pin * 1.5) / travel).clamp(0., 1.);
-            if drag.phase == Phase::Down {
-                // Handles that meet are told apart by the side the press lands on.
-                let near_low = match low == high {
-                    true => low_at(drag.x) < low,
-                    false => (low_at(drag.x) - low).abs() <= (high_at(drag.x) - high).abs(),
+        scrubber.child(
+            surface.on_drag(move |s: &mut S, drag: &mut Drag, tx: &mut Tx| {
+                let travel = (drag.w - pin * 2.).max(f32::EPSILON);
+                let low_at = |x: f32| ((x - pin / 2.) / travel).clamp(0., 1.);
+                let high_at = |x: f32| ((x - pin * 1.5) / travel).clamp(0., 1.);
+                if drag.phase == Phase::Down {
+                    // Handles that meet are told apart by the side the press lands on.
+                    let near_low = match low == high {
+                        true => low_at(drag.x) < low,
+                        false => (low_at(drag.x) - low).abs() <= (high_at(drag.x) - high).abs(),
+                    };
+                    drag.data = match near_low {
+                        true => LOW,
+                        false => HIGH,
+                    };
+                }
+                if drag.cancelled() {
+                    on_change(s, (low, high), tx);
+                    return;
+                }
+                let share = match drag.data == LOW {
+                    true => snap(low_at(drag.x), &stops),
+                    false => snap(high_at(drag.x), &stops),
                 };
-                drag.data = match near_low {
-                    true => LOW,
-                    false => HIGH,
-                };
-            }
-            if drag.cancelled() {
-                on_change(s, (low, high), tx);
-                return;
-            }
-            let share = match drag.data == LOW {
-                true => snap(low_at(drag.x), &stops),
-                false => snap(high_at(drag.x), &stops),
-            };
-            on_change(s, toward((low, high), drag.data, share), tx);
-        })
+                on_change(s, toward((low, high), drag.data, share), tx);
+            }),
+        )
     }
 }
 

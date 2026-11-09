@@ -254,20 +254,16 @@ impl<S: 'static> OptionCard<S> {
                 false => (theme.muted_foreground, Weight::NORMAL),
             };
             let lit = theme.foreground.color();
-            let mut line = row()
-                .center_y()
-                .gap(rems(theme, 0.25))
-                .min_w(0.)
-                .child(
-                    text(label.clone())
-                        .font(TextStyle::new(theme.text(Text::Label), weight))
-                        .color(ink.color())
-                        .group_color(lit)
-                        .truncate()
-                        .shrink()
-                        .min_w(0.)
-                        .a11y_hidden(),
-                );
+            let mut line = row().center_y().gap(rems(theme, 0.25)).min_w(0.).child(
+                text(label.clone())
+                    .font(TextStyle::new(theme.text(Text::Label), weight))
+                    .color(ink.color())
+                    .group_color(lit)
+                    .truncate()
+                    .shrink()
+                    .min_w(0.)
+                    .a11y_hidden(),
+            );
             if self.variants.is_some() {
                 line = line.child(
                     icon(icons::get("icons/chevron-down.svg"), CHEVRON)
@@ -279,7 +275,15 @@ impl<S: 'static> OptionCard<S> {
             let variants_name = i18n::t!("option-variants", name = label).into_owned();
             words = words.child(match (self.variants, self.disabled) {
                 (None, _) | (Some(_), true) => line,
-                (Some(Variants::Menu { key, group, access, menu }), false) => {
+                (
+                    Some(Variants::Menu {
+                        key,
+                        group,
+                        access,
+                        menu,
+                    }),
+                    false,
+                ) => {
                     let layer_menu = (*menu).name(variants_name.clone());
                     Popover::new(key, &group, move |s: &mut S| access(s))
                         .face(line)

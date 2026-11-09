@@ -57,7 +57,7 @@ pub enum ToastButton {
 #[derive(Clone, Debug)]
 pub enum ToastUpdate {
     /// See [`Toasts::settle`].
-    Settle(usize, Toast),
+    Settle(usize, Box<Toast>),
     /// See [`Toasts::progress`].
     Progress(usize, f32),
     /// See [`Toasts::close`].
@@ -375,7 +375,7 @@ impl Toasts {
     /// Replaces what toast `id` says and restarts its clock, the way a loading toast turns into
     /// its result. Nothing happens when the toast is already gone.
     pub fn settle(id: usize, toast: Toast, cx: &mut Cx) {
-        cx.emit(Event::ToastUpdate(ToastUpdate::Settle(id, toast)));
+        cx.emit(Event::ToastUpdate(ToastUpdate::Settle(id, Box::new(toast))));
     }
 
     /// Moves the progress toast `id` shows to `done`, from 0 to 1, leaving its clock and the rest
@@ -558,7 +558,7 @@ impl Store {
                 toasts.push(toast.clone(), cx);
             }
             Change::Event(Event::ToastUpdate(update)) => match update {
-                ToastUpdate::Settle(id, toast) => toasts.replace(*id, toast.clone(), cx),
+                ToastUpdate::Settle(id, toast) => toasts.replace(*id, (**toast).clone(), cx),
                 ToastUpdate::Progress(id, done) => toasts.set_progress(*id, *done),
                 ToastUpdate::Close(id) => toasts.dismiss(*id),
             },

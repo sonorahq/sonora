@@ -97,7 +97,12 @@ impl<S: 'static> Dropdown<S> {
         if let Some(width) = self.width {
             panel = panel.w(width);
         }
-        layer.push(overlay::anchor(panel, &anchor_key, Placement::BottomStart, GAP));
+        layer.push(overlay::anchor(
+            panel,
+            &anchor_key,
+            Placement::BottomStart,
+            GAP,
+        ));
         // over the scrim, so a press on the field keeps the panel and moves the caret
         anchor.raise()
     }

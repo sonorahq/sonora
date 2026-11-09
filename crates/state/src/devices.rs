@@ -988,6 +988,7 @@ impl Store {
                                 }
                             });
                         }
+                        // a resolved remote queue window applies without restarting playback
                         if let Some((past, current, next)) = window {
                             store
                                 .queue

@@ -166,7 +166,9 @@ impl Toast {
             (detail, percent) => detail.or(percent),
         };
         let leading = match (self.progress, self.loading, &self.icon) {
-            (Some(done), _, _) => Some(ArrowRing::new(Some(done)).color(theme.primary).build(theme)),
+            (Some(done), _, _) => {
+                Some(ArrowRing::new(Some(done)).color(theme.primary).build(theme))
+            }
             (None, true, _) => Some(
                 Spinner::new()
                     .size(ICON)
@@ -181,10 +183,15 @@ impl Toast {
             (None, false, None) => None,
         };
 
-        let mut message = message(&self.message, self.strong.as_deref(), self.open.is_some(), theme)
-            .font(TextStyle::new(theme.text(Text::Label), Weight::MEDIUM))
-            .color(theme.popover_foreground.color())
-            .min_w(0.);
+        let mut message = message(
+            &self.message,
+            self.strong.as_deref(),
+            self.open.is_some(),
+            theme,
+        )
+        .font(TextStyle::new(theme.text(Text::Label), Weight::MEDIUM))
+        .color(theme.popover_foreground.color())
+        .min_w(0.);
         message = match self.single_line {
             true => message.truncate(),
             false => message.wrap(),
@@ -228,7 +235,11 @@ impl Toast {
         if self.cancel.is_some() || self.action.is_some() {
             let mut buttons = row().center_y().gap(rems(theme, 0.375));
             if let Some((label, press)) = self.cancel {
-                let button = Button::new("cancel").ghost().small().label(label).build(theme);
+                let button = Button::new("cancel")
+                    .ghost()
+                    .small()
+                    .label(label)
+                    .build(theme);
                 buttons = buttons.child(press.apply(button, live));
             }
             if let Some((label, press)) = self.action {

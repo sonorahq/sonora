@@ -35,14 +35,20 @@ fn spoken<'a>(tree: &'a Value, key: &str) -> (&'a str, &'a str) {
 enum Field {
     Index,
     Title,
+    Artist,
 }
 
-static COLUMNS: [ColumnSpec<Field>; 2] = [
+static COLUMNS: [ColumnSpec<Field>; 3] = [
     ColumnSpec::numbering(Field::Index, 40.),
     ColumnSpec {
         key: "title",
         header: "column-title",
         ..ColumnSpec::filling(Field::Title)
+    },
+    ColumnSpec {
+        key: "artist",
+        header: "column-artist",
+        ..ColumnSpec::filling(Field::Artist)
     },
 ];
 

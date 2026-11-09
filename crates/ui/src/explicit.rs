@@ -25,7 +25,9 @@ impl ExplicitBadge {
             .size(side, side)
             .radius(CORNER)
             .fill(theme.muted.color())
-            .child(icon(icons::get("icons/explicit.svg"), side).color(theme.muted_foreground.color()))
+            .child(
+                icon(icons::get("icons/explicit.svg"), side).color(theme.muted_foreground.color()),
+            )
             .a11y_hidden()
     }
 }

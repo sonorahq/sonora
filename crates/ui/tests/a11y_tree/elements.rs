@@ -131,7 +131,11 @@ fn cards_read_as_buttons_named_for_their_title() {
     assert_eq!(said(album), ("button", "Blue"));
     assert_eq!(album["description"], "Joni Mitchell, 1971");
     assert_eq!(said(node(&tree, "still")), ("group", "Court and Spark"));
-    assert_eq!(with_role(album, "button").len(), 2, "the play button sits in the card");
+    assert_eq!(
+        with_role(album, "button").len(),
+        2,
+        "the play button sits in the card"
+    );
     assert!(act(&mut rt, "album", Action::Click));
     assert_eq!(rt.state.presses, 1);
     let tile = node(&rt.accessibility_json(), "tile").clone();

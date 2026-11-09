@@ -327,11 +327,9 @@ impl<S: 'static> Scrubber<S> {
         let pin = (pad * THUMB).round();
         let reach = (pad * HIT).round();
         let bubble_width = (pad * BUBBLE).round();
-        let (filled, empty, thumb) = self.colors.unwrap_or((
-            theme.progress_bar,
-            theme.muted,
-            theme.progress_bar,
-        ));
+        let (filled, empty, thumb) =
+            self.colors
+                .unwrap_or((theme.progress_bar, theme.muted, theme.progress_bar));
         let state = self.state.clone();
         let interactive = self.enabled && self.on_move.is_some();
         state.update(|g| {
@@ -404,7 +402,9 @@ impl<S: 'static> Scrubber<S> {
                     let above = (reach + line) / 2. + self.lift;
                     let placed = match self.lift >= 0. {
                         true => row().pin(Some(0.), None, None, Some(above)),
-                        false => row().pin(Some(0.), Some((reach + line) / 2. - self.lift), None, None),
+                        false => {
+                            row().pin(Some(0.), Some((reach + line) / 2. - self.lift), None, None)
+                        }
                     };
                     placed.w(bubble_width).justify_center()
                 }
@@ -451,9 +451,10 @@ impl<S: 'static> Scrubber<S> {
             });
         if let Some(hover) = self.on_hover {
             let pointed = state.clone();
-            scrubber = scrubber.on_pointer_move_local(move |s: &mut S, at: PointerEvent, tx: &mut Tx| {
-                hover(s, Some(pointed.fraction_at(at.x, at.y)), tx)
-            });
+            scrubber =
+                scrubber.on_pointer_move_local(move |s: &mut S, at: PointerEvent, tx: &mut Tx| {
+                    hover(s, Some(pointed.fraction_at(at.x, at.y)), tx)
+                });
         }
         let on_move = self.on_move.clone();
         let on_release = self.on_release.clone();
@@ -523,7 +524,10 @@ mod tests {
                 ..geometry
             });
             let middle = drawn.thumb[0] + drawn.thumb[2] / 2.;
-            assert!((middle - center).abs() < 1e-3, "{fraction} drawn at {middle}");
+            assert!(
+                (middle - center).abs() < 1e-3,
+                "{fraction} drawn at {middle}"
+            );
         }
     }
 

@@ -227,7 +227,8 @@ impl<S: 'static> Input<S> {
             field = field.on_submit(move |s: &mut S, tx: &mut Tx| submit(s, tx));
         }
         if let Some(keys) = self.keys {
-            field = field.on_input_key(move |s: &mut S, key: &KeyEvent, tx: &mut Tx| keys(s, key, tx));
+            field =
+                field.on_input_key(move |s: &mut S, key: &KeyEvent, tx: &mut Tx| keys(s, key, tx));
         }
         if let Some(change) = self.change {
             field = field.on_input_change(move |s: &mut S, tx: &mut Tx| change(s, tx));

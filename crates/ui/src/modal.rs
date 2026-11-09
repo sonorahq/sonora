@@ -105,13 +105,18 @@ impl<S: 'static> Modal<S> {
             true => room,
             false => pad,
         };
-        let mut words = col().grow(1.).shrink().min_w(0.).gap(crate::paint::rems(theme, 0.25)).child(
-            text(self.title.clone())
-                .font(TextStyle::new(theme.text(Text::Large), Weight::SEMIBOLD))
-                .color(theme.popover_foreground.color())
-                .wrap()
-                .a11y_hidden(),
-        );
+        let mut words = col()
+            .grow(1.)
+            .shrink()
+            .min_w(0.)
+            .gap(crate::paint::rems(theme, 0.25))
+            .child(
+                text(self.title.clone())
+                    .font(TextStyle::new(theme.text(Text::Large), Weight::SEMIBOLD))
+                    .color(theme.popover_foreground.color())
+                    .wrap()
+                    .a11y_hidden(),
+            );
         if let Some(detail) = &self.detail {
             words = words.child(
                 text(detail.clone())
@@ -164,7 +169,9 @@ impl<S: 'static> Modal<S> {
                     .w_full()
                     .shrink()
                     .min_h(0.)
-                    .scroll(ScrollSpec { stick_bottom: false })
+                    .scroll(ScrollSpec {
+                        stick_bottom: false,
+                    })
                     .scroll_edge_fade(FADE)
                     .child(
                         col()
