@@ -57,7 +57,8 @@ pub use models::{
     Contributor, CoverSize, Credit, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
     ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsWord,
     PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail, ReleaseType, RomanizedText,
-    SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
+    SavedArtist, ScanReport, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice,
+    WritingSystem,
 };
 pub use output::{Server as SoundServer, missing_bridge};
 pub use redact::redact;
@@ -67,6 +68,8 @@ pub const LOCAL_TRACK_PREFIX: &str = "local:";
 pub const LOCAL_ALBUM_PREFIX: &str = "local-album:";
 pub const LOCAL_ARTIST_PREFIX: &str = "local-artist:";
 pub const LOCAL_PLAYLIST_PREFIX: &str = "local-playlist:";
+/// Browse categories derived from the genre tags of local files.
+pub const LOCAL_GENRE_PREFIX: &str = "local-genre:";
 
 /// The most recommendations a provider hands one list of an album or artist page, so a
 /// rail never asks for or draws more than this many releases or artists.
@@ -80,6 +83,7 @@ pub fn is_local_id(id: &str) -> bool {
         || id.starts_with(LOCAL_ALBUM_PREFIX)
         || id.starts_with(LOCAL_ARTIST_PREFIX)
         || id.starts_with(LOCAL_PLAYLIST_PREFIX)
+        || id.starts_with(LOCAL_GENRE_PREFIX)
 }
 
 pub fn distinct_covers(tracks: &[Track], wanted: usize) -> Vec<String> {
@@ -114,6 +118,10 @@ pub enum Report {
 
 #[async_trait]
 pub trait MusicApi: Send + Sync {
+    /// Diagnostics and reconciled moves from the last local scan, empty for streaming sources.
+    fn scan_report(&self) -> ScanReport {
+        ScanReport::default()
+    }
     fn alive(&self) -> bool {
         true
     }
@@ -1070,6 +1078,21 @@ pub trait MusicProvider: Send + Sync {
         None
     }
     async fn restore(&self) -> Result<Option<ProviderSession>>;
+    /// Scans local folders under a reservation made before the worker was scheduled.
+    async fn scan(
+        &self,
+        paths: Vec<PathBuf>,
+        _ticket: progress::Ticket,
+        thorough: bool,
+    ) -> Result<ProviderSession> {
+        if thorough {
+            self.forget_scan();
+        }
+        let (_sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        self.sign_in(SignIn::Path(paths), Arc::new(|_| {}), receiver)
+            .await
+    }
+
     async fn sign_in(
         &self,
         method: SignIn,

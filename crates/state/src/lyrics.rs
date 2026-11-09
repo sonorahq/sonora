@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::hash::{Hash as _, Hasher as _};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,7 +9,7 @@ use music::{LyricsHit, LyricsProvider, LyricsQuery, Track, TrackKey};
 use tokio::task::JoinSet;
 
 use crate::sheets::{Sheets, Unsaved};
-use crate::{AppSettings, Io, Playback, Queue, QueuePosition, Session, join};
+use crate::{AppSettings, Io, Playback, Queue, QueuePosition, Session, SessionEvent, join};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LyricsState {
@@ -34,6 +35,7 @@ pub struct Lyrics {
     settled: bool,
     revision: u64,
     following: Option<String>,
+    following_query: Option<LyricsQuery>,
     /// The answers looked at most recently, newest first.
     recent: VecDeque<(String, Found)>,
     store: Sheets,
@@ -43,6 +45,9 @@ pub struct Lyrics {
     /// Whether lyrics are on at all. While off, nothing is looked up and the sheet stays empty.
     enabled: bool,
     enabled_providers: Vec<String>,
+    /// The lookup permissions last applied, so changing either restarts the current sheet.
+    local_online: bool,
+    offline: bool,
     /// The order of the sources the answer on show was ranked by. A new order looks the track
     /// up again, from what is held, so the source now ranked first is the one shown.
     priority: Vec<String>,
@@ -74,18 +79,38 @@ impl Lyrics {
         })
         .detach();
         cx.observe(&queue, |this, _, cx| this.prefetch(cx)).detach();
+        cx.subscribe(&session, |this, _, event, cx| {
+            if !matches!(event, SessionEvent::LocalChanged) {
+                return;
+            }
+            this.recent.retain(|(id, _)| !music::is_local_id(id));
+            this.ahead = None;
+            this.ahead_of = None;
+            if this.following.as_deref().is_some_and(music::is_local_id) {
+                this.forget(cx);
+                this.follow(cx);
+            }
+        })
+        .detach();
         cx.observe(&settings, |this, settings, cx| {
             let settings = settings.read(cx);
             let on = settings.lyrics_enabled();
             let enabled = settings.lyrics_providers();
             let priority = settings.lyrics_provider_priority();
-            if on == this.enabled && enabled == this.enabled_providers && priority == this.priority
+            let local_online = settings.lyrics_for_local_files();
+            let offline = settings.offline_mode();
+            if enabled == this.enabled_providers
+                && priority == this.priority
+                && local_online == this.local_online
+                && offline == this.offline
             {
                 return;
             }
             this.enabled = on;
             this.enabled_providers = enabled.to_vec();
             this.priority = priority;
+            this.local_online = local_online;
+            this.offline = offline;
             this.task = None;
             this.ahead = None;
             this.ahead_of = None;
@@ -109,12 +134,15 @@ impl Lyrics {
             settled: false,
             revision: 0,
             following: None,
+            following_query: None,
             recent: VecDeque::new(),
             store,
             unsaved: Vec::new(),
             providers,
             enabled,
             enabled_providers,
+            local_online: settings.read(cx).lyrics_for_local_files(),
+            offline: settings.read(cx).offline_mode(),
             priority,
             playback,
             session,
@@ -178,9 +206,17 @@ impl Lyrics {
         let Some(id) = track.id.as_deref() else {
             return self.forget(cx);
         };
+        let query = self.query(track, id, cx);
         if self.following.as_deref() == Some(id) {
-            return;
+            if self.following_query.as_ref() == Some(&query) {
+                return;
+            }
+            self.task = None;
+            self.ahead = None;
+            self.ahead_of = None;
+            self.recent.retain(|(held, _)| held != id);
         }
+        self.following_query = Some(query);
         let (track, id) = (track.clone(), id.to_owned());
         self.following = Some(id.clone());
         self.chosen = 0;
@@ -244,8 +280,8 @@ impl Lyrics {
     }
 
     /// Reads the answer stored for `id` off the main thread.
-    fn stored(&self, id: &str, cx: &Context<Self>) -> Task<Option<Found>> {
-        let key = self.key(id, cx);
+    fn stored(&self, id: &str, track: &Track, cx: &Context<Self>) -> Task<Option<Found>> {
+        let key = self.key(id, track, cx);
         let known: Vec<&'static str> = self
             .providers
             .iter()
@@ -262,11 +298,17 @@ impl Lyrics {
     /// One key per track. The stored answer covers every service that has replied, whichever
     /// are enabled now, and the selection is applied when it is shown. Services that replied
     /// empty are asked again while the stored answer holds nothing usable.
-    fn key(&self, id: &str, cx: &Context<Self>) -> String {
-        match self.session.read(cx).slug_for(id) {
+    fn key(&self, id: &str, track: &Track, cx: &Context<Self>) -> String {
+        let key = match self.session.read(cx).slug_for(id) {
             Some(slug) => format!("{slug}:{id}:lyrics"),
             None => format!("{id}:lyrics"),
+        };
+        if !music::is_local_id(id) {
+            return key;
         }
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        (&track.name, &track.artists, &track.album, track.duration).hash(&mut hash);
+        format!("{key}:{:x}", hash.finish())
     }
 
     /// The providers a lookup for `id` may ask. The file's own lyrics are read only for a local
@@ -322,6 +364,7 @@ impl Lyrics {
         }
         self.task = None;
         self.following = None;
+        self.following_query = None;
         self.hits.clear();
         self.chosen = 0;
         self.picked = false;
@@ -381,8 +424,9 @@ impl Lyrics {
         if crate::Network::offline(cx) {
             asked.retain(|provider| provider.name() == LOCAL);
         }
+        let key = self.key(&id, &track, cx);
         let remembered = self.recall(&id);
-        let stored = remembered.is_none().then(|| self.stored(&id, cx));
+        let stored = remembered.is_none().then(|| self.stored(&id, &track, cx));
         let query = self.query(&track, &id, cx);
         let io = self.io.clone();
         cx.spawn(async move |this, cx| {
@@ -476,7 +520,7 @@ impl Lyrics {
                 match answered {
                     Ok(answered) => {
                         crate::Network::reached(cx);
-                        this.keep(id, cached, &hits, answered, cx);
+                        this.keep(id, key, cached, &hits, answered, cx);
                         if current {
                             let instrumental = music::lyrics::instrumental(&ranking, &hits);
                             let ranked = ordered(&ranking, hits, &priority);
@@ -562,6 +606,7 @@ impl Lyrics {
     fn keep(
         &mut self,
         id: String,
+        key: String,
         mut found: Found,
         hits: &[LyricsHit],
         answered: Vec<&'static str>,
@@ -586,7 +631,6 @@ impl Lyrics {
                 }
             }
             if !found.hits.is_empty() {
-                let key = self.key(&id, cx);
                 self.unsaved
                     .push(Sheets::unsaved(key, &found.hits, &found.answered));
                 self.schedule_save(cx);

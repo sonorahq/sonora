@@ -450,8 +450,8 @@ impl Render for LoginView {
             }
             _ => false,
         };
-        let count = providers.len();
-        let tabs = providers
+        let count = providers.len() + 1;
+        let mut tabs = providers
             .iter()
             .enumerate()
             .map(|(index, info)| {
@@ -469,6 +469,21 @@ impl Render for LoginView {
                     }))
             })
             .collect::<Vec<_>>();
+        let offline_tab = providers.len();
+        let local_configured = !self.session.read(cx).local_paths().is_empty();
+        tabs.push(
+            Button::new("login-tab-offline")
+                .label(t!("login-offline-title"))
+                .small()
+                .ghost()
+                .selected(self.tab == offline_tab)
+                .aria_position_in_set(count)
+                .aria_size_of_set(count)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.tab = offline_tab;
+                    cx.notify();
+                })),
+        );
         let selected = providers.into_iter().nth(self.tab);
         let mut failure = selected.as_ref().and_then(|info| info.error.clone());
         let subscription = failure
@@ -580,6 +595,58 @@ impl Render for LoginView {
                     .items(tabs),
             )
             .when_some(column, |this, column| this.child(self.column(column, cx)))
+            .when(self.tab == offline_tab, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap_3()
+                        .w(COLUMN)
+                        .child(
+                            ui::spoken(
+                                "login-offline-detail",
+                                match local_configured {
+                                    true => t!("login-offline-ready-detail"),
+                                    false => t!("login-offline-detail"),
+                                },
+                            )
+                            .text_center()
+                            .text_color(theme.muted_foreground),
+                        )
+                        .child(
+                            Button::new("login-offline-folder")
+                                .label(match local_configured {
+                                    true => t!("login-offline-continue"),
+                                    false => t!("settings-choose-folder"),
+                                })
+                                .icon(match local_configured {
+                                    true => "icons/file-music.svg",
+                                    false => "icons/folder-plus.svg",
+                                })
+                                .primary()
+                                .w_full()
+                                .disabled(pending)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    if this.session.read(cx).local_paths().is_empty() {
+                                        crate::shared::local::choose_offline_folder(cx);
+                                        return;
+                                    }
+                                    this.session.update(cx, |session, cx| session.use_local(cx));
+                                })),
+                        )
+                        .when(guest.is_some(), |this| {
+                            this.child(
+                                ui::spoken(
+                                    "login-offline-guest-detail",
+                                    t!("login-offline-guest-detail"),
+                                )
+                                .text_center()
+                                .text_color(theme.muted_foreground),
+                            )
+                        }),
+                )
+            })
             .when_some(guest, |this, slug| {
                 this.child(
                     div()

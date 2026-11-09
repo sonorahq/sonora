@@ -5,7 +5,7 @@ use anyhow::Result;
 use gpui::{Context, Entity, Task};
 use music::{Album, ArtistRef, Playlist, SavedArtist, Track};
 
-use crate::{Io, Library, Network, Session, SessionEvent, Shelf, join};
+use crate::{Io, Library, Network, Session, SessionEvent, join};
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
 const LIMIT: usize = 20;
@@ -160,6 +160,11 @@ impl Search {
                 this.query.clear();
                 this.ask(&pending, cx);
             }
+            SessionEvent::LocalChanged if this.session.read(cx).local_only() => {
+                let pending = this.query.clone();
+                this.forget_results();
+                this.ask(&pending, cx);
+            }
             SessionEvent::Reconnected | SessionEvent::WentOffline | SessionEvent::LocalChanged => {}
         })
         .detach();
@@ -238,7 +243,7 @@ impl Search {
 
         self.rank(cx);
 
-        let Some(client) = self.session.read(cx).client() else {
+        let Some(client) = self.session.read(cx).browsing_client() else {
             self.loading = false;
             cx.notify();
             return;
@@ -328,7 +333,7 @@ impl Search {
             return;
         }
 
-        let Some(client) = self.session.read(cx).client() else {
+        let Some(client) = self.session.read(cx).browsing_client() else {
             return;
         };
 
@@ -361,7 +366,7 @@ impl Search {
 
         self.hits = {
             let held = self.library.read(cx);
-            let state = held.state(Shelf::Streaming);
+            let state = held.state(self.session.read(cx).primary_shelf());
             rank(
                 state.tracks(),
                 state.albums(),

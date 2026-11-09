@@ -152,6 +152,9 @@ impl HomeView {
     /// failed otherwise. Asking for the feed again is the retry, and it starts the pauses
     /// between tries over.
     fn failure(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        if self.home.read(cx).is_local(cx) {
+            return None;
+        }
         let reason = match Network::lost(cx) {
             true => None,
             false => Some(self.home.read(cx).error()?.to_owned()),
@@ -176,6 +179,13 @@ impl HomeView {
 
 impl Render for HomeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let session = Sonora::global(cx).session.read(cx);
+        if session.local_only() && session.local_paths().is_empty() && !session.scanning() {
+            return div()
+                .size_full()
+                .child(crate::shared::local::unconfigured("home-local-folder"))
+                .into_any_element();
+        }
         if let Some(failure) = self.failure(cx) {
             return div()
                 .id("home-failure")

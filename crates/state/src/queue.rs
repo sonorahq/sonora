@@ -432,10 +432,8 @@ impl Queue {
     ) -> Self {
         cx.subscribe(&session, |this, _, event, cx| match event {
             SessionEvent::SignedOut => this.purge(cx),
-            SessionEvent::SignedIn
-            | SessionEvent::Reconnected
-            | SessionEvent::WentOffline
-            | SessionEvent::LocalChanged => {}
+            SessionEvent::LocalChanged => this.refresh_local(cx),
+            SessionEvent::SignedIn | SessionEvent::Reconnected | SessionEvent::WentOffline => {}
         })
         .detach();
 
@@ -509,6 +507,35 @@ impl Queue {
         self.upcoming.append(&mut suggested);
     }
 
+    /// Refreshes every occurrence without changing its identity, order, or provenance.
+    fn refresh_local(&mut self, cx: &mut Context<Self>) {
+        let session = self.session.read(cx);
+        let mut changed = false;
+        for entry in self
+            .past
+            .iter_mut()
+            .chain(self.current.iter_mut())
+            .chain(self.upcoming.iter_mut())
+            .chain(self.source.iter_mut())
+        {
+            let Some(track) = entry
+                .track
+                .id
+                .as_deref()
+                .and_then(|id| session.refreshed_local_track(id))
+            else {
+                continue;
+            };
+            if entry.track.as_ref() != track {
+                entry.track = Rc::new(track.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            self.changed(cx);
+        }
+    }
+
     fn changed(&mut self, cx: &mut Context<Self>) {
         trim(&mut self.past, PAST_LIMIT);
         self.sections = QueueSections::new(
@@ -529,7 +556,7 @@ impl Queue {
         let resume = self
             .session
             .read(cx)
-            .provider_slug()
+            .playback_slug()
             .filter(|_| !self.blank())
             .map(|slug| {
                 record(

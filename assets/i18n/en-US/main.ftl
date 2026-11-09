@@ -1438,3 +1438,14 @@ response-graph-readout = { $frequency } · { $direction ->
         [down] -{ $gain }
        *[flat] { $gain }
     } dB
+
+login-offline-title = Offline
+login-offline-detail = Listen to music on your computer. Choose a folder to continue.
+login-offline-ready-detail = Listen to music from your selected folders. You can manage your local folders in Settings.
+login-offline-continue = Continue offline
+login-offline-guest-detail = Just want to stream without signing in? Choose Guest mode instead.
+
+toast-scan-issues = { $count ->
+    [one] One music file or folder could not be read
+   *[other] { $count } music files or folders could not be read
+}

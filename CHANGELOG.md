@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Choose Offline during setup to browse and play music from local folders without a streaming account.
+
 ### Changed
 
 - Nightly updates reuse released executables after a stable release, so they become available sooner.
@@ -27,6 +31,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Apple Music lyrics can be found when the album has a different edition name in the lyrics catalogue.
 - Lyrics sources retry when their cached answers cannot be shown, and newly found lyrics stay available after restarting.
 - On macOS, Widevine is also found in registered browsers that have been renamed or moved.
+
 
 ## [0.48.0] - 2026-11-07
 

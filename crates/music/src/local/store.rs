@@ -1,10 +1,11 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use rusqlite::{Connection, OptionalExtension as _, params};
 use storage::Database;
 
-use crate::LOCAL_PLAYLIST_PREFIX;
+use crate::{LOCAL_PLAYLIST_PREFIX, ScanReport, Track};
 
 pub struct Stored {
     pub id: String,
@@ -51,6 +52,75 @@ impl Store {
 
     fn open(&self) -> Result<rusqlite::Connection> {
         self.database.open().context("cannot open local playlists")
+    }
+
+    /// Repairs durable references only for exact moves whose old paths are no longer indexed.
+    pub fn reconcile(&self, report: &ScanReport, tracks: &[Track]) -> Result<()> {
+        if report.moved.is_empty() && report.moved_albums.is_empty() {
+            return Ok(());
+        }
+        let ids: HashSet<&str> = tracks
+            .iter()
+            .filter_map(|track| track.id.as_deref())
+            .collect();
+        let albums: HashSet<&str> = tracks
+            .iter()
+            .filter_map(|track| track.album_id.as_deref())
+            .collect();
+        let mut connection = self.open()?;
+        let transaction = connection
+            .transaction()
+            .context("cannot repair moved music references")?;
+        for (from, to) in &report.moved {
+            if ids.contains(from.as_str()) || !ids.contains(to.as_str()) {
+                continue;
+            }
+            transaction.execute(
+                "UPDATE OR IGNORE playlist_tracks SET track_id = ?2 WHERE track_id = ?1",
+                params![from, to],
+            )?;
+            transaction.execute("DELETE FROM playlist_tracks WHERE track_id = ?1", [from])?;
+            transaction.execute("INSERT OR IGNORE INTO favorites (track_id, added_at) SELECT ?2, added_at FROM favorites WHERE track_id = ?1", params![from, to])?;
+            transaction.execute("DELETE FROM favorites WHERE track_id = ?1", [from])?;
+            transaction.execute("UPDATE OR REPLACE plays SET track_id = ?2 WHERE provider = 'local' AND track_id = ?1", params![from, to])?;
+        }
+        for (from, to) in &report.moved_albums {
+            if albums.contains(from.as_str()) || !albums.contains(to.as_str()) {
+                continue;
+            }
+            transaction.execute("INSERT OR IGNORE INTO favorite_albums (album_id, added_at) SELECT ?2, added_at FROM favorite_albums WHERE album_id = ?1", params![from, to])?;
+            transaction.execute("DELETE FROM favorite_albums WHERE album_id = ?1", [from])?;
+        }
+        transaction
+            .commit()
+            .context("cannot commit moved music references")
+    }
+
+    /// Reports missing references only inside the currently configured music folders. References
+    /// in a removed folder remain stored for re-adding it and are not scan failures.
+    pub fn missing_tracks(&self, tracks: &[Track], roots: &[PathBuf]) -> Result<Vec<String>> {
+        let ids: HashSet<&str> = tracks
+            .iter()
+            .filter_map(|track| track.id.as_deref())
+            .collect();
+        let connection = self.open()?;
+        let mut query = connection
+            .prepare("SELECT track_id FROM favorites UNION SELECT track_id FROM playlist_tracks")?;
+        let rows = query.query_map([], |row| row.get::<_, String>(0))?;
+        let mut missing = Vec::new();
+        for id in rows {
+            let id = id?;
+            if !ids.contains(id.as_str())
+                && let Some(path) = super::wire::path_from_track_id(&id)
+                && roots.iter().any(|root| path.starts_with(root))
+            {
+                missing.push(format!(
+                    "cannot find music file referenced by a playlist or favorite: {}",
+                    path.display()
+                ));
+            }
+        }
+        Ok(missing)
     }
 
     /// The starred ids of one kind, newest first, with the moment each was starred.
@@ -110,6 +180,25 @@ impl Store {
         }
         .context("cannot update a local favorite")?;
         Ok(())
+    }
+
+    /// Removes a favorite and late writes through its old aliases in one transaction.
+    pub fn unstar(&self, kind: Starred, ids: &[String]) -> Result<()> {
+        let mut connection = self.open()?;
+        let transaction = connection.transaction()?;
+        {
+            let mut remove = transaction.prepare(&format!(
+                "DELETE FROM {} WHERE {} = ?",
+                kind.table(),
+                kind.column()
+            ))?;
+            for id in ids {
+                remove.execute([id])?;
+            }
+        }
+        transaction
+            .commit()
+            .context("cannot remove a local favorite")
     }
 
     pub fn list(&self) -> Result<Vec<Stored>> {
@@ -265,15 +354,21 @@ impl Store {
             .context("cannot add tracks to a local playlist")
     }
 
-    pub fn remove(&self, id: &str, track_id: &str) -> Result<()> {
-        let connection = self.open()?;
-        connection
-            .execute(
-                "DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?",
-                params![id, track_id],
-            )
-            .context("cannot remove a track from a local playlist")?;
-        touch(&connection, id)
+    /// Removes the track and its old aliases together, preserving unrelated playlist members.
+    pub fn remove(&self, id: &str, track_ids: &[String]) -> Result<()> {
+        let mut connection = self.open()?;
+        let transaction = connection.transaction()?;
+        {
+            let mut remove = transaction
+                .prepare("DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?")?;
+            for track_id in track_ids {
+                remove.execute(params![id, track_id])?;
+            }
+        }
+        touch(&transaction, id)?;
+        transaction
+            .commit()
+            .context("cannot remove a track from a local playlist")
     }
 
     pub fn tracks(&self, id: &str) -> Result<Vec<String>> {

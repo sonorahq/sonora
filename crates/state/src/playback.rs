@@ -533,6 +533,9 @@ impl Playback {
         cx.subscribe(&session, |this, session, event, cx| match event {
             SessionEvent::SignedIn => {
                 let Some(playback) = session.read(cx).playback() else {
+                    if session.read(cx).local_only() {
+                        this.adopt(cx);
+                    }
                     return;
                 };
                 // an engine left from playing offline hands its track over where it stands
@@ -562,6 +565,7 @@ impl Playback {
                 {
                     this.start_local_engine(playback, cx);
                 }
+                this.refresh_local_metadata(cx);
             }
         })
         .detach();
@@ -1980,7 +1984,7 @@ impl Playback {
         if self.track.is_some() || !self.queue.read(cx).is_empty() {
             return;
         }
-        let Some(slug) = self.session.read(cx).provider_slug() else {
+        let Some(slug) = self.session.read(cx).playback_slug() else {
             return;
         };
         let Some(resume) = self
@@ -2716,6 +2720,57 @@ impl Playback {
         self.listen(events, true, cx);
         self.local_engine = Some(engine);
         self.prepare_resume(cx);
+    }
+
+    /// Applies rescanned tags without restarting audio; a moved file reopens at the same position.
+    fn refresh_local_metadata(&mut self, cx: &mut Context<Self>) {
+        let Some(previous) = self.track.as_ref() else {
+            return;
+        };
+        let Some(track) = previous
+            .id
+            .as_deref()
+            .and_then(|id| self.session.read(cx).refreshed_local_track(id))
+            .cloned()
+        else {
+            return;
+        };
+        if previous == &track {
+            return;
+        }
+        let moved = previous.id != track.id;
+        if moved
+            && track.playable
+            && let Some(id) = track.id.as_deref()
+        {
+            let playing = self.intent == Intent::Play
+                && matches!(self.state, PlaybackState::Playing | PlaybackState::Loading);
+            self.load = None;
+            self.seek_in_flight = None;
+            self.seek_next = None;
+            self.seek_target = None;
+            self.intent = match playing {
+                true => Intent::Play,
+                false => Intent::Pause,
+            };
+            self.resume_ready = !playing;
+            self.clock.reset(self.position, false);
+            if let Some(engine) = self.engine_for(id) {
+                let reopened = match playing {
+                    true => engine.load(id, self.position, false),
+                    false => engine.load_paused_at(id, self.position),
+                };
+                if let Err(error) = reopened {
+                    self.track = Some(track);
+                    return self
+                        .failed(format!("cannot reopen a moved local track: {error:#}"), cx);
+                }
+            }
+        }
+        self.track = Some(track);
+        self.preloaded = None;
+        self.remember(true, cx);
+        cx.notify();
     }
 
     /// Pumps an engine's events into `on_backend_event` until the engine is dropped.

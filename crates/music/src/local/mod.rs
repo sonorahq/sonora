@@ -39,13 +39,45 @@ impl LocalProvider {
         }
     }
 
-    async fn scan_paths(&self, paths: Vec<PathBuf>) -> Result<ProviderSession> {
+    async fn scan_paths(
+        &self,
+        paths: Vec<PathBuf>,
+        ticket: crate::progress::Ticket,
+        thorough: bool,
+    ) -> Result<ProviderSession> {
         let cache_dir = self.cache_dir.clone();
         let index = self.index.clone();
-        let scanned = tokio::task::spawn_blocking(move || scan::scan(&paths, &cache_dir, &index))
-            .await
-            .context("local scan task panicked")?;
+        let roots = paths.clone();
+        let mut scanned = tokio::task::spawn_blocking(move || {
+            scan::reserved(&paths, &cache_dir, &index, ticket, thorough)
+        })
+        .await
+        .context("local scan task panicked")?
+        .context("local scan was cancelled")?;
+        anyhow::ensure!(ticket.live(), "local scan was cancelled");
 
+        let active = |id: &String| {
+            wire::path_from_track_id(id)
+                .is_some_and(|path| roots.iter().any(|root| path.starts_with(root)))
+        };
+        scanned
+            .report
+            .moved
+            .retain(|(from, to)| active(from) && active(to));
+        scanned.report.moved_albums.retain(|(from, to)| {
+            scanned
+                .report
+                .album_move_paths
+                .get(from)
+                .is_some_and(|paths| !paths.is_empty() && paths.iter().all(&active))
+                && scanned.albums.iter().any(|album| album.id == *to)
+        });
+        let store = store::Store::new(self.database.clone());
+        store.reconcile(&scanned.report, &scanned.tracks)?;
+        scanned
+            .report
+            .issues
+            .extend(store.missing_tracks(&scanned.tracks, &roots)?);
         let api: Arc<dyn MusicApi> = Arc::new(client::LocalClient::new(
             scanned,
             self.database.clone(),
@@ -134,7 +166,17 @@ impl MusicProvider for LocalProvider {
                 "local files can only be configured with a folder path"
             ));
         };
-        self.scan_paths(paths).await
+        self.scan_paths(paths, crate::progress::reserve(), false)
+            .await
+    }
+
+    async fn scan(
+        &self,
+        paths: Vec<PathBuf>,
+        ticket: crate::progress::Ticket,
+        thorough: bool,
+    ) -> Result<ProviderSession> {
+        self.scan_paths(paths, ticket, thorough).await
     }
 
     fn sign_out(&self) {}

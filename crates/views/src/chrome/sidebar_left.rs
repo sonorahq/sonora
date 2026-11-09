@@ -274,11 +274,16 @@ impl SidebarLeft {
     fn navigation(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         // A shelf with rows on it belongs in the sidebar even before the session has restored,
         // since a snapshot fills it while the provider is still answering.
-        let stocked = self.session.read(cx).authenticated()
+        let local_only = self.session.read(cx).local_only();
+        let stocked = local_only
+            || self.session.read(cx).authenticated()
             || self.library.read(cx).stocked(Shelf::Streaming);
         let mut rows = Vec::new();
         for (index, (entry, _, destination)) in NAV.iter().enumerate() {
             if entry.is_some_and(|entry| !self.settings.read(cx).nav_shown(entry.id())) {
+                continue;
+            }
+            if local_only && matches!(destination, Destination::Local(_)) {
                 continue;
             }
             let group = Group::of(destination);

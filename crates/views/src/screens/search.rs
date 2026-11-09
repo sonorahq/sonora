@@ -1031,6 +1031,9 @@ impl SearchView {
     /// search or a failed browse shows its own reason otherwise. Asking again is the retry,
     /// since neither loader counts a failure as served.
     fn failure(&self, asked: bool, gutter: Pixels, cx: &Context<Self>) -> Option<AnyElement> {
+        if Sonora::global(cx).session.read(cx).local_only() {
+            return None;
+        }
         let offline = Network::lost(cx);
         let (id, reason, retry) = match asked {
             true => {
