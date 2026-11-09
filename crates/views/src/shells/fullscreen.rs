@@ -387,7 +387,9 @@ pub(crate) fn poll(ui: &mut Ui, tx: &mut Tx) -> bool {
 /// Wakes the controls for a key press, which shows them as a pointer movement would.
 pub(crate) fn stir(ui: &mut Ui, tx: &mut Tx) {
     if matches!(ui.nav.current(), Destination::Fullscreen) {
-        poke(ui, tx);
+        // never `live_only` here: the key's own action still has to show
+        ui.screens.fullscreen.stir();
+        tx.wake_after(REST);
     }
 }
 
