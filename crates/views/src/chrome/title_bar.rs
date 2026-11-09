@@ -9,7 +9,7 @@ use state::{HistoryState, LibraryState, SessionState, Shelf};
 use ui::{Button, Room, Theme, TrafficLightControls, WindowControls};
 
 use crate::Ui;
-use crate::chrome::{sidebar_left, toolbar};
+use crate::chrome::{downloads, sidebar_left, toolbar};
 
 /// The bar's bottom edge.
 const BORDER: f32 = 1.;
@@ -110,7 +110,7 @@ pub(crate) fn bar(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>, options: Option
     middle = middle.child(rune::spacer());
     if navigation {
         middle = middle
-            .children(downloads(ui, cx, layer))
+            .child(downloads::view(ui, cx, layer).no_window_drag())
             .child(toolbar::view(ui, cx, layer));
     }
 
@@ -272,12 +272,6 @@ fn history(ui: &Ui, theme: &Theme) -> El {
     group
 }
 
-/// The downloads button's place in the bar. It shows only while something downloads, and is
-/// drawn by `chrome::downloads` once that is ported; until then the slot stays empty.
-fn downloads(_ui: &Ui, _cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> Option<El> {
-    None
-}
-
 /// The window's own minimize, maximize and close, as themed buttons or the three dots.
 fn window_controls(ui: &Ui, leading: bool) -> El {
     let theme = &ui.theme;
@@ -311,12 +305,12 @@ fn traffic_lights(ui: &Ui) -> bool {
     }
 }
 
-/// The radius the bar rounds the window's top corners with while the app draws the frame, or
+/// The radius the bar rounds the window's top corners with while the window is borderless, or
 /// `None` for square corners. It never exceeds half the bar's height.
 fn window_radius(ui: &Ui) -> Option<f32> {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
-        if !client_decorated(ui) {
+        if ui.store.settings.server_side_decorations() {
             return None;
         }
         match ui.store.settings.window_rounding() {

@@ -391,16 +391,17 @@ pub(crate) fn lanes(width: f32) -> usize {
 }
 
 /// Deals list rows into lanes side by side.
-fn spread(columns: Vec<Vec<El>>) -> El {
+fn spread(columns: Vec<Vec<El>>, theme: &Theme) -> El {
+    let gap = rems(theme, LANE_SPACE);
     row()
         .w_full()
-        .gap(LANE_GAP)
+        .gap(gap)
         .children(columns.into_iter().map(|column| {
             col()
                 .grow(1.)
                 .shrink()
                 .min_w(0.)
-                .gap(LANE_GAP)
+                .gap(gap)
                 .children(column)
         }))
 }

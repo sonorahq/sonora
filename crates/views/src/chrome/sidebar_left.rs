@@ -15,11 +15,14 @@ use rune::{
 use state::{Origin, PinSort, Shelf};
 use ui::{
     Avatar, Button, Card, Carry, Cover, Edge, Ghost, Menu, MenuItem, PRESS_SCALE, Panel, Picker,
-    Pin, PinKind, Placement, Popovers, Popup, SNUG, ScrollWatch, Side, Springs, Tabs, Text, Theme,
+    Pin, PinKind, Placement, Popovers, SNUG, ScrollWatch, Side, Springs, Tabs, Text, Theme,
     Vacancy, Weight, drop_marker,
 };
 
 use crate::chrome::{LEFT_MAX, LEFT_MIN};
+use crate::shared::menus::{self, Target};
+use crate::shared::pins::destination;
+use crate::shared::playlist_editor::{self, Edit};
 use crate::{Ui, act};
 
 /// The sidebar's navigation rows in order: the entry that can hide each, its icon and where it
@@ -146,8 +149,6 @@ pub struct State {
     /// The playlist a dragged song is held over, which takes the song instead of a new pin.
     drop_into: Option<Pin>,
     carry: Carry,
-    /// The pin a context menu is open on, and where.
-    menu: Option<(Pin, (f32, f32))>,
     popovers: Popovers,
     scroll: ScrollWatch,
 }
@@ -165,7 +166,6 @@ impl State {
             drop_gap: None,
             drop_into: None,
             carry: Carry::new(),
-            menu: None,
             popovers: Popovers::default(),
             scroll: ScrollWatch::new(),
         }
@@ -191,9 +191,10 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
     };
     let reach = cx
         .layout_with("window", move |rect| {
-            (rect[2] - keep).max(LEFT_MIN).min(LEFT_MAX).round()
+            (rect[2] - keep).clamp(LEFT_MIN, LEFT_MAX).round()
         })
         .unwrap_or(LEFT_MAX);
+    let below = layer.len();
     mount(ui, layer);
 
     let rows = rows(ui, width, theme);
@@ -224,25 +225,34 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
     }
 
     match (overlaid, open) {
-        (true, _) => el()
-            .key("sidebar-left-overlay")
-            .absolute(0., 0.)
-            .w_full()
-            .h_full()
-            .raise()
-            .child(
-                ui::shield::<Ui>("sidebar-shield")
-                    .absolute(0., 0.)
-                    .w_full()
-                    .h_full()
-                    .on_press(act(dismiss)),
-            )
-            .child(
-                panel
-                    .absolute(0., 0.)
-                    .fill(theme.sidebar.color())
-                    .transition(Transition::offset(-SLIDE, 0.).combined(Transition::opacity())),
-            ),
+        // Laid over the page, the sidebar floats in the window's overlay layer, over the
+        // workspace's area between the title bar and the player bar, under its own menus.
+        (true, _) => {
+            let [x, y, w, h] = cx
+                .layout_with("workspace", |rect| rect)
+                .unwrap_or([0., 0., 0., 0.]);
+            let overlay = el()
+                .key("sidebar-left-overlay")
+                .absolute(x, y)
+                .size(w, h)
+                .clip_rounded(0.)
+                .child(
+                    ui::shield::<Ui>("sidebar-shield")
+                        .absolute(0., 0.)
+                        .w_full()
+                        .h_full()
+                        .on_press(act(dismiss)),
+                )
+                .child(
+                    panel
+                        .absolute(0., 0.)
+                        .fill(theme.sidebar.color())
+                        .h_full()
+                        .transition(Transition::offset(-SLIDE, 0.).combined(Transition::opacity())),
+                );
+            layer.insert(below, overlay);
+            el().key("sidebar-left").w(0.).h_full()
+        }
         // Shut, the panel springs to nothing and its edge fades, the rows held at their width
         // inside a clip so nothing reflows as it goes.
         (false, false) => panel
@@ -318,7 +328,6 @@ fn dismiss(ui: &mut Ui) {
 /// Goes to `destination` from a row of the sidebar.
 fn travel(ui: &mut Ui, destination: Destination) {
     dismiss(ui);
-    ui.chrome.sidebar.menu = None;
     if let Some(group) = Group::of(&destination) {
         *ui.chrome.sidebar.flag(group) = true;
         ui.chrome.sidebar.folded = None;
@@ -353,11 +362,6 @@ fn mount(ui: &Ui, layer: &mut Vec<El>) {
         sort_menu(ui)
             .anchor(SORT_TRIGGER, Placement::BottomEnd, ui::TRIGGER_GAP)
             .on_dismiss(|ui: &mut Ui| ui.chrome.sidebar.popovers.close())
-            .build(theme, layer);
-    }
-    if let Some((pin, at)) = &state.menu {
-        Popup::new("sidebar-pin-menu", *at, pin_menu(ui, pin))
-            .on_close(|ui: &mut Ui| ui.chrome.sidebar.menu = None)
             .build(theme, layer);
     }
     if let Some(dragging) = &state.drag
@@ -818,9 +822,7 @@ fn pin_row(ui: &Ui, index: usize, pin: &Pin, held: usize, total: usize) -> El {
         .bare_meta(caption(&kind, marked, theme))
         .chosen(aimed)
         .on_press(act(move |ui: &mut Ui| travel(ui, destination.clone())))
-        .menu(move |ui: &mut Ui, press: rune::PointerPress, _: &mut Tx| {
-            ui.chrome.sidebar.menu = Some((opened.clone(), (press.x, press.y)));
-        });
+        .menu(menus::at(Target::Pin(opened)));
     if pin.kind.round() {
         card = card.circle();
     }
@@ -934,54 +936,6 @@ fn vacancy(theme: &Theme) -> El {
         .px(rems(theme, 0.5))
 }
 
-/// A pin's context menu: its page where the card does not open it, play, and pin or unpin.
-fn pin_menu(ui: &Ui, pin: &Pin) -> Menu<Ui> {
-    let store = &ui.store;
-    let open = match pin.kind {
-        PinKind::Album | PinKind::Playlist => None,
-        PinKind::Artist => Some("menu-go-to-artist"),
-        PinKind::Song => Some("menu-view-details"),
-    };
-    let held = store.pins.holds(pin, &store.settings, &store.session);
-    let origin = Origin::from(pin);
-    let mut menu = Menu::new("sidebar-pin-context").min_width(ITEM_MENU_WIDTH);
-    if let Some(key) = open {
-        let destination = destination(pin);
-        menu = menu.item(
-            MenuItem::new("open-pin", i18n::lookup(key, None))
-                .icon("icons/info.svg")
-                .on_press(act(move |ui: &mut Ui| travel(ui, destination.clone()))),
-        );
-    }
-    let toggled = pin.clone();
-    menu.item(
-        MenuItem::new("play-pin", i18n::t!("common-play"))
-            .icon("icons/play.svg")
-            .on_press(act(move |ui: &mut Ui| ui.store.toggle_collection(&origin))),
-    )
-    .item(MenuItem::separator("pin-end"))
-    .item(
-        MenuItem::new(
-            "toggle-pin",
-            match held {
-                true => i18n::t!("nav-unpin"),
-                false => i18n::t!("nav-pin"),
-            },
-        )
-        .icon(match held {
-            true => "icons/pin-off.svg",
-            false => "icons/pin.svg",
-        })
-        .on_press(act(move |ui: &mut Ui| match held {
-            true => ui.store.unpin(toggled.clone()),
-            false => ui.store.toggle_pin(toggled.clone()),
-        })),
-    )
-}
-
-/// The narrowest a pin's context menu gets.
-const ITEM_MENU_WIDTH: f32 = 196.;
-
 /// One phase of a drag of `pin`, from the pinned list or from anywhere else.
 fn carry_from(ui: &mut Ui, pin: &Pin, drag: &Drag, tx: &mut Tx) {
     let state = &mut ui.chrome.sidebar;
@@ -997,7 +951,6 @@ fn carry_from(ui: &mut Ui, pin: &Pin, drag: &Drag, tx: &mut Tx) {
                     return;
                 }
                 state.drag = Some(Dragging { pin: pin.clone() });
-                state.menu = None;
                 // A drag has nowhere to land while the section is shut, so open it.
                 if !state.pinned_open {
                     state.pinned_open = true;
@@ -1095,19 +1048,26 @@ fn accepts(ui: &Ui, song: &Pin, target: &Pin) -> bool {
         && ui.store.library.is_editable(&target.id)
 }
 
-/// Adds a dropped song to a playlist.
+/// Adds a dropped song to a playlist, and asks first when the playlist holds the song already.
 fn add_into(ui: &mut Ui, target: &Pin, song: &Pin) {
     let store = &mut ui.store;
-    let Some(playlist) = store
-        .library
-        .playlist(&target.id)
-        .map(|list| list.id.clone())
-    else {
+    let Some(playlist) = store.library.playlist(&target.id).cloned() else {
         return;
     };
-    store
-        .library
-        .add_to_playlist(playlist, song.id.clone(), &store.session, &mut store.cx);
+    let track = song.id.clone();
+    match store.library.holds(&playlist.id, &track) == Some(true) {
+        true => playlist_editor::open(
+            ui,
+            Edit::Again {
+                playlist,
+                track,
+                leaving: None,
+            },
+        ),
+        false => store
+            .library
+            .add_to_playlist(playlist.id, track, &store.session, &mut store.cx),
+    }
 }
 
 /// `n` of the old layout's rem, which follows the theme's text size: its `p_3` is `rems(.., 0.75)`.
@@ -1118,17 +1078,6 @@ fn rems(theme: &Theme, n: f32) -> f32 {
 /// The space between two rows, the old `gap_1`.
 fn gap(theme: &Theme) -> f32 {
     rems(theme, 0.25)
-}
-
-/// The page a pin opens.
-fn destination(pin: &Pin) -> Destination {
-    let id = pin.id.clone().into();
-    match pin.kind {
-        PinKind::Album => Destination::Album(id),
-        PinKind::Artist => Destination::Artist(id),
-        PinKind::Playlist => Destination::Playlist(id),
-        PinKind::Song => Destination::Song(id),
-    }
 }
 
 fn pin_key(pin: &Pin) -> String {

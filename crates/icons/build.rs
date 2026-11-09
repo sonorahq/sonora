@@ -80,7 +80,7 @@ fn drawn(svg: &str) -> (f32, String) {
     let close = open + svg[open..].find('>').expect("the svg tag closes");
     let root = &svg[open..close];
     let end = svg.rfind("</svg>").expect("the svg element ends");
-    let inner = svg[close + 1..end].trim();
+    let inner = untitled(svg[close + 1..end].trim());
     let view = attribute(root, "viewBox")
         .and_then(|bounds| bounds.split_whitespace().nth(2)?.parse().ok())
         .or_else(|| attribute(root, "width")?.parse().ok())
@@ -94,6 +94,22 @@ fn drawn(svg: &str) -> (f32, String) {
         .collect::<Vec<_>>()
         .join(" ");
     (view, body)
+}
+
+/// `body` without its `<title>` elements. They name a brand mark for a browser, and Rune's icon
+/// reader would take the title's text for an element that hides everything after it.
+fn untitled(body: &str) -> String {
+    let mut rest = body;
+    let mut kept = String::with_capacity(body.len());
+    while let Some(at) = rest.find("<title") {
+        kept.push_str(&rest[..at]);
+        rest = match rest[at..].find("</title>") {
+            Some(end) => &rest[at + end + "</title>".len()..],
+            None => "",
+        };
+    }
+    kept.push_str(rest);
+    kept
 }
 
 fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
