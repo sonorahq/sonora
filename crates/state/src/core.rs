@@ -194,6 +194,13 @@ impl Cx {
         self.dirty = true;
     }
 
+    /// Says that the change being applied shows nothing on screen, such as a position report
+    /// the window already follows through its live values, so the window skips running its
+    /// view for it. A topic or event raised afterwards still asks for a draw.
+    pub fn hush(&mut self) {
+        self.dirty = false;
+    }
+
     pub fn take_dirty(&mut self) -> bool {
         std::mem::take(&mut self.dirty)
     }

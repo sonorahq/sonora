@@ -2625,6 +2625,15 @@ impl Playback {
         let task = Some(cx.spawn(move |link| async move {
             while let Some(event) = events.next().await {
                 link.post(move |store| {
+                    let quiet = matches!(
+                        event,
+                        BackendEvent::Position { .. }
+                            | BackendEvent::Downloaded { .. }
+                            | BackendEvent::Length { .. }
+                    );
+                    if quiet {
+                        store.cx.hush();
+                    }
                     let (this, mut peers) = store.playback_parts();
                     this.on_backend_event(event, local, &mut peers);
                 });

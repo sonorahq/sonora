@@ -308,7 +308,7 @@ fn add_rule(
     .menu(device_menu::menu("equalizer-rule-devices-menu"))
     .items(items)
     .build(theme, layer)
-    .w(Picker::<Ui>::REGULAR);
+    .max_w(Picker::<Ui>::REGULAR);
 
     let height = theme.metrics.cover * SOUND_MENU_HEIGHT;
     let picked = state.rule_sound.clone();
@@ -343,7 +343,7 @@ fn add_rule(
     if let Some(shape) = shape {
         sound_picker = sound_picker.leading(shape.build(theme));
     }
-    let sound_picker = sound_picker.build(theme, layer).w(Picker::<Ui>::NARROW);
+    let sound_picker = sound_picker.build(theme, layer).max_w(Picker::<Ui>::NARROW);
 
     let ready = state.rule_device.is_some() && state.rule_sound.is_some();
     let add = Button::new("equalizer-rule-add")

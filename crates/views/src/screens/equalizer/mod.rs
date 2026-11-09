@@ -179,19 +179,15 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
     }
     name_dialog(ui, layer);
 
-    el().key("equalizer-screen")
-        .w_full()
-        .h_full()
-        .on_visible(|ui: &mut Ui, shown: bool, _: &mut Tx| watch(ui, shown))
-        .child(frame(
-            ui,
-            cx,
-            layer,
-            &Destination::Equalizer,
-            None,
-            "equalizer-page".to_owned(),
-            body,
-        ))
+    el().key("equalizer-screen").w_full().h_full().child(frame(
+        ui,
+        cx,
+        layer,
+        &Destination::Equalizer,
+        None,
+        "equalizer-page".to_owned(),
+        body,
+    ))
 }
 
 /// How a group advanced mode brings in or takes away comes and goes.
@@ -228,7 +224,12 @@ pub(crate) fn poll(ui: &mut Ui, tx: &mut Tx) -> bool {
         }
         return false;
     }
-    let mut changed = rows::show_curve(ui);
+    let mut changed = false;
+    if ui.screens.equalizer.watch.is_none() {
+        watch(ui, true);
+        changed = true;
+    }
+    changed |= rows::show_curve(ui);
     changed |= graph::follow(ui);
     changed |= rows::blurred(ui);
     if ui.screens.equalizer.watch.is_some() {
@@ -289,7 +290,8 @@ fn controls(ui: &Ui, layer: &mut Vec<El>, room: Room, advanced: bool) -> El {
     .width(width)
     .build(theme, layer);
     let picker = match room {
-        Room::Wide | Room::Vast => picker.w(width),
+        // the trigger keeps its own width inside the picker's box, so a wide room only caps it
+        Room::Wide | Room::Vast => picker.max_w(width),
         Room::Roomy => picker.grow(1.).shrink().min_w(0.),
         Room::Tight | Room::Snug => match advanced {
             true => picker.w_full(),

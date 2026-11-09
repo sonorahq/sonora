@@ -229,9 +229,13 @@ fn build_store(io: state::Io, handle: AppHandle<Ui>) -> Store {
     // A job's answer runs on the UI thread with the whole window state, then the store settles
     // what it raised.
     let link = Link::new(move |apply| {
-        handle.update(move |ui: &mut Ui, _| {
+        // A posted change draws unless it said it shows nothing (`Cx::hush`), so the engine's
+        // position reports never run the view: the window follows them through live values.
+        handle.update_if(move |ui: &mut Ui, _| {
+            ui.store.cx.refresh();
             apply(&mut ui.store);
             ui.settle();
+            ui.store.take_dirty()
         });
     });
     Store::new(io, link, database, providers, local_provider, lyrics)
