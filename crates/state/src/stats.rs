@@ -363,7 +363,9 @@ impl Stats {
             self.data = data.clone();
             // The account history can land after the window was kept, so its milestones come
             // from the log, not from the cached copy.
-            if !self.log.scrobbled_milestones.is_empty() {
+            if matches!(self.source, StatsSource::Scrobbler(_))
+                && !self.log.scrobbled_milestones.is_empty()
+            {
                 self.data.milestones = self.log.scrobbled_milestones.clone();
             }
             self.loaded = Some((self.source, self.period, *at));
