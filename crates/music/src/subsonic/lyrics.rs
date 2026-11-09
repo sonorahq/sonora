@@ -278,10 +278,10 @@ fn parse_secondaries(cues: &[&CueLine], offset: f64) -> Vec<LyricsLane> {
     let mut out = Vec::new();
     for &cue in cues[1..].iter() {
         let words = parse_cues(&cue.cue, offset);
-        let Some(start) = cue
-            .start
-            .map(|start| shifted(start, offset))
-            .or_else(|| words.first().map(|word| word.start))
+        let Some(start) = words
+            .first()
+            .map(|word| word.start)
+            .or_else(|| cue.start.map(|start| shifted(start, offset)))
         else {
             continue;
         };
