@@ -20,16 +20,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-use gpui::WindowDecorations;
-use gpui::{
-    App, Bounds, Context, DisplayId, EventEmitter, Pixels, Size, Subscription, Task, Window,
-    WindowBounds, point, px, size,
-};
 use music::lyrics::LOCAL;
 use music::scrobble::Account;
 use music::{Codec, Quality, Transcode, WritingSystem};
-use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
+use notify::{
+    Config, Event as FileEvent, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _,
+};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use storage::Database;
@@ -42,7 +38,7 @@ use crate::equalizer::DeviceRule;
 use crate::pins::PinSort;
 use crate::queue::{Resume, gap_target};
 use crate::updates::{Channel, updates_itself};
-use crate::{Outcome, Repeat, Sonora, Toasts};
+use crate::{Cx, Event, Job, Outcome, Repeat, Store, Toast, Topic};
 
 /// How Sonora is named on the device list of the provider's apps. `Both` is the app's name with
 /// the computer's in brackets, so two machines on one account tell apart.
@@ -233,30 +229,36 @@ impl Default for RomanizationScripts {
     }
 }
 
-/// A window's saved position and size in logical pixels, plus whether it was maximized.
+/// A window's saved position and size in logical pixels, plus whether it was maximized. The
+/// host reads one back with [`AppSettings::window_placement`] when it opens the window and hands
+/// one to [`AppSettings::remember_window`] on every move or resize.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-struct Frame {
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
-    maximized: bool,
+pub struct Placement {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub maximized: bool,
 }
 
-impl Frame {
-    fn of(window: &Window) -> Self {
-        let placement = window.window_bounds();
-        let bounds = placement.get_bounds();
-        Self {
-            x: bounds.origin.x / px(1.),
-            y: bounds.origin.y / px(1.),
-            width: bounds.size.width / px(1.),
-            height: bounds.size.height / px(1.),
-            maximized: matches!(placement, WindowBounds::Maximized(_)),
-        }
-    }
+/// A connected display's area in logical pixels, as the host reports it, so a saved placement
+/// is only restored onto a display that is still there.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Area {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
 
+impl Area {
+    fn contains(self, x: f32, y: f32) -> bool {
+        x >= self.x && x < self.x + self.width && y >= self.y && y < self.y + self.height
+    }
+}
+
+impl Placement {
     /// Rejects what a corrupt write could produce: a non-finite coordinate or an empty size.
     fn sane(self) -> bool {
         [self.x, self.y, self.width, self.height]
@@ -266,19 +268,17 @@ impl Frame {
             && self.height > 0.
     }
 
-    /// Turns the frame back into a gpui placement, never smaller than `least`.
-    fn placement(self, least: Size<Pixels>) -> WindowBounds {
-        let bounds = Bounds {
-            origin: point(px(self.x), px(self.y)),
-            size: size(
-                px(self.width).max(least.width),
-                px(self.height).max(least.height),
-            ),
-        };
-        match self.maximized {
-            true => WindowBounds::Maximized(bounds),
-            false => WindowBounds::Windowed(bounds),
+    /// The placement grown to at least `least_width` by `least_height`.
+    fn at_least(self, least_width: f32, least_height: f32) -> Self {
+        Self {
+            width: self.width.max(least_width),
+            height: self.height.max(least_height),
+            ..self
         }
+    }
+
+    fn center(self) -> (f32, f32) {
+        (self.x + self.width / 2., self.y + self.height / 2.)
     }
 }
 
@@ -692,7 +692,7 @@ struct StateValues {
     sidebar_pin_sort: String,
     sidebar_pin_reversed: bool,
     resume: Option<Resume>,
-    window: Option<Frame>,
+    window: Option<Placement>,
     system_theme: String,
     /// The variant last chosen in each theme family, by family id.
     theme_variants: HashMap<String, String>,
@@ -846,9 +846,8 @@ pub struct AppSettings {
     /// The bundled themes and `themes`, grouped the way the Appearance page lists them.
     families: Vec<ThemeFamily>,
     store: StateStore,
-    save: Option<Task<()>>,
-    save_state: Option<Task<()>>,
-    watch: Option<Subscription>,
+    save: Option<Job>,
+    save_state: Option<Job>,
     writable: bool,
     /// What `settings.json` held when it was last read or written, so the watcher can tell our
     /// own writes from another program's.
@@ -857,17 +856,11 @@ pub struct AppSettings {
     broken: Option<usize>,
     /// The watch on the config folder. Dropping it ends the watch.
     watcher: Option<RecommendedWatcher>,
-    reload: Option<Task<()>>,
+    reload: Option<Job>,
     /// Set once a save gives up after its retries, so the failure toast shows once until a
     /// save lands again.
     failing: bool,
 }
-
-/// Emitted after settings reload or the selected custom palette changes.
-/// Theme owners repaint because a reload never calls `Theme::set` itself.
-pub struct Reloaded;
-
-impl EventEmitter<Reloaded> for AppSettings {}
 
 impl AppSettings {
     /// Loads from the standard config and data paths.
@@ -927,7 +920,6 @@ impl AppSettings {
             store,
             save: None,
             save_state: None,
-            watch: None,
             writable,
             disk,
             broken,
@@ -939,14 +931,11 @@ impl AppSettings {
 
     /// Tells the user that `settings.json` does not parse and that changes are not saved until
     /// it does. Does nothing while the file is fine.
-    pub fn report_broken(&self, cx: &mut App) {
+    pub fn report_broken(&self, cx: &mut Cx) {
         if let Some(line) = self.broken {
-            Toasts::about(
-                Outcome::Failed,
-                "toast-settings-broken",
-                line.to_string(),
-                cx,
-            );
+            cx.emit(Event::Toast(
+                Toast::new(Outcome::Failed, "toast-settings-broken").name(line.to_string()),
+            ));
         }
     }
 
@@ -1116,7 +1105,7 @@ impl AppSettings {
 
     /// Moves an enabled source into `gap`, counted between the enabled sources from 0 before the
     /// first to their count after the last. Disabled sources keep their place.
-    pub fn place_lyrics_provider(&mut self, provider: &str, gap: usize, cx: &mut Context<Self>) {
+    pub fn place_lyrics_provider(&mut self, provider: &str, gap: usize, cx: &mut Cx) {
         let mut order = self.lyrics_provider_priority();
         if !place_lyrics_provider(&mut order, &self.values.lyrics_providers, provider, gap) {
             return;
@@ -1284,10 +1273,12 @@ impl AppSettings {
     }
 
     /// The variant choosing `family` would select: the one last chosen in it, else the first
-    /// whose lightness matches the system appearance, else the first.
-    pub fn family_variant(&self, family: &str, cx: &App) -> Option<&ThemeVariant> {
+    /// whose lightness matches the system appearance (the one [`ThemeKind::assume`] holds, else
+    /// the one last reported through [`Self::set_system_theme`]), else the first.
+    pub fn family_variant(&self, family: &str) -> Option<&ThemeVariant> {
         let family = self.families.iter().find(|found| found.id == family)?;
-        let light = ThemeKind::System.resolved(cx) == ThemeKind::Light;
+        let system_dark = self.system_theme() != ThemeKind::Light;
+        let light = ThemeKind::System.resolved(system_dark) == ThemeKind::Light;
         self.state
             .theme_variants
             .get(&family.id)
@@ -1415,14 +1406,6 @@ impl AppSettings {
         self.values.appearance.server_side_decorations
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    pub fn window_decorations(&self) -> WindowDecorations {
-        match self.server_side_decorations() {
-            true => WindowDecorations::Server,
-            false => WindowDecorations::Client,
-        }
-    }
-
     #[cfg(any(
         target_os = "windows",
         target_os = "linux",
@@ -1475,7 +1458,7 @@ impl AppSettings {
     /// Writes the theme or family a link offered into the themes folder and selects it the way
     /// choosing its card does, turning the adaptive theme off since only the neutral themes wear
     /// it. Returns the family's id.
-    pub fn install_theme(&mut self, offer: &ThemeOffer, cx: &mut Context<Self>) -> Result<String> {
+    pub fn install_theme(&mut self, offer: &ThemeOffer, cx: &mut Cx) -> Result<String> {
         let directory = themes_path(&self.path);
         let id = themes::install(offer, &directory, &self.themes)?;
         let loaded = themes::load(&directory, &self.themes);
@@ -1494,25 +1477,22 @@ impl AppSettings {
             self.set_adaptive_theme(false, cx);
         }
         self.set_theme_family(&id, cx);
-        cx.notify();
+        cx.changed(Topic::Settings);
         Ok(id)
     }
 
     /// Deletes the user's theme family `id` from the themes folder and says whether it worked.
     /// A selected theme in it falls back to Dark. A failure is logged and shown as a toast.
-    pub fn delete_theme_family(&mut self, id: &str, cx: &mut Context<Self>) -> bool {
+    pub fn delete_theme_family(&mut self, id: &str, cx: &mut Cx) -> bool {
         let Some(family) = self.families.iter().find(|family| family.id == id).cloned() else {
             return false;
         };
         let directory = themes_path(&self.path);
         if let Err(error) = themes::remove(&family, &directory) {
             log::warn!("settings: cannot delete theme {id}: {error:#}");
-            Toasts::about(
-                Outcome::Failed,
-                "toast-theme-delete-failed",
-                family.name,
-                cx,
-            );
+            cx.emit(Event::Toast(
+                Toast::new(Outcome::Failed, "toast-theme-delete-failed").name(family.name),
+            ));
             return false;
         }
         log::info!("settings: deleted theme {id}");
@@ -1525,7 +1505,7 @@ impl AppSettings {
         if self.state.theme_variants.remove(id).is_some() {
             self.schedule_state_save(cx);
         }
-        cx.notify();
+        cx.changed(Topic::Settings);
         true
     }
 
@@ -1538,7 +1518,7 @@ impl AppSettings {
         path
     }
 
-    pub fn set_local_folders(&mut self, folders: Vec<PathBuf>, cx: &mut Context<Self>) {
+    pub fn set_local_folders(&mut self, folders: Vec<PathBuf>, cx: &mut Cx) {
         if self.values.local_folders == folders {
             return;
         }
@@ -1548,47 +1528,47 @@ impl AppSettings {
 
     /// Persists playback's volume without invalidating views that observe preferences.
     /// Live volume changes are published by `Playback`, not by settings.
-    pub fn set_volume(&mut self, volume: f32, cx: &mut Context<Self>) {
+    pub fn set_volume(&mut self, volume: f32, cx: &mut Cx) {
         self.state.volume = volume.clamp(0., 1.);
         self.save_state_quietly(cx);
     }
 
-    pub fn set_normalisation(&mut self, normalisation: bool, cx: &mut Context<Self>) {
+    pub fn set_normalisation(&mut self, normalisation: bool, cx: &mut Cx) {
         self.values.normalisation = normalisation;
         self.schedule_save(cx);
     }
 
-    pub fn set_gapless(&mut self, gapless: bool, cx: &mut Context<Self>) {
+    pub fn set_gapless(&mut self, gapless: bool, cx: &mut Cx) {
         self.values.gapless = gapless;
         self.schedule_save(cx);
     }
 
-    pub fn set_keep_tracks(&mut self, keep_tracks: bool, cx: &mut Context<Self>) {
+    pub fn set_keep_tracks(&mut self, keep_tracks: bool, cx: &mut Cx) {
         self.values.keep_tracks = keep_tracks;
         self.schedule_save(cx);
     }
 
-    pub fn set_offline_mode(&mut self, offline_mode: bool, cx: &mut Context<Self>) {
+    pub fn set_offline_mode(&mut self, offline_mode: bool, cx: &mut Cx) {
         self.values.offline_mode = offline_mode;
         self.schedule_save(cx);
     }
 
-    pub fn set_cache_gb(&mut self, cache_gb: u32, cx: &mut Context<Self>) {
+    pub fn set_cache_gb(&mut self, cache_gb: u32, cx: &mut Cx) {
         self.values.cache_gb = cache_gb;
         self.schedule_save(cx);
     }
 
-    pub fn set_spotify_connect(&mut self, enabled: bool, cx: &mut Context<Self>) {
+    pub fn set_spotify_connect(&mut self, enabled: bool, cx: &mut Cx) {
         self.values.spotify_connect = enabled;
         self.schedule_save(cx);
     }
 
-    pub fn set_spotify_connect_name(&mut self, name: ConnectName, cx: &mut Context<Self>) {
+    pub fn set_spotify_connect_name(&mut self, name: ConnectName, cx: &mut Cx) {
         self.values.spotify_connect_name = name;
         self.schedule_save(cx);
     }
 
-    pub fn set_spotify_connect_custom_name(&mut self, name: String, cx: &mut Context<Self>) {
+    pub fn set_spotify_connect_custom_name(&mut self, name: String, cx: &mut Cx) {
         if self.values.spotify_connect_custom_name == name {
             return;
         }
@@ -1596,17 +1576,17 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
-    pub fn set_sessions_button(&mut self, shown: bool, cx: &mut Context<Self>) {
+    pub fn set_sessions_button(&mut self, shown: bool, cx: &mut Cx) {
         self.values.sessions_button = shown;
         self.schedule_save(cx);
     }
 
-    pub fn set_sessions_official(&mut self, official: bool, cx: &mut Context<Self>) {
+    pub fn set_sessions_official(&mut self, official: bool, cx: &mut Cx) {
         self.values.sessions_official = official;
         self.schedule_save(cx);
     }
 
-    pub fn set_sessions_server(&mut self, server: String, cx: &mut Context<Self>) {
+    pub fn set_sessions_server(&mut self, server: String, cx: &mut Cx) {
         if self.values.sessions_server == server {
             return;
         }
@@ -1614,12 +1594,12 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
-    pub fn set_discord_presence(&mut self, enabled: bool, cx: &mut Context<Self>) {
+    pub fn set_discord_presence(&mut self, enabled: bool, cx: &mut Cx) {
         self.values.discord_presence = enabled;
         self.schedule_save(cx);
     }
 
-    pub fn set_discord_name(&mut self, name: DiscordName, cx: &mut Context<Self>) {
+    pub fn set_discord_name(&mut self, name: DiscordName, cx: &mut Cx) {
         self.values.discord_name = name;
         self.schedule_save(cx);
     }
@@ -1627,89 +1607,89 @@ impl AppSettings {
     pub fn set_fullscreen_controls_autohide(
         &mut self,
         fca: FullscreenControlsAutohide,
-        cx: &mut Context<Self>,
+        cx: &mut Cx,
     ) {
         self.values.appearance.fullscreen_controls_autohide = fca.id().to_owned();
         self.schedule_save(cx);
     }
 
-    pub fn set_discord_show_paused(&mut self, enabled: bool, cx: &mut Context<Self>) {
+    pub fn set_discord_show_paused(&mut self, enabled: bool, cx: &mut Cx) {
         self.values.discord_show_paused = enabled;
         self.schedule_save(cx);
     }
 
-    pub fn set_discord_badge(&mut self, enabled: bool, cx: &mut Context<Self>) {
+    pub fn set_discord_badge(&mut self, enabled: bool, cx: &mut Cx) {
         self.values.discord_badge = enabled;
         self.schedule_save(cx);
     }
 
-    pub fn set_discord_hide_on_connect(&mut self, enabled: bool, cx: &mut Context<Self>) {
+    pub fn set_discord_hide_on_connect(&mut self, enabled: bool, cx: &mut Cx) {
         self.values.discord_hide_on_connect = enabled;
         self.schedule_save(cx);
     }
 
-    pub fn set_discord_without_details(&mut self, enabled: bool, cx: &mut Context<Self>) {
+    pub fn set_discord_without_details(&mut self, enabled: bool, cx: &mut Cx) {
         self.values.discord_without_details = enabled;
         self.schedule_save(cx);
     }
 
-    pub fn set_discord_sonora_button(&mut self, enabled: bool, cx: &mut Context<Self>) {
+    pub fn set_discord_sonora_button(&mut self, enabled: bool, cx: &mut Cx) {
         self.values.discord_sonora_button = enabled;
         self.schedule_save(cx);
     }
 
-    pub fn set_discord_provider_button(&mut self, enabled: bool, cx: &mut Context<Self>) {
+    pub fn set_discord_provider_button(&mut self, enabled: bool, cx: &mut Cx) {
         self.values.discord_provider_button = enabled;
         self.schedule_save(cx);
     }
 
-    pub fn set_artwork_for_local_files(&mut self, enabled: bool, cx: &mut Context<Self>) {
+    pub fn set_artwork_for_local_files(&mut self, enabled: bool, cx: &mut Cx) {
         self.values.artwork_for_local_files = enabled;
         self.schedule_save(cx);
     }
 
-    pub fn set_lyrics_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+    pub fn set_lyrics_enabled(&mut self, enabled: bool, cx: &mut Cx) {
         self.values.lyrics_enabled = enabled;
         self.schedule_save(cx);
     }
 
-    pub fn set_lyrics_for_local_files(&mut self, enabled: bool, cx: &mut Context<Self>) {
+    pub fn set_lyrics_for_local_files(&mut self, enabled: bool, cx: &mut Cx) {
         self.values.lyrics_for_local_files = enabled;
         self.schedule_save(cx);
     }
 
-    pub fn set_output_device(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+    pub fn set_output_device(&mut self, id: Option<String>, cx: &mut Cx) {
         self.values.output_device = id;
         self.schedule_save(cx);
     }
 
-    pub fn set_output_rate(&mut self, rate: Option<u32>, cx: &mut Context<Self>) {
+    pub fn set_output_rate(&mut self, rate: Option<u32>, cx: &mut Cx) {
         self.values.output_rate = rate;
         self.schedule_save(cx);
     }
 
-    pub fn set_output_buffer(&mut self, frames: Option<u32>, cx: &mut Context<Self>) {
+    pub fn set_output_buffer(&mut self, frames: Option<u32>, cx: &mut Cx) {
         self.values.output_buffer = frames;
         self.schedule_save(cx);
     }
 
-    pub fn set_output_match_rate(&mut self, on: bool, cx: &mut Context<Self>) {
+    pub fn set_output_match_rate(&mut self, on: bool, cx: &mut Cx) {
         self.values.output_match_rate = on;
         self.schedule_save(cx);
     }
 
-    pub fn set_transcode(&mut self, transcode: Transcode, cx: &mut Context<Self>) {
+    pub fn set_transcode(&mut self, transcode: Transcode, cx: &mut Cx) {
         self.values.subsonic_format = transcode.codec.map(|codec| codec.id().to_owned());
         self.values.subsonic_bitrate = transcode.bitrate;
         self.schedule_save(cx);
     }
 
-    pub fn set_quality(&mut self, quality: Quality, cx: &mut Context<Self>) {
+    pub fn set_quality(&mut self, quality: Quality, cx: &mut Cx) {
         self.values.stream_quality = quality.id().to_owned();
         self.schedule_save(cx);
     }
 
-    pub fn set_lyrics_provider(&mut self, provider: &str, enabled: bool, cx: &mut Context<Self>) {
+    pub fn set_lyrics_provider(&mut self, provider: &str, enabled: bool, cx: &mut Cx) {
         self.values.lyrics_providers.retain(|name| name != provider);
         if enabled {
             self.values.lyrics_providers.push(provider.to_owned());
@@ -1718,27 +1698,27 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
-    pub fn set_karaoke_lyrics(&mut self, karaoke: bool, cx: &mut Context<Self>) {
+    pub fn set_karaoke_lyrics(&mut self, karaoke: bool, cx: &mut Cx) {
         self.values.karaoke_lyrics = karaoke;
         self.schedule_save(cx);
     }
 
-    pub fn set_blur_lyrics(&mut self, blur: bool, cx: &mut Context<Self>) {
+    pub fn set_blur_lyrics(&mut self, blur: bool, cx: &mut Cx) {
         self.values.blur_lyrics = blur;
         self.schedule_save(cx);
     }
 
-    pub fn set_romanized_lyrics(&mut self, romanized: bool, cx: &mut Context<Self>) {
+    pub fn set_romanized_lyrics(&mut self, romanized: bool, cx: &mut Cx) {
         self.values.romanized_lyrics = romanized;
         self.schedule_save(cx);
     }
 
-    pub fn set_panel_lyrics_scale(&mut self, scale: f32, cx: &mut Context<Self>) {
+    pub fn set_panel_lyrics_scale(&mut self, scale: f32, cx: &mut Cx) {
         self.values.panel_lyrics_scale = scale.clamp(ui::MIN_LYRICS_SCALE, ui::MAX_LYRICS_SCALE);
         self.schedule_save(cx);
     }
 
-    pub fn set_fullscreen_lyrics_scale(&mut self, scale: f32, cx: &mut Context<Self>) {
+    pub fn set_fullscreen_lyrics_scale(&mut self, scale: f32, cx: &mut Cx) {
         self.values.fullscreen_lyrics_scale =
             scale.clamp(ui::MIN_LYRICS_SCALE, ui::MAX_LYRICS_SCALE);
         self.schedule_save(cx);
@@ -1748,7 +1728,7 @@ impl AppSettings {
         &mut self,
         writing_system: WritingSystem,
         enabled: bool,
-        cx: &mut Context<Self>,
+        cx: &mut Cx,
     ) {
         self.values
             .romanization_scripts
@@ -1756,38 +1736,38 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
-    pub fn set_adaptive_menu(&mut self, adaptive_menu: bool, cx: &mut Context<Self>) {
+    pub fn set_adaptive_menu(&mut self, adaptive_menu: bool, cx: &mut Cx) {
         self.values.adaptive_menu = adaptive_menu;
         self.schedule_save(cx);
     }
 
-    pub fn set_update_channel(&mut self, channel: Channel, cx: &mut Context<Self>) {
+    pub fn set_update_channel(&mut self, channel: Channel, cx: &mut Cx) {
         self.values.update_channel = channel.id().to_owned();
         self.schedule_save(cx);
     }
 
-    pub fn set_check_updates(&mut self, check_updates: bool, cx: &mut Context<Self>) {
+    pub fn set_check_updates(&mut self, check_updates: bool, cx: &mut Cx) {
         self.values.check_updates = check_updates;
         self.schedule_save(cx);
     }
 
-    pub fn set_close_to_tray(&mut self, close_to_tray: bool, cx: &mut Context<Self>) {
+    pub fn set_close_to_tray(&mut self, close_to_tray: bool, cx: &mut Cx) {
         self.values.close_to_tray = close_to_tray;
         self.schedule_save(cx);
     }
 
-    pub fn set_tray_icon(&mut self, tray_icon: bool, cx: &mut Context<Self>) {
+    pub fn set_tray_icon(&mut self, tray_icon: bool, cx: &mut Cx) {
         self.values.tray_icon = tray_icon;
         self.schedule_save(cx);
     }
 
-    pub fn set_stay_awake(&mut self, stay_awake: bool, cx: &mut Context<Self>) {
+    pub fn set_stay_awake(&mut self, stay_awake: bool, cx: &mut Cx) {
         self.values.stay_awake = stay_awake;
         self.schedule_save(cx);
     }
 
     /// Stores a linked account, or forgets the service when the account carries no session.
-    pub fn set_account(&mut self, service: &str, account: Account, cx: &mut Context<Self>) {
+    pub fn set_account(&mut self, service: &str, account: Account, cx: &mut Cx) {
         match account.linked() {
             true => {
                 self.values.scrobbling.insert(service.to_owned(), account);
@@ -1800,7 +1780,7 @@ impl AppSettings {
     }
 
     /// Turns submissions to one linked service on or off, leaving the link itself alone.
-    pub fn set_scrobbling(&mut self, service: &str, enabled: bool, cx: &mut Context<Self>) {
+    pub fn set_scrobbling(&mut self, service: &str, enabled: bool, cx: &mut Cx) {
         let Some(account) = self.values.scrobbling.get_mut(service) else {
             return;
         };
@@ -1812,7 +1792,7 @@ impl AppSettings {
         self.state.tables.get(table).cloned().unwrap_or_default()
     }
 
-    pub fn set_table(&mut self, table: &str, layout: Layout, cx: &mut Context<Self>) {
+    pub fn set_table(&mut self, table: &str, layout: Layout, cx: &mut Cx) {
         if self.state.tables.get(table) == Some(&layout) {
             return;
         }
@@ -1824,7 +1804,7 @@ impl AppSettings {
         self.state.views.get(table).copied().unwrap_or(fallback)
     }
 
-    pub fn set_view(&mut self, table: &str, mode: Mode, cx: &mut Context<Self>) {
+    pub fn set_view(&mut self, table: &str, mode: Mode, cx: &mut Cx) {
         if self.state.views.get(table) == Some(&mode) {
             return;
         }
@@ -1836,7 +1816,7 @@ impl AppSettings {
         self.state.sorting.get(table).cloned()
     }
 
-    pub fn set_sorting(&mut self, table: &str, sorting: Option<Sorting>, cx: &mut Context<Self>) {
+    pub fn set_sorting(&mut self, table: &str, sorting: Option<Sorting>, cx: &mut Cx) {
         if self.state.sorting.get(table) == Some(&sorting) {
             return;
         }
@@ -1851,12 +1831,7 @@ impl AppSettings {
 
     /// Stores the narrowed filter axes of a table. An empty map drops the entry, so resetting
     /// a table clears its stored filters on the next store.
-    pub fn set_filters(
-        &mut self,
-        table: &str,
-        filters: HashMap<String, FilterValue>,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_filters(&mut self, table: &str, filters: HashMap<String, FilterValue>, cx: &mut Cx) {
         if filters.is_empty() {
             if self.state.filters.remove(table).is_none() {
                 return;
@@ -1879,7 +1854,7 @@ impl AppSettings {
     }
 
     /// Records where playback picks up on the next launch. See `carry` for what survives.
-    pub fn set_resume(&mut self, resume: Option<Resume>, cx: &mut Context<Self>) {
+    pub fn set_resume(&mut self, resume: Option<Resume>, cx: &mut Cx) {
         let mut resume = resume;
         if let Some(next) = resume.as_mut() {
             carry(self.state.resume.as_ref(), next);
@@ -1892,7 +1867,7 @@ impl AppSettings {
     }
 
     /// Saves quietly, since playback calls this on every position tick.
-    pub fn set_resume_position(&mut self, position: f32, cx: &mut Context<Self>) {
+    pub fn set_resume_position(&mut self, position: f32, cx: &mut Cx) {
         let Some(resume) = self.state.resume.as_mut() else {
             return;
         };
@@ -1905,44 +1880,37 @@ impl AppSettings {
 
     /// Pins at `gap`, a slot counted among the pins of the providers in `slugs`. An existing pin
     /// moves instead of duplicating, and nothing is saved when it already sits there.
-    pub fn pin(
-        &mut self,
-        slug: &str,
-        pin: Pin,
-        gap: Option<usize>,
-        slugs: &[&str],
-        cx: &mut Context<Self>,
-    ) {
+    pub fn pin(&mut self, slug: &str, pin: Pin, gap: Option<usize>, slugs: &[&str], cx: &mut Cx) {
         if !place(&mut self.state.pinned, slug, pin, gap, slugs) {
             return;
         }
         self.schedule_state_save(cx);
     }
 
-    pub fn unpin(&mut self, slug: &str, pin: &Pin, cx: &mut Context<Self>) {
+    pub fn unpin(&mut self, slug: &str, pin: &Pin, cx: &mut Cx) {
         if !take(&mut self.state.pinned, slug, pin) {
             return;
         }
         self.schedule_state_save(cx);
     }
 
-    pub fn set_sidebar(&mut self, width: f32, open: bool, cx: &mut Context<Self>) {
+    pub fn set_sidebar(&mut self, width: f32, open: bool, cx: &mut Cx) {
         self.state.sidebar_width = width;
         self.state.sidebar_open = open;
         self.schedule_state_save(cx);
     }
 
-    pub fn set_sidebar_right_width(&mut self, width: f32, cx: &mut Context<Self>) {
+    pub fn set_sidebar_right_width(&mut self, width: f32, cx: &mut Cx) {
         self.state.sidebar_right_width = width;
         self.schedule_state_save(cx);
     }
 
-    pub fn set_sidebar_right_open(&mut self, open: bool, cx: &mut Context<Self>) {
+    pub fn set_sidebar_right_open(&mut self, open: bool, cx: &mut Cx) {
         self.state.sidebar_right_open = open;
         self.schedule_state_save(cx);
     }
 
-    pub fn set_sidebar_right_tab(&mut self, tab: SideTab, cx: &mut Context<Self>) {
+    pub fn set_sidebar_right_tab(&mut self, tab: SideTab, cx: &mut Cx) {
         if self.state.sidebar_right_tab == tab {
             return;
         }
@@ -1950,7 +1918,7 @@ impl AppSettings {
         self.schedule_state_save(cx);
     }
 
-    pub fn set_fullscreen_tab(&mut self, tab: Option<SideTab>, cx: &mut Context<Self>) {
+    pub fn set_fullscreen_tab(&mut self, tab: Option<SideTab>, cx: &mut Cx) {
         if self.state.fullscreen_tab == tab {
             return;
         }
@@ -1958,35 +1926,35 @@ impl AppSettings {
         self.schedule_state_save(cx);
     }
 
-    pub fn set_shuffle(&mut self, shuffle: bool, cx: &mut Context<Self>) {
+    pub fn set_shuffle(&mut self, shuffle: bool, cx: &mut Cx) {
         self.state.shuffle = shuffle;
         self.schedule_state_save(cx);
     }
 
-    pub fn set_repeat(&mut self, repeat: Repeat, cx: &mut Context<Self>) {
+    pub fn set_repeat(&mut self, repeat: Repeat, cx: &mut Cx) {
         self.state.repeat = repeat;
         self.schedule_state_save(cx);
     }
 
-    pub fn set_radio(&mut self, radio: bool, cx: &mut Context<Self>) {
+    pub fn set_radio(&mut self, radio: bool, cx: &mut Cx) {
         self.state.radio = radio;
         self.schedule_state_save(cx);
     }
 
-    pub fn set_language(&mut self, language: impl Into<String>, cx: &mut Context<Self>) {
+    pub fn set_language(&mut self, language: impl Into<String>, cx: &mut Cx) {
         self.values.language = language.into();
         i18n::set(i18n::resolve(&self.values.language));
-        cx.refresh_windows();
+        cx.refresh();
         self.schedule_save(cx);
     }
 
-    pub fn set_font(&mut self, font: impl Into<String>, cx: &mut Context<Self>) {
+    pub fn set_font(&mut self, font: impl Into<String>, cx: &mut Cx) {
         let font = font.into();
         if self.values.font == font {
             return;
         }
         self.values.font = font;
-        cx.refresh_windows();
+        cx.refresh();
         self.schedule_save(cx);
     }
 
@@ -1995,7 +1963,7 @@ impl AppSettings {
         self.state.sidebar_pinned_open
     }
 
-    pub fn set_sidebar_pinned_open(&mut self, open: bool, cx: &mut Context<Self>) {
+    pub fn set_sidebar_pinned_open(&mut self, open: bool, cx: &mut Cx) {
         self.state.sidebar_pinned_open = open;
         self.schedule_state_save(cx);
     }
@@ -2005,7 +1973,7 @@ impl AppSettings {
         self.state.sidebar_full_library
     }
 
-    pub fn set_sidebar_full_library(&mut self, full: bool, cx: &mut Context<Self>) {
+    pub fn set_sidebar_full_library(&mut self, full: bool, cx: &mut Cx) {
         self.state.sidebar_full_library = full;
         self.schedule_state_save(cx);
     }
@@ -2018,12 +1986,7 @@ impl AppSettings {
         self.state.sidebar_pin_reversed
     }
 
-    pub fn set_sidebar_pin_sort(
-        &mut self,
-        sort: Option<PinSort>,
-        reversed: bool,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_sidebar_pin_sort(&mut self, sort: Option<PinSort>, reversed: bool, cx: &mut Cx) {
         self.state.sidebar_pin_sort = sort.map(PinSort::id).unwrap_or_default().to_owned();
         self.state.sidebar_pin_reversed = reversed;
         self.schedule_state_save(cx);
@@ -2037,7 +2000,7 @@ impl AppSettings {
     /// Puts `query` at the top of the search history, dropping an earlier copy that differs only
     /// in case and the oldest entry past the cap. The save skips settings observers, so the
     /// caller repaints what shows the history.
-    pub fn remember_search(&mut self, query: &str, cx: &mut Context<Self>) {
+    pub fn remember_search(&mut self, query: &str, cx: &mut Cx) {
         let query = query.trim();
         if query.is_empty() {
             return;
@@ -2051,7 +2014,7 @@ impl AppSettings {
     }
 
     /// Drops `query` from the search history. Like `remember_search`, it wakes no observers.
-    pub fn forget_search(&mut self, query: &str, cx: &mut Context<Self>) {
+    pub fn forget_search(&mut self, query: &str, cx: &mut Cx) {
         let kept = self.state.searches.len();
         self.state.searches.retain(|held| held != query);
         if self.state.searches.len() != kept {
@@ -2061,7 +2024,7 @@ impl AppSettings {
 
     /// Rewrites the pins of `slugs` into `order`, leaving another provider's pins in their slots.
     /// Nothing happens unless `order` holds exactly the pins already there.
-    pub fn rearrange(&mut self, order: &[Pin], slugs: &[&str], cx: &mut Context<Self>) {
+    pub fn rearrange(&mut self, order: &[Pin], slugs: &[&str], cx: &mut Cx) {
         let slots: Vec<usize> = shown(&self.state.pinned, slugs)
             .map(|(index, _)| index)
             .collect();
@@ -2088,7 +2051,7 @@ impl AppSettings {
         !self.values.hidden_nav.iter().any(|hidden| hidden == entry)
     }
 
-    pub fn set_nav_shown(&mut self, entry: &str, shown: bool, cx: &mut Context<Self>) {
+    pub fn set_nav_shown(&mut self, entry: &str, shown: bool, cx: &mut Cx) {
         if self.nav_shown(entry) == shown {
             return;
         }
@@ -2106,7 +2069,7 @@ impl AppSettings {
             .any(|silenced| silenced == slug)
     }
 
-    pub fn silence_requirement(&mut self, slug: &str, cx: &mut Context<Self>) {
+    pub fn silence_requirement(&mut self, slug: &str, cx: &mut Cx) {
         if self.requirement_silenced(slug) {
             return;
         }
@@ -2114,7 +2077,7 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
-    pub fn set_startup(&mut self, screen: impl Into<String>, cx: &mut Context<Self>) {
+    pub fn set_startup(&mut self, screen: impl Into<String>, cx: &mut Cx) {
         let screen = screen.into();
         if self.values.startup == screen {
             return;
@@ -2123,7 +2086,7 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
-    pub fn set_provider(&mut self, provider: impl Into<String>, cx: &mut Context<Self>) {
+    pub fn set_provider(&mut self, provider: impl Into<String>, cx: &mut Cx) {
         let provider = provider.into();
         if self.state.provider == provider {
             return;
@@ -2134,7 +2097,7 @@ impl AppSettings {
 
     /// Selects a built-in theme by its `ThemeKind` id or a theme file by its variant id, and
     /// remembers a variant as the one its family opens on next time.
-    pub fn set_theme(&mut self, theme: impl Into<String>, cx: &mut Context<Self>) {
+    pub fn set_theme(&mut self, theme: impl Into<String>, cx: &mut Cx) {
         self.values.appearance.theme = theme.into();
         if let Some(family) = self.theme_variant().map(|(family, _)| family.id.clone())
             && self.state.theme_variants.get(&family) != Some(&self.values.appearance.theme)
@@ -2148,9 +2111,9 @@ impl AppSettings {
 
     /// Selects the variant `family_variant` picks for `family`. Returns false and changes
     /// nothing when there is no such family.
-    pub fn set_theme_family(&mut self, family: &str, cx: &mut Context<Self>) -> bool {
+    pub fn set_theme_family(&mut self, family: &str, cx: &mut Cx) -> bool {
         let Some(variant) = self
-            .family_variant(family, cx)
+            .family_variant(family)
             .map(|variant| variant.id.clone())
         else {
             return false;
@@ -2159,36 +2122,36 @@ impl AppSettings {
         true
     }
 
-    pub fn set_adaptive_theme(&mut self, adaptive: bool, cx: &mut Context<Self>) {
+    pub fn set_adaptive_theme(&mut self, adaptive: bool, cx: &mut Cx) {
         self.values.appearance.adaptive_theme = adaptive;
         self.schedule_save(cx);
     }
 
-    pub fn set_ambient(&mut self, ambient: bool, cx: &mut Context<Self>) {
+    pub fn set_ambient(&mut self, ambient: bool, cx: &mut Cx) {
         self.values.appearance.ambient = ambient;
         self.schedule_save(cx);
     }
 
     /// Applies a player bar layout immediately and saves it in the appearance preferences.
-    pub fn set_player_bar_layout(&mut self, layout: PlayerBarLayout, cx: &mut Context<Self>) {
+    pub fn set_player_bar_layout(&mut self, layout: PlayerBarLayout, cx: &mut Cx) {
         self.values.appearance.player_bar_layout = layout.id().to_owned();
         self.schedule_save(cx);
     }
 
     /// Lets the page scroll under the player bar, or restores the solid bar below the page.
-    pub fn set_player_bar_transparent(&mut self, transparent: bool, cx: &mut Context<Self>) {
+    pub fn set_player_bar_transparent(&mut self, transparent: bool, cx: &mut Cx) {
         self.values.appearance.player_bar_transparent = transparent;
         self.schedule_save(cx);
     }
 
-    pub fn set_ambient_motion(&mut self, motion: bool, cx: &mut Context<Self>) {
+    pub fn set_ambient_motion(&mut self, motion: bool, cx: &mut Cx) {
         self.values.appearance.ambient_motion = motion;
         self.schedule_save(cx);
     }
 
     /// Picking a style turns the visualizer on; picking `None` turns it off and leaves the style
     /// behind it alone, so the old choice comes back with it.
-    pub fn set_visualizer_style(&mut self, style: ui::VisualizerStyle, cx: &mut Context<Self>) {
+    pub fn set_visualizer_style(&mut self, style: ui::VisualizerStyle, cx: &mut Cx) {
         self.values.appearance.visualizer = style.shown();
         if style.shown() {
             self.values.appearance.visualizer_style = style.id().to_owned();
@@ -2196,61 +2159,61 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
-    pub fn set_visualizer_absolute(&mut self, absolute: bool, cx: &mut Context<Self>) {
+    pub fn set_visualizer_absolute(&mut self, absolute: bool, cx: &mut Cx) {
         self.values.appearance.visualizer_absolute = absolute;
         self.schedule_save(cx);
     }
 
-    pub fn set_icons(&mut self, pack: impl Into<String>, cx: &mut Context<Self>) {
+    pub fn set_icons(&mut self, pack: impl Into<String>, cx: &mut Cx) {
         let pack = pack.into();
         if self.values.appearance.icons == pack {
             return;
         }
         icons::set(&pack);
         self.values.appearance.icons = pack;
-        cx.refresh_windows();
+        cx.refresh();
         self.schedule_save(cx);
     }
 
-    pub fn set_rounding(&mut self, rounding: impl Into<String>, cx: &mut Context<Self>) {
+    pub fn set_rounding(&mut self, rounding: impl Into<String>, cx: &mut Cx) {
         self.values.appearance.rounding = rounding.into();
         self.schedule_save(cx);
     }
 
-    pub fn set_blur(&mut self, blur: bool, cx: &mut Context<Self>) {
+    pub fn set_blur(&mut self, blur: bool, cx: &mut Cx) {
         self.values.appearance.blur = blur;
         self.schedule_save(cx);
     }
 
-    pub fn set_blur_window(&mut self, blur: bool, cx: &mut Context<Self>) {
+    pub fn set_blur_window(&mut self, blur: bool, cx: &mut Cx) {
         self.values.appearance.blur_window = blur;
         self.schedule_save(cx);
     }
 
-    pub fn set_os_fullscreen(&mut self, value: bool, cx: &mut Context<Self>) {
+    pub fn set_os_fullscreen(&mut self, value: bool, cx: &mut Cx) {
         self.values.appearance.os_fullscreen = value;
         self.schedule_save(cx);
     }
 
-    pub fn set_stillness(&mut self, stillness: Stillness, cx: &mut Context<Self>) {
+    pub fn set_stillness(&mut self, stillness: Stillness, cx: &mut Cx) {
         if self.stillness() == stillness {
             return;
         }
+        // The window reads the stillness from here and follows it.
         self.values.appearance.reduce_motion = stillness.id().to_owned();
-        ui::motion::apply(stillness, self.pace(), cx);
         self.schedule_save(cx);
     }
 
-    pub fn set_pace(&mut self, pace: Pace, cx: &mut Context<Self>) {
+    pub fn set_pace(&mut self, pace: Pace, cx: &mut Cx) {
         if self.pace() == pace {
             return;
         }
         self.values.appearance.motion_pace = pace.id().to_owned();
-        ui::motion::apply(self.stillness(), pace, cx);
+        ui::motion::set_pace(pace);
         self.schedule_save(cx);
     }
 
-    pub fn set_system_theme(&mut self, kind: ThemeKind, cx: &mut Context<Self>) {
+    pub fn set_system_theme(&mut self, kind: ThemeKind, cx: &mut Cx) {
         if self.system_theme() == kind {
             return;
         }
@@ -2258,7 +2221,7 @@ impl AppSettings {
         self.schedule_state_save(cx);
     }
 
-    pub fn set_saver(&mut self, saver: Saver, cx: &mut Context<Self>) {
+    pub fn set_saver(&mut self, saver: Saver, cx: &mut Cx) {
         if self.saver() == saver {
             return;
         }
@@ -2267,7 +2230,7 @@ impl AppSettings {
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    pub fn set_server_side_decorations(&mut self, shown: bool, cx: &mut Context<Self>) {
+    pub fn set_server_side_decorations(&mut self, shown: bool, cx: &mut Cx) {
         self.values.appearance.server_side_decorations = shown;
         self.schedule_save(cx);
     }
@@ -2278,101 +2241,120 @@ impl AppSettings {
         target_os = "freebsd",
         target_os = "macos"
     ))]
-    pub fn set_window_rounding(&mut self, rounding: Rounding, cx: &mut Context<Self>) {
+    pub fn set_window_rounding(&mut self, rounding: Rounding, cx: &mut Cx) {
         self.values.appearance.window_rounding = rounding.id().to_owned();
         self.schedule_save(cx);
     }
 
-    pub fn set_window_controls(&mut self, shown: bool, cx: &mut Context<Self>) {
+    pub fn set_window_controls(&mut self, shown: bool, cx: &mut Cx) {
         self.values.appearance.window_controls = shown;
         self.schedule_save(cx);
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub fn set_traffic_light_controls(&mut self, traffic_light: bool, cx: &mut Context<Self>) {
+    pub fn set_traffic_light_controls(&mut self, traffic_light: bool, cx: &mut Cx) {
         self.values.appearance.traffic_light_controls = traffic_light;
         self.schedule_save(cx);
     }
 
-    pub fn set_controls_on_left(&mut self, left: bool, cx: &mut Context<Self>) {
+    pub fn set_controls_on_left(&mut self, left: bool, cx: &mut Cx) {
         self.values.appearance.controls_on_left = left;
         self.schedule_save(cx);
     }
 
-    pub fn set_font_size(&mut self, size: f32, cx: &mut Context<Self>) {
+    pub fn set_font_size(&mut self, size: f32, cx: &mut Cx) {
         self.values.appearance.font_size = size.clamp(ui::MIN_FONT, ui::MAX_FONT);
         self.schedule_save(cx);
     }
 
-    pub fn reset_font_size(&mut self, cx: &mut Context<Self>) {
+    pub fn reset_font_size(&mut self, cx: &mut Cx) {
         self.set_font_size(DEFAULT_FONT_SIZE, cx);
     }
 
-    pub fn set_transparent(&mut self, transparent: bool, cx: &mut Context<Self>) {
+    pub fn set_transparent(&mut self, transparent: bool, cx: &mut Cx) {
         self.values.appearance.transparent = transparent;
         self.schedule_save(cx);
     }
 
-    pub fn set_transparency(&mut self, transparency: f32, cx: &mut Context<Self>) {
+    pub fn set_transparency(&mut self, transparency: f32, cx: &mut Cx) {
         self.values.appearance.transparency = transparency.clamp(0., ui::MAX_TRANSPARENCY);
         self.schedule_save(cx);
     }
 
-    /// Saves the window frame now and on every move or resize.
-    pub fn watch_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.keep_frame(window, cx);
-        self.watch = Some(cx.observe_window_bounds(window, |this, window, cx| {
-            this.keep_frame(window, cx);
-        }));
-    }
-
-    fn keep_frame(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let frame = Frame::of(window);
-        if !frame.sane() || self.state.window == Some(frame) {
+    /// Saves the window's placement for the next launch. The host calls it once the window is
+    /// open and again on every move or resize. Nothing on screen shows the placement, so it
+    /// wakes no settings followers, which would otherwise run on every frame of a drag.
+    pub fn remember_window(&mut self, placement: Placement, cx: &mut Cx) {
+        if !placement.sane() || self.state.window == Some(placement) {
             return;
         }
-        self.state.window = Some(frame);
-        self.schedule_state_save(cx);
+        self.state.window = Some(placement);
+        self.save_state_quietly(cx);
+    }
+
+    /// The saved window placement, never smaller than `least_width` by `least_height`, and the
+    /// display it goes on, if its centre still lands on one of the connected `displays`.
+    pub fn window_placement<D>(
+        &self,
+        least_width: f32,
+        least_height: f32,
+        displays: impl IntoIterator<Item = (D, Area)>,
+    ) -> Option<(Placement, D)> {
+        let placement = self.state.window?;
+        if !placement.sane() {
+            return None;
+        }
+
+        let placement = placement.at_least(least_width, least_height);
+        let (x, y) = placement.center();
+        displays
+            .into_iter()
+            .find(|(_, area)| area.contains(x, y))
+            .map(|(display, _)| (placement, display))
     }
 
     /// Wakes observers and debounces a `settings.json` write.
-    fn schedule_save(&mut self, cx: &mut Context<Self>) {
-        cx.notify();
+    fn schedule_save(&mut self, cx: &mut Cx) {
+        cx.changed(Topic::Settings);
         self.save_quietly(cx);
     }
 
-    /// Debounces a `settings.json` write. Replacing the task restarts the delay.
-    fn save_quietly(&mut self, cx: &mut Context<Self>) {
-        self.save = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(SAVE_DELAY).await;
+    /// Debounces a `settings.json` write. Replacing the job restarts the delay.
+    fn save_quietly(&mut self, cx: &mut Cx) {
+        self.save = Some(cx.spawn(|link| async move {
+            tokio::time::sleep(SAVE_DELAY).await;
             for attempt in 0..=SAVE_RETRIES {
-                let Ok(result) = this.update(cx, |this, cx| this.save_now(cx)) else {
+                let saved = link.read(|store| {
+                    let Store { settings, cx, .. } = store;
+                    settings.save_now(cx)
+                });
+                let Some(result) = saved.await else {
                     break;
                 };
                 let SettingsSave::Retry(error) = result else {
                     break;
                 };
                 if attempt == SAVE_RETRIES {
-                    this.update(cx, |this, cx| this.give_up(error, cx)).ok();
+                    link.post(move |store| {
+                        let Store { settings, cx, .. } = store;
+                        settings.give_up(error, cx);
+                    });
                     break;
                 }
-                cx.background_executor().timer(SAVE_RETRY_DELAY).await;
+                tokio::time::sleep(SAVE_RETRY_DELAY).await;
             }
         }));
     }
 
     /// Wakes observers and debounces a `state.sqlite` write.
-    fn schedule_state_save(&mut self, cx: &mut Context<Self>) {
-        cx.notify();
+    fn schedule_state_save(&mut self, cx: &mut Cx) {
+        cx.changed(Topic::Settings);
         self.save_state_quietly(cx);
     }
 
     /// Debounces a `state.sqlite` write without waking settings observers.
-    fn save_state_quietly(&mut self, cx: &mut Context<Self>) {
-        self.save_state = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(SAVE_DELAY).await;
-            this.update(cx, |this, _| this.save_state_now()).ok();
-        }));
+    fn save_state_quietly(&mut self, cx: &mut Cx) {
+        self.save_state = Some(cx.after(SAVE_DELAY, |store| store.settings.save_state_now()));
     }
 
     fn save_state_now(&self) {
@@ -2382,22 +2364,18 @@ impl AppSettings {
     }
 
     /// Tells the user that `settings.json` could not be written, once per run of failed saves.
-    fn give_up(&mut self, error: String, cx: &mut App) {
+    fn give_up(&mut self, error: String, cx: &mut Cx) {
         if std::mem::replace(&mut self.failing, true) {
             return;
         }
-        Toasts::with_detail(
-            Outcome::Failed,
-            "toast-settings-save-failed",
-            None,
-            error,
-            cx,
-        );
+        cx.emit(Event::Toast(
+            Toast::new(Outcome::Failed, "toast-settings-save-failed").detail(error),
+        ));
     }
 
     /// Writes `settings.json` now, or logs why it cannot. A save skipped because another
     /// program changed the file warns the user when the reload that follows drops their change.
-    fn save_now(&mut self, cx: &mut App) -> SettingsSave {
+    fn save_now(&mut self, cx: &mut Cx) -> SettingsSave {
         if !self.writable {
             return SettingsSave::Complete;
         }
@@ -2433,7 +2411,10 @@ impl AppSettings {
                 .as_deref()
                 .is_some_and(|current| overrides(current, &bytes))
             {
-                Toasts::show(Outcome::Warning, "toast-settings-overwritten", cx);
+                cx.emit(Event::Toast(Toast::new(
+                    Outcome::Warning,
+                    "toast-settings-overwritten",
+                )));
             }
             return SettingsSave::Complete;
         }
@@ -2447,7 +2428,7 @@ impl AppSettings {
     }
 
     /// Watches the config and themes folders for changes made by another program.
-    pub fn watch_files(&mut self, cx: &mut Context<Self>) {
+    pub fn watch_files(&mut self, cx: &mut Cx) {
         let (Some(folder), Some(settings_name)) = (self.path.parent(), self.path.file_name())
         else {
             return;
@@ -2482,7 +2463,7 @@ impl AppSettings {
         let (sender, mut changes) = tokio::sync::mpsc::unbounded_channel();
         let trigger = sender.clone();
         let watcher = RecommendedWatcher::new(
-            move |result: notify::Result<Event>| match result {
+            move |result: notify::Result<FileEvent>| match result {
                 Ok(event) => {
                     let changed =
                         changed_files(&event, &settings_paths, &theme_roots, case_insensitive);
@@ -2507,12 +2488,12 @@ impl AppSettings {
         }
 
         self.watcher = Some(watcher);
-        self.reload = Some(cx.spawn(async move |this, cx| {
+        self.reload = Some(cx.spawn(|link| async move {
             let mut retry = FileChanges::default();
             let mut retry_attempts = 0;
             loop {
                 let mut pending = if retry.any() {
-                    let delay = cx.background_executor().timer(RELOAD_RETRY_DELAY);
+                    let delay = tokio::time::sleep(RELOAD_RETRY_DELAY);
                     tokio::pin!(delay);
                     tokio::select! {
                         biased;
@@ -2535,7 +2516,7 @@ impl AppSettings {
                 };
                 let mut disconnected = false;
                 loop {
-                    let delay = cx.background_executor().timer(RELOAD_DELAY);
+                    let delay = tokio::time::sleep(RELOAD_DELAY);
                     tokio::pin!(delay);
                     tokio::select! {
                         biased;
@@ -2553,9 +2534,12 @@ impl AppSettings {
                     }
                 }
 
-                let requested = match this.update(cx, |this, cx| this.reload_files(pending, cx)) {
-                    Ok(retry) => retry,
-                    Err(_) => break,
+                let reloaded = link.read(move |store| {
+                    let Store { settings, cx, .. } = store;
+                    settings.reload_files(pending, cx)
+                });
+                let Some(requested) = reloaded.await else {
+                    break;
                 };
                 if requested.any() && retry_attempts < RELOAD_RETRIES {
                     retry_attempts += 1;
@@ -2573,7 +2557,7 @@ impl AppSettings {
     }
 
     /// Reloads changed sources together so a theme and its selection appear at once.
-    fn reload_files(&mut self, changed: FileChanges, cx: &mut Context<Self>) -> FileChanges {
+    fn reload_files(&mut self, changed: FileChanges, cx: &mut Cx) -> FileChanges {
         let previous_theme = self.theme_overrides();
         let (themes_changed, themes_retry) = if changed.themes {
             let loaded = themes::load(&themes_path(&self.path), &self.themes);
@@ -2592,10 +2576,10 @@ impl AppSettings {
         };
         let settings_changed = matches!(settings, SettingsReload::Changed);
         if settings_changed || previous_theme != self.theme_overrides() {
-            cx.emit(Reloaded);
+            cx.emit(Event::SettingsReloaded);
         }
         if themes_changed || settings_changed {
-            cx.notify();
+            cx.changed(Topic::Settings);
         }
         FileChanges {
             settings: matches!(settings, SettingsReload::Retry),
@@ -2605,7 +2589,7 @@ impl AppSettings {
 
     /// Accepts valid external settings, treats an empty file like a deletion, and protects
     /// nonempty broken files from app saves.
-    fn reload_settings(&mut self, cx: &mut Context<Self>) -> SettingsReload {
+    fn reload_settings(&mut self, cx: &mut Cx) -> SettingsReload {
         let bytes = match fs::read(&self.path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -2660,7 +2644,7 @@ impl AppSettings {
     }
 
     /// Pushes the globals that the setters push themselves, for whatever a reload changed.
-    fn push_globals(&self, previous: &Values, cx: &mut App) {
+    fn push_globals(&self, previous: &Values, cx: &mut Cx) {
         let (before, now) = (&previous.appearance, &self.values.appearance);
         if previous.language != self.values.language {
             i18n::set(i18n::resolve(&self.values.language));
@@ -2668,32 +2652,12 @@ impl AppSettings {
         if before.icons != now.icons {
             icons::set(&now.icons);
         }
-        if before.reduce_motion != now.reduce_motion || before.motion_pace != now.motion_pace {
-            ui::motion::apply(self.stillness(), self.pace(), cx);
+        // The window follows the stillness from here itself; only the pace is a global.
+        if before.motion_pace != now.motion_pace {
+            ui::motion::set_pace(self.pace());
         }
-        cx.refresh_windows();
+        cx.refresh();
     }
-}
-
-/// The saved window frame and its display, if its centre still lands on a connected display.
-pub fn window_placement(least: Size<Pixels>, cx: &App) -> Option<(WindowBounds, DisplayId)> {
-    let frame = Sonora::global(cx).settings.read(cx).state.window?;
-    if !frame.sane() {
-        return None;
-    }
-
-    let placement = frame.placement(least);
-    let bounds = placement.get_bounds();
-    cx.displays()
-        .iter()
-        .find(|display| display.bounds().contains(&bounds.center()))
-        .map(|display| (placement, display.id()))
-}
-
-/// Starts saving the window frame for the next launch.
-pub fn remember_window(window: &mut Window, cx: &mut App) {
-    let settings = Sonora::global(cx).settings.clone();
-    settings.update(cx, |settings, cx| settings.watch_window(window, cx));
 }
 
 /// Whether reloading `current` from disk would replace the values that serialize to `ours`. A
@@ -2740,7 +2704,7 @@ fn themes_path(settings: &Path) -> PathBuf {
 
 /// Classifies one notify event without relying on backend-specific path spelling.
 fn changed_files(
-    event: &Event,
+    event: &FileEvent,
     settings: &[PathBuf],
     theme_roots: &[PathBuf],
     case_insensitive: bool,

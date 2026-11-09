@@ -1,10 +1,9 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use gpui::{App, Context, Entity, Subscription, Task};
 use music::output::{self, DeviceInfo, DeviceOption, Failure, Opened, OutputId, Sink};
 
-use crate::{AppSettings, Io, Outcome, Playback, Toasts, join};
+use crate::{AppSettings, Cx, Event, Job, Outcome, Store, Toast, Topic, join};
 
 /// How long a newly picked device holds the picker before it is let go, whether or not it has
 /// answered. CoreAudio takes about ten seconds to give up on a device that will not start.
@@ -20,10 +19,9 @@ const HANDOVER: Duration = Duration::from_secs(2);
 /// both are read again whenever a stream opens or closes or its sink changes. A device picked
 /// here is opened first and only moved onto, and saved, once it has. One that will not open
 /// leaves everything as it was and says so in a toast. `binding_key` names the output the sound
-/// plays on, which the equalizer follows to play the sound its device rule asks for.
+/// plays on, which the equalizer follows to play the sound its device rule asks for. A change
+/// raises [`Topic::Outputs`]. The host calls [`Outputs::on_quit`] as the app quits.
 pub struct Outputs {
-    settings: Entity<AppSettings>,
-    playback: Entity<Playback>,
     devices: Vec<DeviceOption>,
     /// Whether `devices` has been read at least once, so an empty list means none.
     listed: bool,
@@ -39,62 +37,53 @@ pub struct Outputs {
     /// A device picked and being opened, shown as chosen until it answers.
     trying: Option<Option<String>>,
     /// Opens the picked device off the main thread. Dropping it drops the pick.
-    opening: Option<Task<()>>,
+    opening: Option<Job>,
     /// Runs out `SWITCH_TIMEOUT` after a pick. While it is set the picker is held.
-    holding: Option<Task<()>>,
+    holding: Option<Job>,
     /// The picked device's stream, kept open until the engines have joined it.
-    handover: Option<(Opened, Task<()>)>,
-    listing: Option<Task<()>>,
-    _watch: Task<()>,
+    handover: Option<(Opened, Job)>,
+    listing: Option<Job>,
+    _watch: Job,
     /// Why the chosen device could not be taken for direct output, the last time it tried. It is
     /// toasted when it first appears.
     hold_failure: Option<String>,
     /// Why the device could not be switched to a rate, the last time it tried. It is toasted when
     /// it first appears.
     rate_failure: Option<String>,
-    /// Lets the device go when the app quits, so it is not left at a track's rate.
-    _quit: Subscription,
 }
 
 impl Outputs {
     /// Hands the device, rate and buffer saved in settings to the engines, so call it before the
     /// first one starts.
-    pub fn new(
-        settings: Entity<AppSettings>,
-        playback: Entity<Playback>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let selected = settings.read(cx).output_device().map(str::to_owned);
+    pub fn new(settings: &AppSettings, cx: &mut Cx) -> Self {
+        let selected = settings.output_device().map(str::to_owned);
         output::choose_device(selected.clone());
-        output::choose_rate(settings.read(cx).output_rate());
-        output::choose_buffer(settings.read(cx).output_buffer());
-        output::choose_match_rate(settings.read(cx).output_match_rate());
+        output::choose_rate(settings.output_rate());
+        output::choose_buffer(settings.output_buffer());
+        output::choose_match_rate(settings.output_match_rate());
 
         let mut changes = output::watch_device_changes();
-        let watch = cx.spawn(async move |this, cx| {
+        let watch = cx.spawn(|link| async move {
             while changes.changed().await.is_ok() {
-                let updated = this.update(cx, |this, cx| {
+                link.post(|store| {
+                    let Store {
+                        outputs: this,
+                        settings,
+                        cx,
+                        ..
+                    } = store;
                     this.read_device();
                     this.failure = output::latest_device_failure();
                     this.read_direct(cx);
                     this.failing = output::failing();
-                    this.forget_broken(cx);
+                    this.forget_broken(settings, cx);
                     this.refresh(cx);
-                    cx.notify();
+                    cx.changed(Topic::Outputs);
                 });
-                if updated.is_err() {
-                    return;
-                }
             }
-        });
-        let quit = cx.on_app_quit(|_, _| {
-            output::release_hold();
-            std::future::ready(())
         });
 
         let mut outputs = Self {
-            settings,
-            playback,
             devices: Vec::new(),
             listed: false,
             active: output::active_device_info(),
@@ -109,11 +98,16 @@ impl Outputs {
             listing: None,
             hold_failure: output::hold_failure(),
             rate_failure: output::rate_failure(),
-            _quit: quit,
             _watch: watch,
         };
         outputs.refresh(cx);
         outputs
+    }
+
+    /// Lets the device go, so it is not left at a track's rate. The host calls it once as the
+    /// app quits.
+    pub fn on_quit(&mut self) {
+        output::release_hold();
     }
 
     pub fn devices(&self) -> &[DeviceOption] {
@@ -175,18 +169,14 @@ impl Outputs {
 
     /// Reads why the chosen device could not be taken, or switched to a rate, again. A failure
     /// that is new is toasted once, since playback goes on without it.
-    fn read_direct(&mut self, cx: &mut Context<Self>) {
+    fn read_direct(&mut self, cx: &mut Cx) {
         let taken = output::hold_failure();
         if taken != self.hold_failure {
             if let Some(error) = taken.clone() {
                 log::warn!("playback: cannot play directly on the device: {error}");
-                Toasts::with_detail(
-                    Outcome::Failed,
-                    "toast-output-direct-failed",
-                    None,
-                    error,
-                    cx,
-                );
+                cx.emit(Event::Toast(
+                    Toast::new(Outcome::Failed, "toast-output-direct-failed").detail(error),
+                ));
             }
             self.hold_failure = taken;
         }
@@ -194,7 +184,9 @@ impl Outputs {
         if rate != self.rate_failure {
             if let Some(error) = rate.clone() {
                 log::warn!("playback: cannot switch the sample rate: {error}");
-                Toasts::with_detail(Outcome::Failed, "toast-output-rate-failed", None, error, cx);
+                cx.emit(Event::Toast(
+                    Toast::new(Outcome::Failed, "toast-output-rate-failed").detail(error),
+                ));
             }
             self.rate_failure = rate;
         }
@@ -207,8 +199,8 @@ impl Outputs {
     }
 
     /// Whether following each track's sample rate is turned on in settings.
-    pub fn match_rate(&self, cx: &App) -> bool {
-        self.match_rate_supported() && self.settings.read(cx).output_match_rate()
+    pub fn match_rate(&self, settings: &AppSettings) -> bool {
+        self.match_rate_supported() && settings.output_match_rate()
     }
 
     /// Whether the device chosen is played on directly, which is the only kind whose rate can be
@@ -219,19 +211,16 @@ impl Outputs {
 
     /// Whether the rate follows each track right now: it is turned on, and the stream open is on
     /// a direct device.
-    pub fn following(&self, cx: &App) -> bool {
-        self.match_rate(cx) && self.current().is_some_and(|device| device.direct)
+    pub fn following(&self, settings: &AppSettings) -> bool {
+        self.match_rate(settings) && self.current().is_some_and(|device| device.direct)
     }
 
-    /// Turns following each track's sample rate on or off, and saves it. The engines reopen,
-    /// paused or not, so the track playing is heard at once at the rate it was made at.
-    pub fn set_match_rate(&mut self, on: bool, cx: &mut Context<Self>) {
-        self.settings
-            .update(cx, |settings, cx| settings.set_output_match_rate(on, cx));
+    /// Turns following each track's sample rate on or off, and saves it. The engines have to
+    /// reopen for it to be heard, which [`Store::set_output_match_rate`] does too.
+    pub fn set_match_rate(&mut self, on: bool, settings: &mut AppSettings, cx: &mut Cx) {
+        settings.set_output_match_rate(on, cx);
         output::choose_match_rate(on);
-        self.playback
-            .update(cx, |playback, cx| playback.restart_outputs(cx));
-        cx.notify();
+        cx.changed(Topic::Outputs);
     }
 
     /// Why nothing plays, when the device to play on would not open and nothing took its place.
@@ -256,11 +245,9 @@ impl Outputs {
 
     /// The rate the device plays at, or is reopening at once a new one is chosen: the one saved in
     /// settings when the device offers it, otherwise the one it runs at.
-    pub fn rate(&self, cx: &App) -> Option<u32> {
+    pub fn rate(&self, settings: &AppSettings) -> Option<u32> {
         let active = self.current()?;
-        let wanted = self
-            .settings
-            .read(cx)
+        let wanted = settings
             .output_rate()
             .filter(|rate| active.rates.contains(rate));
         Some(wanted.unwrap_or(active.format.rate))
@@ -268,20 +255,17 @@ impl Outputs {
 
     /// Opens the device at `rate` from now on, and saves it. The engines reopen at it, paused or
     /// not.
-    pub fn set_rate(&mut self, rate: u32, cx: &mut Context<Self>) {
-        self.settings
-            .update(cx, |settings, cx| settings.set_output_rate(Some(rate), cx));
+    pub fn set_rate(&mut self, rate: u32, settings: &mut AppSettings, cx: &mut Cx) {
+        settings.set_output_rate(Some(rate), cx);
         output::choose_rate(Some(rate));
-        cx.notify();
+        cx.changed(Topic::Outputs);
     }
 
     /// The buffer the device plays with, in frames, or is reopening with once a new one is
     /// chosen: the one saved in settings when the device allows it, otherwise the one it has.
-    pub fn buffer(&self, cx: &App) -> Option<u32> {
+    pub fn buffer(&self, settings: &AppSettings) -> Option<u32> {
         let active = self.current()?;
-        let wanted = self
-            .settings
-            .read(cx)
+        let wanted = settings
             .output_buffer()
             .filter(|frames| active.buffers.contains(frames));
         Some(wanted.unwrap_or(active.buffer))
@@ -289,12 +273,10 @@ impl Outputs {
 
     /// Asks the device for a buffer of `frames` from now on, and saves it. The engines reopen
     /// with it, paused or not.
-    pub fn set_buffer(&mut self, frames: u32, cx: &mut Context<Self>) {
-        self.settings.update(cx, |settings, cx| {
-            settings.set_output_buffer(Some(frames), cx)
-        });
+    pub fn set_buffer(&mut self, frames: u32, settings: &mut AppSettings, cx: &mut Cx) {
+        settings.set_output_buffer(Some(frames), cx);
         output::choose_buffer(Some(frames));
-        cx.notify();
+        cx.changed(Topic::Outputs);
     }
 
     /// Whether a device was just picked and has not answered yet, so no other can be picked.
@@ -305,7 +287,7 @@ impl Outputs {
     /// Opens `id`, or the system's default when `None`, and once it opens moves playback onto
     /// it, paused or not, and saves it. A device that will not open leaves playback and the saved
     /// device as they were, with a toast saying so.
-    pub fn choose(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+    pub fn choose(&mut self, id: Option<String>, cx: &mut Cx) {
         if self.switching() {
             return;
         }
@@ -314,26 +296,40 @@ impl Outputs {
             return;
         }
         self.trying = Some(id.clone());
-        let io = Io::global(cx);
         let wanted = id.clone();
-        self.opening = Some(cx.spawn(async move |this, cx| {
-            let opened = join(io.spawn_blocking(move || output::open(wanted.as_deref()))).await;
-            this.update(cx, |this, cx| this.picked(id, opened, cx)).ok();
+        self.opening = Some(cx.spawn(|link| async move {
+            let opened = join(tokio::task::spawn_blocking(move || {
+                output::open(wanted.as_deref())
+            }))
+            .await;
+            link.post(move |store| {
+                let Store {
+                    outputs,
+                    settings,
+                    cx,
+                    ..
+                } = store;
+                if outputs.picked(id, opened, settings, cx) {
+                    store.restart_outputs();
+                }
+            });
         }));
-        self.holding = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(SWITCH_TIMEOUT).await;
-            this.update(cx, |this, cx| {
-                this.holding = None;
-                cx.notify();
-            })
-            .ok();
+        self.holding = Some(cx.after(SWITCH_TIMEOUT, |store| {
+            store.outputs.holding = None;
+            store.cx.changed(Topic::Outputs);
         }));
-        cx.notify();
+        cx.changed(Topic::Outputs);
     }
 
-    /// Takes the answer to a pick: moves playback onto a device that opened and saves it, or
-    /// toasts that it would not.
-    fn picked(&mut self, id: Option<String>, opened: Result<Opened>, cx: &mut Context<Self>) {
+    /// Takes the answer to a pick: saves a device that opened, or toasts that it would not.
+    /// Returns whether it opened, after which the caller moves playback onto it.
+    fn picked(
+        &mut self,
+        id: Option<String>,
+        opened: Result<Opened>,
+        settings: &mut AppSettings,
+        cx: &mut Cx,
+    ) -> bool {
         self.opening = None;
         self.holding = None;
         self.trying = None;
@@ -342,31 +338,27 @@ impl Outputs {
             Err(error) => {
                 log::warn!("playback: cannot select the output device: {error:#}");
                 self.toast_rejected(id.as_deref(), &error, cx);
-                cx.notify();
-                return;
+                cx.changed(Topic::Outputs);
+                return false;
             }
         };
         self.selected = id.clone();
         output::choose_device(id.clone());
-        self.save(id, cx);
-        self.playback
-            .update(cx, |playback, cx| playback.restart_outputs(cx));
-        let release = cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(HANDOVER).await;
-            this.update(cx, |this, _| this.handover = None).ok();
-        });
+        self.save(id, settings, cx);
+        let release = cx.after(HANDOVER, |store| store.outputs.handover = None);
         self.handover = Some((opened, release));
-        cx.notify();
+        cx.changed(Topic::Outputs);
+        true
     }
 
     /// Forgets the saved device once it is there but would not open, so the next run does not
     /// wait on it again. The system's default already plays in its place. A device that is gone
     /// is never tried, so it never fails and stays saved.
-    fn forget_broken(&mut self, cx: &mut Context<Self>) {
+    fn forget_broken(&mut self, settings: &mut AppSettings, cx: &mut Cx) {
         let Some(failure) = self.failure.as_ref().filter(|failure| failure.saved) else {
             return;
         };
-        if self.settings.read(cx).output_device() != Some(failure.id.as_str()) {
+        if settings.output_device() != Some(failure.id.as_str()) {
             return;
         }
         log::warn!(
@@ -374,22 +366,18 @@ impl Outputs {
             failure.error
         );
         self.selected = None;
-        self.save(None, cx);
+        self.save(None, settings, cx);
         output::choose_device(None);
     }
 
     /// Says in a toast that the pick `id`, or the system's default when `None`, would not open,
     /// with the error below.
-    fn toast_rejected(&self, id: Option<&str>, error: &anyhow::Error, cx: &mut Context<Self>) {
+    fn toast_rejected(&self, id: Option<&str>, error: &anyhow::Error, cx: &mut Cx) {
         let error = format!("{error:#}");
         let Some(id) = id else {
-            Toasts::with_detail(
-                Outcome::Failed,
-                "toast-output-default-failed",
-                None,
-                error,
-                cx,
-            );
+            cx.emit(Event::Toast(
+                Toast::new(Outcome::Failed, "toast-output-default-failed").detail(error),
+            ));
             return;
         };
         let name = self
@@ -398,34 +386,39 @@ impl Outputs {
             .find(|device| device.id == id)
             .map_or(id, |device| device.name.as_str())
             .to_owned();
-        let name = Some(name.into());
-        Toasts::with_detail(
-            Outcome::Failed,
-            "toast-output-select-failed",
-            name,
-            error,
-            cx,
-        );
+        cx.emit(Event::Toast(
+            Toast::new(Outcome::Failed, "toast-output-select-failed")
+                .name(name)
+                .detail(error),
+        ));
     }
 
-    fn save(&self, id: Option<String>, cx: &mut Context<Self>) {
-        self.settings
-            .update(cx, |settings, cx| settings.set_output_device(id, cx));
+    fn save(&self, id: Option<String>, settings: &mut AppSettings, cx: &mut Cx) {
+        settings.set_output_device(id, cx);
     }
 
     /// Reads the system's devices again, with what the sound server says of its sinks, as when a
     /// settings page comes into view. A saved device that can never be found again, such as an
     /// ALSA device saved before a sound server played, is forgotten here, and the system's
     /// default plays in its place.
-    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+    pub fn refresh(&mut self, cx: &mut Cx) {
         let selected = self.selected.clone();
-        let listed = cx.background_executor().spawn(async move {
-            let retired = selected.filter(|id| output::retired(id));
-            (output::devices(), retired)
-        });
-        self.listing = Some(cx.spawn(async move |this, cx| {
-            let (devices, retired) = listed.await;
-            this.update(cx, |this, cx| {
+        self.listing = Some(cx.spawn(|link| async move {
+            let listed = tokio::task::spawn_blocking(move || {
+                let retired = selected.filter(|id| output::retired(id));
+                (output::devices(), retired)
+            })
+            .await;
+            let Ok((devices, retired)) = listed else {
+                return;
+            };
+            link.post(move |store| {
+                let Store {
+                    outputs: this,
+                    settings,
+                    cx,
+                    ..
+                } = store;
                 this.listing = None;
                 this.listed = true;
                 if let Some(id) = retired.filter(|id| this.selected.as_ref() == Some(id)) {
@@ -434,16 +427,25 @@ impl Outputs {
                          playing on the system default"
                     );
                     this.selected = None;
-                    this.save(None, cx);
+                    this.save(None, settings, cx);
                     output::choose_device(None);
-                    cx.notify();
+                    cx.changed(Topic::Outputs);
                 }
                 if this.devices != devices {
                     this.devices = devices;
-                    cx.notify();
+                    cx.changed(Topic::Outputs);
                 }
-            })
-            .ok();
+            });
         }));
+    }
+}
+
+impl Store {
+    /// Turns following each track's sample rate on or off, and saves it. The engines reopen,
+    /// paused or not, so the track playing is heard at once at the rate it was made at.
+    pub fn set_output_match_rate(&mut self, on: bool) {
+        self.outputs
+            .set_match_rate(on, &mut self.settings, &mut self.cx);
+        self.restart_outputs();
     }
 }

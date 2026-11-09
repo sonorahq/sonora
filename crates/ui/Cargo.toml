@@ -5,26 +5,19 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 futures.workspace = true
-gpui.workspace = true
 i18n.workspace = true
 icons.workspace = true
 image.workspace = true
 log.workspace = true
 qrcodegen.workspace = true
+rune.workspace = true
 serde.workspace = true
 unicode-bidi.workspace = true
 unicode-segmentation.workspace = true
-
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2-app-kit.workspace = true
-
-[target.'cfg(windows)'.dependencies]
-windows-sys.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 ashpd.workspace = true
 
 [dev-dependencies]
-gpui = { workspace = true, features = ["test-support"] }
-gpui_platform.workspace = true

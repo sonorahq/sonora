@@ -2,16 +2,15 @@
 //! store it in, undo and redo, the sound each device rule asks for, and the clip warning the
 //! output meter raises against it.
 
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use gpui::prelude::*;
-use gpui::{App, Context, Entity, Subscription, Task};
 use music::Meter;
 use music::equalizer::{Curve, Edit, EqualizerWriter, PREAMP_RANGE, Preamp, Preset, Tone, apo};
 use music::output::OutputId;
 
 use crate::overload::{OutputLevel, Overload};
-use crate::{AppSettings, Outputs, Playback, Reloaded};
+use crate::{AppSettings, Change, Cx, Event, Job, Store, Topic};
 
 /// How long after the last glided edit the curve is stored, so a drag or a run of wheel steps
 /// reaches the settings once, when it pauses.
@@ -23,24 +22,46 @@ const UNDO_STEPS: usize = 50;
 /// and meter, so a change reaches the output without a restart. It follows the output the sound
 /// plays on and plays the sound that output's device rule names.
 pub struct Equalizer {
-    settings: Entity<AppSettings>,
     writer: EqualizerWriter,
-    /// Shared with every engine like the equalizer's reader, and read only while watched.
-    meter: Meter,
-    overload: Overload,
-    /// The output's level as the meter last read it, notified on its own.
-    output_level: Entity<OutputLevel>,
+    /// The meter every engine reports to, with the level and the clip warning made of it, which
+    /// the signal's tick feeds off the UI thread while watched.
+    metering: Metering,
     /// Stores a glided curve in the settings once the edits pause.
-    glide_store: Option<Task<()>>,
+    glide_store: Option<Job>,
     /// Stores a glided tone in the settings once the edits pause.
-    tone_store: Option<Task<()>>,
+    tone_store: Option<Job>,
     history: History,
     /// The id of the output played on as `Outputs` last settled it, so a rule added for it can
     /// play at once and the same output again is not a move.
     output: Option<String>,
-    /// The volume as playback last had it, so a change to it takes the clip warning down.
-    volume: f32,
-    _subscriptions: Vec<Subscription>,
+    /// The volume as playback last had it, so a change to it takes the clip warning down. `None`
+    /// until playback first changed.
+    volume: Option<f32>,
+}
+
+/// The output meter and what is made of it, shared between the equalizer and the signal's tick,
+/// which reads it about sixty times a second without waking the UI thread.
+#[derive(Clone, Default)]
+pub(crate) struct Metering {
+    /// Shared with every engine like the equalizer's reader, and read only while watched.
+    meter: Meter,
+    gauges: Arc<Mutex<Gauges>>,
+}
+
+/// What the meter's reads make: the clip warning and the level a meter draws.
+#[derive(Default)]
+struct Gauges {
+    overload: Overload,
+    /// The output's level as the meter last read it.
+    level: OutputLevel,
+}
+
+/// What one meter read moved.
+pub(crate) struct Read {
+    /// Whether the level meter moved by a visible step.
+    pub(crate) level: bool,
+    /// Whether the clip warning changed.
+    pub(crate) overload: bool,
 }
 
 /// A sound a device rule plays: a built-in preset, loaded into the unnamed profile the way
@@ -112,59 +133,20 @@ impl History {
 }
 
 impl Equalizer {
-    /// Plays what the settings hold. It follows no output until `follow` is called, since
-    /// `Outputs` is built after the playback that reads this equalizer.
-    pub fn new(settings: Entity<AppSettings>, cx: &mut Context<Self>) -> Self {
-        let reloaded = cx.subscribe(&settings, |this, _, _: &Reloaded, cx| {
-            // The file's curve and tone win over glides that were still to be stored.
-            this.glide_store = None;
-            this.tone_store = None;
-            this.follow_settings(cx)
-        });
-        let mut writer = EqualizerWriter::new(
-            settings.read(cx).equalizer(),
-            settings.read(cx).equalizer_curve(),
-        );
-        writer.set_tone(settings.read(cx).equalizer_tone(), Edit::Replace);
+    /// Plays what the settings hold. It follows the output and the volume through
+    /// [`Store::react_equalizer`] once `Outputs` and playback raise their changes.
+    pub fn new(settings: &AppSettings) -> Self {
+        let mut writer = EqualizerWriter::new(settings.equalizer(), settings.equalizer_curve());
+        writer.set_tone(settings.equalizer_tone(), Edit::Replace);
         Self {
-            settings,
             writer,
-            meter: Meter::default(),
-            overload: Overload::default(),
-            output_level: cx.new(|_| OutputLevel::default()),
+            metering: Metering::default(),
             glide_store: None,
             tone_store: None,
             history: History::default(),
             output: None,
-            volume: 0.,
-            _subscriptions: vec![reloaded],
+            volume: None,
         }
-    }
-
-    /// Starts following the output `outputs` plays on, and the volume of `playback`, which
-    /// takes the clip warning down when it changes.
-    pub(crate) fn follow(
-        &mut self,
-        playback: &Entity<Playback>,
-        outputs: &Entity<Outputs>,
-        cx: &mut Context<Self>,
-    ) {
-        self.volume = playback.read(cx).volume();
-        self._subscriptions
-            .push(cx.observe(playback, |this, playback, cx| {
-                let volume = playback.read(cx).volume();
-                if volume != this.volume {
-                    this.volume = volume;
-                    this.overload.settle(Instant::now());
-                }
-            }));
-        self._subscriptions
-            .push(cx.observe(outputs, |this, outputs, cx| {
-                let playing = outputs.read(cx).binding_key().map(|output| output.id);
-                if let Some(id) = playing {
-                    this.follow_output(id, cx);
-                }
-            }));
     }
 
     /// The reader every engine plays the curve through.
@@ -174,7 +156,12 @@ impl Equalizer {
 
     /// The meter every engine's output reports its loudest sample to.
     pub(crate) fn meter(&self) -> Meter {
-        self.meter.clone()
+        self.metering.meter.clone()
+    }
+
+    /// The meter with the level and the clip warning it feeds, for the signal's tick.
+    pub(crate) fn metering(&self) -> Metering {
+        self.metering.clone()
     }
 
     pub fn enabled(&self) -> bool {
@@ -199,49 +186,50 @@ impl Equalizer {
 
     /// Puts `tone` in place and stores it, the engines cross-fading to it. It turns the equalizer
     /// on like picking a sound does, since a tone is only heard through it.
-    pub fn set_tone(&mut self, tone: Tone, cx: &mut Context<Self>) {
+    pub fn set_tone(&mut self, tone: Tone, settings: &mut AppSettings, cx: &mut Cx) {
         self.tone_store = None;
         self.writer.set_tone(tone, Edit::Replace);
-        self.toned(cx);
-        self.store_tone(cx);
+        self.toned(settings, cx);
+        self.store_tone(settings, cx);
     }
 
     /// Puts `tone` in place the way a slider drag does: the engines glide to it, and the settings
     /// store it once the edits pause.
-    pub fn glide_tone(&mut self, tone: Tone, cx: &mut Context<Self>) {
+    pub fn glide_tone(&mut self, tone: Tone, settings: &mut AppSettings, cx: &mut Cx) {
         if tone == self.writer.tone() {
             return;
         }
         self.writer.set_tone(tone, Edit::Glide);
-        self.toned(cx);
-        self.tone_store = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(GLIDE_STORE).await;
-            this.update(cx, |this, cx| {
-                this.tone_store = None;
-                this.store_tone(cx);
-            })
-            .ok();
+        self.toned(settings, cx);
+        self.tone_store = Some(cx.after(GLIDE_STORE, |store| {
+            let Store {
+                equalizer: this,
+                settings,
+                cx,
+                ..
+            } = store;
+            this.tone_store = None;
+            this.store_tone(settings, cx);
         }));
     }
 
     /// Turns the equalizer on or off. The engines pick the change up on their next frame and
     /// fade to it, so no restart and no click.
-    pub fn set_enabled(&mut self, on: bool, cx: &mut Context<Self>) {
+    pub fn set_enabled(&mut self, on: bool, settings: &mut AppSettings, cx: &mut Cx) {
         self.writer.set_enabled(on);
-        self.overload.settle(Instant::now());
-        self.settings
-            .update(cx, |settings, cx| settings.set_equalizer(on, cx));
-        cx.notify();
+        self.gauges().overload.settle(Instant::now());
+        settings.set_equalizer(on, cx);
+        cx.changed(Topic::Equalizer);
     }
 
     /// Puts a whole curve in place of the playing profile's, the way a preset pick or a typed
     /// value does: the engines cross-fade to it.
-    pub fn set_curve(&mut self, curve: Curve, cx: &mut Context<Self>) {
+    pub fn set_curve(&mut self, curve: Curve, settings: &mut AppSettings, cx: &mut Cx) {
         if curve == *self.writer.curve() {
             return;
         }
         self.history.record(self.writer.curve());
-        self.replace_curve(curve, cx);
+        self.replace_curve(curve, settings, cx);
     }
 
     /// Whether there is an edit to undo, and whether there is an undo to redo.
@@ -250,22 +238,22 @@ impl Equalizer {
     }
 
     /// Plays the curve from before the last edit, cross-fading to it.
-    pub fn undo(&mut self, cx: &mut Context<Self>) {
+    pub fn undo(&mut self, settings: &mut AppSettings, cx: &mut Cx) {
         if let Some(curve) = self.history.undo(self.writer.curve()) {
-            self.replace_curve(curve, cx);
+            self.replace_curve(curve, settings, cx);
         }
     }
 
     /// Plays the curve the last undo took away again.
-    pub fn redo(&mut self, cx: &mut Context<Self>) {
+    pub fn redo(&mut self, settings: &mut AppSettings, cx: &mut Cx) {
         if let Some(curve) = self.history.redo(self.writer.curve()) {
-            self.replace_curve(curve, cx);
+            self.replace_curve(curve, settings, cx);
         }
     }
 
     /// Puts a curve in place that moves one filter a little from the playing one, the way a
     /// drag does: the engines glide it there. The settings store it once the edits pause.
-    pub fn glide_curve(&mut self, curve: Curve, cx: &mut Context<Self>) {
+    pub fn glide_curve(&mut self, curve: Curve, cx: &mut Cx) {
         if curve == *self.writer.curve() {
             return;
         }
@@ -274,12 +262,17 @@ impl Equalizer {
             self.history.record(self.writer.curve());
         }
         self.writer.set_curve(curve, Edit::Glide);
-        self.overload.settle(Instant::now());
-        self.glide_store = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(GLIDE_STORE).await;
-            this.update(cx, |this, cx| this.store_glided(cx)).ok();
+        self.gauges().overload.settle(Instant::now());
+        self.glide_store = Some(cx.after(GLIDE_STORE, |store| {
+            let Store {
+                equalizer: this,
+                settings,
+                cx,
+                ..
+            } = store;
+            this.store_glided(settings, cx);
         }));
-        cx.notify();
+        cx.changed(Topic::Equalizer);
     }
 
     /// The preamp the curve heard resolves to, in decibels, with room for the tone's boost.
@@ -289,47 +282,40 @@ impl Equalizer {
 
     /// How many decibels over full scale the clip warning says the output went, to a tenth,
     /// while something watches. It changes at most about once a second, and the equalizer
-    /// notifies only when it does.
+    /// raises [`Topic::Equalizer`] only when it does.
     pub fn overload(&self) -> Option<f64> {
-        self.overload.db()
+        self.gauges().overload.db()
     }
 
     /// The preamp "Lower preamp" would set, or `None` without an overload or when the preamp
     /// is as low as it goes.
     pub fn lowered_preamp(&self) -> Option<f64> {
-        self.overload.lowered(self.writer.preamp_db())
+        self.gauges().overload.lowered(self.writer.preamp_db())
     }
 
-    /// The output's recent level. It notifies on its own about ten times a second while the
-    /// meter is watched, so a level meter observes it rather than the equalizer.
-    pub fn output_level(&self) -> Entity<OutputLevel> {
-        self.output_level.clone()
+    /// The output's recent level and its held peak, in dBFS. The signal's watch moves it about
+    /// sixty times a second without raising anything, so a level meter reads it on every frame
+    /// it draws, and [`crate::Signal::take_fresh`] says when it moved.
+    pub fn output_level(&self) -> (f32, f32) {
+        let gauges = self.gauges();
+        (gauges.level.level_db(), gauges.level.peak_db())
     }
 
     /// Starts the level meter and the clip warning afresh, from no overload, for a screen that
-    /// starts watching. `Signal::watch` then reads the meter on its own tick.
-    pub(crate) fn reset_meter(&mut self, cx: &mut Context<Self>) {
-        self.overload = Overload::default();
-        self.meter.take();
-        self.output_level.update(cx, |level, cx| level.reset(cx));
-        cx.notify();
-    }
-
-    /// Reads the meter once, the loudest sample since the read before, feeding the level meter
-    /// and the clip warning. It notifies only when the warning changed.
-    pub(crate) fn read_meter(&mut self, cx: &mut Context<Self>) {
-        let (peak, now) = (self.meter.take(), Instant::now());
-        self.output_level
-            .update(cx, |level, cx| level.observe(peak, now, cx));
-        if self.overload.observe(peak, now) {
-            cx.notify();
-        }
+    /// starts watching. [`Store::watch_signal`] then reads the meter on its own tick.
+    pub(crate) fn reset_meter(&mut self, cx: &mut Cx) {
+        let mut gauges = self.gauges();
+        gauges.overload = Overload::default();
+        self.metering.meter.take();
+        gauges.level.reset();
+        drop(gauges);
+        cx.changed(Topic::Equalizer);
     }
 
     /// Lowers the preamp by the overload and a margin, made manual, so what overloaded fits. The
     /// sound stores its own preamp, which the tone lowers further, so the stored one keeps the
     /// difference between the two.
-    pub fn lower_preamp(&mut self, cx: &mut Context<Self>) {
+    pub fn lower_preamp(&mut self, settings: &mut AppSettings, cx: &mut Cx) {
         let Some(preamp) = self.lowered_preamp() else {
             return;
         };
@@ -337,95 +323,85 @@ impl Equalizer {
         let preamp = (preamp + own).clamp(*PREAMP_RANGE.start(), *PREAMP_RANGE.end());
         let filters = self.writer.curve().filters().to_vec();
         if let Ok(curve) = Curve::new(Preamp::Manual(preamp), filters) {
-            self.set_curve(curve, cx);
+            self.set_curve(curve, settings, cx);
         }
     }
 
     /// Adds `rule` in place of the one its device had. When it is the rule the output played on
     /// now goes by, its sound plays at once.
-    pub fn set_rule(&mut self, rule: DeviceRule, cx: &mut Context<Self>) {
+    pub fn set_rule(&mut self, rule: DeviceRule, settings: &mut AppSettings, cx: &mut Cx) {
         let device = rule.device.clone();
-        self.settings
-            .update(cx, |settings, cx| settings.set_equalizer_rule(rule, cx));
+        settings.set_equalizer_rule(rule, cx);
         let governs = self.output.as_deref().is_some_and(|id| {
-            self.settings
-                .read(cx)
+            settings
                 .equalizer_rule_for_output(id)
                 .is_some_and(|rule| rule.device.id() == device.id())
         });
         if governs {
-            self.play_output_sound(cx);
+            self.play_output_sound(settings, cx);
         }
     }
 
     /// Removes the rule for `device`. What plays stays.
-    pub fn remove_rule(&mut self, device: &RuleDevice, cx: &mut Context<Self>) {
-        self.settings.update(cx, |settings, cx| {
-            settings.remove_equalizer_rule(device, cx)
-        });
+    pub fn remove_rule(&mut self, device: &RuleDevice, settings: &mut AppSettings, cx: &mut Cx) {
+        settings.remove_equalizer_rule(device, cx);
     }
 
     /// Plays `sound` and turns the equalizer on, the way picking it does. A profile that is no
     /// longer stored plays nothing.
-    pub fn play_sound(&mut self, sound: &Sound, cx: &mut Context<Self>) {
-        if self.load_sound(sound, cx) && !self.enabled() {
-            self.set_enabled(true, cx);
+    pub fn play_sound(&mut self, sound: &Sound, settings: &mut AppSettings, cx: &mut Cx) {
+        if self.load_sound(sound, settings, cx) && !self.enabled() {
+            self.set_enabled(true, settings, cx);
         }
     }
 
     /// Plays profile `index`, cross-fading to its curve.
-    pub fn select_profile(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.store_glided(cx);
-        self.settings.update(cx, |settings, cx| {
-            settings.select_equalizer_profile(index, cx)
-        });
-        self.follow_settings(cx);
+    pub fn select_profile(&mut self, index: usize, settings: &mut AppSettings, cx: &mut Cx) {
+        self.store_glided(settings, cx);
+        settings.select_equalizer_profile(index, cx);
+        self.follow_settings(settings, cx);
     }
 
     /// Plays profile `index` and turns the equalizer on, the way picking a sound does.
-    pub fn play_profile(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.select_profile(index, cx);
+    pub fn play_profile(&mut self, index: usize, settings: &mut AppSettings, cx: &mut Cx) {
+        self.select_profile(index, settings, cx);
         if !self.enabled() {
-            self.set_enabled(true, cx);
+            self.set_enabled(true, settings, cx);
         }
     }
 
     /// Plays `preset` in the profile with no name, switching to it first when another plays, and
     /// turns the equalizer on. A named profile is never overwritten.
-    pub fn play_preset(&mut self, preset: Preset, cx: &mut Context<Self>) {
-        self.load_preset(preset, cx);
+    pub fn play_preset(&mut self, preset: Preset, settings: &mut AppSettings, cx: &mut Cx) {
+        self.load_preset(preset, settings, cx);
         if !self.enabled() {
-            self.set_enabled(true, cx);
+            self.set_enabled(true, settings, cx);
         }
     }
 
     /// Puts `preset` in the profile with no name and plays that profile, leaving the equalizer on
     /// or off.
-    fn load_preset(&mut self, preset: Preset, cx: &mut Context<Self>) {
+    fn load_preset(&mut self, preset: Preset, settings: &mut AppSettings, cx: &mut Cx) {
         let curve = preset.curve();
-        let settings = self.settings.read(cx);
         if settings.equalizer_scratch() != Some(settings.equalizer_profile()) {
-            self.store_glided(cx);
-            self.settings.update(cx, |settings, cx| {
-                settings.select_equalizer_scratch(&curve, cx)
-            });
-            self.follow_settings(cx);
+            self.store_glided(settings, cx);
+            settings.select_equalizer_scratch(&curve, cx);
+            self.follow_settings(settings, cx);
         }
-        self.set_curve(curve, cx);
+        self.set_curve(curve, settings, cx);
     }
 
     /// Switches to `sound` and leaves the equalizer on or off. A stored profile that plays
     /// already keeps its undo history. Returns false when `sound` names no stored profile.
-    fn load_sound(&mut self, sound: &Sound, cx: &mut Context<Self>) -> bool {
+    fn load_sound(&mut self, sound: &Sound, settings: &mut AppSettings, cx: &mut Cx) -> bool {
         match sound {
-            Sound::Preset(preset) => self.load_preset(*preset, cx),
+            Sound::Preset(preset) => self.load_preset(*preset, settings, cx),
             Sound::Profile(name) => {
-                let settings = self.settings.read(cx);
                 let Some(index) = settings.equalizer_profile_named(name) else {
                     return false;
                 };
                 if index != settings.equalizer_profile() {
-                    self.select_profile(index, cx);
+                    self.select_profile(index, settings, cx);
                 }
             }
         }
@@ -434,41 +410,47 @@ impl Equalizer {
 
     /// Adds a profile named after `name` holding `curve` and plays it. `AppSettings` makes the
     /// name unique.
-    pub fn add_profile(&mut self, name: &str, curve: Curve, cx: &mut Context<Self>) {
-        self.store_glided(cx);
-        self.settings.update(cx, |settings, cx| {
-            settings.add_equalizer_profile(name, &curve, cx)
-        });
-        self.follow_settings(cx);
+    pub fn add_profile(
+        &mut self,
+        name: &str,
+        curve: Curve,
+        settings: &mut AppSettings,
+        cx: &mut Cx,
+    ) {
+        self.store_glided(settings, cx);
+        settings.add_equalizer_profile(name, &curve, cx);
+        self.follow_settings(settings, cx);
     }
 
     /// Saves the playing curve as a new profile named after `name` and plays it. When the curve
     /// was in the profile with no name, that profile goes back to flat. `AppSettings` makes the
     /// name unique.
-    pub fn save_as(&mut self, name: &str, cx: &mut Context<Self>) {
-        self.store_glided(cx);
+    pub fn save_as(&mut self, name: &str, settings: &mut AppSettings, cx: &mut Cx) {
+        self.store_glided(settings, cx);
         let curve = self.writer.curve().clone();
-        self.settings.update(cx, |settings, cx| {
-            if settings.equalizer_scratch() == Some(settings.equalizer_profile()) {
-                settings.set_equalizer_curve(&Preset::Flat.curve(), cx);
-            }
-            settings.add_equalizer_profile(name, &curve, cx);
-        });
-        self.follow_settings(cx);
+        if settings.equalizer_scratch() == Some(settings.equalizer_profile()) {
+            settings.set_equalizer_curve(&Preset::Flat.curve(), cx);
+        }
+        settings.add_equalizer_profile(name, &curve, cx);
+        self.follow_settings(settings, cx);
     }
 
     /// Removes profile `index` while it is still the one named `name`, unless it is the only
     /// one, and the rules that play it. When it was playing, the sound the output's rule names
     /// plays, else the profile `AppSettings` picks.
-    pub fn remove_profile(&mut self, index: usize, name: &str, cx: &mut Context<Self>) {
-        self.store_glided(cx);
-        let playing = self.settings.read(cx).equalizer_profile() == index;
-        self.settings.update(cx, |settings, cx| {
-            settings.remove_equalizer_profile(index, name, cx)
-        });
-        self.follow_settings(cx);
-        if let Some(sound) = self.output_sound(cx).filter(|_| playing) {
-            self.load_sound(&sound, cx);
+    pub fn remove_profile(
+        &mut self,
+        index: usize,
+        name: &str,
+        settings: &mut AppSettings,
+        cx: &mut Cx,
+    ) {
+        self.store_glided(settings, cx);
+        let playing = settings.equalizer_profile() == index;
+        settings.remove_equalizer_profile(index, name, cx);
+        self.follow_settings(settings, cx);
+        if let Some(sound) = self.output_sound(settings).filter(|_| playing) {
+            self.load_sound(&sound, settings, cx);
         }
     }
 
@@ -478,10 +460,11 @@ impl Equalizer {
         &mut self,
         name: &str,
         text: &str,
-        cx: &mut Context<Self>,
+        settings: &mut AppSettings,
+        cx: &mut Cx,
     ) -> Result<Vec<apo::Skipped>, apo::Refused> {
         let parsed = apo::parse(text)?;
-        self.add_profile(name, parsed.curve, cx);
+        self.add_profile(name, parsed.curve, settings, cx);
         Ok(parsed.skipped)
     }
 
@@ -490,76 +473,79 @@ impl Equalizer {
         apo::export(self.writer.curve())
     }
 
+    /// The clip warning and the level meter, behind the lock the signal's tick shares.
+    fn gauges(&self) -> MutexGuard<'_, Gauges> {
+        self.metering.gauges()
+    }
+
     /// Follows a tone that was just put in place: the clip warning starts afresh, and the
     /// equalizer turns on when it was off.
-    fn toned(&mut self, cx: &mut Context<Self>) {
-        self.overload.settle(Instant::now());
+    fn toned(&mut self, settings: &mut AppSettings, cx: &mut Cx) {
+        self.gauges().overload.settle(Instant::now());
         match self.enabled() {
-            true => cx.notify(),
-            false => self.set_enabled(true, cx),
+            true => cx.changed(Topic::Equalizer),
+            false => self.set_enabled(true, settings, cx),
         }
     }
 
-    fn store_tone(&mut self, cx: &mut Context<Self>) {
+    fn store_tone(&mut self, settings: &mut AppSettings, cx: &mut Cx) {
         let tone = self.writer.tone();
-        self.settings
-            .update(cx, |settings, cx| settings.set_equalizer_tone(tone, cx));
+        settings.set_equalizer_tone(tone, cx);
     }
 
-    fn replace_curve(&mut self, curve: Curve, cx: &mut Context<Self>) {
+    fn replace_curve(&mut self, curve: Curve, settings: &mut AppSettings, cx: &mut Cx) {
         self.writer.set_curve(curve, Edit::Replace);
-        self.overload.settle(Instant::now());
-        self.save_curve(cx);
+        self.gauges().overload.settle(Instant::now());
+        self.save_curve(settings, cx);
     }
 
     /// Stores a glided curve that waits for the edits to pause now, so a profile change that
     /// follows keeps it in the profile it was made in.
-    fn store_glided(&mut self, cx: &mut Context<Self>) {
+    fn store_glided(&mut self, settings: &mut AppSettings, cx: &mut Cx) {
         if self.glide_store.take().is_some() {
-            self.save_curve(cx);
+            self.save_curve(settings, cx);
         }
     }
 
     /// Takes in output `id` as the one played on, and plays the sound its rule names when it is
     /// another output than the last one.
-    fn follow_output(&mut self, id: String, cx: &mut Context<Self>) {
+    fn follow_output(&mut self, id: String, settings: &mut AppSettings, cx: &mut Cx) {
         if self.output.as_ref() == Some(&id) {
             return;
         }
         self.output = Some(id);
-        self.play_output_sound(cx);
+        self.play_output_sound(settings, cx);
     }
 
     /// The sound the output played on asks for: its own rule's, else the one for any other
     /// device.
-    fn output_sound(&self, cx: &App) -> Option<Sound> {
+    fn output_sound(&self, settings: &AppSettings) -> Option<Sound> {
         let id = self.output.as_deref()?;
-        let rule = self.settings.read(cx).equalizer_rule_for_output(id)?;
+        let rule = settings.equalizer_rule_for_output(id)?;
         Some(rule.sound.clone())
     }
 
     /// Plays the sound the output played on asks for and turns the equalizer on. Nothing changes
     /// when no rule applies.
-    fn play_output_sound(&mut self, cx: &mut Context<Self>) {
-        let Some(sound) = self.output_sound(cx) else {
+    fn play_output_sound(&mut self, settings: &mut AppSettings, cx: &mut Cx) {
+        let Some(sound) = self.output_sound(settings) else {
             return;
         };
         log::info!("equalizer: playing {sound:?}, the sound for the output played on");
-        self.play_sound(&sound, cx);
+        self.play_sound(&sound, settings, cx);
     }
 
     /// Plays what the settings say, the equalizer on or off and the selected profile's curve,
     /// as one replace, so the sound, the picker and the screen agree after a profile change. A
     /// tone still waiting to be stored is newer than the settings' and stays.
-    fn follow_settings(&mut self, cx: &mut Context<Self>) {
-        let settings = self.settings.read(cx);
+    fn follow_settings(&mut self, settings: &AppSettings, cx: &mut Cx) {
         let (on, curve) = (settings.equalizer(), settings.equalizer_curve());
         if self.tone_store.is_none() {
             self.writer
                 .set_tone(settings.equalizer_tone(), Edit::Replace);
         }
         self.history = History::default();
-        self.overload.settle(Instant::now());
+        self.gauges().overload.settle(Instant::now());
         // Whichever change is heard goes last, so only one replace reaches the ear.
         match on {
             true => {
@@ -571,14 +557,66 @@ impl Equalizer {
                 self.writer.set_curve(curve, Edit::Replace);
             }
         }
-        cx.notify();
+        cx.changed(Topic::Equalizer);
     }
 
-    fn save_curve(&mut self, cx: &mut Context<Self>) {
+    fn save_curve(&mut self, settings: &mut AppSettings, cx: &mut Cx) {
         self.glide_store = None;
         let curve = self.writer.curve().clone();
-        self.settings
-            .update(cx, |settings, cx| settings.set_equalizer_curve(&curve, cx));
-        cx.notify();
+        settings.set_equalizer_curve(&curve, cx);
+        cx.changed(Topic::Equalizer);
+    }
+}
+
+impl Metering {
+    /// Reads the meter once, the loudest sample since the read before, feeding the level meter
+    /// and the clip warning. Called off the UI thread by the signal's tick.
+    pub(crate) fn read(&self, now: Instant) -> Read {
+        let peak = self.meter.take();
+        let mut gauges = self.gauges();
+        Read {
+            level: gauges.level.observe(peak, now),
+            overload: gauges.overload.observe(peak, now),
+        }
+    }
+
+    fn gauges(&self) -> MutexGuard<'_, Gauges> {
+        self.gauges.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Store {
+    /// Follows a settings file read again, the volume, which takes the clip warning down when it
+    /// changes, and the output the sound plays on, whose device rule names the sound to play.
+    pub(crate) fn react_equalizer(&mut self, change: &Change) {
+        let Store {
+            equalizer: this,
+            settings,
+            playback,
+            outputs,
+            cx,
+            ..
+        } = self;
+        match change {
+            Change::Event(Event::SettingsReloaded) => {
+                // The file's curve and tone win over glides that were still to be stored.
+                this.glide_store = None;
+                this.tone_store = None;
+                this.follow_settings(settings, cx)
+            }
+            Change::Topic(Topic::Playback) => {
+                let volume = playback.volume();
+                if this.volume.replace(volume).is_some_and(|was| was != volume) {
+                    this.gauges().overload.settle(Instant::now());
+                }
+            }
+            Change::Topic(Topic::Outputs) => {
+                let playing = outputs.binding_key().map(|output| output.id);
+                if let Some(id) = playing {
+                    this.follow_output(id, settings, cx);
+                }
+            }
+            _ => {}
+        }
     }
 }

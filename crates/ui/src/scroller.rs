@@ -1,285 +1,373 @@
-use gpui::prelude::*;
-use gpui::{
-    AnyElement, App, Div, ElementId, Entity, Interactivity, MouseButton, MouseMoveEvent, Pixels,
-    ScrollWheelEvent, StyleRefinement, Window, div, px,
-};
+//! What Sonora adds to Rune's own scrolling, which already brings momentum, scroll bars, glides
+//! and virtual rows: a sideways shelf of cards with paging arrows, a perched button that glides a
+//! page back to its top, and the scroll position each page is left at.
+//!
+//! Each follows its viewport through `El::on_scroll_offset` into live values, so a scroll moves
+//! the arrows' and the button's look without running the view.
+
+use std::collections::{HashMap, VecDeque};
+
+use i18n::t;
+use rune::{El, Live, ScrollPos, Spring, Tx, el, row};
 
 use crate::button::Button;
 use crate::glass::{blurring, glass};
-use crate::scrollbar::{Scrollbar, activate_middle_scroll, cancel_middle_scroll};
-use crate::theme::ActiveTheme as _;
-use crate::veil::effects;
+use crate::motion::Springs;
+use crate::theme::Theme;
 
-/// How far a region has to be scrolled before the trip back is worth a button, in rows.
+/// How far a page has to be scrolled before the trip back is worth a button, in list rows.
 const REACH: f32 = 3.;
 /// How far a perched control floats off the bottom of its region.
-const PERCH: Pixels = px(12.);
+const PERCH: f32 = 12.;
+/// How close to an end a shelf counts as at it, so a fraction of a point left over by a glide
+/// still dims its arrow.
+const STEADY: f32 = 1.;
+/// How a dimmed paging arrow shows at a shelf's end.
+const DIMMED: f32 = 0.4;
+/// The gap between a shelf's cards when the caller names none.
+const RAIL_GAP: f32 = 16.;
+/// How many pages' scroll positions are remembered.
+const PAGES: usize = 64;
+/// How far below its perch a hidden return button sits: past the region's bottom edge, where it
+/// takes no clicks meant for the rows.
+const TUCKED: f32 = 64.;
+/// The glide a paging arrow and the return button scroll on.
+const GLIDE: Spring = Springs::SLOW;
 
-#[derive(IntoElement)]
-pub struct Scroller {
-    base: Div,
-    id: ElementId,
-    bar: Entity<Scrollbar>,
-    children: Vec<AnyElement>,
-    present_surface: bool,
-    owns_scroll: bool,
-    bottom_inset: Pixels,
-    /// How tall the band along the top is where content fades out as it scrolls away.
-    fade_top: Pixels,
+/// Where a scroll viewport is, kept from its `on_scroll_offset` reports so handlers can read it
+/// and live values can follow it. Clone it into the state that owns the viewport; every clone
+/// shares one position.
+#[derive(Clone)]
+pub struct ScrollWatch {
+    /// The offset, the furthest it can scroll and the viewport's size, along the watched axis.
+    at: Live<[f32; 4]>,
+    /// 1 while the viewport is scrolled away from its top by more than `reach`, else 0.
+    away: Live<f32>,
+    /// Where the return button sits: up on its perch while `away`, else tucked below it.
+    lift: Live<[f32; 2]>,
+    /// 0.4 at the start of a sideways viewport and 1 elsewhere; `end` likewise at its end.
+    start: Live<f32>,
+    end: Live<f32>,
 }
 
-impl Scroller {
-    #[track_caller]
-    pub fn new(id: impl Into<ElementId>, bar: &Entity<Scrollbar>) -> Self {
+impl Default for ScrollWatch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ScrollWatch {
+    pub fn new() -> Self {
         Self {
-            base: div(),
-            id: id.into(),
-            bar: bar.clone(),
-            children: Vec::new(),
-            present_surface: true,
-            owns_scroll: true,
-            bottom_inset: Pixels::ZERO,
-            fade_top: Pixels::ZERO,
+            at: Live::new([0.; 4]),
+            away: Live::new(0.),
+            lift: Live::new([0., TUCKED]),
+            start: Live::new(DIMMED),
+            end: Live::new(1.),
         }
     }
 
-    /// A region whose child scrolls itself, a `uniform_list` above all. The surface still
-    /// carries the wheel, the middle button and the bar, and leaves the offset to the handle
-    /// the child tracks.
-    #[track_caller]
-    pub fn listing(id: impl Into<ElementId>, bar: &Entity<Scrollbar>) -> Self {
-        Self {
-            owns_scroll: false,
-            ..Self::new(id, bar)
+    /// Follows the vertical scroll viewport `e`. `reach` is how far it has to scroll before the
+    /// return button shows.
+    pub fn vertical(&self, e: El, reach: f32) -> El {
+        let watch = self.clone();
+        e.on_scroll_offset(move |at: ScrollPos| {
+            watch.at.set([at.offset[1], at.max[1], at.viewport[1], 0.]);
+            let away = at.offset[1] > reach;
+            watch.away.set(match away {
+                true => 1.,
+                false => 0.,
+            });
+            watch.lift.set(match away {
+                true => [0., 0.],
+                false => [0., TUCKED],
+            });
+        })
+    }
+
+    /// Follows the sideways scroll viewport `e`, dimming the paging arrows at its ends.
+    pub fn horizontal(&self, e: El) -> El {
+        let watch = self.clone();
+        e.on_scroll_offset(move |at: ScrollPos| {
+            let [offset, max, viewport] = [at.offset[0], at.max[0], at.viewport[0]];
+            watch.at.set([offset, max, viewport, 0.]);
+            watch.start.set(match offset <= STEADY {
+                true => DIMMED,
+                false => 1.,
+            });
+            watch.end.set(match offset >= max - STEADY {
+                true => DIMMED,
+                false => 1.,
+            });
+        })
+    }
+
+    /// How far the viewport is scrolled, in points.
+    pub fn offset(&self) -> f32 {
+        self.at.get()[0]
+    }
+
+    /// How far the viewport can scroll at most.
+    pub fn max(&self) -> f32 {
+        self.at.get()[1]
+    }
+
+    /// The viewport's length along the watched axis.
+    pub fn viewport(&self) -> f32 {
+        self.at.get()[2]
+    }
+
+    /// Glides the sideways viewport keyed `key` one viewport on or back, clamped to its ends.
+    pub fn page(&self, key: &str, forward: bool, tx: &mut Tx) {
+        let step = match forward {
+            true => self.viewport(),
+            false => -self.viewport(),
+        };
+        let to = (self.offset() + step).clamp(0., self.max().max(0.));
+        tx.scroll_to_with(key.to_owned(), to, 0., GLIDE);
+    }
+
+    /// Glides the vertical viewport keyed `key` back to its top.
+    pub fn rewind(&self, key: &str, tx: &mut Tx) {
+        tx.scroll_to_with(key.to_owned(), 0., 0., GLIDE);
+    }
+}
+
+/// The scroll position each page was left at, so going back lands where the listener was. Pages
+/// are named by the caller (a route, say). The oldest are forgotten past a bound.
+#[derive(Clone, Debug, Default)]
+pub struct ScrollMemory {
+    offsets: HashMap<String, f32>,
+    order: VecDeque<String>,
+}
+
+impl ScrollMemory {
+    /// Keeps `offset` for `page`, as the page is left.
+    pub fn remember(&mut self, page: impl Into<String>, offset: f32) {
+        let page = page.into();
+        if !offset.is_finite() {
+            return;
+        }
+        self.order.retain(|kept| *kept != page);
+        self.order.push_back(page.clone());
+        self.offsets.insert(page, offset.max(0.));
+        while self.order.len() > PAGES {
+            if let Some(oldest) = self.order.pop_front() {
+                self.offsets.remove(&oldest);
+            }
         }
     }
 
-    /// Lets a caller merge the scroll presentation into child transforms, avoiding nested
-    /// compositor sampling when those children already have their own spring motion.
-    pub fn manual_presentation(mut self) -> Self {
-        self.present_surface = false;
+    /// Where `page` was left, if it was.
+    pub fn recall(&self, page: &str) -> Option<f32> {
+        self.offsets.get(page).copied()
+    }
+
+    /// Puts the vertical viewport keyed `key` back where `page` was left, without a glide, as a
+    /// page comes back.
+    pub fn restore(&self, page: &str, key: &str, tx: &mut Tx) {
+        if let Some(offset) = self.recall(page) {
+            tx.scroll_to_instant(key.to_owned(), 0., offset);
+        }
+    }
+
+    pub fn forget(&mut self, page: &str) {
+        self.offsets.remove(page);
+        self.order.retain(|kept| kept != page);
+    }
+}
+
+/// A sideways rail of cards under a heading, with arrows that glide it a viewport at a time. The
+/// arrows dim at the rail's ends as it scrolls, without the view running again.
+pub struct Shelf {
+    key: String,
+    watch: ScrollWatch,
+    heading: Option<El>,
+    items: Vec<El>,
+    gap: f32,
+    inset: Option<f32>,
+    height: Option<f32>,
+    arrows: bool,
+}
+
+impl Shelf {
+    /// `key` names the rail's scroll viewport, which the arrows glide; `watch` lives in the
+    /// state that owns the shelf.
+    pub fn new(key: impl Into<String>, watch: &ScrollWatch) -> Self {
+        Self {
+            key: key.into(),
+            watch: watch.clone(),
+            heading: None,
+            items: Vec::new(),
+            gap: RAIL_GAP,
+            inset: None,
+            height: None,
+            arrows: true,
+        }
+    }
+
+    pub fn heading(mut self, heading: El) -> Self {
+        self.heading = Some(heading);
         self
     }
 
-    /// Adds room after the scrollable content so its final item can rise above an overlaid
-    /// control. This is added to caller padding, rather than replacing it. A self-scrolling
-    /// listing keeps only its scrollbar clear; its list must provide its own trailing space.
-    pub fn bottom_inset(mut self, inset: Pixels) -> Self {
-        self.bottom_inset = inset.max(Pixels::ZERO);
+    /// The cards, each keyed by the caller, in order.
+    pub fn items(mut self, items: impl IntoIterator<Item = El>) -> Self {
+        self.items = items.into_iter().collect();
         self
     }
 
-    /// Fades content out across a band of `height` along the top, so what scrolls up under a
-    /// control above the region melts away instead of being cut off at a hard line. The content
-    /// starts below the band, so nothing is faded while the region is at rest.
-    pub fn fade_top(mut self, height: Pixels) -> Self {
-        self.fade_top = height.max(Pixels::ZERO);
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.gap = gap;
         self
     }
-}
 
-impl Styled for Scroller {
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
+    /// The room before the first card and after the last, matching the page's side inset.
+    pub fn inset(mut self, inset: f32) -> Self {
+        self.inset = Some(inset);
+        self
     }
-}
 
-impl InteractiveElement for Scroller {
-    fn interactivity(&mut self) -> &mut Interactivity {
-        self.base.interactivity()
+    /// The rail's height, so a shelf of tiles keeps its room while its cards load.
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = Some(height);
+        self
     }
-}
 
-impl ParentElement for Scroller {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.children.extend(elements);
+    /// Whether the paging arrows show: leave them off when every card fits.
+    pub fn arrows(mut self, arrows: bool) -> Self {
+        self.arrows = arrows;
+        self
     }
-}
 
-impl RenderOnce for Scroller {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    pub fn build<S: 'static>(self, theme: &Theme) -> El {
         let Self {
-            mut base,
-            id,
-            bar,
-            children,
-            present_surface,
-            owns_scroll,
-            bottom_inset,
-            fade_top,
+            key,
+            watch,
+            heading,
+            items,
+            gap,
+            inset,
+            height,
+            arrows,
         } = self;
-
-        bar.update(cx, |bar, cx| bar.set_track_bottom(bottom_inset, cx));
-        let scroll = bar.read(cx).scroll().clone();
-        let overrides = std::mem::take(base.style());
-        bar.read(cx).sync();
-        let presentation = bar.read(cx).presentation();
-        let gliding = bar.clone();
-
-        let mut surface = middle_scroll(base, &bar)
-            .id(id)
-            .size_full()
-            .when(owns_scroll, |surface| {
-                surface
-                    .overflow_y_scroll()
-                    .restrict_scroll_to_axis()
-                    .track_scroll(&scroll)
-            })
-            .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
-                match event.delta.precise() {
-                    true => gliding.update(cx, |bar, _| bar.stirred()),
-                    false => gliding.update(cx, |bar, _| bar.nudge(window)),
-                }
-            })
-            .children(children);
-
-        surface.style().refine(&overrides);
-        if owns_scroll && bottom_inset > Pixels::ZERO {
-            let padding = surface
-                .style()
-                .padding
-                .bottom
-                .unwrap_or_default()
-                .to_pixels(Pixels::ZERO.into(), window.rem_size());
-            surface = surface.pb(padding + bottom_inset);
-        }
-        if fade_top > Pixels::ZERO {
-            let padding = surface
-                .style()
-                .padding
-                .top
-                .unwrap_or_default()
-                .to_pixels(Pixels::ZERO.into(), window.rem_size());
-            surface = surface.pt(padding + fade_top);
-        }
-        if present_surface {
-            surface = surface.layer_translate(presentation);
+        let inset = inset.unwrap_or(theme.metrics.inset);
+        let count = items.len();
+        let cards = items
+            .into_iter()
+            .enumerate()
+            .map(|(index, item)| item.position_in_set(index + 1, count));
+        let content = row().gap(gap).px(inset).children(cards);
+        let mut rail = watch.horizontal(
+            row()
+                .key(key.clone())
+                .role("list")
+                .w_full()
+                .scroll_x()
+                .child(content),
+        );
+        if let Some(height) = height {
+            rail = rail.h(height);
         }
 
-        div()
-            .relative()
-            .size_full()
-            .min_h_0()
-            .child(
-                div()
-                    .size_full()
-                    .when(fade_top > Pixels::ZERO && effects(), |this| {
-                        this.fade_edges(fade_top, Pixels::ZERO)
-                    })
-                    .child(surface),
-            )
-            .child(bar)
+        let mut head = row()
+            .w_full()
+            .px(inset)
+            .gap(theme.metrics.pad * 2.)
+            .items_end()
+            .justify_between();
+        if let Some(heading) = heading {
+            head = head.child(heading);
+        }
+        if arrows {
+            head = head.child(
+                row()
+                    .gap(theme.metrics.pad / 2.)
+                    .child(arrow::<S>(&key, &watch, false, theme))
+                    .child(arrow::<S>(&key, &watch, true, theme)),
+            );
+        }
+        rune::col()
+            .w_full()
+            .gap(theme.metrics.pad * 1.5)
+            .child(head)
+            .child(rail)
     }
 }
 
-/// Adds browser-style middle-button auto-scrolling to a scrollable surface. A middle click
-/// turns the mode on until the next press of any button. A middle press that is held and
-/// dragged scrolls only while held, and `Root` ends it on the release. A middle press that a
-/// child handles itself, such as a text field pasting on Linux, does not start it. A middle
-/// press never moves focus or shows a pressed style on the children it passes through.
-pub fn middle_scroll(surface: Div, bar: &Entity<Scrollbar>) -> Div {
-    surface
-        .capture_any_mouse_down(|event, window, cx| {
-            if event.button == MouseButton::Middle {
-                window.prevent_default();
-            } else if cancel_middle_scroll(cx) {
-                window.refresh();
-                cx.stop_propagation();
-            }
-        })
-        .on_mouse_down(MouseButton::Middle, {
-            let gliding = bar.clone();
-            move |event, window, cx| {
-                let started = gliding.update(cx, |bar, cx| {
-                    bar.middle_scroll_start(event.position, window, cx)
-                });
-                if started {
-                    activate_middle_scroll(&gliding, cx);
-                } else {
-                    cancel_middle_scroll(cx);
-                }
-                window.refresh();
-                cx.stop_propagation();
-            }
-        })
-        .on_mouse_move({
-            let gliding = bar.clone();
-            move |event: &MouseMoveEvent, window, cx| {
-                gliding.update(cx, |bar, cx| {
-                    bar.middle_scroll_move(event.position, window, cx)
-                });
-            }
-        })
-}
-
-/// The shape every control that floats over a scrolling region takes: a round bordered pill,
-/// centred along the bottom. It swallows clicks meant for it rather than the rows behind, and
-/// still lets the wheel through. The caller places it with `bottom_*`.
-pub fn perched(button: Button, cx: &App) -> Div {
-    let theme = *cx.theme();
-    let button = match blurring(cx) {
-        true => glass(button, cx),
-        false => button.bg(theme.popover),
+/// One paging arrow of a shelf, dimmed while the rail sits at the end it points to.
+fn arrow<S: 'static>(key: &str, watch: &ScrollWatch, forward: bool, theme: &Theme) -> El {
+    let (side, glyph, tip, dim) = match forward {
+        true => (
+            "next",
+            "icons/chevron-right.svg",
+            t!("common-next"),
+            &watch.end,
+        ),
+        false => (
+            "previous",
+            "icons/chevron-left.svg",
+            t!("common-previous"),
+            &watch.start,
+        ),
     };
+    let rail = key.to_owned();
+    let paging = watch.clone();
+    let button = Button::new(format!("{key}-{side}"))
+        .small()
+        .outline()
+        .icon(glyph)
+        .tooltip(tip.to_string())
+        .on_press_tx(move |_: &mut S, tx: &mut Tx| paging.page(&rail, forward, tx))
+        .build(theme);
+    button.live_opacity(dim.smooth(Springs::QUICK))
+}
 
-    div()
-        .absolute()
-        .bottom(PERCH)
-        .w_full()
-        .flex()
+/// The shape every control that floats over a scrolling region takes: centred along the bottom,
+/// `PERCH` points up. Put it in a parent that also holds the region.
+pub fn perched(control: El) -> El {
+    row()
+        .pin(Some(0.), None, Some(0.), Some(PERCH))
         .justify_center()
-        .child(
-            div().flex().flex_none().block_mouse_except_scroll().child(
-                button
-                    .ghost()
-                    .small()
-                    .rounded_full()
-                    .border_1()
-                    .border_color(theme.border),
-            ),
-        )
+        .child(control)
 }
 
-/// The room a scrolling region has to keep under its last row for a perched control to float in
-/// without covering it.
-pub fn perch_room(cx: &App) -> Pixels {
-    PERCH * 2. + cx.theme().metrics.control_small
+/// The room a scrolling region keeps under its last row for a perched control to float in without
+/// covering it.
+pub fn perch_room(theme: &Theme) -> f32 {
+    PERCH * 2. + theme.metrics.control_small
 }
 
-/// A perched button that glides a scrolling region back to its top. It stays away until the
-/// region has been scrolled far enough for the trip to be worth one. The parent has to be
-/// `relative`.
-pub fn return_top(id: impl Into<ElementId>, bar: &Entity<Scrollbar>, cx: &App) -> Option<Div> {
-    return_to(id, bar, Pixels::ZERO, "nav-return-top", cx)
-}
-
-/// A perched button that glides a scrolling region back to a resting offset, in either
-/// direction. It stays away until the region has drifted far enough from that spot for the trip
-/// to be worth one. `goal` is how far down the region should sit, in the positive pixels
-/// `Scrollbar::offset` reports, and is turned into gpui's negative offset before it is aimed at.
-/// `tooltip` is an i18n key. The parent has to be `relative`.
-pub fn return_to(
-    id: impl Into<ElementId>,
-    bar: &Entity<Scrollbar>,
-    goal: Pixels,
-    tooltip: &'static str,
-    cx: &App,
-) -> Option<Div> {
-    let viewport = bar.read(cx).viewport();
-    let reach = (cx.theme().metrics.list_row * REACH).min(viewport / 2.);
-    if viewport <= Pixels::ZERO || (bar.read(cx).offset() - goal).abs() < reach {
-        return None;
+/// A perched button that glides the vertical viewport keyed `key` back to its top. It slides in
+/// once `watch` (following that viewport with [`ScrollWatch::vertical`] and a reach from
+/// [`return_reach`]) reports the page scrolled far enough, and out again near the top, without
+/// the view running. Put it in a parent that also holds the viewport.
+pub fn return_top<S: 'static>(key: &str, watch: &ScrollWatch, theme: &Theme) -> El {
+    let rail = key.to_owned();
+    let rewind = watch.clone();
+    let mut button = Button::new(format!("{key}-return-top"))
+        .secondary()
+        .small()
+        .icon("icons/undo-2.svg")
+        .tooltip(t!("nav-return-top").to_string())
+        .on_press_tx(move |_: &mut S, tx: &mut Tx| rewind.rewind(&rail, tx))
+        .build(theme);
+    if blurring(theme) {
+        button = glass(button, theme);
     }
-    let bar = bar.clone();
+    let shown = el()
+        .live_opacity(watch.away.smooth(Springs::BASE))
+        .live_offset(watch.lift.smooth(Springs::BASE))
+        .child(button);
+    perched(shown)
+}
 
-    Some(perched(
-        Button::new(id)
-            .secondary()
-            .icon("icons/undo-2.svg")
-            .tooltip(tooltip)
-            .on_click(move |_, window, cx| {
-                bar.update(cx, |bar, _| bar.aim(-goal, window));
-            }),
-        cx,
-    ))
+/// How far a page scrolls before its return button shows: three list rows, or half the viewport
+/// when that is less.
+pub fn return_reach(theme: &Theme, viewport: f32) -> f32 {
+    let reach = theme.metrics.list_row * REACH;
+    match viewport > 0. {
+        true => reach.min(viewport / 2.),
+        false => reach,
+    }
 }

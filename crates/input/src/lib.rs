@@ -1,200 +1,103 @@
-use gpui::{KeyBinding, actions};
-use ui::{
-    Activate, Backspace, BackspaceToStart, BackspaceWord, Copy, Cut, Delete, DeleteToEnd,
-    DeleteWord, Deselect, Dismiss, End, FORM_CONTEXT, Home, INPUT_CONTEXT, Left, MENU_CONTEXT,
-    Paste, Remove, Right, SelectAll, SelectEnd, SelectHome, SelectLeft, SelectNext, SelectPrevious,
-    SelectRight, SelectWordLeft, SelectWordRight, ShowCharacterPalette, Space, Submit,
-    TABLE_CONTEXT, WordLeft, WordRight,
-};
+//! The app's keyboard shortcuts. Text editing, list and menu navigation are Rune's own (its
+//! fields, focus groups and modals); what is left here are the shortcuts that act on the app.
 
-actions!(
-    sonora,
-    [
-        Quit,
-        SignOut,
-        Refresh,
-        TogglePlayback,
-        SongPrevious,
-        SongNext,
-        ToggleShuffle,
-        ToggleRepeat,
-        NavigateBack,
-        NavigateForward,
-        OpenFilter,
-        OpenSearch,
-        OpenSettings,
-        ToggleFullscreen,
-        ToggleQueue,
-        ToggleLyrics,
-        ShowMembers,
-        CloseWindow,
-        MinimizeWindow,
-        ZoomWindow,
-        ToggleWindowFullscreen,
-        Hide,
-        HideOthers,
-        ShowAll,
-        IncreaseFontSize,
-        DecreaseFontSize,
-        ResetFontSize,
-        Undo,
-        Redo
-    ]
-);
+use rune::{Chord, KeyEvent, Tx};
 
-pub const WORKSPACE_CONTEXT: &str = "Workspace";
-pub const SEARCH_CONTEXT: &str = "Search";
+/// Something a shortcut does, whatever has focus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Action {
+    Quit,
+    Refresh,
+    TogglePlayback,
+    SongPrevious,
+    SongNext,
+    NavigateBack,
+    NavigateForward,
+    OpenFilter,
+    OpenSearch,
+    OpenSettings,
+    ToggleFullscreen,
+    ToggleWindowFullscreen,
+    CloseWindow,
+    MinimizeWindow,
+    IncreaseFontSize,
+    DecreaseFontSize,
+    ResetFontSize,
+    Undo,
+    Redo,
+    Dismiss,
+}
 
-/// Every key binding, in precedence order: GPUI prefers the deepest matching context and,
-/// within one, the binding registered last, so the macOS set at the end overrides the shared one.
-pub fn bindings() -> Vec<KeyBinding> {
-    let mut bindings = shared();
+/// Where a shortcut applies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reach {
+    /// Whatever has focus.
+    Anywhere,
+    /// Only while no text field has the keyboard, so typing a space or an `f` types it.
+    AwayFromText,
+}
+
+/// One shortcut: its chord, what it does and where.
+pub struct Binding {
+    pub chord: Chord,
+    pub action: Action,
+    pub reach: Reach,
+}
+
+/// Every shortcut, platform ones included. `mod` is ⌘ on macOS and Ctrl elsewhere.
+pub fn bindings() -> Vec<Binding> {
+    use Action::*;
+    use Reach::*;
+
+    let mut table = vec![
+        ("alt+left", NavigateBack, Anywhere),
+        ("alt+right", NavigateForward, Anywhere),
+        ("mod+q", Quit, Anywhere),
+        ("mod+r", Refresh, Anywhere),
+        ("mod+f", OpenFilter, Anywhere),
+        ("mod+shift+f", OpenSearch, Anywhere),
+        ("mod+,", OpenSettings, Anywhere),
+        ("mod+=", IncreaseFontSize, Anywhere),
+        ("mod+plus", IncreaseFontSize, Anywhere),
+        ("mod+-", DecreaseFontSize, Anywhere),
+        ("mod+0", ResetFontSize, Anywhere),
+        ("space", TogglePlayback, AwayFromText),
+        ("ctrl+left", SongPrevious, AwayFromText),
+        ("ctrl+right", SongNext, AwayFromText),
+        ("f", ToggleFullscreen, AwayFromText),
+        ("f11", ToggleWindowFullscreen, Anywhere),
+        ("mod+z", Undo, AwayFromText),
+        ("mod+shift+z", Redo, AwayFromText),
+        ("escape", Dismiss, Anywhere),
+    ];
     if cfg!(target_os = "macos") {
-        bindings.extend(macos());
+        table.extend([
+            ("mod+w", CloseWindow, Anywhere),
+            ("mod+m", MinimizeWindow, Anywhere),
+            ("ctrl+mod+f", ToggleWindowFullscreen, Anywhere),
+            ("mod+[", NavigateBack, Anywhere),
+            ("mod+]", NavigateForward, Anywhere),
+        ]);
+    } else {
+        table.push(("ctrl+y", Redo, AwayFromText));
     }
+    table
+        .into_iter()
+        .filter_map(|(chord, action, reach)| {
+            Some(Binding {
+                chord: Chord::parse(chord).ok()?,
+                action,
+                reach,
+            })
+        })
+        .collect()
+}
+
+/// The action a key press asks for, if any. `typing` says whether a text field has the keyboard.
+pub fn action(bindings: &[Binding], event: &KeyEvent, tx: &Tx, typing: bool) -> Option<Action> {
     bindings
-}
-
-/// The bindings every platform gets; both `cmd-` and `ctrl-` are registered for each shortcut.
-fn shared() -> Vec<KeyBinding> {
-    let editing = Some(INPUT_CONTEXT);
-    let away_from_text = format!("{WORKSPACE_CONTEXT} && !{INPUT_CONTEXT}");
-    let table = Some(TABLE_CONTEXT);
-    let form = Some(FORM_CONTEXT);
-    let menu = Some(MENU_CONTEXT);
-    let search = Some(SEARCH_CONTEXT);
-    let browsing = format!(
-        "{WORKSPACE_CONTEXT} && !{INPUT_CONTEXT} && !{MENU_CONTEXT} && !{FORM_CONTEXT} && !{TABLE_CONTEXT} && !{SEARCH_CONTEXT}"
-    );
-    let results = format!("{SEARCH_CONTEXT} && !{INPUT_CONTEXT}");
-    let typing = format!("{SEARCH_CONTEXT} > {INPUT_CONTEXT}");
-
-    vec![
-        KeyBinding::new("down", SelectNext, table),
-        KeyBinding::new("up", SelectPrevious, table),
-        KeyBinding::new("shift-down", SelectNext, table),
-        KeyBinding::new("shift-up", SelectPrevious, table),
-        KeyBinding::new("enter", Activate, table),
-        KeyBinding::new("delete", Remove, table),
-        KeyBinding::new("escape", Deselect, table),
-        KeyBinding::new("down", SelectNext, Some(&browsing)),
-        KeyBinding::new("up", SelectPrevious, Some(&browsing)),
-        KeyBinding::new("shift-down", SelectNext, Some(&browsing)),
-        KeyBinding::new("shift-up", SelectPrevious, Some(&browsing)),
-        KeyBinding::new("enter", Activate, Some(&browsing)),
-        KeyBinding::new("delete", Remove, Some(&browsing)),
-        KeyBinding::new("escape", Deselect, Some(&browsing)),
-        KeyBinding::new("down", SelectNext, search),
-        KeyBinding::new("up", SelectPrevious, search),
-        KeyBinding::new("left", SelectLeft, Some(&results)),
-        KeyBinding::new("right", SelectRight, Some(&results)),
-        KeyBinding::new("enter", Activate, Some(&results)),
-        KeyBinding::new("escape", Deselect, Some(&results)),
-        KeyBinding::new("enter", Submit, Some(&typing)),
-        KeyBinding::new("down", SelectNext, menu),
-        KeyBinding::new("up", SelectPrevious, menu),
-        KeyBinding::new("tab", SelectNext, menu),
-        KeyBinding::new("shift-tab", SelectPrevious, menu),
-        KeyBinding::new("enter", Submit, menu),
-        KeyBinding::new("alt-left", NavigateBack, None),
-        KeyBinding::new("alt-right", NavigateForward, None),
-        KeyBinding::new("cmd-q", Quit, None),
-        KeyBinding::new("ctrl-q", Quit, None),
-        KeyBinding::new("cmd-r", Refresh, None),
-        KeyBinding::new("ctrl-r", Refresh, None),
-        KeyBinding::new("cmd-f", OpenFilter, None),
-        KeyBinding::new("ctrl-f", OpenFilter, None),
-        KeyBinding::new("shift-cmd-f", OpenSearch, None),
-        KeyBinding::new("shift-ctrl-f", OpenSearch, None),
-        KeyBinding::new("ctrl-,", OpenSettings, None),
-        KeyBinding::new("cmd-,", OpenSettings, None),
-        KeyBinding::new("cmd-=", IncreaseFontSize, None),
-        KeyBinding::new("ctrl-=", IncreaseFontSize, None),
-        KeyBinding::new("cmd-+", IncreaseFontSize, None),
-        KeyBinding::new("ctrl-+", IncreaseFontSize, None),
-        KeyBinding::new("cmd--", DecreaseFontSize, None),
-        KeyBinding::new("ctrl--", DecreaseFontSize, None),
-        KeyBinding::new("cmd-0", ResetFontSize, None),
-        KeyBinding::new("ctrl-0", ResetFontSize, None),
-        KeyBinding::new("space", TogglePlayback, Some(&away_from_text)),
-        KeyBinding::new("ctrl-left", SongPrevious, Some(&away_from_text)),
-        KeyBinding::new("ctrl-right", SongNext, Some(&away_from_text)),
-        KeyBinding::new("f", ToggleFullscreen, Some(&away_from_text)),
-        KeyBinding::new("f11", ToggleWindowFullscreen, None),
-        KeyBinding::new("cmd-z", Undo, Some(&away_from_text)),
-        KeyBinding::new("ctrl-z", Undo, Some(&away_from_text)),
-        KeyBinding::new("shift-cmd-z", Redo, Some(&away_from_text)),
-        KeyBinding::new("shift-ctrl-z", Redo, Some(&away_from_text)),
-        KeyBinding::new("ctrl-y", Redo, Some(&away_from_text)),
-        KeyBinding::new("escape", Dismiss, Some(WORKSPACE_CONTEXT)),
-        KeyBinding::new("backspace", Backspace, editing),
-        KeyBinding::new("ctrl-backspace", BackspaceWord, editing),
-        KeyBinding::new("delete", Delete, editing),
-        KeyBinding::new("ctrl-delete", DeleteWord, editing),
-        KeyBinding::new("left", Left, editing),
-        KeyBinding::new("right", Right, editing),
-        KeyBinding::new("ctrl-left", WordLeft, editing),
-        KeyBinding::new("ctrl-right", WordRight, editing),
-        KeyBinding::new("shift-left", SelectLeft, editing),
-        KeyBinding::new("shift-right", SelectRight, editing),
-        KeyBinding::new("shift-ctrl-left", SelectWordLeft, editing),
-        KeyBinding::new("shift-ctrl-right", SelectWordRight, editing),
-        KeyBinding::new("home", Home, editing),
-        KeyBinding::new("end", End, editing),
-        KeyBinding::new("cmd-left", Home, editing),
-        KeyBinding::new("cmd-right", End, editing),
-        KeyBinding::new("shift-home", SelectHome, editing),
-        KeyBinding::new("shift-end", SelectEnd, editing),
-        KeyBinding::new("shift-cmd-left", SelectHome, editing),
-        KeyBinding::new("shift-cmd-right", SelectEnd, editing),
-        KeyBinding::new("cmd-a", SelectAll, editing),
-        KeyBinding::new("ctrl-a", SelectAll, editing),
-        KeyBinding::new("cmd-v", Paste, editing),
-        KeyBinding::new("ctrl-v", Paste, editing),
-        KeyBinding::new("cmd-c", Copy, editing),
-        KeyBinding::new("ctrl-c", Copy, editing),
-        KeyBinding::new("cmd-x", Cut, editing),
-        KeyBinding::new("ctrl-x", Cut, editing),
-        KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, editing),
-        KeyBinding::new("space", Space, editing),
-        KeyBinding::new("escape", Dismiss, editing),
-        KeyBinding::new("enter", Submit, form),
-        KeyBinding::new("escape", Dismiss, form),
-    ]
-}
-
-/// What a Mac user expects on top of the shared set: the standard window and application
-/// shortcuts, `cmd-[`/`cmd-]` history, and the Cocoa text-field conventions, `alt` for words,
-/// `cmd` for the line and the Emacs control keys.
-fn macos() -> Vec<KeyBinding> {
-    let editing = Some(INPUT_CONTEXT);
-
-    vec![
-        KeyBinding::new("cmd-w", CloseWindow, None),
-        KeyBinding::new("cmd-m", MinimizeWindow, None),
-        KeyBinding::new("ctrl-cmd-f", ToggleWindowFullscreen, None),
-        KeyBinding::new("cmd-h", Hide, None),
-        KeyBinding::new("alt-cmd-h", HideOthers, None),
-        KeyBinding::new("cmd-[", NavigateBack, None),
-        KeyBinding::new("cmd-]", NavigateForward, None),
-        KeyBinding::new("alt-left", WordLeft, editing),
-        KeyBinding::new("alt-right", WordRight, editing),
-        KeyBinding::new("shift-alt-left", SelectWordLeft, editing),
-        KeyBinding::new("shift-alt-right", SelectWordRight, editing),
-        KeyBinding::new("alt-backspace", BackspaceWord, editing),
-        KeyBinding::new("alt-delete", DeleteWord, editing),
-        KeyBinding::new("cmd-backspace", BackspaceToStart, editing),
-        KeyBinding::new("cmd-delete", DeleteToEnd, editing),
-        KeyBinding::new("cmd-up", Home, editing),
-        KeyBinding::new("cmd-down", End, editing),
-        KeyBinding::new("shift-cmd-up", SelectHome, editing),
-        KeyBinding::new("shift-cmd-down", SelectEnd, editing),
-        KeyBinding::new("ctrl-a", Home, editing),
-        KeyBinding::new("ctrl-e", End, editing),
-        KeyBinding::new("ctrl-b", Left, editing),
-        KeyBinding::new("ctrl-f", Right, editing),
-        KeyBinding::new("ctrl-h", Backspace, editing),
-        KeyBinding::new("ctrl-d", Delete, editing),
-        KeyBinding::new("ctrl-k", DeleteToEnd, editing),
-    ]
+        .iter()
+        .filter(|binding| !typing || binding.reach == Reach::Anywhere)
+        .find(|binding| binding.chord.matches_tx(event, tx))
+        .map(|binding| binding.action)
 }

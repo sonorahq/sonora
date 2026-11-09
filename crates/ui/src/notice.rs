@@ -1,41 +1,42 @@
-use gpui::accesskit::Role;
-use gpui::prelude::*;
-use gpui::{
-    App, Div, ElementId, FontWeight, Interactivity, Pixels, SharedString, StyleRefinement, Window,
-    div, px, svg,
-};
+//! A framed message with an icon and a title, for something the page has to say about itself:
+//! a failed load, a provider that is signed out.
 
+use rune::{El, TextStyle, col, icon, row, text};
+
+use crate::label::Weight;
 use crate::metrics::Text;
-use crate::theme::ActiveTheme as _;
+use crate::paint::rems;
+use crate::theme::Theme;
 
-const ICON: Pixels = px(18.);
-const REACH: Pixels = px(520.);
+const ICON: f32 = 18.;
+const REACH: f32 = 520.;
+const BORDER: f32 = 1.;
+/// How much of the secondary fill shows through the frame.
+const FILL: f32 = 0.45;
 
-#[derive(IntoElement)]
 pub struct Notice {
-    base: Div,
-    title: SharedString,
-    message: SharedString,
-    icon: SharedString,
+    title: String,
+    message: String,
+    icon: String,
     failed: bool,
     centered: bool,
-    /// The id under which the notice reaches screen readers, which it does only once given one.
-    spoken: Option<ElementId>,
+    /// The key under which the notice reaches screen readers as one group.
+    spoken: Option<String>,
 }
 
 impl Notice {
-    pub fn new(title: impl Into<SharedString>, message: impl Into<SharedString>) -> Self {
+    pub fn new(title: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
-            base: div(),
             title: title.into(),
             message: message.into(),
-            icon: SharedString::from("icons/circle-alert.svg"),
+            icon: "icons/circle-alert.svg".to_owned(),
             failed: false,
             centered: false,
             spoken: None,
         }
     }
 
+    /// Tints the icon in the danger colour, for something that went wrong.
     pub fn failed(mut self) -> Self {
         self.failed = true;
         self
@@ -46,98 +47,71 @@ impl Notice {
         self
     }
 
-    pub fn icon(mut self, path: impl Into<SharedString>) -> Self {
+    pub fn icon(mut self, path: impl Into<String>) -> Self {
         self.icon = path.into();
         self
     }
 
-    /// Exposes the notice to screen readers as a group named by its title and described by its
-    /// message, under the element id `id`. Without it both are drawn but never read.
-    pub fn spoken(mut self, id: impl Into<ElementId>) -> Self {
-        self.spoken = Some(id.into());
+    /// Exposes the notice to screen readers as one group named by its title and described by
+    /// its message, under `key`. Without it the title and message are read as plain text.
+    pub fn spoken(mut self, key: impl Into<String>) -> Self {
+        self.spoken = Some(key.into());
         self
     }
-}
 
-impl Styled for Notice {
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
-    }
-}
-
-impl InteractiveElement for Notice {
-    fn interactivity(&mut self) -> &mut Interactivity {
-        self.base.interactivity()
-    }
-}
-
-impl RenderOnce for Notice {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let Self {
-            mut base,
-            title,
-            message,
-            icon,
-            failed,
-            centered,
-            spoken,
-        } = self;
-
-        let theme = *cx.theme();
-        let tint = match failed {
+    pub fn build(self, theme: &Theme) -> El {
+        let tint = match self.failed {
             true => theme.danger,
             false => theme.muted_foreground,
         };
-        let overrides = std::mem::take(base.style());
-
-        let head = div()
-            .flex()
-            .items_center()
-            .gap_2()
+        let spoken = self.spoken.is_some();
+        let hide = |e: El| match spoken {
+            true => e.a11y_hidden(),
+            false => e,
+        };
+        let align = match self.centered {
+            true => rune::Align::Center,
+            false => rune::Align::Start,
+        };
+        let head = row()
+            .center_y()
+            .gap(rems(theme, 0.5))
             .child(
-                svg()
-                    .path(icons::path(icon))
-                    .size(ICON)
-                    .flex_none()
-                    .text_color(tint),
+                icon(icons::get(&self.icon), ICON)
+                    .color(tint.color())
+                    .a11y_hidden(),
             )
-            .child(
-                div()
-                    .text_size(theme.text(Text::Body))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(theme.foreground)
-                    .child(title.clone()),
-            );
-
-        let mut notice = base
-            .flex()
-            .flex_col()
-            .gap_2()
-            .min_w_0()
+            .child(hide(
+                text(self.title.clone())
+                    .font(TextStyle::new(theme.text(Text::Body), Weight::MEDIUM))
+                    .color(theme.foreground.color()),
+            ));
+        let mut notice = col()
+            .gap(rems(theme, 0.5))
+            .min_w(0.)
             .max_w(REACH)
-            .p(theme.metrics.pad * 1.5)
-            .rounded(theme.radius)
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.secondary.opacity(0.45))
-            .text_size(theme.text(Text::Small))
-            .when(centered, |this| this.items_center().text_center())
+            .padding(theme.metrics.pad * 1.5)
+            .radius(theme.radius)
+            .border(BORDER, theme.border.color())
+            .fill(theme.secondary.opacity(FILL).color())
             .child(head)
-            .child(
-                div()
-                    .text_color(theme.muted_foreground)
-                    .child(message.clone()),
-            );
-
-        notice.style().refine(&overrides);
-        match spoken {
-            Some(id) => notice
-                .id(id)
-                .role(Role::Group)
-                .aria_label(title)
-                .aria_description(message)
-                .into_any_element(),
-            None => notice.into_any_element(),
+            .child(hide(
+                text(self.message.clone())
+                    .font(TextStyle::new(theme.text(Text::Small), Weight::NORMAL))
+                    .color(theme.muted_foreground.color())
+                    .align(align)
+                    .wrap(),
+            ));
+        if self.centered {
+            notice = notice.items_center();
+        }
+        match self.spoken {
+            Some(key) => notice
+                .key(key)
+                .role("group")
+                .label(self.title)
+                .description(self.message),
+            None => notice,
         }
     }
 }

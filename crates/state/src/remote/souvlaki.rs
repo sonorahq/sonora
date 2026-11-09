@@ -2,16 +2,14 @@ use std::ffi::c_void;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
-use gpui::App;
 use music::Track;
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
     SeekDirection,
 };
-use tokio::sync::mpsc;
 
 use super::{BUS_NAME, Command, DISPLAY_NAME};
-use crate::{PlaybackState, Repeat};
+use crate::{Link, PlaybackState, Repeat};
 
 const SEEK_STEP: Duration = Duration::from_secs(5);
 
@@ -22,11 +20,9 @@ pub struct Controls {
 }
 
 impl Controls {
-    pub fn new(
-        hwnd: Option<*mut c_void>,
-        commands: mpsc::UnboundedSender<Command>,
-        _cx: &mut App,
-    ) -> Result<Self> {
+    /// Claims the platform's media controls. Every request they make is posted to the store
+    /// through `link`, from whatever thread the platform calls back on.
+    pub fn new(hwnd: Option<*mut c_void>, link: Link) -> Result<Self> {
         let config = PlatformConfig {
             dbus_name: BUS_NAME,
             display_name: DISPLAY_NAME,
@@ -35,7 +31,7 @@ impl Controls {
         let mut controls = MediaControls::new(config).map_err(|error| anyhow!("{error:?}"))?;
         if let Err(error) = controls.attach(move |event| {
             if let Some(command) = command(event) {
-                commands.send(command).ok();
+                link.post(move |store| store.remote_act(command));
             }
         }) {
             log::warn!("remote: cannot listen for media keys: {error:?}");
@@ -43,7 +39,7 @@ impl Controls {
         Ok(Self { controls })
     }
 
-    pub fn describe(&mut self, track: Option<&Track>, cover: Option<&str>, _cx: &App) {
+    pub fn describe(&mut self, track: Option<&Track>, cover: Option<&str>, _url: Option<String>) {
         let metadata = match track {
             Some(track) => MediaMetadata {
                 title: Some(&track.name),

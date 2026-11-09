@@ -2,14 +2,16 @@ use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
-use gpui::{App, Context, Entity, Task};
 use music::{ArtistRef, Track};
 use rusqlite::types::Value;
 use rusqlite::{Connection, params, params_from_iter};
 use storage::Database;
 
 use crate::playback::PlaybackEvent;
-use crate::{Io, Outcome, Playback, Session, SessionEvent, SessionState, Toast, Toasts, join};
+use crate::{
+    Change, Cx, Event, Job, Outcome, Playback, Session, SessionEvent, SessionState, Store, Toast,
+    Toasts, Topic,
+};
 
 const LOCAL_LIMIT: usize = 500;
 /// Every column of `plays`, in the order a [`Row`] holds them.
@@ -27,12 +29,13 @@ pub enum HistoryState {
     Failed,
 }
 
+/// The play log in `state.sqlite`, which every read and write of the history goes through.
 #[derive(Clone)]
-struct Store {
+struct Log {
     database: Database,
 }
 
-impl Store {
+impl Log {
     fn new(database: Database) -> Self {
         Self { database }
     }
@@ -239,19 +242,18 @@ struct Removal {
     rows: Vec<Row>,
 }
 
+/// The listening history: the plays this account made here, with the provider's own recently
+/// played from other devices folded in, and the edits the history page makes to them.
 pub struct History {
-    session: Entity<Session>,
-    playback: Entity<Playback>,
-    store: Store,
-    io: Io,
+    log: Log,
     state: HistoryState,
     tracks: Vec<Track>,
     pending: Vec<Track>,
     active: Option<(String, String)>,
-    task: Option<Task<()>>,
+    task: Option<Job>,
     /// Edits waiting for the batch under way to finish.
     edits: Vec<Edit>,
-    writing: Option<Task<()>>,
+    writing: Option<Job>,
     /// Plays removed since the Removed toast went up, which its Undo puts back.
     removals: Vec<Removal>,
     /// The Removed toast, while it may still be up.
@@ -262,31 +264,9 @@ pub struct History {
 }
 
 impl History {
-    pub fn new(
-        session: Entity<Session>,
-        playback: Entity<Playback>,
-        database: Database,
-        io: Io,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.subscribe(&session, |this, _, event, cx| match event {
-            SessionEvent::SignedIn | SessionEvent::Reconnected => this.refresh(cx),
-            SessionEvent::SignedOut => this.reset(cx),
-            SessionEvent::WentOffline | SessionEvent::LocalChanged => {}
-        })
-        .detach();
-        cx.subscribe(&playback, |this, _, event, cx| match event {
-            PlaybackEvent::StartedPlayback => this.record(cx),
-            PlaybackEvent::EndedPlayback => this.active = None,
-            PlaybackEvent::Paused | PlaybackEvent::Seeked => {}
-        })
-        .detach();
-
+    pub fn new(database: Database, session: &Session, cx: &mut Cx) -> Self {
         let mut history = Self {
-            session,
-            playback,
-            store: Store::new(database),
-            io,
+            log: Log::new(database),
             state: HistoryState::Ready,
             tracks: Vec::new(),
             pending: Vec::new(),
@@ -298,7 +278,7 @@ impl History {
             removal_toast: None,
             era: 0,
         };
-        history.refresh(cx);
+        history.refresh(session, cx);
         history
     }
 
@@ -312,11 +292,11 @@ impl History {
 
     /// Removes one play and offers to put it back. A play no longer in the list, such as one
     /// removed a moment ago, is left alone.
-    pub fn remove(&mut self, track: &Track, cx: &mut Context<Self>) {
+    pub fn remove(&mut self, track: &Track, session: &Session, cx: &mut Cx) {
         if track.id.is_none() || track.added_at.is_none() {
             return;
         }
-        let Some(scope) = self.scope(cx) else {
+        let Some(scope) = scope(session) else {
             return;
         };
         let same = |held: &Track| held.id == track.id && held.added_at == track.added_at;
@@ -325,7 +305,7 @@ impl History {
         };
         let track = self.tracks.remove(at);
         self.pending.retain(|held| !same(held));
-        cx.notify();
+        cx.changed(Topic::History);
         self.write(
             Edit::Remove {
                 scope,
@@ -335,8 +315,8 @@ impl History {
         );
     }
 
-    pub fn clear(&mut self, cx: &mut Context<Self>) {
-        let Some(scope) = self.scope(cx) else {
+    pub fn clear(&mut self, session: &Session, cx: &mut Cx) {
+        let Some(scope) = scope(session) else {
             return;
         };
         self.reset(cx);
@@ -344,7 +324,7 @@ impl History {
     }
 
     /// Queues an edit, and starts a batch unless one is under way.
-    fn write(&mut self, edit: Edit, cx: &mut Context<Self>) {
+    fn write(&mut self, edit: Edit, cx: &mut Cx) {
         self.edits.push(edit);
         if self.writing.is_none() {
             self.flush(cx);
@@ -352,38 +332,49 @@ impl History {
     }
 
     /// Runs every queued edit as one batch, then the edits queued meanwhile.
-    fn flush(&mut self, cx: &mut Context<Self>) {
+    fn flush(&mut self, cx: &mut Cx) {
         let edits = std::mem::take(&mut self.edits);
         if edits.is_empty() {
             self.writing = None;
             return;
         }
-        let store = self.store.clone();
-        let io = self.io.clone();
+        let log = self.log.clone();
         let era = self.era;
-        self.writing = Some(cx.spawn(async move |this, cx| {
-            let applied = io
-                .spawn_blocking(move || {
-                    edits
-                        .into_iter()
-                        .map(|edit| store.apply(edit))
-                        .collect::<Vec<_>>()
-                })
-                .await;
-            this.update(cx, |this, cx| {
+        self.writing = Some(cx.spawn(move |link| async move {
+            let applied = tokio::task::spawn_blocking(move || {
+                edits
+                    .into_iter()
+                    .map(|edit| log.apply(edit))
+                    .collect::<Vec<_>>()
+            })
+            .await;
+            link.post(move |store| {
+                let Store {
+                    history,
+                    session,
+                    toasts,
+                    cx,
+                    ..
+                } = store;
                 match applied {
-                    Ok(applied) => this.applied(applied, era, cx),
+                    Ok(applied) => history.applied(applied, era, session, toasts, cx),
                     Err(error) => log::warn!("history: write task failed: {error}"),
                 }
-                this.flush(cx);
-            })
-            .ok();
+                history.flush(cx);
+            });
         }));
     }
 
     /// Takes in a finished batch. Removals offer an undo, and a removal that failed puts its
     /// play back, unless the list was reset since the batch started.
-    fn applied(&mut self, applied: Vec<Applied>, era: u64, cx: &mut Context<Self>) {
+    fn applied(
+        &mut self,
+        applied: Vec<Applied>,
+        era: u64,
+        session: &Session,
+        toasts: &Toasts,
+        cx: &mut Cx,
+    ) {
         let current = era == self.era;
         let mut removed = Vec::new();
         for done in applied {
@@ -398,53 +389,47 @@ impl History {
                     }
                 }
                 Applied::Removed {
-                    scope,
+                    scope: from,
                     track,
                     rows: Err(error),
                 } => {
                     log::warn!("history: cannot remove a play: {error:#}");
-                    if current && self.scope(cx).as_deref() == Some(scope.as_str()) {
+                    if current && scope(session).as_deref() == Some(from.as_str()) {
                         self.put_back(*track);
-                        cx.notify();
+                        cx.changed(Topic::History);
                     }
                     failed("toast-history-remove-failed", &error, cx);
                 }
                 Applied::Restored(Err(error)) => {
                     log::warn!("history: cannot restore plays: {error:#}");
                     failed("toast-history-restore-failed", &error, cx);
-                    self.refresh(cx);
+                    self.refresh(session, cx);
                 }
                 Applied::Wiped(Err(error)) => {
                     log::warn!("history: cannot clear plays: {error:#}");
                     failed("toast-history-clear-failed", &error, cx);
-                    self.refresh(cx);
+                    self.refresh(session, cx);
                 }
                 Applied::Restored(Ok(())) | Applied::Wiped(Ok(())) => {}
             }
         }
         if !removed.is_empty() {
-            self.offer_undo(removed, cx);
+            self.offer_undo(removed, toasts, cx);
         }
     }
 
     /// Shows the Removed toast, or keeps the one already up and restarts its clock, so one
     /// Undo puts back everything removed while it was up.
-    fn offer_undo(&mut self, removed: Vec<Removal>, cx: &mut Context<Self>) {
-        let toasts = Toasts::entity(cx);
-        let up = self
-            .removal_toast
-            .filter(|id| toasts.read(cx).shown().iter().any(|toast| toast.id == *id));
+    fn offer_undo(&mut self, removed: Vec<Removal>, toasts: &Toasts, cx: &mut Cx) {
+        let up = self.removal_toast.filter(|id| toasts.showing(*id));
         if up.is_none() {
             self.removals.clear();
         }
         self.removals.extend(removed);
 
-        let history = cx.entity().downgrade();
         let toast = Toast::new(Outcome::Plain, "toast-history-removed")
             .count(self.removals.len())
-            .undo(move |cx| {
-                history.update(cx, |history, cx| history.undo(cx)).ok();
-            });
+            .undo(|store| store.undo_history());
         match up {
             Some(id) => Toasts::settle(id, toast, cx),
             None => self.removal_toast = Some(Toasts::post(toast, cx)),
@@ -453,9 +438,9 @@ impl History {
 
     /// Puts back every play the Removed toast reports. Plays of an account no longer signed in
     /// go back into its log without touching the list on screen.
-    fn undo(&mut self, cx: &mut Context<Self>) {
+    fn undo(&mut self, session: &Session, cx: &mut Cx) {
         self.removal_toast = None;
-        let scope = self.scope(cx);
+        let scope = scope(session);
         let mut rows = Vec::new();
         for removal in std::mem::take(&mut self.removals) {
             if scope.as_deref() == Some(removal.scope.as_str()) {
@@ -463,7 +448,7 @@ impl History {
             }
             rows.extend(removal.rows);
         }
-        cx.notify();
+        cx.changed(Topic::History);
         if !rows.is_empty() {
             self.write(Edit::Restore(rows), cx);
         }
@@ -493,76 +478,73 @@ impl History {
 
     /// Drops the list and loads it again, so the page shows its skeleton until the plays land.
     /// A load already under way is left to finish and fills the list in its place.
-    pub fn reload(&mut self, cx: &mut Context<Self>) {
+    pub fn reload(&mut self, session: &Session, cx: &mut Cx) {
         self.tracks.clear();
         self.state = HistoryState::Loading;
-        cx.notify();
-        self.refresh(cx);
+        cx.changed(Topic::History);
+        self.refresh(session, cx);
     }
 
     /// Loads the plays again and keeps the list on screen until they land, which is how the
     /// history picks up plays from other devices in the background.
-    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+    pub fn refresh(&mut self, session: &Session, cx: &mut Cx) {
         if self.task.is_some() {
             return;
         }
-        let Some(scope) = self.scope(cx) else {
+        let Some(scope) = scope(session) else {
             return self.reset(cx);
         };
-        let store = self.store.clone();
-        let io = self.io.clone();
+        let log = self.log.clone();
         // The provider's own cross-device recently played folds in here.
-        let client = self.session.read(cx).client();
+        let client = session.client();
         // A refresh with something to show must not blank the list back to a skeleton.
         if self.tracks.is_empty() {
             self.state = HistoryState::Loading;
-            cx.notify();
+            cx.changed(Topic::History);
         }
 
-        self.task = Some(cx.spawn(async move |this, cx| {
-            let loaded = join(io.spawn(async move {
-                tokio::task::spawn_blocking(move || store.load(&scope)).await?
-            }))
-            .await;
+        self.task = Some(cx.spawn(move |link| async move {
+            let loaded: Result<Vec<Track>> =
+                async { tokio::task::spawn_blocking(move || log.load(&scope)).await? }.await;
             let recent = match client {
-                Some(client) => join(io.spawn(async move { client.recently_played().await })).await,
+                Some(client) => client.recently_played().await,
                 None => Ok(Vec::new()),
             };
-            this.update(cx, |this, cx| {
-                this.task = None;
+            link.post(move |store| {
+                let Store { history, cx, .. } = store;
+                history.task = None;
                 match loaded {
                     Ok(tracks) => {
-                        let mut plays = std::mem::take(&mut this.pending);
+                        let mut plays = std::mem::take(&mut history.pending);
                         match plays.is_empty() {
                             true => plays = tracks,
                             false => plays.extend(tracks),
                         }
                         dedupe(&mut plays);
-                        this.tracks = merge_recent(recent, plays, LOCAL_LIMIT);
-                        this.state = HistoryState::Ready;
+                        history.tracks = merge_recent(recent, plays, LOCAL_LIMIT);
+                        history.state = HistoryState::Ready;
                     }
                     Err(error) => {
                         log::warn!("history: cannot load plays: {error:#}");
-                        this.state = HistoryState::Failed;
+                        history.state = HistoryState::Failed;
                     }
                 }
-                cx.notify();
-            })
-            .ok();
+                cx.changed(Topic::History);
+            });
         }));
     }
 
-    fn record(&mut self, cx: &mut Context<Self>) {
-        let Some(scope) = self.scope(cx) else {
+    fn record(&mut self, playback: &Playback, session: &Session, cx: &mut Cx) {
+        let Some(scope) = scope(session) else {
             return;
         };
-        let Some(mut track) = self.playback.read(cx).track().cloned() else {
+        let Some(mut track) = playback.track().cloned() else {
             return;
         };
         let Some(track_id) = track.id.clone() else {
             return;
         };
-        let Some(provider) = self.session.read(cx).slug_for(&track_id) else {
+        let Some(provider) = session.slug_for(&track_id) else {
             return;
         };
         let key = (provider.to_owned(), track_id.clone());
@@ -579,17 +561,16 @@ impl History {
         }
         self.tracks.truncate(LOCAL_LIMIT);
         self.state = HistoryState::Ready;
-        cx.notify();
+        cx.changed(Topic::History);
 
-        self.report(&track_id, cx);
+        report(&track_id, session, cx);
 
-        let store = self.store.clone();
+        let log = self.log.clone();
         let provider = provider.to_owned();
-        self.io.spawn(async move {
-            let saved = tokio::task::spawn_blocking(move || {
-                store.save(&scope, &provider, &track, played_at)
-            })
-            .await;
+        cx.io.spawn(async move {
+            let saved =
+                tokio::task::spawn_blocking(move || log.save(&scope, &provider, &track, played_at))
+                    .await;
             match saved {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => log::warn!("history: cannot save a play: {error:#}"),
@@ -598,33 +579,7 @@ impl History {
         });
     }
 
-    /// Reports the play to the provider that owns the track, fire-and-forget. A failure is
-    /// logged and dropped, never touching what the listener hears.
-    fn report(&self, track_id: &str, cx: &Context<Self>) {
-        if music::is_local_id(track_id) {
-            return;
-        }
-        let Some(client) = self.session.read(cx).client() else {
-            return;
-        };
-        let track_id = track_id.to_owned();
-        self.io.spawn(async move {
-            if let Err(error) = client.report_play(&track_id).await {
-                log::warn!("history: cannot report the play to the provider: {error:#}");
-            }
-        });
-    }
-
-    fn scope(&self, cx: &Context<Self>) -> Option<String> {
-        let session = self.session.read(cx);
-        let SessionState::SignedIn(profile) = session.state() else {
-            return None;
-        };
-        let provider = session.provider_slug()?;
-        Some(format!("{provider}:{}", profile.id))
-    }
-
-    fn reset(&mut self, cx: &mut Context<Self>) {
+    fn reset(&mut self, cx: &mut Cx) {
         self.task = None;
         self.active = None;
         self.tracks.clear();
@@ -635,12 +590,89 @@ impl History {
             Toasts::close(id, cx);
         }
         self.state = HistoryState::Ready;
-        cx.notify();
+        cx.changed(Topic::History);
     }
 }
 
+impl Store {
+    /// Removes one play from the history and offers to put it back.
+    pub fn remove_play(&mut self, track: &Track) {
+        self.history.remove(track, &self.session, &mut self.cx);
+    }
+
+    /// Wipes the signed-in account's history.
+    pub fn clear_history(&mut self) {
+        self.history.clear(&self.session, &mut self.cx);
+    }
+
+    /// Drops the history and loads it again, so the page shows its skeleton until the plays land.
+    pub fn reload_history(&mut self) {
+        self.history.reload(&self.session, &mut self.cx);
+    }
+
+    /// Loads the plays again and keeps the list on screen until they land.
+    pub fn refresh_history(&mut self) {
+        self.history.refresh(&self.session, &mut self.cx);
+    }
+
+    /// Puts back every play the Removed toast reports, as its Undo does.
+    fn undo_history(&mut self) {
+        self.history.undo(&self.session, &mut self.cx);
+    }
+
+    pub(crate) fn react_history(&mut self, change: &Change) {
+        let Store {
+            history,
+            session,
+            playback,
+            cx,
+            ..
+        } = self;
+        match change {
+            Change::Event(Event::Session(event)) => match event {
+                SessionEvent::SignedIn | SessionEvent::Reconnected => history.refresh(session, cx),
+                SessionEvent::SignedOut => history.reset(cx),
+                SessionEvent::WentOffline | SessionEvent::LocalChanged => {}
+            },
+            Change::Event(Event::Playback(event)) => match event {
+                PlaybackEvent::StartedPlayback => history.record(playback, session, cx),
+                PlaybackEvent::EndedPlayback => history.active = None,
+                PlaybackEvent::Paused | PlaybackEvent::Seeked => {}
+            },
+            _ => {}
+        }
+    }
+}
+
+/// Reports the play to the provider that owns the track, fire-and-forget. A failure is
+/// logged and dropped, never touching what the listener hears.
+fn report(track_id: &str, session: &Session, cx: &Cx) {
+    if music::is_local_id(track_id) {
+        return;
+    }
+    let Some(client) = session.client() else {
+        return;
+    };
+    let track_id = track_id.to_owned();
+    cx.io.spawn(async move {
+        if let Err(error) = client.report_play(&track_id).await {
+            log::warn!("history: cannot report the play to the provider: {error:#}");
+        }
+    });
+}
+
+/// The play log of the signed-in account on the active provider, or `None` while no account is
+/// signed in.
+fn scope(session: &Session) -> Option<String> {
+    let SessionState::SignedIn(profile) = session.state() else {
+        return None;
+    };
+    let provider = session.provider_slug()?;
+    Some(format!("{provider}:{}", profile.id))
+}
+
 /// Shows that a change to the history failed, with the error below it.
-fn failed(key: &'static str, error: &anyhow::Error, cx: &mut App) {
+fn failed(key: &'static str, error: &anyhow::Error, cx: &mut Cx) {
     Toasts::with_detail(Outcome::Failed, key, None, format!("{error:#}"), cx);
 }
 

@@ -10,14 +10,14 @@ mod wire;
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use gpui::{App, Context, Entity, Task};
 use music::Track;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 pub use wire::Member;
 
 use crate::{
-    AppSettings, Io, Outcome, Playback, Queue, Session, SessionEvent, SessionState, Toasts,
+    AppSettings, Change, Cx, Event, Job, Outcome, Playback, Queue, Session, SessionEvent,
+    SessionState, Store, Toasts, Topic,
 };
 use link::{Heard, Link};
 use wire::{Reason, Reply, Request, Shared, VERSION};
@@ -75,20 +75,24 @@ struct Mark {
     upcoming: Vec<String>,
 }
 
+/// The models the session reads to tell what plays here.
+#[derive(Clone, Copy)]
+struct Around<'a> {
+    playback: &'a Playback,
+    queue: &'a Queue,
+    session: &'a Session,
+}
+
 /// The listener's Sonora Session: the link to the server, the room it reports, and the work of
 /// keeping playback here and in the session the same.
 pub struct Listening {
-    playback: Entity<Playback>,
-    queue: Entity<Queue>,
-    session: Entity<Session>,
-    io: Io,
     room: Option<Room>,
     link: Option<Link>,
-    hearing: Option<Task<()>>,
+    hearing: Option<Job>,
     /// Whether a start or join is waiting for the server's answer.
     asking: bool,
     /// The wait before a dropped connection is tried again.
-    retry: Option<Task<()>>,
+    retry: Option<Job>,
     retries: u32,
     /// The session's playback as last heard or sent.
     shared: Option<Shared>,
@@ -104,36 +108,25 @@ pub struct Listening {
     /// Round trips and clock offsets of the latest pings, in milliseconds.
     clock: VecDeque<(u64, i64)>,
     /// Compares playback here with the session's every few seconds while in one.
-    checking: Option<Task<()>>,
+    checking: Option<Job>,
     code_shown: bool,
     join_shown: bool,
-    settings: Entity<AppSettings>,
     http: reqwest::Client,
     /// The health check of a server the listener asked to save.
-    saving: Option<Task<()>>,
+    saving: Option<Job>,
     /// Whether the last save was turned down. It stays so until a save goes through.
     rejected: bool,
 }
 
+impl Default for Listening {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Listening {
-    pub fn new(
-        playback: Entity<Playback>,
-        queue: Entity<Queue>,
-        session: Entity<Session>,
-        settings: Entity<AppSettings>,
-        io: Io,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.observe(&playback, |this, _, cx| this.publish(cx))
-            .detach();
-        cx.observe(&queue, |this, _, cx| this.publish(cx)).detach();
-        cx.subscribe(&session, |this, _, event, cx| this.on_session(event, cx))
-            .detach();
+    pub fn new() -> Self {
         Self {
-            playback,
-            queue,
-            session,
-            io,
             room: None,
             link: None,
             hearing: None,
@@ -150,7 +143,6 @@ impl Listening {
             checking: None,
             code_shown: false,
             join_shown: false,
-            settings,
             http: reqwest::Client::new(),
             saving: None,
             rejected: false,
@@ -158,8 +150,8 @@ impl Listening {
     }
 
     /// Whether a session can be started or joined: a streaming provider is signed in.
-    pub fn available(&self, cx: &App) -> bool {
-        self.session.read(cx).client().is_some()
+    pub fn available(&self, session: &Session) -> bool {
+        session.client().is_some()
     }
 
     /// The session the listener is in.
@@ -178,18 +170,17 @@ impl Listening {
     }
 
     /// Starts a session on the current provider. Its code shows once the server hands it out.
-    pub fn start(&mut self, cx: &mut Context<Self>) {
+    fn start(&mut self, session: &Session, settings: &AppSettings, cx: &mut Cx) {
         if self.room.is_some() || self.asking {
             return;
         }
-        let session = self.session.read(cx);
         let Some(provider) = session
             .provider_slug()
             .filter(|_| session.client().is_some())
         else {
             return Toasts::show(Outcome::Info, "toast-session-needs-provider", cx);
         };
-        let (name, image) = self.me(cx);
+        let (name, image) = me(session);
         self.code_shown = true;
         self.connect(
             Request::Create {
@@ -198,13 +189,14 @@ impl Listening {
                 image,
                 provider: provider.to_owned(),
             },
+            settings,
             cx,
         );
     }
 
     /// Joins the session `code` names. The server checks that this app has an account for its
     /// provider, and the app switches to it when another one is current.
-    pub fn join(&mut self, code: &str, cx: &mut Context<Self>) {
+    fn join(&mut self, code: &str, session: &Session, settings: &AppSettings, cx: &mut Cx) {
         let code: String = code.chars().filter(char::is_ascii_digit).collect();
         if code.len() != CODE_LENGTH || self.asking {
             return;
@@ -215,15 +207,15 @@ impl Listening {
         if self.room.is_some() {
             self.leave(cx);
         }
-        let request = self.join_request(code, cx);
-        self.connect(request, cx);
+        let request = join_request(code, session);
+        self.connect(request, settings, cx);
     }
 
     /// Leaves the session, which ends it for everyone when this app hosts it.
-    pub fn leave(&mut self, cx: &mut Context<Self>) {
+    pub fn leave(&mut self, cx: &mut Cx) {
         let Some(room) = self.room.as_ref() else {
             if self.asking {
-                self.reset(cx);
+                self.reset();
             }
             return;
         };
@@ -234,7 +226,7 @@ impl Listening {
         if let Some(link) = &self.link {
             link.send(Request::Leave);
         }
-        self.reset(cx);
+        self.reset();
         Toasts::show(Outcome::Done, key, cx);
     }
 
@@ -254,9 +246,8 @@ impl Listening {
         self.code_shown && self.room.is_some()
     }
 
-    pub fn show_code(&mut self, shown: bool, cx: &mut Context<Self>) {
+    pub fn show_code(&mut self, shown: bool) {
         self.code_shown = shown;
-        cx.notify();
     }
 
     /// Whether the dialog that takes a code to join is open.
@@ -264,43 +255,8 @@ impl Listening {
         self.join_shown
     }
 
-    pub fn show_join(&mut self, shown: bool, cx: &mut Context<Self>) {
+    pub fn show_join(&mut self, shown: bool) {
         self.join_shown = shown;
-        cx.notify();
-    }
-
-    /// The listener's name and picture, as the others in the session see them.
-    fn me(&self, cx: &App) -> (String, Option<String>) {
-        match self.session.read(cx).state() {
-            SessionState::SignedIn(profile) => {
-                (profile.display_name.clone(), profile.avatar.clone())
-            }
-            _ => (String::new(), None),
-        }
-    }
-
-    fn join_request(&self, code: String, cx: &App) -> Request {
-        let session = self.session.read(cx);
-        let mut providers: Vec<String> = session
-            .connected()
-            .map(|info| info.slug.to_owned())
-            .collect();
-        // a guest session plays without an account stored, and counts while it is current
-        if let Some(current) = session
-            .provider_slug()
-            .filter(|_| session.client().is_some())
-            && !providers.iter().any(|slug| slug == current)
-        {
-            providers.push(current.to_owned());
-        }
-        let (name, image) = self.me(cx);
-        Request::Join {
-            version: VERSION,
-            code,
-            name,
-            image,
-            providers,
-        }
     }
 
     /// Whether the last save of the listener's own server was turned down, which lasts until
@@ -314,50 +270,39 @@ impl Listening {
         self.saving.is_some()
     }
 
-    /// The server sessions go through: the one `SONORA_SESSION_SERVER` names, else the
-    /// listener's own when they turned the official one off and gave an address that reads,
-    /// else the official one.
-    fn server(&self, cx: &App) -> String {
-        if let Ok(forced) = std::env::var(server::VARIABLE) {
-            return forced;
-        }
-        let settings = self.settings.read(cx);
-        if settings.sessions_official() {
-            return server::OFFICIAL.to_owned();
-        }
-        server::socket(settings.sessions_server())
-            .map_or_else(|| server::OFFICIAL.to_owned(), |url| url.to_string())
-    }
-
-    fn reject(&mut self, cx: &mut Context<Self>) {
+    fn reject(&mut self) {
         self.rejected = true;
-        cx.notify();
     }
 
     /// Checks the server at `typed` and keeps it as the listener's own once it answers its health
     /// check. A toast says how it went, so an address that does not lead to a Sonora Sessions
     /// server is never saved.
-    pub fn save_server(&mut self, typed: &str, cx: &mut Context<Self>) {
+    pub fn save_server(&mut self, typed: &str, cx: &mut Cx) {
         let typed = typed.trim().to_owned();
         if typed.is_empty() {
-            self.reject(cx);
+            self.reject();
             return Toasts::show(Outcome::Info, "toast-sessions-server-empty", cx);
         }
         let Some(socket) = server::socket(&typed) else {
-            self.reject(cx);
+            self.reject();
             return Toasts::show(Outcome::Failed, "toast-sessions-server-malformed", cx);
         };
         let http = self.http.clone();
-        let io = self.io.clone();
-        self.saving = Some(cx.spawn(async move |this, cx| {
+        let io = cx.io.clone();
+        self.saving = Some(cx.spawn(|link| async move {
             let found = io.spawn(server::check(http, socket.clone())).await;
-            this.update(cx, |this, cx| {
+            link.post(move |store| {
+                let Store {
+                    listening: this,
+                    settings,
+                    cx,
+                    ..
+                } = store;
                 this.saving = None;
                 match found {
                     Ok(Ok(())) => {
                         this.rejected = false;
-                        this.settings
-                            .update(cx, |settings, cx| settings.set_sessions_server(typed, cx));
+                        settings.set_sessions_server(typed, cx);
                         Toasts::show(Outcome::Done, "toast-sessions-server-saved", cx);
                     }
                     Ok(Err(error)) => {
@@ -370,128 +315,33 @@ impl Listening {
                         Toasts::show(Outcome::Failed, "toast-sessions-server-silent", cx)
                     }
                 }
-                cx.notify();
-            })
-            .ok();
+            });
         }));
-        cx.notify();
     }
 
-    fn connect(&mut self, first: Request, cx: &mut Context<Self>) {
-        let url = self.server(cx);
-        let (link, heard) = Link::open(&self.io, url, first);
+    fn connect(&mut self, first: Request, settings: &AppSettings, cx: &mut Cx) {
+        let url = server_url(settings);
+        let (link, heard) = Link::open(&cx.io, url, first);
         self.link = Some(link);
         self.asking = true;
-        self.hearing = Some(self.listen(heard, cx));
-        cx.notify();
-    }
-
-    fn listen(&mut self, mut heard: UnboundedReceiver<Heard>, cx: &mut Context<Self>) -> Task<()> {
-        cx.spawn(async move |this, cx| {
-            while let Some(first) = heard.recv().await {
-                let lost = this.update(cx, |this, cx| {
-                    let mut lost = false;
-                    for one in
-                        std::iter::once(first).chain(std::iter::from_fn(|| heard.try_recv().ok()))
-                    {
-                        match one {
-                            Heard::Reply(reply) => this.on_reply(*reply, cx),
-                            Heard::Lost => lost = true,
-                        }
-                    }
-                    if lost {
-                        this.lost(cx);
-                    }
-                    lost
-                });
-                if !matches!(lost, Ok(false)) {
-                    break;
-                }
-            }
-        })
-    }
-
-    fn on_reply(&mut self, reply: Reply, cx: &mut Context<Self>) {
-        match reply {
-            Reply::Joined {
-                code,
-                provider,
-                you,
-                members,
-                state,
-            } => {
-                let first = self.room.is_none();
-                self.asking = false;
-                self.retries = 0;
-                self.retry = None;
-                self.room = Some(Room {
-                    code,
-                    provider,
-                    members,
-                    you,
-                });
-                self.echoed = self.sent;
-                self.baseline = None;
-                self.shared = state.clone();
-                self.seeks = self.playback.read(cx).seeks();
-                self.follow_provider(cx);
-                match state.filter(|state| state.track.is_some()) {
-                    Some(state) => {
-                        self.waiting = Some(state);
-                        self.catch_up(cx);
-                    }
-                    None => self.publish(cx),
-                }
-                self.checking = Some(self.check_every(cx));
-                if first {
-                    log::info!("listening: joined a session");
-                }
-            }
-            Reply::Members { members } => {
-                if let Some(room) = self.room.as_mut() {
-                    room.members = members;
-                }
-            }
-            Reply::State { state, by, seq } => {
-                let Some(room) = &self.room else {
-                    return;
-                };
-                if by == room.you {
-                    self.echoed = self.echoed.max(seq);
-                    self.shared = Some(state);
-                    return;
-                }
-                if self.echoed < self.sent {
-                    log::debug!("listening: passing over a state older than our own");
-                    return;
-                }
-                self.shared = Some(state.clone());
-                self.waiting = Some(state);
-                self.catch_up(cx);
-            }
-            Reply::Pong { t, now } => self.sample(t, now),
-            Reply::Ended => {
-                self.reset(cx);
-                Toasts::show(Outcome::Info, "toast-session-ended", cx);
-            }
-            Reply::Kicked => {
-                self.reset(cx);
-                Toasts::show(Outcome::Info, "toast-session-kicked", cx);
-            }
-            Reply::Error { reason, provider } => self.refused(reason, provider, cx),
-        }
-        cx.notify();
+        self.hearing = Some(listen(heard, cx));
     }
 
     /// Says why the server turned down a start or join. A refusal of anything else only goes to
     /// the log, since the session carries on.
-    fn refused(&mut self, reason: Reason, provider: Option<String>, cx: &mut Context<Self>) {
+    fn refused(
+        &mut self,
+        reason: Reason,
+        provider: Option<String>,
+        session: &Session,
+        cx: &mut Cx,
+    ) {
         if !self.asking {
             log::warn!("listening: the server refused a request: {reason:?}");
             return;
         }
         let rejoining = self.room.is_some();
-        self.reset(cx);
+        self.reset();
         let key = match reason {
             Reason::NotFound if rejoining => "toast-session-ended",
             Reason::NotFound => "toast-session-not-found",
@@ -500,9 +350,7 @@ impl Listening {
             Reason::TooMany => "toast-session-too-many",
             Reason::Provider => {
                 let slug = provider.unwrap_or_default();
-                let name = self
-                    .session
-                    .read(cx)
+                let name = session
                     .account(&slug)
                     .map_or(slug.clone(), |(name, _)| name.to_owned());
                 return Toasts::about(Outcome::Failed, "toast-session-provider", name, cx);
@@ -515,40 +363,42 @@ impl Listening {
     }
 
     /// Tries a dropped connection again, a little later each time, or gives up on it.
-    fn lost(&mut self, cx: &mut Context<Self>) {
+    fn lost(&mut self, cx: &mut Cx) {
         self.link = None;
         self.hearing = None;
         let Some(code) = self.room.as_ref().map(|room| room.code.clone()) else {
             if self.asking {
-                self.reset(cx);
+                self.reset();
                 Toasts::show(Outcome::Failed, "toast-session-unreachable", cx);
             }
             return;
         };
         if self.retries >= RETRIES {
-            self.reset(cx);
+            self.reset();
             return Toasts::show(Outcome::Failed, "toast-session-lost", cx);
         }
         let wait = Duration::from_secs(1 << self.retries.min(4));
         self.retries += 1;
         self.asking = false;
         log::info!("listening: connection lost, trying again in {wait:?}");
-        self.retry = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(wait).await;
-            this.update(cx, |this, cx| {
-                this.retry = None;
-                if this.room.is_some() {
-                    let request = this.join_request(code, cx);
-                    this.connect(request, cx);
-                }
-            })
-            .ok();
+        self.retry = Some(cx.after(wait, move |store| {
+            let Store {
+                listening: this,
+                session,
+                settings,
+                cx,
+                ..
+            } = store;
+            this.retry = None;
+            if this.room.is_some() {
+                let request = join_request(code, session);
+                this.connect(request, settings, cx);
+            }
         }));
-        cx.notify();
     }
 
     /// Drops the session and everything kept about it.
-    fn reset(&mut self, cx: &mut Context<Self>) {
+    fn reset(&mut self) {
         self.room = None;
         self.link = None;
         self.hearing = None;
@@ -560,127 +410,32 @@ impl Listening {
         self.baseline = None;
         self.checking = None;
         self.code_shown = false;
-        cx.notify();
-    }
-
-    /// Leaves the session when the listener signs out or moves to another provider than the
-    /// session's, and brings playback in step once the session's provider is signed in.
-    fn on_session(&mut self, event: &SessionEvent, cx: &mut Context<Self>) {
-        let Some(provider) = self.room.as_ref().map(|room| room.provider.clone()) else {
-            return;
-        };
-        let session = self.session.read(cx);
-        let ours = session.provider_slug() == Some(provider.as_str());
-        let gone = !session.is_pending() && (!ours || session.client().is_none());
-        match event {
-            SessionEvent::SignedIn | SessionEvent::Reconnected if ours => self.catch_up(cx),
-            _ if gone => self.leave(cx),
-            _ => {}
-        }
-    }
-
-    /// Switches to the session's provider when another one is current here. The server already
-    /// checked that this app has an account for it.
-    fn follow_provider(&mut self, cx: &mut Context<Self>) {
-        let Some(provider) = self.room.as_ref().map(|room| room.provider.clone()) else {
-            return;
-        };
-        if self.session.read(cx).provider_slug() == Some(provider.as_str()) {
-            return;
-        }
-        log::info!("listening: switching to {provider} for the session");
-        self.session
-            .update(cx, |session, cx| session.switch(&provider, cx));
     }
 
     /// Whether the session's provider is the one signed in here, so its tracks can play.
-    fn ready(&self, cx: &App) -> bool {
+    fn ready(&self, session: &Session) -> bool {
         let Some(room) = &self.room else {
             return false;
         };
-        let session = self.session.read(cx);
         session.provider_slug() == Some(room.provider.as_str())
             && matches!(session.state(), SessionState::SignedIn(_))
     }
 
-    /// Brings playback in step with the state waiting for it, once that can play here.
-    fn catch_up(&mut self, cx: &mut Context<Self>) {
-        if !self.ready(cx) {
-            return;
-        }
-        let Some(state) = self.waiting.take() else {
-            return;
-        };
-        self.apply(state, cx);
-    }
-
-    /// Plays what `state` says, from where the session is now. Only what differs is touched, so
-    /// a pause from another member does not reload the track here.
-    fn apply(&mut self, state: Shared, cx: &mut Context<Self>) {
-        let Some(track) = state.track.clone() else {
-            return;
-        };
-        let Some(id) = track.id.clone() else {
-            return;
-        };
-        let at = self.expected(&state);
-        let queue = self.queue.clone();
-        let current = queue.read(cx).current().and_then(|track| track.id.clone());
-        let upcoming = ids(&state.upcoming);
-        let shown = ids(queue.read(cx).chosen_upcoming());
-        let Shared {
-            upcoming: next,
-            playing,
-            ..
-        } = state;
-        self.playback.update(cx, |playback, cx| {
-            playback.locally(cx, |playback, cx| {
-                if current.as_deref() != Some(id.as_str()) {
-                    log::info!("listening: playing {id} from {at:?} for the session");
-                    if queue.read(cx).shuffle() {
-                        queue.update(cx, |queue, cx| queue.set_shuffle(false, cx));
-                    }
-                    let tracks: Vec<Track> = std::iter::once(track).chain(next).collect();
-                    playback.start_at(tracks, 0, None, at, cx);
-                    if !playing {
-                        playback.pause(cx);
-                    }
-                    return;
-                }
-                if upcoming != shown {
-                    queue.update(cx, |queue, cx| queue.share_upcoming(next, cx));
-                }
-                let toggled = playing != playback.wants_playing();
-                match (playing, toggled) {
-                    (true, true) => playback.resume(cx),
-                    (false, true) => playback.pause(cx),
-                    _ => {}
-                }
-                // a pause or resume lands on the exact spot, where a seek costs nothing heard
-                let tolerance = match toggled || !playing {
-                    true => NUDGE,
-                    false => DRIFT,
-                };
-                if !playback.is_loading() && apart(playback.live_position(), at) > tolerance {
-                    playback.seek(at, cx);
-                }
-            })
-        });
-        self.baseline = Some(self.mark(cx));
-        self.seeks = self.playback.read(cx).seeks();
-    }
-
     /// Tells the session what plays here when the listener changed it: another track, play or
     /// pause, a seek, or the queue.
-    fn publish(&mut self, cx: &mut Context<Self>) {
-        if self.room.is_none() || self.asking || self.waiting.is_some() || !self.ready(cx) {
+    fn publish(&mut self, around: Around<'_>) {
+        if self.room.is_none()
+            || self.asking
+            || self.waiting.is_some()
+            || !self.ready(around.session)
+        {
             return;
         }
         let Some(link) = &self.link else {
             return;
         };
-        let mark = self.mark(cx);
-        let seeks = self.playback.read(cx).seeks();
+        let mark = mark(around.playback, around.queue);
+        let seeks = around.playback.seeks();
         if self.baseline.as_ref() == Some(&mark) && seeks == self.seeks {
             return;
         }
@@ -691,7 +446,7 @@ impl Listening {
             Some(baseline) if baseline.upcoming != mark.upcoming => "queue",
             Some(_) => "seek",
         };
-        let state = self.snapshot(cx);
+        let state = snapshot(around.playback, around.queue);
         self.sent += 1;
         log::debug!(
             "listening: sharing {:?} for its {reason}, playing {}, at {} ms",
@@ -709,81 +464,6 @@ impl Listening {
         });
         self.baseline = Some(mark);
         self.seeks = seeks;
-    }
-
-    fn mark(&self, cx: &App) -> Mark {
-        let queue = self.queue.read(cx);
-        Mark {
-            track: queue
-                .current()
-                .and_then(|track| track.id.clone())
-                .filter(|id| !music::is_local_id(id)),
-            playing: self.playback.read(cx).wants_playing(),
-            upcoming: ids(queue.chosen_upcoming()),
-        }
-    }
-
-    /// Playback here as the session sees it. A local file stands for nothing shared.
-    fn snapshot(&self, cx: &App) -> Shared {
-        let queue = self.queue.read(cx);
-        let playback = self.playback.read(cx);
-        Shared {
-            track: queue.current().filter(|track| shareable(track)).cloned(),
-            upcoming: queue
-                .chosen_upcoming()
-                .filter(|track| shareable(track))
-                .take(UPCOMING)
-                .cloned()
-                .collect(),
-            playing: playback.wants_playing(),
-            position: playback.live_position().as_millis() as u64,
-            at: 0,
-        }
-    }
-
-    fn check_every(&self, cx: &mut Context<Self>) -> Task<()> {
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(CHECK).await;
-                if this.update(cx, |this, cx| this.check(cx)).is_err() {
-                    break;
-                }
-            }
-        })
-    }
-
-    /// Moves playback back in step with the session when it strayed, as after a stall while the
-    /// track buffered here.
-    fn check(&mut self, cx: &mut Context<Self>) {
-        if self.asking || self.waiting.is_some() || !self.ready(cx) {
-            return;
-        }
-        let Some(state) = &self.shared else {
-            return;
-        };
-        let Some(id) = state.track.as_ref().and_then(|track| track.id.as_deref()) else {
-            return;
-        };
-        let current = self
-            .queue
-            .read(cx)
-            .current()
-            .and_then(|track| track.id.as_deref());
-        let playback = self.playback.read(cx);
-        if current != Some(id) || playback.is_loading() || playback.wants_playing() != state.playing
-        {
-            return;
-        }
-        let at = self.expected(state);
-        let drift = apart(playback.live_position(), at);
-        if drift <= DRIFT {
-            return;
-        }
-        log::info!("listening: {drift:?} out of step, seeking to {at:?}");
-        self.playback.update(cx, |playback, cx| {
-            playback.locally(cx, |playback, cx| playback.seek(at, cx))
-        });
-        self.seeks = self.playback.read(cx).seeks();
     }
 
     /// Where the session's track is now, going by when the server took `state`.
@@ -818,6 +498,387 @@ impl Listening {
             .min_by_key(|(trip, _)| *trip)
             .map_or(0, |(_, offset)| *offset);
         link::now().saturating_add_signed(offset)
+    }
+}
+
+impl Store {
+    /// Starts a Sonora Session on the current provider. Its code shows once the server hands it
+    /// out.
+    pub fn start_listening(&mut self) {
+        let Store {
+            listening,
+            session,
+            settings,
+            cx,
+            ..
+        } = self;
+        listening.start(session, settings, cx);
+    }
+
+    /// Joins the Sonora Session `code` names. The server checks that this app has an account
+    /// for its provider, and the app switches to it when another one is current.
+    pub fn join_listening(&mut self, code: &str) {
+        let Store {
+            listening,
+            session,
+            settings,
+            cx,
+            ..
+        } = self;
+        listening.join(code, session, settings, cx);
+    }
+
+    /// The session with the models it reads, split off the store so both can be borrowed.
+    fn listening_parts(&mut self) -> (&mut Listening, Around<'_>, &mut Cx) {
+        let Store {
+            listening,
+            playback,
+            queue,
+            session,
+            cx,
+            ..
+        } = self;
+        let around = Around {
+            playback,
+            queue,
+            session,
+        };
+        (listening, around, cx)
+    }
+
+    fn publish_listening(&mut self) {
+        let (listening, around, _) = self.listening_parts();
+        listening.publish(around);
+    }
+
+    fn on_listening_reply(&mut self, reply: Reply) {
+        match reply {
+            Reply::Joined {
+                code,
+                provider,
+                you,
+                members,
+                state,
+            } => {
+                let this = &mut self.listening;
+                let first = this.room.is_none();
+                this.asking = false;
+                this.retries = 0;
+                this.retry = None;
+                this.room = Some(Room {
+                    code,
+                    provider,
+                    members,
+                    you,
+                });
+                this.echoed = this.sent;
+                this.baseline = None;
+                this.shared = state.clone();
+                this.seeks = self.playback.seeks();
+                self.follow_listening_provider();
+                match state.filter(|state| state.track.is_some()) {
+                    Some(state) => {
+                        self.listening.waiting = Some(state);
+                        self.catch_up_listening();
+                    }
+                    None => self.publish_listening(),
+                }
+                self.listening.checking = Some(check_every(&mut self.cx));
+                if first {
+                    log::info!("listening: joined a session");
+                }
+            }
+            Reply::Members { members } => {
+                if let Some(room) = self.listening.room.as_mut() {
+                    room.members = members;
+                }
+            }
+            Reply::State { state, by, seq } => {
+                let this = &mut self.listening;
+                let Some(room) = &this.room else {
+                    return;
+                };
+                if by == room.you {
+                    this.echoed = this.echoed.max(seq);
+                    this.shared = Some(state);
+                    return;
+                }
+                if this.echoed < this.sent {
+                    log::debug!("listening: passing over a state older than our own");
+                    return;
+                }
+                this.shared = Some(state.clone());
+                this.waiting = Some(state);
+                self.catch_up_listening();
+            }
+            Reply::Pong { t, now } => self.listening.sample(t, now),
+            Reply::Ended => {
+                self.listening.reset();
+                Toasts::show(Outcome::Info, "toast-session-ended", &mut self.cx);
+            }
+            Reply::Kicked => {
+                self.listening.reset();
+                Toasts::show(Outcome::Info, "toast-session-kicked", &mut self.cx);
+            }
+            Reply::Error { reason, provider } => {
+                self.listening
+                    .refused(reason, provider, &self.session, &mut self.cx)
+            }
+        }
+    }
+
+    /// Switches to the session's provider when another one is current here. The server already
+    /// checked that this app has an account for it.
+    fn follow_listening_provider(&mut self) {
+        let Some(provider) = self
+            .listening
+            .room
+            .as_ref()
+            .map(|room| room.provider.clone())
+        else {
+            return;
+        };
+        if self.session.provider_slug() == Some(provider.as_str()) {
+            return;
+        }
+        log::info!("listening: switching to {provider} for the session");
+        self.session.switch(&provider, &self.settings, &mut self.cx);
+    }
+
+    /// Brings playback in step with the state waiting for it, once that can play here.
+    fn catch_up_listening(&mut self) {
+        if !self.listening.ready(&self.session) {
+            return;
+        }
+        let Some(state) = self.listening.waiting.take() else {
+            return;
+        };
+        self.apply_listening(state);
+    }
+
+    /// Plays what `state` says, from where the session is now. Only what differs is touched, so
+    /// a pause from another member does not reload the track here.
+    fn apply_listening(&mut self, state: Shared) {
+        let Some(track) = state.track.clone() else {
+            return;
+        };
+        let Some(id) = track.id.clone() else {
+            return;
+        };
+        let at = self.listening.expected(&state);
+        let current = self.queue.current().and_then(|track| track.id.clone());
+        let upcoming = ids(&state.upcoming);
+        let shown = ids(self.queue.chosen_upcoming());
+        let Shared {
+            upcoming: next,
+            playing,
+            ..
+        } = state;
+        self.locally(|store| {
+            if current.as_deref() != Some(id.as_str()) {
+                log::info!("listening: playing {id} from {at:?} for the session");
+                if store.queue.shuffle() {
+                    store.queue.set_shuffle(false, &mut store.cx);
+                }
+                let tracks: Vec<Track> = std::iter::once(track).chain(next).collect();
+                store.play_tracks_at(tracks, 0, None, at);
+                if !playing {
+                    store.pause_playback();
+                }
+                return;
+            }
+            if upcoming != shown {
+                store.queue.share_upcoming(next, &mut store.cx);
+            }
+            let toggled = playing != store.playback.wants_playing();
+            match (playing, toggled) {
+                (true, true) => store.resume_playback(),
+                (false, true) => store.pause_playback(),
+                _ => {}
+            }
+            // a pause or resume lands on the exact spot, where a seek costs nothing heard
+            let tolerance = match toggled || !playing {
+                true => NUDGE,
+                false => DRIFT,
+            };
+            if !store.playback.is_loading() && apart(store.playback.live_position(), at) > tolerance
+            {
+                store.seek_to(at);
+            }
+        });
+        self.listening.baseline = Some(mark(&self.playback, &self.queue));
+        self.listening.seeks = self.playback.seeks();
+    }
+
+    /// Moves playback back in step with the session when it strayed, as after a stall while the
+    /// track buffered here.
+    fn check_listening(&mut self) {
+        let this = &self.listening;
+        if this.asking || this.waiting.is_some() || !this.ready(&self.session) {
+            return;
+        }
+        let Some(state) = &this.shared else {
+            return;
+        };
+        let Some(id) = state.track.as_ref().and_then(|track| track.id.as_deref()) else {
+            return;
+        };
+        let current = self.queue.current().and_then(|track| track.id.as_deref());
+        let playback = &self.playback;
+        if current != Some(id) || playback.is_loading() || playback.wants_playing() != state.playing
+        {
+            return;
+        }
+        let at = this.expected(state);
+        let drift = apart(playback.live_position(), at);
+        if drift <= DRIFT {
+            return;
+        }
+        log::info!("listening: {drift:?} out of step, seeking to {at:?}");
+        self.locally(|store| store.seek_to(at));
+        self.listening.seeks = self.playback.seeks();
+    }
+
+    /// Leaves the session when the listener signs out or moves to another provider than the
+    /// session's, brings playback in step once the session's provider is signed in, and tells
+    /// the session what the listener changed here.
+    pub(crate) fn react_listening(&mut self, change: &Change) {
+        match change {
+            Change::Topic(Topic::Playback | Topic::Queue) => self.publish_listening(),
+            Change::Event(Event::Session(event)) => {
+                let Some(provider) = self
+                    .listening
+                    .room
+                    .as_ref()
+                    .map(|room| room.provider.clone())
+                else {
+                    return;
+                };
+                let session = &self.session;
+                let ours = session.provider_slug() == Some(provider.as_str());
+                let gone = !session.is_pending() && (!ours || session.client().is_none());
+                match event {
+                    SessionEvent::SignedIn | SessionEvent::Reconnected if ours => {
+                        self.catch_up_listening()
+                    }
+                    _ if gone => self.listening.leave(&mut self.cx),
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Hears what the server says, a batch at a time, until the connection goes.
+fn listen(mut heard: UnboundedReceiver<Heard>, cx: &mut Cx) -> Job {
+    cx.spawn(|link| async move {
+        while let Some(first) = heard.recv().await {
+            let batch: Vec<Heard> = std::iter::once(first)
+                .chain(std::iter::from_fn(|| heard.try_recv().ok()))
+                .collect();
+            let lost = link
+                .read(move |store| {
+                    let mut lost = false;
+                    for one in batch {
+                        match one {
+                            Heard::Reply(reply) => store.on_listening_reply(*reply),
+                            Heard::Lost => lost = true,
+                        }
+                    }
+                    if lost {
+                        store.listening.lost(&mut store.cx);
+                    }
+                    lost
+                })
+                .await;
+            if !matches!(lost, Some(false)) {
+                break;
+            }
+        }
+    })
+}
+
+fn check_every(cx: &mut Cx) -> Job {
+    cx.spawn(|link| async move {
+        loop {
+            tokio::time::sleep(CHECK).await;
+            if link.read(|store| store.check_listening()).await.is_none() {
+                break;
+            }
+        }
+    })
+}
+
+/// The listener's name and picture, as the others in the session see them.
+fn me(session: &Session) -> (String, Option<String>) {
+    match session.state() {
+        SessionState::SignedIn(profile) => (profile.display_name.clone(), profile.avatar.clone()),
+        _ => (String::new(), None),
+    }
+}
+
+fn join_request(code: String, session: &Session) -> Request {
+    let mut providers: Vec<String> = session
+        .connected()
+        .map(|info| info.slug.to_owned())
+        .collect();
+    // a guest session plays without an account stored, and counts while it is current
+    if let Some(current) = session
+        .provider_slug()
+        .filter(|_| session.client().is_some())
+        && !providers.iter().any(|slug| slug == current)
+    {
+        providers.push(current.to_owned());
+    }
+    let (name, image) = me(session);
+    Request::Join {
+        version: VERSION,
+        code,
+        name,
+        image,
+        providers,
+    }
+}
+
+/// The server sessions go through: the one `SONORA_SESSION_SERVER` names, else the
+/// listener's own when they turned the official one off and gave an address that reads,
+/// else the official one.
+fn server_url(settings: &AppSettings) -> String {
+    if let Ok(forced) = std::env::var(server::VARIABLE) {
+        return forced;
+    }
+    if settings.sessions_official() {
+        return server::OFFICIAL.to_owned();
+    }
+    server::socket(settings.sessions_server())
+        .map_or_else(|| server::OFFICIAL.to_owned(), |url| url.to_string())
+}
+
+fn mark(playback: &Playback, queue: &Queue) -> Mark {
+    Mark {
+        track: queue
+            .current()
+            .and_then(|track| track.id.clone())
+            .filter(|id| !music::is_local_id(id)),
+        playing: playback.wants_playing(),
+        upcoming: ids(queue.chosen_upcoming()),
+    }
+}
+
+/// Playback here as the session sees it. A local file stands for nothing shared.
+fn snapshot(playback: &Playback, queue: &Queue) -> Shared {
+    Shared {
+        track: queue.current().filter(|track| shareable(track)).cloned(),
+        upcoming: queue
+            .chosen_upcoming()
+            .filter(|track| shareable(track))
+            .take(UPCOMING)
+            .cloned()
+            .collect(),
+        playing: playback.wants_playing(),
+        position: playback.live_position().as_millis() as u64,
+        at: 0,
     }
 }
 

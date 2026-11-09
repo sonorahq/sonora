@@ -1,118 +1,121 @@
-use gpui::accesskit::Role;
-use gpui::prelude::*;
-use gpui::{App, Div, ElementId, FontWeight, Rems, SharedString, Stateful, div, rems};
+//! Lines of text in the app's voice: the faint eyebrow over a section, a heading, the muted line
+//! an empty list shows, and their `spoken_*` twins that screen readers reach.
+
+use rune::{El, TextStyle, col, text};
 
 use crate::metrics::Text;
-use crate::theme::ActiveTheme as _;
+use crate::theme::Theme;
 
-/// How far the tails of letters may hang below a clipped line, as a share of the font size. The
-/// Arabic fallback font draws ر and ز lower than the line box leaves room for.
-const TAILS: Rems = rems(0.25);
-const TAILS_RETURNED: Rems = rems(-0.25);
+/// Font weights as GPUI named them.
+pub struct Weight;
 
-/// Room below a clipped line of text for the tails of its letters.
-pub trait Tails: Styled + Sized {
-    /// The padding is inside the element's clip, so a tail that hangs past the line box shows, and
-    /// the margin takes the same room back out of the layout, so nothing around the line moves.
-    fn tails(self) -> Self {
-        self.pb(TAILS).mb(TAILS_RETURNED)
-    }
+impl Weight {
+    pub const NORMAL: f32 = 400.;
+    pub const MEDIUM: f32 = 500.;
+    pub const SEMIBOLD: f32 = 600.;
+    pub const BOLD: f32 = 700.;
 }
 
-impl<T: Styled> Tails for T {}
-
-/// A line of static text that screen readers can reach. AccessKit names a `Role::Label` node by
-/// its value and ignores its aria label, so the text goes in as the value.
-pub fn spoken(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Stateful<Div> {
-    let text = text.into();
-    div()
-        .id(id)
-        .role(Role::Label)
-        .aria_value(text.clone())
-        .child(text)
+/// The type of one step of the theme's ladder at `weight`.
+pub fn font(theme: &Theme, step: Text, weight: f32) -> TextStyle {
+    TextStyle::new(theme.text(step), weight)
 }
 
-pub fn eyebrow(label: impl Into<SharedString>, cx: &App) -> Div {
-    faint(cx).child(upper(label))
+/// `label` in capitals, as an eyebrow draws it.
+pub fn upper(label: impl AsRef<str>) -> String {
+    label.as_ref().to_uppercase()
 }
 
-pub fn faint(cx: &App) -> Div {
-    let theme = cx.theme();
-
-    div()
-        .flex_none()
-        .text_size(theme.text(Text::Small))
-        .text_color(theme.muted_foreground)
-        .font_weight(FontWeight::SEMIBOLD)
+/// A small semibold muted line, the style an eyebrow and a section's caption share.
+pub fn faint(label: impl Into<String>, theme: &Theme) -> El {
+    text(label)
+        .font(font(theme, Text::Small, Weight::SEMIBOLD))
+        .color(theme.muted_foreground.color())
 }
 
-pub fn upper(label: impl Into<SharedString>) -> SharedString {
-    label.into().to_uppercase().into()
+/// The capitals over a section. Read as plain text in capitals; [`spoken_eyebrow`] keys it
+/// and reads it as written.
+pub fn eyebrow(label: impl AsRef<str>, theme: &Theme) -> El {
+    faint(upper(label), theme)
 }
 
-pub fn vacant(label: impl Into<SharedString>, cx: &App) -> Div {
-    let theme = cx.theme();
+/// A page or section title in the title step, semibold. Read as plain text; [`spoken_heading`]
+/// lists it among the page's headings.
+pub fn heading(label: impl Into<String>, theme: &Theme) -> El {
+    text(label)
+        .font(font(theme, Text::Title, Weight::SEMIBOLD))
+        .color(theme.foreground.color())
+}
 
-    div()
-        .flex()
+/// The muted, centred line an empty list or page shows, padded off its edges.
+pub fn vacant(label: impl Into<String>, theme: &Theme) -> El {
+    col()
         .w_full()
-        .items_center()
-        .justify_center()
-        .p(theme.metrics.pad * 2.)
-        .text_align(gpui::TextAlign::Center)
-        .text_size(theme.text(Text::Label))
-        .text_color(theme.muted_foreground)
-        .child(div().min_w_0().child(label.into()))
+        .center()
+        .padding(theme.metrics.pad * 2.)
+        .child(vacant_line(label.into(), theme))
 }
 
-pub fn heading(label: impl Into<SharedString>, cx: &App) -> Div {
-    div()
-        .flex_none()
-        .text_size(cx.theme().text(Text::Title))
-        .font_weight(FontWeight::SEMIBOLD)
-        .child(label.into())
+/// A line of static text that screen readers reach under `key`.
+pub fn spoken(key: impl Into<String>, label: impl Into<String>, theme: &Theme) -> El {
+    let label = label.into();
+    text(label.clone())
+        .key(key)
+        .role("text")
+        .label(label)
+        .font(font(theme, Text::Body, Weight::NORMAL))
+        .color(theme.foreground.color())
 }
 
-/// A `heading` that screen readers reach under `id` and list among the page's headings at
-/// `level`, one for a page title and two for a section.
+/// A [`heading`] that screen readers reach under `key` and list among the page's headings at
+/// `level`: one for a page title, two for a section.
 pub fn spoken_heading(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    level: usize,
-    cx: &App,
-) -> Stateful<Div> {
+    key: impl Into<String>,
+    label: impl Into<String>,
+    level: u32,
+    theme: &Theme,
+) -> El {
     let label = label.into();
-    heading(label.clone(), cx)
-        .id(id)
-        .role(Role::Heading)
-        .aria_level(level)
-        .aria_label(label)
+    text(label.clone())
+        .key(key)
+        .role("heading")
+        .level(level)
+        .label(label)
+        .font(font(theme, Text::Title, Weight::SEMIBOLD))
+        .color(theme.foreground.color())
 }
 
-/// An `eyebrow` that screen readers reach under `id`. It reads the label as written rather than
-/// in the capitals it is drawn in, which some readers would spell out letter by letter.
-pub fn spoken_eyebrow(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    cx: &App,
-) -> Stateful<Div> {
+/// An [`eyebrow`] that screen readers reach under `key`. It reads the label as written rather
+/// than in the capitals it is drawn in, which some readers would spell out letter by letter.
+pub fn spoken_eyebrow(key: impl Into<String>, label: impl Into<String>, theme: &Theme) -> El {
     let label = label.into();
-    eyebrow(label.clone(), cx)
-        .id(id)
-        .role(Role::Label)
-        .aria_value(label)
+    text(upper(&label))
+        .key(key)
+        .role("text")
+        .label(label)
+        .font(font(theme, Text::Small, Weight::SEMIBOLD))
+        .color(theme.muted_foreground.color())
 }
 
-/// A `vacant` line that screen readers reach under `id`, for an empty list or page that would
+/// A [`vacant`] line that screen readers reach under `key`, for an empty list or page that would
 /// otherwise say nothing at all.
-pub fn spoken_vacant(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    cx: &App,
-) -> Stateful<Div> {
+pub fn spoken_vacant(key: impl Into<String>, label: impl Into<String>, theme: &Theme) -> El {
     let label = label.into();
-    vacant(label.clone(), cx)
-        .id(id)
-        .role(Role::Label)
-        .aria_value(label)
+    col()
+        .key(key)
+        .role("text")
+        .label(label.clone())
+        .w_full()
+        .center()
+        .padding(theme.metrics.pad * 2.)
+        .child(vacant_line(label, theme).a11y_hidden())
+}
+
+/// The muted line itself, wrapping and centred.
+fn vacant_line(label: String, theme: &Theme) -> El {
+    text(label)
+        .font(font(theme, Text::Label, Weight::NORMAL))
+        .color(theme.muted_foreground.color())
+        .align(rune::Align::Center)
+        .wrap()
 }

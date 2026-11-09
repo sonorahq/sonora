@@ -2,15 +2,14 @@ use std::ffi::c_void;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use futures::future;
-use gpui::{App, Task};
 use mpris_server::{LoopStatus, Metadata, PlaybackStatus, Player, Time, TrackId};
-use music::{MediaKind, Track};
+use music::Track;
 use tokio::sync::mpsc;
 
 use super::{BUS_NAME, Command, DISPLAY_NAME};
-use crate::{PlaybackState, Repeat, Shelf, Sonora};
+use crate::{Link, PlaybackState, Repeat};
 
 /// The desktop entry a native install ships, `sonora.desktop`.
 const DESKTOP_ENTRY: &str = "sonora";
@@ -25,44 +24,47 @@ enum Update {
     Loop(LoopStatus),
 }
 
-/// The MPRIS player on the session bus. It lives on the main thread because `mpris_server`
-/// hands out a `!Send` player, and every setter only queues an update for it.
+/// The MPRIS player on the session bus. It lives on a thread of its own because `mpris_server`
+/// hands out a `!Send` player, and every setter only queues an update for it. The thread ends
+/// once the controls are dropped.
 pub struct Controls {
     updates: mpsc::UnboundedSender<Update>,
-    _server: Task<()>,
 }
 
 impl Controls {
     /// Claims the bus name in the background. A failure there is logged and leaves the
-    /// setters as no-ops, since the bus is only reached once the player is built.
-    pub fn new(
-        _hwnd: Option<*mut c_void>,
-        commands: mpsc::UnboundedSender<Command>,
-        cx: &mut App,
-    ) -> Result<Self> {
+    /// setters as no-ops, since the bus is only reached once the player is built. Every request
+    /// the player accepts is posted to the store through `link`.
+    pub fn new(_hwnd: Option<*mut c_void>, link: Link) -> Result<Self> {
         let (updates, mut receiver) = mpsc::unbounded_channel();
-        let _server = cx.spawn(async move |_| {
-            let player = match build(commands).await {
-                Ok(player) => player,
-                Err(error) => {
-                    return log::warn!("remote: cannot register the mpris player: {error}");
-                }
-            };
-            let apply = async {
-                while let Some(update) = receiver.recv().await {
-                    if let Err(error) = apply(&player, update).await {
-                        log::warn!("remote: cannot publish to mpris: {error}");
-                    }
-                }
-            };
-            future::join(player.run(), apply).await;
-        });
-        Ok(Self { updates, _server })
+        std::thread::Builder::new()
+            .name("sonora-mpris".into())
+            .spawn(move || {
+                futures::executor::block_on(async move {
+                    let player = match build(link).await {
+                        Ok(player) => player,
+                        Err(error) => {
+                            return log::warn!("remote: cannot register the mpris player: {error}");
+                        }
+                    };
+                    let apply = async {
+                        while let Some(update) = receiver.recv().await {
+                            if let Err(error) = apply(&player, update).await {
+                                log::warn!("remote: cannot publish to mpris: {error}");
+                            }
+                        }
+                    };
+                    future::select(Box::pin(player.run()), Box::pin(apply)).await;
+                })
+            })
+            .context("cannot start the mpris thread")?;
+        Ok(Self { updates })
     }
 
-    pub fn describe(&mut self, track: Option<&Track>, cover: Option<&str>, cx: &App) {
+    /// Hands the widget the track, its cover and the link that shares it.
+    pub fn describe(&mut self, track: Option<&Track>, cover: Option<&str>, url: Option<String>) {
         let metadata = match track {
-            Some(track) => metadata(track, cover, cx),
+            Some(track) => metadata(track, cover, url),
             None => Metadata::builder().trackid(TrackId::NO_TRACK).build(),
         };
         self.send(Update::Metadata(metadata));
@@ -103,9 +105,9 @@ impl Controls {
     }
 }
 
-/// Registers `org.mpris.MediaPlayer2.sonora` and routes every request the player accepts
-/// into `commands`.
-async fn build(commands: mpsc::UnboundedSender<Command>) -> mpris_server::zbus::Result<Player> {
+/// Registers `org.mpris.MediaPlayer2.sonora` and posts every request the player accepts to the
+/// store through `link`.
+async fn build(link: Link) -> mpris_server::zbus::Result<Player> {
     let desktop_entry = std::env::var("FLATPAK_ID").unwrap_or_else(|_| DESKTOP_ENTRY.to_owned());
     let player = Player::builder(BUS_NAME)
         .identity(DISPLAY_NAME)
@@ -120,7 +122,7 @@ async fn build(commands: mpsc::UnboundedSender<Command>) -> mpris_server::zbus::
         .await?;
 
     let send = move |command| {
-        commands.send(command).ok();
+        link.post(move |store| store.remote_act(command));
     };
     player.connect_play({
         let send = send.clone();
@@ -200,7 +202,7 @@ async fn apply(player: &Player, update: Update) -> mpris_server::zbus::Result<()
     }
 }
 
-fn metadata(track: &Track, cover: Option<&str>, cx: &App) -> Metadata {
+fn metadata(track: &Track, cover: Option<&str>, url: Option<String>) -> Metadata {
     let artists = match track.artist_refs.is_empty() {
         true => vec![track.artists.clone()],
         false => track
@@ -217,12 +219,7 @@ fn metadata(track: &Track, cover: Option<&str>, cx: &App) -> Metadata {
         .length(time(track.duration))
         .build();
     metadata.set_art_url(cover);
-    if let Some(id) = &track.id {
-        let url = Sonora::global(cx)
-            .session
-            .read(cx)
-            .client_of(Shelf::of(id))
-            .and_then(|client| client.share_url(MediaKind::Track, id));
+    if track.id.is_some() {
         metadata.set_url(url);
     }
     metadata

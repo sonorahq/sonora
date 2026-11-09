@@ -1,5 +1,4 @@
-use gpui::{Pixels, SharedString, TextRun, Window, px};
-use i18n::t;
+use i18n::{SharedString, t};
 
 const HEADER: f32 = 0.75;
 
@@ -43,57 +42,57 @@ impl Rounding {
         }
     }
 
-    pub fn radius(self) -> Pixels {
+    pub fn radius(self) -> f32 {
         match self {
-            Self::Square => px(0.),
-            Self::Subtle => px(6.),
-            Self::Rounded => px(10.),
-            Self::Round => px(20.),
+            Self::Square => 0.,
+            Self::Subtle => 6.,
+            Self::Rounded => 10.,
+            Self::Round => 20.,
         }
     }
 }
 
 #[derive(Clone, Copy)]
 pub struct Metrics {
-    pub row: Pixels,
-    pub header: Pixels,
-    pub pad: Pixels,
-    pub inset: Pixels,
-    pub control: Pixels,
-    pub control_small: Pixels,
-    pub field: Pixels,
-    pub title_bar: Pixels,
-    pub player_bar: Pixels,
-    pub list_row: Pixels,
-    pub thumb: Pixels,
-    pub cover: Pixels,
+    pub row: f32,
+    pub header: f32,
+    pub pad: f32,
+    pub inset: f32,
+    pub control: f32,
+    pub control_small: f32,
+    pub field: f32,
+    pub title_bar: f32,
+    pub player_bar: f32,
+    pub list_row: f32,
+    pub thumb: f32,
+    pub cover: f32,
 }
 
 impl Default for Metrics {
     fn default() -> Self {
-        Self::new(px(14.))
+        Self::new(14.)
     }
 }
 
 impl Metrics {
-    pub fn new(base: Pixels) -> Self {
-        let text = base / px(1.);
-        let roomy = |step: f32, lines: f32| px(step.max((text * lines).round()));
+    pub fn new(base: f32) -> Self {
+        let text = base;
+        let roomy = |step: f32, lines: f32| step.max((text * lines).round());
         let row = roomy(42., 2.4);
 
         Self {
             row,
-            header: px((row / px(1.) * HEADER).round()),
-            pad: px(8.),
-            inset: px(24.),
+            header: (row * HEADER).round(),
+            pad: 8.,
+            inset: 24.,
             control: roomy(32., 2.),
             control_small: roomy(26., 1.7),
             field: roomy(40., 2.6),
             title_bar: roomy(36., 2.4),
             player_bar: roomy(76., 5.),
             list_row: roomy(52., 3.2),
-            thumb: px(34.),
-            cover: px(140.),
+            thumb: 34.,
+            cover: 140.,
         }
     }
 }
@@ -110,7 +109,7 @@ pub enum Text {
 }
 
 impl Text {
-    pub(crate) fn ratio(self) -> f32 {
+    pub fn ratio(self) -> f32 {
         match self {
             Self::Tiny => 0.77,
             Self::Small => 0.85,
@@ -124,36 +123,10 @@ impl Text {
 }
 
 const INSET: f32 = 0.25;
-const BORDER: Pixels = px(1.);
+const BORDER: f32 = 1.;
 
-pub fn snapped(value: Pixels, window: &Window) -> Pixels {
-    let scale = window.scale_factor();
-    px((value / px(1.) * scale).round() / scale)
-}
-
-pub fn text_width(text: impl Into<SharedString>, window: &Window) -> Pixels {
-    let text = text.into();
-    if text.is_empty() {
-        return Pixels::ZERO;
-    }
-
-    let style = window.text_style();
-    let run = TextRun {
-        len: text.len(),
-        font: style.font(),
-        color: style.color,
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-    };
-    let size = style.font_size.to_pixels(window.rem_size());
-
-    window
-        .text_system()
-        .shape_line(text, size, &[run], None)
-        .width
-}
-
-pub fn tucked(radius: Pixels, window: &Window) -> Pixels {
-    (radius - window.rem_size() * INSET - BORDER).max(Pixels::ZERO)
+/// The radius of a box inset by a quarter of the text size and a border inside one rounded by
+/// `radius`, so nested corners stay concentric.
+pub fn tucked(radius: f32, font_size: f32) -> f32 {
+    (radius - font_size * INSET - BORDER).max(0.)
 }

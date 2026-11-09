@@ -7,7 +7,7 @@
 //! which leaves each token in a cookie.
 //!
 //! Nothing here drives it on a schedule. `music::potoken` records the identifier the YouTube
-//! client is waiting on, this entity notices, mints, and files the answer. The client uses a cold
+//! client is waiting on, this module notices, mints, and files the answer. The client uses a cold
 //! start token until then, which covers the start of a track and no more. A host where webkit2gtk
 //! does not load never opens a window and never mints.
 //!
@@ -17,9 +17,10 @@
 //! about 270 MiB. A token outlives the page that minted it, so the page closes [`LINGER`] after
 //! its last answer and only a burst of asks shares one.
 
+use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
-use gpui::{App, AppContext as _, Context, Task};
+use crate::{Cx, Job};
 
 /// Where the minting page is loaded from: the embed player of the first video on YouTube, which
 /// is never taken down. The first binding rides in the query string because the page has nothing
@@ -33,7 +34,7 @@ const COOKIE: &str = "SONORA_POT";
 const FAILED: char = '!';
 /// What ends the escaped binding at the start of an answer.
 const SEPARATOR: char = ':';
-/// How often the entity looks for an ask while no page is open.
+/// How often the minter looks for an ask while no page is open.
 const TICK: Duration = Duration::from_millis(500);
 /// How often it ticks while a page is open. Most of what a warm mint costs a track is this.
 const BUSY_TICK: Duration = Duration::from_millis(100);
@@ -45,10 +46,15 @@ const ANSWER: Duration = Duration::from_secs(10);
 /// How long a page stays open after its last answer, for a skip or two that ask again at once.
 const LINGER: Duration = Duration::from_secs(20);
 
+thread_local! {
+    /// The minter. A browser window lives on the thread that opened it, so the minter is kept on
+    /// the UI thread and reached only from the closures its job posts there.
+    static MINTER: RefCell<PoToken> = const { RefCell::new(PoToken { open: None }) };
+}
+
 /// The browser window that mints proof-of-origin tokens, and the ask it is serving.
-pub struct PoToken {
+struct PoToken {
     open: Option<Open>,
-    task: Option<Task<()>>,
 }
 
 /// A minting page that is open, and where it is with its asks.
@@ -70,30 +76,7 @@ enum Outcome {
 }
 
 impl PoToken {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        let mut this = Self {
-            open: None,
-            task: None,
-        };
-        this.watch(cx);
-        this
-    }
-
-    /// Ticks for the life of the app: one tick starts a mint, carries one along, or does nothing.
-    fn watch(&mut self, cx: &mut Context<Self>) {
-        self.task = Some(cx.spawn(async move |this, cx| {
-            let mut delay = TICK;
-            loop {
-                cx.background_executor().timer(delay).await;
-                let Ok(next) = this.update(cx, |this, _| this.tick()) else {
-                    return;
-                };
-                delay = next;
-            }
-        }));
-    }
-
-    /// Carries the entity one step and says how long to wait before the next.
+    /// Carries the minter one step and says how long to wait before the next.
     fn tick(&mut self) -> Duration {
         match &self.open {
             Some(open) if open.asked.is_some() => self.carry(),
@@ -238,8 +221,19 @@ fn reply<'a>(header: &'a str, binding: &str) -> Option<&'a str> {
         .and_then(|(_, value)| value.strip_prefix(prefix.as_str()))
 }
 
-/// Starts the minting window. Nothing holds it but the global, and nothing reads it: the client
-/// and the window meet in `music::potoken`.
-pub fn attach(cx: &mut App) -> gpui::Entity<PoToken> {
-    cx.new(PoToken::new)
+/// Starts the minter, which ticks for the life of the job: one tick starts a mint, carries one
+/// along, or does nothing. Nothing reads it: the client and the window meet in `music::potoken`.
+/// The store keeps the job among its background workers; dropping it stops the ticks.
+pub(crate) fn attach(cx: &Cx) -> Job {
+    cx.spawn(|link| async move {
+        let mut delay = TICK;
+        loop {
+            tokio::time::sleep(delay).await;
+            let ticked = link.read(|_| MINTER.with_borrow_mut(PoToken::tick)).await;
+            let Some(next) = ticked else {
+                return;
+            };
+            delay = next;
+        }
+    })
 }

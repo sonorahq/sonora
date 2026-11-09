@@ -1,301 +1,216 @@
-use std::collections::HashMap;
+//! A dialog over a dimmed window: a title, an optional detail, a body that scrolls and a row of
+//! actions. It holds the keyboard while open and hands focus back to its opener when it closes.
+
 use std::rc::Rc;
 
-use gpui::prelude::*;
-use gpui::{
-    AnyElement, App, Div, ElementId, Entity, FontWeight, Global, MouseButton, Pixels, Point,
-    ScrollWheelEvent, SharedString, StyleRefinement, Window, anchored, deferred, div, point,
-};
+use rune::{El, ScrollSpec, TextStyle, Tx, col, el, row, text};
 
 use crate::button::Button;
-use crate::metrics::{Rounding, Text, snapped};
-use crate::motion::Rising as _;
-use crate::scrollbar::Scrollbar;
-use crate::scroller::middle_scroll;
-use crate::shield::Shield;
-use crate::theme::ActiveTheme as _;
+use crate::label::Weight;
+use crate::metrics::{Rounding, Text};
+use crate::motion::Springs;
+use crate::overlay::bloom;
+use crate::paint::shadow_md;
+use crate::theme::Theme;
 
+/// How much of the background colour dims the window behind a dialog.
 const BACKDROP: f32 = 0.8;
+/// How wide a dialog is, in covers.
 const WIDTH: f32 = 2.4;
-/// How many times the theme radius a dialog's corners take. A surface this large reads square at
-/// the radius a button uses, and scaling it keeps a dialog square when corners are set to square.
-/// The scaled radius never passes what Rounded gives, since Round doubled bulges a dialog.
+/// How many times the theme radius a dialog's corners take, capped at what Rounded gives.
 const ROUNDING: f32 = 2.;
+const BORDER: f32 = 1.;
+/// How far a scrolling body fades its edges while content passes under them.
+const FADE: f32 = 16.;
 
-type Dismiss = Rc<dyn Fn(&(), &mut Window, &mut App)>;
+type Dismiss<S> = Rc<dyn Fn(&mut S, &mut Tx)>;
 
-#[derive(Default)]
-struct Bars(HashMap<ElementId, Entity<Scrollbar>>);
-
-impl Global for Bars {}
-
-fn bar(id: &ElementId, cx: &mut App) -> Entity<Scrollbar> {
-    if let Some(known) = cx.try_global::<Bars>().and_then(|bars| bars.0.get(id)) {
-        return known.clone();
-    }
-    let bar = cx.new(|_| Scrollbar::inset());
-    cx.default_global::<Bars>()
-        .0
-        .insert(id.clone(), bar.clone());
-    bar
+/// The corner radius of a large floating surface for a theme radius: `ROUNDING` times it,
+/// capped at what the Rounded setting gives. Dialogs, toasts and notices share it.
+pub fn corners(radius: f32) -> f32 {
+    (radius * ROUNDING).min(Rounding::Rounded.radius() * ROUNDING)
 }
 
-#[derive(IntoElement)]
-pub struct Modal {
-    base: Div,
-    id: ElementId,
-    title: SharedString,
-    detail: Option<SharedString>,
-    body: Vec<AnyElement>,
-    actions: Vec<AnyElement>,
-    dismiss: Option<Dismiss>,
+/// A dialog. Mount it while it should show with [`Modal::build`]; it pushes a dimming backdrop
+/// and the panel into the layer. Escape and a press on the backdrop dismiss it.
+pub struct Modal<S> {
+    key: String,
+    title: String,
+    detail: Option<String>,
+    body: Vec<El>,
+    actions: Vec<El>,
+    dismiss: Option<Dismiss<S>>,
     close_button: bool,
+    width: Option<f32>,
 }
 
-impl Modal {
-    #[track_caller]
-    pub fn new(id: impl Into<ElementId>, title: impl Into<SharedString>) -> Self {
+impl<S: 'static> Modal<S> {
+    pub fn new(key: impl Into<String>, title: impl Into<String>) -> Self {
         Self {
-            base: div(),
-            id: id.into(),
+            key: key.into(),
             title: title.into(),
             detail: None,
             body: Vec::new(),
             actions: Vec::new(),
             dismiss: None,
             close_button: false,
+            width: None,
         }
     }
 
-    pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = Some(detail.into());
         self
     }
 
-    pub fn child(mut self, body: impl IntoElement) -> Self {
-        self.body.push(body.into_any_element());
+    pub fn child(mut self, body: El) -> Self {
+        self.body.push(body);
         self
     }
 
-    pub fn action(mut self, action: impl IntoElement) -> Self {
-        self.actions.push(action.into_any_element());
+    /// A button in the row along the foot of the dialog, the last one at the end.
+    pub fn action(mut self, action: El) -> Self {
+        self.actions.push(action);
         self
     }
 
-    /// Draws a cross in the top corner, which dismisses the modal the same way clicking
-    /// outside it does. For a modal the user is meant to be able to walk away from without
-    /// reading the buttons.
+    /// Draws a cross in the top corner, which dismisses the dialog as a press outside does.
     pub fn close_button(mut self) -> Self {
         self.close_button = true;
         self
     }
 
-    pub fn on_dismiss(mut self, handler: impl Fn(&(), &mut Window, &mut App) + 'static) -> Self {
-        self.dismiss = Some(Rc::new(handler));
+    /// The panel's width in place of the default, two and a bit covers.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
         self
     }
 
-    /// Sends the body of an open modal back to the top, for a caller that swapped its content.
-    pub fn rewind(id: impl Into<ElementId>, cx: &mut App) {
-        let id = id.into();
-        let Some(bar) = cx
-            .try_global::<Bars>()
-            .and_then(|bars| bars.0.get(&id).cloned())
-        else {
-            return;
-        };
-        bar.read(cx).scroll().set_offset(Point::default());
+    pub fn on_dismiss(mut self, f: impl Fn(&mut S) + 'static) -> Self {
+        self.dismiss = Some(Rc::new(move |s: &mut S, _: &mut Tx| f(s)));
+        self
     }
-}
 
-impl Styled for Modal {
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
+    pub fn on_dismiss_tx(mut self, f: impl Fn(&mut S, &mut Tx) + 'static) -> Self {
+        self.dismiss = Some(Rc::new(f));
+        self
     }
-}
 
-impl RenderOnce for Modal {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = *cx.theme();
+    pub fn build(self, theme: &Theme, layer: &mut Vec<El>) {
         let pad = theme.metrics.pad;
         let room = pad * 2.;
-        let Self {
-            mut base,
-            id,
-            title,
-            detail,
-            body,
-            actions,
-            dismiss,
-            close_button,
-        } = self;
-        let outside = dismiss.clone();
         // with no action row under it the body carries the bottom padding itself, so the
         // panel is inset by the same amount all the way round
-        let tail = match actions.is_empty() {
+        let tail = match self.actions.is_empty() {
             true => room,
             false => pad,
         };
-        let close = dismiss.clone().filter(|_| close_button);
-        let overrides = std::mem::take(base.style());
-        let scroller = bar(&id, cx);
-        scroller.read(cx).sync();
-        let body_id = SharedString::from(format!("modal-body-{id:?}"));
-        // The panel carries its own node named for the title, since nothing
-        // else in the frame has both an id and a role.
-        let name = title.clone();
-        let about = detail.clone();
-
-        // The window is the modal's frame, not the pane that raised it: anchored to window
-        // coordinates and deferred, so a page with chrome floating over it cannot cover the
-        // modal or crop it. The title bar stays reachable, the way a menu leaves it.
-        let chrome = snapped(theme.metrics.title_bar, window);
-        let viewport = window.viewport_size();
-        let frame = div()
-            .w(viewport.width)
-            .h(viewport.height - chrome)
-            .p(theme.metrics.inset)
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(
-                Shield::new(id.clone())
-                    .absolute()
-                    .inset_0()
-                    .bg(theme.background.opacity(BACKDROP))
-                    .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                    .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                        cx.stop_propagation();
-                        if let Some(outside) = &outside {
-                            outside(&(), window, cx);
-                        }
-                    }),
-            )
-            .child({
-                let mut panel = base
-                    .id((id, "panel"))
-                    .role(gpui::accesskit::Role::Dialog)
-                    .aria_label(name)
-                    .when_some(about, |this, detail| this.aria_description(detail))
-                    .relative()
-                    .occlude()
-                    .w(theme.metrics.cover * WIDTH)
-                    .max_w_full()
-                    .max_h_full()
-                    .flex()
-                    .flex_col()
-                    .rounded(corners(theme.radius))
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(theme.popover)
-                    .shadow_md()
-                    .overflow_hidden()
+        let mut words = col().grow(1.).shrink().min_w(0.).gap(crate::paint::rems(theme, 0.25)).child(
+            text(self.title.clone())
+                .font(TextStyle::new(theme.text(Text::Large), Weight::SEMIBOLD))
+                .color(theme.popover_foreground.color())
+                .wrap()
+                .a11y_hidden(),
+        );
+        if let Some(detail) = &self.detail {
+            words = words.child(
+                text(detail.clone())
+                    .font(TextStyle::new(theme.text(Text::Small), Weight::NORMAL))
+                    .color(theme.muted_foreground.color())
+                    .wrap()
+                    .a11y_hidden(),
+            );
+        }
+        let mut head = row()
+            .key("head")
+            .items_start()
+            .gap(pad)
+            .px(room)
+            .pt(room)
+            .pb(pad)
+            .child(words);
+        if let Some(dismiss) = self.dismiss.clone().filter(|_| self.close_button) {
+            head = head.child(
+                Button::new("close")
+                    .icon("icons/x.svg")
+                    .small()
+                    .tooltip(i18n::t!("common-dismiss"))
+                    .on_press_tx(move |s: &mut S, tx: &mut Tx| dismiss(s, tx))
+                    .build(theme),
+            );
+        }
+        let mut panel = col()
+            .key(format!("{}-dialog", self.key))
+            .role("dialog")
+            .label(self.title)
+            .w(self.width.unwrap_or(theme.metrics.cover * WIDTH))
+            .shrink()
+            .min_h(0.)
+            .radius(corners(theme.radius))
+            .clip_rounded(corners(theme.radius))
+            .border(BORDER, theme.border.color())
+            .fill(theme.popover.color())
+            .motion(Springs::BASE)
+            .transition(bloom())
+            .child(head);
+        panel = shadow_md(panel);
+        if let Some(detail) = self.detail {
+            panel = panel.description(detail);
+        }
+        if !self.body.is_empty() {
+            panel = panel.child(
+                col()
+                    .key("body")
+                    .w_full()
+                    .shrink()
+                    .min_h(0.)
+                    .scroll(ScrollSpec { stick_bottom: false })
+                    .scroll_edge_fade(FADE)
                     .child(
-                        div()
-                            .flex()
-                            .flex_none()
-                            .items_start()
-                            .gap_2()
+                        col()
+                            .w_full()
+                            .min_w(0.)
+                            .gap(pad)
                             .px(room)
-                            .pt(room)
-                            .pb(pad)
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .flex_col()
-                                    .gap_1()
-                                    .child(
-                                        div()
-                                            .text_size(theme.text(Text::Large))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(title),
-                                    )
-                                    .when_some(detail, |this, detail| {
-                                        this.child(
-                                            div()
-                                                .text_size(theme.text(Text::Small))
-                                                .text_color(theme.muted_foreground)
-                                                .child(detail),
-                                        )
-                                    }),
-                            )
-                            .children(close.map(|close| {
-                                Button::new("modal-close")
-                                    .icon("icons/x.svg")
-                                    .small()
-                                    .tooltip("common-dismiss")
-                                    .on_click(move |_, window, cx| close(&(), window, cx))
-                            })),
-                    )
-                    .when(!body.is_empty(), |this| {
-                        this.child(
-                            div()
-                                .relative()
-                                .flex()
-                                .flex_1()
-                                .w_full()
-                                .min_h_0()
-                                .overflow_hidden()
-                                .child(
-                                    middle_scroll(div(), &scroller)
-                                        .id(body_id.clone())
-                                        .flex()
-                                        .flex_col()
-                                        .flex_1()
-                                        .w_full()
-                                        .min_w_0()
-                                        .min_h_0()
-                                        .gap(pad)
-                                        .px(room)
-                                        .pt(pad)
-                                        .pb(tail)
-                                        .overflow_y_scroll()
-                                        .track_scroll(scroller.read(cx).scroll())
-                                        .on_scroll_wheel({
-                                            let gliding = scroller.clone();
-                                            move |event: &ScrollWheelEvent, window, cx| {
-                                                if event.delta.precise() {
-                                                    return;
-                                                }
-                                                gliding.update(cx, |bar, _| bar.nudge(window));
-                                            }
-                                        })
-                                        .children(
-                                            body.into_iter()
-                                                .map(|child| div().flex_none().child(child)),
-                                        ),
-                                )
-                                .child(scroller.clone()),
-                        )
-                    })
-                    .when(!actions.is_empty(), |this| {
-                        this.child(
-                            div()
-                                .flex()
-                                .flex_none()
-                                .justify_end()
-                                .gap_2()
-                                .p(room)
-                                .pt(pad)
-                                .children(actions),
-                        )
-                    });
-                panel.style().refine(&overrides);
-                panel.rising("modal-rise")
-            });
-
-        deferred(
-            anchored()
-                .position(point(Pixels::ZERO, chrome))
-                .child(frame),
-        )
+                            .pt(pad)
+                            .pb(tail)
+                            .children(self.body),
+                    ),
+            );
+        }
+        if !self.actions.is_empty() {
+            panel = panel.child(
+                row()
+                    .key("actions")
+                    .justify_end()
+                    .gap(pad)
+                    .padding(room)
+                    .pt(pad)
+                    .children(self.actions),
+            );
+        }
+        let backdrop = el()
+            .key(format!("{}-backdrop", self.key))
+            .absolute(0., 0.)
+            .w_full()
+            .h_full()
+            .fill(theme.background.opacity(BACKDROP).color())
+            .transition(rune::Transition::opacity())
+            .a11y_hidden();
+        let panel = match self.dismiss {
+            Some(dismiss) => panel.modal_tx(true, move |s: &mut S, tx: &mut Tx| dismiss(s, tx)),
+            None => panel.modal(false, |_: &mut S| {}),
+        };
+        layer.push(backdrop);
+        layer.push(
+            col()
+                .key(format!("{}-frame", self.key))
+                .absolute(0., 0.)
+                .w_full()
+                .h_full()
+                .padding(theme.metrics.inset)
+                .center()
+                .child(panel),
+        );
     }
-}
-
-/// The corner radius of a large floating surface for a theme radius: `ROUNDING` times it, capped
-/// at what the Rounded setting gives. Dialogs, toasts and notices share it, so they round alike.
-pub fn corners(radius: Pixels) -> Pixels {
-    (radius * ROUNDING).min(Rounding::Rounded.radius() * ROUNDING)
 }

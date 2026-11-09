@@ -1,19 +1,13 @@
-use gpui::{Context, EventEmitter};
-
 use crate::{Destination, SettingsPage};
 
-pub enum NavigationEvent {
-    Moved(Destination),
-}
-
+/// The pages visited, with Back and Forward through them. Each move answers the destination
+/// it arrived at, or `None` when it went nowhere, so the window can start the page's transition.
 pub struct Navigation {
     trail: Vec<Destination>,
     at: usize,
     /// The settings destination last on show, which opening settings again returns to.
     last_settings: Option<Destination>,
 }
-
-impl EventEmitter<NavigationEvent> for Navigation {}
 
 impl Navigation {
     pub fn new(start: Destination) -> Self {
@@ -36,9 +30,9 @@ impl Navigation {
         self.at + 1 < self.trail.len()
     }
 
-    pub fn go(&mut self, destination: Destination, cx: &mut Context<Self>) {
+    pub fn go(&mut self, destination: Destination) -> Option<Destination> {
         if self.current() == destination {
-            return;
+            return None;
         }
 
         let replacing = self.current() == Destination::Fullscreen;
@@ -50,63 +44,62 @@ impl Navigation {
                 self.at = self.trail.len() - 1;
             }
         }
-        self.arrive(cx);
+        self.arrive()
     }
 
-    pub fn back(&mut self, cx: &mut Context<Self>) {
+    pub fn back(&mut self) -> Option<Destination> {
         if !self.can_go_back() {
-            return;
+            return None;
         }
         self.at -= 1;
-        self.arrive(cx);
+        self.arrive()
     }
 
     /// Replaces the current page without leaving its stale destination in navigation history.
-    pub fn replace(&mut self, destination: Destination, cx: &mut Context<Self>) {
+    pub fn replace(&mut self, destination: Destination) -> Option<Destination> {
         if self.current() == destination {
-            return;
+            return None;
         }
         self.trail[self.at] = destination;
-        self.arrive(cx);
+        self.arrive()
     }
 
     /// Returns from a drill-in to `parent`. Stepping back keeps the trail free of a parent,
     /// drill-in, parent loop when the page before shows the parent's settings tab, which also
     /// puts that tab back where it was scrolled to. Anywhere else the drill-in is replaced so Back
     /// does not reopen it.
-    pub fn up(&mut self, parent: Destination, cx: &mut Context<Self>) {
+    pub fn up(&mut self, parent: Destination) -> Option<Destination> {
         let tab = |destination: &Destination| destination.settings_page().map(SettingsPage::tab);
         let before = self.at.checked_sub(1).map(|at| &self.trail[at]);
         match before.is_some_and(|before| {
             *before == parent || (tab(before).is_some() && tab(before) == tab(&parent))
         }) {
-            true => self.back(cx),
-            false => self.replace(parent, cx),
+            true => self.back(),
+            false => self.replace(parent),
         }
     }
 
     /// Opens settings on the destination last shown there, or on General the first time.
-    pub fn open_settings(&mut self, cx: &mut Context<Self>) {
+    pub fn open_settings(&mut self) -> Option<Destination> {
         let destination = self
             .last_settings
             .clone()
             .unwrap_or(Destination::Settings(SettingsPage::General));
-        self.go(destination, cx);
+        self.go(destination)
     }
 
-    pub fn forward(&mut self, cx: &mut Context<Self>) {
+    pub fn forward(&mut self) -> Option<Destination> {
         if !self.can_go_forward() {
-            return;
+            return None;
         }
         self.at += 1;
-        self.arrive(cx);
+        self.arrive()
     }
 
-    fn arrive(&mut self, cx: &mut Context<Self>) {
+    fn arrive(&mut self) -> Option<Destination> {
         if self.current().in_settings() {
             self.last_settings = Some(self.current());
         }
-        cx.emit(NavigationEvent::Moved(self.current()));
-        cx.notify();
+        Some(self.current())
     }
 }

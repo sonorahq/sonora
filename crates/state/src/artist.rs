@@ -1,93 +1,33 @@
 use std::sync::Arc;
 
-use gpui::{Context, Entity, EventEmitter, Task};
 use music::{Album, Artist, ArtistCatalogue, Track};
-use tokio::task::AbortHandle;
 
-use crate::{Io, Library, LibraryEvent, Session, SessionEvent, join};
+use crate::{Change, Cx, Event, Job, LibraryEvent, Session, SessionEvent, Store};
 
-/// Signals that a local artist no longer has a page after the library changes.
-pub enum ArtistDetailEvent {
-    Gone(String),
-}
-
+/// The artist page: what [`Store::pages`](crate::Pages) shows as `artist`. A local artist the
+/// library no longer holds raises [`Event::ArtistGone`].
 pub struct ArtistDetail {
     id: Option<String>,
     artist: Option<Arc<Artist>>,
     appears_on: Vec<Album>,
     loading: bool,
     error: Option<String>,
-    session: Entity<Session>,
-    io: Io,
-    task: Option<Task<()>>,
-    request: Option<AbortHandle>,
+    task: Option<Job>,
     filling: bool,
-    fill: Option<Task<()>>,
-    filling_request: Option<AbortHandle>,
+    fill: Option<Job>,
 }
 
-impl EventEmitter<ArtistDetailEvent> for ArtistDetail {}
-
 impl ArtistDetail {
-    pub fn new(
-        session: Entity<Session>,
-        library: Entity<Library>,
-        io: Io,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.subscribe(&session, |this, _, event, cx| match event {
-            SessionEvent::SignedIn => {
-                if let Some(id) = this.id.clone().filter(|id| !music::is_local_id(id)) {
-                    this.clear();
-                    this.open(&id, cx);
-                }
-            }
-            SessionEvent::SignedOut => {
-                if !this.id.as_deref().is_some_and(music::is_local_id) {
-                    this.clear();
-                    cx.notify();
-                }
-            }
-            SessionEvent::Reconnected | SessionEvent::WentOffline => {}
-            SessionEvent::LocalChanged => {
-                if let Some(id) = this.id.clone().filter(|id| music::is_local_id(id)) {
-                    this.clear();
-                    this.open(&id, cx);
-                }
-            }
-        })
-        .detach();
-
-        cx.subscribe(&library, |this, _, event, cx| {
-            let LibraryEvent::TracksHidden(ids) = event else {
-                return;
-            };
-            let Some(artist) = this.artist.as_mut() else {
-                return;
-            };
-            let before = artist.top_tracks.len();
-            Arc::make_mut(artist)
-                .top_tracks
-                .retain(|track| !track.id.as_ref().is_some_and(|id| ids.contains(id)));
-            if artist.top_tracks.len() != before {
-                cx.notify();
-            }
-        })
-        .detach();
-
+    pub(crate) fn new() -> Self {
         Self {
             id: None,
             artist: None,
             appears_on: Vec::new(),
             loading: false,
             error: None,
-            session,
-            io,
             task: None,
-            request: None,
             filling: false,
             fill: None,
-            filling_request: None,
         }
     }
 
@@ -132,7 +72,7 @@ impl ArtistDetail {
         self.error.as_deref()
     }
 
-    pub fn open(&mut self, id: &str, cx: &mut Context<Self>) {
+    fn open(&mut self, id: &str, session: &Session, cx: &mut Cx) {
         if self.id.as_deref() == Some(id) && (self.loading || self.artist.is_some()) {
             return;
         }
@@ -140,48 +80,43 @@ impl ArtistDetail {
         self.clear();
         self.id = Some(id.to_owned());
 
-        let Some(catalog) = self.session.read(cx).catalog(id) else {
-            cx.notify();
+        let Some(catalog) = session.catalog(id) else {
             return;
         };
         if let Some(artist) = catalog.peek_artist(id) {
             self.artist = Some(artist);
             let id = id.to_owned();
-            self.fill(&id, cx);
-            cx.notify();
+            self.fill(&id, session, cx);
             return;
         }
-        self.load(id.to_owned(), false, cx);
+        self.load(id.to_owned(), false, session, cx);
     }
 
     /// Drops the page and fetches it again from the provider, past the catalog cache, so it
     /// shows its loading state until the new overview lands.
-    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+    fn refresh(&mut self, session: &Session, cx: &mut Cx) {
         let Some(id) = self.id.clone() else {
             return;
         };
         self.clear();
         self.id = Some(id.clone());
-        self.load(id, true, cx);
+        self.load(id, true, session, cx);
     }
 
     /// Fetches the artist's overview and fills the rest of the page once it lands. A `fresh`
     /// load drops the cached artist first, so the provider is asked again.
-    fn load(&mut self, id: String, fresh: bool, cx: &mut Context<Self>) {
-        let Some(catalog) = self.session.read(cx).catalog(&id) else {
-            cx.notify();
+    fn load(&mut self, id: String, fresh: bool, session: &Session, cx: &mut Cx) {
+        let Some(catalog) = session.catalog(&id) else {
             return;
         };
 
         self.loading = true;
-        cx.notify();
 
         let local = music::is_local_id(&id)
-            .then(|| self.session.read(cx).local_client())
+            .then(|| session.local_client())
             .flatten();
-        let request = self.io.spawn({
-            let id = id.clone();
-            async move {
+        self.task = Some(cx.spawn(move |link| async move {
+            let loaded: anyhow::Result<Option<Arc<Artist>>> = async {
                 if let Some(client) = local
                     && !client
                         .all_artists()
@@ -196,43 +131,40 @@ impl ArtistDetail {
                 }
                 catalog.artist(&id).await.map(Some)
             }
-        });
-        self.request = Some(request.abort_handle());
-        self.task = Some(cx.spawn(async move |this, cx| {
-            let loaded = join(request).await;
+            .await;
 
-            this.update(cx, |this, cx| {
-                if this.id.as_deref() != Some(id.as_str()) {
+            link.post(move |store| {
+                let Store {
+                    pages, session, cx, ..
+                } = store;
+                let Some(this) = showing(&mut pages.artist, &id) else {
                     return;
-                }
+                };
 
                 this.loading = false;
-                this.request = None;
                 match crate::settled(loaded, cx) {
                     Ok(Some(artist)) => {
                         this.artist = Some(artist);
-                        this.fill(&id, cx);
+                        this.fill(&id, session, cx);
                     }
                     Ok(None) => {
                         this.clear();
-                        cx.emit(ArtistDetailEvent::Gone(id));
+                        cx.emit(Event::ArtistGone(id));
                     }
                     Err(reason) => this.error = Some(reason),
                 }
-                cx.notify();
-            })
-            .ok();
+            });
         }));
     }
 
     /// Asks the provider for the rest of the page once its overview is up: the whole
     /// discography and the popular tracks only the discography can rank. A provider that
     /// answers everything in `artist` has nothing to add here and the page stays as it is.
-    fn fill(&mut self, id: &str, cx: &mut Context<Self>) {
+    fn fill(&mut self, id: &str, session: &Session, cx: &mut Cx) {
         let Some(artist) = self.artist.clone() else {
             return;
         };
-        let Some(catalog) = self.session.read(cx).catalog(id) else {
+        let Some(catalog) = session.catalog(id) else {
             return;
         };
         if let Some(catalogue) = catalog.peek_artist_catalogue(id) {
@@ -242,29 +174,21 @@ impl ArtistDetail {
 
         self.filling = true;
         let id = id.to_owned();
-        let request = self.io.spawn({
-            let id = id.clone();
-            let known = artist.top_tracks.clone();
-            async move { catalog.artist_catalogue(&id, &known).await }
-        });
-        self.filling_request = Some(request.abort_handle());
-        self.fill = Some(cx.spawn(async move |this, cx| {
-            let filled = join(request).await;
+        let known = artist.top_tracks.clone();
+        self.fill = Some(cx.spawn(move |link| async move {
+            let filled = catalog.artist_catalogue(&id, &known).await;
 
-            this.update(cx, |this, cx| {
-                if this.id.as_deref() != Some(id.as_str()) {
+            link.post(move |store| {
+                let Some(this) = showing(&mut store.pages.artist, &id) else {
                     return;
-                }
+                };
 
                 this.filling = false;
-                this.filling_request = None;
                 match filled {
                     Ok(catalogue) => this.absorb(&catalogue),
                     Err(error) => log::warn!("artist: cannot fill the page: {error:#}"),
                 }
-                cx.notify();
-            })
-            .ok();
+            });
         }));
     }
 
@@ -292,12 +216,6 @@ impl ArtistDetail {
     fn clear(&mut self) {
         self.task = None;
         self.fill = None;
-        for request in [self.request.take(), self.filling_request.take()]
-            .into_iter()
-            .flatten()
-        {
-            request.abort();
-        }
         self.id = None;
         self.artist = None;
         self.appears_on.clear();
@@ -305,4 +223,80 @@ impl ArtistDetail {
         self.filling = false;
         self.error = None;
     }
+}
+
+impl Store {
+    /// Opens the artist page on `id`, from the catalog cache when it already holds the artist.
+    pub fn open_artist(&mut self, id: &str) {
+        let Store {
+            pages, session, cx, ..
+        } = self;
+        pages
+            .artist
+            .get_or_insert_with(ArtistDetail::new)
+            .open(id, session, cx);
+    }
+
+    /// Drops the artist page, and the loads it has under way.
+    pub fn close_artist(&mut self) {
+        self.pages.artist = None;
+    }
+
+    /// Drops the artist page's contents and fetches them again from the provider, past the
+    /// catalog cache.
+    pub fn refresh_artist(&mut self) {
+        let Store {
+            pages, session, cx, ..
+        } = self;
+        if let Some(artist) = pages.artist.as_mut() {
+            artist.refresh(session, cx);
+        }
+    }
+
+    pub(crate) fn react_artist(&mut self, change: &Change) {
+        let Store {
+            pages, session, cx, ..
+        } = self;
+        let Some(this) = pages.artist.as_mut() else {
+            return;
+        };
+        match change {
+            Change::Event(Event::Session(event)) => match event {
+                SessionEvent::SignedIn => {
+                    if let Some(id) = this.id.clone().filter(|id| !music::is_local_id(id)) {
+                        this.clear();
+                        this.open(&id, session, cx);
+                    }
+                }
+                SessionEvent::SignedOut => {
+                    if !this.id.as_deref().is_some_and(music::is_local_id) {
+                        this.clear();
+                    }
+                }
+                SessionEvent::Reconnected | SessionEvent::WentOffline => {}
+                SessionEvent::LocalChanged => {
+                    if let Some(id) = this.id.clone().filter(|id| music::is_local_id(id)) {
+                        this.clear();
+                        this.open(&id, session, cx);
+                    }
+                }
+            },
+            Change::Event(Event::Library(LibraryEvent::TracksHidden(ids))) => {
+                let Some(artist) = this.artist.as_mut() else {
+                    return;
+                };
+                Arc::make_mut(artist)
+                    .top_tracks
+                    .retain(|track| !track.id.as_ref().is_some_and(|id| ids.contains(id)));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The page in `slot` when it still shows `id`, which a load that lands checks first, since
+/// another artist may have opened in its place.
+fn showing<'a>(slot: &'a mut Option<ArtistDetail>, id: &str) -> Option<&'a mut ArtistDetail> {
+    slot.as_mut()
+        .filter(|artist| artist.id.as_deref() == Some(id))
 }

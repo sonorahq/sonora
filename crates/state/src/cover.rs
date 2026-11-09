@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use gpui::{Context, Entity, Task};
-use music::{CoverSize, MusicApi};
+use music::{CoverSize, MusicApi, Track};
 
-use crate::{Io, Playback, Session, SessionEvent, join};
+use crate::{Change, Cx, Event, Job, Session, SessionEvent, Store, Topic};
 
 /// The artwork of one album: the large cover, and the full-resolution one when the provider
 /// serves something bigger.
@@ -14,43 +13,23 @@ struct Art {
     full: Option<String>,
 }
 
+/// The artwork of the album the shown track is from, which the player, the fullscreen view and
+/// the presence integrations draw. A change raises [`Topic::Cover`].
 pub struct Cover {
-    session: Entity<Session>,
-    playback: Entity<Playback>,
     album: Option<String>,
     large: Option<String>,
     full: Option<String>,
     cache: HashMap<String, Art>,
-    io: Io,
-    task: Option<Task<()>>,
+    task: Option<Job>,
 }
 
 impl Cover {
-    pub fn new(
-        session: Entity<Session>,
-        playback: Entity<Playback>,
-        io: Io,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.observe(&playback, |this, _, cx| this.follow(cx))
-            .detach();
-        cx.subscribe(&session, |this, _, event, cx| match event {
-            SessionEvent::SignedOut => this.forget(cx),
-            SessionEvent::SignedIn
-            | SessionEvent::Reconnected
-            | SessionEvent::WentOffline
-            | SessionEvent::LocalChanged => {}
-        })
-        .detach();
-
+    pub fn new() -> Self {
         Self {
-            session,
-            playback,
             album: None,
             large: None,
             full: None,
             cache: HashMap::new(),
-            io,
             task: None,
         }
     }
@@ -74,19 +53,19 @@ impl Cover {
             .filter(|_| self.album.as_deref() == Some(album))
     }
 
-    fn forget(&mut self, cx: &mut Context<Self>) {
+    fn forget(&mut self, cx: &mut Cx) {
         self.task = None;
         self.album = None;
         self.large = None;
         self.full = None;
         self.cache.clear();
-        cx.notify();
+        cx.changed(Topic::Cover);
     }
 
     /// Follows the shown track's album. Both covers come straight from the track's thumbnail
     /// when the provider can tell, and the album is loaded only when it cannot.
-    fn follow(&mut self, cx: &mut Context<Self>) {
-        let (album, thumbnail) = match self.playback.read(cx).shown_track(cx) {
+    fn follow(&mut self, shown: Option<Track>, session: &Session, cx: &mut Cx) {
+        let (album, thumbnail) = match shown {
             Some(track) => (track.album_id, track.cover),
             None => (None, None),
         };
@@ -96,7 +75,7 @@ impl Cover {
         self.task = None;
         self.album = album.clone();
         let cached = album.as_ref().and_then(|id| self.cache.get(id)).cloned();
-        let client = album.as_deref().and_then(|id| self.client(id, cx));
+        let client = album.as_deref().and_then(|id| client(session, id));
         let derive = |size| client.as_ref()?.cover_at(thumbnail.as_deref()?, size);
         self.large = cached
             .as_ref()
@@ -105,7 +84,7 @@ impl Cover {
         self.full = cached
             .and_then(|art| art.full)
             .or_else(|| derive(CoverSize::Full));
-        cx.notify();
+        cx.changed(Topic::Cover);
 
         let Some(id) = album else {
             return;
@@ -113,27 +92,29 @@ impl Cover {
         if self.large.is_some() {
             return;
         }
-        self.load(id, cx);
+        self.load(id, session, cx);
     }
 
-    fn load(&mut self, id: String, cx: &mut Context<Self>) {
-        let Some(client) = self.client(&id, cx) else {
+    fn load(&mut self, id: String, session: &Session, cx: &mut Cx) {
+        let Some(client) = client(session, &id) else {
             return;
         };
 
-        let io = self.io.clone();
         let wanted = id.clone();
-        self.task = Some(cx.spawn(async move |this, cx| {
-            let found = join(io.spawn(async move {
+        self.task = Some(cx.spawn(|link| async move {
+            let found = async {
                 let large = client.album(&wanted).await?.album.cover_large;
                 let full = large
                     .as_deref()
                     .and_then(|cover| client.cover_at(cover, CoverSize::Full));
                 anyhow::Ok(large.map(|large| Art { large, full }))
-            }))
+            }
             .await;
 
-            this.update(cx, |this, cx| {
+            link.post(move |store| {
+                let Store {
+                    cover: this, cx, ..
+                } = store;
                 this.task = None;
                 match found {
                     Ok(art) => {
@@ -144,7 +125,7 @@ impl Cover {
                         if this.album.as_deref() == Some(id.as_str()) {
                             this.large = Some(art.large);
                             this.full = art.full.or(this.full.take());
-                            cx.notify();
+                            cx.changed(Topic::Cover);
                         }
                     }
                     Err(error) => {
@@ -152,18 +133,39 @@ impl Cover {
                         crate::noted(&error, cx);
                     }
                 }
-            })
-            .ok();
+            });
         }));
     }
+}
 
-    /// The client that serves album `id`: the local library for a local id, the signed-in
-    /// provider otherwise.
-    fn client(&self, id: &str, cx: &Context<Self>) -> Option<Arc<dyn MusicApi>> {
-        let session = self.session.read(cx);
-        match music::is_local_id(id) {
-            true => session.local_client(),
-            false => session.client(),
+impl Default for Cover {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Store {
+    /// Follows the shown track's album as playback changes, and lets every cover go when the
+    /// account signs out.
+    pub(crate) fn react_cover(&mut self, change: &Change) {
+        match change {
+            Change::Topic(Topic::Playback) => {
+                let shown = self.playback.shown_track(&self.devices);
+                self.cover.follow(shown, &self.session, &mut self.cx);
+            }
+            Change::Event(Event::Session(SessionEvent::SignedOut)) => {
+                self.cover.forget(&mut self.cx)
+            }
+            _ => {}
         }
+    }
+}
+
+/// The client that serves album `id`: the local library for a local id, the signed-in provider
+/// otherwise.
+fn client(session: &Session, id: &str) -> Option<Arc<dyn MusicApi>> {
+    match music::is_local_id(id) {
+        true => session.local_client(),
+        false => session.client(),
     }
 }

@@ -1,14 +1,13 @@
-use gpui::{Pixels, px};
+pub const ALWAYS: f32 = 0.;
+pub const SNUG: f32 = 420.;
+pub const ROOMY: f32 = 620.;
+pub const WIDE: f32 = 740.;
+pub const VAST: f32 = 1180.;
 
-pub const ALWAYS: Pixels = Pixels::ZERO;
-pub const SNUG: Pixels = px(420.);
-pub const ROOMY: Pixels = px(620.);
-pub const WIDE: Pixels = px(740.);
-pub const VAST: Pixels = px(1180.);
-
-pub const MIN_CONTENT: Pixels = px(200.);
+pub const MIN_CONTENT: f32 = 200.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+/// How much width a view has, on the one ladder every layout decision reads.
 pub enum Room {
     Tight,
     Snug,
@@ -18,7 +17,7 @@ pub enum Room {
 }
 
 impl Room {
-    pub fn of(width: Pixels) -> Self {
+    pub fn of(width: f32) -> Self {
         match width {
             width if width >= VAST => Self::Vast,
             width if width >= WIDE => Self::Wide,

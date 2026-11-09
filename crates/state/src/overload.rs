@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use gpui::Context;
 use music::equalizer::PREAMP_RANGE;
 
 /// How long the clip warning stays up after the last read that went over.
@@ -41,8 +40,9 @@ pub(crate) struct Overload {
 }
 
 /// The output's recent level as a meter draws it, in dBFS: the level falling smoothly after
-/// each peak, and the loudest read held a moment before it falls too. Its own entity, so the
-/// meter redraws on every read without waking everything that watches playback.
+/// each peak, and the loudest read held a moment before it falls too. Kept apart from what other
+/// models follow, so the meter redraws on every read without waking everything that watches
+/// playback.
 pub struct OutputLevel {
     level: f32,
     peak: f32,
@@ -126,9 +126,9 @@ impl OutputLevel {
         self.peak
     }
 
-    /// Takes in one meter read, the loudest sample since the one before, made at `now`, and
-    /// notifies when either reading moved by a visible step.
-    pub(crate) fn observe(&mut self, peak: f32, now: Instant, cx: &mut Context<Self>) {
+    /// Takes in one meter read, the loudest sample since the one before, made at `now`. Returns
+    /// whether either reading moved by a visible step, which is when the meter has to redraw.
+    pub(crate) fn observe(&mut self, peak: f32, now: Instant) -> bool {
         let fallen = self
             .read
             .map_or(0., |read| now.duration_since(read).as_secs_f32() * FALL);
@@ -148,16 +148,16 @@ impl OutputLevel {
                 false => level.max(stepped(self.peak - fallen)),
             },
         };
-        if (level, peak) != (self.level, self.peak) {
-            (self.level, self.peak) = (level, peak);
-            cx.notify();
+        if (level, peak) == (self.level, self.peak) {
+            return false;
         }
+        (self.level, self.peak) = (level, peak);
+        true
     }
 
     /// Drops every reading back to the floor, for a meter that starts watching afresh.
-    pub(crate) fn reset(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn reset(&mut self) {
         *self = Self::default();
-        cx.notify();
     }
 }
 

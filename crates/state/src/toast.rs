@@ -1,17 +1,25 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
+use i18n::SharedString;
+
+use crate::{Change, Cx, Event, Job, SessionEvent, Store};
 
 const LINGER: Duration = Duration::from_secs(4);
 
-type Run = Rc<dyn Fn(&mut App)>;
+/// The id the next toast gets. Ids are handed out as a toast is built rather than when it lands
+/// on the stack, so a model that only raises an event still knows which toast it raised.
+static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+type Run = Arc<dyn Fn(&mut Store) + Send + Sync>;
 
 /// What a toast reports, which picks its icon. `Loading` stays up until it is settled or
 /// dismissed.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
     /// A plain message with no icon.
     Plain,
@@ -23,7 +31,7 @@ pub enum Outcome {
 }
 
 /// A page a toast leads to, which the views turn into a destination.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
     Song(SharedString),
     Album(SharedString),
@@ -35,9 +43,41 @@ pub enum Target {
     ProviderSettings,
 }
 
+/// Which of a toast's two buttons was pressed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToastButton {
+    /// The emphasised one, such as Undo.
+    Action,
+    /// The quiet one beside it, such as Cancel.
+    Cancel,
+}
+
+/// A change to a toast already raised, for a model that holds only a [`Cx`]. The stack applies
+/// it once the change that raised it settles.
+#[derive(Clone, Debug)]
+pub enum ToastUpdate {
+    /// See [`Toasts::settle`].
+    Settle(usize, Toast),
+    /// See [`Toasts::progress`].
+    Progress(usize, f32),
+    /// See [`Toasts::close`].
+    Close(usize),
+}
+
+/// A handler a toast runs on the UI thread with the whole store. It has to cope with
+/// everything that may have changed since the toast went up.
+#[derive(Clone)]
+struct Handler(Run);
+
+impl fmt::Debug for Handler {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Handler")
+    }
+}
+
 /// A button on a toast. Pressing it runs the handler, opens the target or the link if there is
 /// one, and then dismisses the toast.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ToastAction {
     /// The Fluent key of the button's label.
     pub key: SharedString,
@@ -45,26 +85,29 @@ pub struct ToastAction {
     pub target: Option<Target>,
     /// The web page the button opens in the browser after the handler has run.
     pub url: Option<SharedString>,
-    run: Run,
+    run: Handler,
 }
 
 impl ToastAction {
-    pub fn new(key: impl Into<SharedString>, run: impl Fn(&mut App) + 'static) -> Self {
+    pub fn new(
+        key: impl Into<SharedString>,
+        run: impl Fn(&mut Store) + Send + Sync + 'static,
+    ) -> Self {
         Self {
             key: key.into(),
             target: None,
             url: None,
-            run: Rc::new(run),
+            run: Handler(Arc::new(run)),
         }
     }
 
-    pub fn run(&self, cx: &mut App) {
-        (self.run)(cx)
+    pub fn run(&self, store: &mut Store) {
+        (self.run.0)(store)
     }
 }
 
 /// One toast, built with the methods below and shown with [`Toasts::post`].
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Toast {
     pub id: usize,
     pub outcome: Outcome,
@@ -89,19 +132,22 @@ pub struct Toast {
     pub single_line: bool,
     /// Runs when the listener dismisses the toast by its cross or a swipe. Closing it from code
     /// or letting it expire runs nothing.
-    dismissed: Option<Run>,
+    dismissed: Option<Handler>,
     /// How long the toast stays while nobody holds it, or `None` to stay until dismissed.
     linger: Option<Duration>,
     /// When the clock last started running.
     rest: Instant,
     /// Time the clock already ran before it was last paused.
     spent: Duration,
+    /// The ids of repeats that were folded into this toast rather than shown, so whoever raised
+    /// one of them still reaches this one by its id.
+    also: Vec<usize>,
 }
 
 impl Toast {
     pub fn new(outcome: Outcome, key: impl Into<SharedString>) -> Self {
         Self {
-            id: 0,
+            id: NEXT.fetch_add(1, Ordering::Relaxed),
             outcome,
             key: key.into(),
             name: None,
@@ -120,6 +166,7 @@ impl Toast {
             },
             rest: Instant::now(),
             spent: Duration::ZERO,
+            also: Vec::new(),
         }
     }
 
@@ -159,7 +206,7 @@ impl Toast {
     pub fn action(
         mut self,
         key: impl Into<SharedString>,
-        run: impl Fn(&mut App) + 'static,
+        run: impl Fn(&mut Store) + Send + Sync + 'static,
     ) -> Self {
         self.action = Some(ToastAction::new(key, run));
         self
@@ -168,7 +215,7 @@ impl Toast {
     pub fn cancel(
         mut self,
         key: impl Into<SharedString>,
-        run: impl Fn(&mut App) + 'static,
+        run: impl Fn(&mut Store) + Send + Sync + 'static,
     ) -> Self {
         self.cancel = Some(ToastAction::new(key, run));
         self
@@ -192,7 +239,7 @@ impl Toast {
 
     /// Adds an Undo button. `run` puts back what the toast reports was removed, and has to cope
     /// with everything that may have changed since, since the toast stays up for seconds.
-    pub fn undo(self, run: impl Fn(&mut App) + 'static) -> Self {
+    pub fn undo(self, run: impl Fn(&mut Store) + Send + Sync + 'static) -> Self {
         self.action("toast-undo", run)
     }
 
@@ -210,8 +257,8 @@ impl Toast {
 
     /// Runs `run` when the listener dismisses the toast, which makes the cross and a swipe
     /// undo what the toast reports, such as a download under way.
-    pub fn on_dismiss(mut self, run: impl Fn(&mut App) + 'static) -> Self {
-        self.dismissed = Some(Rc::new(run));
+    pub fn on_dismiss(mut self, run: impl Fn(&mut Store) + Send + Sync + 'static) -> Self {
+        self.dismissed = Some(Handler(Arc::new(run)));
         self
     }
 
@@ -219,6 +266,11 @@ impl Toast {
     pub fn lasting(mut self) -> Self {
         self.linger = None;
         self
+    }
+
+    /// Whether `id` names this toast, as its own id or as one of a repeat folded into it.
+    fn answers(&self, id: usize) -> bool {
+        self.id == id || self.also.contains(&id)
     }
 
     /// How long a running clock still has to go, or `None` for a toast that never expires.
@@ -248,32 +300,32 @@ impl Toast {
 
 /// The toasts on screen, oldest first. Every toast's clock stops while the stack is paused,
 /// which it is while the pointer is over it.
+///
+/// A model raises a toast with [`Toasts::post`] and its siblings, which only need a [`Cx`]: the
+/// toast travels as [`Event::Toast`] and lands on the stack once the change settles. Views and
+/// `Store` methods reach the stack directly at `store.toasts`.
 pub struct Toasts {
     shown: Vec<Toast>,
-    next: usize,
     paused: bool,
-    clocks: HashMap<usize, Task<()>>,
+    clocks: HashMap<usize, Job>,
 }
 
-struct Installed(Entity<Toasts>);
-
-impl Global for Installed {}
+impl Default for Toasts {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Toasts {
-    pub fn entity(cx: &mut App) -> Entity<Self> {
-        if cx.try_global::<Installed>().is_none() {
-            let toasts = cx.new(|_| Self {
-                shown: Vec::new(),
-                next: 0,
-                paused: false,
-                clocks: HashMap::new(),
-            });
-            cx.set_global(Installed(toasts));
+    pub fn new() -> Self {
+        Self {
+            shown: Vec::new(),
+            paused: false,
+            clocks: HashMap::new(),
         }
-        cx.global::<Installed>().0.clone()
     }
 
-    pub fn show(outcome: Outcome, key: impl Into<SharedString>, cx: &mut App) {
+    pub fn show(outcome: Outcome, key: impl Into<SharedString>, cx: &mut Cx) {
         Self::post(Toast::new(outcome, key), cx);
     }
 
@@ -281,7 +333,7 @@ impl Toasts {
         outcome: Outcome,
         key: impl Into<SharedString>,
         name: impl Into<SharedString>,
-        cx: &mut App,
+        cx: &mut Cx,
     ) {
         Self::post(Toast::new(outcome, key).name(name), cx);
     }
@@ -291,7 +343,7 @@ impl Toasts {
         key: impl Into<SharedString>,
         name: impl Into<SharedString>,
         target: Option<Target>,
-        cx: &mut App,
+        cx: &mut Cx,
     ) {
         Self::post(Toast::new(outcome, key).name(name).target(target), cx);
     }
@@ -302,7 +354,7 @@ impl Toasts {
         key: impl Into<SharedString>,
         name: Option<SharedString>,
         detail: impl Into<SharedString>,
-        cx: &mut App,
+        cx: &mut Cx,
     ) {
         let mut toast = Toast::new(outcome, key).detail(detail);
         toast.name = name;
@@ -312,107 +364,122 @@ impl Toasts {
     /// Shows a toast and returns its id, which [`Self::settle`] and [`Self::close`] take. Every
     /// call shows a new toast, except a failure or warning that says the same thing as one
     /// already up. Those can fire again on their own, so the one up restarts its clock instead
-    /// and its id is returned.
-    pub fn post(toast: Toast, cx: &mut App) -> usize {
-        let toasts = Self::entity(cx);
-        toasts.update(cx, |this, cx| this.push(toast, cx))
+    /// and answers to this id too. The toast lands once the current change settles, so
+    /// [`Self::showing`] does not see it before then.
+    pub fn post(toast: Toast, cx: &mut Cx) -> usize {
+        let id = toast.id;
+        cx.emit(Event::Toast(toast));
+        id
     }
 
     /// Replaces what toast `id` says and restarts its clock, the way a loading toast turns into
     /// its result. Nothing happens when the toast is already gone.
-    pub fn settle(id: usize, toast: Toast, cx: &mut App) {
-        let toasts = Self::entity(cx);
-        toasts.update(cx, |this, cx| {
-            let Some(at) = this.shown.iter().position(|shown| shown.id == id) else {
-                return;
-            };
-            this.shown[at] = Toast {
-                id,
-                rest: Instant::now(),
-                spent: Duration::ZERO,
-                ..toast
-            };
-            this.arm(id, cx);
-            cx.notify();
-        });
+    pub fn settle(id: usize, toast: Toast, cx: &mut Cx) {
+        cx.emit(Event::ToastUpdate(ToastUpdate::Settle(id, toast)));
     }
 
     /// Moves the progress toast `id` shows to `done`, from 0 to 1, leaving its clock and the rest
     /// of what it says alone. Nothing happens when the toast is already gone.
-    pub fn progress(id: usize, done: f32, cx: &mut App) {
-        let toasts = Self::entity(cx);
-        toasts.update(cx, |this, cx| {
-            let Some(toast) = this.shown.iter_mut().find(|shown| shown.id == id) else {
-                return;
-            };
-            if toast.progress != Some(done) {
-                toast.progress = Some(done);
-                cx.notify();
-            }
-        });
-    }
-
-    /// Dismisses toast `id` for the listener, by its cross or a swipe, then runs what the toast
-    /// set with [`Toast::on_dismiss`]. It runs outside the stack's update, so it may post toasts.
-    pub fn discard(id: usize, cx: &mut App) {
-        let toasts = Self::entity(cx);
-        let run = toasts
-            .read(cx)
-            .shown
-            .iter()
-            .find(|shown| shown.id == id)
-            .and_then(|shown| shown.dismissed.clone());
-        toasts.update(cx, |this, cx| this.dismiss(id, cx));
-        if let Some(run) = run {
-            run(cx);
-        }
+    pub fn progress(id: usize, done: f32, cx: &mut Cx) {
+        cx.emit(Event::ToastUpdate(ToastUpdate::Progress(id, done)));
     }
 
     /// Dismisses toast `id` from outside the stack.
-    pub fn close(id: usize, cx: &mut App) {
-        let toasts = Self::entity(cx);
-        toasts.update(cx, |this, cx| this.dismiss(id, cx));
-    }
-
-    /// Dismisses every toast.
-    pub fn clear(cx: &mut App) {
-        let toasts = Self::entity(cx);
-        toasts.update(cx, |this, cx| {
-            this.shown.clear();
-            this.clocks.clear();
-            cx.notify();
-        });
-    }
-
-    /// Dismisses every toast bound to the account being signed out of. Plain messages stay, so
-    /// one that explains the sign-out itself is still read.
-    pub fn clear_account(cx: &mut App) {
-        let toasts = Self::entity(cx);
-        toasts.update(cx, |this, cx| {
-            let clocks = &mut this.clocks;
-            this.shown.retain(|toast| {
-                let bound = toast.bound();
-                if bound {
-                    clocks.remove(&toast.id);
-                }
-                !bound
-            });
-            cx.notify();
-        });
+    pub fn close(id: usize, cx: &mut Cx) {
+        cx.emit(Event::ToastUpdate(ToastUpdate::Close(id)));
     }
 
     pub fn shown(&self) -> &[Toast] {
         &self.shown
     }
 
-    pub fn dismiss(&mut self, id: usize, cx: &mut Context<Self>) {
-        self.shown.retain(|toast| toast.id != id);
-        self.clocks.remove(&id);
-        cx.notify();
+    /// Whether toast `id` is still on screen.
+    pub fn showing(&self, id: usize) -> bool {
+        self.shown.iter().any(|toast| toast.answers(id))
+    }
+
+    /// Puts `toast` on the stack now and returns the id it is reached by. A failure or warning
+    /// that says the same thing as one already up restarts that one's clock instead.
+    pub fn push(&mut self, toast: Toast, cx: &Cx) -> usize {
+        let repeats = matches!(toast.outcome, Outcome::Failed | Outcome::Warning);
+        if let Some(shown) = self
+            .shown
+            .iter_mut()
+            .find(|shown| repeats && shown.same(&toast))
+        {
+            let id = shown.id;
+            shown.also.push(toast.id);
+            shown.rest = Instant::now();
+            shown.spent = Duration::ZERO;
+            self.arm(id, cx);
+            return id;
+        }
+
+        let id = toast.id;
+        self.shown.push(Toast {
+            rest: Instant::now(),
+            spent: Duration::ZERO,
+            ..toast
+        });
+        self.arm(id, cx);
+        id
+    }
+
+    /// [`Self::settle`] applied now.
+    pub fn replace(&mut self, id: usize, toast: Toast, cx: &Cx) {
+        let Some(at) = self.shown.iter().position(|shown| shown.answers(id)) else {
+            return;
+        };
+        let held = &self.shown[at];
+        let (id, mut also) = (held.id, held.also.clone());
+        also.push(toast.id);
+        self.shown[at] = Toast {
+            id,
+            also,
+            rest: Instant::now(),
+            spent: Duration::ZERO,
+            ..toast
+        };
+        self.arm(id, cx);
+    }
+
+    /// [`Self::progress`] applied now.
+    pub fn set_progress(&mut self, id: usize, done: f32) {
+        let Some(toast) = self.shown.iter_mut().find(|shown| shown.answers(id)) else {
+            return;
+        };
+        toast.progress = Some(done);
+    }
+
+    pub fn dismiss(&mut self, id: usize) {
+        let Some(at) = self.shown.iter().position(|toast| toast.answers(id)) else {
+            return;
+        };
+        let toast = self.shown.remove(at);
+        self.clocks.remove(&toast.id);
+    }
+
+    /// Dismisses every toast.
+    pub fn clear(&mut self) {
+        self.shown.clear();
+        self.clocks.clear();
+    }
+
+    /// Dismisses every toast bound to the account being signed out of. Plain messages stay, so
+    /// one that explains the sign-out itself is still read.
+    pub fn clear_account(&mut self) {
+        let clocks = &mut self.clocks;
+        self.shown.retain(|toast| {
+            let bound = toast.bound();
+            if bound {
+                clocks.remove(&toast.id);
+            }
+            !bound
+        });
     }
 
     /// Stops or restarts every toast's clock. A restarted clock runs only the time it had left.
-    pub fn pause(&mut self, paused: bool, cx: &mut Context<Self>) {
+    pub fn pause(&mut self, paused: bool, cx: &Cx) {
         if self.paused == paused {
             return;
         }
@@ -435,36 +502,9 @@ impl Toasts {
         }
     }
 
-    fn push(&mut self, toast: Toast, cx: &mut Context<Self>) -> usize {
-        let repeats = matches!(toast.outcome, Outcome::Failed | Outcome::Warning);
-        if let Some(shown) = self
-            .shown
-            .iter_mut()
-            .find(|shown| repeats && shown.same(&toast))
-        {
-            let id = shown.id;
-            shown.rest = Instant::now();
-            shown.spent = Duration::ZERO;
-            self.arm(id, cx);
-            return id;
-        }
-
-        let id = self.next;
-        self.next += 1;
-        self.shown.push(Toast {
-            id,
-            rest: Instant::now(),
-            spent: Duration::ZERO,
-            ..toast
-        });
-        self.arm(id, cx);
-        cx.notify();
-        id
-    }
-
     /// Starts the clock that dismisses toast `id` once the time it has left runs out. A paused
     /// stack and a toast that never expires get no clock.
-    fn arm(&mut self, id: usize, cx: &mut Context<Self>) {
+    fn arm(&mut self, id: usize, cx: &Cx) {
         self.clocks.remove(&id);
         if self.paused {
             return;
@@ -475,10 +515,57 @@ impl Toasts {
         let Some(wait) = toast.left() else {
             return;
         };
-        let clock = cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(wait).await;
-            this.update(cx, |this, cx| this.dismiss(id, cx)).ok();
-        });
+        let clock = cx.after(wait, move |store| store.toasts.dismiss(id));
         self.clocks.insert(id, clock);
+    }
+}
+
+impl Store {
+    /// Dismisses toast `id` for the listener, by its cross or a swipe, then runs what the toast
+    /// set with [`Toast::on_dismiss`]. It runs after the stack let go of the toast, so it may
+    /// post toasts.
+    pub fn discard_toast(&mut self, id: usize) {
+        let run = self
+            .toasts
+            .shown
+            .iter()
+            .find(|shown| shown.answers(id))
+            .and_then(|shown| shown.dismissed.clone());
+        self.toasts.dismiss(id);
+        if let Some(run) = run {
+            (run.0)(self);
+        }
+    }
+
+    /// Presses one of toast `id`'s buttons: runs its handler and dismisses the toast. Answers the
+    /// button pressed, whose `target` the view then navigates to and whose `url` it opens, or
+    /// `None` when the toast or the button is gone.
+    pub fn press_toast(&mut self, id: usize, button: ToastButton) -> Option<ToastAction> {
+        let toast = self.toasts.shown.iter().find(|shown| shown.answers(id))?;
+        let action = match button {
+            ToastButton::Action => toast.action.clone(),
+            ToastButton::Cancel => toast.cancel.clone(),
+        }?;
+        action.run(self);
+        self.toasts.dismiss(id);
+        Some(action)
+    }
+
+    pub(crate) fn react_toasts(&mut self, change: &Change) {
+        let Store { toasts, cx, .. } = self;
+        match change {
+            Change::Event(Event::Toast(toast)) => {
+                toasts.push(toast.clone(), cx);
+            }
+            Change::Event(Event::ToastUpdate(update)) => match update {
+                ToastUpdate::Settle(id, toast) => toasts.replace(*id, toast.clone(), cx),
+                ToastUpdate::Progress(id, done) => toasts.set_progress(*id, *done),
+                ToastUpdate::Close(id) => toasts.dismiss(*id),
+            },
+            // A toast can carry an Undo that acts on the account it was shown for, so no such
+            // toast outlives it. A plain one stays, since the sign-out can be what it explains.
+            Change::Event(Event::Session(SessionEvent::SignedOut)) => toasts.clear_account(),
+            _ => {}
+        }
     }
 }

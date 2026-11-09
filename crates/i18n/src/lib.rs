@@ -6,9 +6,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use fluent_bundle::concurrent::FluentBundle;
 use fluent_bundle::{FluentResource, FluentValue};
-use gpui::SharedString;
 
 pub use fluent_bundle::FluentArgs;
+
+/// A translated string: borrowed from the bundle when nothing was filled in, owned otherwise.
+pub type SharedString = Cow<'static, str>;
 pub use language::{AUTO, Language, resolve};
 
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
@@ -51,7 +53,7 @@ impl<'a> Value<'a> for &'a String {
 
 impl<'a> Value<'a> for &'a SharedString {
     fn value(self) -> FluentValue<'a> {
-        FluentValue::from(self.as_ref())
+        FluentValue::from(self.as_ref() as &str)
     }
 }
 
@@ -89,7 +91,7 @@ pub fn lookup(key: &str, args: Option<&FluentArgs>) -> SharedString {
     {
         return text;
     }
-    SharedString::from(key.to_owned())
+    Cow::Owned(key.to_owned())
 }
 
 pub fn translate(key: &str) -> SharedString {
@@ -102,7 +104,7 @@ pub fn translate(key: &str) -> SharedString {
     {
         return text;
     }
-    SharedString::from(key.to_owned())
+    Cow::Owned(key.to_owned())
 }
 
 fn format(language: Language, key: &str, args: Option<&FluentArgs>) -> Option<SharedString> {
@@ -118,8 +120,8 @@ fn format(language: Language, key: &str, args: Option<&FluentArgs>) -> Option<Sh
     }
     // The bundles are never dropped, so a message with nothing to fill in is shared as is.
     Some(match text {
-        Cow::Borrowed(text) => SharedString::new_static(text),
-        Cow::Owned(text) => SharedString::from(text),
+        Cow::Borrowed(text) => Cow::Borrowed(text),
+        Cow::Owned(text) => Cow::Owned(text),
     })
 }
 

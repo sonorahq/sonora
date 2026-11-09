@@ -1,54 +1,31 @@
-use crate::theme::ActiveTheme as _;
-use gpui::prelude::*;
-use gpui::{App, Div, IntoElement, RenderOnce, StyleRefinement, Window, div, rems, svg};
+//! The square "E" a track marked explicit carries.
 
-/// The badge's side, in rems.
-const SIDE: f32 = 1.;
+use rune::{El, icon, row};
 
-/// The square "E" a track marked explicit carries. The letter is drawn rather than set in type,
-/// so it sits in the exact middle of the square whatever font and scale are in use, an equal
-/// gap above and below it.
-#[derive(IntoElement)]
-pub struct ExplicitBadge {
-    base: Div,
-}
+use crate::theme::Theme;
+
+/// How large the badge's corners are.
+const CORNER: f32 = 2.;
+
+/// The badge. The letter is drawn rather than set in type, so it sits in the exact middle of the
+/// square whatever font and scale are in use. Screen readers skip it: a row that shows one says
+/// "explicit" in its own description.
+#[derive(Default)]
+pub struct ExplicitBadge;
 
 impl ExplicitBadge {
     pub fn new() -> Self {
-        Self { base: div() }
+        Self
     }
-}
 
-impl Default for ExplicitBadge {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Styled for ExplicitBadge {
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
-    }
-}
-
-impl RenderOnce for ExplicitBadge {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let Self { mut base } = self;
-        let theme = *cx.theme();
-        let overrides = std::mem::take(base.style());
-
-        let mut badge = base
-            .size(rems(SIDE))
-            .flex_none()
-            .bg(theme.muted)
-            .rounded_xs()
-            .child(
-                svg()
-                    .path(icons::path("icons/explicit.svg"))
-                    .size(rems(SIDE))
-                    .text_color(theme.muted_foreground),
-            );
-        badge.style().refine(&overrides);
-        badge
+    pub fn build(self, theme: &Theme) -> El {
+        // one rem, as the old badge measured itself
+        let side = theme.font_size;
+        row()
+            .size(side, side)
+            .radius(CORNER)
+            .fill(theme.muted.color())
+            .child(icon(icons::get("icons/explicit.svg"), side).color(theme.muted_foreground.color()))
+            .a11y_hidden()
     }
 }

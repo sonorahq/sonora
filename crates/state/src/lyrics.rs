@@ -1,14 +1,14 @@
 use std::collections::VecDeque;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui::{Context, Entity, Task};
 use music::lyrics::LOCAL;
 use music::{LyricsHit, LyricsProvider, LyricsQuery, Track, TrackKey};
 use tokio::task::JoinSet;
 
 use crate::sheets::{Sheets, Unsaved};
-use crate::{AppSettings, Io, Playback, Queue, QueuePosition, Session, join};
+use crate::{AppSettings, Change, Cx, Event, Job, QueuePosition, Session, Store, Topic, join};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LyricsState {
@@ -26,6 +26,9 @@ const SAVE_DELAY: Duration = Duration::from_millis(800);
 /// so this only has to cover the track playing, the next one and a few just played.
 const RECENT: usize = 16;
 
+/// The lyrics of the shown track: every answer the sources gave, the one on show, and a lookup
+/// of the next track ahead of time. It follows playback, the queue and the settings through
+/// [`Store::react_lyrics`].
 pub struct Lyrics {
     state: LyricsState,
     hits: Vec<LyricsHit>,
@@ -36,7 +39,7 @@ pub struct Lyrics {
     following: Option<String>,
     /// The answers looked at most recently, newest first.
     recent: VecDeque<(String, Found)>,
-    store: Sheets,
+    sheets: Sheets,
     /// Answers found since the last save, written together once lookups go quiet.
     unsaved: Vec<Unsaved>,
     providers: Vec<Arc<dyn LyricsProvider>>,
@@ -46,61 +49,38 @@ pub struct Lyrics {
     /// The order of the sources the answer on show was ranked by. A new order looks the track
     /// up again, from what is held, so the source now ranked first is the one shown.
     priority: Vec<String>,
-    playback: Entity<Playback>,
-    session: Entity<Session>,
-    settings: Entity<AppSettings>,
-    io: Io,
-    task: Option<Task<()>>,
-    ahead: Option<Task<()>>,
+    task: Option<Job>,
+    ahead: Option<Job>,
     ahead_of: Option<String>,
-    save: Option<Task<()>>,
+    save: Option<Job>,
     /// Moves the old lyrics.json into the cache database, once.
-    _migration: Task<()>,
+    _migration: Job,
+}
+
+/// What a lookup reads from the rest of the store: the session that names an id's provider,
+/// the settings that pick the sources, and whether offline mode is on.
+struct Around<'a> {
+    session: &'a Session,
+    settings: &'a AppSettings,
+    offline: bool,
 }
 
 impl Lyrics {
     pub fn new(
-        playback: Entity<Playback>,
-        queue: Entity<Queue>,
-        session: Entity<Session>,
-        settings: Entity<AppSettings>,
+        settings: &AppSettings,
         providers: Vec<Arc<dyn LyricsProvider>>,
-        io: Io,
-        cx: &mut Context<Self>,
+        cx: &mut Cx,
     ) -> Self {
-        cx.observe(&playback, |this, _, cx| {
-            this.follow(cx);
-            this.prefetch(cx);
-        })
-        .detach();
-        cx.observe(&queue, |this, _, cx| this.prefetch(cx)).detach();
-        cx.observe(&settings, |this, settings, cx| {
-            let settings = settings.read(cx);
-            let on = settings.lyrics_enabled();
-            let enabled = settings.lyrics_providers();
-            let priority = settings.lyrics_provider_priority();
-            if on == this.enabled && enabled == this.enabled_providers && priority == this.priority
-            {
-                return;
-            }
-            this.enabled = on;
-            this.enabled_providers = enabled.to_vec();
-            this.priority = priority;
-            this.task = None;
-            this.ahead = None;
-            this.ahead_of = None;
-            this.forget(cx);
-            this.follow(cx);
-        })
-        .detach();
-        let enabled = settings.read(cx).lyrics_enabled();
-        let enabled_providers = settings.read(cx).lyrics_providers().to_vec();
-        let priority = settings.read(cx).lyrics_provider_priority();
-        let store = Sheets::new(storage::Cache::standard());
-        let moving = store.clone();
-        let migration = cx
-            .background_executor()
-            .spawn(async move { moving.migrate() });
+        let enabled = settings.lyrics_enabled();
+        let enabled_providers = settings.lyrics_providers().to_vec();
+        let priority = settings.lyrics_provider_priority();
+        let sheets = Sheets::new(storage::Cache::standard());
+        let moving = sheets.clone();
+        let migration = cx.spawn(|_| async move {
+            tokio::task::spawn_blocking(move || moving.migrate())
+                .await
+                .ok();
+        });
         Self {
             state: LyricsState::Idle,
             hits: Vec::new(),
@@ -110,16 +90,12 @@ impl Lyrics {
             revision: 0,
             following: None,
             recent: VecDeque::new(),
-            store,
+            sheets,
             unsaved: Vec::new(),
             providers,
             enabled,
             enabled_providers,
             priority,
-            playback,
-            session,
-            settings,
-            io,
             task: None,
             ahead: None,
             ahead_of: None,
@@ -148,38 +124,41 @@ impl Lyrics {
         self.revision
     }
 
-    pub fn choose(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub fn choose(&mut self, index: usize) {
         if index >= self.hits.len() || index == self.chosen {
             return;
         }
         self.chosen = index;
         self.picked = true;
         self.revision = self.revision.wrapping_add(1);
-        cx.notify();
     }
 
-    pub fn active_line(&self, cx: &Context<Self>) -> Option<usize> {
+    /// The synced line sung at `position`, how far into the shown track playback is, as
+    /// `Playback::shown_time` tells it.
+    pub fn active_line(&self, position: Duration) -> Option<usize> {
         let music::Lyrics::Synced { lines } = &self.current()?.lyrics else {
             return None;
         };
-        let playback = self.playback.read(cx);
-        let position = playback.shown_time(cx).0;
         music::lyrics::active(lines, position)
     }
 
-    fn follow(&mut self, cx: &mut Context<Self>) {
+    /// Follows the shown track. Returns whether a held answer went on screen at once, after
+    /// which the next track is looked up ahead.
+    fn follow(&mut self, shown: Option<Track>, around: &Around, cx: &mut Cx) -> bool {
         if !self.enabled {
-            return self.forget(cx);
+            self.forget();
+            return false;
         }
-        let shown = self.playback.read(cx).shown_track(cx);
         let Some(track) = shown.as_ref() else {
-            return self.forget(cx);
+            self.forget();
+            return false;
         };
         let Some(id) = track.id.as_deref() else {
-            return self.forget(cx);
+            self.forget();
+            return false;
         };
         if self.following.as_deref() == Some(id) {
-            return;
+            return false;
         }
         let (track, id) = (track.clone(), id.to_owned());
         self.following = Some(id.clone());
@@ -188,25 +167,26 @@ impl Lyrics {
         self.settled = false;
         self.revision = self.revision.wrapping_add(1);
 
-        let query = self.query(&track, &id, cx);
+        let query = self.query(&track, &id, around);
         // A file's own lyrics are never cached, so an edit to its tags shows on the next play.
-        if !self.reads_file(&id, cx)
+        if !self.reads_file(&id, around)
             && let Some(found) = self.recall(&id)
             && found.usable(&query, &self.enabled_providers)
             && self
-                .asked(&id, cx)
+                .asked(&id, around)
                 .iter()
                 .all(|provider| found.covers(provider))
         {
-            self.show(&found, &query, cx);
-            return;
+            self.show(&found, &query, around.settings);
+            return true;
         }
-        self.load(id, track, cx);
+        self.load(id, track, around, cx);
+        false
     }
 
-    /// Puts what `found` holds from the enabled sources on screen as the settled answer.
-    fn show(&mut self, found: &Found, query: &LyricsQuery, cx: &mut Context<Self>) {
-        let settings = self.settings.read(cx);
+    /// Puts what `found` holds from the enabled sources on screen as the settled answer. The
+    /// caller looks the next track up ahead afterwards.
+    fn show(&mut self, found: &Found, query: &LyricsQuery, settings: &AppSettings) {
         let hits: Vec<LyricsHit> = found
             .hits
             .iter()
@@ -219,8 +199,6 @@ impl Lyrics {
         self.settled = true;
         self.hits = ordered(query, hits, &priority);
         self.state = state_for(&self.hits, instrumental);
-        cx.notify();
-        self.prefetch(cx);
     }
 
     /// The answer held in memory for `id`, which becomes the most recently used.
@@ -244,26 +222,35 @@ impl Lyrics {
     }
 
     /// Reads the answer stored for `id` off the main thread.
-    fn stored(&self, id: &str, cx: &Context<Self>) -> Task<Option<Found>> {
-        let key = self.key(id, cx);
+    fn stored(
+        &self,
+        id: &str,
+        around: &Around,
+    ) -> impl Future<Output = Option<Found>> + Send + 'static {
+        let key = self.key(id, around);
         let known: Vec<&'static str> = self
             .providers
             .iter()
             .map(|provider| provider.name())
             .collect();
-        let store = self.store.clone();
-        cx.background_executor().spawn(async move {
-            store
-                .get(&key, &known)
-                .map(|(hits, answered)| Found { hits, answered })
-        })
+        let sheets = self.sheets.clone();
+        async move {
+            tokio::task::spawn_blocking(move || {
+                sheets
+                    .get(&key, &known)
+                    .map(|(hits, answered)| Found { hits, answered })
+            })
+            .await
+            .ok()
+            .flatten()
+        }
     }
 
     /// One key per track. The stored answer covers every service that has replied, whichever
     /// are enabled now, and the selection is applied when it is shown. Services that replied
     /// empty are asked again while the stored answer holds nothing usable.
-    fn key(&self, id: &str, cx: &Context<Self>) -> String {
-        match self.session.read(cx).slug_for(id) {
+    fn key(&self, id: &str, around: &Around) -> String {
+        match around.session.slug_for(id) {
             Some(slug) => format!("{slug}:{id}:lyrics"),
             None => format!("{id}:lyrics"),
         }
@@ -271,10 +258,10 @@ impl Lyrics {
 
     /// The providers a lookup for `id` may ask. The file's own lyrics are read only for a local
     /// file, and the services only when its metadata may go online.
-    fn asked(&self, id: &str, cx: &Context<Self>) -> Vec<Arc<dyn LyricsProvider>> {
-        let online = self.online(id, cx);
-        let reads_file = self.reads_file(id, cx);
-        let settings = self.settings.read(cx);
+    fn asked(&self, id: &str, around: &Around) -> Vec<Arc<dyn LyricsProvider>> {
+        let online = self.online(id, around.settings);
+        let reads_file = self.reads_file(id, around);
+        let settings = around.settings;
         self.providers
             .iter()
             .filter(|provider| settings.lyrics_provider_enabled(provider.name()))
@@ -286,8 +273,8 @@ impl Lyrics {
             .collect()
     }
 
-    fn query(&self, track: &Track, id: &str, cx: &Context<Self>) -> LyricsQuery {
-        let key = self.session.read(cx).slug_for(id).map(|provider| TrackKey {
+    fn query(&self, track: &Track, id: &str, around: &Around) -> LyricsQuery {
+        let key = around.session.slug_for(id).map(|provider| TrackKey {
             provider,
             id: id.to_owned(),
         });
@@ -296,12 +283,12 @@ impl Lyrics {
 
     /// Whether the services may be asked about this track, which a local file only allows when
     /// the user lets its metadata go online.
-    fn online(&self, id: &str, cx: &Context<Self>) -> bool {
-        !music::is_local_id(id) || self.settings.read(cx).lyrics_for_local_files()
+    fn online(&self, id: &str, settings: &AppSettings) -> bool {
+        !music::is_local_id(id) || settings.lyrics_for_local_files()
     }
 
-    fn reads_file(&self, id: &str, cx: &Context<Self>) -> bool {
-        music::is_local_id(id) && self.settings.read(cx).lyrics_provider_enabled(LOCAL)
+    fn reads_file(&self, id: &str, around: &Around) -> bool {
+        music::is_local_id(id) && around.settings.lyrics_provider_enabled(LOCAL)
     }
 
     /// Ends a lookup's bookkeeping; true when it was for the track on screen.
@@ -316,7 +303,7 @@ impl Lyrics {
         current
     }
 
-    fn forget(&mut self, cx: &mut Context<Self>) {
+    fn forget(&mut self) {
         if self.following.is_none() {
             return;
         }
@@ -328,28 +315,26 @@ impl Lyrics {
         self.settled = false;
         self.revision = self.revision.wrapping_add(1);
         self.state = LyricsState::Idle;
-        cx.notify();
     }
 
-    fn load(&mut self, id: String, track: Track, cx: &mut Context<Self>) {
+    fn load(&mut self, id: String, track: Track, around: &Around, cx: &mut Cx) {
         self.hits.clear();
         self.state = LyricsState::Loading;
-        cx.notify();
 
         if self.ahead_of.as_deref() == Some(id.as_str()) && self.ahead.is_some() {
             self.task = self.ahead.take();
             self.ahead_of = None;
             return;
         }
-        self.task = Some(self.fetch(id, track, cx));
+        self.task = Some(self.fetch(id, track, around, cx));
     }
 
-    fn prefetch(&mut self, cx: &mut Context<Self>) {
+    /// Looks `next`, the track after the shown one, up ahead of time.
+    fn prefetch(&mut self, next: Option<Track>, around: &Around, cx: &mut Cx) {
         if !self.enabled || self.task.is_some() {
             return;
         }
-        let queue = self.playback.read(cx).shown_queue(cx);
-        let Some(track) = queue.track(QueuePosition::Upcoming(0), cx) else {
+        let Some(track) = next else {
             return;
         };
         let Some(id) = track.id.as_deref() else {
@@ -360,15 +345,15 @@ impl Lyrics {
         }
         let id = id.to_owned();
         self.ahead_of = Some(id.clone());
-        self.ahead = Some(self.fetch(id, track, cx));
+        self.ahead = Some(self.fetch(id, track, around, cx));
     }
 
     /// Looks a track up: in memory, then in the cache database, then with the providers. Only
     /// the services that have not answered for this track are asked, unless nothing usable is
     /// stored, and a file's own lyrics are read again on every play. What the cache holds is
     /// shown alongside the new answers.
-    fn fetch(&mut self, id: String, track: Track, cx: &mut Context<Self>) -> Task<()> {
-        let settings = self.settings.read(cx);
+    fn fetch(&mut self, id: String, track: Track, around: &Around, cx: &mut Cx) -> Job {
+        let settings = around.settings;
         let priority = settings.lyrics_provider_priority();
         let enabled: Vec<&'static str> = self
             .providers
@@ -376,16 +361,16 @@ impl Lyrics {
             .map(|provider| provider.name())
             .filter(|name| settings.lyrics_provider_enabled(name))
             .collect();
-        let mut asked = self.asked(&id, cx);
+        let mut asked = self.asked(&id, around);
         // Offline mode reads a file's own lyrics and what the cache kept, and asks no service.
-        if crate::Network::offline(cx) {
+        if around.offline {
             asked.retain(|provider| provider.name() == LOCAL);
         }
         let remembered = self.recall(&id);
-        let stored = remembered.is_none().then(|| self.stored(&id, cx));
-        let query = self.query(&track, &id, cx);
-        let io = self.io.clone();
-        cx.spawn(async move |this, cx| {
+        let stored = remembered.is_none().then(|| self.stored(&id, around));
+        let query = self.query(&track, &id, around);
+        let io = cx.io.clone();
+        cx.spawn(|link| async move {
             let cached = match stored {
                 Some(stored) => stored.await,
                 None => remembered,
@@ -393,7 +378,7 @@ impl Lyrics {
             if let Some(found) = &cached {
                 let held = found.clone();
                 let id = id.clone();
-                this.update(cx, |this, _| this.hold(id, held)).ok();
+                link.post(move |store| store.lyrics.hold(id, held));
             }
             let cached = cached.unwrap_or_default();
             // Services that replied empty are asked again while nothing usable is stored:
@@ -405,13 +390,13 @@ impl Lyrics {
                 .filter(|provider| !stored || !cached.covers(provider))
                 .collect();
             if providers.is_empty() {
-                this.update(cx, |this, cx| {
-                    if this.finished(&id) {
+                link.post(move |store| {
+                    if store.lyrics.finished(&id) {
                         log::debug!("lyrics: showing the stored answer");
-                        this.show(&cached, &query, cx);
+                        store.lyrics.show(&cached, &query, &store.settings);
+                        store.prefetch_lyrics();
                     }
-                })
-                .ok();
+                });
                 return;
             }
 
@@ -460,27 +445,43 @@ impl Lyrics {
                     pending.iter().any(|name| rank_in(&priority, name) < place)
                 });
                 let anchor = displayed.clone();
-                this.update(cx, |this, cx| {
+                let id = id.clone();
+                link.post(move |store| {
+                    let this = &mut store.lyrics;
                     if this.following.as_deref() != Some(id.as_str()) {
                         return;
                     }
-                    this.paint(ranked, anchor.as_ref(), waiting, cx);
-                })
-                .ok();
+                    this.paint(ranked, anchor.as_ref(), waiting);
+                });
             }
 
             let answered = join(worker).await;
 
-            this.update(cx, |this, cx| {
+            link.post(move |store| {
+                let Store {
+                    lyrics: this,
+                    session,
+                    settings,
+                    network,
+                    cx,
+                    ..
+                } = store;
+                let around = Around {
+                    session,
+                    settings,
+                    offline: network.offline(),
+                };
                 let current = this.finished(&id);
+                let mut ahead = false;
                 match answered {
                     Ok(answered) => {
-                        crate::Network::reached(cx);
-                        this.keep(id, cached, &hits, answered, cx);
+                        cx.emit(Event::NetworkReached);
+                        this.keep(id, cached, &hits, answered, &around, cx);
                         if current {
                             let instrumental = music::lyrics::instrumental(&ranking, &hits);
                             let ranked = ordered(&ranking, hits, &priority);
-                            this.settle(ranked, displayed.as_ref(), instrumental, cx);
+                            this.settle(ranked, displayed.as_ref(), instrumental);
+                            ahead = true;
                         }
                     }
                     Err(error) => {
@@ -488,12 +489,13 @@ impl Lyrics {
                         let reason = crate::blamed(&error, cx);
                         if current {
                             this.state = LyricsState::Failed(reason);
-                            cx.notify();
                         }
                     }
                 }
-            })
-            .ok();
+                if ahead {
+                    store.prefetch_lyrics();
+                }
+            });
         })
     }
 
@@ -503,13 +505,7 @@ impl Lyrics {
     /// source that could still beat it has not answered yet. Short of that, the first synced
     /// answer is put up and nothing replaces it until the question settles, and an untimed one
     /// is not shown at all while something better could still arrive.
-    fn paint(
-        &mut self,
-        ranked: Vec<LyricsHit>,
-        displayed: Option<&LyricsHit>,
-        waiting: bool,
-        cx: &mut Context<Self>,
-    ) {
+    fn paint(&mut self, ranked: Vec<LyricsHit>, displayed: Option<&LyricsHit>, waiting: bool) {
         if self.settled {
             return;
         }
@@ -526,20 +522,14 @@ impl Lyrics {
             }
             true => log::debug!("lyrics: showing the first synced answer while the rest arrive"),
         }
-        self.apply(ranked, displayed, cx);
+        self.apply(ranked, displayed);
     }
 
-    fn apply(
-        &mut self,
-        ranked: Vec<LyricsHit>,
-        displayed: Option<&LyricsHit>,
-        cx: &mut Context<Self>,
-    ) {
+    fn apply(&mut self, ranked: Vec<LyricsHit>, displayed: Option<&LyricsHit>) {
         self.pin(ranked, displayed);
         if !self.hits.is_empty() {
             self.state = LyricsState::Ready;
         }
-        cx.notify();
     }
 
     /// The hit a ranking would put on screen.
@@ -565,10 +555,11 @@ impl Lyrics {
         mut found: Found,
         hits: &[LyricsHit],
         answered: Vec<&'static str>,
-        cx: &mut Context<Self>,
+        around: &Around,
+        cx: &mut Cx,
     ) {
         // A file's own lyrics are read again on every play, so they are never kept.
-        if !self.online(&id, cx) {
+        if !self.online(&id, around.settings) {
             return;
         }
         let answered: Vec<&'static str> =
@@ -586,7 +577,7 @@ impl Lyrics {
                 }
             }
             if !found.hits.is_empty() {
-                let key = self.key(&id, cx);
+                let key = self.key(&id, around);
                 self.unsaved
                     .push(Sheets::unsaved(key, &found.hits, &found.answered));
                 self.schedule_save(cx);
@@ -597,12 +588,12 @@ impl Lyrics {
 
     /// Puts up the answer once every source has replied. Unless a word-by-word sheet already
     /// settled the question, this is the best there is and nothing may replace it afterwards.
+    /// The caller looks the next track up ahead afterwards.
     fn settle(
         &mut self,
         ranked: Vec<LyricsHit>,
         displayed: Option<&LyricsHit>,
         instrumental: bool,
-        cx: &mut Context<Self>,
     ) {
         if !self.settled {
             log::debug!("lyrics: settling on the best answer");
@@ -610,8 +601,6 @@ impl Lyrics {
             self.pin(ranked, displayed);
             self.state = state_for(&self.hits, instrumental);
         }
-        cx.notify();
-        self.prefetch(cx);
     }
 
     fn pin(&mut self, ranked: Vec<LyricsHit>, displayed: Option<&LyricsHit>) {
@@ -632,18 +621,100 @@ impl Lyrics {
 
     /// Writes the unsaved answers once lookups have gone quiet for `SAVE_DELAY`. A write that
     /// has begun always finishes, even when another answer reschedules the save.
-    fn schedule_save(&mut self, cx: &mut Context<Self>) {
-        self.save = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(SAVE_DELAY).await;
-            let Ok((store, unsaved)) = this.update(cx, |this, _| {
-                (this.store.clone(), std::mem::take(&mut this.unsaved))
-            }) else {
+    fn schedule_save(&mut self, cx: &mut Cx) {
+        self.save = Some(cx.spawn(|link| async move {
+            tokio::time::sleep(SAVE_DELAY).await;
+            let Some((sheets, unsaved)) = link
+                .read(|store| {
+                    let this = &mut store.lyrics;
+                    (this.sheets.clone(), std::mem::take(&mut this.unsaved))
+                })
+                .await
+            else {
                 return;
             };
-            cx.background_executor()
-                .spawn(async move { store.save(unsaved) })
-                .detach();
+            drop(tokio::task::spawn_blocking(move || sheets.save(unsaved)));
         }));
+    }
+}
+
+impl Store {
+    /// Follows the shown track as playback changes and looks the next one up ahead as the queue
+    /// changes. A change to whether lyrics are on, which sources are asked or their order
+    /// looks the shown track up again.
+    pub(crate) fn react_lyrics(&mut self, change: &Change) {
+        match change {
+            Change::Topic(Topic::Playback) => {
+                self.follow_lyrics();
+                self.prefetch_lyrics();
+            }
+            Change::Topic(Topic::Queue) => self.prefetch_lyrics(),
+            Change::Topic(Topic::Settings) => {
+                let (lyrics, settings) = (&mut self.lyrics, &self.settings);
+                let on = settings.lyrics_enabled();
+                let enabled = settings.lyrics_providers();
+                let priority = settings.lyrics_provider_priority();
+                if on == lyrics.enabled
+                    && enabled == lyrics.enabled_providers
+                    && priority == lyrics.priority
+                {
+                    return;
+                }
+                lyrics.enabled = on;
+                lyrics.enabled_providers = enabled.to_vec();
+                lyrics.priority = priority;
+                lyrics.task = None;
+                lyrics.ahead = None;
+                lyrics.ahead_of = None;
+                lyrics.forget();
+                if self.follow_lyrics() {
+                    self.prefetch_lyrics();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Follows the track playback shows. Returns whether a held answer went on screen at once.
+    fn follow_lyrics(&mut self) -> bool {
+        let shown = self.playback.shown_track(&self.devices);
+        let Store {
+            lyrics,
+            session,
+            settings,
+            network,
+            cx,
+            ..
+        } = self;
+        let around = Around {
+            session,
+            settings,
+            offline: network.offline(),
+        };
+        lyrics.follow(shown, &around, cx)
+    }
+
+    /// Looks up the track after the shown one ahead of time, unless the shown one is still
+    /// being looked up.
+    fn prefetch_lyrics(&mut self) {
+        if !self.lyrics.enabled || self.lyrics.task.is_some() {
+            return;
+        }
+        let next = self.shown_queue().track(QueuePosition::Upcoming(0));
+        let Store {
+            lyrics,
+            session,
+            settings,
+            network,
+            cx,
+            ..
+        } = self;
+        let around = Around {
+            session,
+            settings,
+            offline: network.offline(),
+        };
+        lyrics.prefetch(next, &around, cx);
     }
 }
 

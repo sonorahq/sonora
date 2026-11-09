@@ -1,5 +1,5 @@
 //! The WebSocket to the Sonora Session server, run on tokio. Requests go in through a channel and
-//! replies come out of another, so the entity never touches the socket itself.
+//! replies come out of another, so the model never touches the socket itself.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Error;
-use gpui::{Context, Entity, EventEmitter, Task};
 use i18n::t;
 use music::link::Linked;
 use music::{
@@ -14,7 +13,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::catalog::CatalogSource;
 use crate::settings::AppSettings;
-use crate::{Io, Network, Outcome, Scan, Shelf, Target, Toast, Toasts, join};
+use crate::{Change, Cx, Event, Job, Outcome, Shelf, Store, Target, Toast, Toasts, Topic, join};
 
 const HEARTBEAT: Duration = Duration::from_secs(30);
 /// How often the sign-in window is asked whether the user is through.
@@ -73,6 +72,7 @@ pub enum SessionState {
     Failed(Failure),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionEvent {
     SignedIn,
     SignedOut,
@@ -113,50 +113,47 @@ pub struct Session {
     /// one of them again. A sign-in that lands empties it.
     passed: Vec<usize>,
     error: Option<(usize, Failure)>,
-    settings: Entity<AppSettings>,
     client: Option<Arc<dyn MusicApi>>,
     catalog: Option<Arc<CatalogSource>>,
     playback: Option<Arc<dyn PlaybackFactory>>,
     shape: Shape,
     authenticated: bool,
     capabilities: Capabilities,
-    io: Io,
-    task: Option<Task<()>>,
-    prompt_task: Option<Task<()>>,
+    task: Option<Job>,
+    prompt_task: Option<Job>,
     input: Option<UnboundedSender<String>>,
     /// The browser window a `SignInPrompt::Secret` opened, while it is up.
     window: Option<webview::Page>,
-    window_task: Option<Task<()>>,
+    window_task: Option<Job>,
     local_provider: Arc<dyn MusicProvider>,
     local_folders: Vec<PathBuf>,
     local_client: Option<Arc<dyn MusicApi>>,
     local_catalog: Option<Arc<CatalogSource>>,
     local_playback: Option<Arc<dyn PlaybackFactory>>,
     local_capabilities: Capabilities,
-    local_task: Option<Task<()>>,
+    local_task: Option<Job>,
     /// Whether a local scan is under way, so the UI can show its progress.
     scanning: bool,
     /// Whether the scan under way is one the user started, so its end is reported. An automatic
     /// rescan that cancels it takes the report over.
     scan_asked: bool,
-    watch: Option<Task<()>>,
-    reconnect: Option<Task<()>>,
+    watch: Option<Job>,
+    reconnect: Option<Job>,
     reconnecting: bool,
     attempt: usize,
 }
 
-impl EventEmitter<SessionEvent> for Session {}
-
 impl Session {
+    /// Picks up the provider and the local folders `settings` remembers and starts scanning those
+    /// folders. Nothing is signed in until [`Store::restore_session`].
     pub fn new(
         providers: Vec<Arc<dyn MusicProvider>>,
         local_provider: Arc<dyn MusicProvider>,
-        settings: Entity<AppSettings>,
-        io: Io,
-        cx: &mut Context<Self>,
+        settings: &AppSettings,
+        cx: &mut Cx,
     ) -> Self {
-        let remembered = settings.read(cx).provider().to_string();
-        let local_folders = settings.read(cx).local_folders().to_vec();
+        let remembered = settings.provider().to_string();
+        let local_folders = settings.local_folders().to_vec();
         let active = providers
             .iter()
             .position(|provider| provider.slug() == remembered);
@@ -169,14 +166,12 @@ impl Session {
             resume: None,
             passed: Vec::new(),
             error: None,
-            settings,
             client: None,
             catalog: None,
             playback: None,
             shape: Shape::Saved,
             authenticated: false,
             capabilities: Capabilities::NONE,
-            io,
             task: None,
             prompt_task: None,
             input: None,
@@ -303,7 +298,7 @@ impl Session {
         }
     }
 
-    pub fn forget(&mut self, slug: &str, cx: &mut Context<Self>) {
+    pub fn forget(&mut self, slug: &str, settings: &AppSettings, cx: &mut Cx) {
         let Some(index) = self
             .providers
             .iter()
@@ -312,13 +307,13 @@ impl Session {
             return;
         };
         if self.active == Some(index) {
-            return self.sign_out(cx);
+            return self.sign_out(settings, cx);
         }
         self.providers[index].sign_out();
-        cx.notify();
+        cx.changed(Topic::Session);
     }
 
-    pub fn switch(&mut self, slug: &str, cx: &mut Context<Self>) {
+    pub fn switch(&mut self, slug: &str, settings: &AppSettings, cx: &mut Cx) {
         if self.is_pending() {
             return;
         }
@@ -334,7 +329,7 @@ impl Session {
         }
         self.release(cx);
         self.active = Some(index);
-        self.restore(cx);
+        self.restore(settings, cx);
     }
 
     pub fn provider_name(&self) -> Option<&'static str> {
@@ -430,45 +425,53 @@ impl Session {
     /// Opens the active provider's stored sign-in. One that cannot be opened hands over to the
     /// next provider with an account stored and then to a guest session, so the sign-in page
     /// comes up only when there is nothing at all to carry on with.
-    pub fn restore(&mut self, cx: &mut Context<Self>) {
+    pub fn restore(&mut self, settings: &AppSettings, cx: &mut Cx) {
         if self.is_pending() {
             return;
         }
         self.passed.clear();
         let Some(active) = self.active else {
             self.state = SessionState::SignedOut;
-            cx.notify();
-            cx.emit(SessionEvent::SignedOut);
+            cx.changed(Topic::Session);
+            cx.emit(Event::Session(SessionEvent::SignedOut));
             return;
         };
-        self.restore_at(active, cx);
+        self.restore_at(active, settings, cx);
     }
 
-    fn restore_at(&mut self, index: usize, cx: &mut Context<Self>) {
+    fn restore_at(&mut self, index: usize, settings: &AppSettings, cx: &mut Cx) {
         self.active = Some(index);
         // In offline mode the account is not reached at all. Going online tries it again.
-        if self.settings.read(cx).offline_mode() && self.providers[index].stored() {
+        if settings.offline_mode() && self.providers[index].stored() {
             log::info!("session: offline mode is on, carrying on offline");
             return self.carry_on_offline(offline_mode(), cx);
         }
         self.state = SessionState::Restoring;
-        cx.notify();
+        cx.changed(Topic::Session);
 
         let provider = self.providers[index].clone();
-        let io = self.io.clone();
-        self.task = Some(cx.spawn(async move |this, cx| {
+        let io = cx.io.clone();
+        self.task = Some(cx.spawn(|link| async move {
             let restored = join(io.spawn(async move { provider.restore().await })).await;
 
-            this.update(cx, |this, cx| match restored {
-                Ok(Some(session)) => this.signed_in(session, index, cx),
-                Ok(None) => this.fall_back(index, None, cx),
-                // An account that is only out of reach is kept, and the app carries on offline.
-                Err(error) if Failure::new(&error).offline() && this.stored_active() => {
-                    this.failed(&error, cx)
+            link.post(move |store| {
+                let Store {
+                    session,
+                    settings,
+                    cx,
+                    ..
+                } = store;
+                match restored {
+                    Ok(Some(signed)) => session.signed_in(signed, index, settings, cx),
+                    Ok(None) => session.fall_back(index, None, settings, cx),
+                    // An account that is only out of reach is kept, and the app carries on
+                    // offline.
+                    Err(error) if Failure::new(&error).offline() && session.stored_active() => {
+                        session.failed(&error, cx)
+                    }
+                    Err(error) => session.fall_back(index, Some(&error), settings, cx),
                 }
-                Err(error) => this.fall_back(index, Some(&error), cx),
-            })
-            .ok();
+            });
         }));
     }
 
@@ -477,7 +480,13 @@ impl Session {
     /// settings page, and a toast says it could not sign back in, or that the provider invalidated
     /// the session when it refused the stored sign-in outright. With nowhere to go the
     /// session ends the way it always did, on the sign-in page.
-    fn fall_back(&mut self, failed: usize, error: Option<&Error>, cx: &mut Context<Self>) {
+    fn fall_back(
+        &mut self,
+        failed: usize,
+        error: Option<&Error>,
+        settings: &AppSettings,
+        cx: &mut Cx,
+    ) {
         let provider = self.providers[failed].clone();
         self.passed.push(failed);
         let next = self
@@ -504,8 +513,8 @@ impl Session {
                 Some(error) => self.failed(error, cx),
                 None => {
                     self.state = SessionState::SignedOut;
-                    cx.notify();
-                    cx.emit(SessionEvent::SignedOut);
+                    cx.changed(Topic::Session);
+                    cx.emit(Event::Session(SessionEvent::SignedOut));
                 }
             }
             return;
@@ -546,10 +555,10 @@ impl Session {
         self.client = None;
         self.catalog = None;
         self.playback = None;
-        cx.emit(SessionEvent::SignedOut);
+        cx.emit(Event::Session(SessionEvent::SignedOut));
 
         if let Some(index) = next {
-            return self.restore_at(index, cx);
+            return self.restore_at(index, settings, cx);
         }
         if let Some(slug) = guest {
             // A sign-in only starts from a settled state, and nothing renders in between.
@@ -558,11 +567,11 @@ impl Session {
         }
     }
 
-    pub fn sign_in(&mut self, slug: &str, method: SignIn, cx: &mut Context<Self>) {
+    pub fn sign_in(&mut self, slug: &str, method: SignIn, cx: &mut Cx) {
         self.start_sign_in(slug, method, SecretInput::Browser, cx);
     }
 
-    pub fn sign_in_with_cookies(&mut self, slug: &str, cx: &mut Context<Self>) {
+    pub fn sign_in_with_cookies(&mut self, slug: &str, cx: &mut Cx) {
         self.start_sign_in(slug, SignIn::Secret, SecretInput::Manual, cx);
     }
 
@@ -571,7 +580,7 @@ impl Session {
         slug: &str,
         method: SignIn,
         secret_input: SecretInput,
-        cx: &mut Context<Self>,
+        cx: &mut Cx,
     ) {
         if self.is_pending() {
             return;
@@ -590,24 +599,24 @@ impl Session {
         self.error = None;
         self.awaiting = Some(index);
         self.state = SessionState::Authorizing(None);
-        cx.notify();
+        cx.changed(Topic::Session);
 
         let (input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         self.input = Some(input_tx);
         let (prompt_tx, mut prompt_rx) = tokio::sync::mpsc::unbounded_channel::<SignInPrompt>();
-        self.prompt_task = Some(cx.spawn(async move |this, cx| {
+        self.prompt_task = Some(cx.spawn(|link| async move {
             while let Some(prompt) = prompt_rx.recv().await {
-                this.update(cx, |this, cx| {
-                    if matches!(this.state, SessionState::Authorizing(_)) {
+                link.post(move |store| {
+                    let Store { session, cx, .. } = store;
+                    if matches!(session.state, SessionState::Authorizing(_)) {
                         let secret = matches!(prompt, SignInPrompt::Secret);
-                        this.state = SessionState::Authorizing(Some(prompt));
-                        cx.notify();
+                        session.state = SessionState::Authorizing(Some(prompt));
+                        cx.changed(Topic::Session);
                         if secret && matches!(secret_input, SecretInput::Browser) {
-                            this.open_window(cx);
+                            session.open_window(cx);
                         }
                     }
-                })
-                .ok();
+                });
             }
         }));
         let prompt: PromptSink = Arc::new(move |prompt| {
@@ -615,32 +624,37 @@ impl Session {
         });
 
         let provider = self.providers[index].clone();
-        let io = self.io.clone();
-        self.task = Some(cx.spawn(async move |this, cx| {
+        let io = cx.io.clone();
+        self.task = Some(cx.spawn(|link| async move {
             let authorized =
                 join(io.spawn(async move { provider.sign_in(method, prompt, input_rx).await }))
                     .await;
 
-            this.update(cx, |this, cx| {
-                this.prompt_task = None;
-                this.input = None;
-                this.window = None;
+            link.post(move |store| {
+                let Store {
+                    session,
+                    settings,
+                    cx,
+                    ..
+                } = store;
+                session.prompt_task = None;
+                session.input = None;
+                session.window = None;
                 match authorized {
-                    Ok(session) => this.signed_in(session, index, cx),
-                    Err(error) => this.failed(&error, cx),
+                    Ok(signed) => session.signed_in(signed, index, settings, cx),
+                    Err(error) => session.failed(&error, cx),
                 }
-            })
-            .ok();
+            });
         }));
     }
 
-    pub fn cancel_sign_in(&mut self, cx: &mut Context<Self>) {
+    pub fn cancel_sign_in(&mut self, cx: &mut Cx) {
         if !matches!(self.state, SessionState::Authorizing(_)) {
             return;
         }
         if let Some(index) = self.awaiting {
             let provider = self.providers[index].clone();
-            self.io.spawn(async move { provider.abandon() });
+            cx.io.spawn(async move { provider.abandon() });
         }
         self.task = None;
         self.prompt_task = None;
@@ -652,17 +666,17 @@ impl Session {
         if let Some((index, profile)) = self.resume.take() {
             self.active = Some(index);
             self.state = SessionState::SignedIn(profile);
-            cx.notify();
+            cx.changed(Topic::Session);
             return;
         }
         self.state = SessionState::SignedOut;
-        cx.notify();
-        cx.emit(SessionEvent::SignedOut);
+        cx.changed(Topic::Session);
+        cx.emit(Event::Session(SessionEvent::SignedOut));
     }
 
     /// Opens the browser window for the secret prompt now showing. The window answers the prompt
     /// itself once the user is through; closing it cancels the sign-in.
-    fn open_window(&mut self, cx: &mut Context<Self>) {
+    fn open_window(&mut self, cx: &mut Cx) {
         if !matches!(
             self.state,
             SessionState::Authorizing(Some(SignInPrompt::Secret))
@@ -697,27 +711,30 @@ impl Session {
                 return self.failed(&error, cx);
             }
         }
-        self.window_task = Some(cx.spawn(async move |this, cx| {
+        self.window_task = Some(cx.spawn(|link| async move {
             loop {
-                cx.background_executor().timer(WINDOW_POLL).await;
-                let open = this.update(cx, |this, cx| {
-                    let Some(login) = this.window.as_mut() else {
-                        return false;
-                    };
-                    match login.poll() {
-                        webview::Poll::Pending => true,
-                        webview::Poll::Closed => {
-                            this.window = None;
-                            this.cancel_sign_in(cx);
-                            false
+                tokio::time::sleep(WINDOW_POLL).await;
+                let open = link
+                    .read(|store| {
+                        let Store { session, cx, .. } = store;
+                        let Some(login) = session.window.as_mut() else {
+                            return false;
+                        };
+                        match login.poll() {
+                            webview::Poll::Pending => true,
+                            webview::Poll::Closed => {
+                                session.window = None;
+                                session.cancel_sign_in(cx);
+                                false
+                            }
+                            webview::Poll::Cookies(header) => {
+                                session.window = None;
+                                session.submit_input(header, cx);
+                                false
+                            }
                         }
-                        webview::Poll::Cookies(header) => {
-                            this.window = None;
-                            this.submit_input(header, cx);
-                            false
-                        }
-                    }
-                });
+                    })
+                    .await;
                 if !open.unwrap_or(false) {
                     break;
                 }
@@ -725,7 +742,7 @@ impl Session {
         }));
     }
 
-    pub fn submit_input(&mut self, text: String, cx: &mut Context<Self>) {
+    pub fn submit_input(&mut self, text: String, cx: &mut Cx) {
         if let Some(input) = &self.input {
             self.window = None;
             input.send(text).ok();
@@ -734,19 +751,19 @@ impl Session {
             )) = &self.state
             {
                 self.state = SessionState::Authorizing(None);
-                cx.notify();
+                cx.changed(Topic::Session);
             }
         }
     }
 
-    pub fn sign_out(&mut self, cx: &mut Context<Self>) {
+    pub fn sign_out(&mut self, settings: &AppSettings, cx: &mut Cx) {
         if let Some(active) = self.active {
             self.providers[active].sign_out();
         }
         self.release(cx);
         if let Some(index) = self.remaining() {
             self.active = Some(index);
-            self.restore(cx);
+            self.restore(settings, cx);
         }
     }
 
@@ -760,7 +777,7 @@ impl Session {
     /// Lets go of the live account when offline mode turns on, leaving the session where a launch
     /// in offline mode would put it. A sign-in in progress and an account with nothing stored
     /// are left alone.
-    pub fn go_offline(&mut self, cx: &mut Context<Self>) {
+    pub fn go_offline(&mut self, cx: &mut Cx) {
         let live = matches!(
             self.state,
             SessionState::SignedIn(_) | SessionState::Restoring
@@ -780,14 +797,14 @@ impl Session {
         self.authenticated = false;
         self.capabilities = Capabilities::NONE;
         self.carry_on_offline(offline_mode(), cx);
-        cx.emit(SessionEvent::WentOffline);
+        cx.emit(Event::Session(SessionEvent::WentOffline));
     }
 
     /// Tries the stored account again once the network is back, for a run that started without
     /// one. Anything but a run held up by the network is left alone.
-    pub fn restore_if_offline(&mut self, cx: &mut Context<Self>) {
+    pub fn restore_if_offline(&mut self, settings: &AppSettings, cx: &mut Cx) {
         if matches!(self.state, SessionState::Offline(_)) {
-            self.restore(cx);
+            self.restore(settings, cx);
         }
     }
 
@@ -797,7 +814,7 @@ impl Session {
             .or_else(|| self.providers.iter().position(|provider| provider.stored()))
     }
 
-    fn release(&mut self, cx: &mut Context<Self>) {
+    fn release(&mut self, cx: &mut Cx) {
         self.task = None;
         self.watch = None;
         self.reconnect = None;
@@ -816,11 +833,17 @@ impl Session {
         self.authenticated = false;
         self.capabilities = Capabilities::NONE;
         self.state = SessionState::SignedOut;
-        cx.notify();
-        cx.emit(SessionEvent::SignedOut);
+        cx.changed(Topic::Session);
+        cx.emit(Event::Session(SessionEvent::SignedOut));
     }
 
-    fn signed_in(&mut self, session: ProviderSession, index: usize, cx: &mut Context<Self>) {
+    fn signed_in(
+        &mut self,
+        session: ProviderSession,
+        index: usize,
+        settings: &mut AppSettings,
+        cx: &mut Cx,
+    ) {
         let replaced = self
             .resume
             .take()
@@ -834,9 +857,7 @@ impl Session {
         self.error = self.error.take().filter(|(failed, _)| *failed != index);
         self.passed.clear();
         let slug = self.providers[index].slug();
-        self.settings.update(cx, |settings, cx| {
-            settings.set_provider(slug, cx);
-        });
+        settings.set_provider(slug, cx);
         self.catalog = Some(Arc::new(CatalogSource::new(session.api.clone())));
         self.client = Some(session.api);
         self.playback = Some(session.playback);
@@ -846,11 +867,11 @@ impl Session {
         self.state = SessionState::SignedIn(session.profile);
         self.attempt = 0;
         self.start_heartbeat(cx);
-        cx.notify();
-        cx.emit(SessionEvent::SignedIn);
+        cx.changed(Topic::Session);
+        cx.emit(Event::Session(SessionEvent::SignedIn));
     }
 
-    fn drop_previous_session(&mut self, cx: &mut Context<Self>) {
+    fn drop_previous_session(&mut self, cx: &mut Cx) {
         self.client = None;
         self.catalog = None;
         self.playback = None;
@@ -861,24 +882,24 @@ impl Session {
         self.reconnect = None;
         self.reconnecting = false;
         self.attempt = 0;
-        cx.emit(SessionEvent::SignedOut);
+        cx.emit(Event::Session(SessionEvent::SignedOut));
     }
 
-    fn start_heartbeat(&mut self, cx: &mut Context<Self>) {
-        self.watch = Some(cx.spawn(async move |this, cx| {
+    fn start_heartbeat(&mut self, cx: &mut Cx) {
+        self.watch = Some(cx.spawn(|link| async move {
             loop {
-                cx.background_executor().timer(HEARTBEAT).await;
-                if this
-                    .update(cx, |this, cx| this.reconnect_if_stale(cx))
-                    .is_err()
-                {
+                tokio::time::sleep(HEARTBEAT).await;
+                let checked = link
+                    .read(|store| store.session.reconnect_if_stale(&mut store.cx))
+                    .await;
+                if checked.is_none() {
                     return;
                 }
             }
         }));
     }
 
-    pub fn reconnect_if_stale(&mut self, cx: &mut Context<Self>) -> bool {
+    pub fn reconnect_if_stale(&mut self, cx: &mut Cx) -> bool {
         if self.reconnecting {
             return true;
         }
@@ -904,24 +925,24 @@ impl Session {
             wait.as_secs()
         );
         let provider = self.providers[active].clone();
-        let io = self.io.clone();
-        self.reconnect = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(wait).await;
+        let io = cx.io.clone();
+        self.reconnect = Some(cx.spawn(|link| async move {
+            tokio::time::sleep(wait).await;
             let restored = join(io.spawn(async move { provider.restore().await })).await;
-            this.update(cx, |this, cx| {
-                this.reconnecting = false;
+            link.post(move |store| {
+                let Store { session, cx, .. } = store;
+                session.reconnecting = false;
                 match restored {
-                    Ok(Some(session)) => this.reconnected(session, cx),
+                    Ok(Some(signed)) => session.reconnected(signed, cx),
                     Ok(None) => log::warn!("session: nothing stored to reconnect with"),
                     Err(error) => log::warn!("session: cannot reconnect: {error:#}"),
                 }
-            })
-            .ok();
+            });
         }));
         true
     }
 
-    fn reconnected(&mut self, session: ProviderSession, cx: &mut Context<Self>) {
+    fn reconnected(&mut self, session: ProviderSession, cx: &mut Cx) {
         self.attempt = 0;
         self.catalog = Some(Arc::new(CatalogSource::new(session.api.clone())));
         self.client = Some(session.api);
@@ -930,26 +951,27 @@ impl Session {
         self.authenticated = session.authenticated;
         self.capabilities = session.capabilities;
         log::debug!("session: reconnected");
-        cx.notify();
-        cx.emit(SessionEvent::Reconnected);
+        cx.changed(Topic::Session);
+        cx.emit(Event::Session(SessionEvent::Reconnected));
     }
 
     /// Keeps the stored account without reaching it, so the app runs on what the library kept
     /// and on the downloads, which still play through an engine built from the stored sign-in
     /// alone.
-    fn carry_on_offline(&mut self, failure: Failure, cx: &mut Context<Self>) {
+    fn carry_on_offline(&mut self, failure: Failure, cx: &mut Cx) {
         // A provider may need the runtime to build its offline engine.
-        let _runtime = self.io.handle().enter();
+        let runtime = cx.io.handle();
+        let _runtime = runtime.enter();
         self.playback = self
             .active
             .and_then(|active| self.providers[active].offline_playback());
         self.state = SessionState::Offline(failure);
-        cx.notify();
+        cx.changed(Topic::Session);
     }
 
-    fn failed(&mut self, error: &Error, cx: &mut Context<Self>) {
+    fn failed(&mut self, error: &Error, cx: &mut Cx) {
         let failure = Failure::new(error);
-        Network::failed(&format!("{error:#}"), cx);
+        cx.emit(Event::NetworkFailed(format!("{error:#}")));
         if let Some(failed) = self.awaiting.or(self.active) {
             self.error = Some((failed, failure.clone()));
         }
@@ -960,7 +982,7 @@ impl Session {
         if let Some((index, profile)) = self.resume.take() {
             self.active = Some(index);
             self.state = SessionState::SignedIn(profile);
-            cx.notify();
+            cx.changed(Topic::Session);
             return;
         }
         if restoring && failure.offline() && self.stored_active() {
@@ -971,25 +993,30 @@ impl Session {
         self.catalog = None;
         self.playback = None;
         self.state = SessionState::Failed(failure);
-        cx.notify();
-        cx.emit(SessionEvent::SignedOut);
+        cx.changed(Topic::Session);
+        cx.emit(Event::Session(SessionEvent::SignedOut));
     }
 
-    fn restore_local(&mut self, cx: &mut Context<Self>) {
+    fn restore_local(&mut self, cx: &mut Cx) {
         if self.local_folders.is_empty() {
             return;
         }
-        self.rescan_local(false, cx);
+        self.scan_local(self.local_folders.clone(), false, cx);
     }
 
     /// Adds a folder to the local library, then rescans every configured folder together so
     /// artists and albums that span more than one root merge into one, seamlessly.
-    pub fn add_local_folder(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.add_local_folders(vec![path], cx);
+    pub fn add_local_folder(&mut self, path: PathBuf, settings: &mut AppSettings, cx: &mut Cx) {
+        self.add_local_folders(vec![path], settings, cx);
     }
 
     /// Same as [`Session::add_local_folder`], for a batch picked in one native dialog.
-    pub fn add_local_folders(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+    pub fn add_local_folders(
+        &mut self,
+        paths: Vec<PathBuf>,
+        settings: &mut AppSettings,
+        cx: &mut Cx,
+    ) {
         let mut folders = self.local_folders.clone();
         for path in paths {
             if folders.iter().any(|existing| overlaps(existing, &path)) {
@@ -1004,11 +1031,11 @@ impl Session {
         if folders.len() == self.local_folders.len() {
             return;
         }
-        self.set_local_folders(folders, true, cx);
+        self.set_local_folders(folders, true, settings, cx);
     }
 
     /// Drops a folder from the local library and offers to put it back.
-    pub fn remove_local_folder(&mut self, path: &Path, cx: &mut Context<Self>) {
+    pub fn remove_local_folder(&mut self, path: &Path, settings: &mut AppSettings, cx: &mut Cx) {
         let Some(at) = self
             .local_folders
             .iter()
@@ -1018,25 +1045,23 @@ impl Session {
         };
         let mut folders = self.local_folders.clone();
         let removed = folders.remove(at);
-        self.set_local_folders(folders, true, cx);
+        self.set_local_folders(folders, true, settings, cx);
 
-        let session = cx.entity().downgrade();
         let toast = Toast::new(Outcome::Plain, "toast-folder-removed")
             .name(folder_name(&removed))
-            .undo(move |cx| {
-                let removed = removed.clone();
-                session
-                    .update(cx, |session, cx| {
-                        session.restore_local_folder(removed, at, cx)
-                    })
-                    .ok();
-            });
+            .undo(move |store| store.restore_local_folder(removed.clone(), at));
         Toasts::post(toast, cx);
     }
 
     /// Puts a folder the user just removed back where it was in the list. A folder gone from
     /// disk is reported instead, and one that overlaps a folder added since is left alone.
-    fn restore_local_folder(&mut self, path: PathBuf, at: usize, cx: &mut Context<Self>) {
+    fn restore_local_folder(
+        &mut self,
+        path: PathBuf,
+        at: usize,
+        settings: &mut AppSettings,
+        cx: &mut Cx,
+    ) {
         if !path.is_dir() {
             Toasts::about(
                 Outcome::Warning,
@@ -1055,51 +1080,60 @@ impl Session {
         }
         let mut folders = self.local_folders.clone();
         folders.insert(at.min(folders.len()), path);
-        self.set_local_folders(folders, true, cx);
+        self.set_local_folders(folders, true, settings, cx);
     }
 
     /// Rescans every configured local folder without changing the list, e.g. after files
     /// changed on disk or a tag was edited. A `thorough` rescan is the one the user asked for:
     /// it forgets what the last scan recorded, so every folder is listed and every file stat'd
     /// again, which is the only way an edit made behind Sonora's back is noticed.
-    pub fn rescan_local(&mut self, thorough: bool, cx: &mut Context<Self>) {
+    pub fn rescan_local(&mut self, thorough: bool, settings: &mut AppSettings, cx: &mut Cx) {
         if thorough {
             self.local_provider.forget_scan();
         }
-        self.set_local_folders(self.local_folders.clone(), thorough, cx);
+        self.set_local_folders(self.local_folders.clone(), thorough, settings, cx);
     }
 
     /// Points the local library at `folders` and scans them. A scan already under way is
     /// cancelled first: its folders may be the ones just removed, and two scans would only
     /// fight over the same disk. An `asked` scan is one the user started, and its end or
     /// failure is reported in a toast.
-    fn set_local_folders(&mut self, folders: Vec<PathBuf>, asked: bool, cx: &mut Context<Self>) {
+    fn set_local_folders(
+        &mut self,
+        folders: Vec<PathBuf>,
+        asked: bool,
+        settings: &mut AppSettings,
+        cx: &mut Cx,
+    ) {
+        if !folders.is_empty() {
+            return self.scan_local(folders, asked, cx);
+        }
+        music::progress::cancel();
+        self.scanning = false;
+        self.scan_asked = false;
+        self.local_provider.sign_out();
+        self.local_folders = Vec::new();
+        settings.set_local_folders(Vec::new(), cx);
+        self.local_client = None;
+        self.local_catalog = None;
+        self.local_capabilities = Capabilities::NONE;
+        self.local_task = None;
+        cx.changed(Topic::Session);
+        cx.emit(Event::Session(SessionEvent::LocalChanged));
+    }
+
+    /// The scan half of [`Self::set_local_folders`], for a list that is not empty. The list is
+    /// only kept, in the session and in settings, once the scan has gone through.
+    fn scan_local(&mut self, folders: Vec<PathBuf>, asked: bool, cx: &mut Cx) {
         music::progress::cancel();
         self.scan_asked |= asked;
-        if folders.is_empty() {
-            self.scanning = false;
-            self.scan_asked = false;
-            self.local_provider.sign_out();
-            self.local_folders = Vec::new();
-            self.settings.update(cx, |settings, cx| {
-                settings.set_local_folders(Vec::new(), cx)
-            });
-            self.local_client = None;
-            self.local_catalog = None;
-            self.local_capabilities = Capabilities::NONE;
-            self.local_task = None;
-            cx.notify();
-            cx.emit(SessionEvent::LocalChanged);
-            return;
-        }
-
         let provider = self.local_provider.clone();
         let chosen = folders.clone();
-        let io = self.io.clone();
+        let io = cx.io.clone();
         let counting = self.scan_asked;
         self.scanning = true;
-        cx.notify();
-        self.local_task = Some(cx.spawn(async move |this, cx| {
+        cx.changed(Topic::Session);
+        self.local_task = Some(cx.spawn(|link| async move {
             let prompt: PromptSink = Arc::new(|_| {});
             let (_tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
             let signed_in = join(io.spawn(async move {
@@ -1116,17 +1150,23 @@ impl Session {
             }))
             .await;
 
-            this.update(cx, |this, cx| {
-                this.scanning = false;
-                let asked = std::mem::take(&mut this.scan_asked);
+            link.post(move |store| {
+                let Store {
+                    session,
+                    settings,
+                    scan,
+                    cx,
+                    ..
+                } = store;
+                session.scanning = false;
+                let asked = std::mem::take(&mut session.scan_asked);
                 match signed_in {
-                    Ok((session, songs)) => {
-                        this.local_folders = chosen.clone();
-                        this.settings
-                            .update(cx, |settings, cx| settings.set_local_folders(chosen, cx));
-                        this.local_signed_in(session, cx);
+                    Ok((signed, songs)) => {
+                        session.local_folders = chosen.clone();
+                        settings.set_local_folders(chosen, cx);
+                        session.local_signed_in(signed, cx);
                         if asked {
-                            Scan::global(cx).update(cx, |scan, cx| scan.finished(songs, cx));
+                            scan.finished(songs, cx);
                         }
                     }
                     Err(error) => {
@@ -1140,11 +1180,10 @@ impl Session {
                                 cx,
                             );
                         }
-                        cx.notify();
+                        cx.changed(Topic::Session);
                     }
                 }
-            })
-            .ok();
+            });
         }));
     }
 
@@ -1153,15 +1192,98 @@ impl Session {
         self.scanning
     }
 
-    fn local_signed_in(&mut self, session: ProviderSession, cx: &mut Context<Self>) {
+    fn local_signed_in(&mut self, session: ProviderSession, cx: &mut Cx) {
         self.local_catalog = Some(Arc::new(CatalogSource::new(session.api.clone())));
         self.local_client = Some(session.api);
         if self.local_playback.is_none() {
             self.local_playback = Some(session.playback);
         }
         self.local_capabilities = session.capabilities;
-        cx.notify();
-        cx.emit(SessionEvent::LocalChanged);
+        cx.changed(Topic::Session);
+        cx.emit(Event::Session(SessionEvent::LocalChanged));
+    }
+}
+
+impl Store {
+    /// Opens the active provider's stored sign-in. One that cannot be opened hands over to the
+    /// next provider with an account stored and then to a guest session, so the sign-in page
+    /// comes up only when there is nothing at all to carry on with.
+    pub fn restore_session(&mut self) {
+        self.session.restore(&self.settings, &mut self.cx);
+    }
+
+    /// Makes the provider `slug` the current one and opens its stored sign-in.
+    pub fn switch_provider(&mut self, slug: &str) {
+        self.session.switch(slug, &self.settings, &mut self.cx);
+    }
+
+    /// Signs out of the current provider and carries on with the next one that has an account
+    /// stored, if any.
+    pub fn sign_out(&mut self) {
+        self.session.sign_out(&self.settings, &mut self.cx);
+    }
+
+    /// Forgets the account stored for `slug`, signing out of it first when it is the current one.
+    pub fn forget_provider(&mut self, slug: &str) {
+        self.session.forget(slug, &self.settings, &mut self.cx);
+    }
+
+    /// See [`Session::add_local_folder`].
+    pub fn add_local_folder(&mut self, path: PathBuf) {
+        self.add_local_folders(vec![path]);
+    }
+
+    /// Same as [`Store::add_local_folder`], for a batch picked in one native dialog.
+    pub fn add_local_folders(&mut self, paths: Vec<PathBuf>) {
+        let Store {
+            session,
+            settings,
+            cx,
+            ..
+        } = self;
+        session.add_local_folders(paths, settings, cx);
+    }
+
+    /// Drops a folder from the local library and offers to put it back.
+    pub fn remove_local_folder(&mut self, path: &Path) {
+        let Store {
+            session,
+            settings,
+            cx,
+            ..
+        } = self;
+        session.remove_local_folder(path, settings, cx);
+    }
+
+    /// Puts back a folder the user just removed, for the Undo on the toast that reported it.
+    fn restore_local_folder(&mut self, path: PathBuf, at: usize) {
+        let Store {
+            session,
+            settings,
+            cx,
+            ..
+        } = self;
+        session.restore_local_folder(path, at, settings, cx);
+    }
+
+    /// See [`Session::rescan_local`].
+    pub fn rescan_local(&mut self, thorough: bool) {
+        let Store {
+            session,
+            settings,
+            cx,
+            ..
+        } = self;
+        session.rescan_local(thorough, settings, cx);
+    }
+
+    pub(crate) fn react_session(&mut self, change: &Change) {
+        // A run that started without a network never signed out, so the account it kept is tried
+        // again the moment there is one.
+        if let Change::Event(Event::Reconnected) = change {
+            self.session
+                .restore_if_offline(&self.settings, &mut self.cx);
+        }
     }
 }
 

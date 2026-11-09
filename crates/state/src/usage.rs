@@ -1,11 +1,10 @@
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-use gpui::{Context, Entity, Task};
 use rusqlite::params;
 use storage::Database;
 
-use crate::{Io, Session, SessionEvent, join, version};
+use crate::{Change, Cx, Event, Job, SessionEvent, Store, join, version};
 
 const ENDPOINT: &str = "https://sonora-stats.nolight.dev/install";
 const AGENT: &str = concat!(
@@ -17,12 +16,13 @@ const REPORTED: &str = "reported_usage";
 const LOGGED_IN: &str = "logged_in_once";
 const PATIENCE: Duration = Duration::from_secs(10);
 
+/// The flags table usage reads and writes, behind a handle cheap to send to a blocking thread.
 #[derive(Clone)]
-struct Store {
+struct Flags {
     database: Database,
 }
 
-impl Store {
+impl Flags {
     fn new(database: Database) -> Self {
         Self { database }
     }
@@ -72,38 +72,22 @@ pub struct Usage {
     settled: bool,
     logged_in: bool,
     consented: bool,
-    store: Store,
+    flags: Flags,
     http: reqwest::Client,
-    io: Io,
-    load: Option<Task<()>>,
-    task: Option<Task<()>>,
-    mark: Option<Task<()>>,
+    load: Option<Job>,
+    task: Option<Job>,
+    mark: Option<Job>,
 }
 
 impl Usage {
-    pub fn new(
-        session: Entity<Session>,
-        database: Database,
-        io: Io,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.subscribe(&session, |this, _, event, cx| match event {
-            SessionEvent::SignedIn => this.connected(cx),
-            SessionEvent::Reconnected
-            | SessionEvent::SignedOut
-            | SessionEvent::WentOffline
-            | SessionEvent::LocalChanged => {}
-        })
-        .detach();
-
+    pub fn new(database: Database, cx: &mut Cx) -> Self {
         let mut usage = Self {
             loaded: false,
             settled: false,
             logged_in: false,
             consented: true,
-            store: Store::new(database),
+            flags: Flags::new(database),
             http: reqwest::Client::new(),
-            io,
             load: None,
             task: None,
             mark: None,
@@ -120,67 +104,59 @@ impl Usage {
         self.consented
     }
 
-    pub fn consent(&mut self, consented: bool, cx: &mut Context<Self>) {
+    pub fn consent(&mut self, consented: bool) {
         self.consented = consented;
-        cx.notify();
     }
 
-    pub fn report(&mut self, cx: &mut Context<Self>) {
+    pub fn report(&mut self, cx: &mut Cx) {
         if !self.asking() {
             return;
         }
         let consented = self.consented;
         self.settled = true;
-        cx.notify();
 
-        let store = self.store.clone();
+        let flags = self.flags.clone();
         let http = self.http.clone();
-        let io = self.io.clone();
-        self.task = Some(cx.spawn(async move |this, cx| {
-            let sent = join(io.spawn(async move {
+        self.task = Some(cx.spawn(|link| async move {
+            let sent = async move {
                 if consented {
                     send(&http).await?;
                 }
-                tokio::task::spawn_blocking(move || store.write(REPORTED, consented)).await?
-            }))
+                tokio::task::spawn_blocking(move || flags.write(REPORTED, consented)).await?
+            }
             .await;
             if let Err(error) = sent {
                 log::warn!("usage: cannot report usage: {error:#}");
             }
-            this.update(cx, |this, _| this.task = None).ok();
+            link.post(|store| store.usage.task = None);
         }));
     }
 
-    fn connected(&mut self, cx: &mut Context<Self>) {
+    fn connected(&mut self, cx: &mut Cx) {
         if self.logged_in {
             return;
         }
         self.logged_in = true;
-        cx.notify();
 
-        let store = self.store.clone();
-        let io = self.io.clone();
-        self.mark = Some(cx.spawn(async move |this, cx| {
-            let saved = join(io.spawn(async move {
-                tokio::task::spawn_blocking(move || store.write(LOGGED_IN, true)).await?
+        let flags = self.flags.clone();
+        self.mark = Some(cx.spawn(|link| async move {
+            let saved = join(tokio::task::spawn_blocking(move || {
+                flags.write(LOGGED_IN, true)
             }))
             .await;
             if let Err(error) = saved {
                 log::warn!("usage: cannot remember the first sign in: {error:#}");
             }
-            this.update(cx, |this, _| this.mark = None).ok();
+            link.post(|store| store.usage.mark = None);
         }));
     }
 
-    fn recall(&mut self, cx: &mut Context<Self>) {
-        let store = self.store.clone();
-        let io = self.io.clone();
-        self.load = Some(cx.spawn(async move |this, cx| {
-            let flags = join(
-                io.spawn(async move { tokio::task::spawn_blocking(move || store.read()).await? }),
-            )
-            .await;
-            this.update(cx, |this, cx| {
+    fn recall(&mut self, cx: &mut Cx) {
+        let flags = self.flags.clone();
+        self.load = Some(cx.spawn(|link| async move {
+            let flags = join(tokio::task::spawn_blocking(move || flags.read())).await;
+            link.post(move |store| {
+                let this = &mut store.usage;
                 this.load = None;
                 match flags {
                     Ok((settled, logged_in)) => {
@@ -193,10 +169,16 @@ impl Usage {
                     }
                 }
                 this.loaded = true;
-                cx.notify();
-            })
-            .ok();
+            });
         }));
+    }
+}
+
+impl Store {
+    pub(crate) fn react_usage(&mut self, change: &Change) {
+        if let Change::Event(Event::Session(SessionEvent::SignedIn)) = change {
+            self.usage.connected(&mut self.cx);
+        }
     }
 }
 

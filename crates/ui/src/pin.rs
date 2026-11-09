@@ -1,8 +1,5 @@
-use gpui::prelude::*;
-use gpui::{Context, Pixels, Point, Render, SharedString, Window};
+use i18n::SharedString;
 use serde::{Deserialize, Serialize};
-
-use crate::drag::Ghost;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -75,7 +72,7 @@ impl Pin {
     }
 
     pub fn label(&self) -> SharedString {
-        SharedString::from(self.title.clone())
+        SharedString::Owned(self.title.clone())
     }
 }
 
@@ -99,71 +96,4 @@ impl Spot {
         self.revision = revision;
         self
     }
-}
-
-#[derive(Clone)]
-pub struct DraggedPin {
-    pub pin: Pin,
-    from: Option<Spot>,
-    position: Point<Pixels>,
-}
-
-impl DraggedPin {
-    fn new(pin: Pin, from: Option<Spot>) -> Self {
-        Self {
-            pin,
-            from,
-            position: Point::default(),
-        }
-    }
-
-    pub fn spot(&self, list: &str) -> Option<Spot> {
-        self.from.filter(|spot| spot.list == list)
-    }
-
-    fn at(mut self, position: Point<Pixels>) -> Self {
-        self.position = position;
-        self
-    }
-}
-
-impl Render for DraggedPin {
-    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        // Only a row that names where it came from can be moved, so only it shows the choice.
-        let badge = self
-            .pin
-            .origin
-            .as_ref()
-            .map(|_| match window.modifiers().shift {
-                true => "icons/arrow-right-left.svg",
-                false => "icons/copy.svg",
-            });
-
-        Ghost::new(self.position, self.pin.label())
-            .art(self.pin.cover.clone())
-            .fallback(self.pin.kind.icon())
-            .when(self.pin.kind.round(), Ghost::circle)
-            .when_some(badge, Ghost::badge)
-    }
-}
-
-pub trait Pinnable: Sized {
-    fn pin(self, pin: Pin) -> Self;
-    fn pin_from(self, pin: Pin, spot: Spot) -> Self;
-}
-
-impl<T: StatefulInteractiveElement> Pinnable for T {
-    fn pin(self, pin: Pin) -> Self {
-        haul(self, DraggedPin::new(pin, None))
-    }
-
-    fn pin_from(self, pin: Pin, spot: Spot) -> Self {
-        haul(self, DraggedPin::new(pin, Some(spot)))
-    }
-}
-
-fn haul<T: StatefulInteractiveElement>(element: T, dragged: DraggedPin) -> T {
-    element.on_drag(dragged, |dragged, position, _, cx| {
-        cx.new(|_| dragged.clone().at(position))
-    })
 }

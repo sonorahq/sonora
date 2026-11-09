@@ -2,12 +2,14 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use discord_rich_presence::{DiscordIpc, activity};
-use gpui::{App, AppContext as _, Context, Entity, Global, Task};
 use music::artwork::{ArtworkQuery, ArtworkSearch};
 use music::{MediaKind, MusicProvider, Track};
 use tokio::sync::watch;
 
-use crate::{AppSettings, Cover, Devices, DiscordName, Io, Playback, Session, Shelf, join};
+use crate::{
+    AppSettings, Change, Cover, Cx, Devices, DiscordName, Job, Playback, Session, Shelf, Store,
+    Topic,
+};
 
 #[cfg(unix)]
 mod socket;
@@ -26,25 +28,6 @@ const MAX_TEXT_UTF16_UNITS: usize = 128;
 const MUSIC: &str = "Music";
 /// Where the Sonora button sends a friend who presses it.
 const SONORA_URL: &str = "https://sonorahq.org";
-
-struct Attached {
-    _discord: Entity<Discord>,
-}
-
-impl Global for Attached {}
-
-pub(crate) fn attach(
-    playback: Entity<Playback>,
-    settings: Entity<AppSettings>,
-    session: Entity<Session>,
-    cover: Entity<Cover>,
-    devices: Entity<Devices>,
-    io: Io,
-    cx: &mut App,
-) {
-    let discord = cx.new(|cx| Discord::new(playback, settings, session, cover, devices, io, cx));
-    cx.set_global(Attached { _discord: discord });
-}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 enum Shown {
@@ -114,15 +97,9 @@ impl Timing {
 }
 
 /// Watches playback and settings, and hands each new presence to the worker.
-struct Discord {
-    playback: Entity<Playback>,
-    settings: Entity<AppSettings>,
-    session: Entity<Session>,
-    cover: Entity<Cover>,
-    devices: Entity<Devices>,
+pub(crate) struct Discord {
     sender: watch::Sender<Shown>,
     timing: Timing,
-    io: Io,
     artwork: ArtworkSearch,
     /// Covers found by name, and the queries that found nothing, so neither is asked twice.
     found: HashMap<ArtworkQuery, Option<String>>,
@@ -130,45 +107,33 @@ struct Discord {
     wanted: Option<ArtworkQuery>,
     /// The query last sent to the search. A failed one is not retried until another was asked.
     asked: Option<ArtworkQuery>,
-    lookup: Option<Task<()>>,
-    _worker: Task<()>,
+    lookup: Option<Job>,
+    _worker: Job,
+}
+
+/// The models a presence is made from.
+#[derive(Clone, Copy)]
+struct Seen<'a> {
+    playback: &'a Playback,
+    settings: &'a AppSettings,
+    session: &'a Session,
+    cover: &'a Cover,
+    devices: &'a Devices,
 }
 
 impl Discord {
-    fn new(
-        playback: Entity<Playback>,
-        settings: Entity<AppSettings>,
-        session: Entity<Session>,
-        cover: Entity<Cover>,
-        devices: Entity<Devices>,
-        io: Io,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub(crate) fn new(cx: &mut Cx) -> Self {
         let (sender, receiver) = watch::channel(Shown::Off);
-        let worker = io.spawn(run(receiver));
-        let _worker = cx.spawn(async move |_, _| {
+        let worker = cx.io.spawn(run(receiver));
+        let _worker = cx.spawn(|_| async move {
             if let Err(error) = worker.await {
                 log::warn!("discord: the presence worker stopped: {error}");
             }
         });
 
-        cx.observe(&playback, |this, _, cx| this.publish(cx))
-            .detach();
-        cx.observe(&settings, |this, _, cx| this.publish(cx))
-            .detach();
-        cx.observe(&cover, |this, _, cx| this.publish(cx)).detach();
-        cx.observe(&devices, |this, _, cx| this.publish(cx))
-            .detach();
-
         Self {
-            playback,
-            settings,
-            session,
-            cover,
-            devices,
             sender,
             timing: Timing::default(),
-            io,
             artwork: ArtworkSearch::new(),
             found: HashMap::new(),
             wanted: None,
@@ -178,8 +143,8 @@ impl Discord {
         }
     }
 
-    fn publish(&mut self, cx: &mut Context<Self>) {
-        let shown = self.shown(cx);
+    fn publish(&mut self, seen: Seen<'_>, cx: &mut Cx) {
+        let shown = self.shown(seen);
         self.sender.send_if_modified(|current| {
             let changed = *current != shown;
             if changed {
@@ -192,7 +157,7 @@ impl Discord {
 
     /// Searches for the cover the last presence went without, then publishes again with it.
     /// Replacing the previous task throws away the answer for a track that is no longer playing.
-    fn look_up(&mut self, cx: &mut Context<Self>) {
+    fn look_up(&mut self, cx: &mut Cx) {
         let Some(query) = self.wanted.take() else {
             return;
         };
@@ -202,28 +167,31 @@ impl Discord {
         self.asked = Some(query.clone());
 
         let search = self.artwork.clone();
-        let io = self.io.clone();
-        self.lookup = Some(cx.spawn(async move |this, cx| {
-            let wanted = query.clone();
-            let found = join(io.spawn(async move { search.find(&wanted).await })).await;
+        self.lookup = Some(cx.spawn(|link| async move {
+            let found = search.find(&query).await;
 
-            this.update(cx, |this, cx| {
-                this.lookup = None;
+            link.post(move |store| {
+                store.discord.lookup = None;
                 match found {
                     Ok(cover) => {
-                        this.found.insert(query, cover);
-                        this.publish(cx);
+                        store.discord.found.insert(query, cover);
+                        store.publish_presence();
                     }
                     Err(error) => log::warn!("discord: cannot look up the artwork: {error:#}"),
                 }
-            })
-            .ok();
+            });
         }));
     }
 
-    fn shown(&mut self, cx: &App) -> Shown {
+    fn shown(&mut self, seen: Seen<'_>) -> Shown {
+        let Seen {
+            playback,
+            settings,
+            session,
+            cover,
+            devices,
+        } = seen;
         self.wanted = None;
-        let playback = self.playback.read(cx);
         let Some(track) = playback.track() else {
             self.timing.reset();
             return Shown::Off;
@@ -232,18 +200,15 @@ impl Discord {
         let playing = playback.wants_playing();
 
         let since = self.timing.listening_since();
-        let settings = self.settings.read(cx);
         if !settings.discord_presence() || !playing && !settings.discord_show_paused() {
             return Shown::Off;
         }
-        let devices = self.devices.read(cx);
         if settings.discord_hide_on_connect()
             && (devices.publishing() || devices.steered().is_some())
         {
             return Shown::Off;
         }
 
-        let session = self.session.read(cx);
         let provider = track.id.as_deref().and_then(|id| session.provider_for(id));
         let named = provider.map(|provider| Source {
             badge: settings.discord_badge().then(|| provider.slug()),
@@ -291,7 +256,7 @@ impl Discord {
             source: named,
             details: fit_text(&track.name).unwrap_or_else(anonymous_details),
             state: fit_text(&track.artists),
-            image: self.artwork(track, public_art, lookup, cx),
+            image: self.artwork(track, public_art, lookup, cover),
             image_text: fit_text(&track.album),
             started_at,
             ends_at: started_at
@@ -311,14 +276,14 @@ impl Discord {
         track: &Track,
         public_art: bool,
         lookup: bool,
-        cx: &App,
+        cover: &Cover,
     ) -> Option<String> {
         let own = public_art
             .then(|| {
                 track
                     .album_id
                     .as_deref()
-                    .and_then(|album| self.cover.read(cx).large_for(album))
+                    .and_then(|album| cover.large_for(album))
                     .map(str::to_owned)
                     .or_else(|| track.cover.clone())
                     .filter(|cover| cover.starts_with("https://"))
@@ -334,6 +299,38 @@ impl Discord {
                 self.wanted = Some(query);
                 None
             }
+        }
+    }
+}
+
+impl Store {
+    /// Hands Discord the presence that what plays and the settings call for now.
+    fn publish_presence(&mut self) {
+        let Store {
+            discord,
+            playback,
+            settings,
+            session,
+            cover,
+            devices,
+            cx,
+            ..
+        } = self;
+        let seen = Seen {
+            playback,
+            settings,
+            session,
+            cover,
+            devices,
+        };
+        discord.publish(seen, cx);
+    }
+
+    pub(crate) fn react_discord(&mut self, change: &Change) {
+        if let Change::Topic(Topic::Playback | Topic::Settings | Topic::Cover | Topic::Devices) =
+            change
+        {
+            self.publish_presence();
         }
     }
 }

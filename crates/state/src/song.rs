@@ -1,55 +1,28 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use gpui::{Context, Entity, Task};
 use music::{AlbumDetail, ArtistProfile, Track};
-use tokio::task::AbortHandle;
 
 use crate::catalog::SongPage;
-use crate::{Io, Session, SessionEvent, join};
+use crate::{Change, Cx, Event, Job, Session, SessionEvent, Store};
 
+/// The song page: what [`Store::pages`](crate::Pages) shows as `song`.
 pub struct SongDetail {
     id: Option<String>,
     page: Option<Arc<SongPage>>,
     loading: bool,
     error: Option<String>,
-    session: Entity<Session>,
-    io: Io,
-    task: Option<Task<()>>,
-    request: Option<AbortHandle>,
+    task: Option<Job>,
 }
 
 impl SongDetail {
-    pub fn new(session: Entity<Session>, io: Io, cx: &mut Context<Self>) -> Self {
-        cx.subscribe(&session, |this, _, event, cx| match event {
-            SessionEvent::SignedIn => {
-                if let Some(id) = this.id.clone().filter(|id| !music::is_local_id(id)) {
-                    this.clear();
-                    this.open(&id, cx);
-                }
-            }
-            SessionEvent::SignedOut => {
-                this.clear();
-                cx.notify();
-            }
-            SessionEvent::Reconnected | SessionEvent::WentOffline => {}
-            SessionEvent::LocalChanged => {
-                if let Some(id) = this.id.clone().filter(|id| music::is_local_id(id)) {
-                    this.clear();
-                    this.open(&id, cx);
-                }
-            }
-        })
-        .detach();
+    pub(crate) fn new() -> Self {
         Self {
             id: None,
             page: None,
             loading: false,
             error: None,
-            session,
-            io,
             task: None,
-            request: None,
         }
     }
 
@@ -82,82 +55,126 @@ impl SongDetail {
         self.error.as_deref()
     }
 
-    pub fn open(&mut self, id: &str, cx: &mut Context<Self>) {
+    fn open(&mut self, id: &str, session: &Session, cx: &mut Cx) {
         if self.id.as_deref() == Some(id) && (self.loading || self.page.is_some()) {
             return;
         }
         self.clear();
         self.id = Some(id.to_owned());
-        let Some(catalog) = self.session.read(cx).catalog(id) else {
-            cx.notify();
+        let Some(catalog) = session.catalog(id) else {
             return;
         };
         if let Some(page) = catalog.peek_song(id) {
             self.page = Some(page);
-            cx.notify();
             return;
         }
-        self.load(id.to_owned(), false, cx);
+        self.load(id.to_owned(), false, session, cx);
     }
 
     /// Drops the page and fetches it again from the provider, past the catalog cache, so it
     /// shows its loading state until the new one lands.
-    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+    fn refresh(&mut self, session: &Session, cx: &mut Cx) {
         let Some(id) = self.id.clone() else {
             return;
         };
         self.clear();
         self.id = Some(id.clone());
-        self.load(id, true, cx);
+        self.load(id, true, session, cx);
     }
 
     /// Fetches the song page. A `fresh` load drops the cached page first, so the provider is
     /// asked again.
-    fn load(&mut self, id: String, fresh: bool, cx: &mut Context<Self>) {
-        let Some(catalog) = self.session.read(cx).catalog(&id) else {
-            cx.notify();
+    fn load(&mut self, id: String, fresh: bool, session: &Session, cx: &mut Cx) {
+        let Some(catalog) = session.catalog(&id) else {
             return;
         };
 
         self.loading = true;
-        cx.notify();
-        let request = self.io.spawn({
-            let id = id.clone();
-            async move {
-                if fresh {
-                    catalog.invalidate_song(&id).await;
-                }
-                catalog.song(&id).await
+        self.task = Some(cx.spawn(move |link| async move {
+            if fresh {
+                catalog.invalidate_song(&id).await;
             }
-        });
-        self.request = Some(request.abort_handle());
-        self.task = Some(cx.spawn(async move |this, cx| {
-            let loaded = join(request).await;
-            this.update(cx, |this, cx| {
-                if this.id.as_deref() != Some(id.as_str()) {
+            let loaded = catalog.song(&id).await;
+            link.post(move |store| {
+                let Store { pages, cx, .. } = store;
+                let Some(this) = pages
+                    .song
+                    .as_mut()
+                    .filter(|this| this.id.as_deref() == Some(id.as_str()))
+                else {
                     return;
-                }
+                };
                 this.loading = false;
-                this.request = None;
                 match crate::settled(loaded, cx) {
                     Ok(page) => this.page = Some(page),
                     Err(reason) => this.error = Some(reason),
                 }
-                cx.notify();
-            })
-            .ok();
+            });
         }));
     }
 
     fn clear(&mut self) {
         self.task = None;
-        if let Some(request) = self.request.take() {
-            request.abort();
-        }
         self.id = None;
         self.page = None;
         self.loading = false;
         self.error = None;
+    }
+}
+
+impl Store {
+    /// Opens the song page on `id`, from the catalog cache when it already holds the song.
+    pub fn open_song(&mut self, id: &str) {
+        let Store {
+            pages, session, cx, ..
+        } = self;
+        pages
+            .song
+            .get_or_insert_with(SongDetail::new)
+            .open(id, session, cx);
+    }
+
+    /// Drops the song page, and the load it has under way.
+    pub fn close_song(&mut self) {
+        self.pages.song = None;
+    }
+
+    /// Drops the song page and fetches it again from the provider, past the catalog cache.
+    pub fn refresh_song(&mut self) {
+        let Store {
+            pages, session, cx, ..
+        } = self;
+        if let Some(song) = pages.song.as_mut() {
+            song.refresh(session, cx);
+        }
+    }
+
+    pub(crate) fn react_song(&mut self, change: &Change) {
+        let Change::Event(Event::Session(event)) = change else {
+            return;
+        };
+        let Store {
+            pages, session, cx, ..
+        } = self;
+        let Some(this) = pages.song.as_mut() else {
+            return;
+        };
+        match event {
+            SessionEvent::SignedIn => {
+                if let Some(id) = this.id.clone().filter(|id| !music::is_local_id(id)) {
+                    this.clear();
+                    this.open(&id, session, cx);
+                }
+            }
+            SessionEvent::SignedOut => this.clear(),
+            SessionEvent::Reconnected | SessionEvent::WentOffline => {}
+            SessionEvent::LocalChanged => {
+                if let Some(id) = this.id.clone().filter(|id| music::is_local_id(id)) {
+                    this.clear();
+                    this.open(&id, session, cx);
+                }
+            }
+        }
     }
 }
 

@@ -2,15 +2,14 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
-use gpui::{App, Context, Entity, EventEmitter, SharedString, Task};
 use music::{Album, AlbumDetail, Fraction, Playlist, PlaylistDetail, Track};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use storage::Database;
 
 use crate::{
-    Collection, Io, Network, Outcome, Playback, Reconnected, Session, SessionEvent, SessionState,
-    Target, Toast, Toasts, join,
+    Change, Collection, Cx, Event, Io, Job, Network, Outcome, Playback, Session, SessionEvent,
+    SessionState, Store, Target, Toast, Toasts, Topic, join,
 };
 
 /// How many tracks download at once. Two keep the line busy without starving a track that is
@@ -55,7 +54,7 @@ pub struct Active {
     pub subject: Subject,
     pub id: String,
     pub cover: Option<String>,
-    pub name: SharedString,
+    pub name: String,
     /// Its tracks still to come, the running ones first and the rest in the order it lists them.
     pub left: Vec<Pending>,
 }
@@ -64,8 +63,8 @@ pub struct Active {
 #[derive(Clone, Debug)]
 pub struct Pending {
     pub id: String,
-    pub name: SharedString,
-    pub artists: SharedString,
+    pub name: String,
+    pub artists: String,
     pub running: bool,
     /// How much of a running track has arrived, from 0 to 1, when the provider can tell.
     pub fraction: Option<f32>,
@@ -81,11 +80,6 @@ pub struct Remaining {
     /// How long the rest should take at the pace of the latest downloads.
     pub eta: Option<Duration>,
 }
-
-/// Raised when what a Downloaded filter shows may have changed, which is when a track finished
-/// or went, or an album or playlist was added or removed. Progress alone never raises it, so a
-/// filtered list rebuilds on this rather than on every redraw of a running download.
-pub struct DownloadsChanged;
 
 /// An album or playlist that was downloaded whole, kept with its tracks so its page opens with
 /// no network.
@@ -124,9 +118,9 @@ struct Entry {
 #[derive(Clone)]
 enum About {
     /// An album or a playlist, by name and the page it opens.
-    Set { name: SharedString, target: Target },
+    Set { name: String, target: Target },
     /// One song picked on its own.
-    Song { name: SharedString, target: Target },
+    Song { name: String, target: Target },
     /// Several songs picked one by one.
     Songs(usize),
 }
@@ -135,11 +129,11 @@ impl About {
     fn of(head: &Head) -> Self {
         match head {
             Head::Album(album) => Self::Set {
-                name: album.name.clone().into(),
+                name: album.name.clone(),
                 target: Target::Album(album.id.clone().into()),
             },
             Head::Playlist(playlist) => Self::Set {
-                name: playlist.name.clone().into(),
+                name: playlist.name.clone(),
                 target: Target::Playlist(playlist.id.clone().into()),
             },
         }
@@ -177,7 +171,16 @@ struct Running {
     /// Tells this run apart from an earlier one of the same track that was removed while it ran.
     serial: u64,
     progress: Fraction,
-    task: Task<()>,
+    task: Job,
+}
+
+/// The models a download reads: the account for the provider's limits, the engine that
+/// fetches and whether there is a network to fetch from.
+#[derive(Clone, Copy)]
+struct Around<'a> {
+    session: &'a Session,
+    playback: &'a Playback,
+    network: &'a Network,
 }
 
 /// The tracks, albums and playlists the listener downloaded from the active provider, and the
@@ -187,9 +190,7 @@ struct Running {
 /// that [`Playback`] shares with its engines. A download goes through the same engine a play
 /// would, so it needs the provider signed in, and plays back with no network once it is done.
 pub struct Downloads {
-    session: Entity<Session>,
-    playback: Entity<Playback>,
-    store: Store,
+    ledger: Ledger,
     io: Io,
     /// The provider the lists below belong to.
     provider: Option<&'static str>,
@@ -202,11 +203,11 @@ pub struct Downloads {
     running: HashMap<String, Running>,
     /// Downloads removed while they ran, by serial. An engine cannot stop a fetch it started, so
     /// each runs to its end and whatever it kept is removed then.
-    abandoned: HashMap<u64, Task<()>>,
+    abandoned: HashMap<u64, Job>,
     /// The serial the next download gets.
     serial: u64,
     /// Redraws whoever shows downloads while any is under way, so their progress moves.
-    ticker: Option<Task<()>>,
+    ticker: Option<Job>,
     /// When the next download may start, after a provider refused the last ones or asks for
     /// room between them.
     resting: Option<Instant>,
@@ -221,59 +222,21 @@ pub struct Downloads {
     /// When the latest downloads finished, for the pace the list of running ones reports.
     finished_at: VecDeque<Instant>,
     /// Starts the queue again once it has rested.
-    wake: Option<Task<()>>,
+    wake: Option<Job>,
     failed: HashSet<String>,
     /// Downloads that stopped because the connection went. They count as waiting and go back in
     /// line when the network returns.
     stalled: HashSet<String>,
     /// Fetches the tracks of an album or playlist asked for from a menu, which has none to hand.
-    fetching: HashMap<String, Task<()>>,
-    restore: Option<Task<()>>,
+    fetching: HashMap<String, Job>,
+    restore: Option<Job>,
 }
 
-impl EventEmitter<DownloadsChanged> for Downloads {}
-
 impl Downloads {
-    pub fn new(
-        session: Entity<Session>,
-        playback: Entity<Playback>,
-        network: &Entity<Network>,
-        database: Database,
-        io: Io,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        // The queue stops while the network is gone, and picks up again once it is back.
-        cx.subscribe(network, |this, _, _: &Reconnected, cx| this.resume(cx))
-            .detach();
-        cx.subscribe(&session, |this, session, event, cx| match event {
-            SessionEvent::SignedIn | SessionEvent::Reconnected => {
-                let provider = session.read(cx).provider_slug();
-                this.adopt(provider, cx);
-                this.failed.clear();
-                this.requeue();
-                this.pump(cx);
-            }
-            SessionEvent::SignedOut => this.clear(cx),
-            SessionEvent::WentOffline => this.halt(cx),
-            SessionEvent::LocalChanged => {}
-        })
-        .detach();
-        // A run that starts offline never signs in, but its downloads are still listed.
-        cx.observe(&session, |this, session, cx| {
-            let session = session.read(cx);
-            if this.provider.is_none() && matches!(session.state(), SessionState::Offline(_)) {
-                let provider = session.provider_slug();
-                this.adopt(provider, cx);
-            }
-        })
-        .detach();
-        // The streaming engine starts a moment after sign-in, and the queue waits for it.
-        cx.observe(&playback, |this, _, cx| this.pump(cx)).detach();
+    pub fn new(database: Database, cx: &mut Cx) -> Self {
         Self {
-            session,
-            playback,
-            store: Store { database },
-            io,
+            ledger: Ledger { database },
+            io: cx.io.clone(),
             provider: None,
             tracks: HashMap::new(),
             sets: HashMap::new(),
@@ -386,7 +349,7 @@ impl Downloads {
                     subject,
                     id: id.clone(),
                     cover: cover.clone(),
-                    name: name.clone().into(),
+                    name: name.clone(),
                     left,
                 }
             })
@@ -401,7 +364,7 @@ impl Downloads {
                     subject: Subject::Song,
                     id: id.clone(),
                     cover: track.cover.clone(),
-                    name: track.name.clone().into(),
+                    name: track.name.clone(),
                     left: vec![pending],
                 })
             })
@@ -465,8 +428,8 @@ impl Downloads {
         let id = track.id.as_deref().filter(|id| self.on_its_way(id))?;
         Some(Pending {
             id: id.to_owned(),
-            name: track.name.clone().into(),
-            artists: track.artists.clone().into(),
+            name: track.name.clone(),
+            artists: track.artists.clone(),
             running: self.running.contains_key(id),
             fraction: self.fraction(id),
         })
@@ -548,7 +511,7 @@ impl Downloads {
     }
 
     /// Downloads tracks the listener picked one by one.
-    pub fn download_tracks(&mut self, tracks: Vec<Track>, cx: &mut Context<Self>) {
+    fn download_tracks(&mut self, tracks: Vec<Track>, around: Around<'_>, cx: &mut Cx) {
         let Some(provider) = self.provider else {
             return;
         };
@@ -561,137 +524,23 @@ impl Downloads {
         }
         let about = match tracks.as_slice() {
             [track] => track.id.as_ref().map(|id| About::Song {
-                name: track.name.clone().into(),
+                name: track.name.clone(),
                 target: Target::Song(id.clone().into()),
             }),
             [] => None,
             tracks => Some(About::Songs(tracks.len())),
         };
         self.persist(provider, None, tracks);
-        self.pump(cx);
+        self.pump(around, cx);
         if let Some(about) = about {
             Toasts::post(about.started(), cx);
         }
-        cx.emit(DownloadsChanged);
-        cx.notify();
-    }
-
-    /// Downloads an album whose tracks are already loaded.
-    pub fn download_album(&mut self, detail: AlbumDetail, cx: &mut Context<Self>) {
-        let (id, set) = album_set(detail);
-        Toasts::post(About::of(&set.head).started(), cx);
-        self.download_set(Collection::Album, id, set, cx);
-    }
-
-    /// Downloads a playlist whose tracks are already loaded.
-    pub fn download_playlist(&mut self, detail: PlaylistDetail, cx: &mut Context<Self>) {
-        let (id, set) = playlist_set(detail);
-        Toasts::post(About::of(&set.head).started(), cx);
-        self.download_set(Collection::Playlist, id, set, cx);
-    }
-
-    /// Downloads an album named from a menu, fetching its tracks first.
-    pub fn download_album_by_id(&mut self, album: &Album, cx: &mut Context<Self>) {
-        let Some(catalog) = self.session.read(cx).catalog(&album.id) else {
-            return;
-        };
-        let id = album.id.clone();
-        Toasts::post(
-            About::Set {
-                name: album.name.clone().into(),
-                target: Target::Album(id.clone().into()),
-            }
-            .started(),
-            cx,
-        );
-        let request = self.io.spawn({
-            let id = id.clone();
-            async move { catalog.album(&id).await }
-        });
-        let task = cx.spawn(async move |this, cx| {
-            let loaded = join(request).await;
-            this.update(cx, |this, cx| {
-                this.fetching.remove(&id);
-                match loaded {
-                    Ok(detail) => {
-                        let (id, set) = album_set((*detail).clone());
-                        this.download_set(Collection::Album, id, set, cx);
-                    }
-                    Err(error) => this.failed_to_fetch(&error, cx),
-                }
-            })
-            .ok();
-        });
-        self.fetching.insert(album.id.clone(), task);
-    }
-
-    /// Downloads a playlist named from a menu or its page. The first page of its tracks starts
-    /// downloading as soon as it arrives, and every later page joins the download as it comes,
-    /// so a long playlist does not wait for all of them.
-    pub fn download_playlist_by_id(&mut self, playlist: &Playlist, cx: &mut Context<Self>) {
-        let Some(catalog) = self.session.read(cx).catalog(&playlist.id) else {
-            return;
-        };
-        let id = playlist.id.clone();
-        Toasts::post(
-            About::Set {
-                name: playlist.name.clone().into(),
-                target: Target::Playlist(id.clone().into()),
-            }
-            .started(),
-            cx,
-        );
-        let io = self.io.clone();
-        let task = cx.spawn(async move |this, cx| {
-            let first = io.spawn({
-                let (catalog, id) = (catalog.clone(), id.clone());
-                async move { catalog.playlist(&id).await }
-            });
-            let first = join(first).await;
-            let mut next = this
-                .update(cx, |this, cx| match first {
-                    Ok(detail) => {
-                        let mut detail = (*detail).clone();
-                        let next = detail.continuation.take();
-                        let (id, set) = playlist_set(detail);
-                        this.download_set(Collection::Playlist, id, set, cx);
-                        next
-                    }
-                    Err(error) => {
-                        this.failed_to_fetch(&error, cx);
-                        None
-                    }
-                })
-                .ok()
-                .flatten();
-            while let Some(continuation) = next {
-                let page = io.spawn({
-                    let catalog = catalog.clone();
-                    async move { catalog.playlist_continuation(&continuation).await }
-                });
-                let page = join(page).await;
-                next = this
-                    .update(cx, |this, cx| match page {
-                        Ok((tracks, more)) => this
-                            .extend_set(Collection::Playlist, &id, tracks, cx)
-                            .then_some(more)
-                            .flatten(),
-                        Err(error) => {
-                            log::warn!("downloads: cannot list more of playlist {id}: {error:#}");
-                            None
-                        }
-                    })
-                    .ok()
-                    .flatten();
-            }
-            this.update(cx, |this, _| this.fetching.remove(&id)).ok();
-        });
-        self.fetching.insert(playlist.id.clone(), task);
+        cx.emit(Event::DownloadsChanged);
     }
 
     /// Removes the downloads of tracks, and takes them out of any downloaded album or playlist
     /// that held them. A set left with no tracks stops being downloaded.
-    pub fn remove_tracks(&mut self, ids: &[String], cx: &mut Context<Self>) {
+    fn remove_tracks(&mut self, ids: &[String], around: Around<'_>, cx: &mut Cx) {
         let Some(provider) = self.provider else {
             return;
         };
@@ -711,22 +560,21 @@ impl Downloads {
         for key in &emptied {
             self.sets.remove(key);
         }
-        self.drop_tracks(provider, ids, cx);
-        self.write(move |store| {
+        self.drop_tracks(provider, ids, around, cx);
+        self.write(move |ledger| {
             for (kind, id, set) in &kept {
-                store.keep_set(provider, *kind, id, set)?;
+                ledger.keep_set(provider, *kind, id, set)?;
             }
             for (kind, id) in &emptied {
-                store.forget_set(provider, *kind, id)?;
+                ledger.forget_set(provider, *kind, id)?;
             }
             Ok(())
         });
-        cx.emit(DownloadsChanged);
-        cx.notify();
+        cx.emit(Event::DownloadsChanged);
     }
 
     /// Removes a downloaded album or playlist, and every track of it nothing else keeps.
-    pub fn remove_set(&mut self, kind: Collection, id: &str, cx: &mut Context<Self>) {
+    fn remove_set(&mut self, kind: Collection, id: &str, around: Around<'_>, cx: &mut Cx) {
         let Some(provider) = self.provider else {
             return;
         };
@@ -742,16 +590,15 @@ impl Downloads {
             .filter(|id| !held.contains(id))
             .filter(|id| !self.tracks.get(id).is_some_and(|entry| entry.single))
             .collect();
-        self.drop_tracks(provider, &gone, cx);
+        self.drop_tracks(provider, &gone, around, cx);
         let id = id.to_owned();
-        self.write(move |store| store.forget_set(provider, kind, &id));
-        cx.emit(DownloadsChanged);
-        cx.notify();
+        self.write(move |ledger| ledger.forget_set(provider, kind, &id));
+        cx.emit(Event::DownloadsChanged);
     }
 
-    /// Removes every download of every provider, files and lists alike. The ones under way are
-    /// removed again as they end.
-    pub fn remove_all(&mut self, cx: &mut Context<Self>) {
+    /// Takes every download off the lists. The ones under way are removed again as they end.
+    /// The files are [`Playback`]'s to remove, which [`Store::remove_all_downloads`] asks of it.
+    fn forget_all(&mut self, cx: &mut Cx) {
         self.tracks.clear();
         self.sets.clear();
         self.queue.clear();
@@ -761,15 +608,19 @@ impl Downloads {
         self.failed.clear();
         self.stalled.clear();
         self.fetching.clear();
-        self.playback
-            .update(cx, |playback, cx| playback.remove_downloads(cx));
-        self.write(|store| store.forget_everything());
-        cx.emit(DownloadsChanged);
-        cx.notify();
+        self.write(|ledger| ledger.forget_everything());
+        cx.emit(Event::DownloadsChanged);
     }
 
     /// Downloads an album or playlist.
-    fn download_set(&mut self, kind: Collection, id: String, set: Set, cx: &mut Context<Self>) {
+    fn download_set(
+        &mut self,
+        kind: Collection,
+        id: String,
+        set: Set,
+        around: Around<'_>,
+        cx: &mut Cx,
+    ) {
         let Some(provider) = self.provider else {
             return;
         };
@@ -784,9 +635,8 @@ impl Downloads {
         }
         self.sets.insert((kind, id.clone()), set.clone());
         self.persist(provider, Some((kind, id, set)), tracks);
-        self.pump(cx);
-        cx.emit(DownloadsChanged);
-        cx.notify();
+        self.pump(around, cx);
+        cx.emit(Event::DownloadsChanged);
     }
 
     /// Adds a later page of tracks to an album or playlist already downloading. Says whether the
@@ -796,7 +646,8 @@ impl Downloads {
         kind: Collection,
         id: &str,
         tracks: Vec<Track>,
-        cx: &mut Context<Self>,
+        around: Around<'_>,
+        cx: &mut Cx,
     ) -> bool {
         let Some(provider) = self.provider else {
             return false;
@@ -811,9 +662,8 @@ impl Downloads {
             self.enlist(track, false);
         }
         self.persist(provider, Some((kind, id.to_owned(), set)), tracks);
-        self.pump(cx);
-        cx.emit(DownloadsChanged);
-        cx.notify();
+        self.pump(around, cx);
+        cx.emit(Event::DownloadsChanged);
         true
     }
 
@@ -857,25 +707,25 @@ impl Downloads {
                 Some((id, entry.single))
             })
             .collect();
-        self.write(move |store| {
+        self.write(move |ledger| {
             if let Some((kind, id, set)) = &set {
-                store.keep_set(provider, *kind, id, set)?;
+                ledger.keep_set(provider, *kind, id, set)?;
             }
-            store.enlist(provider, &rows)
+            ledger.enlist(provider, &rows)
         });
     }
 
     /// Starts the next downloads in line, as many as may run at once, while there is an engine
     /// to fetch through and a network to fetch from.
-    fn pump(&mut self, cx: &mut Context<Self>) {
-        if Network::lost(cx) || self.provider.is_none() {
+    fn pump(&mut self, around: Around<'_>, cx: &mut Cx) {
+        if around.network.lost() || self.provider.is_none() {
             return;
         }
         if let Some(until) = self.resting.filter(|until| *until > Instant::now()) {
             return self.wake_at(until, cx);
         }
         // A provider that refuses bursts gets its downloads one at a time.
-        let bursts = self.session.read(cx).capabilities().download_gap;
+        let bursts = around.session.capabilities().download_gap;
         let at_once = match bursts.is_zero() {
             true => AT_ONCE,
             false => 1,
@@ -888,7 +738,7 @@ impl Downloads {
                 continue;
             }
             let progress = Fraction::default();
-            let Some(download) = self.playback.read(cx).download(&id, progress.clone()) else {
+            let Some(download) = around.playback.download(&id, progress.clone()) else {
                 self.queue.push_front(id);
                 return;
             };
@@ -897,10 +747,12 @@ impl Downloads {
             self.serial += 1;
             let task = cx.spawn({
                 let id = id.clone();
-                async move |this, cx| {
+                move |link| async move {
                     let fetched = join(request).await;
-                    this.update(cx, |this, cx| this.finished(id, serial, fetched, cx))
-                        .ok();
+                    link.post(move |store| {
+                        let (downloads, around, cx) = store.downloading();
+                        downloads.finished(id, serial, fetched, around, cx);
+                    });
                 }
             });
             self.running.insert(
@@ -915,28 +767,29 @@ impl Downloads {
                 self.resting = Some(Instant::now() + self.gap);
             }
             self.tick(cx);
-            cx.notify();
         }
     }
 
     /// Keeps the views that show progress redrawing while a download runs, and stops once none
     /// does.
-    fn tick(&mut self, cx: &mut Context<Self>) {
+    fn tick(&mut self, cx: &mut Cx) {
         if self.ticker.is_some() {
             return;
         }
-        self.ticker = Some(cx.spawn(async move |this, cx| {
+        self.ticker = Some(cx.spawn(|link| async move {
             loop {
-                cx.background_executor().timer(TICK).await;
-                let going = this
-                    .update(cx, |this, cx| {
-                        cx.notify();
-                        let going = !this.running.is_empty();
+                tokio::time::sleep(TICK).await;
+                let going = link
+                    .read(|store| {
+                        store.cx.refresh();
+                        let downloads = &mut store.downloads;
+                        let going = !downloads.running.is_empty();
                         if !going {
-                            this.ticker = None;
+                            downloads.ticker = None;
                         }
                         going
                     })
+                    .await
                     .unwrap_or(false);
                 if !going {
                     return;
@@ -947,10 +800,17 @@ impl Downloads {
 
     /// Settles download `serial` of track `id`. One that was removed while it ran has its file
     /// removed again, unless the track was asked for anew in the meantime.
-    fn finished(&mut self, id: String, serial: u64, fetched: Result<()>, cx: &mut Context<Self>) {
+    fn finished(
+        &mut self,
+        id: String,
+        serial: u64,
+        fetched: Result<()>,
+        around: Around<'_>,
+        cx: &mut Cx,
+    ) {
         if self.abandoned.remove(&serial).is_some() {
             if fetched.is_ok() && !self.tracks.contains_key(&id) {
-                self.playback.read(cx).discard(&id);
+                around.playback.discard(&id);
             }
             return;
         }
@@ -965,20 +825,20 @@ impl Downloads {
                 if self.finished_at.len() > PACE_WINDOW {
                     self.finished_at.pop_front();
                 }
-                self.ease(cx);
+                self.ease(around);
                 if let Some(entry) = self.tracks.get_mut(&id)
                     && let Some(provider) = self.provider
                 {
                     entry.done = true;
                     let done = id.clone();
-                    self.write(move |store| store.done(provider, &done));
-                    cx.emit(DownloadsChanged);
+                    self.write(move |ledger| ledger.done(provider, &done));
+                    cx.emit(Event::DownloadsChanged);
                 }
             }
             Err(error) if error.downcast_ref::<music::Throttled>().is_some() => {
                 self.refusals = self.refusals.saturating_add(1);
                 let wait = rest(self.refusals);
-                let bursts = self.session.read(cx).capabilities().download_gap;
+                let bursts = around.session.capabilities().download_gap;
                 // The pause stays at the provider's own, since the long rest is what lets its
                 // limit clear. Widening the pause as well left a quick burst crawling for good.
                 self.gap = bursts;
@@ -1007,13 +867,12 @@ impl Downloads {
                 }
             }
         }
-        self.pump(cx);
-        cx.notify();
+        self.pump(around, cx);
     }
 
     /// Narrows the pause between downloads after a run of them worked, down to none once it is
     /// below a quarter of the one the provider starts from.
-    fn ease(&mut self, cx: &mut Context<Self>) {
+    fn ease(&mut self, around: Around<'_>) {
         if self.gap.is_zero() {
             return;
         }
@@ -1022,7 +881,7 @@ impl Downloads {
             return;
         }
         self.streak = 0;
-        let bursts = self.session.read(cx).capabilities().download_gap;
+        let bursts = around.session.capabilities().download_gap;
         self.gap /= 2;
         if self.gap < bursts / 4 {
             self.gap = Duration::ZERO;
@@ -1031,91 +890,40 @@ impl Downloads {
     }
 
     /// Starts the queue again at `at`, unless something already will.
-    fn wake_at(&mut self, at: Instant, cx: &mut Context<Self>) {
+    fn wake_at(&mut self, at: Instant, cx: &mut Cx) {
         if self.wake.is_some() {
             return;
         }
-        self.wake = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(at.saturating_duration_since(Instant::now()))
-                .await;
-            this.update(cx, |this, cx| {
-                this.wake = None;
-                this.pump(cx);
-            })
-            .ok();
+        self.wake = Some(cx.spawn(move |link| async move {
+            tokio::time::sleep(at.saturating_duration_since(Instant::now())).await;
+            link.post(|store| {
+                let (downloads, around, cx) = store.downloading();
+                downloads.wake = None;
+                downloads.pump(around, cx);
+            });
         }));
     }
 
     /// Says the tracks of an album or playlist could not be listed.
-    fn failed_to_fetch(&mut self, error: &anyhow::Error, cx: &mut Context<Self>) {
+    fn failed_to_fetch(&mut self, error: &anyhow::Error, cx: &mut Cx) {
         log::warn!("downloads: cannot list the tracks to download: {error:#}");
         crate::noted(error, cx);
         Toasts::post(Toast::new(Outcome::Failed, "toast-download-failed"), cx);
     }
 
-    /// Cancels the download of a song the listener stopped from the list of running downloads.
-    pub fn cancel_song(&mut self, id: &str, cx: &mut Context<Self>) {
-        let Some(track) = self.songs.remove(id) else {
-            return;
-        };
-        self.remove_tracks(&[id.to_owned()], cx);
-        Toasts::post(
-            About::Song {
-                name: track.name.into(),
-                target: Target::Song(id.to_owned().into()),
-            }
-            .cancelled(),
-            cx,
-        );
-    }
-
-    /// Cancels the download of an album or playlist the listener stopped from the list of running
-    /// downloads, removing its tracks, and puts up a toast that says so.
-    pub fn cancel_set(&mut self, kind: Collection, id: &str, cx: &mut Context<Self>) {
-        let Some(set) = self.sets.get(&(kind, id.to_owned())) else {
-            return;
-        };
-        let about = About::of(&set.head);
-        self.fetching.remove(id);
-        self.remove_set(kind, id, cx);
-        Toasts::post(about.cancelled(), cx);
-    }
-
-    /// Cancels every album, playlist and song still downloading, along with the albums and
-    /// playlists whose tracks are still being listed, and puts up one toast with how many tracks
-    /// it stopped.
-    pub fn cancel_all(&mut self, cx: &mut Context<Self>) {
-        let stopped = self.remaining().map_or(0, |remaining| remaining.songs);
-        let sets: Vec<(Collection, String)> =
-            self.active_sets().map(|(key, _)| key.clone()).collect();
-        let songs: Vec<String> = self
-            .songs
-            .keys()
-            .filter(|id| self.on_its_way(id))
-            .cloned()
-            .collect();
-        self.fetching.clear();
-        for (kind, id) in sets {
-            self.remove_set(kind, &id, cx);
-        }
-        for id in &songs {
-            self.songs.remove(id);
-        }
-        self.remove_tracks(&songs, cx);
-        if stopped > 0 {
-            Toasts::post(About::Songs(stopped).cancelled(), cx);
-        }
-    }
-
     /// Takes tracks off the list and removes their audio. A download of one still under way is
     /// left to end, and its file is removed when it does. Its place in line goes to the next
     /// track at once.
-    fn drop_tracks(&mut self, provider: &'static str, ids: &[String], cx: &mut Context<Self>) {
+    fn drop_tracks(
+        &mut self,
+        provider: &'static str,
+        ids: &[String],
+        around: Around<'_>,
+        cx: &mut Cx,
+    ) {
         if ids.is_empty() {
             return;
         }
-        let playback = self.playback.read(cx);
         for id in ids {
             self.tracks.remove(id);
             if let Some(run) = self.running.remove(id) {
@@ -1123,12 +931,12 @@ impl Downloads {
             }
             self.failed.remove(id);
             self.stalled.remove(id);
-            playback.discard(id);
+            around.playback.discard(id);
         }
         self.queue.retain(|id| !ids.contains(id));
         let ids = ids.to_vec();
-        self.write(move |store| store.forget(provider, &ids));
-        self.pump(cx);
+        self.write(move |ledger| ledger.forget(provider, &ids));
+        self.pump(around, cx);
     }
 
     /// Every track a downloaded set holds.
@@ -1141,21 +949,19 @@ impl Downloads {
 
     /// Puts the downloads the lost connection stopped back at the front of the line, and starts
     /// it again.
-    fn resume(&mut self, cx: &mut Context<Self>) {
+    fn resume(&mut self, around: Around<'_>, cx: &mut Cx) {
         for id in self.stalled.drain() {
             self.queue.push_front(id);
         }
-        self.pump(cx);
-        cx.notify();
+        self.pump(around, cx);
     }
 
     /// Stops the downloads under way and puts them back in the queue, which waits for the account
     /// to sign in again.
-    fn halt(&mut self, cx: &mut Context<Self>) {
+    fn halt(&mut self) {
         self.running.clear();
         self.ticker = None;
         self.requeue();
-        cx.notify();
     }
 
     /// Puts every track not yet in back in line, as after a sign-in.
@@ -1170,7 +976,7 @@ impl Downloads {
     }
 
     /// Reads the lists of `provider` from disk, unless they are the ones already up.
-    fn adopt(&mut self, provider: Option<&'static str>, cx: &mut Context<Self>) {
+    fn adopt(&mut self, provider: Option<&'static str>, cx: &mut Cx) {
         if self.provider == provider {
             return;
         }
@@ -1179,11 +985,12 @@ impl Downloads {
             return;
         };
         self.provider = Some(provider);
-        let store = self.store.clone();
-        let request = self.io.spawn_blocking(move || store.restore(provider));
-        self.restore = Some(cx.spawn(async move |this, cx| {
+        let ledger = self.ledger.clone();
+        let request = self.io.spawn_blocking(move || ledger.restore(provider));
+        self.restore = Some(cx.spawn(move |link| async move {
             let restored = join(request).await;
-            this.update(cx, |this, cx| {
+            link.post(move |store| {
+                let (this, around, cx) = store.downloading();
                 if this.provider != Some(provider) {
                     return;
                 }
@@ -1201,15 +1008,13 @@ impl Downloads {
                     }
                     Err(error) => log::warn!("downloads: cannot read the list: {error:#}"),
                 }
-                this.pump(cx);
-                cx.emit(DownloadsChanged);
-                cx.notify();
-            })
-            .ok();
+                this.pump(around, cx);
+                cx.emit(Event::DownloadsChanged);
+            });
         }));
     }
 
-    fn clear(&mut self, cx: &mut Context<Self>) {
+    fn clear(&mut self, cx: &mut Cx) {
         self.provider = None;
         self.tracks.clear();
         self.sets.clear();
@@ -1226,26 +1031,278 @@ impl Downloads {
         self.stalled.clear();
         self.fetching.clear();
         self.restore = None;
-        cx.emit(DownloadsChanged);
-        cx.notify();
+        cx.emit(Event::DownloadsChanged);
     }
 
     /// Runs one write on a blocking thread and logs what went wrong. The lists in memory are
     /// already right, so nothing waits on it.
-    fn write(&self, edit: impl FnOnce(&Store) -> Result<()> + Send + 'static) {
-        let store = self.store.clone();
+    fn write(&self, edit: impl FnOnce(&Ledger) -> Result<()> + Send + 'static) {
+        let ledger = self.ledger.clone();
         self.io.spawn_blocking(move || {
-            if let Err(error) = edit(&store) {
+            if let Err(error) = edit(&ledger) {
                 log::warn!("downloads: cannot save the list: {error:#}");
             }
         });
     }
 }
 
-/// Whether a track is downloaded, for code with no handle on the [`Downloads`] entity.
-pub fn downloaded(id: &str, cx: &App) -> bool {
-    cx.try_global::<crate::Sonora>()
-        .is_some_and(|sonora| sonora.downloads.read(cx).has(id))
+impl Store {
+    /// The downloads with the models they read, split off the store so both can be borrowed.
+    fn downloading(&mut self) -> (&mut Downloads, Around<'_>, &mut Cx) {
+        let Store {
+            downloads,
+            session,
+            playback,
+            network,
+            cx,
+            ..
+        } = self;
+        let around = Around {
+            session,
+            playback,
+            network,
+        };
+        (downloads, around, cx)
+    }
+
+    /// Downloads tracks the listener picked one by one.
+    pub fn download_tracks(&mut self, tracks: Vec<Track>) {
+        let (downloads, around, cx) = self.downloading();
+        downloads.download_tracks(tracks, around, cx);
+    }
+
+    /// Downloads an album whose tracks are already loaded.
+    pub fn download_album(&mut self, detail: AlbumDetail) {
+        let (downloads, around, cx) = self.downloading();
+        let (id, set) = album_set(detail);
+        Toasts::post(About::of(&set.head).started(), cx);
+        downloads.download_set(Collection::Album, id, set, around, cx);
+    }
+
+    /// Downloads a playlist whose tracks are already loaded.
+    pub fn download_playlist(&mut self, detail: PlaylistDetail) {
+        let (downloads, around, cx) = self.downloading();
+        let (id, set) = playlist_set(detail);
+        Toasts::post(About::of(&set.head).started(), cx);
+        downloads.download_set(Collection::Playlist, id, set, around, cx);
+    }
+
+    /// Downloads an album named from a menu, fetching its tracks first.
+    pub fn download_album_by_id(&mut self, album: &Album) {
+        let Some(catalog) = self.session.catalog(&album.id) else {
+            return;
+        };
+        let id = album.id.clone();
+        Toasts::post(
+            About::Set {
+                name: album.name.clone(),
+                target: Target::Album(id.clone().into()),
+            }
+            .started(),
+            &mut self.cx,
+        );
+        let task = self.cx.load(
+            {
+                let id = id.clone();
+                async move { catalog.album(&id).await }
+            },
+            move |store, loaded| {
+                let (this, around, cx) = store.downloading();
+                this.fetching.remove(&id);
+                match loaded {
+                    Ok(detail) => {
+                        let (id, set) = album_set((*detail).clone());
+                        this.download_set(Collection::Album, id, set, around, cx);
+                    }
+                    Err(error) => this.failed_to_fetch(&error, cx),
+                }
+            },
+        );
+        self.downloads.fetching.insert(album.id.clone(), task);
+    }
+
+    /// Downloads a playlist named from a menu or its page. The first page of its tracks starts
+    /// downloading as soon as it arrives, and every later page joins the download as it comes,
+    /// so a long playlist does not wait for all of them.
+    pub fn download_playlist_by_id(&mut self, playlist: &Playlist) {
+        let Some(catalog) = self.session.catalog(&playlist.id) else {
+            return;
+        };
+        let id = playlist.id.clone();
+        Toasts::post(
+            About::Set {
+                name: playlist.name.clone(),
+                target: Target::Playlist(id.clone().into()),
+            }
+            .started(),
+            &mut self.cx,
+        );
+        let task = self.cx.spawn(|link| async move {
+            let first = catalog.playlist(&id).await;
+            let mut next = link
+                .read(move |store| {
+                    let (this, around, cx) = store.downloading();
+                    match first {
+                        Ok(detail) => {
+                            let mut detail = (*detail).clone();
+                            let next = detail.continuation.take();
+                            let (id, set) = playlist_set(detail);
+                            this.download_set(Collection::Playlist, id, set, around, cx);
+                            next
+                        }
+                        Err(error) => {
+                            this.failed_to_fetch(&error, cx);
+                            None
+                        }
+                    }
+                })
+                .await
+                .flatten();
+            while let Some(continuation) = next {
+                let page = catalog.playlist_continuation(&continuation).await;
+                let id = id.clone();
+                next = link
+                    .read(move |store| {
+                        let (this, around, cx) = store.downloading();
+                        match page {
+                            Ok((tracks, more)) => this
+                                .extend_set(Collection::Playlist, &id, tracks, around, cx)
+                                .then_some(more)
+                                .flatten(),
+                            Err(error) => {
+                                log::warn!(
+                                    "downloads: cannot list more of playlist {id}: {error:#}"
+                                );
+                                None
+                            }
+                        }
+                    })
+                    .await
+                    .flatten();
+            }
+            link.post(move |store| {
+                store.downloads.fetching.remove(&id);
+            });
+        });
+        self.downloads.fetching.insert(playlist.id.clone(), task);
+    }
+
+    /// Removes the downloads of tracks, and takes them out of any downloaded album or playlist
+    /// that held them. A set left with no tracks stops being downloaded.
+    pub fn remove_downloaded_tracks(&mut self, ids: &[String]) {
+        let (downloads, around, cx) = self.downloading();
+        downloads.remove_tracks(ids, around, cx);
+    }
+
+    /// Removes a downloaded album or playlist, and every track of it nothing else keeps.
+    pub fn remove_downloaded_set(&mut self, kind: Collection, id: &str) {
+        let (downloads, around, cx) = self.downloading();
+        downloads.remove_set(kind, id, around, cx);
+    }
+
+    /// Removes every download of every provider, files and lists alike. The ones under way are
+    /// removed again as they end.
+    pub fn remove_all_downloads(&mut self) {
+        self.downloads.forget_all(&mut self.cx);
+        self.playback.remove_downloads(&mut self.cx);
+    }
+
+    /// Cancels the download of a song the listener stopped from the list of running downloads.
+    pub fn cancel_download_song(&mut self, id: &str) {
+        let (downloads, around, cx) = self.downloading();
+        let Some(track) = downloads.songs.remove(id) else {
+            return;
+        };
+        downloads.remove_tracks(&[id.to_owned()], around, cx);
+        Toasts::post(
+            About::Song {
+                name: track.name,
+                target: Target::Song(id.to_owned().into()),
+            }
+            .cancelled(),
+            cx,
+        );
+    }
+
+    /// Cancels the download of an album or playlist the listener stopped from the list of running
+    /// downloads, removing its tracks, and puts up a toast that says so.
+    pub fn cancel_download_set(&mut self, kind: Collection, id: &str) {
+        let (downloads, around, cx) = self.downloading();
+        let Some(set) = downloads.sets.get(&(kind, id.to_owned())) else {
+            return;
+        };
+        let about = About::of(&set.head);
+        downloads.fetching.remove(id);
+        downloads.remove_set(kind, id, around, cx);
+        Toasts::post(about.cancelled(), cx);
+    }
+
+    /// Cancels every album, playlist and song still downloading, along with the albums and
+    /// playlists whose tracks are still being listed, and puts up one toast with how many tracks
+    /// it stopped.
+    pub fn cancel_all_downloads(&mut self) {
+        let (downloads, around, cx) = self.downloading();
+        let stopped = downloads.remaining().map_or(0, |remaining| remaining.songs);
+        let sets: Vec<(Collection, String)> = downloads
+            .active_sets()
+            .map(|(key, _)| key.clone())
+            .collect();
+        let songs: Vec<String> = downloads
+            .songs
+            .keys()
+            .filter(|id| downloads.on_its_way(id))
+            .cloned()
+            .collect();
+        downloads.fetching.clear();
+        for (kind, id) in sets {
+            downloads.remove_set(kind, &id, around, cx);
+        }
+        for id in &songs {
+            downloads.songs.remove(id);
+        }
+        downloads.remove_tracks(&songs, around, cx);
+        if stopped > 0 {
+            Toasts::post(About::Songs(stopped).cancelled(), cx);
+        }
+    }
+
+    pub(crate) fn react_downloads(&mut self, change: &Change) {
+        match change {
+            // The queue stops while the network is gone, and picks up again once it is back.
+            Change::Event(Event::Reconnected) => {
+                let (downloads, around, cx) = self.downloading();
+                downloads.resume(around, cx);
+            }
+            Change::Event(Event::Session(event)) => match event {
+                SessionEvent::SignedIn | SessionEvent::Reconnected => {
+                    let provider = self.session.provider_slug();
+                    let (downloads, around, cx) = self.downloading();
+                    downloads.adopt(provider, cx);
+                    downloads.failed.clear();
+                    downloads.requeue();
+                    downloads.pump(around, cx);
+                }
+                SessionEvent::SignedOut => self.downloads.clear(&mut self.cx),
+                SessionEvent::WentOffline => self.downloads.halt(),
+                SessionEvent::LocalChanged => {}
+            },
+            // A run that starts offline never signs in, but its downloads are still listed.
+            Change::Topic(Topic::Session) => {
+                if self.downloads.provider.is_none()
+                    && matches!(self.session.state(), SessionState::Offline(_))
+                {
+                    let provider = self.session.provider_slug();
+                    self.downloads.adopt(provider, &mut self.cx);
+                }
+            }
+            // The streaming engine starts a moment after sign-in, and the queue waits for it.
+            Change::Topic(Topic::Playback) => {
+                let (downloads, around, cx) = self.downloading();
+                downloads.pump(around, cx);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Whether a track can be downloaded at all. It has to play, have an id and come from the
@@ -1264,12 +1321,13 @@ struct Restored {
     sets: Vec<(Collection, String, Set)>,
 }
 
+/// Where the lists of downloads are kept on disk.
 #[derive(Clone)]
-struct Store {
+struct Ledger {
     database: Database,
 }
 
-impl Store {
+impl Ledger {
     fn open(&self) -> Result<Connection> {
         self.database
             .open()

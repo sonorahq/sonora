@@ -1,87 +1,94 @@
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+//! Triggers that open a [`Menu`]: a button or any face that toggles a menu under it, one of a
+//! group of which only one is open at a time, and a context menu opened at the pointer.
+
 use std::rc::Rc;
 
-use gpui::prelude::*;
-use gpui::{
-    AnyElement, App, ClickEvent, Div, MouseButton, SharedString, StyleRefinement, Window, div,
-};
+use rune::{Cursor, El, PointerPress, Tx, el, row};
 
 use crate::button::Button;
-use crate::menu::{Menu, Trigger};
+use crate::menu::{Menu, TRIGGER_GAP};
+use crate::overlay::Placement;
+use crate::theme::Theme;
 
-/// Runs when a click on the trigger opens the popover.
-pub(crate) type Open = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
-/// Opens or closes the popover from a click on its trigger, shared by either kind of trigger.
-type Toggle = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+/// How far a context menu sits from the pointer. Opening it right under the cursor would put
+/// an item under the button still held.
+const NUDGE: f32 = 4.;
 
-#[derive(Clone, Default)]
+/// Finds a group of popovers in the window's state.
+type Group<S> = Rc<dyn for<'a> Fn(&'a mut S) -> &'a mut Popovers>;
+type Opened<S> = Rc<dyn Fn(&mut S, &mut Tx)>;
+type Close<S> = Rc<dyn Fn(&mut S)>;
+
+/// Which popover of a group is open, kept in the window's state. Opening one closes the rest.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Popovers {
-    open: Rc<Cell<Option<&'static str>>>,
-    triggers: Rc<RefCell<HashMap<&'static str, Trigger>>>,
+    open: Option<String>,
 }
 
 impl Popovers {
-    pub fn close(&self) {
-        self.open.set(None);
+    pub fn close(&mut self) {
+        self.open = None;
     }
 
     /// Whether any popover of the group is open.
     pub fn any(&self) -> bool {
-        self.open.get().is_some()
+        self.open.is_some()
     }
 
-    pub fn shows(&self, key: &'static str) -> bool {
-        self.open.get() == Some(key)
+    pub fn shows(&self, key: &str) -> bool {
+        self.open.as_deref() == Some(key)
     }
 
     /// Opens the popover `key` names and closes any other of the group, for a trigger drawn
     /// apart from the popover itself.
-    pub fn open(&self, key: &'static str) {
-        self.open.set(Some(key));
+    pub fn open(&mut self, key: &str) {
+        self.open = Some(key.to_owned());
     }
 
-    fn toggle(&self, key: &'static str) {
-        let next = match self.shows(key) {
+    pub fn toggle(&mut self, key: &str) {
+        self.open = match self.shows(key) {
             true => None,
-            false => Some(key),
+            false => Some(key.to_owned()),
         };
-        self.open.set(next);
-    }
-
-    fn trigger(&self, key: &'static str) -> Trigger {
-        self.triggers.borrow_mut().entry(key).or_default().clone()
     }
 }
 
-#[derive(IntoElement)]
-pub struct Popover {
-    base: Div,
-    key: &'static str,
-    group: Popovers,
+/// A trigger and the menu it opens. The trigger is a [`Button`] (read as expanded or collapsed)
+/// or a `face` drawn as given; a press on it toggles the menu, which hangs under it.
+pub struct Popover<S> {
+    key: String,
+    open: bool,
+    group: Group<S>,
     button: Option<Button>,
-    /// A trigger the caller draws instead of a button, which the popover makes clickable.
-    face: Option<AnyElement>,
-    /// What a screen reader calls the `face` trigger, which draws no text the reader can reach.
-    name: Option<SharedString>,
-    menu: Option<Menu>,
+    face: Option<El>,
+    /// What a screen reader calls the `face` trigger.
+    name: Option<String>,
+    menu: Option<Menu<S>>,
     selected: bool,
     commands: bool,
-    on_open: Option<Open>,
+    placement: Placement,
+    on_open: Option<Opened<S>>,
 }
 
-impl Popover {
-    pub fn new(key: &'static str, group: Popovers) -> Self {
+impl<S: 'static> Popover<S> {
+    /// The popover `key` of `group`, which `access` finds in the window's state.
+    pub fn new(
+        key: impl Into<String>,
+        group: &Popovers,
+        access: impl for<'a> Fn(&'a mut S) -> &'a mut Popovers + 'static,
+    ) -> Self {
+        let key = key.into();
         Self {
-            base: div(),
+            open: group.shows(&key),
             key,
-            group,
+            group: Rc::new(access),
             button: None,
             face: None,
             name: None,
             menu: None,
             selected: false,
             commands: false,
+            placement: Placement::BottomStart,
             on_open: None,
         }
     }
@@ -91,127 +98,188 @@ impl Popover {
         self
     }
 
-    /// Opens the popover from `face`, drawn as given, rather than from a button. A click on it
-    /// toggles the popover and goes no further.
-    pub fn face(mut self, face: impl IntoElement) -> Self {
-        self.face = Some(face.into_any_element());
+    /// Opens the menu from `face`, drawn as given, rather than from a button.
+    pub fn face(mut self, face: El) -> Self {
+        self.face = Some(face);
         self
     }
 
-    /// Names the `face` trigger for screen readers. A button trigger names itself and ignores it.
-    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+    /// Names the `face` trigger for screen readers. A button trigger names itself.
+    pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
     }
 
-    pub fn menu(mut self, menu: Menu) -> Self {
+    pub fn menu(mut self, menu: Menu<S>) -> Self {
         self.menu = Some(menu);
         self
     }
 
+    /// Paints the button trigger as selected, as it is while the menu is open.
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
 
+    /// Closes the menu once one of its rows is picked, for a menu of commands. A menu of
+    /// toggles leaves it out and stays open until dismissed.
     pub fn commands(mut self) -> Self {
         self.commands = true;
         self
     }
 
-    /// Runs `handler` when a click on the trigger opens the popover, not when it closes it, as
-    /// for reading afresh what the menu lists.
-    pub fn on_open(
-        mut self,
-        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.on_open = Some(Box::new(handler));
+    /// Where the menu hangs against the trigger; under its start edge unless set.
+    pub fn placement(mut self, placement: Placement) -> Self {
+        self.placement = placement;
         self
     }
-}
 
-impl Styled for Popover {
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
+    /// Runs when a press on the trigger opens the menu, not when it closes it, as for reading
+    /// afresh what the menu lists.
+    pub fn on_open(mut self, f: impl Fn(&mut S, &mut Tx) + 'static) -> Self {
+        self.on_open = Some(Rc::new(f));
+        self
     }
-}
 
-impl RenderOnce for Popover {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let Self {
-            mut base,
-            key,
-            group,
-            button,
-            face,
-            name,
-            menu,
-            selected,
-            commands,
-            on_open,
-        } = self;
-        let overrides = std::mem::take(base.style());
-
-        let open = group.shows(key);
-        let trigger = group.trigger(key);
-        let toggle: Toggle = {
-            let group = group.clone();
-            Rc::new(move |event, window, cx| {
-                group.toggle(key);
-                if let Some(on_open) = on_open.as_ref().filter(|_| group.shows(key)) {
-                    on_open(event, window, cx);
+    /// The trigger, with the open menu pushed into `layer`.
+    pub fn build(self, theme: &Theme, layer: &mut Vec<El>) -> El {
+        let anchor = format!("{}-trigger", self.key);
+        let toggle = {
+            let group = self.group.clone();
+            let key = self.key.clone();
+            let on_open = self.on_open.clone();
+            move |s: &mut S, tx: &mut Tx| {
+                group(s).toggle(&key);
+                if group(s).shows(&key)
+                    && let Some(on_open) = &on_open
+                {
+                    on_open(s, tx);
                 }
-                cx.refresh_windows();
-            })
+            }
         };
-        let head = match (face, button) {
-            (Some(face), _) => Some(
-                head(trigger.clone()).max_w_full().child(
-                    div()
-                        .id(key)
-                        .role(gpui::accesskit::Role::Button)
-                        .aria_expanded(open)
-                        .when_some(name, |this, name| this.aria_label(name))
-                        .max_w_full()
-                        .cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_click(move |event, window, cx| toggle(event, window, cx))
-                        .child(face),
-                ),
-            ),
+        let trigger = match (self.face, self.button) {
+            (Some(face), _) => {
+                let mut face = row()
+                    .key(self.key.clone())
+                    .role("button")
+                    .expanded(self.open)
+                    .focusable(true)
+                    .cursor(Cursor::Pointer)
+                    .on_press_tx(toggle)
+                    .child(face);
+                if let Some(name) = self.name {
+                    face = face.label(name);
+                }
+                Some(face)
+            }
             (None, Some(button)) => Some(
-                head(trigger.clone()).child(
-                    button
-                        .selected(selected || open)
-                        .expanded(open)
-                        .on_click(move |event, window, cx| toggle(event, window, cx)),
-                ),
+                button
+                    .selected(self.selected || self.open)
+                    .expanded(self.open)
+                    .on_press_tx(toggle)
+                    .build(theme),
             ),
             (None, None) => None,
         };
-        let body = menu.filter(|_| open).map(|menu| {
-            let outside = group.clone();
-            let chosen = group.clone();
-
-            menu.trigger(trigger)
-                .on_dismiss(move |_, _, cx| {
-                    outside.close();
-                    cx.refresh_windows();
-                })
-                .when(commands, |menu| {
-                    menu.on_action(move |_, _, cx| {
-                        chosen.close();
-                        cx.refresh_windows();
-                    })
-                })
-        });
-
-        let mut popover = base.relative().children(head).children(body);
-        popover.style().refine(&overrides);
-        popover
+        let head = row().key(anchor.clone()).children(trigger);
+        if !self.open {
+            return head;
+        }
+        if let Some(menu) = self.menu {
+            let close = self.group.clone();
+            let picked = self.group.clone();
+            let mut menu = menu
+                .anchor(anchor, self.placement, TRIGGER_GAP)
+                .on_dismiss(move |s: &mut S| close(s).close());
+            if self.commands {
+                menu = menu.on_pick(move |s: &mut S, _: &mut Tx| picked(s).close());
+            }
+            menu.build(theme, layer);
+        }
+        head
     }
 }
 
-fn head(trigger: Trigger) -> Div {
-    div().on_children_prepainted(move |bounds, _, _| trigger.observe(bounds))
+/// A menu opened at a point, as a context menu opens where the secondary press landed. Keep
+/// the press (from `El::on_secondary_press`) in state while the menu shows and clear it in
+/// `on_close`.
+pub struct Popup<S> {
+    key: String,
+    at: (f32, f32),
+    menu: Menu<S>,
+    close: Option<Close<S>>,
+    above: bool,
+    sticky: bool,
+}
+
+impl<S: 'static> Popup<S> {
+    pub fn new(key: impl Into<String>, at: impl Into<Point>, menu: Menu<S>) -> Self {
+        Self {
+            key: key.into(),
+            at: at.into().0,
+            menu,
+            close: None,
+            above: false,
+            sticky: false,
+        }
+    }
+
+    /// Opens the panel upward, ending at the point rather than starting there, for a popup that
+    /// belongs to something along the bottom of the window.
+    pub fn above(mut self) -> Self {
+        self.above = true;
+        self
+    }
+
+    /// Keeps the panel open after an item is picked, for a menu of toggles the listener may flip
+    /// several of in a row. A press outside still closes it.
+    pub fn sticky(mut self) -> Self {
+        self.sticky = true;
+        self
+    }
+
+    /// Runs when the popup closes: a press outside, Escape, or a picked row unless `sticky`.
+    pub fn on_close(mut self, f: impl Fn(&mut S) + 'static) -> Self {
+        self.close = Some(Rc::new(f));
+        self
+    }
+
+    pub fn build(self, theme: &Theme, layer: &mut Vec<El>) {
+        let point = format!("{}-point", self.key);
+        let (x, y) = self.at;
+        let placement = match self.above {
+            true => Placement::TopStart,
+            false => Placement::BottomStart,
+        };
+        layer.push(
+            el().key(point.clone())
+                .absolute(x + NUDGE, y)
+                .size(0., 0.)
+                .a11y_hidden(),
+        );
+        let mut menu = self.menu.anchor(point, placement, NUDGE);
+        if let Some(close) = self.close {
+            let picked = close.clone();
+            menu = menu.on_dismiss(move |s: &mut S| close(s));
+            if !self.sticky {
+                menu = menu.on_pick(move |s: &mut S, _: &mut Tx| picked(s));
+            }
+        }
+        menu.build(theme, layer);
+    }
+}
+
+/// A point in window points, from a pair or from the press a context menu opens at.
+pub struct Point((f32, f32));
+
+impl From<(f32, f32)> for Point {
+    fn from(at: (f32, f32)) -> Self {
+        Self(at)
+    }
+}
+
+impl From<PointerPress> for Point {
+    fn from(press: PointerPress) -> Self {
+        Self((press.x, press.y))
+    }
 }

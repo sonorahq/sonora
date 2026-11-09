@@ -1,10 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use anyhow::{Context as _, Result, bail};
-use futures::AsyncReadExt as _;
-use gpui::http_client::{AsyncBody, HttpClient};
 use image::imageops::FilterType;
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use tokio::sync::Semaphore;
@@ -46,8 +43,10 @@ pub(crate) fn cached(id: &str, stamp: u32) -> Option<String> {
     path.is_file().then(|| located(&path))
 }
 
+/// Fetches the first [`TILES`] covers with `http`, lays them out two by two and writes the
+/// result to the cache, answering the `file://` url it was written to.
 pub(crate) async fn build(
-    http: Arc<dyn HttpClient>,
+    http: reqwest::Client,
     id: &str,
     stamp: u32,
     covers: Vec<String>,
@@ -104,23 +103,19 @@ fn compose(tiles: &[DynamicImage]) -> RgbaImage {
     canvas
 }
 
-async fn fetch(http: &Arc<dyn HttpClient>, url: &str) -> Result<Vec<u8>> {
-    let mut response = http
-        .get(url, AsyncBody::empty(), true)
+async fn fetch(http: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
+    let response = http
+        .get(url)
+        .send()
         .await
         .context("cannot fetch a cover")?;
     if !response.status().is_success() {
         bail!("a cover request answered {}", response.status());
     }
 
-    let mut bytes = Vec::new();
-    response
-        .body_mut()
-        .read_to_end(&mut bytes)
-        .await
-        .context("cannot read a cover")?;
+    let bytes = response.bytes().await.context("cannot read a cover")?;
 
-    Ok(bytes)
+    Ok(bytes.to_vec())
 }
 
 /// Removes the mosaics older stamps left for the playlist whose current mosaic is `kept`. A

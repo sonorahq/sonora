@@ -1,9 +1,8 @@
 //! The active queue exposed to consumers, independent of where playback happens.
 
-use gpui::{App, Entity};
-use music::Track;
-
 use std::sync::Arc;
+
+use music::Track;
 
 use crate::{Devices, Elsewhere, Origin, Queue, QueueKind};
 
@@ -95,35 +94,38 @@ impl QueueSections {
     }
 }
 
-/// A cheap handle to the active play order. Only requested tracks are copied from the local
-/// queue or remote metadata cache, never the whole playlist.
+/// A cheap view of the active play order, borrowed from the store for as long as it is read.
+/// Only requested tracks are copied from the local queue or remote metadata cache, never the
+/// whole playlist.
 #[derive(Clone)]
-pub struct QueueView {
-    source: Source,
+pub struct QueueView<'a> {
+    source: Source<'a>,
     pub sections: QueueSections,
     pub playing: bool,
 }
 
-#[derive(Clone)]
-enum Source {
-    Local(Entity<Queue>),
-    Remote(Entity<Devices>),
+#[derive(Clone, Copy)]
+enum Source<'a> {
+    Local(&'a Queue),
+    Remote(&'a Devices),
 }
 
-impl QueueView {
+impl<'a> QueueView<'a> {
+    /// The local queue, or the steered device's when `remote` names one, with whether the
+    /// queue it shows is playing.
     pub(crate) fn new(
-        queue: Entity<Queue>,
-        remote: Option<(Entity<Devices>, Elsewhere)>,
+        queue: &'a Queue,
+        devices: &'a Devices,
+        remote: Option<Elsewhere>,
         playing: bool,
-        cx: &App,
     ) -> Self {
         let (source, sections, playing) = match remote {
-            Some((devices, remote)) => {
-                let sections = devices.read(cx).queue_sections();
+            Some(remote) => {
+                let sections = devices.queue_sections();
                 (Source::Remote(devices), sections, remote.state.playing)
             }
             None => {
-                let sections = queue.read(cx).sections.clone();
+                let sections = queue.sections.clone();
                 (Source::Local(queue), sections, playing)
             }
         };
@@ -139,32 +141,29 @@ impl QueueView {
     }
 
     /// Remote queues are read-only; zero is never used to authorize an edit there.
-    pub fn revision(&self, cx: &App) -> u64 {
-        match &self.source {
-            Source::Local(queue) => queue.read(cx).revision(),
+    pub fn revision(&self) -> u64 {
+        match self.source {
+            Source::Local(queue) => queue.revision(),
             Source::Remote(_) => 0,
         }
     }
 
-    pub fn origin<'a>(&'a self, cx: &'a App) -> Option<&'a Origin> {
-        match &self.source {
-            Source::Local(queue) => queue.read(cx).origin(),
+    pub fn origin(&self) -> Option<&'a Origin> {
+        match self.source {
+            Source::Local(queue) => queue.origin(),
             Source::Remote(_) => None,
         }
     }
 
-    pub fn track(&self, position: QueuePosition, cx: &App) -> Option<Track> {
-        match &self.source {
-            Source::Local(queue) => {
-                let queue = queue.read(cx);
-                match position {
-                    QueuePosition::Past(at) => queue.past().nth(at),
-                    QueuePosition::Current => queue.current(),
-                    QueuePosition::Upcoming(at) => queue.upcoming().nth(at),
-                }
-                .cloned()
+    pub fn track(&self, position: QueuePosition) -> Option<Track> {
+        match self.source {
+            Source::Local(queue) => match position {
+                QueuePosition::Past(at) => queue.past().nth(at),
+                QueuePosition::Current => queue.current(),
+                QueuePosition::Upcoming(at) => queue.upcoming().nth(at),
             }
-            Source::Remote(devices) => devices.read(cx).queue_tracks(position),
+            .cloned(),
+            Source::Remote(devices) => devices.queue_tracks(position),
         }
     }
 }

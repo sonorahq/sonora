@@ -1,8 +1,4 @@
-use std::borrow::Cow;
 use std::sync::atomic::{AtomicUsize, Ordering};
-
-use anyhow::Result;
-use gpui::{AssetSource, SharedString};
 
 pub const BASE: &str = "lucide";
 pub const SAMPLES: &[&str] = &["house", "heart-filled", "play-filled", "shuffle", "search"];
@@ -14,10 +10,12 @@ include!(concat!(env!("OUT_DIR"), "/packs.rs"));
 
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
 
+/// One icon of a pack: its file's bytes and the same drawing as Rune paints it.
 pub struct Icon {
     pub name: &'static str,
     pub path: &'static str,
     pub bytes: &'static [u8],
+    pub drawn: rune::Icon,
 }
 
 pub struct Pack {
@@ -27,15 +25,11 @@ pub struct Pack {
 }
 
 impl Pack {
-    pub fn title(&self) -> SharedString {
+    pub fn title(&self) -> String {
         let mut letters = self.id.chars();
         match letters.next() {
-            Some(first) => first
-                .to_uppercase()
-                .chain(letters)
-                .collect::<String>()
-                .into(),
-            None => SharedString::default(),
+            Some(first) => first.to_uppercase().chain(letters).collect(),
+            None => String::new(),
         }
     }
 
@@ -73,20 +67,23 @@ pub fn set(id: &str) {
     ACTIVE.store(chosen, Ordering::Relaxed);
 }
 
-pub fn path(icon: impl AsRef<str>) -> SharedString {
+/// The icon a call site names (`"icons/play.svg"` or `"play"`) in the active pack, falling back
+/// to the shared brand icons and then the base pack. Rune draws the returned icon.
+pub fn get(icon: &str) -> &'static rune::Icon {
+    &icon_in(active(), icon).drawn
+}
+
+/// [`get`] for a chosen pack, as the pack picker previews them.
+pub fn get_in(pack: &Pack, icon: &str) -> &'static rune::Icon {
+    &icon_in(pack, icon).drawn
+}
+
+pub fn path(icon: impl AsRef<str>) -> &'static str {
     shown(active(), icon)
 }
 
-pub fn shown(pack: &Pack, icon: impl AsRef<str>) -> SharedString {
-    let icon = icon.as_ref();
-    let name = stem(icon);
-    match chased(pack, name) {
-        Some(icon) => SharedString::new_static(icon.path),
-        None => {
-            log::warn!("icons: {name} is in no pack");
-            SharedString::from(icon.to_owned())
-        }
-    }
+pub fn shown(pack: &Pack, icon: impl AsRef<str>) -> &'static str {
+    icon_in(pack, icon.as_ref()).path
 }
 
 pub fn asset(path: &str) -> Option<&'static [u8]> {
@@ -95,20 +92,12 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
     folder.icon(stem(file)).map(|icon| icon.bytes)
 }
 
-pub struct Assets;
-
-impl AssetSource for Assets {
-    fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        Ok(asset(path).map(Cow::Borrowed))
-    }
-
-    fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        Ok(ICONS
-            .iter()
-            .filter(|icon| icon.path.starts_with(path))
-            .map(|icon| SharedString::new_static(icon.path))
-            .collect())
-    }
+fn icon_in(pack: &Pack, icon: &str) -> &'static Icon {
+    let name = stem(icon);
+    chased(pack, name).unwrap_or_else(|| {
+        log::warn!("icons: {name} is in no pack");
+        chased(pack, "circle-help").unwrap_or(&ICONS[0])
+    })
 }
 
 fn chased(pack: &Pack, name: &str) -> Option<&'static Icon> {
@@ -134,7 +123,7 @@ mod tests {
             assert!(pack.icon("pin").is_some(), "{} borrows its pin", pack.id);
             let path = super::shown(pack, "icons/pin.svg");
             assert!(
-                super::asset(&path).is_some(),
+                super::asset(path).is_some(),
                 "pin missing from {}",
                 pack.id
             );

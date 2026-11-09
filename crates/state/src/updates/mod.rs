@@ -5,12 +5,11 @@ use std::io::Write as _;
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
-use gpui::{Context, Entity, SharedString, Subscription, Task};
-use i18n::t;
+use i18n::{SharedString, t};
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
-use crate::{AppSettings, Io, join};
+use crate::{AppSettings, Change, Cx, Event, Job, Store, Topic, join};
 use install::Install;
 
 const RELEASES: &str = "https://api.github.com/repos/sonorahq/sonora/releases";
@@ -99,41 +98,24 @@ pub enum UpdateState {
     Failed,
 }
 
+/// Whether a newer build is out on the chosen channel, and the download and install of it.
 pub struct Updates {
     state: UpdateState,
-    settings: Entity<AppSettings>,
     http: reqwest::Client,
-    io: Io,
-    task: Option<Task<()>>,
+    task: Option<Job>,
     /// The channel chosen in settings when Sonora last looked, so a different choice looks again.
     channel: Channel,
-    _settings: Subscription,
 }
 
 impl Updates {
-    pub fn new(settings: Entity<AppSettings>, io: Io, cx: &mut Context<Self>) -> Self {
-        let channel = settings.read(cx).update_channel();
-        let watch = cx.observe(&settings, |this: &mut Self, settings, cx| {
-            let channel = settings.read(cx).update_channel();
-            if channel == this.channel {
-                return;
-            }
-            this.channel = channel;
-            this.task = None;
-            this.state = UpdateState::Quiet;
-            cx.notify();
-            this.look(true, cx);
-        });
+    pub fn new(settings: &AppSettings, cx: &mut Cx) -> Self {
         let mut updates = Self {
             state: UpdateState::Quiet,
-            settings,
             http: reqwest::Client::new(),
-            io,
             task: None,
-            channel,
-            _settings: watch,
+            channel: settings.update_channel(),
         };
-        updates.look(false, cx);
+        updates.look(false, settings, cx);
         updates
     }
 
@@ -155,16 +137,15 @@ impl Updates {
                 .is_some_and(|release| release.package.is_some() && release.sums.is_some())
     }
 
-    pub fn dismiss(&mut self, cx: &mut Context<Self>) {
+    pub fn dismiss(&mut self) {
         self.task = None;
         self.state = UpdateState::Quiet;
-        cx.notify();
     }
 
     /// Downloads the offered build, checks it against the release's checksums and puts it in
     /// place, then quits so the new build can start. A failure leaves the running build as it
     /// was and shows the failure instead of the offer.
-    pub fn install(&mut self, cx: &mut Context<Self>) {
+    pub fn install(&mut self, cx: &mut Cx) {
         let Some(release) = self.offered().cloned() else {
             return;
         };
@@ -172,65 +153,87 @@ impl Updates {
             return;
         };
         self.state = UpdateState::Fetching;
-        cx.notify();
 
         let http = self.http.clone();
-        let io = self.io.clone();
         let version = release.version;
-        self.task = Some(cx.spawn(async move |this, cx| {
-            let fetched =
-                join(io.spawn(async move { download(&http, &package, &sums, &version).await }))
-                    .await;
+        self.task = Some(cx.spawn(|link| async move {
+            let fetched = download(&http, &package, &sums, &version).await;
             let applied = match fetched {
-                Ok(path) => join(io.spawn_blocking(move || Install::current().apply(&path))).await,
+                Ok(path) => {
+                    join(tokio::task::spawn_blocking(move || {
+                        Install::current().apply(&path)
+                    }))
+                    .await
+                }
                 Err(error) => Err(error),
             };
             match applied {
                 Ok(()) => {
-                    cx.update(|cx| cx.quit());
+                    link.post(|store| store.cx.emit(Event::Quit));
                 }
                 Err(error) => {
                     log::warn!("updates: cannot install the new version: {error:#}");
-                    this.update(cx, |this, cx| {
+                    link.post(|store| {
+                        let this = &mut store.updates;
                         this.task = None;
                         this.state = UpdateState::Failed;
-                        cx.notify();
-                    })
-                    .ok();
+                    });
                 }
             }
         }));
     }
 
+    /// Looks again when the channel chosen in settings changed.
+    fn follow(&mut self, settings: &AppSettings, cx: &mut Cx) {
+        let channel = settings.update_channel();
+        if channel == self.channel {
+            return;
+        }
+        self.channel = channel;
+        self.task = None;
+        self.state = UpdateState::Quiet;
+        self.look(true, settings, cx);
+    }
+
     /// Asks GitHub for the newest build on the chosen channel. `asked` marks a look the user
     /// started by switching channels, which runs even with update checks turned off. A copy a
     /// package manager installed follows its own build's channel, and a nightly one never looks.
-    fn look(&mut self, asked: bool, cx: &mut Context<Self>) {
+    fn look(&mut self, asked: bool, settings: &AppSettings, cx: &mut Cx) {
         let channel = match updates_itself() {
             true => self.channel,
             false if Channel::running() == Channel::Stable => Channel::Stable,
             false => return,
         };
-        if !asked && !self.settings.read(cx).check_updates() {
+        if !asked && !settings.check_updates() {
             return;
         }
         let http = self.http.clone();
-        let io = self.io.clone();
-        self.task = Some(cx.spawn(async move |this, cx| {
-            let found = join(io.spawn(async move { latest(&http, channel).await })).await;
-            this.update(cx, |this, cx| {
+        self.task = Some(cx.load(
+            async move { latest(&http, channel).await },
+            |store, found| {
+                let this = &mut store.updates;
                 this.task = None;
                 match found {
-                    Ok(Some(release)) => {
-                        this.state = UpdateState::Offered(release);
-                        cx.notify();
-                    }
+                    Ok(Some(release)) => this.state = UpdateState::Offered(release),
                     Ok(None) => {}
                     Err(error) => log::warn!("updates: cannot ask github: {error:#}"),
                 }
-            })
-            .ok();
-        }));
+            },
+        ));
+    }
+}
+
+impl Store {
+    pub(crate) fn react_updates(&mut self, change: &Change) {
+        if let Change::Topic(Topic::Settings) = change {
+            let Store {
+                updates,
+                settings,
+                cx,
+                ..
+            } = self;
+            updates.follow(settings, cx);
+        }
     }
 }
 

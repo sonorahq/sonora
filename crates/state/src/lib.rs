@@ -1,4 +1,6 @@
 mod artist;
+mod core;
+mod react;
 mod catalog;
 mod control;
 mod cover;
@@ -12,6 +14,7 @@ mod genre;
 mod history;
 mod home;
 mod library;
+mod keychain;
 mod links;
 mod listening;
 mod logging;
@@ -44,14 +47,13 @@ mod vault;
 mod wake;
 mod window_shape;
 
-pub use artist::{ArtistDetail, ArtistDetailEvent};
+pub use artist::ArtistDetail;
+pub use crate::core::{Apply, Cx, Job, Link};
 pub use control::Control;
 pub use cover::Cover;
 pub use detail::{Collection, Detail, Header};
 pub use devices::Devices;
-pub use downloads::{
-    Active, Downloads, DownloadsChanged, Pending, Progress, Remaining, Subject, downloaded,
-};
+pub use downloads::{Active, Downloads, Pending, Progress, Remaining, Subject};
 pub use drm::{CdmState, Drm};
 pub use equalizer::{DeviceRule, Equalizer, RuleDevice, Sound};
 pub use genre::{GenreDetails, Genres};
@@ -61,36 +63,36 @@ pub use library::{
     Addition, CoverEdit, Leaving, Library, LibraryEvent, LibraryPart, LibraryState, Problem, Ready,
     Shelf, cover_problem,
 };
-pub use links::{Links, Opened};
+pub use links::Links;
 pub use listening::{CODE_LENGTH as SESSION_CODE_LENGTH, Listening, Member as RoomMember, Room};
 pub use logging::log_file;
 pub use lyrics::{Lyrics, LyricsState};
 pub use music::connect::{Elsewhere, Repeat};
-pub use network::{Network, Reconnected};
+pub use network::Network;
 pub use outputs::Outputs;
 pub use overload::OutputLevel;
 pub use pins::{PinSort, Pins};
-pub use playback::{Origin, Playback, PlaybackState, Sleep, Unreachable, Whence};
+pub use playback::{Origin, Playback, PlaybackEvent, PlaybackState, Sleep, Unreachable, Whence};
 pub use profile::Profile;
 pub use queue::{
     Queue, QueueKind, QueuePlacement, QueuePosition, QueueSections, QueueSlot, QueueView, Resume,
     Stub,
 };
-pub use remote::{Remote, attach as attach_remote};
+pub use remote::Remote;
 pub use requirements::{Requirement, Requirements};
 pub use scan::Scan;
 pub use scrobble::{ScrobbleRow, ScrobbleState, Scrobbling};
-pub use search::{AlbumHit, ArtistHit, Hit, Kind, PlaylistHit, Search};
+pub use search::{AlbumHit, ArtistHit, Hit, Kind, PlaylistHit, Search, Searching};
 pub use session::{Failure, ProviderInfo, Session, SessionEvent, SessionState};
 pub use settings::{
-    AppSettings, ConnectName, DiscordName, FilterValue, FullscreenControlsAutohide, LYRICS_SOURCES,
-    PlayerBarLayout, Reloaded, RomanizationScripts, SYSTEM_FONT, SideTab, ThemeFamily, ThemeOffer,
-    ThemeVariant, equalizer_profile_label, remember_window, window_placement,
+    AppSettings, Area, ConnectName, DiscordName, FilterValue, FullscreenControlsAutohide,
+    LYRICS_SOURCES, Placement, PlayerBarLayout, RomanizationScripts, SYSTEM_FONT, SideTab,
+    ThemeFamily, ThemeOffer, ThemeVariant, equalizer_profile_label,
 };
-pub use signal::{Change, Equalizing, FLOAT_BITS, Following, Signal, SignalPath};
+pub use signal::{Equalizing, FLOAT_BITS, Following, Signal, SignalChange, SignalPath};
 pub use song::SongDetail;
 pub use tags::{TagState, Tags};
-pub use toast::{Outcome, Target, Toast, ToastAction, Toasts};
+pub use toast::{Outcome, Target, Toast, ToastAction, ToastButton, ToastUpdate, Toasts};
 pub use updates::{Channel, Release, UpdateState, Updates, updates_itself, version};
 pub use usage::Usage;
 pub use vault::CACHE_GB_RANGE;
@@ -102,15 +104,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use gpui::{App, AppContext as _, Context, Entity, Global, Task};
-use music::{LyricsProvider, MusicProvider};
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 
 #[derive(Clone)]
 pub struct Io(Arc<Runtime>);
-
-impl Global for Io {}
 
 /// Worker threads for the tokio runtime. The work here is network calls and the json they
 /// answer with, never a long computation, so the default of one worker per core buys nothing
@@ -123,6 +121,9 @@ const BLOCKING: usize = 8;
 /// How long an idle blocking thread lingers before it exits. A burst of cover reads should not
 /// leave its threads parked for the default ten seconds.
 const LINGER: Duration = Duration::from_secs(2);
+/// How many rounds of reactions one change may set off before the store stops following them,
+/// which only a model that keeps re-raising its own change would reach.
+const ROUNDS: usize = 32;
 
 impl Io {
     pub fn new() -> Result<Self> {
@@ -137,10 +138,6 @@ impl Io {
         Ok(Self(Arc::new(runtime)))
     }
 
-    pub fn global(cx: &App) -> Self {
-        cx.global::<Self>().clone()
-    }
-
     pub fn handle(&self) -> tokio::runtime::Handle {
         self.0.handle().clone()
     }
@@ -151,20 +148,6 @@ impl Io {
         F::Output: Send + 'static,
     {
         self.0.spawn(future)
-    }
-
-    /// Loads on tokio and applies the result on the entity's thread. The caller retains the task.
-    pub fn load<E: 'static, T: Send + 'static>(
-        &self,
-        work: impl Future<Output = Result<T>> + Send + 'static,
-        apply: impl FnOnce(&mut E, Result<T>, &mut Context<E>) + 'static,
-        cx: &mut Context<E>,
-    ) -> Task<()> {
-        let io = self.clone();
-        cx.spawn(async move |this, cx| {
-            let loaded = join(io.spawn(work)).await;
-            this.update(cx, |this, cx| apply(this, loaded, cx)).ok();
-        })
     }
 
     pub fn spawn_blocking<F, R>(&self, func: F) -> JoinHandle<R>
@@ -192,244 +175,167 @@ pub(crate) fn trim_heap() {
 
 /// Flattens a failed call's reason and tells `Network` about it, so one screen's failure puts
 /// the whole app offline rather than only its own page.
-pub(crate) fn blamed(error: &anyhow::Error, cx: &mut gpui::App) -> String {
+pub(crate) fn blamed(error: &anyhow::Error, cx: &mut Cx) -> String {
     let reason = format!("{error:#}");
-    Network::failed(&reason, cx);
+    cx.emit(Event::NetworkFailed(reason.clone()));
     reason
 }
 
 /// Tells `Network` about a failure a caller only logs. An outage is then noticed at the first
 /// call that runs into it, rather than the first one that happens to put its reason on a page.
-pub(crate) fn noted(error: &anyhow::Error, cx: &mut gpui::App) {
-    Network::failed(&format!("{error:#}"), cx);
+pub(crate) fn noted(error: &anyhow::Error, cx: &mut Cx) {
+    cx.emit(Event::NetworkFailed(format!("{error:#}")));
 }
 
 /// Reports a network call's outcome to `Network` and turns its failure into the reason a screen
 /// stores. A success is what puts the app back online the moment one load gets through.
-pub(crate) fn settled<T>(result: Result<T>, cx: &mut gpui::App) -> std::result::Result<T, String> {
+pub(crate) fn settled<T>(result: Result<T>, cx: &mut Cx) -> std::result::Result<T, String> {
     match result {
         Ok(value) => {
-            Network::reached(cx);
+            cx.emit(Event::NetworkReached);
             Ok(value)
         }
         Err(error) => Err(blamed(&error, cx)),
     }
 }
 
-pub struct Sonora {
-    pub session: Entity<Session>,
-    pub control: Entity<Control>,
-    pub cover: Entity<Cover>,
-    pub devices: Entity<Devices>,
-    pub downloads: Entity<Downloads>,
-    pub drm: Entity<Drm>,
-    pub equalizer: Entity<Equalizer>,
-    pub library: Entity<Library>,
-    pub links: Entity<Links>,
-    pub listening: Entity<Listening>,
-    pub history: Entity<History>,
-    pub lyrics: Entity<Lyrics>,
-    pub network: Entity<Network>,
-    pub outputs: Entity<Outputs>,
-    pub pins: Entity<Pins>,
-    pub playback: Entity<Playback>,
-    /// The window that mints YouTube's proof-of-origin token. Nothing reads it; it is held so
-    /// that it keeps ticking.
-    pub potoken: Entity<potoken::PoToken>,
-    pub queue: Entity<Queue>,
-    pub requirements: Entity<Requirements>,
-    pub scan: Entity<Scan>,
-    pub scrobbling: Entity<Scrobbling>,
-    pub settings: Entity<AppSettings>,
-    pub signal: Entity<Signal>,
-    pub updates: Entity<Updates>,
-    pub usage: Entity<Usage>,
-    pub wake: Entity<Wake>,
+/// A model whose changes others follow. Raising one with [`Cx::changed`] stands for "this model
+/// changed"; the store hands it to every follower once the current change is done, and several
+/// raises of one topic before then reach them once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Topic {
+    Session,
+    Settings,
+    Network,
+    Library,
+    Playback,
+    Queue,
+    Cover,
+    Devices,
+    Outputs,
+    Equalizer,
+    Downloads,
+    Lyrics,
+    History,
+    Pins,
+    Listening,
 }
 
-impl Global for Sonora {}
-
-impl Sonora {
-    pub fn global(cx: &App) -> &Self {
-        cx.global()
-    }
+/// Something that happened that other models act on. Unlike a [`Topic`], each one is delivered
+/// as raised, in order.
+#[derive(Clone, Debug)]
+pub enum Event {
+    Session(SessionEvent),
+    /// The network came back, so a screen that gave up can load again.
+    Reconnected,
+    /// A call failed; only a reason that reads as a lost connection puts the app offline.
+    NetworkFailed(String),
+    /// A call reached the network, which is the quickest way back online.
+    NetworkReached,
+    /// The settings file changed on disk and was read again.
+    SettingsReloaded,
+    Library(LibraryEvent),
+    Playback(PlaybackEvent),
+    /// The set of downloaded items changed.
+    DownloadsChanged,
+    /// The artist a page showed is gone from the provider.
+    ArtistGone(String),
+    /// A link the app was opened with resolved to something to show.
+    LinkOpened(music::link::Linked),
+    /// A message for the toast stack.
+    Toast(Toast),
+    /// A change to a toast already on the stack.
+    ToastUpdate(ToastUpdate),
+    /// The app should quit, after its quit hooks ran.
+    Quit,
 }
 
-pub fn init(
-    cx: &mut App,
-    io: Io,
-    database: storage::Database,
-    providers: Vec<Arc<dyn MusicProvider>>,
-    local_provider: Arc<dyn MusicProvider>,
-    lyrics_providers: Vec<Arc<dyn LyricsProvider>>,
-) {
-    cx.set_global(io.clone());
-    let settings = cx.new(|cx| {
-        let mut settings = AppSettings::load(database.clone());
-        settings.watch_files(cx);
-        settings.report_broken(cx);
-        settings
-    });
-    // Spotify sets up its own file cache when its session opens, which can be before Playback
-    // exists, so it hears the setting first.
-    music::vault::Vault::set_keeping(
-        settings.read(cx).keep_tracks(),
-        vault::bytes(settings.read(cx).cache_gb()),
-    );
-    let session =
-        cx.new(|cx| Session::new(providers, local_provider, settings.clone(), io.clone(), cx));
-    let network = cx.new(|cx| Network::new(session.clone(), settings.clone(), io.clone(), cx));
-    // A run that started without a network never signed out, so the account it kept is tried
-    // again the moment there is one.
-    session.update(cx, |_, cx| {
-        cx.subscribe(&network, |this, _, _: &Reconnected, cx| {
-            this.restore_if_offline(cx)
-        })
-        .detach();
-    });
-    // A toast can carry an Undo that acts on the account it was shown for, so no such toast
-    // outlives it. A plain one stays, since the sign-out can be what it explains.
-    cx.subscribe(&session, |_, event, cx| {
-        if let SessionEvent::SignedOut = event {
-            Toasts::clear_account(cx);
+/// One thing the store routes: a topic that changed or an event that happened.
+#[derive(Clone, Debug)]
+pub enum Change {
+    Topic(Topic),
+    Event(Event),
+}
+
+/// Every model the app holds, each a plain struct. The window owns the store; handlers and the
+/// closures jobs post change it directly and then call [`Store::settle`] (posted closures are
+/// settled by the host), which hands each [`Change`] they raised to the models that follow it.
+pub struct Store {
+    pub cx: Cx,
+    pub settings: AppSettings,
+    pub session: Session,
+    pub network: Network,
+    pub control: Control,
+    pub cover: Cover,
+    pub devices: Devices,
+    pub downloads: Downloads,
+    pub drm: Drm,
+    pub equalizer: Equalizer,
+    pub library: Library,
+    pub links: Links,
+    pub listening: Listening,
+    pub history: History,
+    pub lyrics: Lyrics,
+    pub outputs: Outputs,
+    pub pins: Pins,
+    pub playback: Playback,
+    pub queue: Queue,
+    pub requirements: Requirements,
+    pub scan: Scan,
+    pub scrobbling: Scrobbling,
+    pub signal: Signal,
+    pub toasts: Toasts,
+    pub updates: Updates,
+    pub usage: Usage,
+    pub wake: Wake,
+    pub home: Home,
+    pub genres: Genres,
+    /// What the pages that show one item at a time are showing.
+    pub pages: Pages,
+    /// Workers that run as long as the app does and keep nothing the window shows, such as
+    /// YouTube's proof-of-origin window.
+    pub(crate) background: Vec<Job>,
+    /// Discord's rich presence, made from what plays and handed to its worker.
+    pub(crate) discord: discord::Discord,
+    /// The system's media controls, once [`Store::attach_remote`] reached them.
+    pub(crate) remote: Option<Remote>,
+}
+
+/// The models behind the pages that show one item: each is replaced as another item opens and
+/// dropped, with its loads, when it closes.
+#[derive(Default)]
+pub struct Pages {
+    pub album: Option<Detail>,
+    pub playlist: Option<Detail>,
+    pub artist: Option<ArtistDetail>,
+    pub genre: Option<GenreDetails>,
+    pub song: Option<SongDetail>,
+    pub user: Option<Profile>,
+    /// The search page's results for the submitted query.
+    pub search: Option<Search>,
+    /// What the search field suggests while a query is typed.
+    pub suggest: Option<Search>,
+    pub tags: Option<Tags>,
+}
+
+impl Store {
+    /// Hands every change raised so far to the models that follow it, round after round, until
+    /// no model raises another.
+    pub fn settle(&mut self) {
+        for _ in 0..ROUNDS {
+            let changes = self.cx.take_changes();
+            if changes.is_empty() {
+                return;
+            }
+            for change in &changes {
+                self.react(change);
+            }
         }
-    })
-    .detach();
-    let cache = storage::Cache::standard();
-    let library = cx.new(|cx| Library::new(session.clone(), io.clone(), cache, cx));
-    let queue = cx.new(|cx| Queue::new(session.clone(), settings.clone(), cx));
-    // Playback starts no engine until a provider is up, so the saved device is handed over
-    // before any stream opens.
-    let equalizer = cx.new(|cx| Equalizer::new(settings.clone(), cx));
-    let playback = cx.new(|cx| {
-        Playback::new(
-            session.clone(),
-            queue.clone(),
-            settings.clone(),
-            &equalizer,
-            cx,
-        )
-    });
-    let outputs = cx.new(|cx| Outputs::new(settings.clone(), playback.clone(), cx));
-    let downloads = cx.new(|cx| {
-        Downloads::new(
-            session.clone(),
-            playback.clone(),
-            &network,
-            database.clone(),
-            io.clone(),
-            cx,
-        )
-    });
-    equalizer.update(cx, |equalizer, cx| {
-        equalizer.follow(&playback, &outputs, cx)
-    });
-    let history = cx.new(|cx| {
-        History::new(
-            session.clone(),
-            playback.clone(),
-            database.clone(),
-            io.clone(),
-            cx,
-        )
-    });
-    let scan = cx.new(|cx| Scan::new(session.clone(), cx));
-    let scrobbling = cx.new(|cx| {
-        Scrobbling::new(
-            playback.clone(),
-            session.clone(),
-            settings.clone(),
-            io.clone(),
-            cx,
-        )
-    });
-    let lyrics = cx.new(|cx| {
-        Lyrics::new(
-            playback.clone(),
-            queue.clone(),
-            session.clone(),
-            settings.clone(),
-            lyrics_providers,
-            io.clone(),
-            cx,
-        )
-    });
-    let cover = cx.new(|cx| Cover::new(session.clone(), playback.clone(), io.clone(), cx));
-    let drm = cx.new(|cx| Drm::new(session.clone(), io.clone(), cx));
-    let updates = cx.new(|cx| Updates::new(settings.clone(), io.clone(), cx));
-    let requirements = cx.new(|cx| {
-        Requirements::new(
-            settings.clone(),
-            session.clone(),
-            outputs.clone(),
-            io.clone(),
-            cx,
-        )
-    });
-    let usage = cx.new(|cx| Usage::new(session.clone(), database, io.clone(), cx));
-    let pins = cx.new(|cx| Pins::new(settings.clone(), library.clone(), session.clone(), cx));
-    let potoken = potoken::attach(cx);
-    let signal = cx.new(|cx| Signal::new(playback.clone(), outputs.clone(), equalizer.clone(), cx));
-    let wake = cx.new(|cx| Wake::new(settings.clone(), playback.clone(), io.clone(), cx));
-    let devices = cx.new(|cx| {
-        Devices::new(
-            playback.clone(),
-            queue.clone(),
-            library.clone(),
-            settings.clone(),
-            session.clone(),
-            io.clone(),
-            cx,
-        )
-    });
-    let listening = cx.new(|cx| {
-        Listening::new(
-            playback.clone(),
-            queue.clone(),
-            session.clone(),
-            settings.clone(),
-            io.clone(),
-            cx,
-        )
-    });
-    let links = cx.new(|cx| Links::new(session.clone(), devices.clone(), settings.clone(), cx));
-    let control = cx.new(|cx| Control::new(session.clone(), playback.clone(), library.clone(), cx));
-    discord::attach(
-        playback.clone(),
-        settings.clone(),
-        session.clone(),
-        cover.clone(),
-        devices.clone(),
-        io,
-        cx,
-    );
+        log::warn!("state: changes kept raising more after {ROUNDS} rounds; the rest wait");
+    }
 
-    cx.set_global(Sonora {
-        session,
-        control,
-        cover,
-        devices,
-        downloads,
-        drm,
-        equalizer,
-        library,
-        links,
-        listening,
-        history,
-        lyrics,
-        network,
-        outputs,
-        pins,
-        playback,
-        potoken,
-        queue,
-        requirements,
-        scan,
-        scrobbling,
-        settings,
-        signal,
-        updates,
-        usage,
-        wake,
-    });
+    /// Whether anything changed since the host last drew, for a poll that runs outside a commit.
+    pub fn take_dirty(&mut self) -> bool {
+        self.cx.take_dirty()
+    }
 }

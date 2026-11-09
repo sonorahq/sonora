@@ -2,11 +2,10 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::Result;
-use gpui::{Context, Entity, Task};
-use music::link::{self, Linked};
+use music::link::Linked;
 use music::{Album, ArtistRef, MusicApi, Playlist, SavedArtist, Track};
 
-use crate::{Io, Library, Network, Session, SessionEvent, Shelf, join};
+use crate::{Change, Cx, Event, Job, Library, Session, SessionEvent, Shelf, Store, Topic, join};
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
 const LIMIT: usize = 20;
@@ -126,10 +125,21 @@ struct Scored {
     hit: Hit,
 }
 
+/// Which of the search page's two searches a model is, which is how a load that lands finds it
+/// in [`Store::pages`](crate::Pages).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Searching {
+    /// The results of a submitted query, `pages.search`.
+    Results,
+    /// What the search field suggests while a query is typed, `pages.suggest`.
+    Suggestions,
+}
+
 /// A search against the provider and the library, ranked into hits as the answers land. The
 /// search page holds two: one for the results of a submitted query and one that suggests hits
 /// while the query is typed.
 pub struct Search {
+    which: Searching,
     query: String,
     served: Option<String>,
     /// The typed query or the linked item's name used to rank matching results.
@@ -141,37 +151,14 @@ pub struct Search {
     hits: Vec<Hit>,
     loading: bool,
     error: Option<String>,
-    session: Entity<Session>,
-    library: Entity<Library>,
-    io: Io,
-    task: Option<Task<()>>,
-    faces: Option<Task<()>>,
+    task: Option<Job>,
+    faces: Option<Job>,
 }
 
 impl Search {
-    pub fn new(
-        session: Entity<Session>,
-        library: Entity<Library>,
-        io: Io,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.subscribe(&session, |this, _, event, cx| match event {
-            SessionEvent::SignedOut => {
-                this.forget_results();
-                cx.notify();
-            }
-            SessionEvent::SignedIn => {
-                let pending = this.query.clone();
-                this.query.clear();
-                this.ask(&pending, cx);
-            }
-            SessionEvent::Reconnected | SessionEvent::WentOffline | SessionEvent::LocalChanged => {}
-        })
-        .detach();
-
-        cx.observe(&library, |this, _, cx| this.rank(cx)).detach();
-
+    pub(crate) fn new(which: Searching) -> Self {
         Self {
+            which,
             query: String::new(),
             served: None,
             matching: String::new(),
@@ -181,9 +168,6 @@ impl Search {
             hits: Vec::new(),
             loading: false,
             error: None,
-            session,
-            library,
-            io,
             task: None,
             faces: None,
         }
@@ -234,7 +218,7 @@ impl Search {
 
     /// Debounces text searches and resolves active-provider links into metadata and name searches.
     /// Changing the query cancels pending work and signing out clears the results.
-    pub fn ask(&mut self, query: &str, cx: &mut Context<Self>) {
+    fn ask(&mut self, query: &str, session: &Session, library: &Library, cx: &mut Cx) {
         let query = query.trim().to_owned();
         let answered = self.loading || self.served.as_deref() == Some(query.as_str());
         if query == self.query && answered {
@@ -245,7 +229,7 @@ impl Search {
         self.linked = None;
         self.error = None;
         self.task = None;
-        let linked = self.session.read(cx).read_link(&query);
+        let linked = session.read_link(&query);
         if linked.is_some() {
             self.matching.clear();
             self.catalog.clear();
@@ -258,75 +242,74 @@ impl Search {
             self.catalog.clear();
             self.served = Some(String::new());
             self.loading = false;
-            self.rank(cx);
+            self.rank(library, session, cx);
             return;
         }
 
-        self.rank(cx);
+        self.rank(library, session, cx);
 
-        let Some(client) = self.session.read(cx).client() else {
+        let Some(client) = session.client() else {
             self.loading = false;
-            cx.notify();
             return;
         };
 
         if let Some((slug, _)) = &linked
-            && self.session.read(cx).provider_slug() != Some(*slug)
+            && session.provider_slug() != Some(*slug)
         {
             self.loading = false;
-            cx.notify();
             return;
         }
         self.loading = true;
-        cx.notify();
 
-        let io = self.io.clone();
-        self.task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(DEBOUNCE).await;
+        let which = self.which;
+        let io = cx.io.clone();
+        self.task = Some(cx.spawn(move |link| async move {
+            tokio::time::sleep(DEBOUNCE).await;
 
             let mut asked = query.clone();
             if let Some((slug, mut linked)) = linked {
                 if linked == Linked::Short {
-                    let address = query.clone();
-                    let followed =
-                        join(io.spawn(async move { Ok(link::follow(&address).await) })).await;
-                    let resolved = this
-                        .update(cx, |this, cx| {
-                            let followed = followed.ok().flatten()?;
-                            let session = this.session.read(cx);
+                    let followed = music::link::follow(&query).await;
+                    let resolved = link
+                        .read(move |store| {
+                            let followed = followed?;
+                            let session = &store.session;
                             std::iter::once(followed.address.as_str())
-                                .chain(link::addresses(&followed.page))
+                                .chain(music::link::addresses(&followed.page))
                                 .find_map(|address| {
                                     let (owner, linked) = session.read_link(address)?;
                                     (owner == slug && linked != Linked::Short).then_some(linked)
                                 })
                         })
-                        .ok()
+                        .await
                         .flatten();
                     linked = resolved.unwrap_or(Linked::Short);
                 }
-                let api = client.clone();
-                let found =
-                    join(io.spawn(async move { linked_hit(api.as_ref(), linked).await })).await;
+                let found = linked_hit(client.as_ref(), linked).await;
                 let Ok(hit) = found else {
-                    this.update(cx, |this, cx| {
-                        if this.query == query {
+                    link.post(move |store| {
+                        let (slot, _, _, _) = store.search_parts(which);
+                        if let Some(this) = slot.as_mut()
+                            && this.query == query
+                        {
                             this.loading = false;
-                            cx.notify();
                         }
-                    })
-                    .ok();
+                    });
                     return;
                 };
                 asked = hit_name(&hit).to_owned();
-                this.update(cx, |this, cx| {
-                    if this.query == query {
-                        this.matching = asked.clone();
+                let matching = asked.clone();
+                let shown = query.clone();
+                link.post(move |store| {
+                    let (slot, session, library, cx) = store.search_parts(which);
+                    if let Some(this) = slot.as_mut()
+                        && this.query == shown
+                    {
+                        this.matching = matching;
                         this.linked = Some(hit);
-                        this.rank(cx);
+                        this.rank(library, session, cx);
                     }
-                })
-                .ok();
+                });
             }
 
             let songs = {
@@ -352,7 +335,11 @@ impl Search {
                 join(artists).await,
             );
 
-            this.update(cx, |this, cx| {
+            link.post(move |store| {
+                let (slot, session, library, cx) = store.search_parts(which);
+                let Some(this) = slot.as_mut() else {
+                    return;
+                };
                 if this.query != query {
                     return;
                 }
@@ -375,21 +362,20 @@ impl Search {
                     artists: salvaged(artists, kept_artists, &mut trouble),
                 };
                 match trouble.first() {
-                    Some(reason) => Network::failed(reason, cx),
+                    Some(reason) => cx.emit(Event::NetworkFailed(reason.clone())),
                     None => {
-                        Network::reached(cx);
+                        cx.emit(Event::NetworkReached);
                         this.served = Some(query);
                     }
                 }
                 this.error =
                     (!trouble.is_empty() && this.catalog.is_empty()).then(|| trouble.join(" · "));
-                this.rank(cx);
-            })
-            .ok();
+                this.rank(library, session, cx);
+            });
         }));
     }
 
-    fn fetch_portraits(&mut self, cx: &mut Context<Self>) {
+    fn fetch_portraits(&mut self, session: &Session, cx: &mut Cx) {
         let wanted: Vec<String> = self
             .hits
             .iter()
@@ -405,40 +391,41 @@ impl Search {
             return;
         }
 
-        let Some(client) = self.session.read(cx).client() else {
+        let Some(client) = session.client() else {
             return;
         };
 
-        let io = self.io.clone();
+        let which = self.which;
         let asked = wanted.clone();
-        self.faces = Some(cx.spawn(async move |this, cx| {
-            let found = join(io.spawn(async move { client.artist_images(wanted).await })).await;
+        self.faces = Some(cx.spawn(move |link| async move {
+            let found = client.artist_images(wanted).await;
 
-            this.update(cx, |this, cx| {
+            link.post(move |store| {
                 let Ok(found) = found else {
+                    return;
+                };
+                let (slot, session, library, cx) = store.search_parts(which);
+                let Some(this) = slot.as_mut() else {
                     return;
                 };
                 for id in asked {
                     this.portraits.entry(id).or_default();
                 }
                 this.portraits.extend(found);
-                this.rank(cx);
-            })
-            .ok();
+                this.rank(library, session, cx);
+            });
         }));
     }
 
-    fn rank(&mut self, cx: &mut Context<Self>) {
+    fn rank(&mut self, library: &Library, session: &Session, cx: &mut Cx) {
         let query = self.matching.trim();
         if query.is_empty() {
             self.hits.clear();
-            cx.notify();
             return;
         }
 
         self.hits = {
-            let held = self.library.read(cx);
-            let state = held.state(Shelf::Streaming);
+            let state = library.state(Shelf::Streaming);
             rank(
                 state.tracks(),
                 state.albums(),
@@ -452,8 +439,89 @@ impl Search {
             self.hits.retain(|hit| !same_hit(hit, linked));
             self.hits.insert(0, linked.clone());
         }
-        self.fetch_portraits(cx);
-        cx.notify();
+        self.fetch_portraits(session, cx);
+    }
+
+    fn session_event(
+        &mut self,
+        event: &SessionEvent,
+        session: &Session,
+        library: &Library,
+        cx: &mut Cx,
+    ) {
+        match event {
+            SessionEvent::SignedOut => self.forget_results(),
+            SessionEvent::SignedIn => {
+                let pending = self.query.clone();
+                self.query.clear();
+                self.ask(&pending, session, library, cx);
+            }
+            SessionEvent::Reconnected | SessionEvent::WentOffline | SessionEvent::LocalChanged => {}
+        }
+    }
+}
+
+impl Store {
+    /// Searches for the submitted `query`, which the search page lists as its results.
+    pub fn search(&mut self, query: &str) {
+        self.ask_search(Searching::Results, query);
+    }
+
+    /// Suggests hits for `query` while it is typed into the search field.
+    pub fn suggest(&mut self, query: &str) {
+        self.ask_search(Searching::Suggestions, query);
+    }
+
+    /// Drops the submitted search's results, and the loads under way for them.
+    pub fn close_search(&mut self) {
+        self.pages.search = None;
+    }
+
+    /// Drops the search field's suggestions, and the loads under way for them.
+    pub fn close_suggest(&mut self) {
+        self.pages.suggest = None;
+    }
+
+    fn ask_search(&mut self, which: Searching, query: &str) {
+        let (slot, session, library, cx) = self.search_parts(which);
+        slot.get_or_insert_with(|| Search::new(which))
+            .ask(query, session, library, cx);
+    }
+
+    /// The page slot of `which`, what a search reads of the other models, and the store's
+    /// context, borrowed apart so a search can change while it reads them.
+    fn search_parts(
+        &mut self,
+        which: Searching,
+    ) -> (&mut Option<Search>, &Session, &Library, &mut Cx) {
+        let Store {
+            pages,
+            session,
+            library,
+            cx,
+            ..
+        } = self;
+        let slot = match which {
+            Searching::Results => &mut pages.search,
+            Searching::Suggestions => &mut pages.suggest,
+        };
+        (slot, session, library, cx)
+    }
+
+    pub(crate) fn react_search(&mut self, change: &Change) {
+        for which in [Searching::Results, Searching::Suggestions] {
+            let (slot, session, library, cx) = self.search_parts(which);
+            let Some(search) = slot.as_mut() else {
+                continue;
+            };
+            match change {
+                Change::Event(Event::Session(event)) => {
+                    search.session_event(event, session, library, cx)
+                }
+                Change::Topic(Topic::Library) => search.rank(library, session, cx),
+                _ => {}
+            }
+        }
     }
 }
 

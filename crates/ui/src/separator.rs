@@ -1,64 +1,32 @@
-use gpui::prelude::*;
-use gpui::{App, Div, Interactivity, Pixels, StyleRefinement, Window, div, px};
+//! A hairline between two parts of a surface, in the theme's border colour.
 
-use crate::theme::ActiveTheme as _;
+use rune::{El, el};
 
-const THICKNESS: Pixels = px(1.);
+use crate::theme::Theme;
 
-#[derive(Clone, Copy, PartialEq)]
-enum Axis {
-    Horizontal,
-    Vertical,
-}
+const THICKNESS: f32 = 1.;
 
-#[derive(IntoElement)]
+/// A one point rule that never shrinks. It is decoration, so screen readers skip it.
 pub struct Separator {
-    base: Div,
-    axis: Axis,
+    vertical: bool,
 }
 
 impl Separator {
-    #[track_caller]
+    /// A rule across the width of its parent.
     pub fn horizontal() -> Self {
-        Self {
-            base: div(),
-            axis: Axis::Horizontal,
-        }
+        Self { vertical: false }
     }
 
-    #[track_caller]
+    /// A rule down the height of its parent.
     pub fn vertical() -> Self {
-        Self {
-            base: div(),
-            axis: Axis::Vertical,
+        Self { vertical: true }
+    }
+
+    pub fn build(self, theme: &Theme) -> El {
+        let rule = el().fill(theme.border.color()).a11y_hidden();
+        match self.vertical {
+            true => rule.w(THICKNESS).h_full(),
+            false => rule.h(THICKNESS).w_full(),
         }
-    }
-}
-
-impl Styled for Separator {
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
-    }
-}
-
-impl InteractiveElement for Separator {
-    fn interactivity(&mut self) -> &mut Interactivity {
-        self.base.interactivity()
-    }
-}
-
-impl RenderOnce for Separator {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let Self { mut base, axis } = self;
-        let theme = cx.theme();
-        let overrides = std::mem::take(base.style());
-
-        let mut separator = base.flex_none().bg(theme.border).when_else(
-            axis == Axis::Horizontal,
-            |this| this.h(THICKNESS),
-            |this| this.w(THICKNESS),
-        );
-        separator.style().refine(&overrides);
-        separator
     }
 }

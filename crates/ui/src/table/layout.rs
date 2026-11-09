@@ -1,20 +1,28 @@
 use std::collections::HashMap;
 
-use gpui::{Pixels, SharedString, TextAlign, px};
+use i18n::SharedString;
+
+/// Which edge a column's text sits against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextAlign {
+    Left,
+    Center,
+    Right,
+}
 use serde::{Deserialize, Serialize};
 
 use crate::metrics::Metrics;
 
-const SLACK: Pixels = px(2.);
-const MIN_FLEX: Pixels = px(96.);
-const MIN_RIGID: Pixels = px(48.);
-const MIN_TABLE: Pixels = px(160.);
-const COMFORT: Pixels = px(164.);
+const SLACK: f32 = 2.;
+const MIN_FLEX: f32 = 96.;
+const MIN_RIGID: f32 = 48.;
+const MIN_TABLE: f32 = 160.;
+const COMFORT: f32 = 164.;
 
-pub(super) const PADDING: Pixels = px(8.);
-pub(super) const TRAIL: Pixels = px(4.);
-pub(super) const SORT_ROOM: Pixels = px(16.);
-const CUSHION: Pixels = px(1.);
+pub(super) const PADDING: f32 = 8.;
+pub(super) const TRAIL: f32 = 4.;
+pub(super) const SORT_ROOM: f32 = 16.;
+const CUSHION: f32 = 1.;
 
 pub mod rank {
     pub const SPARE: u8 = 10;
@@ -26,7 +34,7 @@ pub mod rank {
 
 #[derive(Clone, Copy)]
 pub enum Width {
-    Fixed(Pixels),
+    Fixed(f32),
     Fill(f32),
     Thumb,
 }
@@ -99,7 +107,7 @@ impl<F: Copy + 'static> ColumnSpec<F> {
         }
     }
 
-    pub const fn numbering(field: F, width: Pixels) -> Self {
+    pub const fn numbering(field: F, width: f32) -> Self {
         Self {
             key: "index",
             header: "column-index",
@@ -130,24 +138,24 @@ impl<F: 'static> ColumnSpec<F> {
         }
     }
 
-    fn natural(&self, metrics: Metrics) -> Pixels {
+    fn natural(&self, metrics: Metrics) -> f32 {
         match self.width {
             Width::Fixed(width) => width,
             Width::Thumb => metrics.thumb + metrics.pad * 2.,
-            Width::Fill(_) => Pixels::ZERO,
+            Width::Fill(_) => 0.,
         }
     }
 
-    fn chrome(&self) -> Pixels {
+    fn chrome(&self) -> f32 {
         let sorting = match self.sortable {
             true => SORT_ROOM,
-            false => Pixels::ZERO,
+            false => 0.,
         };
 
         PADDING * 2. + sorting + TRAIL + CUSHION
     }
 
-    fn floor(&self, metrics: Metrics, head: Pixels) -> Pixels {
+    fn floor(&self, metrics: Metrics, head: f32) -> f32 {
         let bare = match (self.anchored, self.width) {
             (true, _) | (_, Width::Thumb) => self.natural(metrics),
             (false, Width::Fixed(width)) => width.min(MIN_RIGID),
@@ -159,7 +167,7 @@ impl<F: 'static> ColumnSpec<F> {
         }
     }
 
-    fn comfort(&self, metrics: Metrics, head: Pixels) -> Pixels {
+    fn comfort(&self, metrics: Metrics, head: f32) -> f32 {
         let wish = match self.width {
             Width::Fill(_) => COMFORT,
             Width::Fixed(width) => width,
@@ -190,12 +198,11 @@ impl Layout {
             .unwrap_or(usize::MAX)
     }
 
-    fn width(&self, key: &str) -> Option<Pixels> {
+    fn width(&self, key: &str) -> Option<f32> {
         self.widths
             .get(key)
             .copied()
             .filter(|width| width.is_finite() && *width > 0.)
-            .map(px)
     }
 
     pub fn toggle(&mut self, key: &str) {
@@ -210,14 +217,14 @@ impl Layout {
 
 pub struct Resolved<F: 'static> {
     pub spec: &'static ColumnSpec<F>,
-    pub width: Pixels,
-    pub floor: Pixels,
+    pub width: f32,
+    pub floor: f32,
 }
 
 struct Track<F: 'static> {
     spec: &'static ColumnSpec<F>,
-    width: Pixels,
-    floor: Pixels,
+    width: f32,
+    floor: f32,
     pinned: bool,
 }
 
@@ -226,20 +233,20 @@ impl<F: 'static> Track<F> {
         !self.spec.anchored && !matches!(self.spec.width, Width::Thumb)
     }
 
-    fn slack(&self) -> Pixels {
+    fn slack(&self) -> f32 {
         match self.elastic() {
-            true => (self.width - self.floor).max(Pixels::ZERO),
-            false => Pixels::ZERO,
+            true => (self.width - self.floor).max(0.),
+            false => 0.,
         }
     }
 }
 
 pub fn resolve<F: 'static>(
     specs: &'static [ColumnSpec<F>],
-    room: Pixels,
+    room: f32,
     metrics: Metrics,
     layout: &Layout,
-    heads: &[Pixels],
+    heads: &[f32],
     blank: &[bool],
 ) -> Vec<Resolved<F>> {
     let available = (room - SLACK).max(MIN_TABLE);
@@ -281,15 +288,15 @@ fn ordered<F: 'static>(specs: &'static [ColumnSpec<F>], layout: &Layout) -> Vec<
 
 fn crowd<F: 'static>(
     visible: &mut Vec<Seat<F>>,
-    available: Pixels,
+    available: f32,
     metrics: Metrics,
-    head: &impl Fn(usize) -> Pixels,
+    head: &impl Fn(usize) -> f32,
 ) {
     while movable(visible) > 1 {
         let wanted = visible
             .iter()
             .map(|(ix, spec)| spec.comfort(metrics, head(*ix)))
-            .fold(Pixels::ZERO, |total, comfort| total + comfort);
+            .fold(0., |total, comfort| total + comfort);
         if wanted <= available {
             return;
         }
@@ -315,10 +322,10 @@ fn movable<F: 'static>(visible: &[Seat<F>]) -> usize {
 
 fn seed<F: 'static>(
     visible: Vec<Seat<F>>,
-    available: Pixels,
+    available: f32,
     metrics: Metrics,
     layout: &Layout,
-    head: &impl Fn(usize) -> Pixels,
+    head: &impl Fn(usize) -> f32,
 ) -> Vec<Track<F>> {
     let rigid = visible
         .iter()
@@ -327,14 +334,14 @@ fn seed<F: 'static>(
             Some(width) if !spec.anchored => width,
             _ => spec.natural(metrics),
         })
-        .fold(Pixels::ZERO, |total, width| total + width);
+        .fold(0., |total, width| total + width);
 
     let free: f32 = visible
         .iter()
         .filter(|(_, spec)| spec.width.fills() && layout.width(spec.key).is_none())
         .map(|(_, spec)| spec.width.share())
         .sum();
-    let spare = (available - rigid).max(Pixels::ZERO);
+    let spare = (available - rigid).max(0.);
     let loose = visible
         .iter()
         .filter(|(_, spec)| spec.width.fills() && layout.width(spec.key).is_none())
@@ -362,7 +369,7 @@ fn seed<F: 'static>(
         .collect()
 }
 
-fn fit<F: 'static>(tracks: &mut [Track<F>], available: Pixels) {
+fn fit<F: 'static>(tracks: &mut [Track<F>], available: f32) {
     if tracks.is_empty() {
         return;
     }
@@ -370,7 +377,7 @@ fn fit<F: 'static>(tracks: &mut [Track<F>], available: Pixels) {
     let total = tracks
         .iter()
         .map(|track| track.width)
-        .fold(Pixels::ZERO, |total, width| total + width);
+        .fold(0., |total, width| total + width);
 
     match total > available {
         true => shrink(tracks, total - available),
@@ -380,18 +387,18 @@ fn fit<F: 'static>(tracks: &mut [Track<F>], available: Pixels) {
     spread_leftover(tracks, available);
 }
 
-fn shrink<F: 'static>(tracks: &mut [Track<F>], excess: Pixels) {
+fn shrink<F: 'static>(tracks: &mut [Track<F>], excess: f32) {
     let mut excess = excess;
     for stage in [Stage::Fluid, Stage::Any] {
-        if excess <= Pixels::ZERO {
+        if excess <= 0. {
             return;
         }
         let slack = tracks
             .iter()
             .filter(|track| stage.takes(track))
             .map(|track| track.slack())
-            .fold(Pixels::ZERO, |total, slack| total + slack);
-        if slack <= Pixels::ZERO {
+            .fold(0., |total, slack| total + slack);
+        if slack <= 0. {
             continue;
         }
 
@@ -404,8 +411,8 @@ fn shrink<F: 'static>(tracks: &mut [Track<F>], excess: Pixels) {
     }
 }
 
-fn grow<F: 'static>(tracks: &mut [Track<F>], leftover: Pixels) {
-    if leftover <= Pixels::ZERO {
+fn grow<F: 'static>(tracks: &mut [Track<F>], leftover: f32) {
+    if leftover <= 0. {
         return;
     }
 
@@ -428,8 +435,8 @@ fn grow<F: 'static>(tracks: &mut [Track<F>], leftover: Pixels) {
         .iter()
         .filter(|track| track.spec.width.fills())
         .map(|track| track.width)
-        .fold(Pixels::ZERO, |total, width| total + width);
-    if fluid > Pixels::ZERO {
+        .fold(0., |total, width| total + width);
+    if fluid > 0. {
         for track in tracks.iter_mut().filter(|track| track.spec.width.fills()) {
             let share = track.width / fluid;
             track.width += leftover * share;
@@ -442,13 +449,13 @@ fn grow<F: 'static>(tracks: &mut [Track<F>], leftover: Pixels) {
     }
 }
 
-fn spread_leftover<F: 'static>(tracks: &mut [Track<F>], available: Pixels) {
+fn spread_leftover<F: 'static>(tracks: &mut [Track<F>], available: f32) {
     let total = tracks
         .iter()
         .map(|track| track.width)
-        .fold(Pixels::ZERO, |total, width| total + width);
+        .fold(0., |total, width| total + width);
     let residual = available - total;
-    if residual.abs() < px(0.01) {
+    if residual.abs() < 0.01 {
         return;
     }
 
@@ -478,10 +485,10 @@ impl Stage {
 pub fn stretch<F: 'static>(
     columns: &[Resolved<F>],
     at: usize,
-    delta: Pixels,
+    delta: f32,
 ) -> Option<Vec<(String, f32)>> {
-    let mut widths: Vec<Pixels> = columns.iter().map(|column| column.width).collect();
-    let floors: Vec<Pixels> = columns.iter().map(|column| column.floor).collect();
+    let mut widths: Vec<f32> = columns.iter().map(|column| column.width).collect();
+    let floors: Vec<f32> = columns.iter().map(|column| column.floor).collect();
     let right: Vec<usize> = (at + 1..columns.len())
         .filter(|ix| !columns[*ix].spec.anchored)
         .filter(|ix| !matches!(columns[*ix].spec.width, Width::Thumb))
@@ -493,16 +500,16 @@ pub fn stretch<F: 'static>(
     let capacity = right
         .iter()
         .map(|ix| widths[*ix] - floors[*ix])
-        .fold(Pixels::ZERO, |total, slack| total + slack);
+        .fold(0., |total, slack| total + slack);
     let delta = delta.clamp(floors[at] - widths[at], capacity);
-    if delta.abs() < px(0.01) {
+    if delta.abs() < 0.01 {
         return None;
     }
 
     widths[at] += delta;
-    match delta > Pixels::ZERO {
+    match delta > 0. {
         true => {
-            let slack = capacity.max(px(0.01));
+            let slack = capacity.max(0.01);
             for ix in &right {
                 let share = (widths[*ix] - floors[*ix]) / slack;
                 widths[*ix] = (widths[*ix] - delta * share).max(floors[*ix]);
@@ -512,8 +519,8 @@ pub fn stretch<F: 'static>(
             let total = right
                 .iter()
                 .map(|ix| widths[*ix])
-                .fold(Pixels::ZERO, |total, width| total + width)
-                .max(px(0.01));
+                .fold(0., |total, width| total + width)
+                .max(0.01);
             for ix in &right {
                 let share = widths[*ix] / total;
                 widths[*ix] -= delta * share;
@@ -527,17 +534,17 @@ pub fn stretch<F: 'static>(
             .zip(widths)
             .filter(|(column, _)| !column.spec.anchored)
             .filter(|(column, _)| !matches!(column.spec.width, Width::Thumb))
-            .map(|(column, width)| (column.spec.key.to_owned(), width / px(1.)))
+            .map(|(column, width)| (column.spec.key.to_owned(), width))
             .collect(),
     )
 }
 
-pub fn shifted<F: 'static>(columns: &[Resolved<F>], from: usize, delta: Pixels) -> usize {
+pub fn shifted<F: 'static>(columns: &[Resolved<F>], from: usize, delta: f32) -> usize {
     let anchored = columns.iter().filter(|column| column.spec.anchored).count();
     let mut to = from;
-    let mut travelled = Pixels::ZERO;
+    let mut travelled = 0.;
 
-    match delta > Pixels::ZERO {
+    match delta > 0. {
         true => {
             for (ix, column) in columns.iter().enumerate().skip(from + 1) {
                 travelled += column.width;
@@ -600,7 +607,7 @@ mod tests {
             key: "index",
             header: "",
             align: TextAlign::Center,
-            width: Width::Fixed(px(44.)),
+            width: Width::Fixed(44.),
             anchored: true,
             sortable: false,
             first: Sort::Ascending,
@@ -644,7 +651,7 @@ mod tests {
             key: "added",
             header: "",
             align: TextAlign::Left,
-            width: Width::Fixed(px(112.)),
+            width: Width::Fixed(112.),
             anchored: false,
             sortable: true,
             first: Sort::Ascending,
@@ -655,7 +662,7 @@ mod tests {
             key: "length",
             header: "",
             align: TextAlign::Right,
-            width: Width::Fixed(px(72.)),
+            width: Width::Fixed(72.),
             anchored: false,
             sortable: true,
             first: Sort::Ascending,
@@ -667,36 +674,36 @@ mod tests {
         Metrics::default()
     }
 
-    fn laid(room: Pixels, layout: &Layout) -> Vec<Resolved<Field>> {
+    fn laid(room: f32, layout: &Layout) -> Vec<Resolved<Field>> {
         resolve(SPECS, room, metrics(), layout, &[], &[])
     }
 
-    fn headed(room: Pixels, heads: &[Pixels]) -> Vec<Resolved<Field>> {
+    fn headed(room: f32, heads: &[f32]) -> Vec<Resolved<Field>> {
         resolve(SPECS, room, metrics(), &Layout::default(), heads, &[])
     }
 
-    fn head_of(key: &str, width: Pixels) -> Vec<Pixels> {
+    fn head_of(key: &str, width: f32) -> Vec<f32> {
         SPECS
             .iter()
             .map(|spec| match spec.key == key {
                 true => width,
-                false => Pixels::ZERO,
+                false => 0.,
             })
             .collect()
     }
 
-    fn total<F: 'static>(columns: &[Resolved<F>]) -> Pixels {
+    fn total<F: 'static>(columns: &[Resolved<F>]) -> f32 {
         columns
             .iter()
             .map(|column| column.width)
-            .fold(Pixels::ZERO, |total, width| total + width)
+            .fold(0., |total, width| total + width)
     }
 
     fn keys<F: 'static>(columns: &[Resolved<F>]) -> Vec<&'static str> {
         columns.iter().map(|column| column.spec.key).collect()
     }
 
-    fn width<F: 'static>(columns: &[Resolved<F>], key: &str) -> Pixels {
+    fn width<F: 'static>(columns: &[Resolved<F>], key: &str) -> f32 {
         columns
             .iter()
             .find(|column| column.spec.key == key)
@@ -706,11 +713,11 @@ mod tests {
 
     #[test]
     fn columns_exactly_fill_the_room() {
-        for room in [px(400.), px(700.), px(1200.), px(2400.)] {
+        for room in [400., 700., 1200., 2400.] {
             let columns = laid(room, &Layout::default());
             let expected = (room - SLACK).max(MIN_TABLE);
             assert!(
-                (total(&columns) - expected).abs() < px(0.5),
+                (total(&columns) - expected).abs() < 0.5,
                 "room {room:?} produced {:?}",
                 total(&columns)
             );
@@ -719,15 +726,15 @@ mod tests {
 
     #[test]
     fn narrow_rooms_drop_columns_but_still_fill() {
-        let columns = laid(px(400.), &Layout::default());
+        let columns = laid(400., &Layout::default());
         assert!(!keys(&columns).contains(&"added"));
-        assert!((total(&columns) - px(398.)).abs() < px(0.5));
+        assert!((total(&columns) - 398.).abs() < 0.5);
     }
 
     #[test]
     fn fill_columns_split_by_share() {
-        let columns = laid(px(1000.), &Layout::default());
-        assert!((width(&columns, "title") - width(&columns, "artist")).abs() < px(0.5));
+        let columns = laid(1000., &Layout::default());
+        assert!((width(&columns, "title") - width(&columns, "artist")).abs() < 0.5);
     }
 
     #[test]
@@ -736,7 +743,7 @@ mod tests {
             order: vec!["length".to_owned(), "title".to_owned()],
             ..Layout::default()
         };
-        let columns = laid(px(1000.), &layout);
+        let columns = laid(1000., &layout);
 
         assert_eq!(keys(&columns)[..2], ["index", "cover"]);
         assert_eq!(keys(&columns)[2], "length");
@@ -749,10 +756,10 @@ mod tests {
             hidden: vec!["artist".to_owned()],
             ..Layout::default()
         };
-        let columns = laid(px(1000.), &layout);
+        let columns = laid(1000., &layout);
 
         assert!(!keys(&columns).contains(&"artist"));
-        assert!((total(&columns) - px(998.)).abs() < px(0.5));
+        assert!((total(&columns) - 998.).abs() < 0.5);
     }
 
     #[test]
@@ -761,7 +768,7 @@ mod tests {
             hidden: SPECS.iter().map(|spec| spec.key.to_owned()).collect(),
             ..Layout::default()
         };
-        let columns = laid(px(1000.), &layout);
+        let columns = laid(1000., &layout);
 
         assert_eq!(keys(&columns), ["index"]);
     }
@@ -772,10 +779,10 @@ mod tests {
             widths: HashMap::from([("length".to_owned(), 140.)]),
             ..Layout::default()
         };
-        let columns = laid(px(1000.), &layout);
+        let columns = laid(1000., &layout);
 
-        assert!((width(&columns, "length") - px(140.)).abs() < px(0.5));
-        assert!((total(&columns) - px(998.)).abs() < px(0.5));
+        assert!((width(&columns, "length") - 140.).abs() < 0.5);
+        assert!((total(&columns) - 998.).abs() < 0.5);
     }
 
     #[test]
@@ -784,7 +791,7 @@ mod tests {
             widths: HashMap::from([("title".to_owned(), 1.)]),
             ..Layout::default()
         };
-        let columns = laid(px(1000.), &layout);
+        let columns = laid(1000., &layout);
 
         assert!(width(&columns, "title") >= MIN_FLEX);
     }
@@ -795,97 +802,97 @@ mod tests {
             widths: HashMap::from([("index".to_owned(), 400.)]),
             ..Layout::default()
         };
-        let columns = laid(px(1000.), &layout);
+        let columns = laid(1000., &layout);
 
-        assert!((width(&columns, "index") - px(44.)).abs() < px(0.5));
+        assert!((width(&columns, "index") - 44.).abs() < 0.5);
     }
 
     #[test]
     fn stretching_takes_room_from_the_right() {
-        let columns = laid(px(1000.), &Layout::default());
+        let columns = laid(1000., &Layout::default());
         let before = width(&columns, "title");
-        let widths = stretch(&columns, 2, px(60.)).expect("resizable");
+        let widths = stretch(&columns, 2, 60.).expect("resizable");
         let layout = Layout {
             widths: widths.into_iter().collect(),
             ..Layout::default()
         };
-        let after = laid(px(1000.), &layout);
+        let after = laid(1000., &layout);
 
-        assert!((width(&after, "title") - (before + px(60.))).abs() < px(1.));
-        assert!((total(&after) - px(998.)).abs() < px(0.5));
+        assert!((width(&after, "title") - (before + 60.)).abs() < 1.);
+        assert!((total(&after) - 998.).abs() < 0.5);
     }
 
     #[test]
     fn stretching_stops_at_the_floors_on_the_right() {
-        let columns = laid(px(1000.), &Layout::default());
-        let widths = stretch(&columns, 2, px(5000.)).expect("resizable");
+        let columns = laid(1000., &Layout::default());
+        let widths = stretch(&columns, 2, 5000.).expect("resizable");
         let layout = Layout {
             widths: widths.into_iter().collect(),
             ..Layout::default()
         };
-        let after = laid(px(1000.), &layout);
+        let after = laid(1000., &layout);
 
-        assert!(width(&after, "artist") >= MIN_FLEX - px(0.5));
-        assert!((total(&after) - px(998.)).abs() < px(0.5));
+        assert!(width(&after, "artist") >= MIN_FLEX - 0.5);
+        assert!((total(&after) - 998.).abs() < 0.5);
     }
 
     #[test]
     fn the_last_column_has_no_room_to_take() {
-        let columns = laid(px(1000.), &Layout::default());
+        let columns = laid(1000., &Layout::default());
         let last = columns.len() - 1;
 
-        assert!(stretch(&columns, last, px(40.)).is_none());
+        assert!(stretch(&columns, last, 40.).is_none());
     }
 
     #[test]
     fn anchored_columns_cannot_be_stretched() {
-        let columns = laid(px(1000.), &Layout::default());
+        let columns = laid(1000., &Layout::default());
 
-        assert!(stretch(&columns, 0, px(40.)).is_none());
+        assert!(stretch(&columns, 0, 40.).is_none());
     }
 
     #[test]
     fn dragging_past_half_a_neighbour_shifts_by_one() {
-        let columns = laid(px(1000.), &Layout::default());
+        let columns = laid(1000., &Layout::default());
         let next = columns[3].width;
 
-        assert_eq!(shifted(&columns, 2, next / 2. - px(1.)), 2);
-        assert_eq!(shifted(&columns, 2, next / 2. + px(1.)), 3);
+        assert_eq!(shifted(&columns, 2, next / 2. - 1.), 2);
+        assert_eq!(shifted(&columns, 2, next / 2. + 1.), 3);
     }
 
     #[test]
     fn dragging_never_enters_the_anchored_prefix() {
-        let columns = laid(px(1000.), &Layout::default());
+        let columns = laid(1000., &Layout::default());
 
-        assert_eq!(shifted(&columns, 3, px(-5000.)), 2);
+        assert_eq!(shifted(&columns, 3, -5000.), 2);
     }
 
     #[test]
     fn a_column_is_never_narrower_than_its_header() {
-        let heads = head_of("length", px(120.));
-        let columns = headed(px(1200.), &heads);
+        let heads = head_of("length", 120.);
+        let columns = headed(1200., &heads);
         let length = columns
             .iter()
             .find(|column| column.spec.key == "length")
             .expect("kept");
 
-        assert!(length.width >= px(120.) + PADDING * 2. + SORT_ROOM + TRAIL);
-        assert!((total(&columns) - px(1198.)).abs() < px(0.5));
+        assert!(length.width >= 120. + PADDING * 2. + SORT_ROOM + TRAIL);
+        assert!((total(&columns) - 1198.).abs() < 0.5);
     }
 
     #[test]
     fn a_header_that_cannot_fit_drops_its_column() {
-        let heads = head_of("artist", px(900.));
-        let columns = headed(px(700.), &heads);
+        let heads = head_of("artist", 900.);
+        let columns = headed(700., &heads);
 
         assert!(!keys(&columns).contains(&"artist"));
-        assert!((total(&columns) - px(698.)).abs() < px(0.5));
+        assert!((total(&columns) - 698.).abs() < 0.5);
     }
 
     #[test]
     fn crowding_evicts_the_least_important_column_first() {
-        let heads: Vec<Pixels> = SPECS.iter().map(|_| px(150.)).collect();
-        let columns = headed(px(700.), &heads);
+        let heads: Vec<f32> = SPECS.iter().map(|_| 150.).collect();
+        let columns = headed(700., &heads);
 
         assert!(!keys(&columns).contains(&"artist"));
         assert!(keys(&columns).contains(&"title"));
@@ -894,9 +901,9 @@ mod tests {
     #[test]
     fn columns_leave_in_order_of_rank() {
         let mut leaving: Vec<&str> = Vec::new();
-        let mut wider = keys(&laid(px(2000.), &Layout::default()));
+        let mut wider = keys(&laid(2000., &Layout::default()));
         for room in (200..2000).step_by(4).rev() {
-            let present = keys(&laid(px(room as f32), &Layout::default()));
+            let present = keys(&laid(room as f32, &Layout::default()));
             leaving.extend(wider.iter().filter(|key| !present.contains(key)));
             wider = present;
         }
@@ -908,7 +915,7 @@ mod tests {
     fn widening_never_takes_a_column_away() {
         let mut previous: Vec<&str> = Vec::new();
         for room in (200..2000).step_by(4) {
-            let present = keys(&laid(px(room as f32), &Layout::default()));
+            let present = keys(&laid(room as f32, &Layout::default()));
             for key in &previous {
                 assert!(
                     present.contains(key),
@@ -921,8 +928,8 @@ mod tests {
 
     #[test]
     fn a_kept_column_has_room_to_read() {
-        let heads: Vec<Pixels> = SPECS.iter().map(|_| px(40.)).collect();
-        for room in [px(300.), px(560.), px(900.), px(1600.)] {
+        let heads: Vec<f32> = SPECS.iter().map(|_| 40.).collect();
+        for room in [300., 560., 900., 1600.] {
             let columns = headed(room, &heads);
             let last = columns.len() - 1;
             for (at, column) in columns.iter().enumerate() {
@@ -940,15 +947,15 @@ mod tests {
 
     #[test]
     fn every_surviving_header_fits_however_tight_the_room() {
-        let heads: Vec<Pixels> = SPECS.iter().map(|_| px(130.)).collect();
-        for room in [px(300.), px(500.), px(800.), px(1600.)] {
+        let heads: Vec<f32> = SPECS.iter().map(|_| 130.).collect();
+        for room in [300., 500., 800., 1600.] {
             let columns = headed(room, &heads);
             for column in &columns {
                 if column.spec.anchored {
                     continue;
                 }
                 assert!(
-                    column.width >= px(130.) + column.spec.chrome(),
+                    column.width >= 130. + column.spec.chrome(),
                     "{} truncates at room {room:?}",
                     column.spec.key
                 );
@@ -958,7 +965,7 @@ mod tests {
 
     #[test]
     fn reordering_rewrites_the_movable_keys() {
-        let columns = laid(px(1000.), &Layout::default());
+        let columns = laid(1000., &Layout::default());
 
         assert_eq!(
             reordered(&columns, 2, 4),

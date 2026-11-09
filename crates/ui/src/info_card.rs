@@ -1,20 +1,24 @@
-use gpui::accesskit::Role;
-use gpui::prelude::*;
-use gpui::{
-    AnyElement, App, Div, ElementId, FontWeight, Interactivity, SharedString, StyleRefinement,
-    Window, div,
-};
+//! A titled block of facts or settings on a detail page, and the label and value rows it holds.
 
-use crate::label::eyebrow;
-use crate::theme::ActiveTheme as _;
+use rune::{El, TextStyle, col, row, text};
 
-#[derive(IntoElement)]
+use crate::label::{Weight, eyebrow};
+use crate::metrics::Text;
+use crate::paint::rems;
+use crate::theme::Theme;
+
+const BORDER: f32 = 1.;
+/// How much of the secondary fill shows through the card.
+const FILL: f32 = 0.45;
+/// How much of the table hover a striped fact shows.
+const STRIPE: f32 = 0.35;
+
+/// A card with an eyebrow title over its children.
 pub struct InfoCard {
-    base: Div,
-    title: SharedString,
-    /// The id under which the card reaches screen readers, which it does only once given one.
-    spoken: Option<ElementId>,
-    children: Vec<AnyElement>,
+    title: String,
+    /// The key under which the card reaches screen readers as a group named by its title.
+    spoken: Option<String>,
+    children: Vec<El>,
     borderless: bool,
     stretch: bool,
     plain: bool,
@@ -23,9 +27,8 @@ pub struct InfoCard {
 }
 
 impl InfoCard {
-    pub fn new(title: impl Into<SharedString>) -> Self {
+    pub fn new(title: impl Into<String>) -> Self {
         Self {
-            base: div(),
             title: title.into(),
             spoken: None,
             children: Vec::new(),
@@ -37,11 +40,22 @@ impl InfoCard {
         }
     }
 
+    pub fn child(mut self, child: El) -> Self {
+        self.children.push(child);
+        self
+    }
+
+    pub fn children(mut self, children: impl IntoIterator<Item = El>) -> Self {
+        self.children.extend(children);
+        self
+    }
+
     pub fn borderless(mut self) -> Self {
         self.borderless = true;
         self
     }
 
+    /// Fills the height of its parent, for cards side by side that should end level.
     pub fn stretch(mut self) -> Self {
         self.stretch = true;
         self
@@ -54,7 +68,7 @@ impl InfoCard {
         self
     }
 
-    /// Leaves the eyebrow title out, for a card whose heading sits outside it or that needs none.
+    /// Leaves the eyebrow title out, for a card whose heading sits outside it.
     pub fn untitled(mut self) -> Self {
         self.untitled = true;
         self
@@ -67,95 +81,62 @@ impl InfoCard {
         self
     }
 
-    /// Exposes the card to screen readers as a group named by its title, under the element id
-    /// `id`. Without it the title is drawn but never read.
-    pub fn spoken(mut self, id: impl Into<ElementId>) -> Self {
-        self.spoken = Some(id.into());
+    /// Exposes the card to screen readers as a group named by its title, under `key`.
+    pub fn spoken(mut self, key: impl Into<String>) -> Self {
+        self.spoken = Some(key.into());
         self
     }
-}
 
-impl ParentElement for InfoCard {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.children.extend(elements);
-    }
-}
-
-impl Styled for InfoCard {
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
-    }
-}
-
-impl InteractiveElement for InfoCard {
-    fn interactivity(&mut self) -> &mut Interactivity {
-        self.base.interactivity()
-    }
-}
-
-impl RenderOnce for InfoCard {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let Self {
-            mut base,
-            title,
-            spoken,
-            children,
-            borderless,
-            stretch,
-            plain,
-            untitled,
-            flush,
-        } = self;
-
-        let theme = *cx.theme();
-        let overrides = std::mem::take(base.style());
-
-        let mut card = base
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .overflow_hidden()
-            .when(stretch, |this| this.h_full())
-            .when(!flush, |this| this.gap_4())
-            .when(flush, |this| this.py_1())
-            .when(!plain, |this| {
-                this.when(!flush, |this| this.p_5())
-                    .rounded(theme.radius)
-                    .bg(theme.secondary.opacity(0.45))
-                    .when(!borderless, |this| {
-                        this.border_1().border_color(theme.border)
-                    })
-            })
-            .when(!untitled, |this| this.child(eyebrow(title.clone(), cx)))
-            .children(children);
-
-        card.style().refine(&overrides);
-        match spoken {
-            Some(id) => card
-                .id(id)
-                .role(Role::Group)
-                .aria_label(title)
-                .into_any_element(),
-            None => card.into_any_element(),
+    pub fn build(self, theme: &Theme) -> El {
+        let mut card = col().min_w(0.).clip_rounded(match self.plain {
+            true => 0.,
+            false => theme.radius,
+        });
+        if self.stretch {
+            card = card.h_full();
+        }
+        card = match self.flush {
+            true => card.py(rems(theme, 0.25)),
+            false => card.gap(rems(theme, 1.)),
+        };
+        if !self.plain {
+            if !self.flush {
+                card = card.padding(rems(theme, 1.25));
+            }
+            card = card
+                .radius(theme.radius)
+                .fill(theme.secondary.opacity(FILL).color());
+            if !self.borderless {
+                card = card.border(BORDER, theme.border.color());
+            }
+        }
+        if !self.untitled {
+            let title = eyebrow(&self.title, theme);
+            card = card.child(match self.spoken.is_some() {
+                true => title.a11y_hidden(),
+                false => title,
+            });
+        }
+        let card = card.children(self.children);
+        match self.spoken {
+            Some(key) => card.key(key).role("group").label(self.title),
+            None => card,
         }
     }
 }
 
-#[derive(IntoElement)]
+/// One fact: a muted label and its value, set against each other across the row.
 pub struct Fact {
-    base: Div,
-    label: SharedString,
-    value: SharedString,
-    /// The id under which the label and the value reach screen readers, which they do only once
-    /// given one.
-    spoken: Option<ElementId>,
+    label: String,
+    value: String,
+    /// The key under which the label and the value reach screen readers as one row.
+    spoken: Option<String>,
     striped: bool,
 }
 
 impl Fact {
-    pub fn new(label: impl Into<SharedString>, value: impl Into<SharedString>) -> Self {
+    pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
         Self {
-            base: div(),
             label: label.into(),
             value: value.into(),
             spoken: None,
@@ -168,78 +149,57 @@ impl Fact {
         self
     }
 
-    /// Exposes the label and the value to screen readers as two lines of text, under ids derived
-    /// from `id`. Without it both are drawn but never read.
-    pub fn spoken(mut self, id: impl Into<ElementId>) -> Self {
-        self.spoken = Some(id.into());
+    /// Exposes the fact to screen readers under `key`, named by its label with its value as the
+    /// value read after it.
+    pub fn spoken(mut self, key: impl Into<String>) -> Self {
+        self.spoken = Some(key.into());
         self
     }
-}
 
-impl Styled for Fact {
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
-    }
-}
-
-impl InteractiveElement for Fact {
-    fn interactivity(&mut self) -> &mut Interactivity {
-        self.base.interactivity()
-    }
-}
-
-impl RenderOnce for Fact {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let Self {
-            mut base,
-            label,
-            value,
-            spoken,
-            striped,
-        } = self;
-
-        let theme = *cx.theme();
-        let overrides = std::mem::take(base.style());
-
-        let mut fact = base
-            .flex()
+    pub fn build(self, theme: &Theme) -> El {
+        let style = TextStyle::new(theme.text(Text::Body), Weight::NORMAL);
+        let spoken = self.spoken.is_some();
+        let hide = |e: El| match spoken {
+            true => e.a11y_hidden(),
+            false => e,
+        };
+        let mut fact = row()
             .items_start()
             .justify_between()
-            .gap_4()
-            .min_w_0()
+            .gap(rems(theme, 1.))
+            .min_w(0.)
             .px(theme.metrics.pad)
             .py(theme.metrics.pad / 2.)
-            .rounded(theme.radius)
-            .when(striped, |this| this.bg(theme.table_hover.opacity(0.35)))
-            .child(said(
-                div().flex_1().min_w_0().text_color(theme.muted_foreground),
-                spoken.clone().map(|id| ElementId::from((id, "label"))),
-                label,
+            .radius(theme.radius)
+            .child(hide(
+                text(self.label.clone())
+                    .font(style)
+                    .color(theme.muted_foreground.color())
+                    .grow(1.)
+                    .shrink()
+                    .min_w(0.)
+                    .wrap(),
             ))
-            .child(said(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_right()
-                    .font_weight(FontWeight::MEDIUM),
-                spoken.map(|id| ElementId::from((id, "value"))),
-                value,
+            .child(hide(
+                text(self.value.clone())
+                    .font(TextStyle::new(theme.text(Text::Body), Weight::MEDIUM))
+                    .color(theme.foreground.color())
+                    .align(rune::Align::End)
+                    .grow(1.)
+                    .shrink()
+                    .min_w(0.)
+                    .wrap(),
             ));
-
-        fact.style().refine(&overrides);
-        fact
-    }
-}
-
-/// Draws `text` in `line`, as a line screen readers reach under `id` when there is one.
-fn said(line: Div, id: Option<ElementId>, text: SharedString) -> AnyElement {
-    match id {
-        Some(id) => line
-            .id(id)
-            .role(Role::Label)
-            .aria_value(text.clone())
-            .child(text)
-            .into_any_element(),
-        None => line.child(text).into_any_element(),
+        if self.striped {
+            fact = fact.fill(theme.table_hover.opacity(STRIPE).color());
+        }
+        match self.spoken {
+            Some(key) => fact
+                .key(key)
+                .role("text")
+                .label(self.label)
+                .a11y_value(self.value),
+            None => fact,
+        }
     }
 }

@@ -1,39 +1,10 @@
-use gpui::prelude::*;
-use gpui::{App, Div, ElementId, Interactivity, Stateful, StyleRefinement, Window, div};
+//! A surface that keeps presses from reaching what is under it.
 
-#[derive(IntoElement)]
-pub struct Shield {
-    base: Stateful<Div>,
-}
+use rune::{El, el};
 
-impl Shield {
-    #[track_caller]
-    pub fn new(id: impl Into<ElementId>) -> Self {
-        Self { base: div().id(id) }
-    }
-}
-
-impl Styled for Shield {
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
-    }
-}
-
-impl InteractiveElement for Shield {
-    fn interactivity(&mut self) -> &mut Interactivity {
-        self.base.interactivity()
-    }
-}
-
-impl StatefulInteractiveElement for Shield {}
-
-impl RenderOnce for Shield {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let mut base = self.base;
-        let overrides = std::mem::take(base.style());
-
-        let mut shield = base.occlude();
-        shield.style().refine(&overrides);
-        shield
-    }
+/// An empty element that takes every press over it and does nothing with them, laid over
+/// content that must not be reached, such as the page behind an open panel. The caller sizes
+/// and places it. `S` is the window's state type, which the empty handler is typed by.
+pub fn shield<S: 'static>(key: impl Into<String>) -> El {
+    el().key(key).role("none").on_press(|_: &mut S| {})
 }

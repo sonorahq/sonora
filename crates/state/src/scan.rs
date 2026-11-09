@@ -1,9 +1,8 @@
 use std::time::{Duration, Instant};
 
-use gpui::{App, Context, Entity, Task};
 use music::progress::Progress;
 
-use crate::{Outcome, Session, Toast, Toasts};
+use crate::{Change, Cx, Event, Job, Outcome, Session, Store, Toast, Topic};
 
 /// How often the progress is sampled while a scan runs. The count lives in atomics the workers
 /// bump, so this is only how often the screen catches up with them.
@@ -25,17 +24,12 @@ pub struct Scan {
     seen: bool,
     /// Whether the settings page is open, which shows a scan's progress itself.
     on_settings: bool,
-    poll: Option<Task<()>>,
+    poll: Option<Job>,
 }
 
 impl Scan {
-    pub fn new(session: Entity<Session>, cx: &mut Context<Self>) -> Self {
-        cx.observe(&session, |this, session, cx| {
-            this.follow(session.read(cx).scanning(), cx);
-        })
-        .detach();
-
-        let scanning = session.read(cx).scanning();
+    pub fn new(session: &Session, cx: &mut Cx) -> Self {
+        let scanning = session.scanning();
         let mut scan = Self {
             running: false,
             started: None,
@@ -47,10 +41,6 @@ impl Scan {
         };
         scan.follow(scanning, cx);
         scan
-    }
-
-    pub fn global(cx: &App) -> Entity<Self> {
-        crate::Sonora::global(cx).scan.clone()
     }
 
     /// The scan running right now, if one is.
@@ -71,14 +61,13 @@ impl Scan {
 
     /// Follows the settings page: arriving marks a finished scan as shown, leaving forgets it.
     /// Switching category counts as arriving, so only leaving the page clears the note.
-    pub fn viewing_settings(&mut self, viewing: bool, cx: &mut Context<Self>) {
+    pub fn viewing_settings(&mut self, viewing: bool) {
         self.on_settings = viewing;
         match viewing {
             true => self.seen = self.done.is_some(),
             false if self.seen => {
                 self.done = None;
                 self.seen = false;
-                cx.notify();
             }
             false => {}
         }
@@ -86,18 +75,17 @@ impl Scan {
 
     /// Reports a scan the user started that found `songs`, unless the settings page is open to
     /// show it.
-    pub(crate) fn finished(&self, songs: usize, cx: &mut Context<Self>) {
+    pub(crate) fn finished(&self, songs: usize, cx: &mut Cx) {
         if self.on_settings {
             return;
         }
-        Toasts::post(
+        cx.emit(Event::Toast(
             Toast::new(Outcome::Done, "toast-library-scanned").count(songs),
-            cx,
-        );
+        ));
     }
 
     /// Picks up a scan starting or ending. A scan the user asked for leaves its duration behind.
-    fn follow(&mut self, scanning: bool, cx: &mut Context<Self>) {
+    fn follow(&mut self, scanning: bool, cx: &mut Cx) {
         if scanning == self.running {
             return;
         }
@@ -107,12 +95,10 @@ impl Scan {
                 self.started = Some(Instant::now());
                 self.done = None;
                 self.seen = false;
-                self.poll = Some(cx.spawn(async move |this, cx| {
+                self.poll = Some(cx.spawn(|link| async move {
                     loop {
-                        cx.background_executor().timer(TICK).await;
-                        if this.update(cx, |_, cx| cx.notify()).is_err() {
-                            return;
-                        }
+                        tokio::time::sleep(TICK).await;
+                        link.post(|store| store.cx.refresh());
                     }
                 }));
             }
@@ -126,6 +112,18 @@ impl Scan {
                 self.asked = false;
             }
         }
-        cx.notify();
+    }
+}
+
+impl Store {
+    /// Starts or stops sampling the scan as the session starts or ends one.
+    pub(crate) fn react_scan(&mut self, change: &Change) {
+        match change {
+            Change::Topic(Topic::Session) => {
+                let scanning = self.session.scanning();
+                self.scan.follow(scanning, &mut self.cx);
+            }
+            _ => {}
+        }
     }
 }

@@ -1,63 +1,64 @@
-use gpui::prelude::*;
-use gpui::{AnyElement, App, ClickEvent, Hsla, Pixels, SharedString, StyleRefinement, Window, px};
+//! A button that shows the current choice of a setting and opens the menu of its choices.
+
+use rune::{El, Tx};
 
 use crate::button::Button;
-use crate::menu::{Menu, MenuItem, TRIGGER_GAP};
-use crate::popover::{Open, Popover, Popovers};
-use crate::scrollbar::Scrollbar;
-use crate::theme::ActiveTheme as _;
+use crate::color::Hsla;
+use crate::menu::{Menu, MenuItem};
+use crate::overlay::Placement;
+use crate::popover::{Popover, Popovers};
+use crate::theme::Theme;
 
 enum Face {
-    Label(SharedString),
-    Plain(SharedString),
-    Icon(&'static str),
+    Label(String),
+    Plain(String),
+    Icon(String),
 }
 
-#[derive(IntoElement)]
-pub struct Picker {
-    style: StyleRefinement,
-    key: &'static str,
-    group: Popovers,
+/// A picker: an outlined small button reading the current choice with a chevron, or an icon
+/// button, opening a [`Menu`] of its choices as one popover of a group.
+pub struct Picker<S> {
+    popover: Popover<S>,
+    key: String,
     face: Face,
-    /// What a screen reader calls the trigger, read before the current choice.
-    name: Option<SharedString>,
-    /// A small element drawn before the current choice on the trigger.
-    leading: Option<AnyElement>,
-    tooltip: Option<&'static str>,
-    above: bool,
+    name: Option<String>,
+    leading: Option<El>,
+    tooltip: Option<(String, bool)>,
     tint: Option<Hsla>,
-    /// The colour of the status dot over the trigger's icon, `None` for no dot.
     status: Option<Hsla>,
     selected: bool,
     small: bool,
-    /// Draws a labelled trigger without its outline, like the icon buttons around it.
     ghost: bool,
-    width: Pixels,
+    width: f32,
     left: bool,
     sticky: bool,
     disabled: bool,
-    items: Vec<MenuItem>,
-    menu: Option<Menu>,
-    /// How tall the menu grows before it scrolls, unbounded when `None`.
-    scroll_after: Option<Pixels>,
-    on_open: Option<Open>,
+    items: Vec<MenuItem<S>>,
+    menu: Option<Menu<S>>,
+    scroll_after: Option<f32>,
 }
 
-impl Picker {
-    pub const NARROW: Pixels = px(170.);
-    pub const REGULAR: Pixels = px(190.);
-    pub const WIDE: Pixels = px(260.);
+impl<S: 'static> Picker<S> {
+    pub const NARROW: f32 = 170.;
+    pub const REGULAR: f32 = 190.;
+    pub const WIDE: f32 = 260.;
 
-    pub fn new(key: &'static str, group: &Popovers, current: impl Into<SharedString>) -> Self {
+    /// A picker reading `current`, the popover `key` of `group`, which `access` finds in the
+    /// window's state.
+    pub fn new(
+        key: impl Into<String>,
+        group: &Popovers,
+        access: impl for<'a> Fn(&'a mut S) -> &'a mut Popovers + 'static,
+        current: impl Into<String>,
+    ) -> Self {
+        let key = key.into();
         Self {
-            style: StyleRefinement::default(),
+            popover: Popover::new(key.clone(), group, access),
             key,
-            group: group.clone(),
             face: Face::Label(current.into()),
             name: None,
             leading: None,
             tooltip: None,
-            above: false,
             tint: None,
             status: None,
             selected: false,
@@ -70,48 +71,56 @@ impl Picker {
             items: Vec::new(),
             menu: None,
             scroll_after: None,
-            on_open: None,
         }
     }
 
-    pub fn icon(key: &'static str, group: &Popovers, icon: &'static str) -> Self {
+    /// A picker whose trigger is the icon `icon` rather than the current choice.
+    pub fn icon(
+        key: impl Into<String>,
+        group: &Popovers,
+        access: impl for<'a> Fn(&'a mut S) -> &'a mut Popovers + 'static,
+        icon: impl Into<String>,
+    ) -> Self {
         Self {
-            face: Face::Icon(icon),
-            ..Self::new(key, group, "")
+            face: Face::Icon(icon.into()),
+            ..Self::new(key, group, access, "")
         }
     }
 
     /// A labelled trigger without the chevron, for a popover that holds a control rather than a
     /// list of choices.
-    pub fn plain(key: &'static str, group: &Popovers, label: impl Into<SharedString>) -> Self {
+    pub fn plain(
+        key: impl Into<String>,
+        group: &Popovers,
+        access: impl for<'a> Fn(&'a mut S) -> &'a mut Popovers + 'static,
+        label: impl Into<String>,
+    ) -> Self {
         Self {
             face: Face::Plain(label.into()),
-            ..Self::new(key, group, "")
+            ..Self::new(key, group, access, "")
         }
     }
 
     /// Names the trigger for screen readers after the setting it changes, so the current choice
     /// is read as its description rather than as its name.
-    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+    pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
     }
 
-    /// Draws `leading` before the current choice on the trigger, as the menu's items may draw
-    /// one before theirs.
-    pub fn leading(mut self, leading: impl IntoElement) -> Self {
-        self.leading = Some(leading.into_any_element());
+    /// Draws `leading` before the current choice on the trigger.
+    pub fn leading(mut self, leading: El) -> Self {
+        self.leading = Some(leading);
         self
     }
 
-    pub fn tooltip(mut self, key: &'static str) -> Self {
-        self.tooltip = Some(key);
+    pub fn tooltip(mut self, text: impl Into<String>) -> Self {
+        self.tooltip = Some((text.into(), false));
         self
     }
 
-    pub fn tooltip_above(mut self, key: &'static str) -> Self {
-        self.tooltip = Some(key);
-        self.above = true;
+    pub fn tooltip_above(mut self, text: impl Into<String>) -> Self {
+        self.tooltip = Some((text.into(), true));
         self
     }
 
@@ -142,150 +151,117 @@ impl Picker {
         self
     }
 
-    pub fn width(mut self, width: Pixels) -> Self {
+    /// The menu's width, [`Picker::REGULAR`] unless set.
+    pub fn width(mut self, width: f32) -> Self {
         self.width = width;
         self
     }
 
+    /// Hangs the menu from the trigger's start edge rather than its end.
     pub fn left(mut self) -> Self {
         self.left = true;
         self
     }
 
+    /// Keeps the menu open after a pick, for a menu of toggles.
     pub fn sticky(mut self) -> Self {
         self.sticky = true;
         self
     }
 
-    /// Holds the trigger still, so the menu cannot open, as while an earlier choice is applied.
+    /// Holds the trigger still, so the menu cannot open, as while an earlier choice applies.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
-    pub fn item(mut self, item: MenuItem) -> Self {
+    pub fn item(mut self, item: MenuItem<S>) -> Self {
         self.items.push(item);
         self
     }
 
-    pub fn items(mut self, items: impl IntoIterator<Item = MenuItem>) -> Self {
+    pub fn items(mut self, items: impl IntoIterator<Item = MenuItem<S>>) -> Self {
         self.items.extend(items);
         self
     }
 
-    /// Runs `handler` when a click opens the menu, as for reading afresh what it lists.
-    pub fn on_open(
-        mut self,
-        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.on_open = Some(Box::new(handler));
-        self
-    }
-
-    pub fn menu(mut self, menu: Menu) -> Self {
+    /// A whole menu in place of the default one, for a menu with a search or a header.
+    pub fn menu(mut self, menu: Menu<S>) -> Self {
         self.menu = Some(menu);
         self
     }
 
-    /// Caps the menu at `height` and scrolls what does not fit. Ignored when a whole `menu` is
-    /// given, which brings its own.
-    pub fn scroll_after(mut self, height: Pixels) -> Self {
+    /// Caps the default menu at `height` and scrolls what does not fit.
+    pub fn scroll_after(mut self, height: f32) -> Self {
         self.scroll_after = Some(height);
         self
     }
-}
 
-impl Styled for Picker {
-    fn style(&mut self) -> &mut StyleRefinement {
-        &mut self.style
+    /// Runs when a press opens the menu, as for reading afresh what it lists.
+    pub fn on_open(mut self, f: impl Fn(&mut S, &mut Tx) + 'static) -> Self {
+        self.popover = self.popover.on_open(f);
+        self
     }
-}
 
-impl RenderOnce for Picker {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let Self {
-            style,
-            key,
-            group,
-            face,
-            name,
-            leading,
-            tooltip,
-            above,
-            tint,
-            status,
-            selected,
-            small,
-            ghost,
-            width,
-            left,
-            sticky,
-            disabled,
-            items,
-            menu,
-            scroll_after,
-            on_open,
-        } = self;
-
-        let theme = *cx.theme();
-        let drop = match small {
-            true => theme.metrics.control_small,
-            false => theme.metrics.control,
-        } + TRIGGER_GAP;
-
-        let button = match face {
-            Face::Label(current) => Button::new(SharedString::from(format!("{key}-picker")))
+    /// The trigger, with the open menu pushed into `layer`.
+    pub fn build(self, theme: &Theme, layer: &mut Vec<El>) -> El {
+        let key = format!("{}-picker", self.key);
+        let mut button = match self.face {
+            Face::Label(current) => Button::new(key)
                 .label(current)
                 .trailing("icons/chevron-down.svg")
                 .outline(),
-            Face::Plain(label) => Button::new(SharedString::from(format!("{key}-picker")))
-                .label(label)
-                .outline(),
-            Face::Icon(icon) => Button::new(SharedString::from(format!("{key}-picker")))
-                .icon(icon)
-                .ghost(),
+            Face::Plain(label) => Button::new(key).label(label).outline(),
+            Face::Icon(icon) => Button::new(key).icon(icon).ghost(),
         };
-        let button = button
-            .when(small, Button::small)
-            .when(ghost, Button::ghost)
-            .when_some(name.clone(), Button::name)
-            .when_some(leading, Button::leading)
-            .when_some(tooltip, |button, key| match above {
-                true => button.tooltip_above(key),
-                false => button.tooltip(key),
-            })
-            .when_some(tint, Button::tint)
-            .when_some(status, Button::status)
-            .disabled(disabled);
-
-        let menu = menu.unwrap_or_else(|| {
-            let menu = Menu::new(SharedString::from(format!("{key}-menu"))).w(width);
-            match scroll_after {
-                Some(height) => {
-                    let view = window.current_view();
-                    let scrollbar = window.use_keyed_state(
-                        SharedString::from(format!("{key}-menu-scroll")),
-                        cx,
-                        |_, _| Scrollbar::inset().watching(view),
-                    );
-                    menu.max_h(height).scrollbar(scrollbar)
-                }
+        if self.small {
+            button = button.small();
+        }
+        if self.ghost {
+            button = button.ghost();
+        }
+        if let Some(name) = self.name.clone() {
+            button = button.name(name);
+        }
+        if let Some(leading) = self.leading {
+            button = button.leading(leading);
+        }
+        if let Some((tip, above)) = self.tooltip {
+            button = match above {
+                true => button.tooltip_above(tip),
+                false => button.tooltip(tip),
+            };
+        }
+        if let Some(tint) = self.tint {
+            button = button.tint(tint);
+        }
+        if let Some(status) = self.status {
+            button = button.status(status);
+        }
+        let button = button.disabled(self.disabled);
+        let mut menu = self.menu.unwrap_or_else(|| {
+            let menu = Menu::new(format!("{}-menu", self.key)).width(self.width);
+            match self.scroll_after {
+                Some(height) => menu.max_height(height),
                 None => menu,
             }
         });
-        let menu = menu
-            .items(items)
-            .top(drop)
-            .when_some(name, Menu::name)
-            .when_else(left, |menu| menu.left_0(), |menu| menu.right_0());
-
-        let mut popover = Popover::new(key, group)
+        menu = menu.items(self.items);
+        if let Some(name) = self.name {
+            menu = menu.name(name);
+        }
+        let mut popover = self
+            .popover
             .button(button)
-            .selected(selected)
+            .selected(self.selected)
             .menu(menu)
-            .when(!sticky, Popover::commands)
-            .when_some(on_open, |popover, on_open| popover.on_open(on_open));
-        *popover.style() = style;
-        popover
+            .placement(match self.left {
+                true => Placement::BottomStart,
+                false => Placement::BottomEnd,
+            });
+        if !self.sticky {
+            popover = popover.commands();
+        }
+        popover.build(theme, layer)
     }
 }

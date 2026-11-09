@@ -1,10 +1,9 @@
-mod link;
 mod navigation;
 
-pub use link::Link;
-pub use navigation::{Navigation, NavigationEvent};
+pub use navigation::Navigation;
 
-use gpui::{App, AppContext as _, Entity, Global, SharedString};
+/// An id a destination carries: cheap to clone, since every link holds one.
+pub type SharedString = std::sync::Arc<str>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LibraryTab {
@@ -347,18 +346,6 @@ pub enum Destination {
     Fullscreen,
 }
 
-impl From<&ui::Pin> for Destination {
-    fn from(pin: &ui::Pin) -> Self {
-        let id = SharedString::from(pin.id.clone());
-        match pin.kind {
-            ui::PinKind::Album => Destination::Album(id),
-            ui::PinKind::Artist => Destination::Artist(id),
-            ui::PinKind::Playlist => Destination::Playlist(id),
-            ui::PinKind::Song => Destination::Song(id),
-        }
-    }
-}
-
 impl Destination {
     pub fn same_section(&self, other: &Destination) -> bool {
         match (self, other) {
@@ -403,46 +390,4 @@ impl Destination {
                 | Destination::Fullscreen
         )
     }
-}
-
-#[derive(Clone)]
-struct Router(Entity<Navigation>);
-
-impl Global for Router {}
-
-pub fn init(start: Destination, cx: &mut App) {
-    let navigation = cx.new(|_| Navigation::new(start));
-    cx.set_global(Router(navigation));
-}
-
-pub fn trail(cx: &App) -> Entity<Navigation> {
-    cx.global::<Router>().0.clone()
-}
-
-pub fn navigate(destination: Destination, cx: &mut App) {
-    trail(cx).update(cx, |navigation, cx| navigation.go(destination, cx));
-}
-
-/// Replaces the current destination so Back and Forward do not revisit a page that disappeared.
-pub fn replace(destination: Destination, cx: &mut App) {
-    trail(cx).update(cx, |navigation, cx| navigation.replace(destination, cx));
-}
-
-pub fn back(cx: &mut App) {
-    trail(cx).update(cx, |navigation, cx| navigation.back(cx));
-}
-
-pub fn forward(cx: &mut App) {
-    trail(cx).update(cx, |navigation, cx| navigation.forward(cx));
-}
-
-/// Steps up from a drill-in to `parent`, going back when it is the page before so the history
-/// holds no loop, and replacing the drill-in otherwise.
-pub fn up(parent: Destination, cx: &mut App) {
-    trail(cx).update(cx, |navigation, cx| navigation.up(parent, cx));
-}
-
-/// Opens settings on the page they last showed, or on General the first time.
-pub fn open_settings(cx: &mut App) {
-    trail(cx).update(cx, |navigation, cx| navigation.open_settings(cx));
 }

@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 
 use anyhow::{Context as _, Result};
-use gpui::{Context, SharedString};
+use i18n::SharedString;
 use music::equalizer::{
     Curve, Filter, Kind, MAX_FILTERS, PREAMP_RANGE, Preamp, Preset, Tone, Width,
 };
@@ -15,6 +15,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{AppSettings, Values};
+use crate::Cx;
 use crate::equalizer::{DeviceRule, RuleDevice, Sound};
 
 /// How a rule for every output no other rule names stores its output.
@@ -371,12 +372,12 @@ impl AppSettings {
             .map(Profile::curve)
     }
 
-    pub fn set_equalizer(&mut self, on: bool, cx: &mut Context<Self>) {
+    pub fn set_equalizer(&mut self, on: bool, cx: &mut Cx) {
         self.values.equalizer = on;
         self.schedule_save(cx);
     }
 
-    pub fn set_equalizer_advanced(&mut self, advanced: bool, cx: &mut Context<Self>) {
+    pub fn set_equalizer_advanced(&mut self, advanced: bool, cx: &mut Cx) {
         self.values.equalizer_advanced = advanced;
         self.schedule_save(cx);
     }
@@ -403,7 +404,7 @@ impl AppSettings {
         Tone::new(self.values.equalizer_bass, self.values.equalizer_treble)
     }
 
-    pub fn set_equalizer_tone(&mut self, tone: Tone, cx: &mut Context<Self>) {
+    pub fn set_equalizer_tone(&mut self, tone: Tone, cx: &mut Cx) {
         self.values.equalizer_bass = tone.bass();
         self.values.equalizer_treble = tone.treble();
         self.schedule_save(cx);
@@ -418,7 +419,7 @@ impl AppSettings {
     }
 
     /// Makes profile `index` the one that plays. An index past the end is ignored.
-    pub fn select_equalizer_profile(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub fn select_equalizer_profile(&mut self, index: usize, cx: &mut Cx) {
         if index < self.values.equalizer_profiles.len() {
             self.values.equalizer_profile = index;
             self.schedule_save(cx);
@@ -435,7 +436,7 @@ impl AppSettings {
 
     /// Makes the profile with no name the one that plays, adding it holding `curve` when there
     /// is none, so a preset never lands on a profile someone named.
-    pub fn select_equalizer_scratch(&mut self, curve: &Curve, cx: &mut Context<Self>) {
+    pub fn select_equalizer_scratch(&mut self, curve: &Curve, cx: &mut Cx) {
         match self.equalizer_scratch() {
             Some(index) => self.values.equalizer_profile = index,
             None => {
@@ -451,7 +452,7 @@ impl AppSettings {
     /// trimmed, numbered when another profile shows it already. An empty name stays empty so
     /// the label is read at render, unless a profile with no name exists, which keeps that one
     /// the only one presets load into.
-    pub fn add_equalizer_profile(&mut self, name: &str, curve: &Curve, cx: &mut Context<Self>) {
+    pub fn add_equalizer_profile(&mut self, name: &str, curve: &Curve, cx: &mut Cx) {
         let name = match (name.trim(), self.equalizer_scratch()) {
             ("", None) => String::new(),
             ("", Some(_)) => self.free_profile_name(&equalizer_profile_label(""), None),
@@ -473,7 +474,7 @@ impl AppSettings {
         index: usize,
         from: &str,
         name: &str,
-        cx: &mut Context<Self>,
+        cx: &mut Cx,
     ) -> bool {
         let name = name.trim();
         if name.is_empty() {
@@ -499,7 +500,7 @@ impl AppSettings {
 
     /// Removes profile `index` and the rules that play it, unless it is the only one or no
     /// longer the profile named `name`. When it was the one playing, its neighbour plays.
-    pub fn remove_equalizer_profile(&mut self, index: usize, name: &str, cx: &mut Context<Self>) {
+    pub fn remove_equalizer_profile(&mut self, index: usize, name: &str, cx: &mut Cx) {
         let values = &mut self.values;
         let named = values
             .equalizer_profiles
@@ -569,7 +570,7 @@ impl AppSettings {
 
     /// Adds `rule` in place of the rule its device had, else before the rule for every other
     /// device, which stays last.
-    pub fn set_equalizer_rule(&mut self, rule: DeviceRule, cx: &mut Context<Self>) {
+    pub fn set_equalizer_rule(&mut self, rule: DeviceRule, cx: &mut Cx) {
         let rules = &mut self.values.equalizer_rules;
         match rules
             .iter_mut()
@@ -588,7 +589,7 @@ impl AppSettings {
     }
 
     /// Removes the rule for `device`, if it has one.
-    pub fn remove_equalizer_rule(&mut self, device: &RuleDevice, cx: &mut Context<Self>) {
+    pub fn remove_equalizer_rule(&mut self, device: &RuleDevice, cx: &mut Cx) {
         let rules = &mut self.values.equalizer_rules;
         let before = rules.len();
         rules.retain(|rule| rule.device.id() != device.id());
@@ -598,7 +599,7 @@ impl AppSettings {
     }
 
     /// Stores `curve` as the profile that plays, keeping its name.
-    pub fn set_equalizer_curve(&mut self, curve: &Curve, cx: &mut Context<Self>) {
+    pub fn set_equalizer_curve(&mut self, curve: &Curve, cx: &mut Cx) {
         let values = &mut self.values;
         match values.equalizer_profiles.get_mut(values.equalizer_profile) {
             Some(profile) => profile.store(curve),

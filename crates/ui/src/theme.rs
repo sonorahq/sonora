@@ -1,13 +1,9 @@
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::time::{Duration, Instant};
 
-use gpui::{
-    App, Global, Hsla, Pixels, Rgba, SharedString, Task, WindowAppearance,
-    WindowBackgroundAppearance, px, rgb, rgba,
-};
-use i18n::t;
+use i18n::{SharedString, t};
 use serde::{Deserialize, Serialize};
 
+use crate::color::{Hsla, mix, rgb, rgba};
 use crate::metrics::{Metrics, Rounding, Text};
 use crate::palette::CoverPalette;
 
@@ -17,9 +13,6 @@ pub const MAX_TRANSPARENCY: f32 = 1.;
 pub const BACKDROP_TRANSPARENCY: f32 = 0.15;
 pub const MIN_LYRICS_SCALE: f32 = 0.6;
 pub const MAX_LYRICS_SCALE: f32 = 2.;
-
-const FADE: Duration = Duration::from_millis(320);
-const FRAME: Duration = Duration::from_millis(8);
 
 const SURFACE_TINT: f32 = 0.5;
 const BORDER_TINT: f32 = 0.4;
@@ -55,15 +48,23 @@ const HEADER_FLOOR: f32 = 0.15;
 const SURFACE_WEIGHT: f32 = 0.68;
 const HEADER_WEIGHT: f32 = 0.5;
 
+/// What the window draws behind its content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Backdrop {
+    Opaque,
+    Transparent,
+    Blurred,
+}
+
 /// The window background a look asks the platform for. Blur needs something to show through,
 /// so only a see-through window on a platform that can blur gets it, and only an opaque one
 /// can take the platform's own fill.
-pub fn backdrop(blur_window: bool, transparent: bool) -> WindowBackgroundAppearance {
+pub fn backdrop(blur_window: bool, transparent: bool) -> Backdrop {
     match WINDOW_BLUR && blur_window && transparent {
-        true => WindowBackgroundAppearance::Blurred,
+        true => Backdrop::Blurred,
         false => match SYSTEM_FILLS && !transparent {
-            true => WindowBackgroundAppearance::Opaque,
-            false => WindowBackgroundAppearance::Transparent,
+            true => Backdrop::Opaque,
+            false => Backdrop::Transparent,
         },
     }
 }
@@ -121,17 +122,18 @@ impl ThemeKind {
         }
     }
 
-    pub fn resolved(self, cx: &App) -> Self {
+    /// The palette this kind draws with, `system_dark` being what the platform reports.
+    pub fn resolved(self, system_dark: bool) -> Self {
         match self {
-            Self::System => assumed().unwrap_or_else(|| Self::reported(cx)),
+            Self::System => assumed().unwrap_or_else(|| Self::reported(system_dark)),
             kind => kind,
         }
     }
 
-    pub fn reported(cx: &App) -> Self {
-        match cx.window_appearance() {
-            WindowAppearance::Light | WindowAppearance::VibrantLight => Self::Light,
-            WindowAppearance::Dark | WindowAppearance::VibrantDark => Self::Dark,
+    pub fn reported(system_dark: bool) -> Self {
+        match system_dark {
+            true => Self::Dark,
+            false => Self::Light,
         }
     }
 
@@ -381,8 +383,8 @@ pub struct Theme {
     pub table_hover: Hsla,
     pub table_active: Hsla,
     pub table_active_border: Hsla,
-    pub radius: Pixels,
-    pub font_size: Pixels,
+    pub radius: f32,
+    pub font_size: f32,
     pub metrics: Metrics,
     pub transparent: bool,
     /// Whether the frosted treatments are painted. Read it through `ui::blurring` rather
@@ -396,15 +398,6 @@ pub struct Theme {
     /// surfaces like the fullscreen ambient background. The selection itself stays single.
     pub tint_secondary: Option<Hsla>,
 }
-
-impl Global for Theme {}
-
-#[derive(Default)]
-struct Transition {
-    task: Option<Task<()>>,
-}
-
-impl Global for Transition {}
 
 impl Theme {
     pub fn dark() -> Self {
@@ -439,8 +432,8 @@ impl Theme {
             table_hover: rgba(0x3b3b3b66).into(),
             table_active: rgba(0x1e40af33).into(),
             table_active_border: rgb(0x1d4ed8).into(),
-            radius: px(6.),
-            font_size: px(14.),
+            radius: 6.,
+            font_size: 14.,
             metrics: Metrics::default(),
             transparent: false,
             blur: false,
@@ -482,8 +475,8 @@ impl Theme {
             table_hover: rgba(0xe8e8e866).into(),
             table_active: rgba(0x2563eb1f).into(),
             table_active_border: rgb(0x2563eb).into(),
-            radius: px(6.),
-            font_size: px(14.),
+            radius: 6.,
+            font_size: 14.,
             metrics: Metrics::default(),
             transparent: false,
             blur: false,
@@ -734,10 +727,10 @@ impl Theme {
         apply_color!(table_active_border);
 
         if let Some(radius) = overrides.radius {
-            self.radius = px(radius.clamp(0., 24.));
+            self.radius = radius.clamp(0., 24.);
         }
         if let Some(font_size) = overrides.font_size {
-            self.font_size = px(font_size.clamp(10., 24.));
+            self.font_size = font_size.clamp(10., 24.);
         }
         self
     }
@@ -780,10 +773,10 @@ impl Theme {
     }
 
     pub fn for_look(look: Look, overrides: &ThemeOverrides) -> Self {
-        let base = px(overrides
+        let base = overrides
             .font_size
             .unwrap_or(look.font)
-            .clamp(MIN_FONT, MAX_FONT));
+            .clamp(MIN_FONT, MAX_FONT);
         let mut theme = Self::for_kind(look.kind);
 
         if let Some(tint) = look.tint {
@@ -804,56 +797,21 @@ impl Theme {
         theme
     }
 
-    pub fn text(&self, step: Text) -> Pixels {
-        px((self.font_size / px(1.) * step.ratio()).round())
+    /// The font size of a text step, rounded to whole points.
+    pub fn text(&self, step: Text) -> f32 {
+        (self.font_size * step.ratio()).round()
     }
 
-    pub fn init(look: Look, overrides: &ThemeOverrides, cx: &mut App) {
-        cx.set_global(Self::for_look(resolve(look, cx), overrides));
-    }
-
-    pub fn set(look: Look, overrides: &ThemeOverrides, cx: &mut App) {
-        cx.default_global::<Transition>().task = None;
-        cx.set_global(Self::for_look(resolve(look, cx), overrides));
-        cx.refresh_windows();
-    }
-
-    pub fn fade(look: Look, overrides: &ThemeOverrides, cx: &mut App) {
-        let from = *cx.theme();
-        let to = Self::for_look(resolve(look, cx), overrides);
-
-        cx.default_global::<Transition>().task = None;
-        cx.set_global(from.mixed(&to, 0.));
-        cx.refresh_windows();
-
-        let task = cx.spawn(async move |cx| {
-            let start = Instant::now();
-            loop {
-                cx.background_executor().timer(FRAME).await;
-
-                let delta = start.elapsed().as_secs_f32() / FADE.as_secs_f32();
-                let step = match delta >= 1. {
-                    true => to,
-                    false => from.mixed(&to, ease_out(delta)),
-                };
-                cx.update(|cx| {
-                    cx.set_global(step);
-                    cx.refresh_windows();
-                });
-
-                if delta >= 1. {
-                    break;
-                }
-            }
-        });
-        cx.default_global::<Transition>().task = Some(task);
-    }
-}
-
-fn resolve(look: Look, cx: &App) -> Look {
-    Look {
-        kind: look.kind.resolved(cx),
-        ..look
+    /// The theme a look draws with, `system_dark` being what the platform reports. Rune springs
+    /// every colour that changes, so switching themes cross-fades on its own.
+    pub fn resolve(look: Look, overrides: &ThemeOverrides, system_dark: bool) -> Self {
+        Self::for_look(
+            Look {
+                kind: look.kind.resolved(system_dark),
+                ..look
+            },
+            overrides,
+        )
     }
 }
 
@@ -865,22 +823,6 @@ fn veil(color: Hsla, opacity: f32, floor: f32) -> Hsla {
         a: color.a * (opacity + (1. - opacity) * floor),
         ..color
     }
-}
-
-fn mix(from: Hsla, to: Hsla, delta: f32) -> Hsla {
-    let (from, to) = (Rgba::from(from), Rgba::from(to));
-    let channel = |from: f32, to: f32| from + (to - from) * delta;
-
-    Hsla::from(Rgba {
-        r: channel(from.r, to.r),
-        g: channel(from.g, to.g),
-        b: channel(from.b, to.b),
-        a: channel(from.a, to.a),
-    })
-}
-
-fn ease_out(delta: f32) -> f32 {
-    1. - (1. - delta.clamp(0., 1.)).powi(3)
 }
 
 fn wash(base: Hsla, tint: Hsla, strength: f32) -> Hsla {
@@ -899,16 +841,6 @@ fn parse_color(value: &str) -> Option<Hsla> {
         6 => Some(rgb(parsed).into()),
         8 => Some(rgba(parsed).into()),
         _ => None,
-    }
-}
-
-pub trait ActiveTheme {
-    fn theme(&self) -> &Theme;
-}
-
-impl ActiveTheme for App {
-    fn theme(&self) -> &Theme {
-        self.global::<Theme>()
     }
 }
 
@@ -992,7 +924,7 @@ mod tests {
 
         let theme = Theme::for_look(look, &overrides);
 
-        assert_eq!(theme.background, rgb(0x101010).into());
+        assert_eq!(theme.background, Hsla::from(rgb(0x101010)));
         assert_eq!(theme.tint, Some(TINT));
     }
 }

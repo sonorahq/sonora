@@ -1,8 +1,7 @@
-use gpui::{Context, Entity};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use tokio::sync::watch;
 
-use crate::{AppSettings, Io, Playback, PlaybackState};
+use crate::{AppSettings, Change, Cx, Playback, PlaybackState, Store, Topic};
 
 /// How long the Linux inhibitor waits before it asks the portal again after a failed request.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -28,8 +27,6 @@ enum NotHeld {
 /// Keeps the system awake while music plays, and the display on while it plays in the focused
 /// fullscreen view. Linux asks the desktop portal from tokio, so the lock lands a moment later.
 pub struct Wake {
-    settings: Entity<AppSettings>,
-    playback: Entity<Playback>,
     fullscreen: bool,
     focused: bool,
     applied: Want,
@@ -40,41 +37,19 @@ pub struct Wake {
 }
 
 impl Wake {
-    pub fn new(
-        settings: Entity<AppSettings>,
-        playback: Entity<Playback>,
-        io: Io,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.observe(&settings, |this, _, cx| this.apply(cx)).detach();
-        cx.observe(&playback, |this, _, cx| this.apply(cx)).detach();
-
-        let this = cx.weak_entity();
-        cx.on_window_closed(move |cx, _| {
-            if !cx.windows().is_empty() {
-                return;
-            }
-            this.update(cx, |this, cx| {
-                this.fullscreen = false;
-                this.focused = false;
-                this.apply(cx);
-            })
-            .ok();
-        })
-        .detach();
-
+    /// Holds nothing until [`Self::apply`] first finds music playing. On Linux it starts the
+    /// worker that talks to the portal.
+    pub fn new(cx: &mut Cx) -> Self {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let sender = {
             let (sender, receiver) = watch::channel(Want::default());
-            io.spawn(inhibit(receiver));
+            cx.io.spawn(inhibit(receiver));
             sender
         };
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-        let _ = io;
+        let _ = cx;
 
         Self {
-            settings,
-            playback,
             fullscreen: false,
             focused: false,
             applied: Want::default(),
@@ -86,23 +61,30 @@ impl Wake {
     }
 
     /// Records whether the window shows the fullscreen view, which the display lock needs.
-    pub fn set_fullscreen(&mut self, on: bool, cx: &mut Context<Self>) {
+    pub fn set_fullscreen(&mut self, on: bool, settings: &AppSettings, playback: &Playback) {
         self.fullscreen = on;
-        self.apply(cx);
+        self.apply(settings, playback);
     }
 
     /// Records whether the window has focus, which the display lock needs.
-    pub fn set_focused(&mut self, on: bool, cx: &mut Context<Self>) {
+    pub fn set_focused(&mut self, on: bool, settings: &AppSettings, playback: &Playback) {
         self.focused = on;
-        self.apply(cx);
+        self.apply(settings, playback);
+    }
+
+    /// Lets go of the display once the last window closed, since nothing is shown fullscreen
+    /// or focused any more.
+    pub fn windows_closed(&mut self, settings: &AppSettings, playback: &Playback) {
+        self.fullscreen = false;
+        self.focused = false;
+        self.apply(settings, playback);
     }
 
     /// Works out what should be held now and hands it to the platform when it changed. Loading
     /// counts as playing only when play was asked for, so a track change or a rebuffer keeps
     /// the lock while a restored track loading paused at launch never takes it.
-    fn apply(&mut self, cx: &mut Context<Self>) {
-        let playback = self.playback.read(cx);
-        let playing = self.settings.read(cx).stay_awake()
+    pub fn apply(&mut self, settings: &AppSettings, playback: &Playback) {
+        let playing = settings.stay_awake()
             && match playback.state() {
                 PlaybackState::Playing => true,
                 PlaybackState::Loading => playback.wants_playing(),
@@ -154,6 +136,29 @@ impl Wake {
             target_os = "freebsd"
         )))]
         let _ = want;
+    }
+}
+
+impl Store {
+    /// Records whether the window shows the fullscreen view, which the display lock needs.
+    pub fn set_fullscreen(&mut self, on: bool) {
+        self.wake.set_fullscreen(on, &self.settings, &self.playback);
+    }
+
+    /// Records whether the window has focus, which the display lock needs.
+    pub fn set_focused(&mut self, on: bool) {
+        self.wake.set_focused(on, &self.settings, &self.playback);
+    }
+
+    /// For the host once its last window has closed.
+    pub fn windows_closed(&mut self) {
+        self.wake.windows_closed(&self.settings, &self.playback);
+    }
+
+    pub(crate) fn react_wake(&mut self, change: &Change) {
+        if let Change::Topic(Topic::Settings | Topic::Playback) = change {
+            self.wake.apply(&self.settings, &self.playback);
+        }
     }
 }
 

@@ -1,35 +1,36 @@
-use gpui::accesskit::Role;
-use gpui::prelude::*;
-use gpui::{
-    AnyElement, App, Div, ElementId, SharedString, StyleRefinement, TextAlign, Window, div, svg,
-};
+//! The block an empty page or list shows: a faint glyph, a muted line, an optional reason under
+//! it and an optional action.
 
-use crate::label::vacant;
+use rune::{El, TextStyle, col, icon, text};
+
+use crate::label::{Weight, spoken_vacant, vacant};
 use crate::metrics::Text;
-use crate::theme::ActiveTheme as _;
+use crate::paint::rems;
+use crate::theme::Theme;
 
+/// How strongly the glyph shows.
 const GLYPH: f32 = 0.35;
+/// The glyph's size against a cover, regular and compact.
 const GLYPH_SIZE: f32 = 0.5;
 const COMPACT_SIZE: f32 = 0.22;
+/// How strongly the reason shows against the label.
 const DETAIL: f32 = 0.8;
+/// How wide the label and its reason may run, in covers.
 const WORDS: f32 = 2.5;
 
-#[derive(IntoElement)]
 pub struct Vacancy {
-    base: Div,
-    label: SharedString,
-    detail: Option<SharedString>,
-    icon: Option<SharedString>,
-    action: Option<AnyElement>,
+    label: String,
+    detail: Option<String>,
+    icon: Option<String>,
+    action: Option<El>,
     compact: bool,
-    /// The id under which the label reaches screen readers, which it does only once given one.
-    spoken: Option<ElementId>,
+    /// The key under which the label reaches screen readers as one line.
+    spoken: Option<String>,
 }
 
 impl Vacancy {
-    pub fn new(label: impl Into<SharedString>) -> Self {
+    pub fn new(label: impl Into<String>) -> Self {
         Self {
-            base: div(),
             label: label.into(),
             detail: None,
             icon: None,
@@ -46,118 +47,83 @@ impl Vacancy {
     }
 
     /// A second, quieter line under the label, for the reason behind an empty page.
-    pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = Some(detail.into());
         self
     }
 
-    pub fn icon(mut self, path: impl Into<SharedString>) -> Self {
+    pub fn icon(mut self, path: impl Into<String>) -> Self {
         self.icon = Some(path.into());
         self
     }
 
-    pub fn action(mut self, action: impl IntoElement) -> Self {
-        self.action = Some(action.into_any_element());
+    /// An element under the text, usually a button that fills the page.
+    pub fn action(mut self, action: El) -> Self {
+        self.action = Some(action);
         self
     }
 
-    /// Exposes the label to screen readers as a line of text described by the detail, under the
-    /// element id `id`. Without it both are drawn but never read.
-    pub fn spoken(mut self, id: impl Into<ElementId>) -> Self {
-        self.spoken = Some(id.into());
+    /// Exposes the label to screen readers as one line described by the detail, under `key`.
+    pub fn spoken(mut self, key: impl Into<String>) -> Self {
+        self.spoken = Some(key.into());
         self
     }
-}
 
-impl Styled for Vacancy {
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
-    }
-}
-
-impl RenderOnce for Vacancy {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let Self {
-            mut base,
-            label,
-            detail,
-            icon,
-            action,
-            compact,
-            spoken,
-        } = self;
-
-        let theme = *cx.theme();
-        let overrides = std::mem::take(base.style());
+    pub fn build(self, theme: &Theme) -> El {
         let glyph = theme.metrics.cover
-            * match compact {
+            * match self.compact {
                 true => COMPACT_SIZE,
                 false => GLYPH_SIZE,
             };
-
-        let mut vacancy = base
-            .flex()
-            .flex_col()
-            .w_full()
-            .items_center()
-            .justify_center()
-            .when_some(icon, |this, icon| {
-                this.child(
-                    svg()
-                        .path(icons::path(icon))
-                        .size(glyph)
-                        .mt(match compact {
-                            true => theme.metrics.pad,
-                            false => theme.metrics.inset,
-                        })
-                        .flex_none()
-                        .text_color(theme.muted_foreground.opacity(GLYPH)),
-                )
-            })
-            .child({
-                let text = match detail.clone() {
-                    Some(detail) => caption(label.clone(), detail, cx),
-                    None => vacant(label.clone(), cx),
-                };
-                match spoken {
-                    Some(id) => text
-                        .id(id)
-                        .role(Role::Label)
-                        .aria_value(label)
-                        .when_some(detail, |this, detail| this.aria_description(detail))
-                        .into_any_element(),
-                    None => text.into_any_element(),
-                }
-            })
-            .when_some(action, |this, action| this.child(action));
-
-        vacancy.style().refine(&overrides);
-        vacancy
+        let mut vacancy = col().w_full().center();
+        if let Some(path) = &self.icon {
+            vacancy = vacancy.child(
+                icon(icons::get(path), glyph)
+                    .mt(match self.compact {
+                        true => theme.metrics.pad,
+                        false => theme.metrics.inset,
+                    })
+                    .color(theme.muted_foreground.opacity(GLYPH).color())
+                    .a11y_hidden(),
+            );
+        }
+        let words = match (self.detail.clone(), self.spoken) {
+            (Some(detail), Some(key)) => caption(self.label.clone(), detail.clone(), true, theme)
+                .key(key)
+                .role("text")
+                .label(self.label)
+                .description(detail),
+            (Some(detail), None) => caption(self.label, detail, false, theme),
+            (None, Some(key)) => spoken_vacant(key, self.label, theme),
+            (None, None) => vacant(self.label, theme),
+        };
+        vacancy.child(words).children(self.action)
     }
 }
 
 /// The label and its reason stacked, padded the way `vacant` pads its one line.
-fn caption(label: SharedString, detail: SharedString, cx: &App) -> Div {
-    let theme = cx.theme();
-
-    div()
-        .flex()
-        .flex_col()
+fn caption(label: String, detail: String, hidden: bool, theme: &Theme) -> El {
+    let hide = |e: El| match hidden {
+        true => e.a11y_hidden(),
+        false => e,
+    };
+    col()
         .items_center()
-        .gap_1()
-        .p(theme.metrics.pad * 2.)
+        .gap(rems(theme, 0.25))
+        .padding(theme.metrics.pad * 2.)
         .max_w(theme.metrics.cover * WORDS)
-        .text_align(TextAlign::Center)
-        .child(
-            div()
-                .text_size(theme.text(Text::Label))
-                .text_color(theme.muted_foreground)
-                .child(label),
-        )
-        .child(
-            div()
-                .text_size(theme.text(Text::Small))
-                .text_color(theme.muted_foreground.opacity(DETAIL))
-                .child(detail),
-        )
+        .child(hide(
+            text(label)
+                .font(TextStyle::new(theme.text(Text::Label), Weight::NORMAL))
+                .color(theme.muted_foreground.color())
+                .align(rune::Align::Center)
+                .wrap(),
+        ))
+        .child(hide(
+            text(detail)
+                .font(TextStyle::new(theme.text(Text::Small), Weight::NORMAL))
+                .color(theme.muted_foreground.opacity(DETAIL).color())
+                .align(rune::Align::Center)
+                .wrap(),
+        ))
 }

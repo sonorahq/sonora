@@ -1,14 +1,13 @@
 //! Links handed to the app from outside, by the system or on the command line, opened on the
 //! provider they belong to. Sonora's own `sonora:` links offer a theme to install instead.
 
-use gpui::{App, Context, Entity, EventEmitter, Task};
 use music::link::{self, Linked};
 
 use crate::settings::{is_own_link, read_theme_link};
-use crate::{AppSettings, Devices, Io, Outcome, Session, SessionState, ThemeOffer, Toasts};
-
-/// A page a link asked for, for the app to navigate to. It never carries a Jam or a short link.
-pub struct Opened(pub Linked);
+use crate::{
+    AppSettings, Change, Cx, Event, Job, Outcome, Session, SessionState, Store, ThemeOffer, Toasts,
+    Topic,
+};
 
 /// A link waiting for its provider to be the signed-in one.
 struct Waiting {
@@ -21,159 +20,23 @@ struct Waiting {
 
 /// Opens links to any provider's pages and Jams. A link to a provider other than the current
 /// one switches to it when it has an account stored, and opens once that provider is signed in.
-/// A page comes out as an `Opened` event and a Jam goes to `Devices` to be asked about. A theme
-/// link waits in `theme_offer` until the user installs it or turns it down.
+/// A page comes out as [`Event::LinkOpened`] and a Jam goes to `Devices` to be asked about. A
+/// theme link waits in `theme_offer` until the user installs it or turns it down.
+#[derive(Default)]
 pub struct Links {
-    session: Entity<Session>,
-    devices: Entity<Devices>,
-    settings: Entity<AppSettings>,
     waiting: Option<Waiting>,
-    following: Option<Task<()>>,
+    following: Option<Job>,
     theme: Option<ThemeOffer>,
 }
 
-impl EventEmitter<Opened> for Links {}
-
 impl Links {
-    pub fn new(
-        session: Entity<Session>,
-        devices: Entity<Devices>,
-        settings: Entity<AppSettings>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.observe(&session, |this, _, cx| this.advance(cx))
-            .detach();
-        Self {
-            session,
-            devices,
-            settings,
-            waiting: None,
-            following: None,
-            theme: None,
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Recognizes provider links and Sonora links without opening them or fetching short links.
-    pub fn recognizes(&self, text: &str, cx: &App) -> bool {
-        is_own_link(text) || self.session.read(cx).read_link(text).is_some()
-    }
-
-    /// Opens provider links, browser handoffs and theme offers, returning whether the link was handled.
-    /// A recognized link cancels the previous resolution and waiting destination before opening.
-    pub fn open(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
-        if !self.recognizes(text, cx) {
-            return false;
-        }
-        self.following = None;
-        self.waiting = None;
-        if let Some(address) = link::address(text)
-            .filter(|address| address.scheme() == "sonora" && address.host_str() == Some("open"))
-        {
-            if let Some(target) = link::query(&address, "url")
-                && self.session.read(cx).read_link(&target).is_some()
-            {
-                return self.open(&target, cx);
-            }
-            Toasts::show(Outcome::Failed, "toast-link-unreadable", cx);
-            return true;
-        }
-        if is_own_link(text) {
-            match read_theme_link(text) {
-                Ok(offer) => {
-                    self.theme = Some(offer);
-                    cx.notify();
-                }
-                Err(error) => {
-                    log::warn!("links: cannot read a theme link: {error:#}");
-                    Toasts::show(Outcome::Failed, "toast-theme-link-unreadable", cx);
-                }
-            }
-            return true;
-        }
-        let Some((slug, linked)) = self.session.read(cx).read_link(text) else {
-            return false;
-        };
-        match linked {
-            Linked::Short => self.follow(slug, text.trim().to_owned(), cx),
-            linked => self.arrive(slug, linked, cx),
-        }
-        true
-    }
-
-    /// Fetches a short link and opens what its address or its page leads to on `slug`.
-    fn follow(&mut self, slug: &'static str, short: String, cx: &mut Context<Self>) {
-        let fetch = Io::global(cx).spawn(async move { link::follow(&short).await });
-        self.following = Some(cx.spawn(async move |this, cx| {
-            let followed = fetch.await.ok().flatten();
-            this.update(cx, |this, cx| {
-                this.following = None;
-                let found = followed.and_then(|followed| {
-                    let session = this.session.read(cx);
-                    std::iter::once(followed.address.as_str())
-                        .chain(link::addresses(&followed.page))
-                        .find_map(|address| {
-                            let (owner, linked) = session.read_link(address)?;
-                            (owner == slug && linked != Linked::Short).then_some(linked)
-                        })
-                });
-                match found {
-                    Some(linked) => this.arrive(slug, linked, cx),
-                    None => Toasts::show(Outcome::Failed, "toast-link-unreadable", cx),
-                }
-            })
-            .ok();
-        }));
-    }
-
-    fn arrive(&mut self, slug: &'static str, linked: Linked, cx: &mut Context<Self>) {
-        self.waiting = Some(Waiting {
-            slug,
-            linked,
-            switched: false,
-        });
-        self.advance(cx);
-    }
-
-    /// Opens the waiting link once its provider is signed in, asks the session to switch to that
-    /// provider when it is not, and drops the link when there is no account to switch to.
-    fn advance(&mut self, cx: &mut Context<Self>) {
-        let Some(waiting) = &self.waiting else {
-            return;
-        };
-        let session = self.session.read(cx);
-        if session.is_pending() {
-            return;
-        }
-        let here = session.provider_slug() == Some(waiting.slug);
-        let ready = matches!(
-            session.state(),
-            SessionState::SignedIn(_) | SessionState::Offline(_)
-        );
-        if here && ready {
-            if let Some(waiting) = self.waiting.take() {
-                self.deliver(waiting.linked, cx);
-            }
-            return;
-        }
-        if waiting.switched {
-            self.waiting = None;
-            return;
-        }
-        let slug = waiting.slug;
-        match session.account(slug) {
-            Some((_, true)) => {
-                if let Some(waiting) = &mut self.waiting {
-                    waiting.switched = true;
-                }
-                self.session
-                    .update(cx, |session, cx| session.switch(slug, cx));
-            }
-            Some((name, false)) => {
-                self.waiting = None;
-                Toasts::about(Outcome::Info, "toast-link-sign-in", name, cx);
-            }
-            None => self.waiting = None,
-        }
+    pub fn recognizes(&self, text: &str, session: &Session) -> bool {
+        is_own_link(text) || session.read_link(text).is_some()
     }
 
     /// The theme a link offered, while the user has not answered it.
@@ -181,22 +44,17 @@ impl Links {
         self.theme.as_ref()
     }
 
-    pub fn decline_theme(&mut self, cx: &mut Context<Self>) {
-        if self.theme.take().is_some() {
-            cx.notify();
-        }
+    pub fn decline_theme(&mut self) {
+        self.theme = None;
     }
 
     /// Installs and selects the offered theme and says whether it worked. A failure is logged
     /// and shown as a toast.
-    pub fn install_theme(&mut self, cx: &mut Context<Self>) -> bool {
+    pub fn install_theme(&mut self, settings: &mut AppSettings, cx: &mut Cx) -> bool {
         let Some(offer) = self.theme.take() else {
             return false;
         };
-        cx.notify();
-        let installed = self
-            .settings
-            .update(cx, |settings, cx| settings.install_theme(&offer, cx));
+        let installed = settings.install_theme(&offer, cx);
         match installed {
             Ok(id) => {
                 log::info!("links: installed theme {id}");
@@ -214,14 +72,137 @@ impl Links {
             }
         }
     }
+}
 
-    fn deliver(&mut self, linked: Linked, cx: &mut Context<Self>) {
+impl Store {
+    /// Opens provider links, browser handoffs and theme offers, returning whether the link was handled.
+    /// A recognized link cancels the previous resolution and waiting destination before opening.
+    pub fn open_link(&mut self, text: &str) -> bool {
+        if !self.links.recognizes(text, &self.session) {
+            return false;
+        }
+        self.links.following = None;
+        self.links.waiting = None;
+        if let Some(address) = link::address(text)
+            .filter(|address| address.scheme() == "sonora" && address.host_str() == Some("open"))
+        {
+            if let Some(target) = link::query(&address, "url")
+                && self.session.read_link(&target).is_some()
+            {
+                return self.open_link(&target);
+            }
+            Toasts::show(Outcome::Failed, "toast-link-unreadable", &mut self.cx);
+            return true;
+        }
+        if is_own_link(text) {
+            match read_theme_link(text) {
+                Ok(offer) => self.links.theme = Some(offer),
+                Err(error) => {
+                    log::warn!("links: cannot read a theme link: {error:#}");
+                    Toasts::show(Outcome::Failed, "toast-theme-link-unreadable", &mut self.cx);
+                }
+            }
+            return true;
+        }
+        let Some((slug, linked)) = self.session.read_link(text) else {
+            return false;
+        };
         match linked {
-            Linked::Jam(jam) => self
-                .devices
-                .update(cx, |devices, cx| devices.peek(&jam, cx)),
+            Linked::Short => self.follow_link(slug, text.trim().to_owned()),
+            linked => self.arrive_link(slug, linked),
+        }
+        true
+    }
+
+    /// Installs and selects the theme a link offered and says whether it worked.
+    pub fn install_theme_offer(&mut self) -> bool {
+        self.links.install_theme(&mut self.settings, &mut self.cx)
+    }
+
+    pub(crate) fn react_links(&mut self, change: &Change) {
+        if let Change::Topic(Topic::Session) = change {
+            self.advance_link();
+        }
+    }
+
+    /// Fetches a short link and opens what its address or its page leads to on `slug`.
+    fn follow_link(&mut self, slug: &'static str, short: String) {
+        self.links.following = Some(self.cx.spawn(|back| async move {
+            let followed = link::follow(&short).await;
+            back.post(move |store| {
+                store.links.following = None;
+                let found = followed.and_then(|followed| {
+                    let session = &store.session;
+                    std::iter::once(followed.address.as_str())
+                        .chain(link::addresses(&followed.page))
+                        .find_map(|address| {
+                            let (owner, linked) = session.read_link(address)?;
+                            (owner == slug && linked != Linked::Short).then_some(linked)
+                        })
+                });
+                match found {
+                    Some(linked) => store.arrive_link(slug, linked),
+                    None => Toasts::show(Outcome::Failed, "toast-link-unreadable", &mut store.cx),
+                }
+            });
+        }));
+    }
+
+    fn arrive_link(&mut self, slug: &'static str, linked: Linked) {
+        self.links.waiting = Some(Waiting {
+            slug,
+            linked,
+            switched: false,
+        });
+        self.advance_link();
+    }
+
+    /// Opens the waiting link once its provider is signed in, asks the session to switch to that
+    /// provider when it is not, and drops the link when there is no account to switch to.
+    fn advance_link(&mut self) {
+        let Some(waiting) = &self.links.waiting else {
+            return;
+        };
+        let session = &self.session;
+        if session.is_pending() {
+            return;
+        }
+        let here = session.provider_slug() == Some(waiting.slug);
+        let ready = matches!(
+            session.state(),
+            SessionState::SignedIn(_) | SessionState::Offline(_)
+        );
+        if here && ready {
+            if let Some(waiting) = self.links.waiting.take() {
+                self.deliver_link(waiting.linked);
+            }
+            return;
+        }
+        if waiting.switched {
+            self.links.waiting = None;
+            return;
+        }
+        let slug = waiting.slug;
+        match session.account(slug) {
+            Some((_, true)) => {
+                if let Some(waiting) = &mut self.links.waiting {
+                    waiting.switched = true;
+                }
+                self.session.switch(slug, &self.settings, &mut self.cx);
+            }
+            Some((name, false)) => {
+                self.links.waiting = None;
+                Toasts::about(Outcome::Info, "toast-link-sign-in", name, &mut self.cx);
+            }
+            None => self.links.waiting = None,
+        }
+    }
+
+    fn deliver_link(&mut self, linked: Linked) {
+        match linked {
+            Linked::Jam(jam) => self.devices.peek(&jam, &mut self.cx),
             Linked::Short => {}
-            linked => cx.emit(Opened(linked)),
+            linked => self.cx.emit(Event::LinkOpened(linked)),
         }
     }
 }

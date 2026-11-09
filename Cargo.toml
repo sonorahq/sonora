@@ -11,6 +11,14 @@ repository = "https://github.com/sonorahq/sonora"
 
 [workspace.dependencies]
 embed = { path = "crates/embed" }
+rune = { git = "https://github.com/anomalyco/rune", rev = "46cfcd64cf348ea9391c5db01f0d488c548d74d9", default-features = false, features = [
+  "accessibility",
+  "dbus",
+  "embedded-fonts",
+  "metal-backend",
+  "native-file-dialog",
+  "svg",
+] }
 cli = { path = "crates/cli" }
 i18n = { path = "crates/i18n" }
 icons = { path = "crates/icons" }
@@ -45,12 +53,6 @@ fastrand = "2.5"
 futures = "0.3"
 gethostname = "1.1"
 fluent-bundle = "0.16"
-gpui = { git = "https://github.com/sonorahq/gpui", rev = "6f271bf242b34c174aca298dd40f796995075494" }
-gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "6f271bf242b34c174aca298dd40f796995075494", features = [
-  "font-kit",
-  "wayland",
-  "x11",
-] }
 http = "1.3"
 winresource = "0.1"
 x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
@@ -134,6 +136,12 @@ objc2-io-kit = { version = "0.3", default-features = false, features = [
   "std",
   "pwr_mgt",
 ] }
+objc2-security = { version = "0.3", default-features = false, features = [
+  "std",
+  "SecBase",
+  "SecItem",
+] }
+oo7 = { version = "0.6", default-features = false }
 ashpd = { version = "0.13", default-features = false, features = [
   "async-io",
   "inhibit",

@@ -14,8 +14,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, bail};
-use gpui::{App, AppContext as _, AsyncApp, Task};
 use music::vault::{MASTER, Vault};
+
+use crate::{Cx, Job, keychain};
 
 /// The keychain entry the master key is stored under.
 const KEYCHAIN_URL: &str = "sonora://kept-tracks";
@@ -38,17 +39,19 @@ pub(crate) fn bytes(gb: u32) -> u64 {
 }
 
 /// Finds the master key, or makes and stores one on a first run, and unlocks `vault` with it.
-/// Until the task ends the vault keeps nothing, and a keychain that refuses leaves it locked for
+/// Until the job ends the vault keeps nothing, and a keychain that refuses leaves it locked for
 /// the session, with every kept track and download out of reach.
-pub(crate) fn unlock(vault: Arc<Vault>, cx: &mut App) -> Task<()> {
-    cx.spawn(async move |cx| match master(&vault, cx).await {
-        Ok(master) => {
-            vault.unlock(&master);
-            log::info!("vault: unlocked");
-        }
-        Err(error) => {
-            vault.stay_locked();
-            log::warn!("vault: stays locked, no track is kept or played from disk: {error:#}");
+pub(crate) fn unlock(vault: Arc<Vault>, cx: &Cx) -> Job {
+    cx.spawn(|_| async move {
+        match master(&vault).await {
+            Ok(master) => {
+                vault.unlock(&master);
+                log::info!("vault: unlocked");
+            }
+            Err(error) => {
+                vault.stay_locked();
+                log::warn!("vault: stays locked, no track is kept or played from disk: {error:#}");
+            }
         }
     })
 }
@@ -60,26 +63,26 @@ pub(crate) fn unlock(vault: Arc<Vault>, cx: &mut App) -> Task<()> {
 /// answers the same when the listener declines its prompt. An existing key file is used then and
 /// moved into the keychain. Any other keychain error is taken as passing, so with no key file
 /// the vault stays locked rather than sealing tracks under a key the next launch will not find.
-async fn master(vault: &Arc<Vault>, cx: &mut AsyncApp) -> Result<Vec<u8>> {
-    let read = cx.update(|cx| cx.read_credentials(KEYCHAIN_URL)).await;
+async fn master(vault: &Arc<Vault>) -> Result<Vec<u8>> {
+    let read = keychain::read(KEYCHAIN_URL).await;
     match read {
         Ok(Some((_, master))) if master.len() == MASTER => Ok(master),
         Ok(Some(_)) => bail!("the keychain holds a key of the wrong length"),
         Ok(None) => {
-            if let Some(master) = cx.background_spawn(async { from_file() }).await? {
-                into_keychain(&master, cx).await;
+            if let Some(master) = blocking(from_file).await? {
+                into_keychain(&master).await;
                 return Ok(master);
             }
-            fresh(vault, true, cx).await
+            fresh(vault, true).await
         }
         Err(error) if no_service(&error) => {
             log::warn!("vault: there is no keychain, using a key file: {error:#}");
-            match cx.background_spawn(async { from_file() }).await? {
+            match blocking(from_file).await? {
                 Some(master) => Ok(master),
-                None => fresh(vault, false, cx).await,
+                None => fresh(vault, false).await,
             }
         }
-        Err(error) => match cx.background_spawn(async { from_file() }).await? {
+        Err(error) => match blocking(from_file).await? {
             Some(master) => {
                 log::warn!("vault: the keychain did not answer, using the key file: {error:#}");
                 Ok(master)
@@ -95,11 +98,10 @@ async fn master(vault: &Arc<Vault>, cx: &mut AsyncApp) -> Result<Vec<u8>> {
 /// Makes a new master key and stores it in the keychain when `keychain` allows, or in the key
 /// file. It refuses while any download is sealed, since those were sealed under a key that
 /// still exists somewhere and a new one would orphan them.
-async fn fresh(vault: &Arc<Vault>, keychain: bool, cx: &mut AsyncApp) -> Result<Vec<u8>> {
+async fn fresh(vault: &Arc<Vault>, keychain: bool) -> Result<Vec<u8>> {
     let sealed = {
         let vault = vault.clone();
-        cx.background_spawn(async move { vault.holds_downloads() })
-            .await
+        tokio::task::spawn_blocking(move || vault.holds_downloads()).await?
     };
     if sealed {
         bail!(
@@ -109,9 +111,7 @@ async fn fresh(vault: &Arc<Vault>, keychain: bool, cx: &mut AsyncApp) -> Result<
     }
     let master = Vault::new_master()?;
     if keychain {
-        let written = cx
-            .update(|cx| cx.write_credentials(KEYCHAIN_URL, KEYCHAIN_USER, &master))
-            .await;
+        let written = keychain::write(KEYCHAIN_URL, KEYCHAIN_USER, &master).await;
         match written {
             Ok(()) => return Ok(master.to_vec()),
             Err(error) => {
@@ -119,32 +119,35 @@ async fn fresh(vault: &Arc<Vault>, keychain: bool, cx: &mut AsyncApp) -> Result<
             }
         }
     }
-    cx.background_spawn(async move { write_file(&master) })
-        .await?;
+    blocking(move || write_file(&master)).await?;
     log::info!("vault: made a new key");
     Ok(master.to_vec())
 }
 
 /// Moves a key found in the key file into the keychain, and removes the file once the keychain
 /// holds it. A keychain that will not store it leaves the file where it is.
-async fn into_keychain(master: &[u8], cx: &mut AsyncApp) {
-    let written = cx
-        .update(|cx| cx.write_credentials(KEYCHAIN_URL, KEYCHAIN_USER, master))
-        .await;
+async fn into_keychain(master: &[u8]) {
+    let written = keychain::write(KEYCHAIN_URL, KEYCHAIN_USER, master).await;
     if let Err(error) = written {
         log::warn!("vault: the keychain will not store the key, keeping the file: {error:#}");
         return;
     }
-    let removed = cx
-        .background_spawn(async {
-            let path = key_file().context("cannot find the vault key file")?;
-            std::fs::remove_file(path).context("cannot remove the vault key file")
-        })
-        .await;
+    let removed = blocking(|| {
+        let path = key_file().context("cannot find the vault key file")?;
+        std::fs::remove_file(path).context("cannot remove the vault key file")
+    })
+    .await;
     match removed {
         Ok(()) => log::info!("vault: moved the key from its file into the keychain"),
         Err(error) => log::warn!("vault: the key is in the keychain, but {error:#}"),
     }
+}
+
+/// Runs `work` on a blocking thread, where the disk is read and written.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T> {
+    tokio::task::spawn_blocking(work).await?
 }
 
 /// Whether a keychain error means the desktop has no keychain at all, which a later launch will

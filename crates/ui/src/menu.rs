@@ -1,457 +1,135 @@
-use std::cell::{Cell, RefCell};
-use std::rc::Rc;
-use std::time::Duration;
+//! Menus drawn by the app itself, since Linux has no native pop-up menu: a frosted panel of
+//! rows anchored to a trigger or opened at the pointer, walked with the arrow keys, with
+//! check marks, submenus that open beside their row, and an optional search field over the rows.
 
-use gpui::prelude::*;
-use gpui::{
-    Anchor, AnyElement, AnyWindowHandle, App, Bounds, ClickEvent, Div, ElementId, Entity,
-    FocusHandle, Focusable as _, Global, Interactivity, MouseButton, MouseClickEvent,
-    MouseDownEvent, Pixels, Point, ScrollWheelEvent, SharedString, Size, Stateful, StyleRefinement,
-    Window, anchored, deferred, div, point, px, svg,
+use std::rc::Rc;
+
+use rune::{
+    Cursor, El, Key, KeyEvent, ScrollSpec, TextEdit, TextStyle, Tx, col, el, icon, row, text,
 };
 
-use crate::Artwork;
-use crate::form::Submit;
-use crate::glass::{GLASS_BLUR, blurring, popover_fill};
 use crate::input::Input;
-use crate::label::Tails as _;
-use crate::metrics::snapped;
-use crate::motion::{Fading as _, Rising as _};
-use crate::scrollbar::Scrollbar;
-use crate::scroller::middle_scroll;
+use crate::label::Weight;
+use crate::metrics::{Text, tucked};
+use crate::motion::Springs;
+use crate::overlay::{self, Placement};
+use crate::paint::{rems, shadow_md};
 use crate::separator::Separator;
-use crate::shield::Shield;
-use crate::table::{SelectNext, SelectPrevious};
-use crate::theme::ActiveTheme as _;
-use crate::tooltip::{Perch, Tipped as _};
+use crate::theme::Theme;
+use crate::glass::{GLASS_BLUR, blurring, popover_fill};
 
-pub const MENU_CONTEXT: &str = "Menu";
+/// The gap a menu leaves between itself and the trigger it drops from.
+pub const TRIGGER_GAP: f32 = 4.;
+const BORDER: f32 = 1.;
+/// The space between two rows.
+const ROW_GAP: f32 = 2.;
+const ICON: f32 = 14.;
+/// How far a scrolling menu's edges fade while rows pass under them.
+const FADE: f32 = 16.;
+/// The check mark and the arrow of a row that opens a submenu.
+const CHECK: &str = "✓";
+const MORE: &str = "›";
 
-const ESCAPE_KEY: &str = "escape";
+/// What a row does when it is picked, after the menu's own bookkeeping.
+type Pick<S> = Rc<dyn Fn(&mut S, &mut Tx)>;
+/// Opens or closes a submenu.
+type Open<S> = Rc<dyn Fn(&mut S, bool)>;
+/// Finds a menu's search in the window's state.
+type Search<S> = Rc<dyn for<'a> Fn(&'a mut S) -> &'a mut MenuSearch>;
 
-const SUBMENU_CLOSE_DELAY: Duration = Duration::from_millis(160);
-const SUBMENU_FALLBACK_WIDTH: Pixels = px(236.);
-const SUBMENU_TOP: Pixels = px(-14.);
-const WINDOW_MARGIN: Pixels = px(8.);
-pub(crate) const TRIGGER_GAP: Pixels = px(4.);
-const PANEL_SLACK: Pixels = px(6.);
-/// How far the pointer has to travel from where a context menu was opened before letting go of
-/// the button picks the item under it. A plain click never moves this far, so it only opens the
-/// menu, while a press held and dragged onto an item behaves the way a context menu is expected
-/// to.
-const HOLD_REACH: f64 = 8.;
-const SAFE_X: Pixels = px(6.);
-const SAFE_Y: Pixels = px(12.);
-const NEAR: usize = Near::InnerBar as usize + 1;
-
-type Close = Rc<dyn Fn(&(), &mut Window, &mut App) + 'static>;
-type Action = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
-
-#[derive(Default)]
-struct Escape(Rc<RefCell<Option<Close>>>);
-
-impl Global for Escape {}
-
-#[derive(Clone, Default)]
-pub(crate) struct Trigger(Rc<Cell<Option<Bounds<Pixels>>>>);
-
-impl Trigger {
-    pub(crate) fn observe(&self, bounds: Vec<Bounds<Pixels>>) {
-        self.0
-            .set(bounds.into_iter().reduce(|one, other| one.union(&other)));
-    }
-
-    fn bounds(&self) -> Option<Bounds<Pixels>> {
-        self.0.get()
-    }
-
-    fn contains(&self, position: Point<Pixels>, slack: Pixels) -> bool {
-        self.0
-            .get()
-            .is_some_and(|bounds| grown(bounds, slack, slack).contains(&position))
-    }
-}
-
-/// Where the pointer can be that keeps a submenu open. The `Inner` places are the gap, panel
-/// and scrollbar of a submenu opened from inside this one.
-#[derive(Clone, Copy)]
-enum Near {
-    Item,
-    Gap,
-    Panel,
-    Bar,
-    InnerGap,
-    InnerPanel,
-    InnerBar,
-}
-
-impl Near {
-    /// The place this one counts as for the submenus enclosing it.
-    fn inward(self) -> Self {
-        match self {
-            Self::Gap => Self::InnerGap,
-            Self::Panel => Self::InnerPanel,
-            Self::Bar => Self::InnerBar,
-            inner => inner,
-        }
-    }
-}
-
-#[derive(Clone, Default)]
-pub struct SubmenuState {
-    open: Rc<Cell<bool>>,
-    generation: Rc<Cell<u64>>,
-    near: Rc<Cell<[bool; NEAR]>>,
-    flip: Rc<Cell<Option<bool>>>,
-    menu_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
-    panel_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
-    /// Keeps the submenu open after the pointer leaves, set while its search holds a query so
-    /// the list does not vanish mid-typing.
-    held: Rc<Cell<bool>>,
-    /// Closes the submenu as soon as the pointer is off both its item and its panel, rather than
-    /// after `SUBMENU_CLOSE_DELAY`.
-    instant: bool,
-}
-
-impl SubmenuState {
-    /// A submenu that closes the moment the pointer leaves it, for a menu of sibling submenus
-    /// where the delay would show the last one over the next. The pointer cannot cut across
-    /// other items on its way to the panel.
-    pub fn instant() -> Self {
-        Self {
-            instant: true,
-            ..Self::default()
-        }
-    }
-
-    fn is_open(&self) -> bool {
-        self.open.get()
-    }
-
-    fn touched(&self) -> bool {
-        self.near.get().iter().any(|there| *there)
-    }
-
-    fn near(&self, place: Near, hovered: bool, window: AnyWindowHandle, cx: &mut App) {
-        let mut near = self.near.get();
-        if near[place as usize] == hovered {
-            return;
-        }
-        near[place as usize] = hovered;
-        self.near.set(near);
-
-        let generation = self.generation.get().wrapping_add(1);
-        self.generation.set(generation);
-
-        if self.touched() {
-            if !self.open.replace(true) {
-                cx.refresh_windows();
-            }
-            return;
-        }
-
-        let state = self.clone();
-        let delay = match self.instant {
-            true => Duration::ZERO,
-            false => SUBMENU_CLOSE_DELAY,
-        };
-        cx.spawn(async move |cx| {
-            // even with no delay this waits a turn, so a pointer moving from the item onto the
-            // gap or the panel is seen there before the submenu closes
-            cx.background_executor().timer(delay).await;
-            let inside = cx.update(|cx| {
-                cx.update_window(window, |_, window, _| state.covers(window.mouse_position()))
-                    .unwrap_or(false)
-            });
-            cx.update(|cx| {
-                if state.generation.get() == generation
-                    && !state.touched()
-                    && !state.held.get()
-                    && !inside
-                    && state.open.replace(false)
-                {
-                    state.flip.set(None);
-                    cx.refresh_windows();
-                }
-            });
-        })
-        .detach();
-    }
-
-    /// Records the pointer at `place` of this submenu, and at the matching inner place of each
-    /// submenu in `outer` that it opened from, so those stay open while the pointer is here.
-    fn reach(
-        &self,
-        outer: &[SubmenuState],
-        place: Near,
-        hovered: bool,
-        window: AnyWindowHandle,
-        cx: &mut App,
-    ) {
-        self.near(place, hovered, window, cx);
-        for state in outer {
-            state.near(place.inward(), hovered, window, cx);
-        }
-    }
-
-    fn measure_panel(&self, bounds: Bounds<Pixels>) {
-        self.panel_bounds.set(Some(grown(bounds, SAFE_X, SAFE_Y)));
-    }
-
-    fn measure_menu(&self, bounds: Bounds<Pixels>) {
-        self.menu_bounds.set(Some(bounds));
-    }
-
-    /// Whether the submenu opens to the left of its menu. Decided once from the panel width
-    /// measured last time it was open, or a guess before that; `measure_reach` corrects it.
-    fn flipped(&self, viewport_width: Pixels) -> bool {
-        if let Some(flip) = self.flip.get() {
-            return flip;
-        }
-        let Some(menu) = self.menu_bounds.get() else {
-            return false;
-        };
-        let width = self
-            .panel_bounds
-            .get()
-            .map(|bounds| bounds.size.width)
-            .unwrap_or(SUBMENU_FALLBACK_WIDTH);
-        let flip = flips(menu, width, viewport_width);
-        self.flip.set(Some(flip));
-        flip
-    }
-
-    /// Re-decides the side once the submenu's real width is known, so a wrong guess flips it
-    /// and a submenu too wide for either side lands on the roomier one.
-    fn measure_reach(&self, bounds: Bounds<Pixels>, window: &Window, cx: &mut App) {
-        let Some(menu) = self.menu_bounds.get() else {
-            return;
-        };
-        let flip = flips(menu, bounds.size.width, window.viewport_size().width);
-        if self.flip.replace(Some(flip)) == Some(flip) {
-            return;
-        }
-        cx.refresh_windows();
-    }
-
-    fn covers(&self, position: Point<Pixels>) -> bool {
-        self.panel_bounds
-            .get()
-            .is_some_and(|bounds| bounds.contains(&position))
-    }
-
-    fn contains(&self, position: Point<Pixels>) -> bool {
-        self.is_open() && self.covers(position)
-    }
-
-    pub fn reset(&self) {
-        self.generation.set(self.generation.get().wrapping_add(1));
-        self.open.set(false);
-        self.near.set([false; NEAR]);
-        self.flip.set(None);
-        self.held.set(false);
-        self.menu_bounds.set(None);
-        self.panel_bounds.set(None);
-    }
-}
-
-/// A search field drawn above a menu's items, with the row the arrow keys have reached. The
-/// menu focuses the field while it is drawn and hands focus back when it closes, so the owner
-/// only filters its items by `query`.
-#[derive(Clone)]
+/// A search field over a menu's rows, kept in the window's state. The menu shows it as its
+/// header, takes focus for it as it opens, and lets the arrow keys walk and Return pick the rows
+/// that can be picked, so the owner only filters its items by [`MenuSearch::query`].
+#[derive(Clone, Debug, Default)]
 pub struct MenuSearch {
-    input: Entity<Input>,
-    cursor: Rc<Cell<Option<usize>>>,
-    asked: Rc<RefCell<String>>,
-    restore: Rc<RefCell<Option<Option<FocusHandle>>>>,
+    pub edit: TextEdit,
+    /// The place among the pickable rows the arrow keys moved to.
+    cursor: Option<usize>,
 }
 
 impl MenuSearch {
-    pub fn new(hint: &'static str, cx: &mut App) -> Self {
-        Self {
-            input: cx.new(|cx| Input::new(hint, cx).compact().tucked()),
-            cursor: Rc::default(),
-            asked: Rc::default(),
-            restore: Rc::default(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// The field's text, trimmed and lowercased for matching.
-    pub fn query(&self, cx: &App) -> String {
-        self.input.read(cx).text().trim().to_lowercase()
+    pub fn query(&self) -> String {
+        self.edit.text.trim().to_lowercase()
     }
 
-    /// Takes focus for the field once, remembering where it was so `release` can give it back.
-    /// A query left over from a menu that went away without closing is emptied here.
-    fn hold(&self, window: &mut Window, cx: &mut App) {
-        if self.restore.borrow().is_some() {
-            return;
-        }
-        if !self.input.read(cx).text().is_empty() {
-            self.input.update(cx, |input, cx| input.set_text("", cx));
-        }
-        let own = self.input.read(cx).focus_handle(cx);
-        let before = window.focused(cx).filter(|focus| *focus != own);
-        *self.restore.borrow_mut() = Some(before);
-        window.focus(&own, cx);
+    /// Empties the field and forgets the row the keys reached, for a menu about to open afresh.
+    pub fn reset(&mut self) {
+        self.edit.clear();
+        self.cursor = None;
     }
 
-    /// Empties the field and returns focus to where it was before `hold`. Without that, focus
-    /// stays on a field that is no longer drawn and later actions reach no handler. Focus the
-    /// user already moved elsewhere stays where it is.
-    fn release(&self, window: &mut Window, cx: &mut App) {
-        let Some(restore) = self.restore.borrow_mut().take() else {
-            return;
-        };
-        self.cursor.set(None);
-        self.input.update(cx, |input, cx| input.set_text("", cx));
-        if !self.input.read(cx).focus_handle(cx).is_focused(window) {
-            return;
-        }
-        match restore {
-            Some(focus) => window.focus(&focus, cx),
-            None => window.blur(cx),
-        }
-    }
-
-    /// Forgets the focus to hand back, for an owner about to open the menu afresh after it may
-    /// have gone away without closing. The next open takes focus and empties the field.
-    pub fn reset(&self) {
-        self.restore.borrow_mut().take();
-        self.cursor.set(None);
-    }
-
-    /// Takes in the field's current query, and says whether it changed since the last draw. A
-    /// changed query drops the row the arrow keys had picked.
-    fn renewed(&self, cx: &App) -> bool {
-        let query = self.query(cx);
-        if *self.asked.borrow() == query {
-            return false;
-        }
-        self.cursor.set(None);
-        *self.asked.borrow_mut() = query;
-        true
-    }
-
-    /// The place among the `count` pickable rows the cursor is on. It points at the first
-    /// match until the arrow keys move it, and nowhere while the field is empty.
-    fn place(&self, count: usize) -> Option<usize> {
+    /// The place among `count` pickable rows the cursor is on: the first match until the arrow
+    /// keys move it, and nowhere while the field is empty.
+    pub fn place(&self, count: usize) -> Option<usize> {
         let place = self
             .cursor
-            .get()
-            .or_else(|| (!self.asked.borrow().is_empty()).then_some(0))?;
+            .or_else(|| (!self.query().is_empty()).then_some(0))?;
         (count > 0).then(|| place.min(count - 1))
     }
 
-    fn walk(&self, count: usize, step: isize) {
+    /// Moves the cursor `step` rows through `count`, wrapping at the ends.
+    fn walk(&mut self, count: usize, step: isize) {
         if count == 0 {
             return;
         }
-        let place = match self.place(count) {
+        self.cursor = Some(match self.place(count) {
             Some(place) => (place as isize + step).rem_euclid(count as isize) as usize,
             None if step > 0 => 0,
             None => count - 1,
-        };
-        self.cursor.set(Some(place));
+        });
     }
 }
 
-/// What a searchable menu's panel needs to answer the arrow keys and Enter. `rows` holds the
-/// item index of every row that can be picked, in order.
-struct Keys {
-    search: MenuSearch,
-    rows: Rc<[usize]>,
-    picked: Option<Action>,
-    /// Whether the picked row keeps the menu open, so Enter neither closes it nor hands focus back.
-    stays: bool,
-    action: Option<Action>,
-    searches: Rc<[MenuSearch]>,
-    scrollbar: Option<Entity<Scrollbar>>,
+/// A submenu and how its row opens it. Whether it shows is the owner's state.
+struct Submenu<S> {
+    menu: Box<Menu<S>>,
+    open: bool,
+    toggle: Open<S>,
 }
 
-impl Keys {
-    fn bind(self, panel: Stateful<Div>) -> Stateful<Div> {
-        let Self {
-            search,
-            rows,
-            picked,
-            stays,
-            action,
-            searches,
-            scrollbar,
-        } = self;
-        let back = (search.clone(), rows.clone(), scrollbar.clone());
-
-        panel
-            .on_action(move |_: &SelectNext, _, cx| step(&search, &rows, 1, &scrollbar, cx))
-            .on_action(move |_: &SelectPrevious, _, cx| {
-                let (search, rows, scrollbar) = &back;
-                step(search, rows, -1, scrollbar, cx)
-            })
-            .on_action(move |_: &Submit, window, cx| {
-                let Some(press) = picked.as_ref() else {
-                    return;
-                };
-                let click = ClickEvent::default();
-                if !stays {
-                    release(&searches, window, cx);
-                }
-                press(&click, window, cx);
-                if let Some(action) = action.as_ref() {
-                    action(&click, window, cx);
-                }
-            })
-    }
-}
-
-struct Submenu {
-    menu: Box<Menu>,
-    state: SubmenuState,
-}
-
-pub struct MenuItem {
-    id: ElementId,
-    label: SharedString,
-    detail: Option<AnyElement>,
+/// One row of a [`Menu`], or a separator, or a block of custom content.
+pub struct MenuItem<S> {
+    key: String,
+    label: String,
+    detail: Option<El>,
     selected: bool,
-    /// Whether a keyboard cursor the owner tracks rests on the row. It paints the row like a
-    /// selected one but leaves out the check.
+    /// Whether a keyboard cursor the owner tracks rests on the row: painted like a selected one,
+    /// without the check.
     highlighted: bool,
     checked: bool,
     disabled: bool,
     separator: bool,
-    content: Option<AnyElement>,
-    face: Option<SharedString>,
-    icon: Option<&'static str>,
-    leading: Option<AnyElement>,
-    trailing: Option<AnyElement>,
-    artwork: Option<Option<SharedString>>,
-    tooltip: Option<SharedString>,
-    press: Option<Action>,
-    submenu: Option<Submenu>,
-    /// Whether picking the item leaves the menu open, for a row that toggles something in place.
+    content: Option<El>,
+    icon: Option<String>,
+    leading: Option<El>,
+    trailing: Option<El>,
+    tooltip: Option<String>,
+    press: Option<Pick<S>>,
+    submenu: Option<Submenu<S>>,
+    /// Whether picking the row leaves the menu open, for a row that toggles something in place.
     stays: bool,
 }
 
-impl FluentBuilder for MenuItem {}
-
-impl MenuItem {
-    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
+impl<S: 'static> MenuItem<S> {
+    pub fn new(key: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
-            id: id.into(),
+            key: key.into(),
             label: label.into(),
             detail: None,
             selected: false,
             highlighted: false,
             checked: false,
-            face: None,
             disabled: false,
             separator: false,
             content: None,
             icon: None,
             leading: None,
             trailing: None,
-            artwork: None,
             tooltip: None,
             press: None,
             submenu: None,
@@ -459,59 +137,44 @@ impl MenuItem {
         }
     }
 
+    pub fn separator(key: impl Into<String>) -> Self {
+        Self {
+            separator: true,
+            disabled: true,
+            ..Self::new(key, "")
+        }
+    }
+
+    /// A row that holds `content` rather than a choice, such as a slider inside the menu.
+    pub fn content(key: impl Into<String>, content: El) -> Self {
+        Self {
+            content: Some(content),
+            disabled: true,
+            ..Self::new(key, "")
+        }
+    }
+
+    /// Draws a check after the label and reads the row as checked.
     pub fn checked(mut self, checked: bool) -> Self {
         self.checked = checked;
         self
     }
 
+    /// The current choice of a picker: painted, checked, and where keyboard focus starts.
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
 
-    /// Marks the row the owner's own keyboard cursor is on, for a searchable list that keeps
-    /// its cursor outside the menu. Unlike `selected`, it draws no check.
+    /// Marks the row the owner's own keyboard cursor is on. Unlike `selected`, no check.
     pub fn highlighted(mut self, highlighted: bool) -> Self {
         self.highlighted = highlighted;
         self
     }
 
-    pub fn separator(id: impl Into<ElementId>) -> Self {
-        Self {
-            id: id.into(),
-            label: SharedString::default(),
-            detail: None,
-            selected: false,
-            highlighted: false,
-            checked: false,
-            disabled: true,
-            separator: true,
-            content: None,
-            face: None,
-            icon: None,
-            leading: None,
-            trailing: None,
-            artwork: None,
-            tooltip: None,
-            press: None,
-            submenu: None,
-            stays: false,
-        }
-    }
-
-    pub fn detail(mut self, detail: impl IntoElement) -> Self {
-        self.detail = Some(detail.into_any_element());
-        self
-    }
-
-    pub fn content(mut self, content: impl IntoElement) -> Self {
-        self.content = Some(content.into_any_element());
-        self.disabled = true;
-        self
-    }
-
-    pub fn face(mut self, family: impl Into<SharedString>) -> Self {
-        self.face = Some(family.into());
+    /// A second element under the label, which wraps at the menu's width.
+    pub fn detail(mut self, detail: El) -> Self {
+        self.detail = Some(detail);
         self
     }
 
@@ -520,117 +183,115 @@ impl MenuItem {
         self
     }
 
-    /// Shows the Fluent message `key` beside the pointer while the item is hovered.
-    pub fn tooltip(mut self, key: impl Into<SharedString>) -> Self {
-        self.tooltip = Some(key.into());
+    /// Text read after the label and shown over the row while the pointer rests on it, already
+    /// resolved.
+    pub fn tooltip(mut self, text: impl Into<String>) -> Self {
+        self.tooltip = Some(text.into());
         self
     }
 
-    pub fn icon(mut self, path: &'static str) -> Self {
-        self.icon = Some(path);
+    pub fn icon(mut self, path: impl Into<String>) -> Self {
+        self.icon = Some(path.into());
         self
     }
 
-    /// Draws `leading` before the label, such as a small picture of what the item chooses.
-    pub fn leading(mut self, leading: impl IntoElement) -> Self {
-        self.leading = Some(leading.into_any_element());
+    /// Draws `leading` before the label, such as a cover or a small picture of the choice.
+    pub fn leading(mut self, leading: El) -> Self {
+        self.leading = Some(leading);
         self
     }
 
-    /// Draws `trailing` at the end of the row after the label, such as badges or a small button.
-    pub fn trailing(mut self, trailing: impl IntoElement) -> Self {
-        self.trailing = Some(trailing.into_any_element());
+    /// Draws `trailing` at the end of the row, such as badges or a small button.
+    pub fn trailing(mut self, trailing: El) -> Self {
+        self.trailing = Some(trailing);
         self
     }
 
-    pub fn artwork(mut self, url: Option<impl Into<SharedString>>) -> Self {
-        self.artwork = Some(url.map(Into::into));
+    pub fn on_press(self, f: impl Fn(&mut S) + 'static) -> Self {
+        self.on_press_tx(move |s: &mut S, _: &mut Tx| f(s))
+    }
+
+    pub fn on_press_tx(mut self, f: impl Fn(&mut S, &mut Tx) + 'static) -> Self {
+        self.press = Some(Rc::new(f));
         self
     }
 
-    pub fn on_click(
-        mut self,
-        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.press = Some(Rc::new(handler));
-        self
-    }
-
-    /// Keeps the menu open after the item is picked, for a checked row that toggles in place.
-    /// The caller rebuilds the menu on its next render, so the check follows the new state.
+    /// Keeps the menu open after the row is picked, for a checked row that toggles in place.
     pub fn stays_open(mut self) -> Self {
         self.stays = true;
         self
     }
 
-    pub fn submenu(mut self, menu: Menu, state: SubmenuState) -> Self {
-        let mut menu = menu;
-        menu.hover_guard = Some(state.clone());
+    /// Opens `menu` beside the row while `open`. The row calls `toggle` with true when the
+    /// pointer comes to it or the Right arrow is pressed on it, and with false when the pointer
+    /// moves to a sibling row or the Left arrow goes back out of the submenu.
+    pub fn submenu(mut self, menu: Menu<S>, open: bool, toggle: impl Fn(&mut S, bool) + 'static) -> Self {
         self.submenu = Some(Submenu {
             menu: Box::new(menu),
-            state,
+            open,
+            toggle: Rc::new(toggle),
         });
         self
     }
+
+    fn pickable(&self) -> bool {
+        !self.disabled && !self.separator && self.content.is_none() && self.press.is_some()
+    }
 }
 
-#[derive(IntoElement)]
-pub struct Menu {
-    base: Stateful<Div>,
-    items: Vec<MenuItem>,
+/// A menu's panel. Mount it with [`Menu::build`], which anchors it to a trigger keyed elsewhere
+/// in the view or opens it at a point, and pushes it and any open submenus into the layer.
+pub struct Menu<S> {
+    key: String,
+    items: Vec<MenuItem<S>>,
     /// What a screen reader calls the menu, read as focus enters it.
-    name: Option<SharedString>,
-    dismiss: Option<Close>,
-    action: Option<Action>,
-    priority: usize,
-    deferred: bool,
-    scrollbar: Option<Entity<Scrollbar>>,
-    header: Option<AnyElement>,
-    search: Option<MenuSearch>,
-    hover_guard: Option<SubmenuState>,
-    /// The states of the submenus this submenu sits inside, outermost first.
-    outer: Vec<SubmenuState>,
-    trigger: Option<Trigger>,
-    pressed: Option<Point<Pixels>>,
-    above: bool,
+    name: Option<String>,
+    header: Option<El>,
+    search: Option<(MenuSearch, Search<S>, String)>,
+    dismiss: Option<Pick<S>>,
+    picked: Option<Pick<S>>,
+    width: Option<f32>,
+    min_width: Option<f32>,
+    max_height: Option<f32>,
+    anchor: Option<(String, Placement, f32)>,
+    at: Option<(f32, f32)>,
+    /// Back out of a submenu with the Left arrow: the parent row's key and its toggle.
+    parent: Option<(String, Open<S>)>,
 }
 
-impl Menu {
-    #[track_caller]
-    pub fn new(id: impl Into<ElementId>) -> Self {
+impl<S: 'static> Menu<S> {
+    pub fn new(key: impl Into<String>) -> Self {
         Self {
-            base: div().id(id),
+            key: key.into(),
             items: Vec::new(),
             name: None,
-            dismiss: None,
-            action: None,
-            priority: 1,
-            deferred: true,
-            scrollbar: None,
             header: None,
             search: None,
-            hover_guard: None,
-            outer: Vec::new(),
-            trigger: None,
-            pressed: None,
-            above: false,
+            dismiss: None,
+            picked: None,
+            width: None,
+            min_width: None,
+            max_height: None,
+            anchor: None,
+            at: None,
+            parent: None,
         }
     }
 
-    pub fn item(mut self, item: MenuItem) -> Self {
+    pub fn item(mut self, item: MenuItem<S>) -> Self {
         self.items.push(item);
         self
     }
 
-    pub fn items(mut self, items: impl IntoIterator<Item = MenuItem>) -> Self {
+    pub fn items(mut self, items: impl IntoIterator<Item = MenuItem<S>>) -> Self {
         self.items.extend(items);
         self
     }
 
     /// Puts `items` before the ones already added, with a separator after them when the menu
     /// held anything.
-    pub fn lead(mut self, items: impl IntoIterator<Item = MenuItem>) -> Self {
-        let mut led: Vec<MenuItem> = items.into_iter().collect();
+    pub fn lead(mut self, items: impl IntoIterator<Item = MenuItem<S>>) -> Self {
+        let mut led: Vec<MenuItem<S>> = items.into_iter().collect();
         if !led.is_empty() && !self.items.is_empty() {
             led.push(MenuItem::separator("lead-separator"));
         }
@@ -639,771 +300,493 @@ impl Menu {
     }
 
     /// Names the menu for screen readers, usually after the button or setting that opens it.
-    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+    pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
     }
 
-    pub(crate) fn trigger(mut self, trigger: Trigger) -> Self {
-        self.trigger = Some(trigger);
+    /// An element over the rows, such as a title.
+    pub fn header(mut self, header: El) -> Self {
+        self.header = Some(header);
         self
     }
 
-    /// Where the button that opened the menu went down. A menu that knows this lets go of the
-    /// button over an item to pick it, as long as the pointer moved `HOLD_REACH` away first.
-    pub(crate) fn pressed_at(mut self, at: Point<Pixels>) -> Self {
-        self.pressed = Some(at);
-        self
-    }
-
-    /// Grows the panel upward from where the menu is placed instead of downward, for one opened
-    /// at a point along the bottom of the window. Only a menu with no trigger takes it, since a
-    /// trigger already says which side to open on.
-    pub(crate) fn above(mut self) -> Self {
-        self.above = true;
-        self
-    }
-
-    pub fn on_dismiss(mut self, handler: impl Fn(&(), &mut Window, &mut App) + 'static) -> Self {
-        self.dismiss = Some(Rc::new(handler));
-        self
-    }
-
-    pub(crate) fn on_action(
+    /// A search field over the rows, showing `search` from the window's state with the
+    /// placeholder `hint`. The field takes focus as the menu opens; Up and Down walk the rows
+    /// that can be picked and Return picks the one reached.
+    pub fn search(
         mut self,
-        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+        search: &MenuSearch,
+        hint: impl Into<String>,
+        access: impl for<'a> Fn(&'a mut S) -> &'a mut MenuSearch + 'static,
     ) -> Self {
-        self.action = Some(Rc::new(handler));
+        self.search = Some((search.clone(), Rc::new(access), hint.into()));
         self
     }
 
-    pub fn priority(mut self, priority: usize) -> Self {
-        self.priority = priority;
+    /// Runs when the menu is dismissed without a pick: Escape or a press outside it.
+    pub fn on_dismiss(mut self, f: impl Fn(&mut S) + 'static) -> Self {
+        self.dismiss = Some(Rc::new(move |s: &mut S, _: &mut Tx| f(s)));
         self
     }
 
-    pub fn scrollbar(mut self, scrollbar: Entity<Scrollbar>) -> Self {
-        self.scrollbar = Some(scrollbar);
+    /// Runs after any row is picked that does not stay open, after the row's own handler. A
+    /// popover passes its close here.
+    pub fn on_pick(mut self, f: impl Fn(&mut S, &mut Tx) + 'static) -> Self {
+        self.picked = Some(Rc::new(f));
         self
     }
 
-    pub fn header(mut self, header: impl IntoElement) -> Self {
-        self.header = Some(header.into_any_element());
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
         self
     }
 
-    /// Draws `search` as the header. The arrow keys and Enter then walk and pick the rows
-    /// that can be clicked, and the field keeps focus for as long as the menu is drawn.
-    pub fn search(mut self, search: MenuSearch) -> Self {
-        self.header = Some(search.input.clone().into_any_element());
-        self.search = Some(search);
+    pub fn min_width(mut self, width: f32) -> Self {
+        self.min_width = Some(width);
         self
     }
 
-    /// The searches in this menu and its submenus, for a caller that closes the menu some way
-    /// the menu does not see and has to hand their focus back itself.
-    pub(crate) fn searches(&self) -> Rc<[MenuSearch]> {
-        self.search
-            .iter()
-            .chain(
-                self.items
-                    .iter()
-                    .filter_map(|item| item.submenu.as_ref()?.menu.search.as_ref()),
-            )
-            .cloned()
-            .collect()
-    }
-
-    fn inline(mut self) -> Self {
-        self.deferred = false;
+    /// Caps the panel at `height` and scrolls what does not fit. A menu is always at most as
+    /// tall as the window leaves it beside its trigger.
+    pub fn max_height(mut self, height: f32) -> Self {
+        self.max_height = Some(height);
         self
     }
-}
 
-impl Styled for Menu {
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
+    /// Anchors the panel to the element keyed `key`, on its `placement` side, `gap` away.
+    pub fn anchor(mut self, key: impl Into<String>, placement: Placement, gap: f32) -> Self {
+        self.anchor = Some((key.into(), placement, gap));
+        self
     }
-}
 
-impl InteractiveElement for Menu {
-    fn interactivity(&mut self) -> &mut Interactivity {
-        self.base.interactivity()
+    /// Opens the panel with its top left corner at a window point, as a context menu does.
+    pub fn at(mut self, x: f32, y: f32) -> Self {
+        self.at = Some((x, y));
+        self
     }
-}
 
-impl StatefulInteractiveElement for Menu {}
+    /// The panel and its open submenus, pushed into `layer`. A menu with a dismiss handler
+    /// holds the keyboard while open: Escape and a press outside close it, and focus goes back
+    /// to its trigger when it does.
+    pub fn build(mut self, theme: &Theme, layer: &mut Vec<El>) {
+        let key = self.key.clone();
+        let mut placed = None;
+        let (anchor, placement, gap) = match (self.at.take(), self.anchor.take()) {
+            (Some((x, y)), _) => {
+                let point = format!("{key}-point");
+                layer.push(el().key(point.clone()).absolute(x, y).size(0., 0.));
+                (point, Placement::BottomStart, 0.)
+            }
+            (None, Some((anchor, placement, gap))) => {
+                placed = Some(anchor.clone());
+                (anchor, placement, gap)
+            }
+            (None, None) => (format!("{key}-trigger"), Placement::BottomStart, TRIGGER_GAP),
+        };
+        let dismiss = self.dismiss.clone();
+        let mut subs = Vec::new();
+        let mut surface = self.surface(theme, &mut subs);
+        if let Some(trigger) = placed {
+            surface = surface.focus_return(trigger);
+        }
+        // Submenus ride inside the panel, so the modal that holds the keyboard holds theirs too.
+        surface = surface.children(subs);
+        if let Some(dismiss) = dismiss {
+            surface = surface.modal_tx(true, move |s: &mut S, tx: &mut Tx| dismiss(s, tx));
+        }
+        layer.push(overlay::anchor(surface, &anchor, placement, gap));
+    }
 
-impl RenderOnce for Menu {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let Self {
-            mut base,
+    /// The panel itself, with its open submenus pushed into `layer`, since they anchor to rows
+    /// inside it.
+    fn surface(self, theme: &Theme, layer: &mut Vec<El>) -> El {
+        let Menu {
+            key,
             items,
             name,
-            dismiss,
-            action,
-            priority,
-            deferred: should_defer,
-            scrollbar,
             header,
             search,
-            hover_guard,
-            outer,
-            trigger,
-            pressed,
-            above,
+            picked,
+            width,
+            min_width,
+            max_height,
+            parent,
+            ..
         } = self;
-
-        if let Some(search) = search.as_ref() {
-            search.hold(window, cx);
-        }
-        let mut searches: Vec<MenuSearch> = search.iter().cloned().collect();
-        for submenu in items.iter().filter_map(|item| item.submenu.as_ref()) {
-            let Some(inner) = submenu.menu.search.as_ref() else {
-                continue;
-            };
-            match submenu.state.is_open() {
-                true => submenu.state.held.set(!inner.query(cx).is_empty()),
-                false => inner.release(window, cx),
-            }
-            searches.push(inner.clone());
-        }
-        let searches: Rc<[MenuSearch]> = searches.into();
-        let dismiss = dismiss.map(|dismiss| -> Close {
-            let searches = searches.clone();
-            Rc::new(move |_, window, cx| {
-                release(&searches, window, cx);
-                dismiss(&(), window, cx);
-            })
-        });
+        let pad = rems(theme, 0.25);
+        let radius = tucked(theme.radius, theme.font_size);
         let pickable: Vec<usize> = items
             .iter()
             .enumerate()
-            .filter(|(_, item)| !item.disabled && item.press.is_some())
+            .filter(|(_, item)| item.pickable())
             .map(|(place, _)| place)
             .collect();
-        let renewed = search.as_ref().is_some_and(|search| search.renewed(cx));
-        if let Some(scrollbar) = scrollbar.as_ref().filter(|_| renewed) {
-            scrollbar.read(cx).scroll().scroll_to_item(0);
-        }
         let cursor = search
             .as_ref()
-            .and_then(|search| search.place(pickable.len()))
+            .and_then(|(search, _, _)| search.place(pickable.len()))
             .map(|place| pickable[place]);
-        let picked = cursor.and_then(|place| items[place].press.clone());
-        let picked_stays = cursor.is_some_and(|place| items[place].stays);
+        let choices = items
+            .iter()
+            .filter(|item| !item.separator && item.content.is_none())
+            .count();
+        let toggles: Vec<(String, Open<S>)> = items
+            .iter()
+            .filter_map(|item| {
+                let sub = item.submenu.as_ref()?;
+                Some((item.key.clone(), sub.toggle.clone()))
+            })
+            .collect();
+        let toggles = Rc::new(toggles);
 
-        if let (Some(scrollbar), Some(guard)) = (scrollbar.as_ref(), hover_guard.clone()) {
-            let outer = outer.clone();
-            scrollbar.update(cx, |scrollbar, _| {
-                scrollbar.set_hover_guard(move |hovered, window, cx| {
-                    guard.reach(&outer, Near::Bar, hovered, window, cx)
-                });
-            });
+        let cursor_press = cursor.and_then(|place| {
+            let item = &items[place];
+            let press = item.press.clone()?;
+            let after = picked.clone().filter(|_| !item.stays);
+            Some((press, after))
+        });
+        let mut position = 0;
+        let mut rows = Vec::with_capacity(items.len());
+        for (place, item) in items.into_iter().enumerate() {
+            if item.separator {
+                rows.push(
+                    row()
+                        .key(format!("{key}-{}", item.key))
+                        .w_full()
+                        .px(rems(theme, 0.5))
+                        .py(rems(theme, 0.25))
+                        .child(Separator::horizontal().build(theme))
+                        .a11y_hidden(),
+                );
+                continue;
+            }
+            if let Some(content) = item.content {
+                rows.push(
+                    col()
+                        .key(format!("{key}-{}", item.key))
+                        .w_full()
+                        .min_w(0.)
+                        .px(rems(theme, 0.75))
+                        .py(rems(theme, 0.25))
+                        .child(content),
+                );
+                continue;
+            }
+            position += 1;
+            let row_key = format!("{key}-{}", item.key);
+            let lit = item.selected || item.highlighted || cursor == Some(place);
+            rows.push(menu_row(
+                theme,
+                item,
+                RowPlace {
+                    key: row_key,
+                    position,
+                    count: choices,
+                    lit,
+                    radius,
+                },
+                picked.clone(),
+                toggles.clone(),
+                parent.clone(),
+                layer,
+            ));
         }
 
-        let theme = *cx.theme();
-        let overrides = std::mem::take(base.style());
-        let panel = Trigger::default();
-        let nested = hover_guard.is_some();
-        let inner_outer: Vec<SubmenuState> =
-            outer.iter().cloned().chain(hover_guard.clone()).collect();
-        let dismiss_guards = submenu_states(&items);
-        let bounds_guards: Vec<_> = items
-            .iter()
-            .filter_map(|item| item.submenu.as_ref().map(|submenu| submenu.state.clone()))
-            .collect();
-        let viewport_width = window.viewport_size().width;
-        let tucked = crate::metrics::tucked(theme.radius, window);
-
-        let keys = search.map(|search| Keys {
-            search,
-            rows: pickable.into(),
-            picked,
-            stays: picked_stays,
-            action: action.clone().filter(|_| !picked_stays),
-            searches: searches.clone(),
-            scrollbar: scrollbar.clone(),
-        });
-        let row_searches = searches.clone();
-        // Separators and custom content are not choices, so a screen reader counts only the
-        // items around them when it says how far down the menu it is.
-        let mut choices = 0;
-        let positions: Vec<Option<usize>> = items
-            .iter()
-            .map(|item| match item.separator || item.content.is_some() {
-                true => None,
-                false => {
-                    choices += 1;
-                    Some(choices)
-                }
-            })
-            .collect();
-        let rows = items.into_iter().enumerate().map(move |(place, item)| {
-            let MenuItem {
-                id,
-                label,
-                detail,
-                selected,
-                highlighted,
-                checked,
-                disabled,
-                separator,
-                content,
-                face,
-                icon,
-                leading,
-                trailing,
-                artwork,
-                tooltip,
-                press,
-                submenu,
-                stays,
-            } = item;
-
-            if let Some(content) = content {
-                return div()
-                    .id(id)
-                    .flex()
-                    .w_full()
-                    .min_w_0()
-                    .flex_col()
-                    .px_3()
-                    .py_1()
-                    .child(content)
-                    .into_any_element();
-            }
-
-            if separator {
-                return Separator::horizontal().mx_2().my_1().into_any_element();
-            }
-            let action = action.clone();
-            let press_action = action.clone().filter(|_| !stays);
-            let press = press.map(|press| match stays {
-                true => press,
-                false => releasing(press, &row_searches),
-            });
-            let submenu_state = submenu.as_ref().map(|submenu| submenu.state.clone());
-            let expanded = submenu.as_ref().map(|submenu| submenu.state.is_open());
-            let has_artwork = artwork.is_some();
-            let leading = leading.filter(|_| !has_artwork && icon.is_none());
-            let detailed = detail.is_some();
-
-            div()
-                .id(id)
-                .relative()
-                .flex()
-                .w_full()
-                .min_w_0()
-                .items_center()
-                .justify_between()
-                // The gap is part of the row's own width, so a menu widens rather than letting
-                // a trailing mark crowd the label.
-                .gap_3()
-                .px_3()
-                .when_else(detailed, |this| this.py_2(), |this| this.py_1())
-                .rounded(tucked)
-                .role(gpui::accesskit::Role::MenuItem)
-                .aria_label(label.clone())
-                .when_some(positions[place], |this, position| {
-                    this.aria_position_in_set(position)
-                        .aria_size_of_set(choices)
-                })
-                .when(selected, |this| this.aria_selected(true))
-                .when(checked, |this| {
-                    this.aria_toggled(gpui::accesskit::Toggled::True)
-                })
-                .when_some(expanded, |this, open| this.aria_expanded(open))
-                .when_else(
-                    disabled,
-                    |this| this.text_color(theme.muted_foreground).cursor_default(),
-                    |this| this.cursor_pointer(),
-                )
-                .when(selected || highlighted || cursor == Some(place), |this| {
-                    this.bg(theme.secondary_active)
-                })
-                .when(!disabled, |this| {
-                    this.hover(move |this| this.bg(theme.secondary_hover))
-                })
-                // the label column fills the row, so a detail wraps at the menu's width rather
-                // than at the label's
-                .child(
-                    div()
-                        .flex()
-                        .flex_1()
-                        .min_w_0()
-                        .items_center()
-                        .gap_2()
-                        .when_some(artwork, |this, artwork| {
-                            this.child(Artwork::new(artwork).size(px(20.)).flex_none())
-                        })
-                        .when_some(leading, |this, leading| {
-                            this.child(div().flex_none().child(leading))
-                        })
-                        .when_some(icon.filter(|_| !has_artwork), |this, icon| {
-                            this.child(
-                                svg()
-                                    .path(icons::path(icon))
-                                    .size(px(14.))
-                                    .flex_none()
-                                    .text_color(if disabled {
-                                        theme.muted_foreground
-                                    } else {
-                                        theme.popover_foreground
-                                    }),
-                            )
-                        })
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .flex_1()
-                                .min_w_0()
-                                .gap_1()
-                                .child(
-                                    div()
-                                        .truncate()
-                                        .tails()
-                                        .when_some(face, |this, family| {
-                                            this.font(gpui::font(family))
-                                        })
-                                        .child(label),
-                                )
-                                .when_some(detail, |this, detail| this.child(detail)),
-                        ),
-                )
-                .when_some(trailing, |this, trailing| {
-                    this.child(div().flex_none().child(trailing))
-                })
-                .when(selected || checked, |this| {
-                    this.child(div().flex_none().child("✓"))
-                })
-                .when(submenu.is_some(), |this| {
-                    this.child(div().flex_none().child("›"))
-                })
-                .when_some(submenu_state, |this, state| {
-                    this.on_hover(move |hovered, window, cx| {
-                        state.near(Near::Item, *hovered, window.window_handle(), cx)
-                    })
-                })
-                .when_some(tooltip.clone(), |this, key| {
-                    this.aria_description(i18n::lookup(&key, None))
-                })
-                .when_some(tooltip, |this, key| this.tip(key, Perch::Follow))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .when_some(press, |this, press| {
-                    let released = press.clone();
-                    let release_action = press_action.clone();
-                    this.on_click(move |event, window, cx| {
-                        press(event, window, cx);
-                        if let Some(action) = press_action.as_ref() {
-                            action(event, window, cx);
-                        }
-                    })
-                    .when_some(pressed.filter(|_| !disabled), |this, from| {
-                        this.on_mouse_up(MouseButton::Right, move |event, window, cx| {
-                            if (event.position - from).magnitude() <= HOLD_REACH {
-                                return;
-                            }
-                            let click = ClickEvent::Mouse(MouseClickEvent {
-                                down: MouseDownEvent {
-                                    button: MouseButton::Right,
-                                    position: from,
-                                    modifiers: event.modifiers,
-                                    click_count: 1,
-                                    first_mouse: false,
-                                },
-                                up: event.clone(),
-                            });
-                            released(&click, window, cx);
-                            if let Some(action) = release_action.as_ref() {
-                                action(&click, window, cx);
-                            }
-                        })
-                    })
-                })
-                .when_some(submenu, |this, mut submenu| {
-                    if submenu.menu.action.is_none() {
-                        submenu.menu.action = action.clone();
-                    }
-                    if submenu.menu.pressed.is_none() {
-                        submenu.menu.pressed = pressed;
-                    }
-                    submenu.menu.priority = submenu.menu.priority.max(priority + 1);
-                    submenu.menu.outer = inner_outer.clone();
-                    let gap_outer = inner_outer.clone();
-                    let gap_state = submenu.state.clone();
-                    let reach_state = submenu.state.clone();
-                    match submenu.state.is_open() {
-                        false => this,
-                        true => this.child({
-                            let flip_left = submenu.state.flipped(viewport_width);
-                            let panel = div()
-                                .absolute()
-                                .top(SUBMENU_TOP)
-                                .w(px(0.))
-                                .when(flip_left, |this| this.right_full())
-                                .when(!flip_left, |this| this.left_full())
-                                .on_children_prepainted(move |bounds, window, cx| {
-                                    if let Some(bounds) =
-                                        bounds.into_iter().reduce(|one, other| one.union(&other))
-                                    {
-                                        reach_state.measure_reach(bounds, window, cx);
-                                    }
-                                })
-                                .child(
-                                    anchored()
-                                        .anchor(match flip_left {
-                                            true => Anchor::TopRight,
-                                            false => Anchor::TopLeft,
-                                        })
-                                        .snap_to_window_with_margin(WINDOW_MARGIN)
-                                        .child(
-                                            div()
-                                                .id("submenu-safe-area")
-                                                .occlude()
-                                                .pt_3()
-                                                .pb_3()
-                                                .when(flip_left, |this| this.pl_3().pr_1())
-                                                .when(!flip_left, |this| this.pl_1().pr_3())
-                                                .on_hover(move |hovered, window, cx| {
-                                                    gap_state.reach(
-                                                        &gap_outer,
-                                                        Near::Gap,
-                                                        *hovered,
-                                                        window.window_handle(),
-                                                        cx,
-                                                    )
-                                                })
-                                                .child(submenu.menu.inline().relative()),
-                                        ),
-                                );
-                            deferred(panel).with_priority(priority + 1)
-                        }),
-                    }
-                })
-                .into_any_element()
-        });
-
-        let content = match scrollbar.as_ref() {
-            Some(scrollbar) => {
-                scrollbar.read(cx).sync();
-                let gliding = scrollbar.clone();
-
-                middle_scroll(div(), scrollbar)
-                    .id("menu-scroll-content")
-                    .flex()
-                    .flex_1()
-                    .w_full()
-                    .min_w_0()
-                    .min_h_0()
-                    .flex_col()
-                    .overflow_y_scroll()
-                    .track_scroll(scrollbar.read(cx).scroll())
-                    .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
-                        if event.delta.precise() {
-                            return;
-                        }
-                        gliding.update(cx, |bar, _| bar.nudge(window));
-                    })
-                    .children(rows)
-                    .into_any_element()
-            }
-            None => div()
-                .flex()
-                .flex_col()
-                .on_children_prepainted({
-                    let panel = panel.clone();
-                    move |bounds, _, _| panel.observe(bounds)
-                })
-                .gap(px(2.))
-                .children(rows)
-                .into_any_element(),
-        };
-        let body = match scrollbar {
-            Some(scrollbar) => div()
-                .relative()
-                .flex()
-                .flex_1()
-                .w_full()
-                .min_w_0()
-                .min_h_0()
-                .overflow_hidden()
-                .on_children_prepainted({
-                    let panel = panel.clone();
-                    move |bounds, _, _| panel.observe(bounds)
-                })
-                .child(content)
-                .child(scrollbar)
-                .into_any_element(),
-            None => content,
-        };
-        let body = match header {
-            Some(header) => div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .w_full()
-                .min_w_0()
-                .min_h_0()
-                .gap_1()
-                .on_children_prepainted({
-                    let panel = panel.clone();
-                    move |bounds, _, _| panel.observe(bounds)
-                })
-                .child(div().w_full().child(header))
-                .child(body)
-                .into_any_element(),
-            None => body,
-        };
-        let shielded = should_defer && !nested;
-        let chrome = snapped(theme.metrics.title_bar, window);
-        let mut overrides = overrides;
-        let width = overrides.size.width.take();
-        let floor = overrides.min_size.width.take();
-        let ceiling = overrides.max_size.height.take();
-        let right = overrides.inset.left.is_none() && overrides.inset.right.is_some();
-        let corner = match (right, above && trigger.is_none()) {
-            (true, false) => Anchor::TopRight,
-            (false, false) => Anchor::TopLeft,
-            (true, true) => Anchor::BottomRight,
-            (false, true) => Anchor::BottomLeft,
-        };
-        let perch = trigger
-            .as_ref()
-            .and_then(|trigger| trigger.bounds())
-            .map(|bounds| {
-                let x = match right {
-                    true => bounds.right(),
-                    false => bounds.left(),
-                };
-                let position = point(x, bounds.top() - TRIGGER_GAP);
-                let offset = point(Pixels::ZERO, bounds.size.height + TRIGGER_GAP + TRIGGER_GAP);
-                (position, offset)
-            });
-        let frosting = blurring(cx);
-        let fill = popover_fill(cx);
-        let panel_looks = div()
-            .on_children_prepainted({
-                let guard = hover_guard.clone();
-                move |bounds, _, _| {
-                    let Some(bounds) = bounds.into_iter().reduce(|one, other| one.union(&other))
-                    else {
-                        return;
-                    };
-                    if let Some(guard) = guard.as_ref() {
-                        guard.measure_panel(bounds);
-                    }
-                    for guard in &bounds_guards {
-                        guard.measure_menu(bounds);
-                    }
-                }
-            })
-            .id("menu-panel")
-            .role(gpui::accesskit::Role::Menu)
-            .when_some(name, |this, name| this.aria_label(name))
-            .flex()
-            .flex_col()
-            .p_1()
-            .rounded(theme.radius)
-            .border_1()
-            .gap_1()
-            .border_color(theme.border)
-            .bg(fill)
-            .shadow_md()
-            .text_color(theme.popover_foreground)
-            .key_context(MENU_CONTEXT)
-            .when_some(keys, |this, keys| keys.bind(this))
-            .when_some(width, |this, width| this.w(width))
-            .when_some(floor, |this, floor| this.min_w(floor))
-            .when_some(ceiling, |this, ceiling| this.max_h(ceiling))
-            .when_some(hover_guard, |this, guard| {
-                this.on_hover(move |hovered, window, cx| {
-                    guard.reach(&outer, Near::Panel, *hovered, window.window_handle(), cx)
-                })
-            })
-            .occlude()
+        let body = col()
+            .key(format!("{key}-rows"))
+            .w_full()
+            .gap(ROW_GAP)
+            .children(rows);
+        let scroll = col()
+            .key(format!("{key}-scroll"))
+            .w_full()
+            .shrink()
+            .min_h(0.)
+            .scroll(ScrollSpec { stick_bottom: false })
+            .scroll_edge_fade(FADE)
+            .scroll_margin(FADE)
             .child(body);
-        if let Some(dismiss) = dismiss.clone().filter(|_| shielded) {
-            arm(dismiss, cx);
-        }
 
-        let rising = panel_looks.rising("menu-rise");
-        // The renderer drops a backdrop while a paint filter is open and the entrance is one,
-        // so the panel cannot carry its own frost on the way in: it would arrive only once the
-        // rise was over, which reads as a blink. The frost is a sibling underneath instead,
-        // sized to the panel and fading in on the same curve.
-        let frosted = div()
-            .relative()
-            .when(frosting, |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .rounded(theme.radius)
-                        .backdrop_blur(GLASS_BLUR)
-                        .fading("menu-frost"),
-                )
+        let mut panel = col()
+            .key(format!("{key}-menu"))
+            .role("menu")
+            .focus_group()
+            .min_h(0.)
+            .padding(pad)
+            .gap(pad)
+            .radius(theme.radius)
+            .border(BORDER, theme.border.color())
+            .fill(popover_fill(theme).color())
+            .motion(Springs::CONTROL);
+        panel = shadow_md(panel);
+        if blurring(theme) {
+            panel = panel.backdrop_blur(GLASS_BLUR);
+        }
+        if let Some(name) = name {
+            panel = panel.label(name);
+        }
+        if let Some(width) = width {
+            panel = panel.w(width);
+        }
+        if let Some(width) = min_width {
+            panel = panel.min_w(width);
+        }
+        if let Some(height) = max_height {
+            panel = panel.max_h(height);
+        }
+        if let Some(header) = header {
+            panel = panel.child(row().w_full().child(header));
+        }
+        if let Some((search, access, hint)) = search {
+            let count = pickable.len();
+            let walk = access.clone();
+            let edits = access.clone();
+            let changed = access.clone();
+            let mut field = Input::new("search", &search.edit, hint, move |s: &mut S| {
+                &mut edits(s).edit
             })
-            .child(rising);
-        let surface = match should_defer {
-            true => {
-                let anchored = anchored().anchor(corner);
-                match perch {
-                    Some((position, offset)) => anchored.position(position).offset(offset),
-                    None => anchored.snap_to_window_with_margin(WINDOW_MARGIN),
+            .compact()
+            .tucked()
+            .autofocus()
+            .on_change(move |s: &mut S, _: &mut Tx| changed(s).cursor = None)
+            .on_key(move |s: &mut S, event: &KeyEvent, _: &mut Tx| match event.key {
+                Key::Down => {
+                    walk(s).walk(count, 1);
+                    true
                 }
-                .child(frosted)
-                .into_any_element()
-            }
-            false => frosted.into_any_element(),
-        };
-
-        let mut menu = base
-            .absolute()
-            .flex()
-            .flex_col()
-            .when_some(dismiss, |this, dismiss| {
-                let blocked = move |position: Point<Pixels>| {
-                    let reachable = !shielded || position.y < chrome;
-                    panel.contains(position, PANEL_SLACK)
-                        || dismiss_guards.iter().any(|guard| guard.contains(position))
-                        || reachable
-                            && trigger
-                                .as_ref()
-                                .is_some_and(|trigger| trigger.contains(position, Pixels::ZERO))
-                };
-                this.on_mouse_down_out(move |event, window, cx| {
-                    if !blocked(event.position) {
-                        dismiss(&(), window, cx);
+                Key::Up => {
+                    walk(s).walk(count, -1);
+                    true
+                }
+                _ => false,
+            });
+            if let Some((press, after)) = cursor_press {
+                field = field.on_submit(move |s: &mut S, tx: &mut Tx| {
+                    press(s, tx);
+                    if let Some(after) = &after {
+                        after(s, tx);
                     }
-                })
-            })
-            .when(shielded, |this| {
-                let viewport = window.viewport_size();
-                this.child(
-                    anchored().position(point(Pixels::ZERO, chrome)).child(
-                        Shield::new("menu-shield")
-                            .w(viewport.width)
-                            .h(viewport.height - chrome),
-                    ),
-                )
-            })
-            .child(surface);
-
-        menu.style().refine(&overrides);
-
-        if should_defer {
-            deferred(menu).with_priority(priority).into_any_element()
-        } else {
-            menu.into_any_element()
+                });
+            }
+            panel = panel.child(field.build(theme));
         }
+        panel.child(scroll)
     }
 }
 
-/// Closes the open menu the way Escape would. A control drawn inside a menu calls it before it
-/// opens a dialog, so the menu does not stay on screen over the dialog.
-pub fn close_menu(window: &mut Window, cx: &mut App) {
-    let close = cx
-        .try_global::<Escape>()
-        .and_then(|escape| escape.0.borrow_mut().take());
-    if let Some(close) = close {
-        close(&(), window, cx);
-    }
+/// Where a row sits and how it is painted.
+struct RowPlace {
+    key: String,
+    position: usize,
+    count: usize,
+    lit: bool,
+    radius: f32,
 }
 
-fn arm(close: Close, cx: &mut App) {
-    if cx.try_global::<Escape>().is_none() {
-        let armed: Rc<RefCell<Option<Close>>> = Rc::default();
-        let watched = armed.clone();
-        cx.observe_keystrokes(move |event, window, cx| {
-            if event.keystroke.key != ESCAPE_KEY {
+/// One pickable row of a menu, with its submenu pushed into `layer` when open.
+#[allow(clippy::too_many_arguments)]
+fn menu_row<S: 'static>(
+    theme: &Theme,
+    item: MenuItem<S>,
+    place: RowPlace,
+    picked: Option<Pick<S>>,
+    toggles: Rc<Vec<(String, Open<S>)>>,
+    parent: Option<(String, Open<S>)>,
+    layer: &mut Vec<El>,
+) -> El {
+    let MenuItem {
+        key: item_key,
+        label,
+        detail,
+        selected,
+        checked,
+        disabled,
+        icon: glyph,
+        leading,
+        trailing,
+        tooltip,
+        press,
+        submenu,
+        stays,
+        ..
+    } = item;
+    let RowPlace {
+        key,
+        position,
+        count,
+        lit,
+        radius,
+    } = place;
+    let ink = match disabled {
+        true => theme.muted_foreground,
+        false => theme.popover_foreground,
+    };
+    let style = TextStyle::new(theme.text(Text::Body), Weight::NORMAL);
+    let detailed = detail.is_some();
+    let mut words = col()
+        .grow(1.)
+        .shrink()
+        .min_w(0.)
+        .gap(rems(theme, 0.25))
+        .child(
+            text(label.clone())
+                .font(style)
+                .color(ink.color())
+                .truncate()
+                .a11y_hidden(),
+        );
+    if let Some(detail) = detail {
+        words = words.child(detail);
+    }
+    let mut lead = row()
+        .grow(1.)
+        .shrink()
+        .min_w(0.)
+        .center_y()
+        .gap(rems(theme, 0.5));
+    if let Some(leading) = leading {
+        lead = lead.child(leading);
+    } else if let Some(path) = glyph {
+        lead = lead.child(
+            icon(icons::get(&path), ICON)
+                .color(ink.color())
+                .a11y_hidden(),
+        );
+    }
+    lead = lead.child(words);
+
+    let mark = |glyph: &str| {
+        text(glyph)
+            .font(style)
+            .color(ink.color())
+            .a11y_hidden()
+    };
+    let mut row = row()
+        .key(key.clone())
+        .role(match checked {
+            true => "menuitemcheckbox",
+            false => "menuitem",
+        })
+        .label(label)
+        .position_in_set(position, count)
+        .w_full()
+        .min_w(0.)
+        .center_y()
+        .justify_between()
+        .gap(rems(theme, 0.75))
+        .px(rems(theme, 0.75))
+        .py(match detailed {
+            true => rems(theme, 0.5),
+            false => rems(theme, 0.25),
+        })
+        .radius(radius)
+        .child(lead);
+    if checked {
+        row = row.checked(true);
+    }
+    if let Some(tip) = tooltip {
+        row = row.description(tip.clone()).help(tip);
+    }
+    if let Some(trailing) = trailing {
+        row = row.child(trailing);
+    }
+    if selected || checked {
+        row = row.child(mark(CHECK));
+    }
+    if submenu.is_some() {
+        row = row.child(mark(MORE));
+    }
+    row = match lit {
+        true => row.fill(theme.secondary_active.color()),
+        false => row,
+    };
+    if !disabled {
+        row = row
+            .focusable(true)
+            .focus_selected(selected)
+            .focus_highlight(theme.secondary_hover.color())
+            .cursor(Cursor::Pointer);
+    } else {
+        row = row.disabled(true);
+    }
+
+    let opens = submenu.as_ref().map(|sub| sub.toggle.clone());
+    let first = submenu.as_ref().and_then(|sub| {
+        sub.menu
+            .items
+            .iter()
+            .find(|item| item.pickable() || item.submenu.is_some())
+            .map(|item| format!("{}-{}", sub.menu.key, item.key))
+    });
+    // Moving onto a row opens its own submenu and closes its siblings', as a menu does.
+    if !toggles.is_empty() && !disabled {
+        let mine = item_key.clone();
+        let siblings = toggles.clone();
+        row = row.on_hover_change(move |s: &mut S, hovered: bool, _: &mut Tx| {
+            if !hovered {
                 return;
             }
-            let Some(close) = watched.borrow_mut().take() else {
-                return;
-            };
-            close(&(), window, cx);
-        })
-        .detach();
-
-        cx.set_global(Escape(armed));
+            for (sibling, toggle) in siblings.iter() {
+                toggle(s, *sibling == mine);
+            }
+        });
     }
-
-    let armed = cx.global::<Escape>().0.clone();
-    *armed.borrow_mut() = Some(close);
-}
-
-/// Picks the side a submenu of `width` opens on: the right when it fits, else the left when
-/// that fits, else whichever side has more room and lets it overlap the menu.
-fn flips(menu: Bounds<Pixels>, width: Pixels, viewport_width: Pixels) -> bool {
-    let right = viewport_width - menu.right() - WINDOW_MARGIN;
-    let left = menu.left() - WINDOW_MARGIN;
-    match (right >= width, left >= width) {
-        (true, _) => false,
-        (false, true) => true,
-        (false, false) => left > right,
+    // Right goes into a submenu and Left back out of one, as the arrows walk a menu bar.
+    if opens.is_some() || parent.is_some() {
+        let opens = opens.clone();
+        row = row.on_key(move |s: &mut S, event: &KeyEvent, tx: &mut Tx| match event.key {
+            Key::Right => match (&opens, &first) {
+                (Some(open), Some(first)) => {
+                    open(s, true);
+                    tx.focus(first.clone(), true);
+                    true
+                }
+                _ => false,
+            },
+            Key::Left => match &parent {
+                Some((parent_key, back)) => {
+                    back(s, false);
+                    tx.focus(parent_key.clone(), true);
+                    true
+                }
+                None => false,
+            },
+            _ => false,
+        });
     }
-}
-
-/// The states of every submenu reachable from `items`, nested ones included, so a click in any
-/// of their panels does not count as a click outside the menu.
-fn submenu_states(items: &[MenuItem]) -> Vec<SubmenuState> {
-    items
-        .iter()
-        .filter_map(|item| item.submenu.as_ref())
-        .flat_map(|submenu| {
-            std::iter::once(submenu.state.clone()).chain(submenu_states(&submenu.menu.items))
-        })
-        .collect()
-}
-
-fn grown(bounds: Bounds<Pixels>, x: Pixels, y: Pixels) -> Bounds<Pixels> {
-    Bounds {
-        origin: Point {
-            x: bounds.origin.x - x,
-            y: bounds.origin.y - y,
-        },
-        size: Size {
-            width: bounds.size.width + x * 2.,
-            height: bounds.size.height + y * 2.,
-        },
+    if let Some(Submenu { menu, open, toggle }) = submenu {
+        let opens = toggle.clone();
+        row = row.expanded(open).on_press(move |s: &mut S| opens(s, true));
+        if open {
+            let mut menu = *menu;
+            if menu.picked.is_none() {
+                menu.picked = picked.clone();
+            }
+            menu.parent = Some((key.clone(), toggle));
+            // a deeper submenu anchors to a row of this one, so it mounts after it
+            let mut deeper = Vec::new();
+            let surface = menu.surface(theme, &mut deeper);
+            let pad = rems(theme, 0.25) + BORDER;
+            layer.push(overlay::anchor(
+                surface.offset(0., -pad),
+                &key,
+                Placement::RightStart,
+                0.,
+            ));
+            layer.extend(deeper);
+        }
+        return row;
     }
-}
-
-/// Hands focus back from every search in `searches`, before the menu holding them goes away.
-pub(crate) fn release(searches: &[MenuSearch], window: &mut Window, cx: &mut App) {
-    for search in searches {
-        search.release(window, cx);
+    match (press, disabled) {
+        (Some(press), false) => {
+            let after = picked.filter(|_| !stays);
+            row.on_press_tx(move |s: &mut S, tx: &mut Tx| {
+                press(s, tx);
+                if let Some(after) = &after {
+                    after(s, tx);
+                }
+            })
+        }
+        _ => row,
     }
-}
-
-/// Wraps an item's press so the menu's searches give focus back first. A press that opens a
-/// dialog then keeps the focus the dialog takes.
-fn releasing(press: Action, searches: &Rc<[MenuSearch]>) -> Action {
-    let searches = searches.clone();
-    Rc::new(move |event, window, cx| {
-        release(&searches, window, cx);
-        press(event, window, cx);
-    })
-}
-
-/// Moves a search's cursor `by` rows through `rows` and scrolls the row it lands on into view.
-/// The field is notified rather than the window refreshed, so a cached view holding the menu
-/// draws again too.
-fn step(
-    search: &MenuSearch,
-    rows: &[usize],
-    by: isize,
-    scrollbar: &Option<Entity<Scrollbar>>,
-    cx: &mut App,
-) {
-    search.walk(rows.len(), by);
-    let Some(place) = search.cursor.get() else {
-        return;
-    };
-    if let Some(scrollbar) = scrollbar {
-        scrollbar.read(cx).scroll().scroll_to_item(rows[place]);
-    }
-    search.input.update(cx, |_, cx| cx.notify());
 }

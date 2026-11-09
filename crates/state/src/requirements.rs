@@ -2,10 +2,9 @@
 //! server, an output device that opens, the browser engine for cookie sign-ins. Each is found
 //! here and drawn as a card by `views`, which can put it away for the run or for good.
 
-use gpui::{App, Context, Entity, Task};
 use music::SoundServer;
 
-use crate::{AppSettings, Io, Outputs, Session};
+use crate::{AppSettings, Change, Cx, Job, Outputs, Session, Store, Topic};
 
 /// One thing missing from the system, named by what a user installs to fix it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,63 +37,47 @@ pub struct Requirements {
     web_engine: bool,
     /// Put away until the next run.
     dismissed: Vec<&'static str>,
-    settings: Entity<AppSettings>,
-    session: Entity<Session>,
-    task: Option<Task<()>>,
+    task: Option<Job>,
 }
 
 impl Requirements {
-    pub fn new(
-        settings: Entity<AppSettings>,
-        session: Entity<Session>,
-        outputs: Entity<Outputs>,
-        io: Io,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.observe(&outputs, |this, outputs, cx| this.listen(outputs, cx))
-            .detach();
-        // whether the browser engine matters follows the provider in use
-        cx.observe(&session, |_, _, cx| cx.notify()).detach();
-
-        let task = cx.spawn(async move |this, cx| {
-            let looked = io
-                .spawn_blocking(|| (music::missing_bridge(), !webview::supported()))
-                .await;
+    /// Starts looking at the system and takes the output's state from `outputs`. Whether the
+    /// browser engine matters follows the provider in use, which [`Self::shown`] reads.
+    pub fn new(outputs: &Outputs, cx: &mut Cx) -> Self {
+        let task = cx.spawn(|link| async move {
+            let looked =
+                tokio::task::spawn_blocking(|| (music::missing_bridge(), !webview::supported()))
+                    .await;
             let Ok((bridge, web_engine)) = looked else {
                 return;
             };
             if let Some(server) = bridge {
                 log::warn!("requirements: {server:?} runs without its ALSA plugin");
             }
-            this.update(cx, |this, cx| {
+            link.post(move |store| {
+                let this = &mut store.requirements;
                 this.task = None;
                 this.bridge = bridge;
                 this.web_engine = web_engine && cfg!(target_os = "linux");
-                cx.notify();
-            })
-            .ok();
+            });
         });
 
         Self {
             bridge: None,
-            output: outputs.read(cx).failing(),
+            output: outputs.failing(),
             web_engine: false,
             dismissed: Vec::new(),
-            settings,
-            session,
             task: Some(task),
         }
     }
 
     /// The requirements to show, most pressing first. A failed output whose cause is already
     /// known to be the missing ALSA plugin is left to that card.
-    pub fn shown(&self, cx: &App) -> Vec<Requirement> {
-        let settings = self.settings.read(cx);
+    pub fn shown(&self, settings: &AppSettings, session: &Session) -> Vec<Requirement> {
         let found = [
             self.bridge.map(Requirement::AudioBridge),
             (self.output && self.bridge.is_none()).then_some(Requirement::AudioOutput),
-            (self.web_engine && self.session.read(cx).wants_browser())
-                .then_some(Requirement::WebEngine),
+            (self.web_engine && session.wants_browser()).then_some(Requirement::WebEngine),
         ];
         found
             .into_iter()
@@ -107,23 +90,19 @@ impl Requirements {
     }
 
     /// Puts `requirement` away until the next run.
-    pub fn dismiss(&mut self, requirement: Requirement, cx: &mut Context<Self>) {
+    pub fn dismiss(&mut self, requirement: Requirement) {
         self.dismissed.push(requirement.slug());
-        cx.notify();
     }
 
     /// Puts `requirement` away for good.
-    pub fn silence(&mut self, requirement: Requirement, cx: &mut Context<Self>) {
-        self.settings.update(cx, |settings, cx| {
-            settings.silence_requirement(requirement.slug(), cx)
-        });
-        cx.notify();
+    pub fn silence(&self, requirement: Requirement, settings: &mut AppSettings, cx: &mut Cx) {
+        settings.silence_requirement(requirement.slug(), cx);
     }
 
     /// Follows the output after `Outputs` changed. An output that came back takes its card away
     /// and lets it show again should it fail later in the run.
-    fn listen(&mut self, outputs: Entity<Outputs>, cx: &mut Context<Self>) {
-        let output = outputs.read(cx).failing();
+    fn listen(&mut self, outputs: &Outputs) {
+        let output = outputs.failing();
         if output == self.output {
             return;
         }
@@ -135,6 +114,24 @@ impl Requirements {
             }
         }
         self.output = output;
-        cx.notify();
+    }
+}
+
+impl Store {
+    /// Puts `requirement` away for good.
+    pub fn silence_requirement(&mut self, requirement: Requirement) {
+        self.requirements
+            .silence(requirement, &mut self.settings, &mut self.cx);
+    }
+
+    /// The requirements to show, most pressing first.
+    pub fn requirements_shown(&self) -> Vec<Requirement> {
+        self.requirements.shown(&self.settings, &self.session)
+    }
+
+    pub(crate) fn react_requirements(&mut self, change: &Change) {
+        if let Change::Topic(Topic::Outputs) = change {
+            self.requirements.listen(&self.outputs);
+        }
     }
 }

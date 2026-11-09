@@ -16,7 +16,6 @@ dirs.workspace = true
 discord-rich-presence.workspace = true
 fastrand.workspace = true
 futures.workspace = true
-gpui.workspace = true
 i18n.workspace = true
 icons.workspace = true
 image.workspace = true
@@ -39,6 +38,7 @@ webview.workspace = true
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 ashpd.workspace = true
 mpris-server.workspace = true
+oo7 = { workspace = true, features = ["async-std", "native_crypto"] }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
@@ -47,11 +47,13 @@ libc.workspace = true
 souvlaki.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Security_Credentials", "Win32_System_SystemInformation"] }
 windows-sys.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-core-foundation.workspace = true
+objc2-core-foundation = { workspace = true, features = ["CFBase", "CFData", "CFDictionary", "CFNumber"] }
 objc2-io-kit.workspace = true
+objc2-security.workspace = true
 
 [build-dependencies]
 embed.workspace = true

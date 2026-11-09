@@ -1,14 +1,15 @@
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::rc::{Rc, Weak};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
-use gpui::{App, Context, Entity};
 use music::connect::QueuedTrack;
 use music::{ArtistRef, Track};
 use serde::{Deserialize, Serialize};
 
-use crate::{AppSettings, Origin, Outcome, Session, SessionEvent, Toast, Toasts};
+use crate::{
+    AppSettings, Change, Cx, Event, Origin, Outcome, Session, SessionEvent, Store, Toast, Toasts,
+    Topic,
+};
 
 mod view;
 pub use view::{QueuePosition, QueueSections, QueueSlot, QueueView};
@@ -67,7 +68,7 @@ pub struct Stub {
 #[derive(Clone, Debug, PartialEq)]
 struct Entry {
     uid: String,
-    track: Rc<Track>,
+    track: Arc<Track>,
     origin: Option<Origin>,
     kind: QueueKind,
 }
@@ -140,7 +141,7 @@ impl Entry {
     fn with_uid(uid: String, track: Track, origin: Option<Origin>, kind: QueueKind) -> Self {
         Self {
             uid,
-            track: Rc::new(track),
+            track: Arc::new(track),
             origin,
             kind,
         }
@@ -153,25 +154,21 @@ impl Entry {
 
 /// What an Undo on a queue toast puts back. The toast's handler holds the only strong
 /// reference, so the tracks are let go once the toast is, and taking them empties it.
-type Snapshot<T> = Rc<RefCell<Option<T>>>;
+type Snapshot<T> = Arc<Mutex<Option<T>>>;
 
 /// A toast the queue posted with an Undo, and a weak handle on what that Undo puts back.
 struct Reported<T> {
     toast: usize,
-    undo: Weak<RefCell<Option<T>>>,
+    undo: Weak<Mutex<Option<T>>>,
 }
 
 impl<T> Reported<T> {
     /// What the toast's Undo puts back, while the toast is still up and its Undo unused, so a
     /// change made meanwhile can join it.
-    fn live(&self, cx: &mut App) -> Option<Snapshot<T>> {
-        let shown = Toasts::entity(cx)
-            .read(cx)
-            .shown()
-            .iter()
-            .any(|toast| toast.id == self.toast);
+    fn live(&self, toasts: &Toasts) -> Option<Snapshot<T>> {
+        let shown = toasts.showing(self.toast);
         let snapshot = self.undo.upgrade().filter(|_| shown)?;
-        let unused = snapshot.borrow().is_some();
+        let unused = lock(&snapshot).is_some();
         unused.then_some(snapshot)
     }
 }
@@ -406,7 +403,8 @@ fn unknown(upcoming: &mut VecDeque<Entry>, source: &[Entry]) -> Vec<Entry> {
 }
 
 /// One play order around the current song. Entries retain their provenance when moved;
-/// `source` keeps only the original collection order for reset and unshuffle.
+/// `source` keeps only the original collection order for reset and unshuffle. Every edit raises
+/// [`Topic::Queue`], which is also when the queue is saved for the next launch.
 pub struct Queue {
     past: Vec<Entry>,
     current: Option<Entry>,
@@ -420,26 +418,14 @@ pub struct Queue {
     removed: Option<Reported<Vec<Taken>>>,
     /// Counts the times the suggestions were replaced or dropped.
     suggested: u64,
-    session: Entity<Session>,
-    settings: Entity<AppSettings>,
+    /// Whether shuffle was turned on or off since the settings last stored it, which the
+    /// reaction to [`Topic::Queue`] does.
+    shuffle_unsaved: bool,
 }
 
 impl Queue {
-    pub fn new(
-        session: Entity<Session>,
-        settings: Entity<AppSettings>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.subscribe(&session, |this, _, event, cx| match event {
-            SessionEvent::SignedOut => this.purge(cx),
-            SessionEvent::SignedIn
-            | SessionEvent::Reconnected
-            | SessionEvent::WentOffline
-            | SessionEvent::LocalChanged => {}
-        })
-        .detach();
-
-        let shuffle = settings.read(cx).shuffle();
+    pub fn new(settings: &AppSettings) -> Self {
+        let shuffle = settings.shuffle();
 
         Self {
             past: Vec::new(),
@@ -451,8 +437,7 @@ impl Queue {
             revision: 0,
             removed: None,
             suggested: 0,
-            session,
-            settings,
+            shuffle_unsaved: false,
         }
     }
 
@@ -460,13 +445,14 @@ impl Queue {
         self.shuffle
     }
 
-    pub fn set_shuffle(&mut self, on: bool, cx: &mut Context<Self>) {
+    /// Turns shuffle on or off and reorders what is ahead. The settings store it once the
+    /// change settles.
+    pub fn set_shuffle(&mut self, on: bool, cx: &mut Cx) {
         if self.shuffle == on {
             return;
         }
         self.shuffle = on;
-        self.settings
-            .update(cx, |settings, cx| settings.set_shuffle(on, cx));
+        self.shuffle_unsaved = true;
         self.reorder();
         self.changed(cx);
     }
@@ -509,7 +495,9 @@ impl Queue {
         self.upcoming.append(&mut suggested);
     }
 
-    fn changed(&mut self, cx: &mut Context<Self>) {
+    /// Takes in an edit: rebuilds the sections and raises [`Topic::Queue`], whose reaction saves
+    /// the queue for the next launch.
+    fn changed(&mut self, cx: &mut Cx) {
         trim(&mut self.past, PAST_LIMIT);
         self.sections = QueueSections::new(
             self.past.len(),
@@ -517,18 +505,20 @@ impl Queue {
             self.upcoming.iter().map(|entry| entry.kind),
         );
         self.revision = self.revision.wrapping_add(1);
-        self.remember(cx);
-        cx.notify();
+        cx.changed(Topic::Queue);
     }
 
     fn blank(&self) -> bool {
         self.past.is_empty() && self.current.is_none() && self.upcoming.is_empty()
     }
 
-    fn remember(&mut self, cx: &mut Context<Self>) {
-        let resume = self
-            .session
-            .read(cx)
+    /// Saves the queue for the next launch, under the provider signed in now, and shuffle when
+    /// it was turned on or off.
+    fn remember(&mut self, session: &Session, settings: &mut AppSettings, cx: &mut Cx) {
+        if std::mem::take(&mut self.shuffle_unsaved) {
+            settings.set_shuffle(self.shuffle, cx);
+        }
+        let resume = session
             .provider_slug()
             .filter(|_| !self.blank())
             .map(|slug| {
@@ -539,13 +529,12 @@ impl Queue {
                     self.upcoming.iter(),
                 )
             });
-        self.settings
-            .update(cx, |settings, cx| settings.set_resume(resume, cx));
+        settings.set_resume(resume, cx);
     }
 
     /// Restores a saved queue. A queue saved by an older version has one origin for all of it,
     /// which goes to every track except the ones queued by hand.
-    pub(crate) fn revive(&mut self, resume: Resume, cx: &mut Context<Self>) -> Option<Track> {
+    pub(crate) fn revive(&mut self, resume: Resume, cx: &mut Cx) -> Option<Track> {
         let origins = resume.origins;
         let entry = |stub: Stub| {
             let kind = stub.kind;
@@ -586,7 +575,7 @@ impl Queue {
         before != self.upcoming.len()
     }
 
-    fn purge(&mut self, cx: &mut Context<Self>) {
+    fn purge(&mut self, cx: &mut Cx) {
         let suggested = self.drop_suggested();
         self.suggested += 1;
         let sifted = sift(
@@ -720,7 +709,7 @@ impl Queue {
     }
 
     /// Replaces the suggestions with `tracks` from the radio `origin`.
-    pub fn suggest(&mut self, tracks: Vec<Track>, origin: Origin, cx: &mut Context<Self>) {
+    pub fn suggest(&mut self, tracks: Vec<Track>, origin: Origin, cx: &mut Cx) {
         self.drop_suggested();
         self.suggested += 1;
         self.upcoming
@@ -730,7 +719,7 @@ impl Queue {
 
     /// Adds suggestions after the ones already there, for a station topped up before the queue
     /// has played through it.
-    pub fn extend_similar(&mut self, tracks: Vec<Track>, origin: Origin, cx: &mut Context<Self>) {
+    pub fn extend_similar(&mut self, tracks: Vec<Track>, origin: Origin, cx: &mut Cx) {
         if tracks.is_empty() {
             return;
         }
@@ -739,7 +728,7 @@ impl Queue {
         self.changed(cx);
     }
 
-    pub fn clear_similar(&mut self, cx: &mut Context<Self>) {
+    pub fn clear_similar(&mut self, cx: &mut Cx) {
         if !self.drop_suggested() {
             return;
         }
@@ -756,7 +745,7 @@ impl Queue {
             .collect()
     }
 
-    pub fn remove_tracks(&mut self, ids: &[String], cx: &mut Context<Self>) -> bool {
+    pub fn remove_tracks(&mut self, ids: &[String], cx: &mut Cx) -> bool {
         if ids.is_empty() {
             return false;
         }
@@ -796,7 +785,7 @@ impl Queue {
 
     /// Drops everything queued, keeping the suggestions, and posts a toast whose Undo puts it
     /// back. Every clear gets a toast and an Undo of its own.
-    pub fn clear_upcoming(&mut self, cx: &mut Context<Self>) {
+    pub fn clear_upcoming(&mut self, cx: &mut Cx) {
         let mut removed = Vec::new();
         let mut kept = 0;
         self.upcoming.retain(|entry| {
@@ -815,13 +804,9 @@ impl Queue {
             return;
         }
         self.changed(cx);
-        let snapshot = Rc::new(RefCell::new(Some(removed)));
-        let toast = Self::undo_toast(
-            Toast::new(Outcome::Plain, "toast-queue-cleared"),
-            snapshot,
-            cx,
-        );
-        Toasts::post(toast, cx);
+        let snapshot = Arc::new(Mutex::new(Some(removed)));
+        let toast = undo_toast(Toast::new(Outcome::Plain, "toast-queue-cleared"), snapshot);
+        cx.emit(Event::Toast(toast));
     }
 
     pub fn reordered(&self) -> bool {
@@ -834,7 +819,7 @@ impl Queue {
         !self.source.is_empty() && !in_order(sequence, &self.source)
     }
 
-    pub fn reset(&mut self, cx: &mut Context<Self>) -> Option<Track> {
+    pub fn reset(&mut self, cx: &mut Cx) -> Option<Track> {
         if self.source.is_empty() {
             return None;
         }
@@ -850,7 +835,7 @@ impl Queue {
         tracks: Vec<Track>,
         index: usize,
         origin: Option<Origin>,
-        cx: &mut Context<Self>,
+        cx: &mut Cx,
     ) -> Option<Track> {
         self.fill(
             tagged(tracks, origin, QueueKind::Context).collect(),
@@ -860,7 +845,7 @@ impl Queue {
     }
 
     /// Rebuilds play order while retaining only collection entries for reset and unshuffle.
-    fn fill(&mut self, entries: Vec<Entry>, index: usize, cx: &mut Context<Self>) -> Option<Track> {
+    fn fill(&mut self, entries: Vec<Entry>, index: usize, cx: &mut Cx) -> Option<Track> {
         if index >= entries.len() {
             return None;
         }
@@ -888,7 +873,7 @@ impl Queue {
         current: bool,
         upcoming: Vec<(Track, bool)>,
         reach: Reach,
-        cx: &mut Context<Self>,
+        cx: &mut Cx,
     ) {
         let origin = self.origin().or_else(|| self.context_origin()).cloned();
         let old_past = std::mem::take(&mut self.past);
@@ -998,7 +983,7 @@ impl Queue {
 
     /// Makes `tracks` what plays after the current track, as a Sonora Session shares it. Local
     /// files and suggestions are never shared, so the ones here stay after them.
-    pub(crate) fn share_upcoming(&mut self, tracks: Vec<Track>, cx: &mut Context<Self>) {
+    pub(crate) fn share_upcoming(&mut self, tracks: Vec<Track>, cx: &mut Cx) {
         let origin = self.origin().cloned();
         let kept: Vec<_> = self
             .upcoming
@@ -1021,7 +1006,7 @@ impl Queue {
         tracks: impl IntoIterator<Item = Track>,
         origin: Option<Origin>,
         placement: QueuePlacement,
-        cx: &mut Context<Self>,
+        cx: &mut Cx,
     ) {
         let (at, kind) = match placement {
             QueuePlacement::Next => (0, QueueKind::Queued),
@@ -1053,12 +1038,7 @@ impl Queue {
 
     /// Adds the next stretch of the station the queue was started from, both to the source and
     /// after what is queued.
-    pub(crate) fn extend_context(
-        &mut self,
-        tracks: Vec<Track>,
-        origin: Origin,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn extend_context(&mut self, tracks: Vec<Track>, origin: Origin, cx: &mut Cx) {
         let at = self.context_end();
         let entries: Vec<Entry> = tagged(tracks, Some(origin), QueueKind::Context).collect();
         self.source.extend(entries.iter().cloned());
@@ -1084,7 +1064,7 @@ impl Queue {
     /// Moves a song to `gap`. Landing inside or right after the hand-queued run joins it and
     /// leaving that run leaves it, and a suggestion dragged ahead of the queue's end becomes part
     /// of the queue, so the next radio refill keeps it.
-    pub fn move_upcoming_to_gap(&mut self, from: usize, gap: usize, cx: &mut Context<Self>) {
+    pub fn move_upcoming_to_gap(&mut self, from: usize, gap: usize, cx: &mut Cx) {
         // only a suggestion moves among the suggestions, anything else stops at the queue's end
         let gap = match self.upcoming.get(from).map(|entry| entry.kind) {
             Some(QueueKind::Suggested) | None => gap,
@@ -1123,8 +1103,9 @@ impl Queue {
         self.changed(cx);
     }
 
-    /// Removes an upcoming song or suggestion, retaining its position for Undo.
-    pub fn remove(&mut self, position: QueuePosition, cx: &mut Context<Self>) {
+    /// Removes an upcoming song or suggestion, retaining its position for Undo. The toast that
+    /// reports it is posted on `toasts`, or joins the one still up.
+    pub fn remove(&mut self, position: QueuePosition, toasts: &mut Toasts, cx: &mut Cx) {
         let QueuePosition::Upcoming(index) = position else {
             return;
         };
@@ -1138,63 +1119,39 @@ impl Queue {
                 index,
                 batch: self.suggested,
             },
+            toasts,
             cx,
         );
     }
 
     /// Adds a removed track to the toast that reports removals, or posts a new one once the
     /// last has gone. Every removal restarts its clock.
-    fn report_removal(&mut self, taken: Taken, cx: &mut Context<Self>) {
+    fn report_removal(&mut self, taken: Taken, toasts: &mut Toasts, cx: &mut Cx) {
         let live = self
             .removed
             .as_ref()
-            .and_then(|reported| Some((reported.toast, reported.live(cx)?)));
+            .and_then(|reported| Some((reported.toast, reported.live(toasts)?)));
         match live {
             Some((id, snapshot)) => {
-                if let Some(removed) = snapshot.borrow_mut().as_mut() {
+                if let Some(removed) = lock(&snapshot).as_mut() {
                     removed.push(taken);
                 }
-                let toast = Self::removal_toast(snapshot, cx);
-                Toasts::settle(id, toast, cx);
+                let toast = removal_toast(snapshot);
+                toasts.replace(id, toast, cx);
             }
             None => {
-                let snapshot = Rc::new(RefCell::new(Some(vec![taken])));
-                let undo = Rc::downgrade(&snapshot);
-                let toast = Self::removal_toast(snapshot, cx);
-                let toast = Toasts::post(toast, cx);
+                let snapshot = Arc::new(Mutex::new(Some(vec![taken])));
+                let undo = Arc::downgrade(&snapshot);
+                let toast = removal_toast(snapshot);
+                let toast = toasts.push(toast, cx);
                 self.removed = Some(Reported { toast, undo });
             }
         }
     }
 
-    /// The toast for tracks removed one by one, naming one and counting several. Its Undo hands
-    /// `snapshot` back to the queue once.
-    fn removal_toast(snapshot: Snapshot<Vec<Taken>>, cx: &mut Context<Self>) -> Toast {
-        let toast = match snapshot.borrow().as_deref() {
-            Some([only]) => Toast::new(Outcome::Plain, "toast-queue-removed-track")
-                .name(only.entry.track.name.clone()),
-            removed => Toast::new(Outcome::Plain, "toast-queue-removed-tracks")
-                .count(removed.map_or(0, <[Taken]>::len)),
-        };
-        Self::undo_toast(toast, snapshot, cx)
-    }
-
-    /// Builds the same one-shot Undo for clearing a queue and removing individual songs.
-    fn undo_toast(toast: Toast, snapshot: Snapshot<Vec<Taken>>, cx: &mut Context<Self>) -> Toast {
-        let queue = cx.entity().downgrade();
-        toast.undo(move |cx| {
-            let Some(removed) = snapshot.borrow_mut().take() else {
-                return;
-            };
-            queue
-                .update(cx, |queue, cx| queue.put_back(removed, cx))
-                .ok();
-        })
-    }
-
     /// Restores removals newest first, clamping positions to today's queue. Occurrences already
     /// played and recommendations from a replaced batch are not restored.
-    fn put_back(&mut self, removed: Vec<Taken>, cx: &mut Context<Self>) {
+    fn put_back(&mut self, removed: Vec<Taken>, cx: &mut Cx) {
         // A reset or shuffle may have restored the same occurrence already. Identities
         // distinguish those from separate additions of the same song.
         let restoring: HashSet<_> = removed.iter().map(|taken| &taken.entry.uid).collect();
@@ -1217,7 +1174,7 @@ impl Queue {
         self.changed(cx);
     }
 
-    pub fn next(&mut self, cx: &mut Context<Self>) -> Option<Track> {
+    pub fn next(&mut self, cx: &mut Cx) -> Option<Track> {
         let next = self.upcoming.pop_front()?;
         if let Some(played) = self.current.replace(next) {
             self.past.push(played);
@@ -1228,7 +1185,7 @@ impl Queue {
 
     /// Starts the queue over from its first song, for repeat all. What was queued by hand joins
     /// the collection it played in, so the next loop has no stale hand-queued run.
-    pub fn rewind(&mut self, cx: &mut Context<Self>) -> Option<Track> {
+    pub fn rewind(&mut self, cx: &mut Cx) -> Option<Track> {
         self.drop_suggested();
         let mut entries = std::mem::take(&mut self.past);
         entries.extend(self.current.take());
@@ -1239,14 +1196,14 @@ impl Queue {
         self.fill(entries, 0, cx)
     }
 
-    pub fn previous(&mut self, cx: &mut Context<Self>) -> Option<Track> {
+    pub fn previous(&mut self, cx: &mut Cx) -> Option<Track> {
         let index = self.past.iter().rposition(|entry| entry.track.playable)?;
         self.select(QueuePosition::Past(index), cx)
     }
 
     /// Selects a song in play order. Replaying history queues the interrupted songs first;
     /// selecting the collection preserves manual additions, while selecting a suggestion skips them.
-    pub fn select(&mut self, position: QueuePosition, cx: &mut Context<Self>) -> Option<Track> {
+    pub fn select(&mut self, position: QueuePosition, cx: &mut Cx) -> Option<Track> {
         match position {
             QueuePosition::Past(index) => {
                 if !select_past(&mut self.past, &mut self.current, &mut self.upcoming, index) {
@@ -1268,6 +1225,69 @@ impl Queue {
         self.changed(cx);
         self.current().cloned()
     }
+}
+
+impl Store {
+    /// Removes the upcoming song or suggestion with occurrence identity `uid`, as its row's
+    /// remove button does, with a toast whose Undo puts it back.
+    pub fn remove_queued(&mut self, uid: &str) {
+        let Store {
+            queue, toasts, cx, ..
+        } = self;
+        if let Some(position) = queue.position(uid) {
+            queue.remove(position, toasts, cx);
+        }
+    }
+
+    /// Moves the upcoming song at `from` to `gap`, as a drag in the queue does, unless the queue
+    /// changed since the drag began at `revision`.
+    pub fn move_queued(&mut self, revision: u64, from: usize, gap: usize) {
+        if self.queue.revision() == revision {
+            self.queue.move_upcoming_to_gap(from, gap, &mut self.cx);
+        }
+    }
+
+    /// Saves the queue for the next launch after every edit, and keeps only imported tracks once
+    /// the account signs out.
+    pub(crate) fn react_queue(&mut self, change: &Change) {
+        match change {
+            Change::Topic(Topic::Queue) => {
+                self.queue
+                    .remember(&self.session, &mut self.settings, &mut self.cx)
+            }
+            Change::Event(Event::Session(SessionEvent::SignedOut)) => {
+                self.queue.purge(&mut self.cx)
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The toast for tracks removed one by one, naming one and counting several. Its Undo hands
+/// `snapshot` back to the queue once.
+fn removal_toast(snapshot: Snapshot<Vec<Taken>>) -> Toast {
+    let toast = match lock(&snapshot).as_deref() {
+        Some([only]) => Toast::new(Outcome::Plain, "toast-queue-removed-track")
+            .name(only.entry.track.name.clone()),
+        removed => Toast::new(Outcome::Plain, "toast-queue-removed-tracks")
+            .count(removed.map_or(0, <[Taken]>::len)),
+    };
+    undo_toast(toast, snapshot)
+}
+
+/// Builds the same one-shot Undo for clearing a queue and removing individual songs.
+fn undo_toast(toast: Toast, snapshot: Snapshot<Vec<Taken>>) -> Toast {
+    toast.undo(move |store: &mut Store| {
+        let Some(removed) = lock(&snapshot).take() else {
+            return;
+        };
+        store.queue.put_back(removed, &mut store.cx);
+    })
+}
+
+/// Reaches what an Undo puts back, whatever a panic elsewhere left it as.
+fn lock<T>(snapshot: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    snapshot.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Whether a song put at `at` joins the hand-queued run in `upcoming`: inside it or right after
@@ -1360,7 +1380,7 @@ fn connect_entry(entry: &Entry) -> Option<QueuedTrack> {
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
-    use std::rc::Rc;
+    use std::sync::Arc;
     use std::time::Duration;
 
     use music::{ArtistRef, Track};
@@ -1383,7 +1403,7 @@ mod tests {
     fn entry(id: &str) -> Entry {
         Entry {
             uid: format!("test-{id}"),
-            track: Rc::new(track(id)),
+            track: Arc::new(track(id)),
             origin: None,
             kind: super::QueueKind::Context,
         }

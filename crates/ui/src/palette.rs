@@ -1,8 +1,6 @@
 use std::f32::consts::TAU;
 
-use gpui::{App, Hsla, RenderImage, Rgba, SharedString, Task};
-
-use crate::artwork::sample_palette;
+use crate::color::{Hsla, Rgba};
 
 const BINS: usize = 24;
 const SAMPLES: usize = 6000;
@@ -28,20 +26,6 @@ const SECONDARY_HUE: f32 = 0.05;
 const SECONDARY_SPREAD: f32 = 0.05;
 const SECONDARY_VIVID: f32 = 0.35;
 
-/// The palette of a frame that is already decoded, for artwork the cache has in
-/// hand. Sampling walks at most `SAMPLES` pixels, so this costs nothing beside
-/// the decode that produced the frame.
-pub(crate) fn of_image(image: &RenderImage) -> CoverPalette {
-    image.as_bytes(0).map(sampled).unwrap_or_default()
-}
-
-/// The dominant hue of the artwork at `url`, or none for near-greyscale art.
-pub fn tint(url: impl Into<SharedString>, cx: &mut App) -> Task<Option<Hsla>> {
-    let palette = palette(url, cx);
-
-    cx.spawn(async move |_| palette.await.primary)
-}
-
 /// What one artwork extraction names: the hue that leads and, when the art
 /// carries a real second family, the runner-up. Sampled once per cover and
 /// shared by the theme tint and the ambient background, so the two never disagree.
@@ -56,10 +40,12 @@ pub struct CoverPalette {
     pub lightness: f32,
 }
 
-/// Both hues of the artwork at `url` in a single pass over its pixels. A cover the
-/// artwork cache has drawn answers at once, and any other is decoded small and dropped.
-pub fn palette(url: impl Into<SharedString>, cx: &mut App) -> Task<CoverPalette> {
-    sample_palette(url.into(), cx)
+impl CoverPalette {
+    /// The palette of decoded artwork, straight-alpha RGBA rows. Sampling walks at most
+    /// `SAMPLES` pixels, so this costs nothing beside the decode that produced them.
+    pub fn of_rgba(pixels: &[u8]) -> Self {
+        sampled(pixels)
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -109,7 +95,7 @@ fn sampled(pixels: &[u8]) -> CoverPalette {
     let mut sampled = 0.;
     let mut lightness = 0.;
 
-    for &[blue, green, red, alpha] in pixels.as_chunks::<4>().0.iter().step_by(stride) {
+    for &[red, green, blue, alpha] in pixels.as_chunks::<4>().0.iter().step_by(stride) {
         if alpha < MIN_ALPHA {
             continue;
         }
@@ -207,7 +193,7 @@ mod tests {
         colours
             .iter()
             .flat_map(|&([red, green, blue], count)| {
-                std::iter::repeat_n([blue, green, red, 255], count).flatten()
+                std::iter::repeat_n([red, green, blue, 255], count).flatten()
             })
             .collect()
     }
