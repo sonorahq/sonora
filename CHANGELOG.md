@@ -42,6 +42,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An artist's page links to the songs of theirs you have in your Favorites, so you can see and play them together, and take one out with the X that appears when you point at it.
 - Turn off Show lyrics in the lyrics settings to hide the lyrics buttons in the player bar and
   Now playing, and stop Sonora looking lyrics up.
+- Drag the left sidebar's edge all the way in to fold it down to icons, with each name shown
+  beside its icon on hover. Songs, Albums, Artists and Playlists now have icons of their own.
 
 ### Changed
 

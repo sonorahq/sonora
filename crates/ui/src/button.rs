@@ -298,6 +298,11 @@ impl Button {
         self
     }
 
+    pub fn tooltip_trailing(mut self, key: impl Into<SharedString>) -> Self {
+        self.tooltip = Some((key.into(), Perch::Trailing));
+        self
+    }
+
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
