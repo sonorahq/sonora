@@ -150,16 +150,9 @@ fn sheet(entry: StructuredLyrics) -> Option<Lyrics> {
                         text: group[0].value.as_deref()?.trim().to_owned(),
                         end: Some(shifted(group[0].end?, offset)),
                         romanized: None,
-                        voice: get_agent(agents?, group[0].agent_id.clone()).map_or(
-                            Voice::Lead,
-                            |a| {
-                                if a.id == main_agent.unwrap().id {
-                                    Voice::Lead
-                                } else {
-                                    Voice::Counter
-                                }
-                            },
-                        ),
+                        voice: get_agent(agents?, group[0].agent_id.as_deref())
+                            .filter(|a| a.role == "voice")
+                            .map_or(Voice::Lead, |_| Voice::Counter),
                         words: Some(parse_cues(&group[0].cue, offset)),
                         secondary: parse_secondaries(group, offset),
                     })
@@ -244,7 +237,7 @@ fn group_cues<'a>(lines: &'a [CueLine], main: &Agent, count: usize) -> Vec<Vec<&
     groups
 }
 
-fn get_agent(list: &[Agent], id: Option<String>) -> Option<&Agent> {
+fn get_agent<'a>(list: &'a [Agent], id: Option<&str>) -> Option<&'a Agent> {
     let target = id?;
     list.iter().find(|&agent| agent.id == target)
 }
