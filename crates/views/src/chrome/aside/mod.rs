@@ -57,6 +57,27 @@ pub(crate) fn header(tab: SideTab, actions: Option<El>, theme: &Theme) -> El {
         .children(actions)
 }
 
+/// Whether the panels draw in the fullscreen player rather than in the sidebar: no title over
+/// them and no player bar under them, and the lyrics set larger.
+pub(crate) fn staged(ui: &Ui) -> bool {
+    matches!(ui.nav.current(), router::Destination::Fullscreen)
+}
+
+/// The strip across a panel's top in the fullscreen player: only its actions, at its end. The
+/// pill under the panel already says which panel shows.
+pub(crate) fn bare_header(tab: SideTab, actions: Option<El>, theme: &Theme) -> El {
+    row()
+        .key(format!("aside-header-{}", tab_id(tab)))
+        .w_full()
+        .h(theme.metrics.header.round())
+        .center_y()
+        .justify_end()
+        .gap(theme.metrics.pad)
+        .pl(theme.metrics.pad)
+        .pr(theme.metrics.control + theme.metrics.pad)
+        .children(actions)
+}
+
 fn tab_id(tab: SideTab) -> &'static str {
     match tab {
         SideTab::Queue => "queue",

@@ -56,6 +56,11 @@ impl Genres {
         self.genres.clone()
     }
 
+    /// The genres borrowed in place, for a view that lists them without taking a share.
+    pub fn list(&self) -> &[Genre] {
+        &self.genres
+    }
+
     pub fn adopt(&mut self, id: &str, cover: Option<String>) {
         let Some(cover) = cover else {
             return;

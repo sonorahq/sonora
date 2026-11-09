@@ -5,6 +5,7 @@ pub(crate) mod popups;
 pub(crate) mod steps;
 pub(crate) mod about;
 pub(crate) mod adaptive;
+pub(crate) mod ambient;
 pub(crate) mod confirm;
 pub(crate) mod device_menu;
 pub(crate) mod dialogs;
@@ -13,7 +14,9 @@ pub(crate) mod menus;
 pub(crate) mod pins;
 pub(crate) mod playlist_editor;
 pub(crate) mod tag_editor;
+pub(crate) mod transport;
 pub(crate) mod trouble;
+pub(crate) mod visualizer;
 pub(crate) mod widevine;
 // The building blocks below wait for the wave-2 screens; drop each allow once a screen uses it.
 #[allow(dead_code, unused_imports)]

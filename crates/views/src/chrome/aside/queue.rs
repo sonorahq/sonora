@@ -158,13 +158,17 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
     let sections = listing.sections.clone();
     let remote = !listing.editable();
     let state = &ui.chrome.aside.queue;
-    state.bottom.set(crate::chrome::player_bar::bottom(ui, cx));
+    let staged = super::staged(ui);
+    state.bottom.set(match staged {
+        true => 0.,
+        false => crate::chrome::player_bar::bottom(ui, cx),
+    });
 
-    let header = super::header(
-        SideTab::Queue,
-        (!remote).then(|| actions(ui, &sections, theme)),
-        theme,
-    );
+    let actions = (!remote).then(|| actions(ui, &sections, theme));
+    let header = match staged {
+        true => super::bare_header(SideTab::Queue, actions, theme),
+        false => super::header(SideTab::Queue, actions, theme),
+    };
     let body = match sections.is_empty() {
         true => ui::spoken_vacant("queue-empty", t!("queue-empty").to_string(), theme).grow(1.),
         false => {

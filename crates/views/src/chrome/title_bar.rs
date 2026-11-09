@@ -307,7 +307,7 @@ fn traffic_lights(ui: &Ui) -> bool {
 
 /// The radius the bar rounds the window's top corners with while the window is borderless, or
 /// `None` for square corners. It never exceeds half the bar's height.
-fn window_radius(ui: &Ui) -> Option<f32> {
+pub(crate) fn window_radius(ui: &Ui) -> Option<f32> {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         if ui.store.settings.server_side_decorations() {

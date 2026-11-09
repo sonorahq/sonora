@@ -115,6 +115,9 @@ impl Ui {
     /// Settles what a change raised and re-derives what follows the settings.
     pub fn settle(&mut self) {
         self.store.settle();
+        crate::screens::login::follow(self);
+        crate::screens::detail::follow(self);
+        crate::screens::artist::follow_gone(self);
         for linked in self.store.take_opened() {
             if let Some(destination) = linked_page(&linked) {
                 self.go(destination);
@@ -170,15 +173,19 @@ impl Ui {
             Destination::Song(id) => store.open_song(id),
             Destination::User(id) => store.open_user(id),
             Destination::Genre(id) => store.open_genre(id),
+            Destination::Search => store.load_genres(),
             _ => {}
         }
         self.screens.arrived(destination, &self.store.settings);
+        crate::screens::home::arrived(self, destination);
         self.settle();
     }
 
     /// The shortcut a key press asks for, run against the window.
     pub(crate) fn key(&mut self, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
         let typing = tx.focused().is_some_and(|focused| focused.contains("input"));
+        // a key shows the fullscreen controls as a pointer movement does
+        crate::shells::fullscreen::stir(self, tx);
         let Some(action) = input::action(&self.bindings, event, tx, typing) else {
             return false;
         };
@@ -209,10 +216,18 @@ impl Ui {
             tx.wake_after(TICK);
         }
         let artwork = self.artwork.as_ref().is_some_and(Artwork::take_news);
-        // the right sidebar's lyrics follow the sung line, and its queue the playing song
-        let aside = crate::chrome::sidebar_right::poll(self, tx);
+        // the right sidebar's lyrics follow the sung line, and its queue the playing song, or
+        // in fullscreen the panel beside the cover does
+        // (its poll runs after the workspace's too, which is how it notices being left)
+        let fullscreen = crate::shells::fullscreen::poll(self, tx);
+        let aside = match self.nav.current() {
+            Destination::Fullscreen => fullscreen,
+            _ => fullscreen | crate::chrome::sidebar_right::poll(self, tx),
+        };
         let tinted = crate::shared::adaptive::wear(self);
-        self.store.take_dirty() | artwork | aside | tinted
+        // the equalizer page follows the curve and draws its spectrum and meter
+        let equalizer = crate::screens::equalizer::poll(self, tx);
+        self.store.take_dirty() | artwork | aside | tinted | equalizer
     }
 }
 

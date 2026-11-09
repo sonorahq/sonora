@@ -164,19 +164,18 @@ pub(crate) fn close(ui: &mut Ui, tx: &mut Tx) {
 fn page_tools(ui: &Ui, at: &Destination, layer: &mut Vec<El>) -> Tools {
     let _ = (ui, &layer);
     match at {
-        Destination::Library(_) | Destination::Local(_) => Tools {
-            search: Some("filter-library"),
-            ..Tools::default()
-        },
+        Destination::Library(_) | Destination::Local(_) => {
+            crate::screens::library::tools(ui, layer)
+        }
         Destination::History => Tools {
             search: Some("filter-history"),
             ..Tools::default()
         },
-        Destination::Album(_) | Destination::Playlist(_) => Tools {
-            search: Some("filter-album"),
-            ..Tools::default()
-        },
-        Destination::Artist(_) | Destination::Genre(_) => Tools::default(),
+        Destination::Album(_) | Destination::Playlist(_) => {
+            crate::screens::detail::tools(ui, layer)
+        }
+        Destination::Artist(_) => crate::screens::artist::tools(ui),
+        Destination::Genre(_) => crate::screens::genre::tools(ui),
         Destination::Home
         | Destination::Search
         | Destination::Song(_)

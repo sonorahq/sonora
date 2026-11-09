@@ -24,8 +24,8 @@ use router::Destination;
 use rune::{Drag, El, PointerPress, Tx, row};
 use state::{AppSettings, Origin, Progress, Shelf};
 use ui::{
-    ArrowRing, Button, ColumnSpec, Filter, FilterChange, FlagAxis, Pending, RangeAxis, Sorting,
-    Table, TableCell, TableState, Unit,
+    ArrowRing, Button, ColumnSpec, Filter, FilterChange, FlagAxis, Pending, RangeAxis, SortAxis,
+    Sorting, Table, TableCell, TableState, Unit,
 };
 
 use crate::Ui;
@@ -233,7 +233,9 @@ impl TrackList {
         tracks: &[Track],
         columns: &'static [ColumnSpec<TrackField>],
         downloads_only: bool,
+        query: Option<&str>,
     ) -> Rc<Order> {
+        let query = query.unwrap_or(&self.query);
         let sorting = self.table.sorting().and_then(|sorting| {
             columns
                 .iter()
@@ -246,7 +248,7 @@ impl TrackList {
             len: tracks.len(),
             sorting,
             sieve: self.sieve,
-            query: self.query.clone(),
+            query: query.to_owned(),
             facts: match reads {
                 true => facts(ui, tracks),
                 false => 0,
@@ -271,7 +273,7 @@ impl TrackList {
             {
                 return false;
             }
-            sort::hits(track, &self.query)
+            sort::hits(track, query)
         };
         let mut rows: Vec<u32> = (0..tracks.len())
             .filter(|&at| keeps(&tracks[at]))
@@ -360,6 +362,9 @@ pub(crate) struct TrackRows {
     liked: bool,
     /// The album the rows are, for its own track numbers.
     album: Option<String>,
+    /// What the page's search field narrows the rows by, which then stands in for the
+    /// [`TrackList`]'s own query.
+    query: Option<String>,
 }
 
 impl TrackRows {
@@ -381,7 +386,15 @@ impl TrackRows {
             starrable: None,
             liked: false,
             album: None,
+            query: None,
         }
+    }
+
+    /// Narrows the rows to those whose title, artists, album or contributor hold `query`, as
+    /// the title bar's search field reads for the page (`ui.chrome.toolbar.query(..)`).
+    pub(crate) fn query(mut self, query: &str) -> Self {
+        self.query = Some(query.trim().to_lowercase());
+        self
     }
 
     /// The collection the rows are, which playback names as where its queue came from.
@@ -442,7 +455,13 @@ impl TrackRows {
     /// The rows on screen.
     pub(crate) fn order(&self, ui: &Ui) -> Rc<Order> {
         let tracks = (self.source)(ui);
-        (self.list)(ui).order(ui, tracks, self.columns, self.downloads_only(ui))
+        (self.list)(ui).order(
+            ui,
+            tracks,
+            self.columns,
+            self.downloads_only(ui),
+            self.query.as_deref(),
+        )
     }
 
     /// The tracks in the order they show, for a queue.
@@ -571,6 +590,34 @@ impl TrackRows {
             axes.push(flag("filter-downloaded", sieve.downloaded));
         }
         axes
+    }
+
+    /// The columns the sort picker offers: every sortable one the source has something for, the
+    /// sorted one with its order.
+    pub(crate) fn sorts(&self, ui: &Ui) -> Vec<SortAxis> {
+        let tracks = (self.source)(ui);
+        let sorting = (self.list)(ui).table.sorting();
+        self.columns
+            .iter()
+            .filter(|spec| spec.sortable && populated(tracks, spec.field))
+            .map(|spec| SortAxis {
+                key: spec.key,
+                label: spec.label(),
+                order: sorting
+                    .filter(|sorting| sorting.column == spec.key)
+                    .map(|sorting| sorting.order),
+            })
+            .collect()
+    }
+
+    /// Steps the column keyed `key` through its orders, as the sort picker and a header click
+    /// do, and saves the sort under `remember` in settings.
+    pub(crate) fn cycle_sort(&self, ui: &mut Ui, key: &str, remember: Option<&str>) {
+        let sorting = (self.list_mut)(ui).table.cycle(self.columns, key);
+        if let Some(remember) = remember {
+            let store = &mut ui.store;
+            store.settings.set_sorting(remember, sorting, &mut store.cx);
+        }
     }
 
     /// Applies a change from the filter popover and saves the filters under `key`.

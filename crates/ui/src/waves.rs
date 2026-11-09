@@ -34,6 +34,7 @@ pub struct Waves {
     colors: [Hsla; 5],
     stage: Option<Hsla>,
     radius: f32,
+    still: bool,
 }
 
 impl Waves {
@@ -42,6 +43,7 @@ impl Waves {
             colors,
             stage: None,
             radius: 0.,
+            still: false,
         }
     }
 
@@ -53,6 +55,13 @@ impl Waves {
 
     pub fn corner_radius(mut self, radius: f32) -> Self {
         self.radius = radius;
+        self
+    }
+
+    /// Holds every pool at its brightest instead of breathing, for a field the user asked to
+    /// keep still. A still field costs no frames.
+    pub fn still(mut self, still: bool) -> Self {
+        self.still = still;
         self
     }
 
@@ -69,15 +78,19 @@ impl Waves {
             .enumerate()
             .map(|(index, ((color, (center, reach)), (period, delay)))| {
                 let core = color.color().alpha(color.a * PEAK);
-                el().key(format!("pool-{index}"))
+                let pool = el()
+                    .key(format!("pool-{index}"))
                     .absolute(0., 0.)
                     .size(w, h)
                     .radial_gradient(
                         center,
                         long * reach / 2.,
                         [(0., core), (1., core.alpha(0.))],
-                    )
-                    .looping(LoopSpec::opacity(period, delay, LOW, 1.))
+                    );
+                match self.still {
+                    true => pool,
+                    false => pool.looping(LoopSpec::opacity(period, delay, LOW, 1.)),
+                }
             });
         el().size(w, h)
             .radius(self.radius)

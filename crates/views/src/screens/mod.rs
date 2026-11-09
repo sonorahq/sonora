@@ -38,6 +38,10 @@ impl Screens {
     /// Lets a screen reset what it keeps per visit as the window arrives at `destination`.
     pub(crate) fn arrived(&mut self, destination: &Destination, settings: &state::AppSettings) {
         self.settings.arrived(destination);
+        self.library.arrived(destination, settings);
+        self.search.arrived(destination);
         self.detail.arrived(destination, settings);
+        self.genre.arrived(destination);
+        self.artist.arrived(destination, settings);
     }
 }

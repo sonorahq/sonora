@@ -966,6 +966,7 @@ equalizer-no-gain-spoken = No gain
 equalizer-filter-frequency = Filter { $number } frequency
 equalizer-filter-gain = Filter { $number } gain
 equalizer-filter-width = Filter { $number } width
+equalizer-filter-selected = Selected on the graph
 equalizer-graph = Frequency response
 equalizer-graph-detail = { $count ->
     [0] No filters

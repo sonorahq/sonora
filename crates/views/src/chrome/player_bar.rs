@@ -275,7 +275,11 @@ fn artwork(ui: &Ui, layout: PlayerBarLayout, stacked: bool) -> El {
         .size(size)
         .fallback("icons/disc-3.svg")
         .build(theme);
-    let mut face = el().key("now-playing-artwork").child(art);
+    // the fullscreen cover carries the same match, so the cover flies between the two
+    let mut face = el()
+        .key("now-playing-artwork")
+        .matched(crate::shared::transport::COVER_FLIGHT)
+        .child(art);
     let Some(track) = track else {
         return face;
     };
@@ -398,7 +402,7 @@ fn track_details(ui: &Ui, centered: bool) -> El {
 
 /// The heart that saves or drops the shown track. Liking pops the filled heart in on a bouncy
 /// spring; unliking fades it back to the outline.
-fn like(ui: &Ui, track: Option<&Track>) -> El {
+pub(crate) fn like(ui: &Ui, track: Option<&Track>) -> El {
     let theme = &ui.theme;
     let id = track.and_then(|track| track.id.as_deref());
     let saved = id.is_some_and(|id| ui.store.library.saved(id));
@@ -801,14 +805,14 @@ fn fullscreen_button(theme: &Theme) -> El {
 }
 
 /// Opens the shared track menu on whatever is playing, where the secondary press landed.
-fn open_menu(ui: &mut Ui, press: rune::PointerPress, _: &mut Tx) {
+pub(crate) fn open_menu(ui: &mut Ui, press: rune::PointerPress, _: &mut Tx) {
     let Some(track) = ui.store.playback.shown_track(&ui.store.devices) else {
         return;
     };
     menus::open(ui, menus::Target::track(track), press);
 }
 
-fn volume_icon(level: f32) -> &'static str {
+pub(crate) fn volume_icon(level: f32) -> &'static str {
     match level {
         level if level <= 0.0001 => "icons/volume-x.svg",
         level if level < 0.25 => "icons/volume.svg",
@@ -817,12 +821,12 @@ fn volume_icon(level: f32) -> &'static str {
     }
 }
 
-fn percent(fraction: f32) -> String {
+pub(crate) fn percent(fraction: f32) -> String {
     t!("player-percent", value = (fraction * 100.).round()).into_owned()
 }
 
 /// Whether the pointer moved far enough over a slider for its bubble to follow, or came or went.
-fn moved(before: Option<f32>, after: Option<f32>) -> bool {
+pub(crate) fn moved(before: Option<f32>, after: Option<f32>) -> bool {
     match (before, after) {
         (Some(before), Some(after)) => (before - after).abs() > STEP,
         (before, after) => before.is_some() != after.is_some(),

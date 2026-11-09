@@ -54,6 +54,11 @@ const ACTIVE_VERSE_GROWTH: f32 = 2.;
 const VERSE_GAP: f32 = 0.6;
 const VERSE_PADDING: f32 = 0.15;
 const VERSE_SIDE_PADDING: f32 = 0.45;
+/// How much larger than a title fullscreen sets a verse.
+const STAGED_VERSE_GROWTH: f32 = 3.;
+/// How far over the sheet's foot the follow button stands in fullscreen, in rems, clear of the
+/// panel pill.
+const STAGED_PERCH: f32 = 4.;
 /// How much larger than a lane unsynced lyrics are set.
 const PLAIN_LYRICS_GROWTH: f32 = 1.15;
 /// How far a held verse sinks.
@@ -203,17 +208,27 @@ struct Look {
 pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
     let theme = &ui.theme;
     let state = &ui.chrome.aside.lyrics;
-    let header = super::header(SideTab::Lyrics, None, theme);
+    let staged = super::staged(ui);
+    // fullscreen puts no title over the sheet: its pill says which panel shows
+    let header = (!staged).then(|| super::header(SideTab::Lyrics, None, theme));
     let lyrics = &ui.store.lyrics;
     let settings = &ui.store.settings;
-    let (verse, lane) = verse_sizes(settings.panel_lyrics_scale(), theme);
+    let (verse, lane) = sizes(ui);
     let hit = lyrics.current();
     let lines = match (lyrics.state(), hit.map(|hit| &hit.lyrics)) {
         (LyricsState::Ready, Some(music::Lyrics::Synced { lines })) => Some(lines),
         _ => None,
     };
     // a translucent player bar floats over the sheet's foot: the sheet reads the part above it
-    let bottom = crate::chrome::player_bar::bottom(ui, cx);
+    let bottom = match staged {
+        true => 0.,
+        false => crate::chrome::player_bar::bottom(ui, cx),
+    };
+    // in fullscreen the button stands clear of the pill floating over the sheet's foot
+    let perch = match staged {
+        true => theme.font_size * STAGED_PERCH,
+        false => bottom,
+    };
     let viewport = cx
         .layout_with(SHEET, move |rect| {
             [rect[1].round(), rect[2].round(), (rect[3] - bottom).round()]
@@ -268,7 +283,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
     let follow = (lines.is_some() && !state.pinned).then(|| {
         // over a translucent player bar the button floats clear of it
         ui::perched(
-            el().pb(bottom).child(
+            el().pb(perch).child(
                 Button::new("resume-pin")
                     .secondary()
                     .icon("icons/undo-2.svg")
@@ -286,7 +301,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
         .h_full()
         .min_h(0.)
         .min_w(0.)
-        .child(header)
+        .children(header)
         .child(
             col()
                 .key("lyrics-body")
@@ -305,7 +320,7 @@ pub(crate) fn poll(ui: &mut Ui, shown: bool, tx: &mut Tx) -> bool {
     if !shown {
         return false;
     }
-    let (verse, _) = verse_sizes(ui.store.settings.panel_lyrics_scale(), &ui.theme);
+    let (verse, _) = sizes(ui);
     let karaoke = ui.store.settings.karaoke_lyrics() && ui::effects();
     let playback = &ui.store.playback;
     let (position, playing) = match playback.steered(&ui.store.devices) {
@@ -412,6 +427,24 @@ pub(crate) fn poll(ui: &mut Ui, shown: bool, tx: &mut Tx) -> bool {
         }
     }
     changed
+}
+
+/// The verse and lane sizes the sheet is set in: the panel's, or in fullscreen larger ones that
+/// grow further with a big window.
+fn sizes(ui: &Ui) -> (f32, f32) {
+    let theme = &ui.theme;
+    let settings = &ui.store.settings;
+    match super::staged(ui) {
+        false => verse_sizes(settings.panel_lyrics_scale(), theme),
+        true => {
+            let scale = settings.fullscreen_lyrics_scale()
+                * crate::shells::fullscreen::lyrics_frame(ui);
+            (
+                (theme.text(Text::Title) + STAGED_VERSE_GROWTH) * scale,
+                theme.text(Text::Body) * scale,
+            )
+        }
+    }
 }
 
 /// The verse and lane sizes at `scale`.
