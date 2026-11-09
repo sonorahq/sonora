@@ -19,7 +19,8 @@ const ROWS: usize = 3;
 const STEADY: Pixels = px(0.5);
 const PENDING: usize = 3;
 const RAIL_GAP: Pixels = px(16.);
-const STACK_GAP: Pixels = px(32.);
+/// The space between the sections of a page that stacks rails and other sections.
+pub(crate) const STACK_GAP: Pixels = px(32.);
 const LANE_GAP: Pixels = px(8.);
 const HEADING_GAP: Pixels = px(12.);
 const LEADING: f32 = 1.4;
@@ -494,6 +495,7 @@ impl Rail {
             tile,
             columns,
             tabs,
+            note,
         } = spec;
         let tall = Card::tile_height(tile, window, cx);
         let inset = cx.theme().metrics.inset;
@@ -517,11 +519,20 @@ impl Rail {
                     .justify_between()
                     .gap_4()
                     .h(head(window, cx))
-                    .child(shelf_heading(
-                        SharedString::from(format!("{tag}-heading-{place}")),
-                        title,
-                        cx,
-                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .h_full()
+                            .gap_3()
+                            .min_w_0()
+                            .child(shelf_heading(
+                                SharedString::from(format!("{tag}-heading-{place}")),
+                                title,
+                                cx,
+                            ))
+                            .children(note),
+                    )
                     .children(arrows),
             )
             .children(tabs.map(|tabs| div().px(inset).child(tabs)))
@@ -609,6 +620,39 @@ pub(crate) struct RailSpec {
     pub tile: Pixels,
     pub columns: usize,
     pub tabs: Option<AnyElement>,
+    /// Small badges beside the heading, such as what the rail counts.
+    pub note: Option<AnyElement>,
+}
+
+/// A page section that is no rail, under the same heading and spacing as one.
+pub(crate) fn section(
+    tag: &'static str,
+    title: SharedString,
+    note: Option<AnyElement>,
+    body: impl IntoElement,
+    window: &Window,
+    cx: &App,
+) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(
+            div()
+                .flex()
+                .items_end()
+                .h(head(window, cx))
+                .gap_3()
+                .items_center()
+                .child(shelf_heading(
+                    SharedString::from(format!("{tag}-heading")),
+                    title,
+                    cx,
+                ))
+                .children(note),
+        )
+        .child(body)
+        .into_any_element()
 }
 
 /// The paging arrows of a rail head, which is what tells a crowded rail from a short one.

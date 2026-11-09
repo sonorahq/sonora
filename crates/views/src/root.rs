@@ -24,6 +24,7 @@ use crate::chrome::{
 };
 use crate::screens::search::SearchView;
 use crate::screens::settings::SettingsHeader;
+use crate::screens::stats::StatsView;
 use crate::shared::ambient::{self, Ambient};
 use crate::shared::tracks::{LIBRARY_COLUMNS, album_columns};
 use crate::shells::Shell;
@@ -36,6 +37,7 @@ use crate::{
 struct Screens {
     home: Entity<HomeView>,
     history: Entity<HistoryView>,
+    stats: Entity<StatsView>,
     library: Entity<LibraryView>,
     local: Entity<LibraryView>,
     artist: Option<Entity<ArtistView>>,
@@ -210,6 +212,9 @@ impl Root {
         let history = Sonora::global(cx).history.clone();
         let history = cx.new(|cx| HistoryView::new(history, playback.clone(), window, cx));
 
+        let stats =
+            cx.new(|cx| StatsView::new(Sonora::global(cx).stats.clone(), playback.clone(), cx));
+
         let queries = cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
         let suggestions =
             cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
@@ -337,6 +342,7 @@ impl Root {
             screens: Screens {
                 home,
                 history,
+                stats,
                 library: library_view,
                 local: local_view,
                 artist: None,
@@ -632,6 +638,10 @@ impl Root {
                 let history = Sonora::global(cx).history.clone();
                 Box::new(move |cx| matches!(history.read(cx).state(), HistoryState::Loading))
             }
+            Destination::Stats => {
+                let stats = Sonora::global(cx).stats.clone();
+                Box::new(move |cx| stats.read(cx).is_loading())
+            }
             Destination::Library(_) => shelf(Shelf::Streaming),
             Destination::Local(_) => {
                 let session = Sonora::global(cx).session.clone();
@@ -677,6 +687,10 @@ impl Root {
             Destination::History => {
                 let history = Sonora::global(cx).history.clone();
                 history.update(cx, |history, cx| history.reload(cx));
+            }
+            Destination::Stats => {
+                let stats = Sonora::global(cx).stats.clone();
+                stats.update(cx, |stats, cx| stats.refresh(cx));
             }
             Destination::Library(_) => {
                 library.update(cx, |library, cx| library.reload(Shelf::Streaming, cx))
@@ -882,6 +896,11 @@ impl Root {
                 history.update(cx, |history, cx| history.refresh(cx));
                 toolbar = Some(history.read(cx).toolbar());
                 history.into()
+            }
+            Destination::Stats => {
+                let stats = self.screens.stats.clone();
+                stats.update(cx, |view, cx| view.ensure(cx));
+                stats.into()
             }
             Destination::Local(tab) => {
                 let local = self.screens.local.clone();

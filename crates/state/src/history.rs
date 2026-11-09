@@ -28,12 +28,12 @@ pub enum HistoryState {
 }
 
 #[derive(Clone)]
-struct Store {
+pub(crate) struct Store {
     database: Database,
 }
 
 impl Store {
-    fn new(database: Database) -> Self {
+    pub(crate) fn new(database: Database) -> Self {
         Self { database }
     }
 
@@ -171,6 +171,15 @@ impl Store {
     }
 
     fn load(&self, scope: &str) -> Result<Vec<Track>> {
+        self.read(scope, LOCAL_LIMIT as i64)
+    }
+
+    /// Reads the retained play log without the history page's display limit.
+    pub(crate) fn recorded(&self, scope: &str) -> Result<Vec<Track>> {
+        self.read(scope, i64::MAX)
+    }
+
+    fn read(&self, scope: &str, limit: i64) -> Result<Vec<Track>> {
         let connection = self.open()?;
         let mut query = connection
             .prepare(
@@ -183,7 +192,7 @@ impl Store {
             )
             .context("cannot prepare listening history read")?;
         let rows = query
-            .query_map(params![scope, LOCAL_LIMIT], |row| {
+            .query_map(params![scope, limit], |row| {
                 let refs = row.get_ref(5)?.as_str()?;
                 let artist_refs: Vec<ArtistRef> = serde_json::from_str(refs).unwrap_or_default();
                 let played_at: i64 = row.get(1)?;
@@ -615,7 +624,7 @@ impl History {
         });
     }
 
-    fn scope(&self, cx: &Context<Self>) -> Option<String> {
+    pub(crate) fn scope(&self, cx: &gpui::App) -> Option<String> {
         let session = self.session.read(cx);
         let SessionState::SignedIn(profile) = session.state() else {
             return None;

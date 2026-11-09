@@ -1,7 +1,8 @@
 use std::time::Duration;
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, bail, ensure};
 use async_trait::async_trait;
+use futures::StreamExt as _;
 use md5::{Digest, Md5};
 use percent_encoding::percent_decode_str;
 use serde::Deserialize;
@@ -9,7 +10,12 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
 use super::{Account, Link, Play, Secret, Service};
-use crate::escape;
+use crate::{
+    Album, ListeningStats, Milestone, Overview, Ranked, SavedArtist, Track, compare,
+    milestone_numbers,
+};
+use crate::{escape, tag_key};
+use serde_json::Value;
 
 /// The loopback address the browser hands the token back on.
 const PORT: u16 = 8990;
@@ -18,6 +24,17 @@ const PATH: &str = "/scrobble";
 const WAIT: Duration = Duration::from_secs(300);
 /// How many listens last.fm's `track.scrobble` takes in one call.
 const LASTFM_BATCH: usize = 50;
+/// How many plays one page of recent tracks holds, and how many pages are read for the hours
+/// someone listens at.
+const ACTIVITY_PAGE: &str = "200";
+const ACTIVITY_PAGES: usize = 4;
+/// How many slices of the account's history are asked about at once.
+const DENSITY_AT_ONCE: usize = 8;
+/// How many slices the account's history is cut into to show when it was played.
+const SLICES: usize = 24;
+/// How many ranked artists, songs and albums are kept, and how many rows a weekly chart can hold.
+const RANKED: usize = 50;
+const CHART_ROWS: usize = 1000;
 
 const PAGE: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
     <html><body>Sonora is connected. You can close this window.</body></html>";
@@ -37,6 +54,8 @@ pub struct AudioScrobbler {
     /// How many listens one `track.scrobble` carries. One means the server only implements the
     /// single unindexed form, which is what GNU FM does.
     batch: usize,
+    /// Whether the service reads personal rankings between any two dates.
+    dated: bool,
 }
 
 pub const LASTFM: AudioScrobbler = AudioScrobbler {
@@ -46,6 +65,7 @@ pub const LASTFM: AudioScrobbler = AudioScrobbler {
     signup: Some("https://www.last.fm/api/account/create"),
     link: Link::Keys,
     batch: LASTFM_BATCH,
+    dated: true,
 };
 
 pub const LIBREFM: AudioScrobbler = AudioScrobbler {
@@ -55,6 +75,7 @@ pub const LIBREFM: AudioScrobbler = AudioScrobbler {
     signup: None,
     link: Link::Browser,
     batch: 1,
+    dated: false,
 };
 
 #[async_trait]
@@ -139,6 +160,473 @@ impl Service for AudioScrobbler {
         }
         Ok(())
     }
+
+    fn stats_dated(&self) -> bool {
+        self.dated
+    }
+
+    async fn history(&self, account: &Account) -> Result<ListeningStats> {
+        ensure!(self.stats_dated(), "{} does not expose history", self.id);
+        let info = self
+            .read("user.getInfo", &[("user", account.name.as_str())], account)
+            .await?;
+        let user = info.get("user").unwrap_or(&info);
+        let (milestones, density) = tokio::join!(
+            async {
+                match number(user, "playcount") {
+                    Some(total) => self.milestones(account, total).await,
+                    None => Vec::new(),
+                }
+            },
+            async {
+                match registered(user) {
+                    Some(since) => self.density(account, since).await,
+                    None => Vec::new(),
+                }
+            },
+        );
+        Ok(ListeningStats {
+            milestones,
+            density,
+            ..Default::default()
+        })
+    }
+
+    async fn stats(&self, account: &Account, dates: Option<(i64, i64)>) -> Result<ListeningStats> {
+        ensure!(self.stats_dated(), "{} does not expose stats", self.id);
+        let user = account.name.as_str();
+        let profile = [("user", user)];
+        let tags = [("user", user), ("limit", "30")];
+        // A range is also read for the equal stretch before it, to see how the listening moved.
+        let earlier = dates.map(|(from, to)| (2 * from - to - 1, from - 1));
+        let (charts, info, tags, activity, before) = tokio::join!(
+            self.charts(account, dates),
+            self.read("user.getInfo", &profile, account),
+            self.read("user.getTopTags", &tags, account),
+            self.activity(account, dates),
+            async {
+                match earlier {
+                    Some(range) => Some(tokio::join!(
+                        self.charts(account, Some(range)),
+                        self.plays_between(account, range)
+                    )),
+                    None => None,
+                }
+            },
+        );
+        let mut charts = charts?;
+        let mut overview = Overview {
+            artists: charts.distinct[0],
+            tracks: charts.distinct[1],
+            albums: charts.distinct[2],
+            ..Default::default()
+        };
+        if let Some((plays, times)) = activity {
+            overview.plays = Some(plays);
+            // Only the latest plays are read, so their days and streaks say nothing of the rest.
+            let complete = times.len() >= plays;
+            overview = overview.timed(&times);
+            if !complete {
+                overview = overview.partial();
+            }
+        }
+        if let Some((Ok(before), plays_before @ Some(1..))) = before {
+            let key = |name: &str, artist: &str| format!("{name}\u{1}{artist}");
+            compare(
+                &mut charts.artists,
+                before.artists.iter().map(|row| row.item.name.clone()),
+                |artist| artist.name.clone(),
+            );
+            compare(
+                &mut charts.tracks,
+                before
+                    .tracks
+                    .iter()
+                    .map(|row| key(&row.item.name, &row.item.artists)),
+                |track| key(&track.name, &track.artists),
+            );
+            compare(
+                &mut charts.albums,
+                before
+                    .albums
+                    .iter()
+                    .map(|row| key(&row.item.name, &row.item.artists)),
+                |album| key(&album.name, &album.artists),
+            );
+            overview.change = overview
+                .plays
+                .zip(plays_before)
+                .map(|(now, was)| ((now as i64 - was as i64) * 100 / was as i64) as i32);
+        }
+        let user = info
+            .as_ref()
+            .ok()
+            .map(|info| info.get("user").unwrap_or(info));
+        overview.since = user.and_then(registered);
+        if let (None, Some(user)) = (dates, user) {
+            // The window is the whole account, so its totals are the account's.
+            let plays = number(user, "playcount");
+            let per_day = plays.zip(overview.since).and_then(|(plays, since)| {
+                let days = (jiff::Timestamp::now().as_second() - since) as f32 / 86_400.;
+                (days >= 1.).then(|| plays as f32 / days)
+            });
+            overview = Overview {
+                plays,
+                artists: number(user, "artist_count"),
+                tracks: number(user, "track_count"),
+                albums: number(user, "album_count"),
+                plays_per_day: per_day,
+                ..overview
+            };
+        }
+        let genres = tags
+            .map(|tags| {
+                rows(&tags, "toptags", "tag")
+                    .into_iter()
+                    .filter(|tag| tag_key(&string(tag, "name")).is_some())
+                    .map(|tag| Ranked::new(string(tag, "name"), number(tag, "count")))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(ListeningStats {
+            artists: charts.artists,
+            tracks: charts.tracks,
+            albums: charts.albums,
+            genres,
+            overview,
+            ..Default::default()
+        })
+    }
+}
+
+/// The top artists, songs and albums of a stretch of time, and how many distinct ones the
+/// stretch holds where that is known.
+struct Charts {
+    artists: Vec<Ranked<SavedArtist>>,
+    tracks: Vec<Ranked<Track>>,
+    albums: Vec<Ranked<Album>>,
+    distinct: [Option<usize>; 3],
+}
+
+impl AudioScrobbler {
+    /// Reads one unsigned read method, which is open to the account's public profile.
+    async fn read(&self, method: &str, query: &[(&str, &str)], account: &Account) -> Result<Value> {
+        let key = match account.key.is_empty() {
+            true => ANONYMOUS,
+            false => &account.key,
+        };
+        let answer = super::http()
+            .get(self.endpoint)
+            .query(&[("method", method), ("api_key", key), ("format", "json")])
+            .query(query)
+            .send()
+            .await
+            .with_context(|| format!("cannot reach {} {method}", self.id))?;
+        let status = answer.status();
+        let value: Value = answer
+            .json()
+            .await
+            .with_context(|| format!("cannot decode {} {method} (HTTP {status})", self.id))?;
+        if !status.is_success() || value.get("error").is_some() {
+            bail!(
+                "{} {method} refused the request (HTTP {status}): {value}",
+                self.id
+            );
+        }
+        Ok(value)
+    }
+
+    /// Plays in each equal slice of the account's history, one count request for each slice. An
+    /// account that cannot be read at all has none.
+    async fn density(&self, account: &Account, since: i64) -> Vec<usize> {
+        let now = jiff::Timestamp::now().as_second();
+        let width = ((now - since) / SLICES as i64).max(1);
+        // A few at a time keeps Last.fm from refusing the burst, and a slice it refused is asked
+        // for once more.
+        let counts: Vec<Option<usize>> = futures::stream::iter(0..SLICES as i64)
+            .map(|slice| async move {
+                let range = (since + slice * width, since + slice * width + width - 1);
+                match self.plays_between(account, range).await {
+                    None => self.plays_between(account, range).await,
+                    found => found,
+                }
+            })
+            .buffered(DENSITY_AT_ONCE)
+            .collect()
+            .await;
+        match counts.iter().any(Option::is_some) {
+            true => counts.into_iter().map(Option::unwrap_or_default).collect(),
+            false => Vec::new(),
+        }
+    }
+
+    /// The plays of the whole history that reached a round number. Reading them newest first one
+    /// to a page, the nth play is on page `total - n + 1`.
+    async fn milestones(&self, account: &Account, total: usize) -> Vec<Milestone> {
+        let reads = milestone_numbers(total)
+            .into_iter()
+            .map(|number| async move {
+                let recent = self.recent(account, "1", total - number + 1, None).await?;
+                // A song playing right now leads every page and has no date, so it is skipped.
+                let track = rows(&recent, "recenttracks", "track")
+                    .into_iter()
+                    .find(|track| track.get("date").is_some())?;
+                let at = number_of(track.get("date")?, "uts")?;
+                Some(Milestone {
+                    number,
+                    title: string(track, "name"),
+                    artist: credited(track),
+                    at,
+                })
+            });
+        let mut found: Vec<_> = futures::future::join_all(reads)
+            .await
+            .into_iter()
+            .flatten()
+            .collect();
+        found.sort_by_key(|milestone| milestone.number);
+        found
+    }
+
+    /// The top artists, songs and albums between two dates, or of all time. The weekly chart
+    /// methods take any two dates, and Last.fm says as much of the range as it holds up to 1000.
+    async fn charts(&self, account: &Account, dates: Option<(i64, i64)>) -> Result<Charts> {
+        let user = account.name.as_str();
+        let (from, to) = dates
+            .map(|(from, to)| (from.to_string(), to.to_string()))
+            .unzip();
+        let ranged = [
+            ("user", user),
+            ("from", from.as_deref().unwrap_or_default()),
+            ("to", to.as_deref().unwrap_or_default()),
+        ];
+        let overall = [("user", user), ("period", "overall"), ("limit", "50")];
+        let (query, methods, parents) = match dates {
+            Some(_) => (
+                &ranged[..],
+                [
+                    "user.getWeeklyArtistChart",
+                    "user.getWeeklyTrackChart",
+                    "user.getWeeklyAlbumChart",
+                ],
+                ["weeklyartistchart", "weeklytrackchart", "weeklyalbumchart"],
+            ),
+            None => (
+                &overall[..],
+                [
+                    "user.getTopArtists",
+                    "user.getTopTracks",
+                    "user.getTopAlbums",
+                ],
+                ["topartists", "toptracks", "topalbums"],
+            ),
+        };
+        let (artists, tracks, albums) = tokio::try_join!(
+            self.read(methods[0], query, account),
+            self.read(methods[1], query, account),
+            self.read(methods[2], query, account),
+        )?;
+        let ranged = dates.is_some();
+        let (artist_rows, artist_total) = kept(&artists, parents[0], "artist", ranged);
+        let (track_rows, track_total) = kept(&tracks, parents[1], "track", ranged);
+        let (album_rows, album_total) = kept(&albums, parents[2], "album", ranged);
+        Ok(Charts {
+            artists: artist_rows
+                .into_iter()
+                .map(|row| {
+                    let artist = SavedArtist {
+                        name: string(row, "name"),
+                        cover: image(row),
+                        ..Default::default()
+                    };
+                    chart_row(row, artist)
+                })
+                .collect(),
+            tracks: track_rows
+                .into_iter()
+                .map(|row| {
+                    let track = Track {
+                        name: string(row, "name"),
+                        artists: credited(row),
+                        album: row
+                            .get("album")
+                            .map(|album| string(album, "#text"))
+                            .unwrap_or_default(),
+                        cover: image(row).or_else(|| row.get("album").and_then(image)),
+                        ..Default::default()
+                    };
+                    chart_row(row, track)
+                })
+                .collect(),
+            albums: album_rows
+                .into_iter()
+                .map(|row| {
+                    let album = Album {
+                        name: string(row, "name"),
+                        artists: credited(row),
+                        cover: image(row),
+                        ..Default::default()
+                    };
+                    chart_row(row, album)
+                })
+                .collect(),
+            distinct: [artist_total, track_total, album_total],
+        })
+    }
+
+    /// One page of the recent tracks, newest first, optionally within a range of dates.
+    async fn recent(
+        &self,
+        account: &Account,
+        limit: &str,
+        page: usize,
+        dates: Option<(i64, i64)>,
+    ) -> Option<Value> {
+        let page = page.to_string();
+        let (from, to) = dates
+            .map(|(from, to)| (from.to_string(), to.to_string()))
+            .unzip();
+        let mut query = vec![
+            ("user", account.name.as_str()),
+            ("limit", limit),
+            ("page", page.as_str()),
+        ];
+        query.extend(from.as_deref().map(|from| ("from", from)));
+        query.extend(to.as_deref().map(|to| ("to", to)));
+        self.read("user.getRecentTracks", &query, account)
+            .await
+            .ok()
+    }
+
+    /// How many plays there are between two dates, which the first page of a range says.
+    async fn plays_between(&self, account: &Account, range: (i64, i64)) -> Option<usize> {
+        attr_total(
+            &self.recent(account, "1", 1, Some(range)).await?,
+            "recenttracks",
+        )
+    }
+
+    /// How many plays there are between two dates (or ever), and the start times of the latest
+    /// of them, newest first. Every page is asked for at once, since the first only says how
+    /// many there are, and a page past the end comes back empty.
+    async fn activity(
+        &self,
+        account: &Account,
+        dates: Option<(i64, i64)>,
+    ) -> Option<(usize, Vec<i64>)> {
+        let pages =
+            (1..=ACTIVITY_PAGES).map(|page| self.recent(account, ACTIVITY_PAGE, page, dates));
+        let mut chunks = futures::future::join_all(pages).await.into_iter();
+        let first = chunks.next()??;
+        let plays = attr_total(&first, "recenttracks")?;
+        let times = std::iter::once(first)
+            .chain(chunks.flatten())
+            .flat_map(|chunk| {
+                rows(&chunk, "recenttracks", "track")
+                    .into_iter()
+                    .filter_map(|play| number_of(play.get("date")?, "uts"))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        Some((plays, times))
+    }
+}
+
+/// The top rows of a chart and how many distinct rows it holds. A ranged chart is cut off at
+/// `CHART_ROWS`, past which its size is unknown.
+fn kept<'a>(
+    chart: &'a Value,
+    parent: &str,
+    child: &str,
+    ranged: bool,
+) -> (Vec<&'a Value>, Option<usize>) {
+    let all = rows(chart, parent, child);
+    let distinct = match ranged {
+        true => (all.len() < CHART_ROWS).then_some(all.len()),
+        false => attr_total(chart, parent),
+    };
+    (all.into_iter().take(RANKED).collect(), distinct)
+}
+
+/// The total a Last.fm list reports for itself, under the list's `@attr`.
+fn attr_total(value: &Value, parent: &str) -> Option<usize> {
+    number(value.get(parent)?.get("@attr")?, "total")
+}
+
+/// A chart row's item with its play count and Last.fm page.
+fn chart_row<T>(row: &Value, item: T) -> Ranked<T> {
+    Ranked::new(item, number(row, "playcount")).linked(lastfm_url(row))
+}
+
+/// An allow-listed Last.fm page, used as the identity of a chart entry with no catalogue match.
+fn lastfm_url(value: &Value) -> Option<String> {
+    let url = string(value, "url");
+    (url.starts_with("https://www.last.fm/") || url.starts_with("https://last.fm/")).then_some(url)
+}
+
+/// The largest real artwork entry, skipping Last.fm's generic placeholder.
+fn image(value: &Value) -> Option<String> {
+    value
+        .get("image")
+        .and_then(Value::as_array)?
+        .iter()
+        .rev()
+        .filter_map(|image| image.get("#text")?.as_str())
+        .map(str::trim)
+        .find(|url| !url.is_empty() && !url.contains("2a96cbd8b46e442fc41c2b86b821562f"))
+        .map(str::to_owned)
+}
+
+/// The chart rows under `parent.child`, which Last.fm sends as a lone object for a single row.
+fn rows<'a>(value: &'a Value, parent: &str, child: &str) -> Vec<&'a Value> {
+    match value.get(parent).and_then(|value| value.get(child)) {
+        Some(Value::Array(items)) => items.iter().collect(),
+        Some(item @ Value::Object(_)) => vec![item],
+        _ => Vec::new(),
+    }
+}
+
+/// The artist of a track or album row, which is either a name or an object holding one.
+fn credited(row: &Value) -> String {
+    row.get("artist")
+        .map(|artist| match artist.is_string() {
+            true => artist.as_str().unwrap_or_default().to_owned(),
+            false => Some(string(artist, "name"))
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| string(artist, "#text")),
+        })
+        .unwrap_or_default()
+}
+
+fn string(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// When the account registered, in Unix seconds.
+fn registered(user: &Value) -> Option<i64> {
+    number_of(user.get("registered")?, "unixtime")
+}
+
+/// A time in Unix seconds that Last.fm sends as a string.
+fn number_of(value: &Value, key: &str) -> Option<i64> {
+    number(value, key).and_then(|seconds| i64::try_from(seconds).ok())
+}
+
+/// A count Last.fm sends as a string.
+fn number(value: &Value, key: &str) -> Option<usize> {
+    let number = value.get(key)?;
+    number
+        .as_str()
+        .and_then(|text| text.parse().ok())
+        .or_else(|| {
+            number
+                .as_u64()
+                .and_then(|count| usize::try_from(count).ok())
+        })
 }
 
 impl AudioScrobbler {

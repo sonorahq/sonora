@@ -386,6 +386,26 @@ pub(crate) fn count(value: u64) -> SharedString {
     SharedString::from(grouped)
 }
 
+/// A count in the short form a badge has room for: 109k for 109,637, 1.2M for 1,234,567, and the
+/// plain grouped number below ten thousand.
+pub(crate) fn compact(value: u64) -> SharedString {
+    let short = |value: f64, unit: u64| {
+        let scaled = value / unit as f64;
+        // One decimal helps while the number is small, and is noise once it has three digits.
+        match scaled < 100. {
+            true => format!("{:.1}", (scaled * 10.).floor() / 10.)
+                .trim_end_matches(".0")
+                .to_owned(),
+            false => format!("{}", scaled.floor() as u64),
+        }
+    };
+    match value {
+        ..10_000 => count(value),
+        10_000..1_000_000 => t!("number-thousand", value = short(value as f64, 1_000)),
+        _ => t!("number-million", value = short(value as f64, 1_000_000)),
+    }
+}
+
 pub(crate) fn title<F>(
     cell: &Cell<F>,
     value: impl Into<SharedString>,

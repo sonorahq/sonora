@@ -18,8 +18,9 @@ const MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const FILE: &str = "pathfinder.json";
 
 /// Operations the shared hash service does not list, read from the web player bundle instead.
-const DESKTOP_OPERATIONS: [(&str, &str); 4] = [
+const DESKTOP_OPERATIONS: [(&str, &str); 5] = [
     ("home", "query"),
+    ("userTopContent", "query"),
     ("libraryV3", "query"),
     ("pinLibraryItem", "mutation"),
     ("unpinLibraryItem", "mutation"),
@@ -230,6 +231,15 @@ async fn desktop_hash(operation: &str) -> Result<String> {
     let html = public_text(&public, "https://open.spotify.com").await?;
     let bundle = desktop_bundle(&html).context("Spotify page has no desktop player bundle")?;
     let javascript = public_text(&public, bundle).await?;
+    let javascript = match operation {
+        "userTopContent" => {
+            let chunk =
+                profile_bundle(&javascript).context("Spotify bundle has no profile chunk")?;
+            let url = format!("https://open.spotifycdn.com/cdn/build/web-player/{chunk}");
+            public_text(&public, &url).await?
+        }
+        _ => javascript,
+    };
     let mut operations = registry()
         .map(|registry| registry.operations)
         .unwrap_or_default();
@@ -273,6 +283,24 @@ fn desktop_bundle(html: &str) -> Option<&str> {
         url.starts_with("https://open.spotifycdn.com/cdn/build/web-player/web-player.")
             && url.ends_with(".js")
     })
+}
+
+/// Resolves the profile chunk from the client's own JavaScript filename map.
+fn profile_bundle(javascript: &str) -> Option<String> {
+    let name = "xpui-routes-profile";
+    let before = javascript.split_once(&format!(":\"{name}\""))?.0;
+    let id = before.rsplit([',', '{']).next()?;
+    // An entry of the map follows a comma or the opening brace, so a longer id that merely ends
+    // in these digits is not taken for it.
+    let hash = [',', '{'].into_iter().find_map(|before| {
+        let marker = format!("{before}{id}:\"");
+        javascript
+            .split(&marker)
+            .skip(1)
+            .filter_map(|tail| tail.split_once('"').map(|p| p.0))
+            .find(|value| value.len() == 8 && value.bytes().all(|b| b.is_ascii_hexdigit()))
+    })?;
+    Some(format!("{name}.{hash}.js"))
 }
 
 fn operation_hash<'a>(javascript: &'a str, operation: &str, kind: &str) -> Option<&'a str> {
