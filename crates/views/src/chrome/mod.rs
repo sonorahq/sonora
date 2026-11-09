@@ -1,10 +1,13 @@
 //! The window's chrome: the title bar, both sidebars, the player bar and the toast stack.
 
+pub(crate) mod aside;
 pub(crate) mod player_bar;
 pub(crate) mod sidebar_left;
 pub(crate) mod sidebar_right;
 pub(crate) mod title_bar;
 pub(crate) mod toasts;
+pub(crate) mod toolbar;
+pub(crate) mod tools;
 
 use state::{AppSettings, SideTab};
 
@@ -27,6 +30,9 @@ pub struct ChromeState {
     /// The chrome's own menus and popovers.
     pub popovers: ui::Popovers,
     pub sidebar: sidebar_left::State,
+    pub title_bar: title_bar::State,
+    /// The shown page's search field in the title bar.
+    pub toolbar: toolbar::State,
     pub player_bar: player_bar::State,
     pub aside: sidebar_right::State,
 }
@@ -42,6 +48,8 @@ impl ChromeState {
             signing_in: false,
             popovers: ui::Popovers::default(),
             sidebar: sidebar_left::State::new(settings),
+            title_bar: title_bar::State::default(),
+            toolbar: toolbar::State::default(),
             player_bar: player_bar::State::default(),
             aside: sidebar_right::State::default(),
         }

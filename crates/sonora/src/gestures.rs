@@ -1,68 +1,58 @@
 //! macOS trackpad page swipes.
 //!
-//! macOS's "Swipe between pages" gesture reaches the app as an `NSEventTypeSwipe` event.
-//! GPUI typically drops that event because it accepts a swipe only when the swipe carries the
-//! `Ended` phase, so here a local monitor reads the event before it's passed to the window.
+//! macOS's "Swipe between pages" gesture, and the back and forward buttons of many mice, reach
+//! the app as an `NSEventTypeSwipe` event. Rune hears wheel, pinch and rotate gestures but not
+//! swipes, so a local monitor reads the event before it is passed to the window and moves
+//! through the navigation history.
 
 use std::ptr::NonNull;
 
-use gpui::{App, NavigationDirection};
 use objc2_app_kit::{NSEvent, NSEventMask};
-use tokio::sync::mpsc::{self, UnboundedSender};
+use views::Ui;
 
-pub fn install(cx: &mut App) {
-    let (sender, mut receiver) = mpsc::unbounded_channel();
-    if !watch(sender) {
-        return;
-    }
-
-    cx.spawn(async move |cx| {
-        while let Some(direction) = receiver.recv().await {
-            cx.update(|cx| match direction {
-                NavigationDirection::Back => router::back(cx),
-                NavigationDirection::Forward => router::forward(cx),
-            });
-        }
-    })
-    .detach();
+#[derive(Clone, Copy)]
+enum Direction {
+    Back,
+    Forward,
 }
 
-/// Asks AppKit for this app's swipe events and reports the direction of each one. Returns false
-/// when macOS refuses a monitor, which leaves `install` nothing to feed.
-fn watch(sender: UnboundedSender<NavigationDirection>) -> bool {
+/// Asks AppKit for this app's swipe events and goes back or forward on each one. Call it on the
+/// main thread once the app runs.
+pub fn install() {
     let block = block2::RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
         let raw = event;
+        // SAFETY: AppKit hands the monitor a live event for the length of the call.
         let event = unsafe { event.as_ref() };
-        // Swallow the swipe rather than pass it on, because GPUI reads any that carry the
-        // `Ended` phase as a click on its navigation buttons, and the app would navigate twice.
         let Some(direction) = direction(event) else {
             return raw.as_ptr();
         };
-        sender.send(direction).ok();
+        crate::handle().update(move |ui: &mut Ui, _| match direction {
+            Direction::Back => ui.back(),
+            Direction::Forward => ui.forward(),
+        });
+        // swallowed, so nothing else reads the same swipe as a second navigation
         std::ptr::null_mut()
     });
 
+    // SAFETY: the block matches the handler's signature and is kept alive below.
     let monitor = unsafe {
         NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::Swipe, &block)
     };
     let Some(monitor) = monitor else {
-        log::warn!("gestures: macOS would not hand out a monitor for swipe events");
-        return false;
+        return log::warn!("gestures: macOS would not hand out a monitor for swipe events");
     };
     // AppKit calls the block only while the monitor and the block are alive, and the app wants
     // them watching for as long as it runs.
     std::mem::forget(block);
     std::mem::forget(monitor);
-    true
 }
 
 /// The direction of swipe an event carries, or `None` for one that went nowhere. The sign of
-/// `deltaX` is the direction. This should also work for mice with back/forward buttons, as
-/// they're reported as swipes as well.
-fn direction(swipe: &NSEvent) -> Option<NavigationDirection> {
+/// `deltaX` is the direction.
+fn direction(swipe: &NSEvent) -> Option<Direction> {
     match swipe.deltaX() {
-        x if x > 0. => Some(NavigationDirection::Back),
-        x if x < 0. => Some(NavigationDirection::Forward),
+        x if x > 0. => Some(Direction::Back),
+        x if x < 0. => Some(Direction::Forward),
         _ => None,
     }
 }

@@ -1,32 +1,31 @@
+//! The X11 window icon. Wayland resolves the icon through the app id, so this only does
+//! anything on an X11 window.
+
 use anyhow::{Context as _, Result};
-use raw_window_handle::{HasDisplayHandle as _, RawDisplayHandle, RawWindowHandle};
+use rune::raw_window_handle::RawWindowHandle;
 use x11rb::connection::Connection as _;
 use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, PropMode};
 use x11rb::wrapper::ConnectionExt as _;
-use x11rb::xcb_ffi::XCBConnection;
 
-/// Publishes every icon size on X11 windows. Wayland resolves the icon through the app id.
-pub fn install(window: &gpui::Window) {
-    if let Err(error) = set_icons(window) {
+/// Publishes every icon size on the window as `_NET_WM_ICON`. Rune only lends the window's
+/// handle, not its display connection, so the property goes over a short-lived connection of
+/// its own, which X11 allows for any window.
+pub fn install(window: &rune::WindowHandle) {
+    let id = window.with_raw_handle(|handle| match handle.as_raw() {
+        RawWindowHandle::Xlib(handle) => u32::try_from(handle.window).ok(),
+        RawWindowHandle::Xcb(handle) => Some(handle.window.get()),
+        _ => None,
+    });
+    let Ok(Some(id)) = id else {
+        return;
+    };
+    if let Err(error) = set_icons(id) {
         log::warn!("icon: cannot set the X11 window icons: {error:#}");
     }
 }
 
-/// Borrows GPUI's connection for one property update and leaves ownership and events with GPUI.
-fn set_icons(window: &gpui::Window) -> Result<()> {
-    let RawWindowHandle::Xcb(handle) =
-        raw_window_handle::HasWindowHandle::window_handle(window)?.as_raw()
-    else {
-        return Ok(());
-    };
-    let RawDisplayHandle::Xcb(display) = window.display_handle()?.as_raw() else {
-        return Ok(());
-    };
-    let connection = display
-        .connection
-        .context("cannot find the X11 connection")?;
-    let connection = unsafe { XCBConnection::from_raw_xcb_connection(connection.as_ptr(), false) }
-        .context("cannot borrow the X11 connection")?;
+fn set_icons(window: u32) -> Result<()> {
+    let (connection, _) = x11rb::connect(None).context("cannot reach the X11 display")?;
     let atom = connection
         .intern_atom(false, b"_NET_WM_ICON")?
         .reply()?
@@ -45,7 +44,7 @@ fn set_icons(window: &gpui::Window) -> Result<()> {
     connection
         .change_property32(
             PropMode::REPLACE,
-            handle.window.get(),
+            window,
             atom,
             AtomEnum::CARDINAL,
             &pixels,

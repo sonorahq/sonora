@@ -1,18 +1,29 @@
+//! The tray icon and its menu: the playing song with its cover, transport, shuffle and repeat,
+//! and the way back to the window. The platform halves live in `sni` (Linux, StatusNotifierItem
+//! over D-Bus) and `native` (macOS and Windows, through `tray-icon`); this module keeps them in
+//! step with the store.
+//!
+//! Nothing here observes the store: [`publish`] runs from the app's `poll`, which Rune calls
+//! before every frame and on every wake of a hidden window, and compares a hash of what the
+//! menu shows before it builds anything. A menu event reaches the store through
+//! `AppHandle::update`, like every other thread does.
+
 #[cfg(any(target_os = "macos", windows))]
 mod native;
 #[cfg(target_os = "linux")]
 mod sni;
 
+use std::cell::RefCell;
+use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result, bail};
-use futures::AsyncReadExt as _;
-use gpui::http_client::{AsyncBody, HttpClient};
-use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
+use anyhow::{Context as _, Result};
 use i18n::t;
 use router::Destination;
-use state::{Outcome, PlaybackState, Repeat, Sonora, Toasts};
-use tokio::sync::mpsc::{self, UnboundedReceiver};
+use rune::Tx;
+use state::{Outcome, PlaybackState, Repeat, Store, Toasts};
+use tokio::task::JoinHandle;
+use views::Ui;
 
 #[cfg(any(target_os = "macos", windows))]
 use native::Icon;
@@ -45,28 +56,31 @@ pub struct Art {
     pub height: u32,
 }
 
+/// Everything the menu draws, compared whole so a change that alters nothing visible costs no
+/// platform call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Shown {
     pub artwork: Option<Arc<Art>>,
     pub caption: String,
     /// Whether the caption opens anything, so a row that leads nowhere stays inert.
     pub song: bool,
-    pub toggle: SharedString,
-    pub previous: SharedString,
-    pub next: SharedString,
-    pub shuffle: SharedString,
+    pub toggle: String,
+    pub previous: String,
+    pub next: String,
+    pub shuffle: String,
     pub shuffle_on: bool,
-    pub repeat: SharedString,
+    pub repeat: String,
     pub repeat_on: bool,
-    pub show: SharedString,
-    pub quit: SharedString,
+    pub show: String,
+    pub quit: String,
     pub playing: bool,
 }
 
 impl Shown {
-    /// What the Dock menu draws. GPUI keeps every action a Dock menu was built with for the life of
-    /// the app, so the menu is rebuilt only when this changes, never on a caption or cover alone.
-    fn docked(&self) -> (&str, &str, &str, &str, bool, &str, bool) {
+    /// What the Dock menu draws, so the native menus are rebuilt only when this changes, never
+    /// on a caption or cover alone.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub fn docked(&self) -> (&str, &str, &str, &str, bool, &str, bool) {
         (
             &self.toggle,
             &self.previous,
@@ -79,153 +93,162 @@ impl Shown {
     }
 }
 
-struct Installed {
-    _tray: Entity<Tray>,
+thread_local! {
+    /// The tray, owned by the UI thread: every update, poll and window hook runs there.
+    static TRAY: RefCell<Option<Tray>> = const { RefCell::new(None) };
 }
 
-impl Global for Installed {}
-
-/// Sets up the tray icon and its menu. Returns whether Sonora may keep running once its window
-/// closes, which it only does when the desktop has a tray to bring it back from.
-pub fn install(show: impl Fn(&mut App) + 'static, cx: &mut App) -> bool {
-    let (sender, receiver) = mpsc::unbounded_channel();
-    let Some(icon) = Icon::new(sender) else {
-        return false;
-    };
-    let tray = cx.new(|cx| Tray::new(icon, receiver, show, cx));
-    cx.set_global(Installed { _tray: tray });
-    Icon::hosted()
-}
-
-pub struct Tray {
+struct Tray {
     icon: Icon,
+    /// Whether the desktop has a tray to bring Sonora back from.
+    hosted: bool,
     shown: Shown,
+    /// The hash of what `shown` was built from, so a poll with nothing new builds nothing.
+    seen: Option<u64>,
     /// Whether the icon is in the tray now, which `place` compares against the setting.
     placed: bool,
     /// The cover the art below was loaded from, so a repeat of the same track loads nothing.
     cover: Option<String>,
     art: Option<Arc<Art>>,
-    artwork: Option<Task<()>>,
-    _events: Task<()>,
+    /// The cover load in flight; aborting it on a skip means a run of skips draws only the last.
+    artwork: Option<JoinHandle<()>>,
+    http: crate::http::Client,
+}
+
+/// Starts the tray: the platform probe (a D-Bus round trip on Linux) runs off the UI thread,
+/// then the icon is built on it, since AppKit and the Win32 tray want the main thread.
+pub fn start(ui: &Ui, http: crate::http::Client) {
+    let io = ui.store.cx.io.clone();
+    io.spawn(async move {
+        let hosted = tokio::task::spawn_blocking(Icon::probe).await.ok().flatten();
+        crate::handle().update(move |ui: &mut Ui, _| {
+            if let Some(hosted) = hosted {
+                install(ui, hosted, http);
+            }
+        });
+    });
+}
+
+/// Whether closing the window should leave Sonora running: only while the icon is in a tray
+/// that can bring the window back.
+pub fn lingers() -> bool {
+    TRAY.with_borrow(|tray| tray.as_ref().is_some_and(|tray| tray.hosted && tray.placed))
+}
+
+/// Keeps the icon placed as the setting says and the menu in step with playback. Cheap when
+/// nothing the menu shows changed, which is almost every frame.
+pub fn publish(ui: &mut Ui) {
+    let placed = ui.store.settings.tray_icon();
+    let seen = fingerprint(&ui.store);
+    let refused = TRAY.with_borrow_mut(|tray| {
+        let tray = tray.as_mut()?;
+        let refused = tray.place(placed);
+        if tray.seen != Some(seen) {
+            tray.seen = Some(seen);
+            tray.follow(&ui.store);
+            tray.refresh(&ui.store);
+        }
+        refused
+    });
+    // turning the setting off happens outside the borrow, since it settles the store
+    if refused.is_some() {
+        Toasts::show(Outcome::Failed, "toast-tray-unavailable", &mut ui.store.cx);
+        ui.store.settings.set_tray_icon(false, &mut ui.store.cx);
+        ui.settle();
+    }
+}
+
+/// Carries out what the tray menu asked for, on the UI thread.
+pub fn run(ui: &mut Ui, event: Event, tx: &mut Tx) {
+    match event {
+        Event::Show => crate::window::show(),
+        Event::Song => {
+            crate::window::show();
+            open_song(ui);
+        }
+        Event::Quit => return crate::window::quit(ui, tx),
+        Event::Toggle => ui.store.toggle_play(),
+        Event::Previous => ui.store.previous_track(),
+        Event::Next => ui.store.next_track(),
+        Event::Shuffle => ui.store.toggle_shuffle(),
+        Event::Repeat => ui.store.toggle_repeat(),
+    }
+    ui.settle();
+    publish(ui);
+}
+
+/// Hands a menu event from the platform's thread to the UI thread.
+pub(crate) fn send(event: Event) {
+    crate::handle().update(move |ui: &mut Ui, tx| run(ui, event, tx));
+}
+
+fn install(ui: &mut Ui, hosted: bool, http: crate::http::Client) {
+    let Some(mut icon) = Icon::new() else {
+        return;
+    };
+    let shown = shown(None, &ui.store);
+    icon.show(&shown);
+    crate::actions::publish(&shown);
+    let tray = Tray {
+        icon,
+        hosted,
+        shown,
+        seen: None,
+        placed: false,
+        cover: None,
+        art: None,
+        artwork: None,
+        http,
+    };
+    TRAY.with_borrow_mut(|slot| *slot = Some(tray));
+    publish(ui);
 }
 
 impl Tray {
-    fn new(
-        mut icon: Icon,
-        mut receiver: UnboundedReceiver<Event>,
-        show: impl Fn(&mut App) + 'static,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let _events = cx.spawn(async move |this, cx| {
-            while let Some(event) = receiver.recv().await {
-                if this.upgrade().is_none() {
-                    break;
-                }
-                cx.update(|cx| match event {
-                    Event::Show => show(cx),
-                    Event::Song => {
-                        show(cx);
-                        open(cx);
-                    }
-                    Event::Quit => cx.quit(),
-                    Event::Toggle
-                    | Event::Previous
-                    | Event::Next
-                    | Event::Repeat
-                    | Event::Shuffle => {
-                        let playback = Sonora::global(cx).playback.clone();
-                        playback.update(cx, |playback, cx| match event {
-                            Event::Toggle => playback.toggle_play(cx),
-                            Event::Previous => playback.previous(cx),
-                            Event::Repeat => playback.toggle_repeat(cx),
-                            Event::Shuffle => playback.toggle_shuffle(cx),
-                            _ => playback.next(cx),
-                        });
-                    }
-                });
-            }
-        });
-
-        let playback = Sonora::global(cx).playback.clone();
-        cx.observe(&playback, |this, _, cx| this.publish(cx))
-            .detach();
-        let queue = Sonora::global(cx).queue.clone();
-        cx.observe(&queue, |this, _, cx| this.publish(cx)).detach();
-        // the track of a device that is steered, a jam's host included, changes here and not in
-        // `Playback`
-        let devices = Sonora::global(cx).devices.clone();
-        cx.observe(&devices, |this, _, cx| this.publish(cx))
-            .detach();
-        // only `place` here: settings notifies on every window move, and rebuilding `Shown`
-        // allocates the caption and clones the cover each time
-        let settings = Sonora::global(cx).settings.clone();
-        cx.observe(&settings, |this, _, cx| this.place(cx)).detach();
-
-        let shown = shown(None, cx);
-        icon.show(&shown);
-        crate::dock::menu(&shown, cx);
-        let mut tray = Self {
-            icon,
-            shown,
-            placed: false,
-            cover: None,
-            art: None,
-            artwork: None,
-            _events,
-        };
-        tray.place(cx);
-        tray.follow(cx);
-        tray
-    }
-
-    /// Puts the icon in the tray, or takes it out, following `tray_icon` alone. An icon that cannot
-    /// be placed turns `tray_icon` off and says so.
-    fn place(&mut self, cx: &mut Context<Self>) {
-        let placed = Sonora::global(cx).settings.read(cx).tray_icon();
+    /// Puts the icon in the tray, or takes it out, following `tray_icon` alone. Returns the
+    /// error when the icon was asked for and cannot be placed, which turns the setting off.
+    fn place(&mut self, placed: bool) -> Option<anyhow::Error> {
         if placed == self.placed {
-            return;
+            return None;
         }
         if let Err(error) = self.icon.place(placed) {
             log::warn!("tray: cannot place the tray icon: {error:#}");
             if placed {
-                Toasts::show(Outcome::Failed, "toast-tray-unavailable", cx);
-                let settings = Sonora::global(cx).settings.clone();
-                settings.update(cx, |settings, cx| settings.set_tray_icon(false, cx));
-                return;
+                // the setting goes off, which ends up here again with nothing to do
+                return Some(error);
             }
         }
         self.placed = placed;
-        if !placed {
-            return;
+        if placed {
+            // the cover of whatever is playing went unfetched while the icon was out, so
+            // forget the one `follow` last saw and let it load again
+            if self.art.is_none() {
+                self.cover = None;
+            }
+            self.seen = None;
         }
-        // the cover of whatever is playing went unfetched while the icon was out, so forget
-        // the one `follow` last saw and let it load again
-        if self.art.is_none() {
-            self.cover = None;
-        }
-        self.publish(cx);
+        None
     }
 
-    fn publish(&mut self, cx: &mut Context<Self>) {
-        self.follow(cx);
-        let shown = shown(self.art.clone(), cx);
+    /// Rebuilds what the menu shows and hands it over when it changed.
+    fn refresh(&mut self, store: &Store) {
+        let shown = shown(self.art.clone(), store);
         if shown == self.shown {
             return;
         }
         self.icon.show(&shown);
         if shown.docked() != self.shown.docked() {
-            crate::dock::menu(&shown, cx);
+            crate::actions::publish(&shown);
         }
         self.shown = shown;
     }
 
-    /// Starts loading the cover of the track that is playing now. Dropping the task cancels the
-    /// load for the track that was playing before, so a run of skips only draws the last cover.
-    fn follow(&mut self, cx: &mut Context<Self>) {
-        let cover = Sonora::global(cx)
+    /// Starts loading the cover of the track that is playing now, dropping the load for the
+    /// track that played before.
+    fn follow(&mut self, store: &Store) {
+        let cover = store
             .playback
-            .read(cx)
-            .shown_track(cx)
+            .shown_track(&store.devices)
             .and_then(|track| track.cover);
         if cover == self.cover {
             return;
@@ -233,91 +256,118 @@ impl Tray {
 
         self.cover = cover.clone();
         self.art = None;
+        if let Some(load) = self.artwork.take() {
+            load.abort();
+        }
         // only the tray menu draws the cover, so an icon that is out of the tray fetches none
-        self.artwork = match self.placed {
-            true => cover.map(|cover| self.load(cover, cx)),
-            false => None,
+        let (true, Some(cover)) = (self.placed, cover) else {
+            return;
         };
-    }
-
-    fn load(&self, cover: String, cx: &mut Context<Self>) -> Task<()> {
-        let http = cx.http_client();
-        cx.spawn(async move |this, cx| {
-            let art = match cx.background_spawn(art(cover, http)).await {
-                Ok(art) => art,
+        let http = self.http.clone();
+        self.artwork = Some(store.cx.io.spawn(async move {
+            let art = match art(&cover, &http).await {
+                Ok(art) => Arc::new(art),
                 Err(error) => return log::warn!("tray: cannot draw the cover: {error:#}"),
             };
-            this.update(cx, |this, cx| {
-                this.art = Some(Arc::new(art));
-                this.publish(cx);
-            })
-            .ok();
-        })
+            crate::handle().update(move |ui: &mut Ui, _| drawn(ui, &cover, art));
+        }));
     }
 }
 
-/// Opens the song page of whatever is playing. A track without an id is not an error: the caption
-/// row is only enabled when there is one.
-fn open(cx: &mut App) {
-    let playing = Sonora::global(cx).playback.read(cx).shown_track(cx);
+/// Puts a loaded cover on the caption row, if its track is still the one playing.
+fn drawn(ui: &mut Ui, cover: &str, art: Arc<Art>) {
+    TRAY.with_borrow_mut(|tray| {
+        let Some(tray) = tray.as_mut() else {
+            return;
+        };
+        if tray.cover.as_deref() != Some(cover) {
+            return;
+        }
+        tray.art = Some(art);
+        tray.artwork = None;
+        tray.refresh(&ui.store);
+    });
+}
+
+/// Opens the song page of whatever is playing. A track without an id is not an error: the
+/// caption row is only enabled when there is one.
+fn open_song(ui: &mut Ui) {
+    let playing = ui.store.playback.shown_track(&ui.store.devices);
     let Some(id) = playing.and_then(|track| track.id) else {
         return;
     };
-    router::navigate(Destination::Song(id.into()), cx);
+    ui.go(Destination::Song(id.as_str().into()));
 }
 
 /// Reads a cover, over http or from the disk, and scales it down to a menu row. An unreadable
 /// cover leaves the caption on its own rather than holding up the rest of the menu.
-async fn art(cover: String, http: Arc<dyn HttpClient>) -> Result<Art> {
+async fn art(cover: &str, http: &crate::http::Client) -> Result<Art> {
     let bytes = match cover.starts_with("http://") || cover.starts_with("https://") {
-        true => fetch(&http, &cover).await?,
+        true => http
+            .fetch(cover.to_owned())
+            .await
+            .context("cannot fetch the cover")?,
         false => {
-            let path = cover.strip_prefix("file://").unwrap_or(&cover);
-            std::fs::read(path).context("cannot read the cover")?
+            let path = cover.strip_prefix("file://").unwrap_or(cover).to_owned();
+            tokio::fs::read(path)
+                .await
+                .context("cannot read the cover")?
         }
     };
-    let image = image::load_from_memory(&bytes)
-        .context("cannot decode the cover")?
-        .thumbnail(COVER, COVER)
-        .into_rgba8();
-
-    let (width, height) = image.dimensions();
-    Ok(Art {
-        data: image.into_raw(),
-        width,
-        height,
+    tokio::task::spawn_blocking(move || {
+        let image = image::load_from_memory(&bytes)
+            .context("cannot decode the cover")?
+            .thumbnail(COVER, COVER)
+            .into_rgba8();
+        let (width, height) = image.dimensions();
+        Ok(Art {
+            data: image.into_raw(),
+            width,
+            height,
+        })
     })
+    .await
+    .context("cannot scale the cover")?
 }
 
-async fn fetch(http: &Arc<dyn HttpClient>, url: &str) -> Result<Vec<u8>> {
-    let mut response = http
-        .get(url, AsyncBody::empty(), true)
-        .await
-        .context("cannot fetch the cover")?;
-    if !response.status().is_success() {
-        bail!("the cover request answered {}", response.status());
-    }
-
-    let mut bytes = Vec::new();
-    response
-        .body_mut()
-        .read_to_end(&mut bytes)
-        .await
-        .context("cannot read the cover")?;
-
-    Ok(bytes)
-}
-
-fn shown(artwork: Option<Arc<Art>>, cx: &App) -> Shown {
-    let playback = Sonora::global(cx).playback.read(cx);
-    let playing = match playback.steered(cx) {
+/// Whether the track is playing, as the player shows it: the other device's state while one is
+/// steered.
+fn playing(store: &Store) -> bool {
+    match store.playback.steered(&store.devices) {
         Some(remote) => remote.state.playing,
         None => matches!(
-            playback.state(),
+            store.playback.state(),
             PlaybackState::Playing | PlaybackState::Loading
         ),
+    }
+}
+
+/// A hash of everything [`shown`] reads, which costs no allocation for this app's own track.
+fn fingerprint(store: &Store) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    playing(store).hash(&mut hasher);
+    store.queue.shuffle().hash(&mut hasher);
+    (store.playback.repeat() != Repeat::Off).hash(&mut hasher);
+    store.settings.language().hash(&mut hasher);
+    let hash = |track: &music::Track, hasher: &mut DefaultHasher| {
+        (&track.id, &track.name, &track.artists, &track.cover).hash(hasher);
     };
-    let track = playback.shown_track(cx);
+    match store.playback.steered(&store.devices) {
+        Some(_) => match store.playback.shown_track(&store.devices) {
+            Some(track) => hash(&track, &mut hasher),
+            None => 0u8.hash(&mut hasher),
+        },
+        None => match store.playback.track() {
+            Some(track) => hash(track, &mut hasher),
+            None => 0u8.hash(&mut hasher),
+        },
+    }
+    hasher.finish()
+}
+
+fn shown(artwork: Option<Arc<Art>>, store: &Store) -> Shown {
+    let playing = playing(store);
+    let track = store.playback.shown_track(&store.devices);
     let caption = match &track {
         Some(track) => {
             let full = match track.artists.is_empty() {
@@ -329,8 +379,6 @@ fn shown(artwork: Option<Arc<Art>>, cx: &App) -> Shown {
         None => t!("player-nothing-playing").to_string(),
     };
     let song = track.is_some_and(|track| track.id.is_some());
-    let shuffle_on = Sonora::global(cx).queue.read(cx).shuffle();
-    let repeat_on = playback.repeat() != Repeat::Off;
     Shown {
         artwork,
         caption,
@@ -338,15 +386,16 @@ fn shown(artwork: Option<Arc<Art>>, cx: &App) -> Shown {
         toggle: match playing {
             true => t!("tray-pause"),
             false => t!("tray-play"),
-        },
-        previous: t!("player-previous"),
-        next: t!("player-next"),
-        shuffle: t!("player-shuffle"),
-        shuffle_on,
-        repeat: t!("player-repeat"),
-        repeat_on,
-        show: t!("tray-show"),
-        quit: t!("app-quit"),
+        }
+        .to_string(),
+        previous: t!("player-previous").to_string(),
+        next: t!("player-next").to_string(),
+        shuffle: t!("player-shuffle").to_string(),
+        shuffle_on: store.queue.shuffle(),
+        repeat: t!("player-repeat").to_string(),
+        repeat_on: store.playback.repeat() != Repeat::Off,
+        show: t!("tray-show").to_string(),
+        quit: t!("app-quit").to_string(),
         playing,
     }
 }

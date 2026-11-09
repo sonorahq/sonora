@@ -3,8 +3,8 @@
 //! Hovering Sonora's taskbar button opens a thumbnail of the window, and this
 //! puts previous, play/pause and next underneath it, so playback can be driven
 //! without raising the window. They are the same three commands the tray menu
-//! carries and they reach [`state::Playback`] the same way, through an
-//! unbounded channel the window procedure writes to.
+//! carries and they reach the store the same way, through `AppHandle::update`
+//! from the window procedure.
 //!
 //! Two Windows rules shape the module. The buttons cannot be added until the
 //! shell has created the taskbar button, which it announces with the registered
@@ -14,12 +14,12 @@
 
 use std::cell::RefCell;
 use std::ffi::c_void;
+use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::rc::Rc;
 
-use gpui::{App, AppContext as _, Context, Entity, Global, Subscription, Task, WindowId};
 use i18n::t;
-use state::{PlaybackState, Sonora};
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use state::{PlaybackState, Store};
+use views::Ui;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateDIBSection, DIB_RGB_COLORS,
@@ -38,7 +38,7 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateIconIndirect, DestroyIcon, GetSystemMetrics, HICON, ICONINFO, RegisterWindowMessageW,
-    SM_CXSMICON, WM_COMMAND,
+    SM_CXSMICON, WM_COMMAND, WM_SETTINGCHANGE,
 };
 use windows::core::{BOOL, w};
 
@@ -94,105 +94,74 @@ struct Look {
     size: i32,
 }
 
-/// The toolbar of the one window that has one. Lives exactly as long as that
-/// window: `closed` takes it down with the window, so a closed-to-tray Sonora
-/// never pushes buttons at a handle that no longer exists.
-struct Installed {
-    window: WindowId,
-    _bar: Entity<ThumbBar>,
-    _closed: Subscription,
+thread_local! {
+    /// The toolbar of the window, owned by the UI thread that runs the window procedure.
+    static BAR: RefCell<Option<Installed>> = const { RefCell::new(None) };
 }
 
-impl Global for Installed {}
+/// The toolbar and what it was last dressed from.
+struct Installed {
+    hwnd: usize,
+    bar: Bar,
+    /// The playing state, idleness and language the toolbar was built from, so a poll with
+    /// nothing new reads no registry and draws nothing.
+    seen: Option<(bool, bool, u64, &'static str)>,
+}
 
 /// Puts the toolbar under `hwnd`'s taskbar preview, replacing one installed on
-/// an earlier window. Returns `false` when the shell will not hand out a
-/// taskbar list, which is normal on a machine with no taskbar at all.
-pub fn install(window: WindowId, hwnd: *mut c_void, cx: &mut App) -> bool {
-    if let Some(installed) = cx.try_global::<Installed>()
-        && installed.window == window
-    {
-        return true;
+/// an earlier window. Does nothing when the shell will not hand out a taskbar
+/// list, which is normal on a machine with no taskbar at all.
+pub fn install(hwnd: *mut c_void) {
+    let hwnd = hwnd as usize;
+    if BAR.with_borrow(|bar| bar.as_ref().is_some_and(|bar| bar.hwnd == hwnd)) {
+        return;
     }
-
-    let (sender, receiver) = mpsc::unbounded_channel();
-    let Some(bar) = Bar::new(HWND(hwnd), sender) else {
-        return false;
+    let Some(bar) = Bar::new(HWND(hwnd as *mut c_void)) else {
+        return;
     };
-    let entity = cx.new(|cx| ThumbBar::new(bar, receiver, cx));
-    let closed = cx.on_window_closed(move |cx, closed| {
-        if closed != window {
-            return;
-        }
-        let ours = cx
-            .try_global::<Installed>()
-            .is_some_and(|installed| installed.window == window);
-        if ours {
-            log::debug!("thumbbar: the window closed, taking the toolbar down");
-            cx.remove_global::<Installed>();
-        }
-    });
-    cx.set_global(Installed {
-        window,
-        _bar: entity,
-        _closed: closed,
-    });
-    true
-}
-
-/// Owns the toolbar and keeps it in step with playback, the way `Tray` does for
-/// the tray menu.
-pub struct ThumbBar {
-    bar: Bar,
-    shown: Shown,
-    _events: Task<()>,
-}
-
-impl ThumbBar {
-    fn new(mut bar: Bar, mut receiver: UnboundedReceiver<Event>, cx: &mut Context<Self>) -> Self {
-        let _events = cx.spawn(async move |this, cx| {
-            while let Some(event) = receiver.recv().await {
-                if this.upgrade().is_none() {
-                    break;
-                }
-                cx.update(|cx| {
-                    let playback = Sonora::global(cx).playback.clone();
-                    playback.update(cx, |playback, cx| match event {
-                        Event::Previous => playback.previous(cx),
-                        Event::Toggle => playback.toggle_play(cx),
-                        Event::Next => playback.next(cx),
-                    });
-                });
-            }
-        });
-
-        let playback = Sonora::global(cx).playback.clone();
-        cx.observe(&playback, |this, _, cx| this.publish(cx))
-            .detach();
-        let devices = Sonora::global(cx).devices.clone();
-        cx.observe(&devices, |this, _, cx| this.publish(cx))
-            .detach();
-        let settings = Sonora::global(cx).settings.clone();
-        cx.observe(&settings, |this, _, cx| this.publish(cx))
-            .detach();
-
-        let shown = shown(cx);
-        bar.show(&shown);
-        Self {
+    BAR.with_borrow_mut(|slot| {
+        *slot = Some(Installed {
+            hwnd,
             bar,
-            shown,
-            _events,
-        }
-    }
+            seen: None,
+        })
+    });
+}
 
-    fn publish(&mut self, cx: &mut Context<Self>) {
-        let shown = shown(cx);
-        if shown == self.shown {
+/// Keeps the buttons in step with playback. Runs from the app's `poll`, before every frame,
+/// so it compares what it reads before it builds anything.
+pub fn publish(ui: &Ui) {
+    let store = &ui.store;
+    let idle = match store.playback.steered(&store.devices) {
+        Some(_) => store.playback.shown_track(&store.devices).is_none(),
+        None => store.playback.track().is_none(),
+    };
+    let mut language = DefaultHasher::new();
+    store.settings.language().hash(&mut language);
+    let seen = (playing(store), idle, language.finish(), icons::active().id);
+    BAR.with_borrow_mut(|installed| {
+        let Some(installed) = installed.as_mut() else {
+            return;
+        };
+        if installed.seen.as_ref() == Some(&seen) {
             return;
         }
-        self.bar.show(&shown);
-        self.shown = shown;
-    }
+        let shown = shown(seen.0, seen.1);
+        installed.seen = Some(seen);
+        installed.bar.show(&shown);
+    });
+}
+
+/// Carries a button click to playback, on the UI thread.
+fn send(event: Event) {
+    crate::handle().update(move |ui: &mut Ui, _| {
+        match event {
+            Event::Previous => ui.store.previous_track(),
+            Event::Toggle => ui.store.toggle_play(),
+            Event::Next => ui.store.next_track(),
+        }
+        ui.settle();
+    });
 }
 
 /// The Win32 half: the taskbar list, the buttons and the window subclass.
@@ -207,8 +176,8 @@ pub struct Bar {
 }
 
 impl Bar {
-    fn new(hwnd: HWND, sender: UnboundedSender<Event>) -> Option<Self> {
-        // GPUI has already initialised COM on this thread; asking for an
+    fn new(hwnd: HWND) -> Option<Self> {
+        // winit has already initialised COM on this thread; asking for an
         // apartment it is not in answers RPC_E_CHANGED_MODE, which is not a
         // failure for us. Deliberately unpaired with CoUninitialize.
         let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
@@ -236,7 +205,6 @@ impl Bar {
             look: None,
             created,
             added: false,
-            sender,
         }));
 
         // The procedure borrows this reference for the life of the subclass;
@@ -283,7 +251,6 @@ struct Shared {
     look: Option<Look>,
     created: u32,
     added: bool,
-    sender: UnboundedSender<Event>,
 }
 
 impl Shared {
@@ -397,7 +364,7 @@ impl Shared {
     }
 }
 
-/// The window procedure. It runs on the window's thread, ahead of GPUI's own,
+/// The window procedure. It runs on the window's thread, ahead of winit's own,
 /// and hands every message it does not own to the rest of the chain.
 unsafe extern "system" fn subclass(
     hwnd: HWND,
@@ -421,8 +388,16 @@ unsafe extern "system" fn subclass(
                 _ => None,
             };
             if let Some(event) = event {
-                shared.sender.send(event).ok();
+                send(event);
                 return LRESULT(0);
+            }
+        } else if message == WM_SETTINGCHANGE {
+            // the shell may have switched between light and dark, which the glyphs follow
+            shared.look = None;
+            if let Some(mut shown) = shared.shown.clone() {
+                shown.look = look();
+                shared.dress(&shown);
+                shared.push();
             }
         }
     }
@@ -545,16 +520,19 @@ fn icon(rgba: &[u8], size: u32) -> Option<HICON> {
     drawn
 }
 
-/// Reads what the toolbar should be showing right now.
-fn shown(cx: &App) -> Shown {
-    let playback = Sonora::global(cx).playback.read(cx);
-    let playing = match playback.steered(cx) {
+/// Whether the track is playing, as the player shows it.
+fn playing(store: &Store) -> bool {
+    match store.playback.steered(&store.devices) {
         Some(remote) => remote.state.playing,
         None => matches!(
-            playback.state(),
+            store.playback.state(),
             PlaybackState::Playing | PlaybackState::Loading
         ),
-    };
+    }
+}
+
+/// What the toolbar should be showing for `playing` and `idle`.
+fn shown(playing: bool, idle: bool) -> Shown {
     Shown {
         previous: t!("player-previous").to_string(),
         toggle: match playing {
@@ -564,7 +542,7 @@ fn shown(cx: &App) -> Shown {
         .to_string(),
         next: t!("player-next").to_string(),
         playing,
-        idle: playback.shown_track(cx).is_none(),
+        idle,
         look: look(),
     }
 }
@@ -578,8 +556,8 @@ fn look() -> Look {
 }
 
 /// Whether the shell is drawing its chrome light, which decides the glyph
-/// colour. Read afresh on every publish, so switching Windows themes catches up
-/// at the next playback change rather than needing a restart.
+/// colour. Read afresh whenever the buttons are dressed and on every
+/// `WM_SETTINGCHANGE`, so switching Windows themes catches up at once.
 fn light_theme() -> bool {
     let mut value = 0u32;
     let mut size = size_of::<u32>() as u32;

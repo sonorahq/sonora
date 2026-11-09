@@ -1,16 +1,28 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod actions;
 #[cfg(windows)]
 mod app_icon;
+mod assets;
 mod console;
+#[cfg(target_os = "macos")]
+mod dock;
+#[cfg(target_os = "macos")]
+mod gestures;
 mod http;
 mod logging;
 mod memory;
 mod single;
+#[cfg(windows)]
+mod thumbbar;
+mod tray;
+mod window;
+#[cfg(target_os = "linux")]
+mod x11_icon;
 
 use std::path::PathBuf;
 use std::process::{ExitCode, exit};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use cli::commands::CommandType;
@@ -20,13 +32,22 @@ use state::{Link, Outcome, Store, Toasts};
 use ui::Artwork;
 use views::Ui;
 
-const LEAST_SIZE: (f32, f32) = (480., 400.);
-const FIRST_SIZE: (f32, f32) = (920., 640.);
 /// Some file managers launch a fresh process per selected file instead of one with every path,
 /// so a multi-file "Open With" arrives here as several single-file hand-offs within milliseconds
 /// of each other. This is how long to wait for the burst to go quiet before acting on it, so
 /// they land as one batch instead of racing each other into the engine one at a time.
 const OPEN_COALESCE: Duration = Duration::from_millis(250);
+
+/// The running app, for the threads and platform callbacks (tray, Dock, taskbar, gestures)
+/// that reach the window state. Set once, before the app runs.
+static HANDLE: OnceLock<AppHandle<Ui>> = OnceLock::new();
+
+/// The running app's handle. Every caller runs after `main` set it.
+pub fn handle() -> &'static AppHandle<Ui> {
+    HANDLE
+        .get()
+        .expect("the app handle is set before the app runs")
+}
 
 fn main() -> ExitCode {
     memory::tune();
@@ -87,29 +108,32 @@ fn main() -> ExitCode {
         }
     };
     rune::prewarm_gpu();
+    #[cfg(target_os = "macos")]
+    dock::install_icon();
+    rune::set_app_id(assets::app_id());
+    actions::install_labels();
 
     let spec = AppSpec {
-        min_size: Some(LEAST_SIZE),
+        min_size: Some(window::LEAST_SIZE),
         setup: Some(setup),
         poll: Some(poll),
         on_key: Some(views::on_key),
-        ..AppSpec::new("Sonora", FIRST_SIZE, unreachable_init, views::view)
+        fonts: &assets::FACES,
+        ..AppSpec::new("Sonora", window::FIRST_SIZE, unreachable_init, window::view)
     };
-    let app = rune::App::new(spec);
+    // Closing the window keeps the app running; `window::on_close` quits unless the window
+    // went to the tray.
+    let app = rune::App::new(spec)
+        .keep_running()
+        .standard_menus()
+        .on_close(window::on_close)
+        .on_quit(window::on_quit)
+        .on_focus(window::on_focus)
+        .on_reopen(window::on_reopen)
+        .on_window(window::created);
     let handle = app.handle();
-    let app = app.init({
-        let io = io.clone();
-        let handle = handle.clone();
-        move || {
-            let store = build_store(io, handle);
-            Ui::new(store)
-        }
-    });
+    HANDLE.set(handle.clone()).ok();
     memory::watch(&io, handle.clone());
-    let app = app.on_close(|ui: &mut Ui, tx| {
-        ui.store.outputs.on_quit();
-        tx.quit();
-    });
 
     // Commands from `sonora …` in a terminal skip the open batching, since nothing arrives in
     // bursts there.
@@ -145,7 +169,7 @@ fn main() -> ExitCode {
                 }
             }
             let batch = std::mem::take(&mut pending);
-            opened.open();
+            window::show();
             opened.update(move |ui: &mut Ui, _| follow(ui, &batch));
         }
     });
@@ -153,7 +177,17 @@ fn main() -> ExitCode {
         sender.send(args).ok();
     }
 
-    app.run();
+    // The window factory sees the connected displays, which a saved placement is restored
+    // onto, so the store (and with it the settings) is built here rather than in `App::init`.
+    rune::run_windows(move |displays| {
+        let store = build_store(io, handle);
+        let (options, maximized) = window::options(&store.settings, displays);
+        let app = app.window_options(options).maximized(maximized);
+        #[cfg(any(target_os = "macos", windows))]
+        let app = app.titlebar(window::titlebar(&store.settings));
+        let app = app.init(move || Ui::new(store));
+        vec![rune::WindowSpec::from_app("main", app)]
+    });
     ExitCode::SUCCESS
 }
 
@@ -203,9 +237,10 @@ fn build_store(io: state::Io, handle: AppHandle<Ui>) -> Store {
     Store::new(io, link, database, providers, local_provider, lyrics)
 }
 
-/// Installs what needs the window's waker, then restores the last account.
+/// Installs what needs the window's waker, restores the last account and starts the tray.
 fn setup(ui: &mut Ui, waker: Waker) {
     let http = http::Client::new(ui.store.cx.io.handle());
+    let http_for_tray = http.clone();
     let fetch: ui::Fetch = Arc::new(move |url: String| {
         let http = http.clone();
         Box::pin(async move { http.fetch(url).await })
@@ -215,16 +250,25 @@ fn setup(ui: &mut Ui, waker: Waker) {
         io.spawn(future);
     });
     ui.artwork = Some(Artwork::new(fetch, spawn, waker));
+    window::assume_appearance(ui);
     ui.store.restore_session();
     ui.settle();
+    tray::start(ui, http_for_tray);
+    #[cfg(target_os = "macos")]
+    gestures::install();
 }
 
-fn poll(ui: &mut Ui, _clock: f64, tx: &mut rune::Tx) -> bool {
+/// Before every frame, and on every wake of a hidden window: a quit an update asked for, what
+/// the host follows of the window, the tray and taskbar menus, then the views' live values.
+fn poll(ui: &mut Ui, clock: f64, tx: &mut rune::Tx) -> bool {
     if ui.store.take_quit() {
-        ui.store.outputs.on_quit();
-        tx.quit();
+        window::quit(ui, tx);
     }
-    views::poll(ui, tx)
+    let changed = window::poll(ui, clock);
+    tray::publish(ui);
+    #[cfg(windows)]
+    thumbbar::publish(ui);
+    views::poll(ui, tx) | changed
 }
 
 /// Opens what a launch or a hand-off passed: a provider's link opens on that provider, and

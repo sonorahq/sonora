@@ -49,6 +49,8 @@ pub struct Ui {
     pub live: Lives,
     pub chrome: ChromeState,
     pub screens: Screens,
+    /// The overlays any screen opens: the context menu and the dialogs.
+    pub dialogs: crate::shared::Dialogs,
     /// What the theme was last resolved from, so a change anywhere re-resolves it once.
     resolved: Option<(Look, ThemeOverrides, bool)>,
     /// Whether the platform reports a dark appearance.
@@ -73,6 +75,7 @@ impl Ui {
             live: Lives::new(),
             chrome,
             screens: Screens::default(),
+            dialogs: crate::shared::Dialogs::default(),
             resolved: None,
             system_dark: true,
             applied: (String::new(), String::new()),
@@ -106,6 +109,7 @@ impl Ui {
             self.applied = applied;
         }
         ui::motion::set_pace(settings.pace());
+        crate::shared::adaptive::wear(self);
     }
 
     /// Settles what a change raised and re-derives what follows the settings.
@@ -191,7 +195,10 @@ impl Ui {
             true => 0.,
             false => (elapsed.as_secs_f32() / total.as_secs_f32()).clamp(0., 1.),
         };
-        self.live.seek.set(fraction);
+        // a drag on a seek bar holds it where the pointer is until the seek lands
+        if self.chrome.player_bar.seeking.is_none() {
+            self.live.seek.set(fraction);
+        }
         let seconds = (elapsed.as_secs(), total.as_secs());
         if self.live.last != Some(seconds) {
             self.live.elapsed.set(ui::clock(elapsed).as_ref());
@@ -202,7 +209,10 @@ impl Ui {
             tx.wake_after(TICK);
         }
         let artwork = self.artwork.as_ref().is_some_and(Artwork::take_news);
-        self.store.take_dirty() | artwork
+        // the right sidebar's lyrics follow the sung line, and its queue the playing song
+        let aside = crate::chrome::sidebar_right::poll(self, tx);
+        let tinted = crate::shared::adaptive::wear(self);
+        self.store.take_dirty() | artwork | aside | tinted
     }
 }
 

@@ -47,6 +47,9 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
 
     let toasts = toasts::view(ui, cx, layer);
     layer.push(toasts);
+    let bar = player_bar::view(ui, cx, layer);
+    // The context menu and the dialogs go over everything else in the layer.
+    crate::shared::dialogs::view(ui, cx, layer);
     col()
         .key("workspace-shell")
         .grow(1.)
@@ -54,7 +57,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
         .w_full()
         .fill(theme.background.color())
         .child(body)
-        .child(player_bar::view(ui, cx, layer))
+        .child(bar)
 }
 
 /// The screen that draws `destination`.
@@ -123,5 +126,8 @@ pub(crate) fn open_filter(ui: &mut Ui, tx: &mut Tx) {
 
 /// Closes whatever is open on top of the page: a menu, a popover, a dialog.
 pub(crate) fn dismiss(ui: &mut Ui) {
+    if crate::shared::dialogs::dismiss(ui) {
+        return;
+    }
     ui.chrome.popovers.close();
 }

@@ -1,8 +1,10 @@
+//! The Linux tray: a StatusNotifierItem with a `com.canonical.dbusmenu` menu, served by ksni on
+//! its own thread.
+
 use anyhow::{Context as _, Result};
 use ksni::blocking::{Handle, TrayMethods as _};
 use ksni::menu::{CheckmarkItem, MenuItem, StandardItem};
 use ksni::{Category, ToolTip};
-use tokio::sync::mpsc::UnboundedSender;
 
 use super::{Art, Event, Shown};
 
@@ -20,7 +22,28 @@ pub struct Icon {
 }
 
 impl Icon {
-    pub fn new(sender: UnboundedSender<Event>) -> Option<Self> {
+    /// Whether a status notifier watcher is on the session bus, so there is a tray to bring
+    /// Sonora back from, or `None` without a session bus at all, where no icon can ever show.
+    /// It asks the bus, not the watcher, so it works while the icon is out. Blocks on D-Bus,
+    /// so it runs off the UI thread.
+    pub fn probe() -> Option<bool> {
+        let bus = match zbus::blocking::Connection::session() {
+            Ok(bus) => bus,
+            Err(error) => {
+                log::info!("tray: no session bus, so no tray icon: {error:#}");
+                return None;
+            }
+        };
+        match watched(&bus) {
+            Ok(hosted) => Some(hosted),
+            Err(error) => {
+                log::warn!("tray: cannot ask the session bus for a tray: {error:#}");
+                Some(false)
+            }
+        }
+    }
+
+    pub fn new() -> Option<Self> {
         let pixmap = crate::assets::LINUX_ICONS
             .iter()
             .filter(|(size, _)| *size <= 64)
@@ -29,6 +52,7 @@ impl Icon {
                     let image = image.into_rgba8();
                     let (width, height) = image.dimensions();
                     let mut data = image.into_raw();
+                    // the item wants ARGB in network order
                     for pixel in data.as_chunks_mut::<4>().0 {
                         pixel.rotate_right(1);
                     }
@@ -45,24 +69,11 @@ impl Icon {
             })
             .collect();
         let item = Item {
-            sender,
             pixmap,
             icon_name: icon_name(sandboxed()),
             shown: None,
         };
         Some(Self { item, handle: None })
-    }
-
-    /// Whether a status notifier watcher is on the session bus, so there is a tray to bring Sonora
-    /// back from. It asks the bus, not the watcher, so it works while the icon is out.
-    pub fn hosted() -> bool {
-        match watched() {
-            Ok(hosted) => hosted,
-            Err(error) => {
-                log::warn!("tray: cannot ask the session bus for a tray: {error:#}");
-                false
-            }
-        }
     }
 
     /// Puts the icon in the tray, or takes it out. A host draws every item that is registered, so
@@ -81,7 +92,9 @@ impl Icon {
         let shown = shown.clone();
         match &self.handle {
             Some(handle) => {
-                handle.update(|item| item.shown = Some(shown));
+                let copy = shown.clone();
+                handle.update(|item| item.shown = Some(copy));
+                self.item.shown = Some(shown);
             }
             None => self.item.shown = Some(shown),
         }
@@ -99,21 +112,16 @@ fn spawn(item: Item) -> Result<Handle<Item>> {
 
 #[derive(Clone)]
 struct Item {
-    sender: UnboundedSender<Event>,
     pixmap: Vec<ksni::Icon>,
     icon_name: String,
     shown: Option<Shown>,
 }
 
 impl Item {
-    fn send(&self, event: Event) {
-        self.sender.send(event).ok();
-    }
-
     fn entry(&self, label: &str, event: Event) -> MenuItem<Self> {
         StandardItem {
             label: label.to_owned(),
-            activate: Box::new(move |this: &mut Self| this.send(event)),
+            activate: Box::new(move |_: &mut Self| super::send(event)),
             ..Default::default()
         }
         .into()
@@ -123,7 +131,7 @@ impl Item {
         CheckmarkItem {
             label: label.to_owned(),
             checked,
-            activate: Box::new(move |this: &mut Self| this.send(event)),
+            activate: Box::new(move |_: &mut Self| super::send(event)),
             ..Default::default()
         }
         .into()
@@ -164,11 +172,16 @@ impl ksni::Tray for Item {
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
-        self.send(Event::Show);
+        // A Wayland host hands over an activation token with the click, which is what lets
+        // the window take focus rather than only ask for attention.
+        match ksni::current_xdg_activation_token() {
+            Some(token) => crate::handle().activate(token),
+            None => super::send(Event::Show),
+        }
     }
 
     fn secondary_activate(&mut self, _x: i32, _y: i32) {
-        self.send(Event::Toggle);
+        super::send(Event::Toggle);
     }
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
@@ -180,7 +193,7 @@ impl ksni::Tray for Item {
                 label: shown.caption.clone(),
                 icon_data: cover(shown.artwork.as_deref()).unwrap_or_default(),
                 enabled: shown.song,
-                activate: Box::new(|this: &mut Self| this.send(Event::Song)),
+                activate: Box::new(|_: &mut Self| super::send(Event::Song)),
                 ..Default::default()
             }
             .into(),
@@ -198,10 +211,9 @@ impl ksni::Tray for Item {
     }
 }
 
-fn watched() -> Result<bool> {
-    let bus = zbus::blocking::Connection::session().context("cannot reach the session bus")?;
+fn watched(bus: &zbus::blocking::Connection) -> Result<bool> {
     let name = zbus::names::BusName::try_from(WATCHER).context("cannot name the watcher")?;
-    zbus::blocking::fdo::DBusProxy::new(&bus)
+    zbus::blocking::fdo::DBusProxy::new(bus)
         .context("cannot reach the bus daemon")?
         .name_has_owner(name)
         .context("cannot ask for the watcher")

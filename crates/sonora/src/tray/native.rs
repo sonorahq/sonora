@@ -1,5 +1,8 @@
+//! The macOS and Windows tray: a status item (macOS) or notification-area icon (Windows) with a
+//! native menu, through `tray-icon`. Both are built and changed on the main thread, which is
+//! where Rune runs every update.
+
 use anyhow::{Context as _, Result};
-use tokio::sync::mpsc::UnboundedSender;
 use tray_icon::menu::{
     CheckMenuItem, Icon as MenuIcon, IconMenuItem, Menu, MenuEvent, MenuId, MenuItem,
     PredefinedMenuItem,
@@ -38,7 +41,12 @@ pub struct Icon {
 }
 
 impl Icon {
-    pub fn new(sender: UnboundedSender<Event>) -> Option<Self> {
+    /// Windows and macOS always have a tray to bring Sonora back from.
+    pub fn probe() -> Option<bool> {
+        Some(true)
+    }
+
+    pub fn new() -> Option<Self> {
         let logo = match logo() {
             Ok(logo) => logo,
             Err(error) => {
@@ -73,10 +81,10 @@ impl Icon {
             return None;
         }
 
-        let menus = sender.clone();
+        // Both handlers run on the platform's thread for the menu; `send` hops to the UI thread.
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             if let Some(event) = translate(&event.id) {
-                menus.send(event).ok();
+                super::send(event);
             }
         }));
         TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
@@ -89,7 +97,7 @@ impl Icon {
                 return;
             };
             if !MENU_ON_CLICK {
-                sender.send(Event::Show).ok();
+                super::send(Event::Show);
             }
         }));
 
@@ -107,11 +115,6 @@ impl Icon {
             show,
             quit,
         })
-    }
-
-    /// Whether there is a tray to bring Sonora back from, which Windows and macOS always have.
-    pub fn hosted() -> bool {
-        true
     }
 
     /// Puts the icon in the tray, or takes it out. The status item stays alive once built, so the

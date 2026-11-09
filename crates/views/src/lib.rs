@@ -68,6 +68,11 @@ pub fn on_key(ui: &mut Ui, event: &KeyEvent, tx: &mut Tx) -> bool {
     ui.key(event, tx)
 }
 
+/// Runs a shortcut's action as its key would, for the host's native menus.
+pub fn run_action(ui: &mut Ui, action: input::Action, tx: &mut Tx) {
+    actions::run(ui, action, tx);
+}
+
 /// The width class of the content area between the sidebars, re-running the view only when it
 /// crosses a step of the ladder.
 pub(crate) fn content_room<S>(cx: &Cx<S>) -> Room {
