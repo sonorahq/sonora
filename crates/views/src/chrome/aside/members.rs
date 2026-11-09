@@ -46,7 +46,7 @@ enum Gathering {
     },
 }
 
-pub(crate) fn view(ui: &Ui, _cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
+pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
     let theme = &ui.theme;
     let header = super::header(SideTab::Members, None, theme);
     let panel = col().w_full().h_full().min_h(0.).min_w(0.).child(header);
@@ -173,6 +173,8 @@ pub(crate) fn view(ui: &Ui, _cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
                 col()
                     .w_full()
                     .padding(theme.metrics.pad)
+                    // the last row scrolls clear of a translucent player bar
+                    .pb(theme.metrics.pad + crate::chrome::player_bar::bottom(ui, cx))
                     .motion(Springs::BASE)
                     .children(rows),
             ),

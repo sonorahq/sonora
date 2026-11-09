@@ -54,6 +54,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
     let mut panel = Panel::new("sidebar-right", Side::Right, width)
         .limits(RIGHT_MIN, RIGHT_MAX)
         .reach(reach)
+        .grip_above(crate::chrome::player_bar::bottom(ui, cx))
         .on_resize(|ui: &mut Ui, width: f32, _: &mut Tx| {
             ui.chrome.right_width = width;
             ui.store

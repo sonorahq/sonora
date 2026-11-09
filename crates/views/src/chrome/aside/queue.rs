@@ -71,6 +71,8 @@ pub struct State {
     /// The recall button's opacity and its lift off its perch.
     away: Live<f32>,
     lift: Live<[f32; 2]>,
+    /// How much of the panel's foot a translucent player bar covers, as the view last read it.
+    bottom: Cell<f32>,
 }
 
 impl Default for State {
@@ -88,6 +90,7 @@ impl Default for State {
             resting: Rc::new(Cell::new(None)),
             away: Live::new(0.),
             lift: Live::new([0., TUCKED]),
+            bottom: Cell::new(0.),
         }
     }
 }
@@ -149,12 +152,13 @@ enum Line {
     Slot(QueueSlot),
 }
 
-pub(crate) fn view(ui: &Ui, _cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
+pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
     let theme = &ui.theme;
     let listing = ui.store.shown_queue();
     let sections = listing.sections.clone();
     let remote = !listing.editable();
     let state = &ui.chrome.aside.queue;
+    state.bottom.set(crate::chrome::player_bar::bottom(ui, cx));
 
     let header = super::header(
         SideTab::Queue,
@@ -219,7 +223,7 @@ pub(crate) fn poll(ui: &mut Ui, shown: bool, tx: &mut Tx) -> bool {
         state.anchor = false;
         return false;
     };
-    let viewport = state.scroll.get()[2];
+    let viewport = state.scroll.get()[2] - state.bottom.get();
     if viewport <= 0. {
         // not laid out yet: try again once it is
         tx.wake_after(Duration::from_millis(50));
@@ -318,6 +322,7 @@ fn rows(ui: &Ui, listing: &QueueView<'_>, theme: &Theme) -> El {
         ui.chrome.aside.queue.lift.clone(),
     );
     let reach = theme.metrics.list_row * REACH_ROWS;
+    let bottom = ui.chrome.aside.queue.bottom.get();
     let mut viewport = col()
         .key(SCROLL)
         .role("list")
@@ -329,7 +334,7 @@ fn rows(ui: &Ui, listing: &QueueView<'_>, theme: &Theme) -> El {
             stick_bottom: false,
         })
         .on_scroll_offset(move |at: ScrollPos| {
-            let [offset, max, height] = [at.offset[1], at.max[1], at.viewport[1]];
+            let [offset, max, height] = [at.offset[1], at.max[1], at.viewport[1] - bottom];
             scroll.set([offset, max, height, 0.]);
             let goal = match resting.get() {
                 Some((top, row)) if top >= 0. => resting_offset(top, row, height, max),
@@ -369,6 +374,7 @@ fn recall(ui: &Ui, sections: &QueueSections, theme: &Theme) -> El {
     };
     let scroll = state.scroll.clone();
     let resting = state.resting.clone();
+    let bottom = state.bottom.get();
     let mut button = Button::new("queue-return-top")
         .secondary()
         .small()
@@ -376,6 +382,7 @@ fn recall(ui: &Ui, sections: &QueueSections, theme: &Theme) -> El {
         .tooltip(tooltip.to_string())
         .on_press_tx(move |_: &mut Ui, tx: &mut Tx| {
             let [_, max, height, _] = scroll.get();
+            let height = height - bottom;
             let goal = match resting.get() {
                 Some((top, row)) if top >= 0. => resting_offset(top, row, height, max),
                 _ => 0.,
@@ -386,10 +393,13 @@ fn recall(ui: &Ui, sections: &QueueSections, theme: &Theme) -> El {
     if ui::blurring(theme) {
         button = ui::glass(button, theme);
     }
+    // over a translucent player bar the button floats clear of it
     ui::perched(
-        el().live_opacity(state.away.smooth(Springs::BASE))
-            .live_offset(state.lift.smooth(Springs::BASE))
-            .child(button),
+        el().pb(bottom).child(
+            el().live_opacity(state.away.smooth(Springs::BASE))
+                .live_offset(state.lift.smooth(Springs::BASE))
+                .child(button),
+        ),
     )
 }
 
@@ -442,7 +452,7 @@ fn line(ui: &Ui, index: usize) -> El {
         Line::Top => el().w_full().h(TOP).a11y_hidden(),
         Line::Tail => el()
             .w_full()
-            .h(theme.metrics.list_row.round() * TAIL_ROWS)
+            .h(theme.metrics.list_row.round() * TAIL_ROWS + ui.chrome.aside.queue.bottom.get())
             .a11y_hidden(),
         Line::Slot(QueueSlot::Header(heading)) => section(ui, &listing, heading, index, theme),
         Line::Slot(QueueSlot::Track(position)) => track_row(ui, &listing, position, index, theme),

@@ -212,9 +212,11 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
         (LyricsState::Ready, Some(music::Lyrics::Synced { lines })) => Some(lines),
         _ => None,
     };
+    // a translucent player bar floats over the sheet's foot: the sheet reads the part above it
+    let bottom = crate::chrome::player_bar::bottom(ui, cx);
     let viewport = cx
-        .layout_with(SHEET, |rect| {
-            [rect[1].round(), rect[2].round(), rect[3].round()]
+        .layout_with(SHEET, move |rect| {
+            [rect[1].round(), rect[2].round(), (rect[3] - bottom).round()]
         })
         .unwrap_or([0.; 3]);
     let mirrored = hit.is_some_and(|hit| reads_right_to_left(&hit.lyrics));
@@ -242,11 +244,11 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
     let take = (lyrics.following().map(str::to_owned), lyrics.revision());
 
     let body = match (lines, lyrics.state()) {
-        (Some(lines), _) => sheet(ui, cx, lines, look, &take, viewport, theme),
+        (Some(lines), _) => sheet(ui, cx, lines, look, &take, viewport, bottom, theme),
         (None, LyricsState::Ready) => match hit.map(|hit| &hit.lyrics) {
             Some(music::Lyrics::Plain { text, romanized }) => {
                 let plain = plain(text, romanized.as_ref(), look, theme);
-                scroller(plain, look, &take, None, theme)
+                scroller(plain, look, &take, None, bottom, theme)
             }
             _ => wordless("lyrics-missing", "icons/mic-off.svg", theme),
         },
@@ -263,18 +265,20 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
             }
         }
     };
-    let follow = (lines.is_some() || !state.pinned).then(|| {
+    let follow = (lines.is_some() && !state.pinned).then(|| {
+        // over a translucent player bar the button floats clear of it
         ui::perched(
-            Button::new("resume-pin")
-                .secondary()
-                .icon("icons/undo-2.svg")
-                .tooltip(t!("lyrics-follow").to_string())
-                .on_press(|ui: &mut Ui| ui.chrome.aside.lyrics.pin())
-                .build(theme),
+            el().pb(bottom).child(
+                Button::new("resume-pin")
+                    .secondary()
+                    .icon("icons/undo-2.svg")
+                    .tooltip(t!("lyrics-follow").to_string())
+                    .on_press(|ui: &mut Ui| ui.chrome.aside.lyrics.pin())
+                    .build(theme),
+            ),
         )
         .key("lyrics-follow")
-        .raise()
-        .transition(Transition::opacity())
+        .transition(Transition::opacity().combined(Transition::offset(0., 8.)))
     });
 
     col()
@@ -435,6 +439,7 @@ fn sheet(
     look: Look,
     take: &(Option<String>, u64),
     viewport: [f32; 3],
+    bottom: f32,
     theme: &Theme,
 ) -> El {
     let state = &ui.chrome.aside.lyrics;
@@ -522,7 +527,7 @@ fn sheet(
         .items_start()
         .children(rows)
         .children(credit);
-    scroller(content, look, take, edges, theme)
+    scroller(content, look, take, edges, bottom, theme)
 }
 
 /// The scroll viewport a sheet reads in, which a wheel takes out of following the song. A new
@@ -532,9 +537,11 @@ fn scroller(
     look: Look,
     take: &(Option<String>, u64),
     edges: Option<(f32, f32)>,
+    bottom: f32,
     theme: &Theme,
 ) -> El {
     let (over, under) = edges.unwrap_or((REST, REST));
+    let under = under + bottom;
     let content = content
         .key(format!(
             "{CONTENT}-{}-{}",
