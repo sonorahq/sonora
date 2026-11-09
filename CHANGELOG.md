@@ -21,6 +21,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Reduce redraw work when scrolling large Favorites collections.
 - Song durations stay aligned when hovering over an artist's favorite songs.
+- Reduce fullscreen visualizer redraws while keeping animation at up to 120 FPS.
 
 - Mixed English and Japanese lyrics no longer show duplicate English romanizations or misplaced spaces inside parentheses.
 
