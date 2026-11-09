@@ -3,12 +3,14 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use opensubsonic::data::{Cue, CueLine, StructuredLyrics};
+use opensubsonic::data::{Agent, Cue, CueLine, StructuredLyrics};
 
 use crate::lyrics::lrc;
 use crate::subsonic::auth::{self, Credentials};
 use crate::subsonic::{NAME, SubsonicClient};
-use crate::{Lyrics, LyricsHit, LyricsLine, LyricsProvider, LyricsQuery, LyricsWord, Voice};
+use crate::{
+    Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsProvider, LyricsQuery, LyricsWord, Voice,
+};
 
 const SLUG: &str = "subsonic";
 
@@ -128,42 +130,43 @@ fn structured(entries: Vec<StructuredLyrics>) -> Vec<Lyrics> {
 fn sheet(entry: StructuredLyrics) -> Option<Lyrics> {
     let offset = entry.offset.unwrap_or(0.);
     if entry.synced {
-        let mut lines: Vec<LyricsLine>;
+        let mut lines: Vec<LyricsLine> = Vec::new();
         let cue_lines: Option<&Vec<CueLine>> = entry.cue_line.as_ref();
+        let agents = entry.agents.as_ref();
+        let main_agent: Option<&Agent> = agents.into_iter().flatten().find(|&a| a.role == "main");
 
-        if cue_lines.is_some_and(|v| !v.is_empty()) {
-            let agents = entry.agents.as_ref();
-            let agents_exists: bool = agents.is_some_and(|a| !a.is_empty());
+        if cue_lines.is_some_and(|l| !l.is_empty()) && main_agent.is_some() {
+            let groups: Vec<Vec<&CueLine>> = group_cues(cue_lines?, main_agent?);
 
-            lines = cue_lines?
+            lines = entry
+                .line
                 .iter()
-                .filter_map(|cue| {
-                    let voice: Voice = if agents_exists && cue.agent_id.is_some() {
-                        let agent = agents?
-                            .iter()
-                            .find(|&agent| cue.agent_id.to_owned().unwrap() == agent.id);
-
-                        if agent.is_none_or(|_| agent.is_some_and(|a| a.role != "voice")) {
-                            Voice::Lead
-                        } else {
-                            Voice::Counter
-                        }
-                    } else {
-                        Voice::Lead
-                    };
+                .enumerate()
+                .filter_map(|(idx, line)| {
+                    let group = &groups[idx];
 
                     Some(LyricsLine {
-                        start: shifted(cue.start?, offset),
-                        end: cue.end.map(|value| shifted(value, offset)),
-                        text: cue.value.clone()?.trim().to_owned(),
+                        start: shifted(line.start?, offset),
+                        text: group[0].value.as_deref()?.trim().to_owned(),
+                        end: Some(shifted(group[0].end?, offset)),
                         romanized: None,
-                        words: cues(&cue.cue, offset),
-                        secondary: Vec::new(),
-                        voice,
+                        voice: get_agent(agents?, group[0].agent_id.clone()).map_or(
+                            Voice::Lead,
+                            |a| {
+                                if a.id == main_agent.unwrap().id {
+                                    Voice::Lead
+                                } else {
+                                    Voice::Counter
+                                }
+                            },
+                        ),
+                        words: Some(parse_cues(&group[0].cue, offset)),
+                        secondary: parse_secondaries(group, offset),
                     })
                 })
                 .collect();
-        } else {
+        }
+        if lines.is_empty() {
             lines = entry
                 .line
                 .iter()
@@ -211,20 +214,75 @@ fn legacy_sheet(text: &str) -> Option<Lyrics> {
     }
 }
 
-fn cues(cues: &[Cue], offset: f64) -> Option<Vec<LyricsWord>> {
-    if cues.is_empty() {
-        return None;
+/// Sort the cues, placing the main cue line first.
+fn group_cues<'a>(lines: &'a [CueLine], main: &Agent) -> Vec<Vec<&'a CueLine>> {
+    let mut groups: Vec<Vec<&CueLine>> = Vec::new();
+
+    for line in lines.iter() {
+        // index is required by spec: https://opensubsonic.netlify.app/docs/responses/cueline/#:~:text=Yes
+        let line_idx: usize = line.index.expect("missing required index field in CueLine") as usize;
+
+        if line_idx >= groups.len() {
+            groups.resize_with(line_idx + 1, Vec::new);
+        }
+
+        groups[line_idx].push(line);
     }
 
-    Some(
-        cues.iter()
-            .filter_map(|m| {
-                Some(LyricsWord {
-                    start: shifted(m.start?, offset),
-                    end: shifted(m.end?, offset),
-                    text: m.value.clone()?,
-                })
+    // Ensure the first line is always the main agent
+    for group in &mut groups {
+        if group.len() > 1
+            && let Some(pos) = group
+                .iter()
+                .position(|&l| l.agent_id.as_ref().is_some_and(|id| id == main.id.as_str()))
+        {
+            group.swap(0, pos);
+        }
+    }
+
+    groups
+}
+
+fn get_agent(list: &[Agent], id: Option<String>) -> Option<&Agent> {
+    let target = id?;
+    list.iter().find(|&agent| agent.id == target)
+}
+
+fn parse_cues(cues: &[Cue], offset: f64) -> Vec<LyricsWord> {
+    cues.iter()
+        .filter_map(|m| {
+            Some(LyricsWord {
+                start: shifted(m.start?, offset),
+                end: shifted(m.end?, offset),
+                text: m.value.as_deref()?.trim().to_owned(),
             })
-            .collect(),
-    )
+        })
+        .collect()
+}
+
+fn parse_secondaries(cues: &[&CueLine], offset: f64) -> Vec<LyricsLane> {
+    if cues.len() <= 1 {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for &cue in cues[1..].iter() {
+        let words = parse_cues(&cue.cue, offset);
+        let start = cue
+            .start
+            .or_else(|| words.first().map(|word| word.start.as_secs_f64()))
+            .unwrap();
+        let end = cue
+            .end
+            .or_else(|| words.last().map(|word| word.end.as_secs_f64()));
+
+        out.push(LyricsLane {
+            start: shifted(start, offset),
+            end: end.map(|end| shifted(end, offset)),
+            text: cue.value.as_deref().unwrap().trim().to_owned(),
+            romanized: None,
+            words: Some(words),
+        });
+    }
+    out
 }
