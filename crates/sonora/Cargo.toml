@@ -38,6 +38,8 @@ image.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
 ksni.workspace = true
+raw-window-handle.workspace = true
+x11rb.workspace = true
 zbus.workspace = true
 
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
@@ -50,11 +52,13 @@ objc2.workspace = true
 objc2-app-kit = { workspace = true, features = [
   "block2",
   "NSEvent",
+  "NSImage",
+  "NSImageRep",
   "NSToolbar",
   "NSView",
   "NSWindow",
 ] }
-objc2-foundation = { workspace = true, features = ["NSString"] }
+objc2-foundation = { workspace = true, features = ["NSData", "NSGeometry", "NSString"] }
 raw-window-handle.workspace = true
 
 [target.'cfg(windows)'.dependencies]
@@ -73,6 +77,4 @@ windows-sys = { workspace = true, features = [
 
 [build-dependencies]
 embed.workspace = true
-
-[target.'cfg(windows)'.build-dependencies]
 winresource.workspace = true

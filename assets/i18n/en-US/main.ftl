@@ -457,6 +457,7 @@ home-collection-albums = Albums from your collection
 search-placeholder = What do you want to listen to?
 search-browse = Browse all
 search-submit = Search
+search-open-link = Open link in Sonora
 search-recent = Recent searches
 search-forget = Remove from history
 genre-empty = Nothing to show here yet

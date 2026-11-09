@@ -9,7 +9,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Open music links from the search field or send browser pages to Sonora with a bookmark.
+- Open YouTube handle links on their artist pages.
+- Preview music links in search suggestions and search by their titles or artist names.
 - Subsonic lyrics provider can now read OpenSubsonic's enhanced cueLine data for karaoke lyrics.
+
+### Changed
+
+- Nightly updates reuse released executables after a stable release, so they become available sooner.
+
+### Fixed
+
+- Reduce redraw work when scrolling large Favorites collections.
+- Song durations stay aligned when hovering over an artist's favorite songs.
+
+- Mixed English and Japanese lyrics no longer show duplicate English romanizations or misplaced spaces inside parentheses.
+
+## [0.48.1] - 2026-11-08
 
 ### Changed
 
@@ -18,6 +34,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Opening an artist's favorite songs no longer crashes when a song appears under the pointer.
+- Back and forward buttons stay beside the sidebar toggle with enough space between them.
+- App and tray icons stay sharp at more display scales, and Linux windows show the Sonora icon without desktop integration.
 - Lyrics keep equal left and right insets at every window and text size.
 - Apple Music lyrics can be found when the album has a different edition name in the lyrics catalogue.
 - Lyrics sources retry when their cached answers cannot be shown, and newly found lyrics stay available after restarting.
@@ -2570,7 +2589,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.48.0...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.48.1...HEAD
+[0.48.1]: https://github.com/sonorahq/sonora/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/sonorahq/sonora/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/sonorahq/sonora/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/sonorahq/sonora/compare/v0.45.0...v0.46.0

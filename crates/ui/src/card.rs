@@ -626,7 +626,23 @@ impl RenderOnce for Card {
                     .id("card-action")
                     .flex_none()
                     .map(|this| match collapsed {
-                        true => this.hidden().group_hover(CARD_GROUP, |style| style.flex()),
+                        true => this
+                            .overflow_hidden()
+                            .invisible()
+                            // Keep the action in prepaint even when it takes no space.
+                            .when_else(
+                                tile.is_some(),
+                                |this| {
+                                    this.h_0().mt_neg_2().group_hover(CARD_GROUP, |style| {
+                                        style.h_auto().mt_0().visible()
+                                    })
+                                },
+                                |this| {
+                                    this.w_0().ml_neg_3().group_hover(CARD_GROUP, |style| {
+                                        style.w_auto().ml_0().visible()
+                                    })
+                                },
+                            ),
                         false => this
                             .invisible()
                             .group_hover(CARD_GROUP, |style| style.visible()),
