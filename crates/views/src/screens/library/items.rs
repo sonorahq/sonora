@@ -152,13 +152,16 @@ struct Deck {
     rows: Rc<Vec<DeckRow>>,
 }
 
+/// The rows last worked out, with what they were worked out from.
+type Kept<S> = (Stamp<S>, Rc<Order>);
+
 /// A page of items' own state, kept in the screen's state: the table's selection, layout and
 /// sort, the filters, and the rows they leave.
 pub(crate) struct Items<K: Kind> {
     pub(crate) table: TableState,
     pub(crate) sieve: K::Sieve,
     pub(crate) memo: RefCell<K::Memo>,
-    order: RefCell<Option<(Stamp<K::Sieve>, Rc<Order>)>>,
+    order: RefCell<Option<Kept<K::Sieve>>>,
     deck: RefCell<Option<Deck>>,
     versions: Cell<u64>,
 }

@@ -175,9 +175,6 @@ struct Frame {
     split: bool,
     /// Whether the controls are put away, by the pointer resting or by the setting.
     hide: bool,
-    /// Whether the pointer has rested, which the leave button and the cursor follow whatever
-    /// the setting says about the controls.
-    idle: bool,
     frosted: bool,
 }
 
@@ -205,7 +202,6 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
         panel,
         split: room.fits(Room::Wide) && panel.is_some(),
         hide,
-        idle,
         frosted: ambient::shown(ui),
     };
     let staged = panel.is_none() || frame.split;
@@ -441,9 +437,9 @@ fn busy(ui: &Ui) -> bool {
 fn hover(ui: &mut Ui, pointer: PointerEvent, tx: &mut Tx) {
     let state = &mut ui.screens.fullscreen;
     let at = [pointer.window_x, pointer.window_y];
-    let travel = state
-        .last_pos
-        .map_or(f32::INFINITY, |last| (at[0] - last[0]).hypot(at[1] - last[1]));
+    let travel = state.last_pos.map_or(f32::INFINITY, |last| {
+        (at[0] - last[0]).hypot(at[1] - last[1])
+    });
     if travel < WAKE_TRAVEL {
         tx.live_only();
         return;
@@ -522,7 +518,7 @@ fn stage(ui: &Ui, frame: &Frame, layer: &mut Vec<El>) -> El {
     let line = |step: Text| (theme.text(step) * LEADING).round();
     let meta = line(Text::Title) + rem * META_GAP + line(Text::Body);
     let stack = theme.metrics.title_bar + rem * (COLUMN_GAP * 2. + PAGE_PAD) + meta;
-    let dock = theme.metrics.player_bar
+    let docked = theme.metrics.player_bar
         * match frame.split {
             true => DOCK,
             false => DOCK_FULL,
@@ -534,9 +530,9 @@ fn stage(ui: &Ui, frame: &Frame, layer: &mut Vec<El>) -> El {
             .min(ceiling)
             .max(COVER_MIN)
     };
-    let near = fit(tall, wide_share, stack + dock, ceiling);
+    let near = fit(tall, wide_share, stack + docked, ceiling);
     // the resting cover never reaches further up than the room above the awake one
-    let slack = (vh - stack - dock - near).max(0.);
+    let slack = (vh - stack - docked - near).max(0.);
     let above = theme.metrics.title_bar + slack / 2. - COVER_PAD;
     let far = fit(tall_rest, wide_rest, stack, ceiling_rest)
         .min(near + above * 2.)
@@ -578,7 +574,9 @@ fn artwork(ui: &Ui, side: f32, rest: f32) -> El {
         .as_ref()
         .and_then(|track| track.id.as_deref())
         .is_some_and(music::is_local_id)
-        || small.as_deref().is_some_and(|url| url.starts_with("file://"));
+        || small
+            .as_deref()
+            .is_some_and(|url| url.starts_with("file://"));
     let cover = &ui.store.cover;
     let large = album.as_deref().and_then(|album| cover.large_for(album));
     let full = album.as_deref().and_then(|album| cover.full_for(album));
@@ -717,13 +715,12 @@ fn meta_view(ui: &Ui, frame: &Frame) -> El {
         .min_w(0.)
         .child(headline);
     if let Some(track) = &track {
-        meta = meta.child(
-            row()
-                .w_full()
-                .min_w(0.)
-                .justify_center()
-                .child(artists(track, "fullscreen-artists", Text::Body, theme)),
-        );
+        meta = meta.child(row().w_full().min_w(0.).justify_center().child(artists(
+            track,
+            "fullscreen-artists",
+            Text::Body,
+            theme,
+        )));
     }
     meta
 }
@@ -799,7 +796,9 @@ fn strip(ui: &Ui, frame: &Frame) -> El {
             .build(theme),
     );
     if let Some(track) = &track {
-        art = art.label(album_name(track)).press_scale(ui::PRESS_SCALE_CARD);
+        art = art
+            .label(album_name(track))
+            .press_scale(ui::PRESS_SCALE_CARD);
         art = match track.album_id.clone() {
             Some(id) => art
                 .role("link")
@@ -812,11 +811,12 @@ fn strip(ui: &Ui, frame: &Frame) -> El {
         };
     }
     let explicit = track.as_ref().is_some_and(|track| track.explicit);
-    let mut headline = row()
-        .center_y()
-        .gap(rem * 0.5)
-        .min_w(0.)
-        .child(title(ui, track.as_ref(), Text::Body, "strip-title"));
+    let mut headline = row().center_y().gap(rem * 0.5).min_w(0.).child(title(
+        ui,
+        track.as_ref(),
+        Text::Body,
+        "strip-title",
+    ));
     if explicit {
         headline = headline.child(
             el().key("strip-explicit")
@@ -833,11 +833,7 @@ fn strip(ui: &Ui, frame: &Frame) -> El {
             })
             .child(transport::like(ui, track.as_ref())),
     );
-    let mut details = col()
-        .justify_center()
-        .grow(1.)
-        .min_w(0.)
-        .child(headline);
+    let mut details = col().justify_center().grow(1.).min_w(0.).child(headline);
     if let Some(track) = &track {
         details = details.child(artists(track, "strip-artists", Text::Small, theme));
     }
@@ -1134,28 +1130,32 @@ fn volume_panel(ui: &Ui, frame: &Frame, level: f32) -> El {
     let theme = &ui.theme;
     let pad = theme.metrics.pad;
     let span = theme.metrics.control_small + VOLUME_ZONE * 2.;
-    let mut slider = Scrubber::<Ui>::new("fullscreen-volume-slider", &ui.screens.fullscreen.volume, level)
-        .vertical()
-        .name(t!("equalizer-status-volume"))
-        .value(transport::percent(level))
-        .colors(
-            theme.progress_bar,
-            theme.muted_foreground.opacity(0.3),
-            theme.foreground,
-        )
-        .lift(VOLUME_BUBBLE_LIFT)
-        .on_move(|ui: &mut Ui, level: f32, _: &mut Tx| {
-            let state = &mut ui.screens.fullscreen;
-            state.volume_held = true;
-            state.muted = None;
-            ui.store.slide_volume(level);
-            ui.settle();
-        })
-        .on_release(|ui: &mut Ui, _: &mut Tx| {
-            ui.screens.fullscreen.volume_held = false;
-            ui.store.end_volume_slide();
-            ui.settle();
-        });
+    let mut slider = Scrubber::<Ui>::new(
+        "fullscreen-volume-slider",
+        &ui.screens.fullscreen.volume,
+        level,
+    )
+    .vertical()
+    .name(t!("equalizer-status-volume"))
+    .value(transport::percent(level))
+    .colors(
+        theme.progress_bar,
+        theme.muted_foreground.opacity(0.3),
+        theme.foreground,
+    )
+    .lift(VOLUME_BUBBLE_LIFT)
+    .on_move(|ui: &mut Ui, level: f32, _: &mut Tx| {
+        let state = &mut ui.screens.fullscreen;
+        state.volume_held = true;
+        state.muted = None;
+        ui.store.slide_volume(level);
+        ui.settle();
+    })
+    .on_release(|ui: &mut Ui, _: &mut Tx| {
+        ui.screens.fullscreen.volume_held = false;
+        ui.store.end_volume_slide();
+        ui.settle();
+    });
     slider = slider.bubble(level, transport::percent(level));
     let mut panel = col()
         .key("fullscreen-volume-panel")
@@ -1210,7 +1210,9 @@ fn spectrum(ui: &Ui, frame: &Frame, corner: Option<f32>, cx: &mut Cx<Ui>) -> El 
     let meta = cx
         .layout_with("fullscreen-meta", |rect| (rect[1] + rect[3]).round())
         .unwrap_or(vh / 2.);
-    let max = (vh - meta - theme.metrics.inset).max(VISUALIZER_MIN).round();
+    let max = (vh - meta - theme.metrics.inset)
+        .max(VISUALIZER_MIN)
+        .round();
     let mut view = ui
         .screens
         .fullscreen
@@ -1248,12 +1250,7 @@ fn leave(ui: &Ui, frame: &Frame) -> El {
     }
     col()
         .key("leave-fullscreen-slot")
-        .pin(
-            None,
-            None,
-            Some(theme.font_size * 1.25),
-            Some(-LEAVE_DROP),
-        )
+        .pin(None, None, Some(theme.font_size * 1.25), Some(-LEAVE_DROP))
         .h(theme.metrics.player_bar.round())
         .justify_center()
         .on_hover_change(parks(|state, over| state.over_leave = over))

@@ -711,7 +711,7 @@ fn browse(ui: &Ui, gutter: f32, width: f32, bottom: f32) -> El {
 /// loader counts a failure as served.
 fn failure(ui: &Ui, asked: bool, gutter: f32) -> Option<El> {
     let offline = ui.store.network.lost();
-    let (key, reason, retry): (&str, Option<String>, Box<dyn Fn(&mut Ui)>) = match asked {
+    let (key, reason, retry): (&str, Option<String>, Retry) = match asked {
         true => {
             let reason = match offline {
                 true => None,
@@ -829,6 +829,9 @@ fn hit_row(ui: &Ui, hit: &Hit, key: &str, seat: Seat, look: Look) -> El {
     }
     row
 }
+
+/// What a failed page's button does to try again.
+type Retry = Box<dyn Fn(&mut Ui)>;
 
 /// The line under a hit's name.
 enum Subtitle {

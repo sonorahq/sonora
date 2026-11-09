@@ -437,8 +437,8 @@ fn sizes(ui: &Ui) -> (f32, f32) {
     match super::staged(ui) {
         false => verse_sizes(settings.panel_lyrics_scale(), theme),
         true => {
-            let scale = settings.fullscreen_lyrics_scale()
-                * crate::shells::fullscreen::lyrics_frame(ui);
+            let scale =
+                settings.fullscreen_lyrics_scale() * crate::shells::fullscreen::lyrics_frame(ui);
             (
                 (theme.text(Text::Title) + STAGED_VERSE_GROWTH) * scale,
                 theme.text(Text::Body) * scale,

@@ -5,9 +5,11 @@
 use router::Destination;
 use rune::{Cx, El, Transition, Tx, col, row};
 
-use crate::chrome::{jam, notice, player_bar, session, sidebar_left, sidebar_right, toasts};
-use crate::screens;
 use crate::Ui;
+use crate::chrome::{
+    jam, notice, player_bar, session, sidebar_left, sidebar_right, swipe_cue, toasts,
+};
+use crate::screens;
 
 /// How far a page grows from as it enters, and how blurred it starts: the GPUI entrance's veil.
 const ENTRANCE_SCALE: f32 = 0.99;
@@ -33,7 +35,10 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
         .min_w(0.)
         .min_h(0.)
         .clip_rounded(0.)
-        .child(page);
+        // a two-finger swipe across the page steps through its history, as in a browser
+        .on_wheel(swipe_cue::follow)
+        .child(page)
+        .child(swipe_cue::view(ui));
 
     let body = row()
         .key("workspace")
@@ -138,6 +143,11 @@ pub(crate) fn open_filter(ui: &mut Ui, tx: &mut Tx) {
 /// Closes whatever is open on top of the page: a menu, a popover, a dialog.
 pub(crate) fn dismiss(ui: &mut Ui) {
     if crate::shared::dialogs::dismiss(ui) {
+        return;
+    }
+    // with nothing open over it, Escape leaves the fullscreen player
+    if matches!(ui.nav.current(), Destination::Fullscreen) {
+        ui.back();
         return;
     }
     ui.chrome.popovers.close();

@@ -13,7 +13,7 @@ use std::rc::Rc;
 use i18n::t;
 use music::{Album, GenreItem, SavedArtist, Track};
 use router::{Destination, LibraryTab};
-use rune::{Cx, Drag, El, GrowthSpec, PointerPress, ScrollSpec, Tx, WheelEvent, col, row};
+use rune::{Cx, Drag, El, PointerPress, ScrollSpec, Tx, WheelEvent, col, row};
 use state::{AppSettings, ArtistDetail, Origin};
 use ui::{Button, Card, Mode, Pending, ScrollWatch, Text, Weight, font, spoken_heading};
 
@@ -390,11 +390,9 @@ fn listed(ui: &Ui, detail: &ArtistDetail, width: f32, origin: Option<Origin>) ->
             .build(theme)
             .w_full()
     });
-    // A growth stack, so the frame eases between five rows and ten.
     col()
         .key("artist-popular-list")
         .w_full()
-        .growth(GrowthSpec::default())
         .gap(rems(theme, LIST_GAP))
         .child(frame)
         .children(more)
@@ -530,33 +528,34 @@ fn releases(ui: &Ui, detail: &ArtistDetail, width: f32, page: El) -> El {
             // One key whatever the filter, so a change of filter or of the expansion eases rows
             // in and out of the same grid rather than swapping grids.
             CardGrid::new("artist-releases", width, shown.len())
-            .inset(inset)
-            .build(
-                theme,
-                move |ui: &Ui, at: usize| {
-                    keyed
-                        .get(at)
-                        .and_then(|&index| releases_of(ui).get(index))
-                        .map_or(Cow::Borrowed(""), |album| Cow::Borrowed(album.id.as_str()))
-                },
-                move |ui: &Ui, at: usize, tile: f32| {
-                    let Some(album) = shown.get(at).and_then(|&index| releases_of(ui).get(index))
-                    else {
-                        return Card::skeleton(format!("artist-release-{at}"))
-                            .tile(tile)
-                            .build(&ui.theme);
-                    };
-                    cards::album_card(
-                        ui,
-                        format!("artist-release-{}", album.id),
-                        album,
-                        Fit::Tile(tile),
-                        Some(&on_item),
-                    )
-                    .flat()
-                    .build(&ui.theme)
-                },
-            )
+                .inset(inset)
+                .build(
+                    theme,
+                    move |ui: &Ui, at: usize| {
+                        keyed
+                            .get(at)
+                            .and_then(|&index| releases_of(ui).get(index))
+                            .map_or(Cow::Borrowed(""), |album| Cow::Borrowed(album.id.as_str()))
+                    },
+                    move |ui: &Ui, at: usize, tile: f32| {
+                        let Some(album) =
+                            shown.get(at).and_then(|&index| releases_of(ui).get(index))
+                        else {
+                            return Card::skeleton(format!("artist-release-{at}"))
+                                .tile(tile)
+                                .build(&ui.theme);
+                        };
+                        cards::album_card(
+                            ui,
+                            format!("artist-release-{}", album.id),
+                            album,
+                            Fit::Tile(tile),
+                            Some(&on_item),
+                        )
+                        .flat()
+                        .build(&ui.theme)
+                    },
+                )
         }
     };
     let page = page.child(grid);

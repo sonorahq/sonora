@@ -2,7 +2,9 @@
 //! heart, and the helpers behind the volume and seek sliders. The player bar draws them first,
 //! so they live there and this is where the rest of the app reaches them.
 
-pub(crate) use crate::chrome::player_bar::{like, moved, open_menu, percent, transport, volume_icon};
+pub(crate) use crate::chrome::player_bar::{
+    like, moved, open_menu, percent, transport, volume_icon,
+};
 
 /// How far one notch of the wheel over a volume control moves it.
 pub(crate) const NOTCH: f32 = 0.05;

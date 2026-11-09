@@ -97,7 +97,11 @@ impl Ui {
     /// pack and the motion pace. Cheap when nothing changed.
     pub fn sync(&mut self) {
         let settings = &self.store.settings;
-        let wanted = (settings.look(), settings.theme_overrides(), self.system_dark);
+        let wanted = (
+            settings.look(),
+            settings.theme_overrides(),
+            self.system_dark,
+        );
         if self.resolved.as_ref() != Some(&wanted) {
             self.theme = Theme::resolve(wanted.0, &wanted.1, wanted.2);
             self.resolved = Some(wanted);
@@ -183,7 +187,9 @@ impl Ui {
 
     /// The shortcut a key press asks for, run against the window.
     pub(crate) fn key(&mut self, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
-        let typing = tx.focused().is_some_and(|focused| focused.contains("input"));
+        let typing = tx
+            .focused()
+            .is_some_and(|focused| focused.contains("input"));
         // a key shows the fullscreen controls as a pointer movement does
         crate::shells::fullscreen::stir(self, tx);
         let Some(action) = input::action(&self.bindings, event, tx, typing) else {

@@ -95,11 +95,14 @@ impl State {
         self.edge.set([edge * sign, 0.]);
         self.reach.set(reach.min(1.) * (1. - launch));
         self.scale.set(
-            ((PEEK + (1. - PEEK) * reach.min(1.)) * (1. + ARMED * armed) * (1. + LAUNCH_GROWTH * launch))
+            ((PEEK + (1. - PEEK) * reach.min(1.))
+                * (1. + ARMED * armed)
+                * (1. + LAUNCH_GROWTH * launch))
                 .max(0.01),
         );
         self.armed.set(armed);
-        self.lean.set([(LEAN * armed + LEAN * 2. * launch) * -sign, 0.]);
+        self.lean
+            .set([(LEAN * armed + LEAN * 2. * launch) * -sign, 0.]);
     }
 }
 

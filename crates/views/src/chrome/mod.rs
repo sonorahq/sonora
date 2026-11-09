@@ -11,6 +11,7 @@ pub(crate) mod session;
 pub(crate) mod sessions_button;
 pub(crate) mod sidebar_left;
 pub(crate) mod sidebar_right;
+pub(crate) mod swipe_cue;
 pub(crate) mod theme_invite;
 pub(crate) mod title_bar;
 pub(crate) mod toasts;
@@ -49,6 +50,8 @@ pub struct ChromeState {
     pub jam: jam::State,
     pub session: session::State,
     pub aside: sidebar_right::State,
+    /// The arrow a touchpad swipe across the page draws.
+    pub swipe: swipe_cue::State,
 }
 
 impl ChromeState {
@@ -71,6 +74,7 @@ impl ChromeState {
             jam: jam::State::default(),
             session: session::State::default(),
             aside: sidebar_right::State::default(),
+            swipe: swipe_cue::State::default(),
         }
     }
 }
