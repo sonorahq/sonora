@@ -13,6 +13,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Reduce redraw work when scrolling large Favorites collections.
+- Song durations stay aligned when hovering over an artist's favorite songs.
+
 - Mixed English and Japanese lyrics no longer show duplicate English romanizations or misplaced spaces inside parentheses.
 
 ## [0.48.1] - 2026-11-08

@@ -199,6 +199,7 @@ pub struct TableDelegate<S: TableSource> {
     sort: Option<(S::Field, Sort)>,
     query: String,
     order: Vec<usize>,
+    revision: u64,
     locked: Option<&'static [&'static str]>,
 }
 
@@ -227,6 +228,7 @@ impl<S: TableSource> TableDelegate<S> {
             sort: None,
             query: String::new(),
             order: Vec::new(),
+            revision: 0,
             locked: None,
         };
         delegate.reorder(cx);
@@ -523,6 +525,11 @@ impl<S: TableSource> TableDelegate<S> {
         &self.query
     }
 
+    /// Changes whenever rows are rebuilt, filtered or sorted, including updates to their data.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     fn reorder(&mut self, cx: &App) {
         let mut order: Vec<usize> = (0..self.source.rows(cx))
             .filter(|row| {
@@ -539,6 +546,7 @@ impl<S: TableSource> TableDelegate<S> {
         }
 
         self.order = order;
+        self.revision = self.revision.wrapping_add(1);
         self.prune_selection();
     }
 

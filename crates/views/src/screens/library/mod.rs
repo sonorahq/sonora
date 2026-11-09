@@ -2,7 +2,9 @@ mod albums;
 mod artists;
 mod playlists;
 
+use std::cell::Cell;
 use std::rc::Rc;
+use std::time::Duration;
 
 use crate::chrome::tools::{self, Sliders};
 use crate::chrome::{Chrome, Searchable, Toolbar, Tooled};
@@ -189,6 +191,8 @@ pub struct LibraryView {
     settings: Entity<AppSettings>,
     playback: Entity<Playback>,
     playback_status: PlaybackStatus,
+    /// The listed duration is reused until the song table rebuilds its rows.
+    duration: Cell<Option<(u64, Duration)>>,
     section: Section,
     views: [Mode; 4],
     width: Pixels,
@@ -416,6 +420,7 @@ impl LibraryView {
             settings,
             playback,
             playback_status: current_playback,
+            duration: Cell::new(None),
             section: Section::Songs,
             views,
             width,
@@ -634,10 +639,18 @@ impl LibraryView {
                 .expected(self.shelf, Section::Songs.part())
                 .map_or(listed, |expected| expected.max(listed)),
         };
-        let duration: std::time::Duration = (0..listed)
-            .filter_map(|display| delegate.source().peek(delegate.row(display), cx))
-            .map(|track| track.duration)
-            .sum();
+        let revision = delegate.revision();
+        let duration = match self.duration.get() {
+            Some((cached, duration)) if cached == revision => duration,
+            _ => {
+                let duration = (0..listed)
+                    .filter_map(|display| delegate.source().peek(delegate.row(display), cx))
+                    .map(|track| track.duration)
+                    .sum();
+                self.duration.set(Some((revision, duration)));
+                duration
+            }
+        };
         let mut strip = HeroMetaStrip::new().text(t!("count-songs", count = count));
         if !duration.is_zero() {
             strip = strip.text(runtime(duration));
