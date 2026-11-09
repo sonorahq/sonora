@@ -53,14 +53,19 @@ impl Link {
         }));
     }
 
-    /// Runs `read` on the UI thread and waits for its answer. `None` when the job was cancelled
+    /// Runs `read` on the UI thread and waits for its answer. The window draws afterwards only
+    /// if `read` raised a change. `None` when the job was cancelled
     /// or the window is gone before it ran.
     pub async fn read<R: Send + 'static>(
         &self,
         read: impl FnOnce(&mut Store) -> R + Send + 'static,
     ) -> Option<R> {
         let (answer, answered) = tokio::sync::oneshot::channel();
+        // A read asks; it doesn't change what the window shows unless the closure raises a
+        // topic or an event, or refreshes, so it doesn't run the view by itself. A background
+        // worker that polls (the PO token minter, a heartbeat) costs no frame.
         self.post(move |store| {
+            store.cx.hush();
             answer.send(read(store)).ok();
         });
         answered.await.ok()
