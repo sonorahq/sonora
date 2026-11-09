@@ -123,30 +123,26 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
     root(page, layer)
 }
 
-fn main() {
-    let modal = std::env::var("GALLERY_MODAL").is_ok();
+fn init() -> App {
     let menu = std::env::var("GALLERY_MENU").is_ok();
     let scrubber = ScrubberState::new();
     scrubber.set(0.35);
-    rune::run(AppSpec::new(
-        "Gallery",
-        (1400., 1000.),
-        move || {
-            let mut popovers = Popovers::default();
-            if menu {
-                popovers.open("file");
-            }
-            App {
-                on: false,
-                edit: TextEdit::new(""),
-                code: TextEdit::new("123"),
-                popovers,
-                sub: menu,
-                scrubber: scrubber.clone(),
-                volume: ScrubberState::new(),
-                modal,
-            }
-        },
-        view,
-    ));
+    let mut popovers = Popovers::default();
+    if menu {
+        popovers.open("file");
+    }
+    App {
+        on: false,
+        edit: TextEdit::new(""),
+        code: TextEdit::new("123"),
+        popovers,
+        sub: menu,
+        scrubber,
+        volume: ScrubberState::new(),
+        modal: std::env::var("GALLERY_MODAL").is_ok(),
+    }
+}
+
+fn main() {
+    rune::run(AppSpec::new("Gallery", (1400., 1000.), init, view));
 }
