@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Open music links from the search field or send browser pages to Sonora with a bookmark.
+- Open YouTube handle links on their artist pages.
+
 ### Changed
 
 - Nightly updates reuse released executables after a stable release, so they become available sooner.

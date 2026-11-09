@@ -162,8 +162,14 @@ impl SearchView {
             this.typed = query.clone();
             this.dismissed = false;
             this.pick = None;
-            this.suggestions
-                .update(cx, |suggestions, cx| suggestions.ask(&query, cx));
+            let linked = Sonora::global(cx).links.read(cx).recognizes(&query, cx);
+            this.suggestions.update(cx, |suggestions, cx| {
+                let query = match linked {
+                    true => "",
+                    false => &query,
+                };
+                suggestions.ask(query, cx)
+            });
             // An emptied field goes back to browsing rather than keeping the last results.
             if query.trim().is_empty() {
                 this.search.update(cx, |search, cx| search.ask("", cx));
@@ -321,10 +327,15 @@ impl SearchView {
         cx.notify();
     }
 
-    /// Runs `query` as a full search, files it in the history and puts the panel away.
+    /// Opens recognized links or runs a full search and saves it in history.
     fn run(&mut self, query: &str, cx: &mut Context<Self>) {
         let query = query.trim().to_owned();
         if query.is_empty() {
+            return;
+        }
+        let links = Sonora::global(cx).links.clone();
+        if links.update(cx, |links, cx| links.open(&query, cx)) {
+            self.close_panel(cx);
             return;
         }
         remember(&query, cx);

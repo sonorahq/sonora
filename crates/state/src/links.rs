@@ -1,7 +1,7 @@
 //! Links handed to the app from outside, by the system or on the command line, opened on the
 //! provider they belong to. Sonora's own `sonora:` links offer a theme to install instead.
 
-use gpui::{Context, Entity, EventEmitter, Task};
+use gpui::{App, Context, Entity, EventEmitter, Task};
 use music::link::{self, Linked};
 
 use crate::settings::{is_own_link, read_theme_link};
@@ -53,10 +53,25 @@ impl Links {
         }
     }
 
-    /// Opens `text` when it is a provider's link or Sonora's own and says whether it was one. A
-    /// short link is followed first, so what it points at opens a moment later. A `sonora:` link
-    /// that does not read as a theme is refused with a toast.
+    /// Recognizes provider links and Sonora links without opening them or fetching short links.
+    pub fn recognizes(&self, text: &str, cx: &App) -> bool {
+        is_own_link(text) || self.session.read(cx).read_link(text).is_some()
+    }
+
+    /// Opens provider links, browser handoffs and theme offers, returning whether the link was handled.
+    /// Invalid Sonora links show a toast, and short links resolve before opening.
     pub fn open(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
+        if let Some(address) = link::address(text)
+            .filter(|address| address.scheme() == "sonora" && address.host_str() == Some("open"))
+        {
+            if let Some(target) = link::query(&address, "url")
+                && self.session.read(cx).read_link(&target).is_some()
+            {
+                return self.open(&target, cx);
+            }
+            Toasts::show(Outcome::Failed, "toast-link-unreadable", cx);
+            return true;
+        }
         if is_own_link(text) {
             match read_theme_link(text) {
                 Ok(offer) => {

@@ -11,7 +11,7 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 /// How many redirects a short link may take, the same as reqwest's default policy.
 const REDIRECTS: usize = 10;
 /// How much of a short link's page is read when its address alone does not say where it goes.
-const PAGE_LIMIT: usize = 256 * 1024;
+const PAGE_LIMIT: usize = 2 * 1024 * 1024;
 /// What ends an address written into a page.
 const ADDRESS_END: [char; 7] = ['"', '\'', '<', '>', '\\', ' ', '`'];
 
@@ -25,7 +25,7 @@ pub enum Linked {
     User(String),
     /// A group session to join, kept as the whole link since the device network reads it.
     Jam(String),
-    /// A short link, which says what it points at only once `follow` has fetched it.
+    /// A link whose destination id must be resolved from a redirect or page metadata.
     Short,
 }
 
