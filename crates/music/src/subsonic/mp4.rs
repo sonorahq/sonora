@@ -54,11 +54,8 @@ impl Remote {
         }
         let request = http
             .get(self.url.clone())
-            .header(RANGE, format!("bytes={start}-{}", self.total - 1));
-        let request = match &self.validator {
-            Some(validator) => request.header(IF_RANGE, validator),
-            None => request,
-        };
+            .header(RANGE, format!("bytes={start}-{}", self.total - 1))
+            .header(IF_RANGE, self.validator.as_ref()?);
         tokio::time::timeout(RANGE_PATIENCE, async {
             let mut response = request.send().await.ok()?;
             let expected = format!("bytes {start}-{}/{}", self.total - 1, self.total);
@@ -392,6 +389,39 @@ mod tests {
             );
             server.abort();
         }
+    }
+
+    #[tokio::test]
+    async fn missing_validator_keeps_the_original_sequential_response() {
+        let (http, mut remote, mut requests, server) = server("valid").await;
+        remote.validator = None;
+        let (mut stream, send) = partial(TAIL, Some(TAIL.len() as u64)).await;
+        let mut waiting = tokio::spawn(async move {
+            let prepared = Prepared::load(&mut stream, Some((&http, &remote)))
+                .await
+                .unwrap();
+            (stream, prepared)
+        });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut waiting)
+                .await
+                .is_err()
+        );
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        send.send(Bytes::from_static(&TAIL[PREFIX..])).unwrap();
+        drop(send);
+        let (stream, prepared) = waiting.await.unwrap();
+        assert!(prepared.tail.is_none());
+        assert!(
+            decoder(stream, prepared, Duration::ZERO)
+                .await
+                .next()
+                .is_some()
+        );
+        server.abort();
     }
 
     #[tokio::test]
