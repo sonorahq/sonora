@@ -143,7 +143,18 @@ fn sheet(entry: StructuredLyrics) -> Option<Lyrics> {
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, line)| {
-                    let group = &groups[idx];
+                    let start = shifted(line.start?, offset);
+                    let Some(group) = groups.get(idx).filter(|g| !g.is_empty()) else {
+                        return Some(LyricsLine {
+                            start,
+                            end: None,
+                            text: line.value.trim().to_owned(),
+                            romanized: None,
+                            words: None,
+                            secondary: Vec::new(),
+                            voice: Voice::Lead,
+                        });
+                    };
 
                     Some(LyricsLine {
                         start,
