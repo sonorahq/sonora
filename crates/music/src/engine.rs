@@ -351,6 +351,40 @@ impl PlaybackEvents for Events {
     }
 }
 
+/// Owns the next track's load and cancels it when it is replaced or the engine ends.
+struct Preload {
+    id: String,
+    segue: bool,
+    task: tokio::task::AbortHandle,
+}
+
+impl Preload {
+    /// Reuses a pending load of the same track and remembers a later request to queue it.
+    fn request(
+        slot: &mut Option<Self>,
+        id: String,
+        segue: bool,
+        start: impl FnOnce() -> tokio::task::AbortHandle,
+    ) {
+        if let Some(pending) = slot.as_mut().filter(|pending| pending.id == id) {
+            pending.segue |= segue;
+            return;
+        }
+        *slot = None;
+        *slot = Some(Self {
+            id,
+            segue,
+            task: start(),
+        });
+    }
+}
+
+impl Drop for Preload {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
 /// What the fetch of one track came back with, and whether anything still wants it.
 struct Fetched<F: Fetch> {
     epoch: u64,
@@ -450,6 +484,7 @@ async fn engine_loop<F: Fetch>(
     let mut awaited: Option<u64> = None;
     let mut inflight: Option<tokio::task::AbortHandle> = None;
     let mut ahead: Option<(String, F::Loaded)> = None;
+    let mut preloading: Option<Preload> = None;
     // the track the audio thread is decoding, as far as the engine knows: set by a load, then
     // moved on by the audio thread's own word when a track runs out
     let mut current: Option<String> = None;
@@ -492,6 +527,7 @@ async fn engine_loop<F: Fetch>(
                         segued = None;
                         waiting = None;
                         epoch += 1;
+                        preloading = None;
                         if let Some(handle) = inflight.take() {
                             handle.abort();
                         }
@@ -553,6 +589,7 @@ async fn engine_loop<F: Fetch>(
                             // Fetched already, as the next track is once the current one is
                             // all in. A segue only has to line it up.
                             Some(loaded) => {
+                                preloading = None;
                                 if !segue || segued.as_deref() == Some(id.as_str()) {
                                     continue;
                                 }
@@ -565,7 +602,9 @@ async fn engine_loop<F: Fetch>(
                                 }
                             }
                             None => {
-                                spawn(&fetch, id, epoch, segue, &fetched);
+                                Preload::request(&mut preloading, id.clone(), segue, || {
+                                    spawn(&fetch, id, epoch, segue, &fetched)
+                                });
                             }
                         }
                     }
@@ -609,15 +648,22 @@ async fn engine_loop<F: Fetch>(
                 }
             }
             arrival = arrivals.recv() => {
-                let Some(Fetched { epoch: at, id, segue, result }) = arrival else { break };
+                let Some(Fetched { epoch: at, id, mut segue, result }) = arrival else { break };
                 if at != epoch {
                     continue;
+                }
+                let current_load = awaited == Some(at) && current.as_deref() == Some(id.as_str());
+                if !current_load {
+                    let Some(pending) = preloading.take_if(|pending| pending.id == id) else {
+                        continue;
+                    };
+                    segue = pending.segue;
                 }
                 let loaded = match result {
                     Ok(loaded) => loaded,
                     Err(error) => {
                         log::warn!("playback: cannot load {id}: {error:#}");
-                        if awaited == Some(at) {
+                        if current_load {
                             awaited = None;
                             inflight = None;
                             announcing = None;
@@ -630,7 +676,7 @@ async fn engine_loop<F: Fetch>(
                         continue;
                     }
                 };
-                if awaited == Some(at) && current.as_deref() == Some(id.as_str()) {
+                if current_load {
                     awaited = None;
                     inflight = None;
                     announce_length(&events, &id, fetch.length(&loaded));
@@ -1341,6 +1387,56 @@ async fn download<F: Fetch>(fetch: &F, id: &str, progress: &Fraction) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Keeps a resource alive until a pending provider load is cancelled.
+    fn pending_load() -> (tokio::task::AbortHandle, tokio::sync::oneshot::Receiver<()>) {
+        let (held, dropped) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _held = held;
+            std::future::pending::<()>().await;
+        });
+        (task.abort_handle(), dropped)
+    }
+
+    #[tokio::test]
+    async fn superseded_preloads_release_their_pending_resources() {
+        let (first, dropped) = pending_load();
+        let mut slot = None;
+        Preload::request(&mut slot, "one".to_owned(), false, || first);
+        let (next, next_dropped) = pending_load();
+        Preload::request(&mut slot, "two".to_owned(), false, || next);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), dropped)
+                .await
+                .unwrap()
+                .is_err()
+        );
+        drop(slot);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), next_dropped)
+                .await
+                .unwrap()
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_segue_request_reuses_the_pending_preload() {
+        let (task, dropped) = pending_load();
+        let mut slot = None;
+        Preload::request(&mut slot, "one".to_owned(), false, || task);
+        Preload::request(&mut slot, "one".to_owned(), true, || {
+            panic!("load restarted")
+        });
+        assert!(slot.as_ref().unwrap().segue);
+        drop(slot);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), dropped)
+                .await
+                .unwrap()
+                .is_err()
+        );
+    }
 
     fn measured(lufs: f32, peak: Option<f32>) -> Option<Loudness> {
         Some(Loudness { lufs, peak })
