@@ -48,6 +48,7 @@ impl Remote {
 
     /// Accepts only an exact partial response and bounds both its size and its lifetime.
     async fn tail(&self, http: &reqwest::Client, start: u64) -> Option<Tail> {
+        let validator = self.validator.as_ref()?;
         let length = self.total.checked_sub(start)?;
         if length == 0 || length > METADATA_LIMIT {
             return None;
@@ -55,7 +56,7 @@ impl Remote {
         let request = http
             .get(self.url.clone())
             .header(RANGE, format!("bytes={start}-{}", self.total - 1))
-            .header(IF_RANGE, self.validator.as_ref()?);
+            .header(IF_RANGE, validator);
         tokio::time::timeout(RANGE_PATIENCE, async {
             let mut response = request.send().await.ok()?;
             let expected = format!("bytes {start}-{}/{}", self.total - 1, self.total);
@@ -407,13 +408,13 @@ mod tests {
                 .await
                 .is_err()
         );
+        send.send(Bytes::from_static(&TAIL[PREFIX..])).unwrap();
+        drop(send);
+        let (stream, prepared) = waiting.await.unwrap();
         assert!(matches!(
             requests.try_recv(),
             Err(mpsc::error::TryRecvError::Empty)
         ));
-        send.send(Bytes::from_static(&TAIL[PREFIX..])).unwrap();
-        drop(send);
-        let (stream, prepared) = waiting.await.unwrap();
         assert!(prepared.tail.is_none());
         assert!(
             decoder(stream, prepared, Duration::ZERO)
