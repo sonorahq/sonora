@@ -400,6 +400,7 @@ pub struct Table<S: 'static, F: Copy + PartialEq + 'static> {
     tip: Option<RowFn<S, Option<String>>>,
     populated: Option<FieldFn<S, F>>,
     lead: Option<El>,
+    foot: Option<El>,
     pending: Option<Pending>,
     label: Option<String>,
     bottom: f32,
@@ -440,6 +441,7 @@ impl<S: 'static, F: Copy + PartialEq + 'static> Table<S, F> {
             tip: None,
             populated: None,
             lead: None,
+            foot: None,
             pending: None,
             label: None,
             bottom: 0.,
@@ -495,6 +497,13 @@ impl<S: 'static, F: Copy + PartialEq + 'static> Table<S, F> {
     /// An element that scrolls above the header, such as a page's hero.
     pub fn lead(mut self, lead: El) -> Self {
         self.lead = Some(lead);
+        self
+    }
+
+    /// An element that scrolls under the last row, such as a page's notices. The room set with
+    /// [`Table::bottom`] then goes under it rather than under the rows.
+    pub fn foot(mut self, foot: El) -> Self {
+        self.foot = Some(foot);
         self
     }
 
@@ -583,7 +592,11 @@ impl<S: 'static, F: Copy + PartialEq + 'static> Table<S, F> {
         self
     }
 
-    pub fn build(self, s: &S, theme: &Theme) -> El {
+    pub fn build(mut self, s: &S, theme: &Theme) -> El {
+        let foot = self.foot.take().map(|foot| {
+            let room = std::mem::take(&mut self.bottom);
+            col().key("foot").w_full().pb(room).child(foot)
+        });
         let st = (self.state)(s);
         let count = (self.len)(s);
         let metrics = theme.metrics;
@@ -642,7 +655,7 @@ impl<S: 'static, F: Copy + PartialEq + 'static> Table<S, F> {
         if let Some(lead) = self.lead {
             root = root.child(lead);
         }
-        root.child(header).child(body)
+        root.child(header).child(body).children(foot)
     }
 
     /// The sticky header: a cell per column with its title and sort arrow, a grip on each movable
