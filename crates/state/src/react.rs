@@ -40,5 +40,6 @@ impl Store {
         self.react_song(change);
         self.react_profile(change);
         self.react_search(change);
+        self.react_host(change);
     }
 }

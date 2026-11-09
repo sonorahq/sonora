@@ -296,10 +296,20 @@ pub struct Store {
     /// Workers that run as long as the app does and keep nothing the window shows, such as
     /// YouTube's proof-of-origin window.
     pub(crate) background: Vec<Job>,
+    /// What the window has to act on itself: a quit an update asked for, and links that
+    /// resolved to a page to show.
+    host: Host,
     /// Discord's rich presence, made from what plays and handed to its worker.
     pub(crate) discord: discord::Discord,
     /// The system's media controls, once [`Store::attach_remote`] reached them.
     pub(crate) remote: Option<Remote>,
+}
+
+/// Requests the store leaves for the window, which owns quitting and navigation.
+#[derive(Default)]
+struct Host {
+    quit: bool,
+    opened: Vec<music::link::Linked>,
 }
 
 /// The models behind the pages that show one item: each is replaced as another item opens and
@@ -395,6 +405,7 @@ impl Store {
             discord,
             remote: None,
             background,
+            host: Host::default(),
             cx,
         }
     }
@@ -412,6 +423,24 @@ impl Store {
             }
         }
         log::warn!("state: changes kept raising more after {ROUNDS} rounds; the rest wait");
+    }
+
+    /// Whether an update (or anything else) asked the app to quit since the last call.
+    pub fn take_quit(&mut self) -> bool {
+        std::mem::take(&mut self.host.quit)
+    }
+
+    /// Links that resolved to something to show since the last call, oldest first.
+    pub fn take_opened(&mut self) -> Vec<music::link::Linked> {
+        std::mem::take(&mut self.host.opened)
+    }
+
+    pub(crate) fn react_host(&mut self, change: &Change) {
+        match change {
+            Change::Event(Event::Quit) => self.host.quit = true,
+            Change::Event(Event::LinkOpened(linked)) => self.host.opened.push(linked.clone()),
+            _ => {}
+        }
     }
 
     /// Whether anything changed since the host last drew, for a poll that runs outside a commit.

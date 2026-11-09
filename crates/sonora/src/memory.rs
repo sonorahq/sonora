@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use gpui::App;
-use state::Sonora;
+use rune::AppHandle;
+use views::Ui;
 
 /// How often the footprint is logged under debug logging.
 const INTERVAL: Duration = Duration::from_secs(10);
@@ -24,27 +24,25 @@ pub fn tune() {}
 /// Logs the memory footprint every `INTERVAL` when debug logging is on for this module, and does
 /// nothing otherwise. The log file keeps it off, so it runs only when `RUST_LOG` or `SONORA_LOG`
 /// asks for `sonora::memory=debug`.
-pub fn watch(cx: &mut App) {
+pub fn watch(io: &state::Io, handle: AppHandle<Ui>) {
     if !log::log_enabled!(log::Level::Debug) {
         return;
     }
-    cx.spawn(async move |cx| {
+    io.spawn(async move {
         loop {
-            cx.background_executor().timer(INTERVAL).await;
-            let probed = cx
-                .background_executor()
-                .spawn(async { (footprint().unwrap_or_default(), resident()) })
-                .await;
-            cx.update(|cx| report(probed, cx));
+            tokio::time::sleep(INTERVAL).await;
+            let probed = tokio::task::spawn_blocking(|| (footprint().unwrap_or_default(), resident()))
+                .await
+                .unwrap_or_default();
+            handle.update(move |ui: &mut Ui, _| report(probed, ui));
         }
-    })
-    .detach();
+    });
 }
 
-fn report(probed: (Footprint, Option<usize>), cx: &mut App) {
+fn report(probed: (Footprint, Option<usize>), ui: &Ui) {
     let (footprint, resident) = probed;
-    let (entries, bytes) = ui::artwork_usage(cx).unwrap_or((0, 0));
-    let queue = Sonora::global(cx).queue.read(cx);
+    let (entries, bytes) = ui.artwork.as_ref().map_or((0, 0), |artwork| artwork.usage());
+    let queue = &ui.store.queue;
     let past = queue.past().len();
     let ahead = queue.upcoming().len();
 

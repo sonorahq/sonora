@@ -5,16 +5,16 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+dirs.workspace = true
 i18n.workspace = true
 icons.workspace = true
-jiff.workspace = true
-music.workspace = true
 input.workspace = true
-router.workspace = true
-ui.workspace = true
-state.workspace = true
+jiff.workspace = true
 log.workspace = true
+music.workspace = true
 open.workspace = true
-dirs.workspace = true
+router.workspace = true
+rune.workspace = true
+state.workspace = true
+ui.workspace = true
 unicode-bidi.workspace = true
-[dev-dependencies]

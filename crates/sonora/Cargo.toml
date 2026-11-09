@@ -30,6 +30,7 @@ sha2.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 interprocess.workspace = true
 image.workspace = true
+rune.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true

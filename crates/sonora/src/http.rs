@@ -1,16 +1,10 @@
 use std::fs::{self, FileTimes, OpenOptions};
-use std::future::Future;
-use std::io::Read as _;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Result, anyhow};
-use gpui::http_client::http::header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, COOKIE, RANGE};
-use gpui::http_client::http::{HeaderValue, Method};
-use gpui::http_client::{AsyncBody, HttpClient, Inner, Request, Response, Url};
 use sha2::{Digest, Sha256};
 use tokio::runtime::Handle;
 
@@ -21,12 +15,11 @@ const CACHE_SWEEP: Duration = Duration::from_secs(60 * 60);
 
 static TEMP_FILE: AtomicU64 = AtomicU64::new(0);
 
-type Sent = Pin<Box<dyn Future<Output = Result<Response<AsyncBody>>> + Send>>;
-
+/// Fetches cover art over HTTP, keeping images in a disk cache so a cover seen in an earlier run
+/// opens without the network.
+#[derive(Clone)]
 pub struct Client {
     inner: reqwest::Client,
-    handle: Handle,
-    user_agent: HeaderValue,
     cache: Option<Arc<Mutex<DiskCache>>>,
 }
 
@@ -50,100 +43,63 @@ impl Client {
                 .user_agent(USER_AGENT)
                 .build()
                 .unwrap_or_default(),
-            handle: handle.clone(),
-            user_agent: HeaderValue::from_static(USER_AGENT),
             cache,
         }
     }
-}
 
-impl HttpClient for Client {
-    fn user_agent(&self) -> Option<&HeaderValue> {
-        Some(&self.user_agent)
-    }
-
-    fn proxy(&self) -> Option<&Url> {
-        None
-    }
-
-    fn send(&self, request: Request<AsyncBody>) -> Sent {
-        let client = self.inner.clone();
-        let handle = self.handle.clone();
-        let cache = self.cache.clone();
-
-        Box::pin(async move {
-            let (parts, body) = request.into_parts();
-            let body = read(body)?;
-
-            let fetch = handle.spawn(async move {
-                let uri = parts.uri.to_string();
-                let cacheable = parts.method == Method::GET
-                    && !parts.headers.contains_key(AUTHORIZATION)
-                    && !parts.headers.contains_key(COOKIE)
-                    && !parts.headers.contains_key(RANGE);
-                let cached = match (cacheable, cache.as_ref()) {
-                    (true, Some(cache)) => {
-                        let cache = cache.clone();
-                        let uri = uri.clone();
-                        tokio::task::spawn_blocking(move || {
-                            with_cache(&cache, |cache| cache.get(&uri)).flatten()
-                        })
-                        .await
-                        .unwrap_or_else(|error| {
-                            log::warn!("artwork: cannot read the disk cache: {error}");
-                            None
-                        })
-                    }
-                    _ => None,
-                };
-                if let Some(bytes) = cached {
-                    return Ok::<_, anyhow::Error>((reqwest::StatusCode::OK, bytes.into()));
-                }
-
-                let mut outgoing = client.request(parts.method, &uri).headers(parts.headers);
-
-                if let Some(body) = body {
-                    outgoing = outgoing.body(body);
-                }
-
-                let incoming = outgoing.send().await.map_err(reqwest::Error::without_url)?;
-                let status = incoming.status();
-                let is_image = incoming
-                    .headers()
-                    .get(CONTENT_TYPE)
-                    .and_then(|value| value.to_str().ok())
-                    .is_some_and(|value| value.to_ascii_lowercase().starts_with("image/"));
-                let private = incoming
-                    .headers()
-                    .get(CACHE_CONTROL)
-                    .and_then(|value| value.to_str().ok())
-                    .is_some_and(|value| {
-                        value.split(',').map(str::trim).any(|value| {
-                            value.eq_ignore_ascii_case("no-store")
-                                || value.eq_ignore_ascii_case("private")
-                        })
-                    });
-                let bytes = incoming.bytes().await?;
-                if cacheable
-                    && status == reqwest::StatusCode::OK
-                    && is_image
-                    && !private
-                    && let Some(cache) = cache.as_ref()
-                {
-                    let cache = cache.clone();
-                    let stored = bytes.clone();
-                    drop(tokio::task::spawn_blocking(move || {
-                        with_cache(&cache, |cache| cache.put(&uri, &stored));
-                    }));
-                }
-                Ok::<_, anyhow::Error>((status, bytes))
+    /// The bytes at `url`, from the disk cache when it holds them. Only images are cached, and
+    /// never a response the server marked private.
+    pub async fn fetch(&self, url: String) -> Result<Vec<u8>> {
+        if let Some(cache) = self.cache.clone() {
+            let key = url.clone();
+            let cached = tokio::task::spawn_blocking(move || {
+                with_cache(&cache, |cache| cache.get(&key)).flatten()
+            })
+            .await
+            .unwrap_or_else(|error| {
+                log::warn!("artwork: cannot read the disk cache: {error}");
+                None
             });
+            if let Some(bytes) = cached {
+                return Ok(bytes);
+            }
+        }
 
-            let (status, bytes) = fetch.await??;
-            Ok(Response::builder()
-                .status(status)
-                .body(AsyncBody::from(bytes))?)
-        })
+        let incoming = self
+            .inner
+            .get(&url)
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)?;
+        let status = incoming.status();
+        if !status.is_success() {
+            return Err(anyhow!("artwork: the server answered {status}"));
+        }
+        let header = |name: &str| {
+            incoming
+                .headers()
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_ascii_lowercase)
+        };
+        let is_image = header("content-type").is_some_and(|value| value.starts_with("image/"));
+        let private = header("cache-control").is_some_and(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .any(|value| value == "no-store" || value == "private")
+        });
+        let bytes = incoming.bytes().await?.to_vec();
+        if is_image
+            && !private
+            && let Some(cache) = self.cache.clone()
+        {
+            let stored = bytes.clone();
+            drop(tokio::task::spawn_blocking(move || {
+                with_cache(&cache, |cache| cache.put(&url, &stored));
+            }));
+        }
+        Ok(bytes)
     }
 }
 
@@ -300,17 +256,6 @@ fn cache_entry(path: &Path) -> bool {
         .is_some_and(|name| name.len() == 64 && name.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
-fn read(body: AsyncBody) -> Result<Option<Vec<u8>>> {
-    match body.0 {
-        Inner::Empty => Ok(None),
-        Inner::Bytes(mut cursor) => {
-            let mut bytes = Vec::new();
-            cursor.read_to_end(&mut bytes)?;
-            Ok(Some(bytes))
-        }
-        Inner::AsyncReader(_) => Err(anyhow!("streaming request bodies are not supported")),
-    }
-}
 
 #[cfg(test)]
 mod tests {

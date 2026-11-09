@@ -111,6 +111,11 @@ impl Ui {
     /// Settles what a change raised and re-derives what follows the settings.
     pub fn settle(&mut self) {
         self.store.settle();
+        for linked in self.store.take_opened() {
+            if let Some(destination) = linked_page(&linked) {
+                self.go(destination);
+            }
+        }
         self.sync();
     }
 
@@ -193,7 +198,7 @@ impl Ui {
             self.live.total.set(ui::clock(total).as_ref());
             self.live.last = Some(seconds);
         }
-        if playback.is_playing() {
+        if playback.wants_playing() {
             tx.wake_after(TICK);
         }
         let artwork = self.artwork.as_ref().is_some_and(Artwork::take_news);
@@ -215,5 +220,18 @@ pub fn act_tx(f: impl Fn(&mut Ui, &mut Tx) + 'static) -> impl Fn(&mut Ui, &mut T
     move |ui: &mut Ui, tx: &mut Tx| {
         f(ui, tx);
         ui.settle();
+    }
+}
+
+/// The page a link opens on, for the kinds of link that open a page.
+fn linked_page(linked: &music::link::Linked) -> Option<Destination> {
+    use music::link::Linked;
+    match linked {
+        Linked::Track(id) => Some(Destination::Song(id.as_str().into())),
+        Linked::Album(id) => Some(Destination::Album(id.as_str().into())),
+        Linked::Artist(id) => Some(Destination::Artist(id.as_str().into())),
+        Linked::Playlist(id) => Some(Destination::Playlist(id.as_str().into())),
+        Linked::User(id) => Some(Destination::User(id.as_str().into())),
+        Linked::Jam(_) | Linked::Short => None,
     }
 }
