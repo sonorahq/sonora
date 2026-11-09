@@ -89,7 +89,8 @@ pub(crate) fn frame(
         .max_w(COLUMN)
         .min_w(0.)
         .pt(layout.top)
-        .pb(theme.metrics.inset * 2.)
+        // a translucent player bar floats over the page, so the last row scrolls clear of it
+        .pb(theme.metrics.inset * 2. + crate::chrome::player_bar::bottom(ui, cx))
         .child(title(theme, destination, named).mb(theme.metrics.inset))
         .child(body);
     let mut page = col()

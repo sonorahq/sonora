@@ -273,6 +273,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
                 .build(theme),
         )
         .key("lyrics-follow")
+        .raise()
         .transition(Transition::opacity())
     });
 

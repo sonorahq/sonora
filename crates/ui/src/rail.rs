@@ -69,6 +69,10 @@ impl Rail {
         let items = row()
             .key(scroll_key.clone())
             .mx(-FADE)
+            // a flex item is as wide as its content unless told it may shrink, which would
+            // leave nothing to scroll
+            .grow(1.)
+            .min_w(0.)
             .scroll_x()
             .scroll_edge_fade(FADE)
             .on_scroll_offset(move |at: ScrollPos| {
@@ -137,6 +141,11 @@ impl Rail {
                 });
             shadow_md(arrow)
         });
-        row().key(self.key).center_y().child(items).children(arrows)
+        row()
+            .key(self.key)
+            .center_y()
+            .min_w(0.)
+            .child(items)
+            .children(arrows)
     }
 }
