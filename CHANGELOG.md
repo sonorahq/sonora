@@ -44,6 +44,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Now playing, and stop Sonora looking lyrics up.
 - Drag the left sidebar's edge all the way in to fold it down to icons, with each name shown
   beside its icon on hover. Songs, Albums, Artists and Playlists now have icons of their own.
+  Keep dragging to close it, and the toggle brings it back as it was. A narrowing window folds
+  the sidebar to icons before hiding it.
 
 ### Changed
 
