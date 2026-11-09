@@ -193,9 +193,8 @@ impl Search {
         &self.query
     }
 
-    /// The resolved title or artist name offered as a text search for a pasted link.
-    pub fn linked_query(&self) -> Option<&str> {
-        self.linked.as_ref().map(|_| self.matching.as_str())
+    pub fn has_linked_hit(&self) -> bool {
+        self.linked.is_some()
     }
 
     pub fn hits(&self) -> &[Hit] {
