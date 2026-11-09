@@ -59,8 +59,13 @@ impl Links {
     }
 
     /// Opens provider links, browser handoffs and theme offers, returning whether the link was handled.
-    /// Invalid Sonora links show a toast, and short links resolve before opening.
+    /// A recognized link cancels the previous resolution and waiting destination before opening.
     pub fn open(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
+        if !self.recognizes(text, cx) {
+            return false;
+        }
+        self.following = None;
+        self.waiting = None;
         if let Some(address) = link::address(text)
             .filter(|address| address.scheme() == "sonora" && address.host_str() == Some("open"))
         {
