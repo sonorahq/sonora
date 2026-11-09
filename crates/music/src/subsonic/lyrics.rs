@@ -146,9 +146,14 @@ fn sheet(entry: StructuredLyrics) -> Option<Lyrics> {
                     let group = &groups[idx];
 
                     Some(LyricsLine {
-                        start: shifted(line.start?, offset),
-                        text: group[0].value.as_deref()?.trim().to_owned(),
-                        end: Some(shifted(group[0].end?, offset)),
+                        start,
+                        text: group[0]
+                            .value
+                            .as_deref()
+                            .unwrap_or(&line.value)
+                            .trim()
+                            .to_owned(),
+                        end: group[0].end.map(|end| shifted(end, offset)),
                         romanized: None,
                         voice: get_agent(agents?, group[0].agent_id.as_deref())
                             .filter(|a| a.role == "voice")
