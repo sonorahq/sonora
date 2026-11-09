@@ -136,7 +136,7 @@ fn sheet(entry: StructuredLyrics) -> Option<Lyrics> {
         let main_agent: Option<&Agent> = agents.into_iter().flatten().find(|&a| a.role == "main");
 
         if cue_lines.is_some_and(|l| !l.is_empty()) && main_agent.is_some() {
-            let groups: Vec<Vec<&CueLine>> = group_cues(cue_lines?, main_agent?);
+            let groups: Vec<Vec<&CueLine>> = group_cues(cue_lines?, main_agent?, entry.line.len());
 
             lines = entry
                 .line
@@ -215,18 +215,19 @@ fn legacy_sheet(text: &str) -> Option<Lyrics> {
 }
 
 /// Sort the cues, placing the main cue line first.
-fn group_cues<'a>(lines: &'a [CueLine], main: &Agent) -> Vec<Vec<&'a CueLine>> {
-    let mut groups: Vec<Vec<&CueLine>> = Vec::new();
+fn group_cues<'a>(lines: &'a [CueLine], main: &Agent, count: usize) -> Vec<Vec<&'a CueLine>> {
+    let mut groups: Vec<Vec<&CueLine>> = vec![Vec::new(); count];
 
-    for line in lines.iter() {
-        // index is required by spec: https://opensubsonic.netlify.app/docs/responses/cueline/#:~:text=Yes
-        let line_idx: usize = line.index.expect("missing required index field in CueLine") as usize;
+    for line in lines {
+        let Some(group) = line
+            .index
+            .and_then(|index| usize::try_from(index).ok())
+            .and_then(|index| groups.get_mut(index))
+        else {
+            continue;
+        };
 
-        if line_idx >= groups.len() {
-            groups.resize_with(line_idx + 1, Vec::new);
-        }
-
-        groups[line_idx].push(line);
+        group.push(line);
     }
 
     // Ensure the first line is always the main agent
