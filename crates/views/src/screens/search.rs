@@ -80,7 +80,6 @@ impl HitMenu {
 #[derive(Clone)]
 enum Offer {
     Past(String),
-    Search(String),
     Link(String),
     Hit(Box<Hit>),
 }
@@ -90,7 +89,6 @@ impl Offer {
     fn key(&self) -> String {
         match self {
             Offer::Past(query) => format!("past:{query}"),
-            Offer::Search(query) => format!("search:{query}"),
             Offer::Link(query) => format!("link:{query}"),
             Offer::Hit(hit) => match &**hit {
                 Hit::Song(track) => {
@@ -287,9 +285,7 @@ impl SearchView {
             .recognizes(&self.typed, cx)
         {
             offers.push(Offer::Link(self.typed.trim().to_owned()));
-            if let Some(query) = suggestions.linked_query() {
-                offers.push(Offer::Search(query.to_owned()));
-            } else {
+            if suggestions.linked_query().is_none() {
                 return offers;
             }
         }
@@ -390,7 +386,6 @@ impl SearchView {
                     .update(cx, |links, cx| links.open(&query, cx));
                 self.close_panel(cx);
             }
-            Offer::Search(query) => self.search_text(&query, cx),
             Offer::Past(query) => {
                 // Set ahead of the field, so its observer does not take this for typing and
                 // open the panel again.
@@ -443,11 +438,8 @@ impl SearchView {
         let chosen = self.pick == Some(at);
         let query = match offer {
             Offer::Hit(hit) => return self.row(hit, at, at, total, true, chosen, me, cx),
-            Offer::Link(_) | Offer::Search(_) => {
-                let label = match offer {
-                    Offer::Search(query) => t!("search-link-title", query = query.as_str()),
-                    _ => t!("search-open-link"),
-                };
+            Offer::Link(_) => {
+                let label = t!("search-open-link");
                 let taken = offer.clone();
                 let take = me.clone();
                 return Card::new(SharedString::from(offer.key()), label)
