@@ -4,7 +4,7 @@
 //! a control moves the window.
 
 use router::Destination;
-use rune::{Color, Cx, El, row};
+use rune::{Color, Cx, El, el, row};
 use state::{HistoryState, LibraryState, SessionState, Shelf};
 use ui::{Button, Room, Theme, TrafficLightControls, WindowControls};
 
@@ -68,8 +68,10 @@ pub(crate) fn bar(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>, options: Option
         (navigation && crate::window_room(cx).fits(Room::Wide)).then_some(ui.chrome.right_open);
     let decorated = client_decorated(ui);
     let leading = decorated && settings.controls_on_left();
-    // macOS draws its traffic lights over the bar's start; the bar's content starts past them.
-    let inset = cx.titlebar_inset();
+    // The window's own controls drawn over the bar by the system (macOS's traffic lights at the
+    // start, the Windows caption buttons at the end) keep their room clear.
+    let insets = cx.chrome_insets();
+    let inset = insets.leading;
     let start = match (leading, inset > 0.) {
         (true, _) => rems(theme, 0.5),
         (false, true) => inset,
@@ -149,6 +151,9 @@ pub(crate) fn bar(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>, options: Option
                 .pr(rems(theme, 0.5))
                 .child(window_controls(ui, false)),
         );
+    }
+    if insets.trailing > 0. {
+        bar = bar.child(el().key("title-bar-caption").w(insets.trailing).h_full());
     }
     bar
 }
@@ -282,14 +287,13 @@ fn window_controls(ui: &Ui, leading: bool) -> El {
     }
 }
 
-/// Whether the app draws the window's frame, and with it the window controls: under client-side
-/// decorations on Linux, when asked for on Windows, never on macOS, where AppKit draws them.
+/// Whether Sonora draws the window controls itself: on Linux, where the window is borderless
+/// under client-side decorations and the controls are asked for. Rune draws the Windows caption
+/// buttons and AppKit the traffic lights, so never there.
 fn client_decorated(ui: &Ui) -> bool {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    return !ui.store.settings.server_side_decorations();
-    #[cfg(target_os = "windows")]
-    return ui.store.settings.window_controls();
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "windows")))]
+    return !ui.store.settings.server_side_decorations() && ui.store.settings.window_controls();
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     {
         let _ = ui;
         false

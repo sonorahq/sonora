@@ -674,7 +674,7 @@ fn tab(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>, page: SettingsPage) -> El 
         )
     });
     col()
-        .key(format!("settings-tab-{}", page.tab().id()))
+        .key(format!("settings-sections-{}", page.tab().id()))
         .w_full()
         .gap(GROUPS)
         .children(sections)
