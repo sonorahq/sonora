@@ -19,8 +19,8 @@ use rune::{
 };
 use state::{FullscreenControlsAutohide, SideTab};
 use ui::{
-    Button, Cover, ExplicitBadge, InlineLink, InlineLinks, LEADING, Room, Scrubber, ScrubberState,
-    Springs, TabBar, Text, Theme, VeilEdge, Weight,
+    Button, Cover, ExplicitBadge, InlineLink, InlineLinks, Room, Scrubber, ScrubberState, Springs,
+    TabBar, Text, Theme, VeilEdge, Weight,
 };
 
 use crate::chrome::{aside, title_bar};
@@ -51,6 +51,9 @@ const PAGE_PAD: f32 = 1.5;
 const PAGE_SIDE: f32 = 2.;
 const ROW_GAP: f32 = 2.;
 const META_GAP: f32 = 0.25;
+/// The line height of the title and the artist line: the golden ratio the GPUI player set them
+/// at, rather than body text's leading.
+const META_LEADING: f32 = 1.618;
 /// The height the controls take, in player bars, beside the cover and along the bottom.
 const DOCK: f32 = 1.15;
 const DOCK_FULL: f32 = 1.7;
@@ -476,10 +479,8 @@ fn parks(set: fn(&mut State, bool)) -> impl Fn(&mut Ui, bool, &mut Tx) + 'static
 
 /// Shows `panel` beside the cover, or the cover alone, and remembers it.
 fn show(ui: &mut Ui, panel: Option<SideTab>) {
-    let state = &mut ui.screens.fullscreen;
-    // the pill moves between the cover and the panel, and the one left behind reports no leave
-    state.over_pill = false;
-    state.stir();
+    // the pill left behind as it moves between the cover and the panel still hears its leave
+    ui.screens.fullscreen.stir();
     match panel {
         Some(SideTab::Lyrics) => ui.chrome.aside.lyrics.anchor(),
         Some(SideTab::Queue) => ui.chrome.aside.queue.anchor(),
@@ -517,7 +518,7 @@ fn stage(ui: &Ui, frame: &Frame, layer: &mut Vec<El>) -> El {
     };
     // Everything the cover shares the column with: the title bar above it, the gaps, the meta
     // and the page's bottom padding. A window too short for all of it shrinks the cover.
-    let line = |step: Text| (theme.text(step) * LEADING).round();
+    let line = |step: Text| (theme.text(step) * META_LEADING).round();
     let meta = line(Text::Title) + rem * META_GAP + line(Text::Body);
     let stack = theme.metrics.title_bar + rem * (COLUMN_GAP * 2. + PAGE_PAD) + meta;
     let docked = theme.metrics.player_bar
@@ -688,6 +689,7 @@ fn meta_view(ui: &Ui, frame: &Frame) -> El {
     let title = title(ui, track.as_ref(), Text::Title, "fullscreen-title");
     let headline = row()
         .key("fullscreen-headline")
+        .h((theme.text(Text::Title) * META_LEADING).round())
         .center_y()
         .gap(rem * 0.5)
         .w_full()
@@ -717,12 +719,15 @@ fn meta_view(ui: &Ui, frame: &Frame) -> El {
         .min_w(0.)
         .child(headline);
     if let Some(track) = &track {
-        meta = meta.child(row().w_full().min_w(0.).justify_center().child(artists(
-            track,
-            "fullscreen-artists",
-            Text::Body,
-            theme,
-        )));
+        meta = meta.child(
+            row()
+                .h((theme.text(Text::Body) * META_LEADING).round())
+                .center_y()
+                .w_full()
+                .min_w(0.)
+                .justify_center()
+                .child(artists(track, "fullscreen-artists", Text::Body, theme)),
+        );
     }
     meta
 }

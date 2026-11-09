@@ -480,12 +480,17 @@ pub(crate) fn transport(ui: &Ui, big: bool) -> El {
         .child(repeat(ui, big))
 }
 
-/// The ghost button every transport button starts from.
-fn transport_button(key: &str, big: bool) -> Button {
+/// The ghost button every transport button starts from: small, and in fullscreen (`big`)
+/// frosted while the ambient field is under it. Only fullscreen's play button is full size.
+fn transport_button(ui: &Ui, key: &str, big: bool) -> Button {
     let button = Button::new(key).ghost();
-    match big {
-        true => button.frosted(),
+    let button = match big && key == "play-pause" {
+        true => button,
         false => button.small(),
+    };
+    match big && ui.store.settings.ambient() {
+        true => button.frosted(),
+        false => button,
     }
 }
 
@@ -525,7 +530,7 @@ fn toggle(ui: &Ui, big: bool) -> El {
         .a11y_hidden()
         .child(glyph("play", "icons/play.svg", !playing))
         .child(glyph("pause", "icons/pause.svg", playing));
-    transport_button("play-pause", big)
+    transport_button(ui, "play-pause", big)
         .leading(face)
         .tooltip_above(match playing {
             true => t!("play-pause"),
@@ -542,7 +547,7 @@ fn shuffle(ui: &Ui, big: bool) -> El {
         .store
         .playback
         .shown_shuffle(&ui.store.queue, &ui.store.devices);
-    transport_button("shuffle", big)
+    transport_button(ui, "shuffle", big)
         .icon("icons/shuffle.svg")
         .indicator(on)
         .toggled(on)
@@ -558,7 +563,7 @@ fn shuffle(ui: &Ui, big: bool) -> El {
 fn repeat(ui: &Ui, big: bool) -> El {
     let theme = &ui.theme;
     let repeat = ui.store.playback.shown_repeat(&ui.store.devices);
-    transport_button("repeat", big)
+    transport_button(ui, "repeat", big)
         .icon(match repeat {
             Repeat::One => "icons/repeat-one.svg",
             _ => "icons/repeat.svg",
@@ -580,7 +585,7 @@ fn repeat(ui: &Ui, big: bool) -> El {
 fn previous(ui: &Ui, big: bool) -> El {
     let queue = ui.store.shown_queue();
     let enabled = !queue.editable() || queue.sections.current || queue.sections.past > 0;
-    transport_button("previous", big)
+    transport_button(ui, "previous", big)
         .icon("icons/skip-back.svg")
         .tooltip_above(t!("player-previous"))
         .disabled(!enabled)
@@ -591,7 +596,7 @@ fn previous(ui: &Ui, big: bool) -> El {
 fn next(ui: &Ui, big: bool) -> El {
     let queue = ui.store.shown_queue();
     let enabled = !queue.editable() || queue.sections.upcoming > 0;
-    transport_button("next", big)
+    transport_button(ui, "next", big)
         .icon("icons/skip-forward.svg")
         .tooltip_above(t!("player-next"))
         .disabled(!enabled)
