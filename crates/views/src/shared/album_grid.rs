@@ -11,14 +11,15 @@ use ui::{Card, Theme};
 
 use crate::Ui;
 use crate::shared::cards::{self, Fit, OnItem};
+use crate::shared::page::rems;
 
 /// The narrowest and widest a card in a grid stands.
 pub(crate) const CARD_MIN: f32 = 130.;
 pub(crate) const CARD_MAX: f32 = 190.;
 /// The least room between two cards side by side.
 const CARD_GAP: f32 = 32.;
-/// The room between two rows of cards.
-pub(crate) const ROW_GAP: f32 = 24.;
+/// The room between two rows of cards, in rems.
+const ROW_GAP: f32 = 1.5;
 
 /// Finds a grid's items in the window state.
 type ItemsFn<T> = Rc<dyn for<'a> Fn(&'a Ui) -> &'a [T]>;
@@ -68,7 +69,7 @@ pub(crate) struct CardGrid {
     key: String,
     layout: CardLayout,
     count: usize,
-    row_gap: f32,
+    inset: f32,
     bottom: f32,
 }
 
@@ -79,9 +80,16 @@ impl CardGrid {
             key: key.into(),
             layout: CardLayout::new(available),
             count,
-            row_gap: ROW_GAP,
+            inset: 0.,
             bottom: 0.,
         }
+    }
+
+    /// Room at the grid's sides, such as the page's inset: the grid is a direct child of the
+    /// scroll viewport, so it pads itself rather than sit in a padded column.
+    pub(crate) fn inset(mut self, inset: f32) -> Self {
+        self.inset = inset;
+        self
     }
 
     /// How a row of cards fills `available` points.
@@ -107,9 +115,10 @@ impl CardGrid {
             key: grid,
             layout,
             count,
-            row_gap,
+            inset,
             bottom,
         } = self;
+        let row_gap = rems(theme, ROW_GAP);
         let rows = layout.rows(count);
         let height = Card::tile_height(layout.card, theme) + row_gap;
         let columns = layout.columns;
@@ -118,6 +127,7 @@ impl CardGrid {
         col()
             .key(grid)
             .w_full()
+            .px(inset)
             .pb(bottom)
             .growth(GrowthSpec::default())
             .virtual_rows(
@@ -140,11 +150,13 @@ impl CardGrid {
 }
 
 /// A virtualised grid of album cards, the albums found by `albums` in the store, each opening
-/// its page and playing from its cover. `on_item` opens a card's menu.
+/// its page and playing from its cover, `available` wide inside `inset` at each side. Make it a
+/// direct child of the page's scroll viewport. `on_item` opens a card's menu.
 pub(crate) fn album_grid(
     ui: &Ui,
     key: &str,
     available: f32,
+    inset: f32,
     albums: impl for<'a> Fn(&'a Ui) -> &'a [Album] + 'static,
     on_item: Option<OnItem>,
 ) -> El {
@@ -152,7 +164,7 @@ pub(crate) fn album_grid(
     let count = albums(ui).len();
     let keyed = albums.clone();
     let tag = key.to_owned();
-    CardGrid::new(key, available, count).build(
+    CardGrid::new(key, available, count).inset(inset).build(
         &ui.theme,
         move |ui: &Ui, at: usize| {
             keyed(ui)

@@ -212,6 +212,7 @@ fn node(theme: &Theme, step: Step, (index, count): (usize, usize)) -> El {
         .transition(Transition::scale(0.9).combined(Transition::opacity()))
         .child(
             icon(icons::get(step.icon), ICON)
+                .icon_one_color()
                 .color(step.tint.unwrap_or(theme.muted_foreground).color())
                 .a11y_hidden(),
         )

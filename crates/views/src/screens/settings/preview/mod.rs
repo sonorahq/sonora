@@ -158,9 +158,18 @@ pub(super) fn framed(key: &str, content: El, theme: &Theme) -> El {
         .w_full()
         .radius(theme.radius)
         .clip_rounded(theme.radius)
-        .border(BORDER, theme.border.color())
         .transition(Transition::opacity())
         .child(content)
+        .child(
+            el().key("frame-border")
+                .absolute(0., 0.)
+                .w_full()
+                .h_full()
+                .radius(theme.radius)
+                .border(BORDER, theme.border.color())
+                .inert()
+                .a11y_hidden(),
+        )
 }
 
 /// The colours a preview over the ambient field wears, and the field itself: the cover's own

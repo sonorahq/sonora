@@ -184,7 +184,8 @@ fn verse(index: usize, look: Look, size: f32, lane: f32, theme: &Theme) -> El {
             .powf(HAZE),
         false => 0.,
     };
-    let soft = size * BLUR * haze;
+    // GPUI blurred by a radius about twice the deviation Rune takes
+    let soft = size * BLUR * haze / 2.;
     col()
         .key(format!("verse-{index}"))
         .w_full()

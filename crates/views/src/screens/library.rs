@@ -62,15 +62,14 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
             .min_h(0.)
             .scroll(ScrollSpec { stick_bottom: false })
             .child(hero)
-            .child(
-                col().px(theme.metrics.inset).child(album_grid(
-                    ui,
-                    "library-albums",
-                    width - theme.metrics.inset * 2.,
-                    |ui: &Ui| ui.store.library.state(Shelf::Local).albums(),
-                    None,
-                )),
-            ),
+            .child(album_grid(
+                ui,
+                "library-albums",
+                width - theme.metrics.inset * 2.,
+                theme.metrics.inset,
+                |ui: &Ui| ui.store.library.state(Shelf::Local).albums(),
+                None,
+            )),
         _ => col()
             .key("screen-library")
             .w_full()

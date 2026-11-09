@@ -17,6 +17,7 @@ use ui::{Card, Mode, ScrollWatch, Shelf, Skeleton, Text, Theme, spoken_heading};
 use crate::Ui;
 use crate::shared::album_grid::CardLayout;
 use crate::shared::cards::{self, Fit, OnItem};
+use crate::shared::page::rems;
 
 /// The narrowest a genre plate or a lane of list rows stands, and the most lanes across.
 const PLATE: f32 = 260.;
@@ -29,7 +30,9 @@ const PENDING: usize = 3;
 const RAIL_GAP: f32 = 16.;
 const STACK_GAP: f32 = 32.;
 const LANE_GAP: f32 = 8.;
-const HEADING_GAP: f32 = 12.;
+/// The space under a heading and between lanes side by side, in rems.
+const HEADING_GAP: f32 = 0.75;
+const LANE_SPACE: f32 = 0.5;
 /// The line height a section heading stands at.
 const LEADING: f32 = 1.4;
 /// How wide a skeleton heading stands.
@@ -123,7 +126,7 @@ impl<'a> Shelves<'a> {
         let sections = (0..PENDING).map(|shelf| {
             col()
                 .key(format!("{key}-pending-{shelf}"))
-                .gap(HEADING_GAP)
+                .gap(rems(theme, HEADING_GAP))
                 .child(
                     row().px(theme.metrics.inset).child(
                         Skeleton::new()
@@ -203,13 +206,13 @@ impl<'a> Shelves<'a> {
         col()
             .key(format!("{}-lane-{place}", self.key))
             .px(theme.metrics.inset)
-            .gap(HEADING_GAP)
+            .gap(rems(theme, HEADING_GAP))
             .child(row().items_end().h(head(theme)).child(heading(
                 format!("{}-heading-{place}", self.key),
                 title,
                 theme,
             )))
-            .child(spread(columns))
+            .child(spread(columns, theme))
     }
 }
 
@@ -273,7 +276,7 @@ impl<'a> Rail<'a> {
             // The tabs go under the heading, which the shelf draws first.
             Some(tabs) => col()
                 .w_full()
-                .gap(HEADING_GAP)
+                .gap(rems(theme, HEADING_GAP))
                 .child(row().px(theme.metrics.inset).child(tabs))
                 .child(shelf),
             None => shelf,
@@ -299,7 +302,7 @@ impl<'a> Rail<'a> {
         col()
             .key(format!("{key}-pending"))
             .mx(-theme.metrics.inset)
-            .gap(HEADING_GAP)
+            .gap(rems(theme, HEADING_GAP))
             .child(
                 row()
                     .px(theme.metrics.inset)
@@ -371,7 +374,7 @@ pub(crate) fn grid(
                     .map(|_| col().grow(1.).shrink().min_w(0.));
                 let line = row()
                     .w_full()
-                    .gap(LANE_GAP)
+                    .gap(rems(&ui.theme, LANE_SPACE))
                     .children(cells)
                     .children(fillers);
                 match at + 1 < rows {

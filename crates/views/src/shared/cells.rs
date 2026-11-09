@@ -16,6 +16,7 @@ use ui::{
 
 use crate::Ui;
 use crate::shared::hero::release_date_label;
+use crate::shared::page::rems;
 
 const PLAY: &str = "icons/play.svg";
 const PLAYING: &str = "icons/music-2.svg";
@@ -38,10 +39,10 @@ pub(crate) const FACE: f32 = 20.;
 /// The padding a table puts inside each cell, which a cell's frame reaches back over so the
 /// pointer never leaves the row's hover between two cells.
 const CELL_PAD: f32 = 8.;
-/// The space between a title and the marks after it.
-const MARK_GAP: f32 = 6.;
-/// The space between a face and the name beside it.
-const FACE_GAP: f32 = 8.;
+/// The space between a title and the marks after it, in rems.
+const MARK_GAP: f32 = 0.375;
+/// The space between a face and the name beside it, in rems.
+const FACE_GAP: f32 = 0.5;
 
 /// A handler a cell runs when pressed.
 pub(crate) type Act = Rc<dyn Fn(&mut Ui, &mut Tx)>;
@@ -361,7 +362,7 @@ pub(crate) fn title(frame: El, title: Title, theme: &Theme) -> El {
             .child(ExplicitBadge::new().build(theme))
     });
     frame
-        .gap(MARK_GAP)
+        .gap(rems(theme, MARK_GAP))
         .child(label)
         .children(badge)
         .children(status)
@@ -427,7 +428,7 @@ pub(crate) fn added_by(
     .on_link(move |ui: &mut Ui, _: &str, _: &mut Tx| ui.go(to.clone()))
     .build(theme);
     frame
-        .gap(FACE_GAP)
+        .gap(rems(theme, FACE_GAP))
         .child(portrait(added, artwork, theme))
         .child(name)
 }
@@ -446,7 +447,7 @@ pub(crate) fn credited(
     };
     let value = value.into();
     frame
-        .gap(FACE_GAP)
+        .gap(rems(theme, FACE_GAP))
         .child(portrait(added, artwork, theme))
         .child(said(line(value.clone(), color, theme), "credited", &value))
 }

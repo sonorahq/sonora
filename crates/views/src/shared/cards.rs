@@ -13,13 +13,14 @@ use ui::{Card, Cover, Text, Theme, Weight};
 
 use crate::Ui;
 use crate::shared::cells;
+use crate::shared::page::rems;
 
 const BULLET: &str = "·";
 /// How many of a release's credits a card lists. Anything past this is clipped by the card's
 /// own width before it can be read.
 const CARD_LINKS: usize = 3;
-/// The space between the parts of a caption.
-const CAPTION_GAP: f32 = 4.;
+/// The space between the parts of a caption, in rems.
+const CAPTION_GAP: f32 = 0.25;
 
 /// Opens the context menu of a shelf item, at the window point a right-click landed on. The
 /// screen owns the menu, so a card only reports what it shows.
@@ -386,7 +387,7 @@ fn small(value: impl Into<String>, theme: &Theme) -> El {
 fn tagged(kind: String, rest: El, theme: &Theme) -> El {
     row()
         .center_y()
-        .gap(CAPTION_GAP)
+        .gap(rems(theme, CAPTION_GAP))
         .min_w(0.)
         .child(small(format!("{kind} {BULLET}"), theme).a11y_hidden())
         .child(row().min_w(0.).shrink().child(rest))
@@ -442,7 +443,7 @@ pub(crate) fn released(
         .text_size(theme.text(Text::Small))
         .truncate()
         .build(theme);
-    let mut line = row().center_y().gap(CAPTION_GAP).min_w(0.);
+    let mut line = row().center_y().gap(rems(theme, CAPTION_GAP)).min_w(0.);
     if let Some(year) = year {
         line = line.child(small(year, theme));
         if named {

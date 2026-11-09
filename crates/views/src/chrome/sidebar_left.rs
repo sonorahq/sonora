@@ -1112,7 +1112,7 @@ fn add_into(ui: &mut Ui, target: &Pin, song: &Pin) {
 
 /// `n` of the old layout's rem, which follows the theme's text size: its `p_3` is `rems(.., 0.75)`.
 fn rems(theme: &Theme, n: f32) -> f32 {
-    theme.font_size * n
+    (theme.font_size * n).floor()
 }
 
 /// The space between two rows, the old `gap_1`.

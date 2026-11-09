@@ -5,10 +5,11 @@ use std::rc::Rc;
 
 use music::{GenreItem, Track};
 use rune::{El, Transition, col, row};
-use ui::{Button, Card, spoken_eyebrow, spoken_heading, spoken_vacant};
+use ui::{Button, Card, Text, Weight, font, spoken_eyebrow, spoken_heading, spoken_vacant};
 
 use crate::Ui;
 use crate::shared::cards::{self, OnItem};
+use crate::shared::page::rems;
 use crate::shared::track_card::{ContextHandler, StartHandler, TrackCard};
 
 /// How many rows each column holds.
@@ -16,14 +17,17 @@ const ROWS: usize = 5;
 /// The most columns a deck lays out, and the narrowest one.
 const MAX_COLUMNS: usize = 3;
 const MIN_COLUMN_WIDTH: f32 = 280.;
-/// The deck's padding around its head and its body, and the space between its rows.
-const HEAD_PAD: f32 = 16.;
-const HEAD_PAD_BOTTOM: f32 = 12.;
-const HEAD_GAP: f32 = 16.;
-const ARROW_GAP: f32 = 4.;
-const BODY_PAD: f32 = 8.;
-const ROW_GAP: f32 = 4.;
-/// The hairline between the head and the body, and between columns.
+/// The deck's padding around its head and its body and the space between its rows, in rems.
+const HEAD_PAD: f32 = 1.;
+const HEAD_PAD_BOTTOM: f32 = 0.75;
+const HEAD_GAP: f32 = 1.;
+const ARROW_GAP: f32 = 0.25;
+const BODY_PAD: f32 = 0.5;
+const ROW_GAP: f32 = 0.25;
+/// The line height of the deck's title: GPUI's default, the golden ratio.
+const TITLE_LEADING: f32 = 1.618;
+/// The hairline between the head and the body, and between columns. Rune draws a border over
+/// the box, so the deck makes room for it where GPUI's took layout space.
 const RULE: f32 = 1.;
 
 /// Moves a deck to another page.
@@ -201,8 +205,8 @@ impl<'a> Picks<'a> {
         let arrows = row()
             .key("arrows")
             .center_y()
-            .gap(ARROW_GAP)
-            .pb(ROW_GAP)
+            .gap(rems(theme, ARROW_GAP))
+            .pb(rems(theme, ROW_GAP))
             .child(arrow(
                 "previous",
                 "icons/chevron-left.svg",
@@ -226,16 +230,21 @@ impl<'a> Picks<'a> {
                     .as_ref()
                     .map(|label| spoken_eyebrow(format!("{key}-eyebrow"), label.clone(), theme)),
             )
-            .child(spoken_heading(format!("{key}-heading"), title, 2, theme));
+            .child(
+                spoken_heading(format!("{key}-heading"), title, 2, theme).font(
+                    font(theme, Text::Title, Weight::SEMIBOLD)
+                        .lh((theme.text(Text::Title) * TITLE_LEADING).round()),
+                ),
+            );
         let head = row()
             .key("head")
             .w_full()
             .items_end()
             .justify_between()
-            .gap(HEAD_GAP)
-            .px(HEAD_PAD)
-            .pt(HEAD_PAD)
-            .pb(HEAD_PAD_BOTTOM)
+            .gap(rems(theme, HEAD_GAP))
+            .px(rems(theme, HEAD_PAD))
+            .pt(rems(theme, HEAD_PAD))
+            .pb(rems(theme, HEAD_PAD_BOTTOM) + RULE)
             .border_sides([0., 0., RULE, 0.], theme.border.color())
             .child(heading)
             .child(arrows);
@@ -246,6 +255,7 @@ impl<'a> Picks<'a> {
             .w_full()
             .radius(theme.radius)
             .border(RULE, theme.border.color())
+            .padding(RULE)
             .clip_rounded(theme.radius)
             .child(head);
         if barren {
@@ -259,12 +269,12 @@ impl<'a> Picks<'a> {
                 .grow(1.)
                 .shrink()
                 .min_w(0.)
-                .gap(ROW_GAP)
+                .gap(rems(theme, ROW_GAP))
                 .children(rows);
             match column > 0 {
                 true => shell
-                    .border_sides([RULE, 0., 0., 0.], theme.border.color())
-                    .pl(BODY_PAD),
+                    .border_sides([0., 0., 0., RULE], theme.border.color())
+                    .pl(rems(theme, BODY_PAD) + RULE),
                 false => shell,
             }
         };
@@ -288,8 +298,8 @@ impl<'a> Picks<'a> {
         let body = row()
             .key(format!("page-{page}"))
             .w_full()
-            .gap(BODY_PAD)
-            .padding(BODY_PAD)
+            .gap(rems(theme, BODY_PAD))
+            .padding(rems(theme, BODY_PAD))
             .children(columns)
             .transition(Transition::opacity());
         deck = deck.child(body);

@@ -67,12 +67,6 @@ impl Layout {
     }
 }
 
-/// The width of the content column, re-running the view only when it changes, for the cards
-/// that size what they draw by it.
-pub(crate) fn column_width(cx: &Cx<Ui>) -> Option<f32> {
-    cx.layout_with(MEASURE, |rect| rect[2].round())
-}
-
 /// A settings page in its column, centred in the content area under the floating header: the
 /// title, then `body`, scrolling together from just under the header, into which they dissolve.
 /// `destination` names the page for its title unless `named` gives one. `scroll` keys the

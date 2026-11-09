@@ -395,6 +395,7 @@ fn image(ui: &Ui, art: Option<String>, badge: Option<(&'static str, &'static str
                                 icons::get(provider_logo(slug)),
                                 BADGE_SIZE * BADGE_MARK_SHARE,
                             )
+                            .icon_one_color()
                             .color(hex(BADGE_MARK))
                             .a11y_hidden(),
                         ),

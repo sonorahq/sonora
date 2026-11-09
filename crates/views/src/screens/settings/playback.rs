@@ -124,7 +124,6 @@ pub(super) fn view(ui: &Ui, _cx: &mut Cx<Ui>, layer: &mut Vec<El>, layout: &Layo
 }
 
 /// The detail of the Widevine row for its state, which a search reads.
-#[allow(dead_code)]
 pub(super) fn widevine_detail(ui: &Ui) -> String {
     let (detail, _) = widevine_copy(ui.store.drm.state());
     i18n::lookup(detail, None).into_owned()

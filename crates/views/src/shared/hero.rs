@@ -13,6 +13,7 @@ use ui::{
 };
 
 use crate::Ui;
+use crate::shared::page::rems;
 use crate::shared::tracks::TrackRows;
 use state::Origin;
 
@@ -21,18 +22,18 @@ use state::Origin;
 const TITLE_SKELETON: f32 = 240.;
 const META_SKELETON: f32 = 180.;
 const ACTION_SKELETON: f32 = 96.;
-/// The space between the cover and the text beside it, in rems.
+/// The space between the cover and the text beside it, in rems, as are the spaces below.
 const COVER_GAP: f32 = 1.25;
 /// The space between the lines beside the cover.
-const LINE_GAP: f32 = 8.;
+const LINE_GAP: f32 = 0.5;
 /// The space between the title and the explicit badge after it.
-const TITLE_GAP: f32 = 12.;
+const TITLE_GAP: f32 = 0.75;
 /// The space between the facts of the meta line and the bullets between them.
-const META_GAP: f32 = 4.;
+const META_GAP: f32 = 0.25;
 /// How far the actions sit below the meta line, on top of the line gap.
-const ACTIONS_DROP: f32 = 4.;
+const ACTIONS_DROP: f32 = 0.25;
 /// The room under the hero, above the table header.
-const BOTTOM: f32 = 24.;
+const BOTTOM: f32 = 1.5;
 /// The cover's corners against the theme's radius.
 const COVER_ROUNDING: f32 = 1.5;
 /// The space between the buttons in a row of hero actions, in rems.
@@ -97,7 +98,7 @@ pub(crate) fn release_date_label(value: &str) -> String {
 
 /// The space between the hero's actions.
 pub(crate) fn action_gap(theme: &Theme) -> f32 {
-    theme.font_size * ACTION_GAP
+    rems(theme, ACTION_GAP)
 }
 
 /// The line of facts under a hero title, joined by bullets. Its text items reach screen readers
@@ -141,7 +142,7 @@ impl MetaStrip {
             .flex_wrap()
             .center_y()
             .min_w(0.)
-            .gap(META_GAP);
+            .gap(rems(theme, META_GAP));
         for (index, item) in self.items.into_iter().enumerate() {
             let item = match item {
                 MetaItem::Text(value) => text(value.clone())
@@ -152,7 +153,10 @@ impl MetaStrip {
                     .color(muted),
                 MetaItem::Element(item) => item,
             };
-            let mut fact = row().key(format!("fact-{index}")).center_y().gap(META_GAP);
+            let mut fact = row()
+                .key(format!("fact-{index}"))
+                .center_y()
+                .gap(rems(theme, META_GAP));
             if index > 0 {
                 fact = fact.child(text("•").font(style).color(muted).a11y_hidden());
             }
@@ -425,7 +429,7 @@ impl Hero {
 
     /// The width a hero `width` wide leaves beside its cover for the title and the actions.
     pub(crate) fn room(width: f32, theme: &Theme) -> f32 {
-        width - theme.metrics.cover - theme.font_size * COVER_GAP
+        width - theme.metrics.cover - rems(theme, COVER_GAP)
     }
 
     pub(crate) fn cover(mut self, cover: Option<String>) -> Self {
@@ -515,8 +519,8 @@ impl Hero {
             .key(self.key.clone())
             .w_full()
             .items_end()
-            .gap(theme.font_size * COVER_GAP)
-            .pb(BOTTOM);
+            .gap(rems(theme, COVER_GAP))
+            .pb(rems(theme, BOTTOM));
         if self.padded {
             hero = hero.px(theme.metrics.inset).pt(theme.metrics.inset);
         }
@@ -526,7 +530,7 @@ impl Hero {
             .min_w(0.)
             .h(art)
             .justify_end()
-            .gap(LINE_GAP)
+            .gap(rems(theme, LINE_GAP))
             .children(eyebrow);
 
         if self.pending {
@@ -549,7 +553,7 @@ impl Hero {
                                 .size(META_SKELETON, theme.metrics.pad),
                         ))
                         .child(
-                            row().pt(ACTIONS_DROP).child(
+                            row().pt(rems(theme, ACTIONS_DROP)).child(
                                 Skeleton::new()
                                     .build(theme)
                                     .size(ACTION_SKELETON, theme.metrics.control),
@@ -604,14 +608,14 @@ impl Hero {
         let heading = row()
             .key("hero-title")
             .center_y()
-            .gap(TITLE_GAP)
+            .gap(rems(theme, TITLE_GAP))
             .min_w(0.)
             .child(title)
             .children(badge);
         hero.child(cover).child(
             lines.child(heading).children(self.meta).children(
                 self.actions
-                    .map(|actions| row().pt(ACTIONS_DROP).child(actions)),
+                    .map(|actions| row().pt(rems(theme, ACTIONS_DROP)).child(actions)),
             ),
         )
     }

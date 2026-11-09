@@ -423,7 +423,6 @@ fn guest(ui: &Ui) -> Option<Guest> {
 
 /// The words the accounts row answers a search with: every provider name, and the guest entry
 /// when one is shown.
-#[allow(dead_code)]
 pub(super) fn account_words(ui: &Ui) -> String {
     let mut names: Vec<String> = providers(ui)
         .iter()
@@ -630,8 +629,11 @@ fn provider_row(theme: &Theme, row_: ProviderRow) -> El {
         .collect::<Vec<_>>()
         .join(", ");
     let mark = match active {
-        true => icon(icons::get(logo), MARK).color(brand.color()),
+        true => icon(icons::get(logo), MARK)
+            .icon_one_color()
+            .color(brand.color()),
         false => icon(icons::get(logo), MARK)
+            .icon_one_color()
             .color(theme.muted_foreground.color())
             .group_color(brand.color()),
     }

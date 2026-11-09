@@ -182,45 +182,39 @@ fn sidebar_toggle(ui: &Ui, cx: &mut Cx<Ui>) -> El {
     let theme = &ui.theme;
     let open = sidebar_left::shown(ui, cx);
     let cramped = sidebar_left::cramped(ui, cx);
-    square(
-        Button::new("sidebar-toggle")
-            .icon(match open {
-                true => "icons/panel-left-close.svg",
-                false => "icons/panel-left-open.svg",
-            })
-            .tooltip(i18n::t!("nav-sidebar"))
-            .small()
-            .expanded(open)
-            .on_press(move |ui: &mut Ui| sidebar_left::toggle(ui, cramped))
-            .build(theme),
-        theme,
-    )
-    .no_window_drag()
+    Button::new("sidebar-toggle")
+        .icon(match open {
+            true => "icons/panel-left-close.svg",
+            false => "icons/panel-left-open.svg",
+        })
+        .tooltip(i18n::t!("nav-sidebar"))
+        .small()
+        .expanded(open)
+        .on_press(move |ui: &mut Ui| sidebar_left::toggle(ui, cramped))
+        .build(theme)
+        .no_window_drag()
 }
 
 /// The button that shows and hides the queue and lyrics.
 fn aside_toggle(ui: &Ui, open: bool) -> El {
     let theme = &ui.theme;
-    square(
-        Button::new("sidebar-right-toggle")
-            .icon(match open {
-                true => "icons/panel-right-close.svg",
-                false => "icons/panel-right-open.svg",
-            })
-            .tooltip(i18n::t!("nav-sidebar-right"))
-            .small()
-            .expanded(open)
-            .on_press(crate::act(|ui: &mut Ui| {
-                let open = !ui.chrome.right_open;
-                ui.chrome.right_open = open;
-                ui.store
-                    .settings
-                    .set_sidebar_right_open(open, &mut ui.store.cx);
-            }))
-            .build(theme),
-        theme,
-    )
-    .no_window_drag()
+    Button::new("sidebar-right-toggle")
+        .icon(match open {
+            true => "icons/panel-right-close.svg",
+            false => "icons/panel-right-open.svg",
+        })
+        .tooltip(i18n::t!("nav-sidebar-right"))
+        .small()
+        .expanded(open)
+        .on_press(crate::act(|ui: &mut Ui| {
+            let open = !ui.chrome.right_open;
+            ui.chrome.right_open = open;
+            ui.store
+                .settings
+                .set_sidebar_right_open(open, &mut ui.store.cx);
+        }))
+        .build(theme)
+        .no_window_drag()
 }
 
 /// Back, forward and, on a page that can reload, refresh. They light with the sidebar's accent,
@@ -245,6 +239,7 @@ fn history(ui: &Ui, theme: &Theme) -> El {
         .role("toolbar")
         .label(i18n::t!("nav-history"))
         .center_y()
+        .gap(rems(theme, 0.25))
         .no_window_drag()
         .child(step(
             "history-back",
@@ -361,18 +356,13 @@ fn loading(ui: &Ui, at: &Destination) -> Option<bool> {
 /// `n` of the old layout's rem, which follows the theme's text size: its `pl_3` is
 /// `rems(.., 0.75)`.
 fn rems(theme: &Theme, n: f32) -> f32 {
-    theme.font_size * n
+    (theme.font_size * n).floor()
 }
 
-/// An icon-only small button as a square, its icon centred.
-fn square(button: El, theme: &Theme) -> El {
-    button.w(theme.metrics.control_small).px(0.)
-}
-
-/// A history button: a regular-height square that hovers and presses in the sidebar's accent
-/// while it can be pressed.
+/// A history button: a regular-height square two rems wide that hovers and presses in the
+/// sidebar's accent while it can be pressed.
 fn lit(button: El, enabled: bool, theme: &Theme) -> El {
-    let button = button.w(theme.metrics.control).px(0.);
+    let button = button.w(rems(theme, 2.)).px(0.);
     match enabled {
         true => button
             .hover(theme.sidebar_accent.color())

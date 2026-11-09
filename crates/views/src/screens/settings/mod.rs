@@ -633,7 +633,17 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
         }
     });
     themes::delete_modal(ui, layer);
-    frame(ui, cx, layer, &destination, named, scroll, body)
+    // a new opening of settings picks a new track for the previews, and a closing stops what
+    // they keep running
+    frame(ui, cx, layer, &destination, named, scroll, body).on_visible(
+        |ui: &mut Ui, shown: bool, _: &mut Tx| {
+            let previews = &mut ui.screens.settings.previews;
+            match shown {
+                true => previews.opened(&ui.store),
+                false => previews.closed(&mut ui.store),
+            }
+        },
+    )
 }
 
 /// The tab on show, or the drill-in on its own: each of its pages in turn. The frame draws the
@@ -683,9 +693,17 @@ fn content(
         SettingsPage::General => general::view(ui, cx, layer, layout),
         SettingsPage::Appearance => appearance::view(ui, cx, layer, layout),
         SettingsPage::PlayerBar => player_bar::view(ui, cx, layer, layout),
-        SettingsPage::NowPlaying => now_playing::view(ui, cx, layer, layout),
+        SettingsPage::NowPlaying => {
+            let mut blocks = vec![preview::now_playing::view(ui, cx, layout)];
+            blocks.extend(now_playing::view(ui, cx, layer, layout));
+            blocks
+        }
         SettingsPage::Storage => storage::view(ui, cx, layer),
-        SettingsPage::Discord => discord::view(ui, cx, layer),
+        SettingsPage::Discord => {
+            let mut blocks = vec![preview::discord::view(ui, cx, layout)];
+            blocks.extend(discord::view(ui, cx, layer));
+            blocks
+        }
         SettingsPage::Providers => accounts::view(ui, cx, layer, layout),
         SettingsPage::MusicFolders => accounts::folders(ui, cx, layer, layout),
         SettingsPage::Playback => {
@@ -783,7 +801,7 @@ fn settings(ui: &Ui) -> Vec<Hit> {
             detail,
         });
         if entry.slug == "output-device" && ui.store.outputs.failure().is_some() {
-            let (title, detail) = sound_failure(ui);
+            let (title, detail) = sound::output_failure(ui);
             hits.push(Hit {
                 page: entry.page,
                 slug: "output-failure".to_owned(),
@@ -803,12 +821,6 @@ fn settings(ui: &Ui) -> Vec<Hit> {
         }
     }
     hits
-}
-
-/// The failed output's title and detail, as the Sound page words them.
-fn sound_failure(ui: &Ui) -> (String, String) {
-    let _ = ui;
-    (String::new(), String::new())
 }
 
 /// What a search shows instead of the page: every setting that answers it, the matched letters

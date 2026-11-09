@@ -303,7 +303,13 @@ pub fn assume_appearance(ui: &mut Ui) {
 /// Saves where the window is, if it shows. A minimized or full-screen window keeps what was
 /// saved before, and a maximized one keeps the size it restores to.
 fn remember(ui: &mut Ui) {
-    let Some(placement) = HOST.with_borrow(|host| host.window.as_ref()?.placement()) else {
+    let Some(window) = HOST.with_borrow(|host| host.window.clone()) else {
+        return;
+    };
+    // winit's X11 backend unwraps the X reply, so a window the server already destroyed (a
+    // client killing it from outside) panics instead of answering an error
+    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| window.placement()));
+    let Ok(Some(placement)) = read else {
         return;
     };
     HOST.with_borrow_mut(|host| host.full_screen = placement.full_screen);

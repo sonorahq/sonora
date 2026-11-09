@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use rune::Cx;
 use state::FilterValue;
-use ui::{Filter, FilterChange};
+use ui::{Filter, FilterChange, Theme};
 
 use crate::Ui;
 
@@ -16,6 +16,11 @@ pub(crate) fn content_width(cx: &Cx<Ui>, inset: f32) -> f32 {
         .layout_with("content", |rect| rect[2].round())
         .unwrap_or(0.);
     (width - inset).max(ui::MIN_CONTENT)
+}
+
+/// `n` rems in points: GPUI measured its spacing in rems, one rem being the theme's font size.
+pub(crate) fn rems(theme: &Theme, n: f32) -> f32 {
+    theme.font_size * n
 }
 
 /// The room a page with `inset` on both sides leaves its content, less a hairline either side.
