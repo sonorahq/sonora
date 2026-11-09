@@ -429,7 +429,7 @@ impl Hero {
 
     /// The width a hero `width` wide leaves beside its cover for the title and the actions.
     pub(crate) fn room(width: f32, theme: &Theme) -> f32 {
-        width - theme.metrics.cover - rems(theme, COVER_GAP)
+        width - theme.metrics.cover - rems(theme, COVER_GAP).floor()
     }
 
     pub(crate) fn cover(mut self, cover: Option<String>) -> Self {
@@ -519,7 +519,7 @@ impl Hero {
             .key(self.key.clone())
             .w_full()
             .items_end()
-            .gap(rems(theme, COVER_GAP))
+            .gap(rems(theme, COVER_GAP).floor())
             .pb(rems(theme, BOTTOM));
         if self.padded {
             hero = hero.px(theme.metrics.inset).pt(theme.metrics.inset);
@@ -605,8 +605,10 @@ impl Hero {
                 .label(t!("song-explicit").into_owned())
                 .child(ExplicitBadge::new().build(theme))
         });
+        // The line keeps GPUI's height of the title, which Rune would round up to a whole point.
         let heading = row()
             .key("hero-title")
+            .h(theme.text(Text::Display) * ui::LEADING)
             .center_y()
             .gap(rems(theme, TITLE_GAP))
             .min_w(0.)
