@@ -354,28 +354,39 @@ impl PlaybackEvents for Events {
 /// Owns the next track's load and cancels it when it is replaced or the engine ends.
 struct Preload {
     id: String,
+    request: u64,
     segue: bool,
     task: tokio::task::AbortHandle,
 }
 
 impl Preload {
     /// Reuses a pending load of the same track and remembers a later request to queue it.
+    /// The sequence must be shared by every preload in an engine.
     fn request(
         slot: &mut Option<Self>,
+        sequence: &mut u64,
         id: String,
         segue: bool,
-        start: impl FnOnce() -> tokio::task::AbortHandle,
+        start: impl FnOnce(u64) -> tokio::task::AbortHandle,
     ) {
         if let Some(pending) = slot.as_mut().filter(|pending| pending.id == id) {
             pending.segue |= segue;
             return;
         }
         *slot = None;
+        *sequence += 1;
         *slot = Some(Self {
             id,
+            request: *sequence,
             segue,
-            task: start(),
+            task: start(*sequence),
         });
+    }
+
+    /// Accepts only the active request's completion, even if an older request used the same id.
+    fn finish(slot: &mut Option<Self>, request: u64) -> Option<bool> {
+        let pending = slot.take_if(|pending| pending.request == request)?;
+        Some(pending.segue)
     }
 }
 
@@ -389,7 +400,7 @@ impl Drop for Preload {
 struct Fetched<F: Fetch> {
     epoch: u64,
     id: String,
-    segue: bool,
+    preload: Option<u64>,
     result: Result<F::Loaded>,
 }
 
@@ -485,6 +496,7 @@ async fn engine_loop<F: Fetch>(
     let mut inflight: Option<tokio::task::AbortHandle> = None;
     let mut ahead: Option<(String, F::Loaded)> = None;
     let mut preloading: Option<Preload> = None;
+    let mut preload_sequence = 0u64;
     // the track the audio thread is decoding, as far as the engine knows: set by a load, then
     // moved on by the audio thread's own word when a track runs out
     let mut current: Option<String> = None;
@@ -573,7 +585,7 @@ async fn engine_loop<F: Fetch>(
                             None => {
                                 ahead = None;
                                 awaited = Some(epoch);
-                                inflight = Some(spawn(&fetch, id, epoch, false, &fetched));
+                                inflight = Some(spawn(&fetch, id, epoch, None, &fetched));
                             }
                         }
                     }
@@ -602,8 +614,8 @@ async fn engine_loop<F: Fetch>(
                                 }
                             }
                             None => {
-                                Preload::request(&mut preloading, id.clone(), segue, || {
-                                    spawn(&fetch, id, epoch, segue, &fetched)
+                                Preload::request(&mut preloading, &mut preload_sequence, id.clone(), segue, |request| {
+                                    spawn(&fetch, id, epoch, Some(request), &fetched)
                                 });
                             }
                         }
@@ -648,17 +660,20 @@ async fn engine_loop<F: Fetch>(
                 }
             }
             arrival = arrivals.recv() => {
-                let Some(Fetched { epoch: at, id, mut segue, result }) = arrival else { break };
+                let Some(Fetched { epoch: at, id, preload, result }) = arrival else { break };
                 if at != epoch {
                     continue;
                 }
-                let current_load = awaited == Some(at) && current.as_deref() == Some(id.as_str());
-                if !current_load {
-                    let Some(pending) = preloading.take_if(|pending| pending.id == id) else {
-                        continue;
-                    };
-                    segue = pending.segue;
-                }
+                let current_load = preload.is_none() && awaited == Some(at) && current.as_deref() == Some(id.as_str());
+                let segue = match current_load {
+                    true => false,
+                    false => {
+                        let Some(requested_segue) = preload.and_then(|request| Preload::finish(&mut preloading, request)) else {
+                            continue;
+                        };
+                        requested_segue
+                    }
+                };
                 let loaded = match result {
                     Ok(loaded) => loaded,
                     Err(error) => {
@@ -854,11 +869,12 @@ fn queue_segue<F: Fetch>(
     }
 }
 
+/// Runs a cancellable provider load and tags its completion with its epoch and preload request.
 fn spawn<F: Fetch>(
     fetch: &Arc<F>,
     id: String,
     epoch: u64,
-    segue: bool,
+    preload: Option<u64>,
     fetched: &UnboundedSender<Fetched<F>>,
 ) -> tokio::task::AbortHandle {
     let fetch = fetch.clone();
@@ -869,7 +885,7 @@ fn spawn<F: Fetch>(
             .send(Fetched {
                 epoch,
                 id,
-                segue,
+                preload,
                 result,
             })
             .ok();
@@ -1402,9 +1418,10 @@ mod tests {
     async fn superseded_preloads_release_their_pending_resources() {
         let (first, dropped) = pending_load();
         let mut slot = None;
-        Preload::request(&mut slot, "one".to_owned(), false, || first);
+        let mut sequence = 0;
+        Preload::request(&mut slot, &mut sequence, "one".to_owned(), false, |_| first);
         let (next, next_dropped) = pending_load();
-        Preload::request(&mut slot, "two".to_owned(), false, || next);
+        Preload::request(&mut slot, &mut sequence, "two".to_owned(), false, |_| next);
         assert!(
             tokio::time::timeout(Duration::from_secs(1), dropped)
                 .await
@@ -1424,12 +1441,44 @@ mod tests {
     async fn a_segue_request_reuses_the_pending_preload() {
         let (task, dropped) = pending_load();
         let mut slot = None;
-        Preload::request(&mut slot, "one".to_owned(), false, || task);
-        Preload::request(&mut slot, "one".to_owned(), true, || {
+        let mut sequence = 0;
+        Preload::request(&mut slot, &mut sequence, "one".to_owned(), false, |_| task);
+        Preload::request(&mut slot, &mut sequence, "one".to_owned(), true, |_| {
             panic!("load restarted")
         });
         assert!(slot.as_ref().unwrap().segue);
         drop(slot);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), dropped)
+                .await
+                .unwrap()
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_same_track_completions_preserve_the_replacement_preload() {
+        let mut slot = None;
+        let mut sequence = 0;
+        let (first, _) = pending_load();
+        Preload::request(&mut slot, &mut sequence, "a".to_owned(), false, |_| first);
+        let stale = slot.as_ref().unwrap().request;
+        let (second, _) = pending_load();
+        Preload::request(&mut slot, &mut sequence, "b".to_owned(), false, |_| second);
+        let (replacement, mut dropped) = pending_load();
+        Preload::request(&mut slot, &mut sequence, "a".to_owned(), true, |_| {
+            replacement
+        });
+        let active = slot.as_ref().unwrap().request;
+        assert_ne!(active, stale);
+        assert_eq!(Preload::finish(&mut slot, stale), None);
+        assert_eq!(slot.as_ref().unwrap().request, active);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut dropped)
+                .await
+                .is_err()
+        );
+        assert_eq!(Preload::finish(&mut slot, active), Some(true));
         assert!(
             tokio::time::timeout(Duration::from_secs(1), dropped)
                 .await
