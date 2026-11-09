@@ -382,7 +382,9 @@ impl Artwork {
 
 impl Shared {
     fn lock(&self) -> MutexGuard<'_, Inner> {
-        self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Runs `job` on a decoder thread, or in place when none could start.
@@ -413,7 +415,8 @@ impl Shared {
         let Some(entry) = inner.entries.get_mut(&key) else {
             return;
         };
-        entry.art
+        entry
+            .art
             .pixels
             .set(decoded.width, decoded.height, decoded.rgba);
         entry.art.shown.set(1.);
@@ -714,9 +717,7 @@ pub struct Avatar<'a> {
 impl<'a> Avatar<'a> {
     pub fn new(artwork: &'a Artwork, url: Option<&'a str>) -> Self {
         Self {
-            cover: Cover::new(artwork, url)
-                .circle()
-                .fallback("icons/user.svg"),
+            cover: Cover::new(artwork, url).circle().fallback("icons/user.svg"),
         }
     }
 

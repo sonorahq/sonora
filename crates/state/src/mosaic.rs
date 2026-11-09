@@ -104,11 +104,7 @@ fn compose(tiles: &[DynamicImage]) -> RgbaImage {
 }
 
 async fn fetch(http: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
-    let response = http
-        .get(url)
-        .send()
-        .await
-        .context("cannot fetch a cover")?;
+    let response = http.get(url).send().await.context("cannot fetch a cover")?;
     if !response.status().is_success() {
         bail!("a cover request answered {}", response.status());
     }

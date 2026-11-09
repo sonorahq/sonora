@@ -7222,6 +7222,7 @@ dependencies = [
  "qrcodegen",
  "rune",
  "serde",
+ "serde_json",
  "unicode-bidi",
  "unicode-segmentation",
 ]

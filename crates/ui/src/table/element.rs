@@ -26,6 +26,7 @@ use super::layout::{
 use crate::color::Hsla;
 use crate::glass::{bar_surface, blurring, popover_surface};
 use crate::metrics::Text;
+use crate::skeleton::Skeleton;
 use crate::theme::Theme;
 
 /// The narrowest a cell's content gets, however tight its column.
@@ -191,7 +192,11 @@ impl TableState {
     }
 
     /// The order `field` is sorted in, if it is the sort column.
-    pub fn direction<F: Copy + PartialEq>(&self, specs: &[ColumnSpec<F>], field: F) -> Option<Sort> {
+    pub fn direction<F: Copy + PartialEq>(
+        &self,
+        specs: &[ColumnSpec<F>],
+        field: F,
+    ) -> Option<Sort> {
         let sorting = self.sorting.as_ref()?;
         specs
             .iter()
@@ -598,12 +603,7 @@ impl<S: 'static, F: Copy + PartialEq + 'static> Table<S, F> {
             })
             .collect();
         let columns = Rc::new(resolve(
-            self.specs,
-            self.width,
-            metrics,
-            &st.layout,
-            &heads,
-            &blank,
+            self.specs, self.width, metrics, &st.layout, &heads, &blank,
         ));
 
         let header = self.header(st, &columns, theme, font);
@@ -690,7 +690,7 @@ impl<S: 'static, F: Copy + PartialEq + 'static> Table<S, F> {
         let marker = st.moving.and_then(|(from, to)| {
             let column = columns.get(to)?;
             let start: f32 = columns.iter().take(to).map(|column| column.width).sum();
-            (from != to).then(|| match to > from {
+            (from != to).then_some(match to > from {
                 true => start + column.width,
                 false => start,
             })
@@ -985,7 +985,8 @@ impl<S: 'static, F: Copy + PartialEq + 'static> Table<S, F> {
             });
             if let Some(on_open) = on_open.clone() {
                 let opened = id.clone();
-                line = line.on_double_press_tx(move |s: &mut S, tx: &mut Tx| on_open(s, &opened, tx));
+                line =
+                    line.on_double_press_tx(move |s: &mut S, tx: &mut Tx| on_open(s, &opened, tx));
             }
             if let Some(on_context) = on_context.clone() {
                 let clicked = id.clone();
@@ -1040,14 +1041,15 @@ impl<S: 'static, F: Copy + PartialEq + 'static> Table<S, F> {
         };
         let height = theme.metrics.row;
         let bar = (height * SKELETON_BAR).round();
-        let fill = theme.muted.color();
         let last = columns.len().saturating_sub(1);
         let rows = (0..count).map(|display| {
             let cells = columns.iter().enumerate().map(|(ix, column)| {
                 let inner = inner_width(column.width, ix == last);
                 let block = match column.spec.width {
-                    Width::Thumb => el().size(theme.metrics.thumb, theme.metrics.thumb),
-                    _ => el().size(
+                    Width::Thumb => Skeleton::new()
+                        .build(theme)
+                        .size(theme.metrics.thumb, theme.metrics.thumb),
+                    _ => Skeleton::new().build(theme).size(
                         (inner * SKELETON_REACH[(display + ix) % SKELETON_REACH.len()]).round(),
                         bar,
                     ),
@@ -1056,7 +1058,7 @@ impl<S: 'static, F: Copy + PartialEq + 'static> Table<S, F> {
                     row().w(column.width).h_full().px(PADDING).center_y(),
                     column.spec.align,
                 )
-                .child(block.radius(theme.radius.min(bar / 2.)).fill(fill))
+                .child(block)
             });
             row()
                 .key(format!("skeleton-{display}"))

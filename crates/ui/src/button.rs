@@ -73,7 +73,7 @@ pub struct Button {
     small: bool,
     disabled: bool,
     loading: bool,
-    selected: bool,
+    pub(crate) selected: bool,
     expanded: Option<bool>,
     toggled: Option<bool>,
     tab: bool,
@@ -89,6 +89,9 @@ pub struct Button {
     /// The tooltip text, already resolved, and whether it sits above the button.
     tooltip: Option<(String, bool)>,
     press: Press,
+    /// Drawn under the content in place of the selected fill, such as a tab bar's indicator
+    /// that flies from one tab to the next.
+    pub(crate) underlay: Option<El>,
 }
 
 impl Button {
@@ -121,6 +124,7 @@ impl Button {
             tint: None,
             tooltip: None,
             press: Press::default(),
+            underlay: None,
         }
     }
 
@@ -388,7 +392,7 @@ impl Button {
         if let Some(toggled) = self.toggled {
             button = button.checked(toggled);
         }
-        let background = match self.selected && !self.backgroundless {
+        let background = match self.selected && !self.backgroundless && self.underlay.is_none() {
             true => Some(theme.secondary_active),
             false => palette.background,
         };
@@ -417,6 +421,9 @@ impl Button {
             }
         }
 
+        if let Some(underlay) = self.underlay {
+            button = button.child(underlay);
+        }
         let icon_path = match self.loading {
             true => Some("icons/loader-circle.svg".to_owned()),
             false => self.icon.clone(),

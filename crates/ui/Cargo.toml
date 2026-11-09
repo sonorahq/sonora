@@ -21,3 +21,4 @@ unicode-segmentation.workspace = true
 ashpd.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true

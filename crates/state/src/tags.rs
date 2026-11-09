@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use music::{MusicApi, Track, TrackTags};
 
-use crate::{Cx, Event, Job, Outcome, Session, Store, Target, Toast, join};
+use crate::{Cx, Job, Outcome, Session, Store, Target, Toasts, join};
 
 /// Where the tag editor's read of a track's tags stands.
 pub enum TagState {
@@ -105,8 +105,7 @@ impl Tags {
             // A write runs to the end on its own, so closing the editor never leaves a file
             // half written.
             let written =
-                join(io.spawn(async move { client.set_track_tags(&written_to, tags).await }))
-                    .await;
+                join(io.spawn(async move { client.set_track_tags(&written_to, tags).await })).await;
 
             link.post(move |store| {
                 let Some(this) = editing(store, &id) else {
@@ -119,18 +118,17 @@ impl Tags {
                         if has_local_folder {
                             store.rescan_local(false);
                         }
-                        store.cx.emit(Event::Toast(
-                            Toast::new(Outcome::Done, "toast-tags-saved")
-                                .name(name)
-                                .target(target),
-                        ));
+                        Toasts::linked(
+                            Outcome::Done,
+                            "toast-tags-saved",
+                            name,
+                            target,
+                            &mut store.cx,
+                        );
                     }
                     Err(error) => {
                         log::warn!("tags: cannot save the tags: {error:#}");
-                        store.cx.emit(Event::Toast(Toast::new(
-                            Outcome::Failed,
-                            "toast-tags-failed",
-                        )));
+                        Toasts::show(Outcome::Failed, "toast-tags-failed", &mut store.cx);
                     }
                 }
             });

@@ -101,7 +101,8 @@ pub struct MenuItem<S> {
     /// Whether a keyboard cursor the owner tracks rests on the row: painted like a selected one,
     /// without the check.
     highlighted: bool,
-    checked: bool,
+    /// Whether the row toggles something, and whether that is on.
+    checked: Option<bool>,
     disabled: bool,
     separator: bool,
     content: Option<El>,
@@ -123,7 +124,7 @@ impl<S: 'static> MenuItem<S> {
             detail: None,
             selected: false,
             highlighted: false,
-            checked: false,
+            checked: None,
             disabled: false,
             separator: false,
             content: None,
@@ -154,9 +155,9 @@ impl<S: 'static> MenuItem<S> {
         }
     }
 
-    /// Draws a check after the label and reads the row as checked.
+    /// Makes the row a toggle, read as checked or not, with a check after the label while on.
     pub fn checked(mut self, checked: bool) -> Self {
-        self.checked = checked;
+        self.checked = Some(checked);
         self
     }
 
@@ -664,8 +665,8 @@ fn menu_row<S: 'static>(
     let mut row = row()
         .key(key.clone())
         .role(match checked {
-            true => "menuitemcheckbox",
-            false => "menuitem",
+            Some(_) => "menuitemcheckbox",
+            None => "menuitem",
         })
         .label(label)
         .position_in_set(position, count)
@@ -681,8 +682,8 @@ fn menu_row<S: 'static>(
         })
         .radius(radius)
         .child(lead);
-    if checked {
-        row = row.checked(true);
+    if let Some(on) = checked {
+        row = row.checked(on);
     }
     if let Some(tip) = tooltip {
         row = row.description(tip.clone()).help(tip);
@@ -690,7 +691,7 @@ fn menu_row<S: 'static>(
     if let Some(trailing) = trailing {
         row = row.child(trailing);
     }
-    if selected || checked {
+    if selected || checked == Some(true) {
         row = row.child(mark(CHECK));
     }
     if submenu.is_some() {

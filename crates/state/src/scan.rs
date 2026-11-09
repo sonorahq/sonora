@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use music::progress::Progress;
 
-use crate::{Change, Cx, Event, Job, Outcome, Session, Store, Toast, Topic};
+use crate::{Change, Cx, Job, Outcome, Session, Store, Toast, Toasts, Topic};
 
 /// How often the progress is sampled while a scan runs. The count lives in atomics the workers
 /// bump, so this is only how often the screen catches up with them.
@@ -79,9 +79,10 @@ impl Scan {
         if self.on_settings {
             return;
         }
-        cx.emit(Event::Toast(
+        Toasts::post(
             Toast::new(Outcome::Done, "toast-library-scanned").count(songs),
-        ));
+            cx,
+        );
     }
 
     /// Picks up a scan starting or ending. A scan the user asked for leaves its duration behind.
@@ -118,12 +119,9 @@ impl Scan {
 impl Store {
     /// Starts or stops sampling the scan as the session starts or ends one.
     pub(crate) fn react_scan(&mut self, change: &Change) {
-        match change {
-            Change::Topic(Topic::Session) => {
-                let scanning = self.session.scanning();
-                self.scan.follow(scanning, &mut self.cx);
-            }
-            _ => {}
+        if let Change::Topic(Topic::Session) = change {
+            let scanning = self.session.scanning();
+            self.scan.follow(scanning, &mut self.cx);
         }
     }
 }

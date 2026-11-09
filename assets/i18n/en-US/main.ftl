@@ -19,6 +19,7 @@ common-clear = Clear
 option-variants = Variants of { $name }
 table-sorted-ascending = Sorted ascending
 table-sorted-descending = Sorted descending
+table-resize-column = Resize { $column }
 range-from = From
 range-to = To
 rail-back = Scroll back
