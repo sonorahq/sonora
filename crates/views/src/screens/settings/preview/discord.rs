@@ -490,7 +490,8 @@ fn details(
                                 .w(0.)
                                 .radius(BAR_HEIGHT / 2.)
                                 .fill(hex(BAR_FILL))
-                                .live_rect(&clock.fill),
+                                .live_rect(&clock.fill)
+                                .pixel_snap(false),
                         ),
                 )
                 .child(time("discord-preview-total", &clock.total)),

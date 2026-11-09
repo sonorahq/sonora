@@ -1,6 +1,7 @@
 //! The artist's About card on an artist page, and the dialog it opens with the whole biography.
 
 use std::rc::Rc;
+use ui::Smooth as _;
 
 use i18n::t;
 use router::Destination;
@@ -155,6 +156,7 @@ pub(crate) fn view(ui: &Ui, layer: &mut Vec<El>) {
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
+                .smooth::<Ui>("artist-about-bio")
                 .scroll_edge_fade(FADE)
                 .child(
                     rich(plain.clone(), italics)

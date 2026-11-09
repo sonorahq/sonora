@@ -16,6 +16,7 @@ mod playlists;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
+use ui::Smooth as _;
 
 use i18n::t;
 use music::{GenreItem, Shape};
@@ -418,6 +419,7 @@ fn songs(ui: &Ui, cx: &mut Cx<Ui>, shelf: Shelf) -> El {
             .scroll(ScrollSpec {
                 stick_bottom: false,
             })
+            .smooth::<Ui>(&format!("library-songs-{}", items::shelf_name(shelf)))
             .child(hero)
             .child(col().w_full().pb(bottom).child(note));
     }
@@ -574,6 +576,7 @@ fn listing<K: Kind>(ui: &Ui, cx: &mut Cx<Ui>, shelf: Shelf, mode: Mode) -> El {
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
+                .smooth::<Ui>(&viewport)
                 .child(el().key("library-deck-top").h(inset))
                 .child(grid);
             remembered(ui, shelf, viewport, deck)

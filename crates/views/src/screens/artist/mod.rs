@@ -9,6 +9,7 @@ mod favorites;
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::rc::Rc;
+use ui::Smooth as _;
 
 use i18n::t;
 use music::{Album, GenreItem, SavedArtist, Track};
@@ -173,6 +174,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+        .smooth::<Ui>(PAGE)
         .child(top(ui, detail, width, mode, origin))
         .child(
             col()

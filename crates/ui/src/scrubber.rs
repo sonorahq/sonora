@@ -361,6 +361,7 @@ impl<S: 'static> Scrubber<S> {
                 el().key("track")
                     .absolute(0., 0.)
                     .live_rect(state.track.smooth(CATCH_UP))
+                    .pixel_snap(false)
                     .radius(ROUND)
                     .fill(empty.color())
                     .a11y_hidden(),
@@ -369,6 +370,7 @@ impl<S: 'static> Scrubber<S> {
                 el().key("fill")
                     .absolute(0., 0.)
                     .live_rect(state.fill.smooth(CATCH_UP))
+                    .pixel_snap(false)
                     .radius(ROUND)
                     .fill(filled.color())
                     .a11y_hidden(),
@@ -382,6 +384,7 @@ impl<S: 'static> Scrubber<S> {
                 el().key("thumb")
                     .absolute(0., 0.)
                     .live_rect(state.thumb.smooth(CATCH_UP))
+                    .pixel_snap(false)
                     .radius(ROUND)
                     .fill(thumb.color())
                     .a11y_hidden(),
@@ -422,6 +425,7 @@ impl<S: 'static> Scrubber<S> {
                 bubble
                     .key("bubble")
                     .live_offset(state.bubble.smooth(CATCH_UP))
+                    .pixel_snap(false)
                     .child(chip)
                     .a11y_hidden(),
             );

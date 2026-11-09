@@ -6,6 +6,7 @@ use i18n::t;
 use music::{SignIn, SignInProblem, SignInPrompt};
 use rune::{Align, Cx, El, ScrollSpec, TextEdit, Transition, Tx, col, icon};
 use state::{Failure, SessionState};
+use ui::Smooth as _;
 use ui::{Button, Checkbox, Modal, TabBar, Text, Theme, Weight, font, spoken};
 
 use crate::shared::device_code::device_code;
@@ -254,6 +255,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
             .scroll(ScrollSpec {
                 stick_bottom: false,
             })
+            .smooth::<Ui>("login-scroll")
             // the content stands centred in the window, and scrolls once it is taller
             .child(col().w_full().min_h(tall).center().child(content)),
     )

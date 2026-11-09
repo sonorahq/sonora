@@ -287,11 +287,14 @@ impl VisualizerView {
                 _ => color.opacity(OPACITY),
             }
             .color();
-            let bars = self
-                .feed
-                .bars
-                .iter()
-                .map(|bar| el().grow(1.).w(0.).h(self.max).fill(fill).live_offset(bar));
+            let bars = self.feed.bars.iter().map(|bar| {
+                el().grow(1.)
+                    .w(0.)
+                    .h(self.max)
+                    .fill(fill)
+                    .live_offset(bar)
+                    .pixel_snap(false)
+            });
             root = root.child(
                 row()
                     .pin(Some(0.), Some(0.), Some(0.), Some(0.))

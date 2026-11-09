@@ -291,7 +291,9 @@ fn card(ui: &Ui, toast: &Toast, place: &Place, width: f32, below: f32) -> El {
         .motion(SETTLE)
         .transition(Transition::asymmetric(enter, exit).springs(SpringPair::new(SETTLE, SETTLE)));
     if state.swiped == Some(id) {
-        card = card.live_offset(state.offset.smooth(FOLLOW));
+        card = card
+            .live_offset(state.offset.smooth(FOLLOW))
+            .pixel_snap(false);
     }
     if place.active {
         card =

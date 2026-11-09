@@ -8,6 +8,7 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+use ui::Smooth as _;
 
 use i18n::t;
 use music::{Contributor, Shape, Track};
@@ -337,6 +338,7 @@ fn rows(ui: &Ui, listing: &QueueView<'_>, theme: &Theme) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+        .smooth::<Ui>(SCROLL)
         .on_scroll_offset(move |at: ScrollPos| {
             let [offset, max, height] = [at.offset[1], at.max[1], at.viewport[1] - bottom];
             scroll.set([offset, max, height, 0.]);
@@ -402,6 +404,7 @@ fn recall(ui: &Ui, sections: &QueueSections, theme: &Theme) -> El {
         el().pb(bottom).child(
             el().live_opacity(state.away.smooth(Springs::BASE))
                 .live_offset(state.lift.smooth(Springs::BASE))
+                .pixel_snap(false)
                 .child(button),
         ),
     )
@@ -708,7 +711,7 @@ fn track_row(
         .px(theme.metrics.pad)
         .child(card);
     if dragged {
-        line = line.live_offset(&state.carry).raise();
+        line = line.live_offset(&state.carry).pixel_snap(false).raise();
     } else if let Some(at) = upcoming {
         line = line
             .offset(0., state.shift(at, row_height))

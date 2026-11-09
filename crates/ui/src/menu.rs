@@ -2,6 +2,7 @@
 //! rows anchored to a trigger or opened at the pointer, walked with the arrow keys, with
 //! check marks, submenus that open beside their row, and an optional search field over the rows.
 
+use crate::smooth::Smooth as _;
 use std::rc::Rc;
 
 use rune::{
@@ -515,6 +516,7 @@ impl<S: 'static> Menu<S> {
             .scroll(ScrollSpec {
                 stick_bottom: false,
             })
+            .smooth::<S>(&format!("{key}-scroll"))
             .scroll_edge_fade(FADE)
             .scroll_margin(FADE)
             .child(body);

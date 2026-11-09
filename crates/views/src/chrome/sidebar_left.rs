@@ -6,6 +6,7 @@
 use std::borrow::Cow;
 use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
+use ui::Smooth as _;
 
 use router::{Destination, LibraryTab, NavEntry, SettingsPage};
 use rune::{
@@ -408,6 +409,7 @@ fn rows(ui: &Ui, width: f32, theme: &Theme) -> El {
             .scroll(ScrollSpec {
                 stick_bottom: false,
             })
+            .smooth::<Ui>(ROWS)
             .child(deck),
         ui::return_reach(theme, 0.),
     );

@@ -158,6 +158,7 @@ impl<'a> Ghost<'a> {
         }
         el().absolute(NUDGE, NUDGE)
             .live_offset(&carry.at)
+            .pixel_snap(false)
             .inert()
             .a11y_hidden()
             .child(chip)

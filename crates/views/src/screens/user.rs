@@ -3,6 +3,7 @@
 
 use std::borrow::Cow;
 use std::rc::Rc;
+use ui::Smooth as _;
 
 use i18n::t;
 use music::{GenreItem, Playlist};
@@ -59,6 +60,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+        .smooth::<Ui>("user-page")
         .child(hero(ui, profile))
         .child(
             row()

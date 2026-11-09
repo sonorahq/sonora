@@ -201,7 +201,8 @@ pub(crate) fn view(ui: &Ui) -> El {
             .child(
                 icon(icons::get(chevron), ICON)
                     .color(ink.color())
-                    .live_offset(swipe.lean.smooth(Springs::SETTLE)),
+                    .live_offset(swipe.lean.smooth(Springs::SETTLE))
+                    .pixel_snap(false),
             )
     };
     let armed = face(
@@ -218,7 +219,9 @@ pub(crate) fn view(ui: &Ui) -> El {
         .shadow(4., 12., Color::BLACK.alpha(0.25))
         .live_opacity(swipe.reach.smooth(Springs::QUICK))
         .live_scale(swipe.scale.smooth(Springs::SETTLE))
+        .pixel_snap(false)
         .live_offset(swipe.edge.smooth(Springs::QUICK))
+        .pixel_snap(false)
         .child(face(
             "swipe-cue-quiet",
             theme.secondary,

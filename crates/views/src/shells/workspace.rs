@@ -18,8 +18,16 @@ const ENTRANCE_BLUR: f32 = 1.5;
 pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
     let theme = &ui.theme;
     let destination = ui.nav.current();
-    let page = page(ui, &destination, cx, layer)
+    // The page plays its entrance in a wrapper keyed per destination, so the screen keeps its
+    // own key: scroll requests and restored positions address a screen's viewport by it.
+    let page = col()
         .key(page_key(&destination))
+        .child(
+            page(ui, &destination, cx, layer)
+                .grow(1.)
+                .min_h(0.)
+                .w_full(),
+        )
         .absolute(0., 0.)
         .w_full()
         .h_full()

@@ -8,6 +8,7 @@
 //! a re-sort. Only the rows on screen and two viewports either side are built, so a list of
 //! 100,000 rows costs what the visible thirty do.
 
+use crate::smooth::Smooth as _;
 use std::borrow::Cow;
 use std::cell::Cell as Hint;
 use std::collections::{HashMap, HashSet};
@@ -636,6 +637,7 @@ impl<S: 'static, F: Copy + PartialEq + 'static> Table<S, F> {
             .scroll(ScrollSpec {
                 stick_bottom: false,
             })
+            .smooth::<S>(&self.key)
             .on_layout_tx(move |s: &mut S, rect: [f32; 4], tx: &mut Tx| {
                 let st = state_mut(s);
                 if st.viewport == rect[3] {

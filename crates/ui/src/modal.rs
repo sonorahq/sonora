@@ -1,6 +1,7 @@
 //! A dialog over a dimmed window: a title, an optional detail, a body that scrolls and a row of
 //! actions. It holds the keyboard while open and hands focus back to its opener when it closes.
 
+use crate::smooth::Smooth as _;
 use std::rc::Rc;
 
 use rune::{El, ScrollSpec, TextStyle, Tx, col, el, row, text};
@@ -172,6 +173,7 @@ impl<S: 'static> Modal<S> {
                     .scroll(ScrollSpec {
                         stick_bottom: false,
                     })
+                    .smooth::<S>("body")
                     .scroll_edge_fade(FADE)
                     .child(
                         col()

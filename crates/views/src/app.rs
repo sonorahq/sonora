@@ -202,6 +202,7 @@ impl Ui {
     /// Feeds the live values from playback. Called before every frame; returns whether anything
     /// the view reads changed outside a commit.
     pub fn poll(&mut self, tx: &mut Tx) -> bool {
+        ui::glide_wheels(tx);
         let playback = &self.store.playback;
         let (elapsed, total) = playback.shown_time(&self.store.devices);
         let fraction = match total.is_zero() {

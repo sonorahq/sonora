@@ -6,6 +6,7 @@ use i18n::t;
 use music::connect::JamMember;
 use rune::{Cx, El, ScrollSpec, TextStyle, Transition, Tx, col, row, text};
 use state::SideTab;
+use ui::Smooth as _;
 use ui::{Button, Springs, Text, Theme, Weight};
 
 use crate::chrome::{jam, session};
@@ -153,6 +154,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
             .scroll(ScrollSpec {
                 stick_bottom: false,
             })
+            .smooth::<Ui>("members-list")
             .child(
                 col()
                     .w_full()

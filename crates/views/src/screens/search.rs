@@ -6,6 +6,7 @@
 
 use std::borrow::Cow;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use ui::Smooth as _;
 
 use i18n::t;
 use music::{Album, Playlist, SavedArtist, Track};
@@ -660,6 +661,7 @@ fn deck(ui: &Ui, only: &[Kind], gutter: f32, leading: bool, label: String, botto
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+        .smooth::<Ui>(&id)
         .scroll_edge_fade(FADE)
         .scroll_margin(FADE)
         .px(gutter)
@@ -692,6 +694,7 @@ fn browse(ui: &Ui, gutter: f32, width: f32, bottom: f32) -> El {
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
+                .smooth::<Ui>("search-browse-list")
                 .scroll_edge_fade(FADE)
                 .px(gutter)
                 .pb(pad + bottom)

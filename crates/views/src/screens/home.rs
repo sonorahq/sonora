@@ -3,6 +3,7 @@
 //! the feed cannot be reached.
 
 use std::rc::Rc;
+use ui::Smooth as _;
 
 use i18n::t;
 use music::GenreItem;
@@ -85,6 +86,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+        .smooth::<Ui>("home-page")
         .child(
             col()
                 .key("home-content")

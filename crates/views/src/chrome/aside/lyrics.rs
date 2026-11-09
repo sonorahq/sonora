@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+use ui::Smooth as _;
 
 use i18n::t;
 use music::{LyricsLane, LyricsLine, LyricsWord, Voice};
@@ -607,6 +608,7 @@ fn scroller(
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+        .smooth::<Ui>(SHEET)
         .child(content);
     if ui::effects() {
         viewport = viewport.scroll_edge_fade(look.verse * VERSE_FADE);
@@ -781,12 +783,14 @@ fn verse_text(
             .size(width + fade, line_height * 1.5)
             .clip_fade(left, 0., right, 0.)
             .live_offset(&sweep.clip)
+            .pixel_snap(false)
             .a11y_hidden()
             .child(
                 text(words.to_owned())
                     .font(style)
                     .color(theme.foreground.color())
-                    .live_offset(&sweep.words),
+                    .live_offset(&sweep.words)
+                    .pixel_snap(false),
             ),
     )
 }

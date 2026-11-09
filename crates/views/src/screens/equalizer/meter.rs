@@ -106,6 +106,7 @@ impl Meter {
             el().key(key)
                 .absolute(0., 0.)
                 .live_rect(live.smooth(FOLLOW))
+                .pixel_snap(false)
                 .fill(color)
         };
         el().key("equalizer-level-meter")
@@ -126,6 +127,7 @@ impl Meter {
                 el().key("peak")
                     .absolute(0., 0.)
                     .live_rect(self.tick.smooth(FOLLOW))
+                    .pixel_snap(false)
                     .live_fill(&self.tick_color),
             )
             .a11y_hidden()

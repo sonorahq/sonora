@@ -3,6 +3,7 @@
 
 use std::borrow::Cow;
 use std::rc::Rc;
+use ui::Smooth as _;
 
 use i18n::t;
 use music::Track;
@@ -88,6 +89,7 @@ pub(super) fn dialog(ui: &Ui, id: &str, origin: Option<Origin>, room: Room, laye
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+        .smooth::<Ui>("artist-favorite-songs")
         .child(
             col()
                 .key("artist-favorite-rows")

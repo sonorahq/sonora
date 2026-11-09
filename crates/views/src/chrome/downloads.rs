@@ -5,6 +5,7 @@
 
 use std::borrow::Cow;
 use std::rc::Rc;
+use ui::Smooth as _;
 
 use i18n::t;
 use router::Destination;
@@ -118,6 +119,7 @@ fn list(theme: &Theme, rows: Vec<Row>, songs: usize) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+        .smooth::<Ui>("downloads-rows")
         .child(
             col()
                 .key("downloads-list")

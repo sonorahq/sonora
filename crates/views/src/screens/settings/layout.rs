@@ -5,6 +5,7 @@
 
 use router::{Destination, SettingsPage};
 use rune::{Cx, El, ScrollSpec, Transition, col, el, row, text};
+use ui::Smooth as _;
 use ui::{Button, Room, Text, Theme, VeilEdge, Weight, effects, font, veil};
 
 use super::header;
@@ -94,11 +95,12 @@ pub(crate) fn frame(
         .child(title(theme, destination, named).mb(theme.metrics.inset))
         .child(body);
     let mut page = col()
-        .key(scroll)
+        .key(scroll.clone())
         .pin(Some(0.), Some(0.), Some(0.), Some(0.))
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+        .smooth::<Ui>(&scroll)
         .scroll_margin(layout.clear())
         .transition(Transition::opacity())
         .child(

@@ -3,6 +3,7 @@
 //! About card and the album's copyright line.
 
 use std::rc::Rc;
+use ui::Smooth as _;
 
 use i18n::t;
 use music::{Credit, Track};
@@ -74,6 +75,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+        .smooth::<Ui>("song-page")
         .px(inset)
         .pt(inset)
         .pb(inset + player_bar::bottom(ui, cx));

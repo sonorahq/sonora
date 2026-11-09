@@ -358,6 +358,7 @@ pub fn return_top<S: 'static>(key: &str, watch: &ScrollWatch, theme: &Theme) -> 
     let shown = el()
         .live_opacity(watch.away.smooth(Springs::BASE))
         .live_offset(watch.lift.smooth(Springs::BASE))
+        .pixel_snap(false)
         .child(button);
     perched(shown)
 }

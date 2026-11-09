@@ -45,6 +45,7 @@ mod scrubber;
 mod separator;
 mod shield;
 mod skeleton;
+mod smooth;
 mod spinner;
 mod switch;
 mod table;
@@ -111,6 +112,7 @@ pub use scrubber::{Scrubber, ScrubberState};
 pub use separator::Separator;
 pub use shield::shield;
 pub use skeleton::{Initials, Skeleton};
+pub use smooth::{Smooth, glide_wheels, smooth};
 pub use spinner::Spinner;
 pub use switch::Switch;
 pub use table::{
