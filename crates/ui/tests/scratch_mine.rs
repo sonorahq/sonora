@@ -139,6 +139,8 @@ mod more {
         rt.frame(0.5);
         let hi2 = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("yr-high")).unwrap().rect;
         println!("hi moved {:?} -> {:?}", hi, hi2);
+        rt.pointer_down(250., 8.); rt.frame(0.016); rt.pointer_move(330., 8.); rt.frame(0.016); rt.pointer_up(330., 8.); rt.frame(0.016);
+        println!("after rail drag {:?}", rt.state.v);
     }
 
     struct G { st: ResponseGraphState, pos: ResponsePoint, sel: bool, log: Vec<String> }
