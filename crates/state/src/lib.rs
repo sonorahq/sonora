@@ -104,6 +104,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use music::{LyricsProvider, MusicProvider};
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 
@@ -319,6 +320,85 @@ pub struct Pages {
 }
 
 impl Store {
+    /// Builds every model, in the order their reactions run, and starts what runs from launch:
+    /// the settings watch, the account restore and the background workers. `link` is how jobs
+    /// reach the window.
+    pub fn new(
+        io: Io,
+        link: Link,
+        database: storage::Database,
+        providers: Vec<Arc<dyn MusicProvider>>,
+        local_provider: Arc<dyn MusicProvider>,
+        lyrics_providers: Vec<Arc<dyn LyricsProvider>>,
+    ) -> Self {
+        let mut cx = Cx::new(io, link);
+        let mut settings = AppSettings::load(database.clone());
+        settings.watch_files(&mut cx);
+        settings.report_broken(&mut cx);
+        // Spotify sets up its own file cache when its session opens, which can be before Playback
+        // exists, so it hears the setting first.
+        music::vault::Vault::set_keeping(
+            settings.keep_tracks(),
+            vault::bytes(settings.cache_gb()),
+        );
+        let session = Session::new(providers, local_provider, &settings, &mut cx);
+        let network = Network::new(&settings);
+        let library = Library::new(&session, storage::Cache::standard(), &mut cx);
+        let queue = Queue::new(&settings);
+        let equalizer = Equalizer::new(&settings);
+        let outputs = Outputs::new(&settings, &mut cx);
+        let playback = Playback::new(&session, &settings, &equalizer, &mut cx);
+        let downloads = Downloads::new(database.clone(), &mut cx);
+        let history = History::new(database.clone(), &session, &mut cx);
+        let scan = Scan::new(&session, &mut cx);
+        let scrobbling = Scrobbling::new(&settings, &mut cx);
+        let lyrics = Lyrics::new(&settings, lyrics_providers, &mut cx);
+        let updates = Updates::new(&settings, &mut cx);
+        let requirements = Requirements::new(&outputs, &mut cx);
+        let usage = Usage::new(database, &mut cx);
+        let wake = Wake::new(&mut cx);
+        let devices = Devices::new(&session, &settings, &playback, &queue, &mut cx);
+        let home = Home::new(&session, &mut cx);
+        let discord = discord::Discord::new(&mut cx);
+        let background = vec![potoken::attach(&cx)];
+
+        Self {
+            settings,
+            session,
+            network,
+            control: Control::new(),
+            cover: Cover::new(),
+            devices,
+            downloads,
+            drm: Drm::new(),
+            equalizer,
+            library,
+            links: Links::new(),
+            listening: Listening::new(),
+            history,
+            lyrics,
+            outputs,
+            pins: Pins::new(),
+            playback,
+            queue,
+            requirements,
+            scan,
+            scrobbling,
+            signal: Signal::new(),
+            toasts: Toasts::new(),
+            updates,
+            usage,
+            wake,
+            home,
+            genres: Genres::new(),
+            pages: Pages::default(),
+            discord,
+            remote: None,
+            background,
+            cx,
+        }
+    }
+
     /// Hands every change raised so far to the models that follow it, round after round, until
     /// no model raises another.
     pub fn settle(&mut self) {
