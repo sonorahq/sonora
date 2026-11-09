@@ -103,7 +103,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
             fullscreen_button(theme),
         ]
     };
-    let content = match (stacked, layout) {
+    match (stacked, layout) {
         (true, _) => surface(col())
             .justify_center()
             .py(rems(theme, 0.5))
@@ -188,9 +188,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
                     .grow(1.)
                     .children(right(VOLUME_WIDTH)),
             ),
-    };
-
-    content
+    }
 }
 
 /// The height the workspace gives the bar: two rows when stacked, a row's height in the compact

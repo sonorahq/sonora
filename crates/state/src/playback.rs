@@ -252,10 +252,10 @@ impl Unreachable {
 
     fn toast(&self, cx: &mut Cx) {
         let toast = Toast::new(Outcome::Failed, self.key());
-        cx.emit(Event::Toast(match self.provider() {
+        cx.emit(Event::Toast(Box::new(match self.provider() {
             Some(provider) => toast.name(provider.to_owned()),
             None => toast,
-        }));
+        })));
     }
 }
 
@@ -1059,9 +1059,9 @@ impl Playback {
                         log::error!("playback: cannot load radio queue: {error:#}");
                         crate::noted(&error, peers.cx);
                         if this.origin(peers.queue) == Some(&origin) {
-                            peers.cx.emit(Event::Toast(
+                            peers.cx.emit(Event::Toast(Box::new(
                                 Toast::new(Outcome::Failed, "toast-radio-failed").name(title),
-                            ));
+                            )));
                         }
                     }
                 }
@@ -1092,16 +1092,16 @@ impl Playback {
         match named {
             Some((name, target)) => {
                 if let Some(key) = placed.toast("track") {
-                    peers.cx.emit(Event::Toast(
+                    peers.cx.emit(Event::Toast(Box::new(
                         Toast::new(Outcome::Done, key).name(name).target(target),
-                    ));
+                    )));
                 }
             }
             None => {
                 if let Some(key) = placed.toast("tracks") {
-                    peers
-                        .cx
-                        .emit(Event::Toast(Toast::new(Outcome::Done, key).count(count)));
+                    peers.cx.emit(Event::Toast(Box::new(
+                        Toast::new(Outcome::Done, key).count(count),
+                    )));
                 }
             }
         }
@@ -1165,10 +1165,10 @@ impl Playback {
             }
         }
         if kept {
-            peers.cx.emit(Event::Toast(Toast::new(
+            peers.cx.emit(Event::Toast(Box::new(Toast::new(
                 Outcome::Info,
                 "toast-queue-local-elsewhere",
-            )));
+            ))));
         }
         Some(!kept)
     }
@@ -1263,15 +1263,17 @@ impl Playback {
                     Ok(tracks) => {
                         let placed = this.place(tracks, origin, placement, &mut peers);
                         if let Some(key) = placed.and_then(|placed| placed.toast(source)) {
-                            peers.cx.emit(Event::Toast(Toast::new(Outcome::Done, key)));
+                            peers
+                                .cx
+                                .emit(Event::Toast(Box::new(Toast::new(Outcome::Done, key))));
                         }
                     }
                     Err(error) => {
                         log::error!("playback: cannot enqueue {source}: {error:#}");
-                        peers.cx.emit(Event::Toast(Toast::new(
+                        peers.cx.emit(Event::Toast(Box::new(Toast::new(
                             Outcome::Failed,
                             "toast-queue-failed",
-                        )));
+                        ))));
                     }
                 }
             },
@@ -1594,9 +1596,9 @@ impl Playback {
                         log::warn!("playback: cannot load similar tracks: {error:#}");
                         crate::noted(&error, peers.cx);
                         if asked && this.radio {
-                            peers.cx.emit(Event::Toast(
+                            peers.cx.emit(Event::Toast(Box::new(
                                 Toast::new(Outcome::Failed, "toast-similar-failed").name(title),
-                            ));
+                            )));
                         }
                     }
                 }
@@ -1972,9 +1974,10 @@ impl Playback {
                 let (this, mut peers) = store.playback_parts();
                 this.sleep = None;
                 if this.wants_playing() {
-                    peers
-                        .cx
-                        .emit(Event::Toast(Toast::new(Outcome::Info, "toast-sleep-ended")));
+                    peers.cx.emit(Event::Toast(Box::new(Toast::new(
+                        Outcome::Info,
+                        "toast-sleep-ended",
+                    ))));
                 }
                 this.pause(&mut peers);
             })),
@@ -1985,9 +1988,10 @@ impl Playback {
     /// Ends an end-of-track sleep request once its track has ended, holding the next track
     /// paused, and says so on a toast.
     fn doze(&mut self, peers: &mut Peers) {
-        peers
-            .cx
-            .emit(Event::Toast(Toast::new(Outcome::Info, "toast-sleep-ended")));
+        peers.cx.emit(Event::Toast(Box::new(Toast::new(
+            Outcome::Info,
+            "toast-sleep-ended",
+        ))));
         self.sleep = None;
         self.sleep_task = None;
         self.fetch = None;
@@ -2834,7 +2838,7 @@ impl Playback {
                         .name(name)
                         .target(target),
                 };
-                peers.cx.emit(Event::Toast(toast));
+                peers.cx.emit(Event::Toast(Box::new(toast)));
                 peers.cx.emit(Event::Playback(PlaybackEvent::EndedPlayback));
                 match (exhausted || self.intent == Intent::Pause, self.repeat) {
                     (true, _) => self.hold_next(peers),
@@ -2929,9 +2933,9 @@ impl Playback {
                 "playback: {provider} kept turning {} down, waiting for play",
                 track.name
             );
-            peers.cx.emit(Event::Toast(
+            peers.cx.emit(Event::Toast(Box::new(
                 Toast::new(Outcome::Failed, "toast-still-throttled").name(provider),
-            ));
+            )));
             return self.hold(at, peers.cx);
         }
         let wait = throttle_wait(self.throttles);
@@ -2941,9 +2945,9 @@ impl Playback {
             wait.as_secs()
         );
         if self.throttles == 1 {
-            peers.cx.emit(Event::Toast(
+            peers.cx.emit(Event::Toast(Box::new(
                 Toast::new(Outcome::Failed, "toast-throttled").name(provider),
-            ));
+            )));
         }
         self.blocked_until = Some(Instant::now() + wait);
         self.load_from(&track, at, Start::Retry, peers);
@@ -3007,9 +3011,9 @@ impl Playback {
                  until you sign in"
             );
         }
-        peers.cx.emit(Event::Toast(
+        peers.cx.emit(Event::Toast(Box::new(
             Toast::new(Outcome::Failed, "toast-sign-in-to-play").name(provider.to_owned()),
-        ));
+        )));
         peers.cx.changed(Topic::Playback);
     }
 
@@ -3029,11 +3033,11 @@ impl Playback {
                  this session"
             );
         }
-        cx.emit(Event::Toast(
+        cx.emit(Event::Toast(Box::new(
             Toast::new(Outcome::Failed, "toast-keys-error")
                 .note("toast-keys-refused")
                 .visit("toast-why", KEYS_FAQ),
-        ));
+        )));
         cx.changed(Topic::Playback);
     }
 }
@@ -3425,7 +3429,7 @@ fn report_unread(unread: &[Unread], nothing_read: bool, cx: &mut Cx) {
             .detail(listed(unread)),
         (_, false) => Toast::new(Outcome::Warning, "toast-open-some-failed").detail(listed(unread)),
     };
-    cx.emit(Event::Toast(toast));
+    cx.emit(Event::Toast(Box::new(toast)));
 }
 
 /// The names of unreadable files for a toast's detail line, cut short after `LISTED_FILES`.

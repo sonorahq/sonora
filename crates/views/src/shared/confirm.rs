@@ -256,11 +256,6 @@ pub(crate) fn delete_track_files(ui: &mut Ui, ids: Vec<String>) {
     });
 }
 
-/// Whether the question is up.
-pub(crate) fn shows(ui: &Ui) -> bool {
-    ui.dialogs.confirm.is_some()
-}
-
 /// Puts the question away unanswered.
 pub(crate) fn close(ui: &mut Ui) {
     ui.dialogs.confirm = None;

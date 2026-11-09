@@ -1,8 +1,7 @@
 mod artist;
-mod core;
-mod react;
 mod catalog;
 mod control;
+mod core;
 mod cover;
 mod detail;
 mod devices;
@@ -13,8 +12,8 @@ mod equalizer;
 mod genre;
 mod history;
 mod home;
-mod library;
 mod keychain;
+mod library;
 mod links;
 mod listening;
 mod logging;
@@ -28,6 +27,7 @@ mod playback;
 mod potoken;
 mod profile;
 mod queue;
+mod react;
 mod remote;
 mod requirements;
 mod scan;
@@ -47,8 +47,8 @@ mod vault;
 mod wake;
 mod window_shape;
 
-pub use artist::ArtistDetail;
 pub use crate::core::{Apply, Cx, Job, Link};
+pub use artist::ArtistDetail;
 pub use control::Control;
 pub use cover::Cover;
 pub use detail::{Collection, Detail, Header};
@@ -243,8 +243,8 @@ pub enum Event {
     ArtistGone(String),
     /// A link the app was opened with resolved to something to show.
     LinkOpened(music::link::Linked),
-    /// A message for the toast stack.
-    Toast(Toast),
+    /// A message for the toast stack, boxed since a toast is far larger than any other event.
+    Toast(Box<Toast>),
     /// A change to a toast already on the stack.
     ToastUpdate(ToastUpdate),
     /// The app should quit, after its quit hooks ran.
@@ -295,7 +295,7 @@ pub struct Store {
     pub pages: Pages,
     /// Workers that run as long as the app does and keep nothing the window shows, such as
     /// YouTube's proof-of-origin window.
-    pub(crate) background: Vec<Job>,
+    _background: Vec<Job>,
     /// What the window has to act on itself: a quit an update asked for, and links that
     /// resolved to a page to show.
     host: Host,
@@ -347,10 +347,7 @@ impl Store {
         settings.report_broken(&mut cx);
         // Spotify sets up its own file cache when its session opens, which can be before Playback
         // exists, so it hears the setting first.
-        music::vault::Vault::set_keeping(
-            settings.keep_tracks(),
-            vault::bytes(settings.cache_gb()),
-        );
+        music::vault::Vault::set_keeping(settings.keep_tracks(), vault::bytes(settings.cache_gb()));
         let session = Session::new(providers, local_provider, &settings, &mut cx);
         let network = Network::new(&settings);
         let library = Library::new(&session, storage::Cache::standard(), &mut cx);
@@ -404,7 +401,7 @@ impl Store {
             pages: Pages::default(),
             discord,
             remote: None,
-            background,
+            _background: background,
             host: Host::default(),
             cx,
         }

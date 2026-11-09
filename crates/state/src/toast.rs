@@ -368,7 +368,7 @@ impl Toasts {
     /// [`Self::showing`] does not see it before then.
     pub fn post(toast: Toast, cx: &mut Cx) -> usize {
         let id = toast.id;
-        cx.emit(Event::Toast(toast));
+        cx.emit(Event::Toast(Box::new(toast)));
         id
     }
 
@@ -555,7 +555,7 @@ impl Store {
         let Store { toasts, cx, .. } = self;
         match change {
             Change::Event(Event::Toast(toast)) => {
-                toasts.push(toast.clone(), cx);
+                toasts.push((**toast).clone(), cx);
             }
             Change::Event(Event::ToastUpdate(update)) => match update {
                 ToastUpdate::Settle(id, toast) => toasts.replace(*id, (**toast).clone(), cx),

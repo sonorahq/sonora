@@ -3,7 +3,7 @@
 
 use music::{Album, Playlist, SavedArtist, Track};
 use router::Destination;
-use state::{Hit, Leaving, Origin, Whence};
+use state::{Hit, Origin, Whence};
 use ui::{Pin, PinKind};
 
 /// The origin tag of a song dragged from the favorites. A playlist's tag is its id.
@@ -94,13 +94,5 @@ pub(crate) fn origin_tag(origin: &Origin) -> Option<String> {
         Whence::Saved => Some(LIKED.to_owned()),
         Whence::Playlist => Some(origin.id.clone()),
         _ => None,
-    }
-}
-
-/// Reads back a tag written by `origin_tag`.
-pub(crate) fn leaving(tag: &str) -> Leaving {
-    match tag {
-        LIKED => Leaving::Liked,
-        id => Leaving::Playlist(id.to_owned()),
     }
 }

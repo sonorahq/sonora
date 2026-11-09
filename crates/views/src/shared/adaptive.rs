@@ -98,19 +98,6 @@ fn dress(ui: &Ui, fullscreen: bool) -> (Look, ThemeOverrides) {
     )
 }
 
-/// The theme fullscreen wears over the ambient background for a cover's `palette`, for a
-/// preview that has to look like fullscreen while the app wears the chosen theme.
-pub(crate) fn stage(ui: &Ui, palette: CoverPalette) -> Theme {
-    let settings = &ui.store.settings;
-    let look = Look {
-        kind: ThemeKind::Dark,
-        tint: palette.primary,
-        tint_secondary: palette.secondary,
-        ..settings.look()
-    };
-    Theme::for_look(look, &stripped(settings.theme_overrides()))
-}
-
 /// The overrides with every colour taken out, leaving the radius and font size.
 fn stripped(overrides: ThemeOverrides) -> ThemeOverrides {
     ThemeOverrides {

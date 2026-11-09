@@ -933,9 +933,9 @@ impl AppSettings {
     /// it does. Does nothing while the file is fine.
     pub fn report_broken(&self, cx: &mut Cx) {
         if let Some(line) = self.broken {
-            cx.emit(Event::Toast(
+            cx.emit(Event::Toast(Box::new(
                 Toast::new(Outcome::Failed, "toast-settings-broken").name(line.to_string()),
-            ));
+            )));
         }
     }
 
@@ -1490,9 +1490,9 @@ impl AppSettings {
         let directory = themes_path(&self.path);
         if let Err(error) = themes::remove(&family, &directory) {
             log::warn!("settings: cannot delete theme {id}: {error:#}");
-            cx.emit(Event::Toast(
+            cx.emit(Event::Toast(Box::new(
                 Toast::new(Outcome::Failed, "toast-theme-delete-failed").name(family.name),
-            ));
+            )));
             return false;
         }
         log::info!("settings: deleted theme {id}");
@@ -2368,9 +2368,9 @@ impl AppSettings {
         if std::mem::replace(&mut self.failing, true) {
             return;
         }
-        cx.emit(Event::Toast(
+        cx.emit(Event::Toast(Box::new(
             Toast::new(Outcome::Failed, "toast-settings-save-failed").detail(error),
-        ));
+        )));
     }
 
     /// Writes `settings.json` now, or logs why it cannot. A save skipped because another
@@ -2411,10 +2411,10 @@ impl AppSettings {
                 .as_deref()
                 .is_some_and(|current| overrides(current, &bytes))
             {
-                cx.emit(Event::Toast(Toast::new(
+                cx.emit(Event::Toast(Box::new(Toast::new(
                     Outcome::Warning,
                     "toast-settings-overwritten",
-                )));
+                ))));
             }
             return SettingsSave::Complete;
         }

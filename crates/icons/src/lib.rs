@@ -122,11 +122,7 @@ mod tests {
         for pack in super::packs() {
             assert!(pack.icon("pin").is_some(), "{} borrows its pin", pack.id);
             let path = super::shown(pack, "icons/pin.svg");
-            assert!(
-                super::asset(path).is_some(),
-                "pin missing from {}",
-                pack.id
-            );
+            assert!(super::asset(path).is_some(), "pin missing from {}", pack.id);
         }
     }
 }

@@ -1,17 +1,17 @@
 //! The pages the workspace shows, one module each.
 
-pub(crate) mod home;
-pub(crate) mod library;
-pub(crate) mod search;
-pub(crate) mod detail;
 pub(crate) mod artist;
-pub(crate) mod song;
-pub(crate) mod user;
+pub(crate) mod detail;
+pub(crate) mod equalizer;
 pub(crate) mod genre;
 pub(crate) mod history;
-pub(crate) mod settings;
-pub(crate) mod equalizer;
+pub(crate) mod home;
+pub(crate) mod library;
 pub(crate) mod login;
+pub(crate) mod search;
+pub(crate) mod settings;
+pub(crate) mod song;
+pub(crate) mod user;
 
 use router::Destination;
 

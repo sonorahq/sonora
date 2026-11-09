@@ -806,7 +806,7 @@ impl Queue {
         self.changed(cx);
         let snapshot = Arc::new(Mutex::new(Some(removed)));
         let toast = undo_toast(Toast::new(Outcome::Plain, "toast-queue-cleared"), snapshot);
-        cx.emit(Event::Toast(toast));
+        cx.emit(Event::Toast(Box::new(toast)));
     }
 
     pub fn reordered(&self) -> bool {

@@ -174,9 +174,9 @@ impl Outputs {
         if taken != self.hold_failure {
             if let Some(error) = taken.clone() {
                 log::warn!("playback: cannot play directly on the device: {error}");
-                cx.emit(Event::Toast(
+                cx.emit(Event::Toast(Box::new(
                     Toast::new(Outcome::Failed, "toast-output-direct-failed").detail(error),
-                ));
+                )));
             }
             self.hold_failure = taken;
         }
@@ -184,9 +184,9 @@ impl Outputs {
         if rate != self.rate_failure {
             if let Some(error) = rate.clone() {
                 log::warn!("playback: cannot switch the sample rate: {error}");
-                cx.emit(Event::Toast(
+                cx.emit(Event::Toast(Box::new(
                     Toast::new(Outcome::Failed, "toast-output-rate-failed").detail(error),
-                ));
+                )));
             }
             self.rate_failure = rate;
         }
@@ -375,9 +375,9 @@ impl Outputs {
     fn toast_rejected(&self, id: Option<&str>, error: &anyhow::Error, cx: &mut Cx) {
         let error = format!("{error:#}");
         let Some(id) = id else {
-            cx.emit(Event::Toast(
+            cx.emit(Event::Toast(Box::new(
                 Toast::new(Outcome::Failed, "toast-output-default-failed").detail(error),
-            ));
+            )));
             return;
         };
         let name = self
@@ -386,11 +386,11 @@ impl Outputs {
             .find(|device| device.id == id)
             .map_or(id, |device| device.name.as_str())
             .to_owned();
-        cx.emit(Event::Toast(
+        cx.emit(Event::Toast(Box::new(
             Toast::new(Outcome::Failed, "toast-output-select-failed")
                 .name(name)
                 .detail(error),
-        ));
+        )));
     }
 
     fn save(&self, id: Option<String>, settings: &mut AppSettings, cx: &mut Cx) {
