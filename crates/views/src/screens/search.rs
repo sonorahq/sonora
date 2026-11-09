@@ -80,6 +80,7 @@ impl HitMenu {
 #[derive(Clone)]
 enum Offer {
     Past(String),
+    Search(String),
     Link(String),
     Hit(Box<Hit>),
 }
@@ -89,6 +90,7 @@ impl Offer {
     fn key(&self) -> String {
         match self {
             Offer::Past(query) => format!("past:{query}"),
+            Offer::Search(query) => format!("search:{query}"),
             Offer::Link(query) => format!("link:{query}"),
             Offer::Hit(hit) => match &**hit {
                 Hit::Song(track) => {
@@ -278,20 +280,27 @@ impl SearchView {
                 .collect();
         }
         let suggestions = self.suggestions.read(cx);
-        if !suggestions.has_linked_hit()
-            && Sonora::global(cx)
-                .links
-                .read(cx)
-                .recognizes(&self.typed, cx)
+        let mut offers = Vec::new();
+        if Sonora::global(cx)
+            .links
+            .read(cx)
+            .recognizes(&self.typed, cx)
         {
-            return vec![Offer::Link(self.typed.trim().to_owned())];
+            offers.push(Offer::Link(self.typed.trim().to_owned()));
+            if let Some(query) = suggestions.linked_query() {
+                offers.push(Offer::Search(query.to_owned()));
+            } else {
+                return offers;
+            }
         }
-        suggestions
-            .hits()
-            .iter()
-            .take(SUGGESTED)
-            .map(|hit| Offer::Hit(Box::new(hit.clone())))
-            .collect()
+        offers.extend(
+            suggestions
+                .hits()
+                .iter()
+                .take(SUGGESTED)
+                .map(|hit| Offer::Hit(Box::new(hit.clone()))),
+        );
+        offers
     }
 
     /// Whether the panel shows: the field has the keyboard, nothing put the panel away, and it
@@ -331,19 +340,26 @@ impl SearchView {
         cx.notify();
     }
 
-    /// Opens recognized links or runs a full search and saves it in history.
+    /// Searches by the resolved name or lets the full search load the link's metadata.
     fn run(&mut self, query: &str, cx: &mut Context<Self>) {
         let query = query.trim().to_owned();
         if query.is_empty() {
             return;
         }
-        let links = Sonora::global(cx).links.clone();
-        if links.update(cx, |links, cx| links.open(&query, cx)) {
-            self.close_panel(cx);
+        let suggestions = self.suggestions.read(cx);
+        if suggestions.query() == query
+            && let Some(name) = suggestions.linked_query().map(str::to_owned)
+        {
+            self.search_text(&name, cx);
             return;
         }
-        remember(&query, cx);
-        self.search.update(cx, |search, cx| search.ask(&query, cx));
+        self.search_text(&query, cx);
+    }
+
+    /// Runs a full search and records the submitted query in history.
+    fn search_text(&mut self, query: &str, cx: &mut Context<Self>) {
+        remember(query, cx);
+        self.search.update(cx, |search, cx| search.ask(query, cx));
         self.close_panel(cx);
     }
 
@@ -367,7 +383,14 @@ impl SearchView {
     /// it does in the results, which files what was typed in the history as a search would.
     fn take(&mut self, offer: Offer, cx: &mut Context<Self>) {
         match offer {
-            Offer::Link(query) => self.run(&query, cx),
+            Offer::Link(query) => {
+                Sonora::global(cx)
+                    .links
+                    .clone()
+                    .update(cx, |links, cx| links.open(&query, cx));
+                self.close_panel(cx);
+            }
+            Offer::Search(query) => self.search_text(&query, cx),
             Offer::Past(query) => {
                 // Set ahead of the field, so its observer does not take this for typing and
                 // open the panel again.
@@ -420,8 +443,11 @@ impl SearchView {
         let chosen = self.pick == Some(at);
         let query = match offer {
             Offer::Hit(hit) => return self.row(hit, at, at, total, true, chosen, me, cx),
-            Offer::Link(_) => {
-                let label = t!("search-open-link");
+            Offer::Link(_) | Offer::Search(_) => {
+                let label = match offer {
+                    Offer::Search(query) => t!("search-link-title", query = query.as_str()),
+                    _ => t!("search-open-link"),
+                };
                 let taken = offer.clone();
                 let take = me.clone();
                 return Card::new(SharedString::from(offer.key()), label)

@@ -193,8 +193,9 @@ impl Search {
         &self.query
     }
 
-    pub fn has_linked_hit(&self) -> bool {
-        self.linked.is_some()
+    /// The resolved item name used to search for matches to a pasted link.
+    pub fn linked_query(&self) -> Option<&str> {
+        self.linked.as_ref().map(|_| self.matching.as_str())
     }
 
     pub fn hits(&self) -> &[Hit] {
