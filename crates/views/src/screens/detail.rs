@@ -41,6 +41,9 @@ const NOTICE_GAP: f32 = 0.25;
 /// The space between the recommendation tabs, in rems.
 const TAB_GAP: f32 = 0.25;
 
+/// What the hero's heart does when pressed.
+type Press = Box<dyn Fn(&mut Ui)>;
+
 /// Which list the recommendation rail shows: releases, or artists.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum RailTab {
@@ -424,7 +427,7 @@ fn hero(
         if let Some(date) = header.release_date.as_deref() {
             strip = strip.text(release_date_label(date));
         }
-        if let Some(owner) = header.owner_name.clone() {
+        if let Some(owner) = header.owner_name.clone().filter(|owner| !owner.is_empty()) {
             strip = strip.text(owner);
         }
         if header.track_count > 0 {
@@ -544,7 +547,7 @@ fn target(ui: &Ui, detail: &Detail) -> Option<Target> {
 fn library_button(ui: &Ui, detail: &Detail) -> Option<El> {
     let library = &ui.store.library;
     let id = detail.id()?.to_owned();
-    let (saved, busy, press): (bool, bool, Box<dyn Fn(&mut Ui)>) = match detail.header()?.kind {
+    let (saved, busy, press): (bool, bool, Press) = match detail.header()?.kind {
         Collection::Album => {
             let album = detail.album()?.clone();
             let saved = library.saved_album(&id);
