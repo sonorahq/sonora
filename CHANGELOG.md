@@ -33,6 +33,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- M4A tracks on Subsonic servers start before downloading in full, including files with metadata at the end when the server supports byte ranges.
 - Opening an artist's favorite songs no longer crashes when a song appears under the pointer.
 - Back and forward buttons stay beside the sidebar toggle with enough space between them.
 - App and tray icons stay sharp at more display scales, and Linux windows show the Sonora icon without desktop integration.

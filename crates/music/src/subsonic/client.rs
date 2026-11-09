@@ -61,7 +61,7 @@ pub struct SubsonicClient {
     signed: String,
     /// The server address with no trailing slash.
     server: String,
-    http: reqwest::Client,
+    pub(super) http: reqwest::Client,
     /// The cover art endpoint with the fixed signature already on it. The library client signs
     /// every url afresh, which would give one cover a new url on every conversion and defeat
     /// every image cache between here and the screen.

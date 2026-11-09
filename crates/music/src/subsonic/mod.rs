@@ -1,6 +1,7 @@
 pub(crate) mod auth;
 mod client;
 mod lyrics;
+mod mp4;
 mod playback;
 mod wire;
 
