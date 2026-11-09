@@ -628,6 +628,7 @@ pub(crate) struct TrackTable {
     rows: TrackRows,
     width: f32,
     lead: Option<El>,
+    foot: Option<El>,
     pending: Option<Pending>,
     label: Option<String>,
     bottom: f32,
@@ -646,6 +647,7 @@ impl TrackTable {
             rows: rows.clone(),
             width: 0.,
             lead: None,
+            foot: None,
             pending: None,
             label: None,
             bottom: 0.,
@@ -666,6 +668,13 @@ impl TrackTable {
     /// An element that scrolls above the header, such as the page's hero.
     pub(crate) fn lead(mut self, lead: El) -> Self {
         self.lead = Some(lead);
+        self
+    }
+
+    /// An element that scrolls under the last row, such as an album's notices. The room set
+    /// with [`TrackTable::bottom`] goes under it.
+    pub(crate) fn foot(mut self, foot: El) -> Self {
+        self.foot = Some(foot);
         self
     }
 
@@ -734,6 +743,7 @@ impl TrackTable {
             rows,
             width,
             lead,
+            foot,
             pending,
             label,
             bottom,
@@ -821,6 +831,9 @@ impl TrackTable {
             table.populated(move |ui: &Ui, field: TrackField| populated(filled.tracks(ui), field));
         if let Some(lead) = lead {
             table = table.lead(lead);
+        }
+        if let Some(foot) = foot {
+            table = table.foot(foot);
         }
         if let Some(label) = label {
             table = table.label(label);

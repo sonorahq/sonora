@@ -244,7 +244,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
     let take = (lyrics.following().map(str::to_owned), lyrics.revision());
 
     let body = match (lines, lyrics.state()) {
-        (Some(lines), _) => sheet(ui, cx, lines, look, &take, viewport, bottom, theme),
+        (Some(lines), _) => sheet(ui, cx, lines, look, &take, viewport, bottom),
         (None, LyricsState::Ready) => match hit.map(|hit| &hit.lyrics) {
             Some(music::Lyrics::Plain { text, romanized }) => {
                 let plain = plain(text, romanized.as_ref(), look, theme);
@@ -440,8 +440,8 @@ fn sheet(
     take: &(Option<String>, u64),
     viewport: [f32; 3],
     bottom: f32,
-    theme: &Theme,
 ) -> El {
+    let theme = &ui.theme;
     let state = &ui.chrome.aside.lyrics;
     let sheet_padding = theme.metrics.pad * 0.75;
     let active_size = active_verse_size(look.verse);

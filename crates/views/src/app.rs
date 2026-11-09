@@ -172,7 +172,7 @@ impl Ui {
             Destination::Genre(id) => store.open_genre(id),
             _ => {}
         }
-        self.screens.arrived(destination);
+        self.screens.arrived(destination, &self.store.settings);
         self.settle();
     }
 
