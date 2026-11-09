@@ -80,6 +80,8 @@ impl HitMenu {
 #[derive(Clone)]
 enum Offer {
     Past(String),
+    Search(String),
+    Link(String),
     Hit(Box<Hit>),
 }
 
@@ -88,6 +90,8 @@ impl Offer {
     fn key(&self) -> String {
         match self {
             Offer::Past(query) => format!("past:{query}"),
+            Offer::Search(query) => format!("search:{query}"),
+            Offer::Link(query) => format!("link:{query}"),
             Offer::Hit(hit) => match &**hit {
                 Hit::Song(track) => {
                     format!("song:{}", track.id.as_deref().unwrap_or(&track.name))
@@ -162,14 +166,8 @@ impl SearchView {
             this.typed = query.clone();
             this.dismissed = false;
             this.pick = None;
-            let linked = Sonora::global(cx).links.read(cx).recognizes(&query, cx);
-            this.suggestions.update(cx, |suggestions, cx| {
-                let query = match linked {
-                    true => "",
-                    false => &query,
-                };
-                suggestions.ask(query, cx)
-            });
+            this.suggestions
+                .update(cx, |suggestions, cx| suggestions.ask(&query, cx));
             // An emptied field goes back to browsing rather than keeping the last results.
             if query.trim().is_empty() {
                 this.search.update(cx, |search, cx| search.ask("", cx));
@@ -281,13 +279,25 @@ impl SearchView {
                 .map(Offer::Past)
                 .collect();
         }
-        self.suggestions
-            .read(cx)
+        let suggestions = self.suggestions.read(cx);
+        if suggestions.linked_query().is_none()
+            && Sonora::global(cx)
+                .links
+                .read(cx)
+                .recognizes(&self.typed, cx)
+        {
+            return vec![Offer::Link(self.typed.trim().to_owned())];
+        }
+        let mut offers: Vec<_> = suggestions
             .hits()
             .iter()
             .take(SUGGESTED)
             .map(|hit| Offer::Hit(Box::new(hit.clone())))
-            .collect()
+            .collect();
+        if let Some(query) = suggestions.linked_query() {
+            offers.insert(1.min(offers.len()), Offer::Search(query.to_owned()));
+        }
+        offers
     }
 
     /// Whether the panel shows: the field has the keyboard, nothing put the panel away, and it
@@ -363,7 +373,8 @@ impl SearchView {
     /// it does in the results, which files what was typed in the history as a search would.
     fn take(&mut self, offer: Offer, cx: &mut Context<Self>) {
         match offer {
-            Offer::Past(query) => {
+            Offer::Link(query) => self.run(&query, cx),
+            Offer::Past(query) | Offer::Search(query) => {
                 // Set ahead of the field, so its observer does not take this for typing and
                 // open the panel again.
                 self.typed = query.clone();
@@ -415,6 +426,27 @@ impl SearchView {
         let chosen = self.pick == Some(at);
         let query = match offer {
             Offer::Hit(hit) => return self.row(hit, at, at, total, true, chosen, me, cx),
+            Offer::Search(query) | Offer::Link(query) => {
+                let label = match offer {
+                    Offer::Search(_) => t!("search-link-title", query = query.as_str()),
+                    _ => t!("search-open-link"),
+                };
+                let taken = offer.clone();
+                let take = me.clone();
+                return Card::new(SharedString::from(offer.key()), label)
+                    .tucked()
+                    .fallback("icons/search.svg")
+                    .press(move |_, _, cx| {
+                        cx.stop_propagation();
+                        take.update(cx, |this, cx| this.take(taken.clone(), cx))
+                            .ok();
+                    })
+                    .chosen(chosen)
+                    .aria_position_in_set(at + 1)
+                    .aria_size_of_set(total)
+                    .when(chosen, |card| card.aria_active_descendant())
+                    .into_any_element();
+            }
             Offer::Past(query) => query,
         };
         let theme = *cx.theme();
