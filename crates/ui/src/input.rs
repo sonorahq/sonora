@@ -261,7 +261,7 @@ impl<S: 'static> Input<S> {
         }
         frame = match self.tucked {
             true => frame.w_full(),
-            false => frame.grow(1.).border(
+            false => frame.w_full().shrink().border(
                 BORDER,
                 match self.invalid {
                     true => theme.danger.color(),

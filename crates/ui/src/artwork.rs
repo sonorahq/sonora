@@ -93,6 +93,8 @@ pub struct Art {
     pub failed: Live<f32>,
 }
 
+/// What every clone of an [`Artwork`] shares: the cache, the app's fetch and spawn, and the
+/// decoder queue.
 struct Shared {
     inner: Mutex<Inner>,
     fetch: Fetch,
@@ -105,6 +107,7 @@ struct Shared {
     news: AtomicBool,
 }
 
+/// The cache proper, behind the service's lock.
 #[derive(Default)]
 struct Inner {
     entries: HashMap<Key, Entry>,
@@ -119,12 +122,15 @@ struct Inner {
     budget: Option<(usize, usize)>,
 }
 
+/// One cover at one decode edge: what elements bind, how far its load got, and when a view last
+/// asked for it.
 struct Entry {
     art: Art,
     load: Load,
     used: Instant,
 }
 
+/// How far a cover's load got. `Ready` holds its decoded bytes.
 #[derive(Clone, Copy, PartialEq)]
 enum Load {
     Queued,
@@ -339,11 +345,19 @@ impl Artwork {
             }
             drop(inner);
 
-            let read = self.read(&key.0);
-            let shared = self.0.clone();
+            let artwork = self.clone();
+            // A local file is read on a decoder thread, so no runtime thread blocks on the disk.
+            if let Some(path) = key.0.strip_prefix(FILE_PREFIX) {
+                let path = path.to_owned();
+                self.0.decode(Box::new(move || {
+                    let bytes = std::fs::read(&path).map_err(anyhow::Error::from);
+                    artwork.fetched(key, prefetch, bytes);
+                }));
+                continue;
+            }
+            let read = (self.0.fetch)(key.0.clone());
             (self.0.spawn)(Box::pin(async move {
                 let bytes = read.await;
-                let artwork = Artwork(shared);
                 artwork.fetched(key, prefetch, bytes);
             }));
         }

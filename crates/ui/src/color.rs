@@ -82,8 +82,7 @@ impl Hsla {
         if alpha <= 0. {
             return transparent();
         }
-        let channel =
-            |a: f32, b: f32| (b * above.a + a * below.a * (1. - above.a)) / alpha;
+        let channel = |a: f32, b: f32| (b * above.a + a * below.a * (1. - above.a)) / alpha;
         Hsla::from(Rgba {
             r: channel(below.r, above.r),
             g: channel(below.g, above.g),
@@ -127,7 +126,12 @@ impl From<Hsla> for Rgba {
     fn from(color: Hsla) -> Self {
         let Hsla { h, s, l, a } = color;
         if s == 0. {
-            return Rgba { r: l, g: l, b: l, a };
+            return Rgba {
+                r: l,
+                g: l,
+                b: l,
+                a,
+            };
         }
         let q = match l < 0.5 {
             true => l * (1. + s),

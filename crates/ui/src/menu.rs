@@ -637,27 +637,18 @@ fn menu_row<S: 'static>(
     };
     let style = TextStyle::new(theme.text(Text::Body), Weight::NORMAL);
     let detailed = detail.is_some();
-    let mut words = col()
-        .grow(1.)
-        .shrink()
-        .min_w(0.)
-        .gap(rems(theme, 0.25))
-        .child(
-            text(label.clone())
-                .font(style)
-                .color(ink.color())
-                .truncate()
-                .a11y_hidden(),
-        );
+    // No grow: a grown row measures nothing, and the panel sizes itself to its widest row.
+    let mut words = col().shrink().min_w(0.).gap(rems(theme, 0.25)).child(
+        text(label.clone())
+            .font(style)
+            .color(ink.color())
+            .truncate()
+            .a11y_hidden(),
+    );
     if let Some(detail) = detail {
         words = words.child(detail);
     }
-    let mut lead = row()
-        .grow(1.)
-        .shrink()
-        .min_w(0.)
-        .center_y()
-        .gap(rems(theme, 0.5));
+    let mut lead = row().shrink().min_w(0.).center_y().gap(rems(theme, 0.5));
     if let Some(leading) = leading {
         lead = lead.child(leading);
     } else if let Some(path) = glyph {

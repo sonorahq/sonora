@@ -172,6 +172,7 @@ pub struct SortAxis {
 pub struct RangeScrubber<S: 'static> {
     key: String,
     value: (f32, f32),
+    width: f32,
     stops: Rc<[f32]>,
     colors: Option<(Hsla, Hsla, Hsla)>,
     name: Option<String>,
@@ -180,12 +181,14 @@ pub struct RangeScrubber<S: 'static> {
 }
 
 impl<S: 'static> RangeScrubber<S> {
-    /// `value` is the low and high handle as shares of the scrubber.
-    pub fn new(key: impl Into<String>, value: (f32, f32)) -> Self {
+    /// `value` is the low and high handle as shares of the scrubber, which is `width` points
+    /// wide: a held handle follows the pointer by it.
+    pub fn new(key: impl Into<String>, value: (f32, f32), width: f32) -> Self {
         let low = value.0.clamp(0., 1.);
         Self {
             key: key.into(),
             value: (low, value.1.clamp(0., 1.).max(low)),
+            width: width.max(0.),
             stops: Rc::from(Vec::new()),
             colors: None,
             name: None,
@@ -230,6 +233,7 @@ impl<S: 'static> RangeScrubber<S> {
         let Self {
             key,
             value,
+            width,
             stops,
             colors,
             name,
@@ -240,6 +244,7 @@ impl<S: 'static> RangeScrubber<S> {
         let line = (pad * TRACK).round();
         let pin = (pad * THUMB).round();
         let reach = (pad * HIT).round();
+        let travel = (width - pin * 2.).max(f32::EPSILON);
         let (filled, empty, thumb) =
             colors.unwrap_or((theme.primary, theme.secondary, theme.foreground));
         let (low, high) = value;
@@ -267,11 +272,29 @@ impl<S: 'static> RangeScrubber<S> {
                 knob = knob.a11y_value(spoken);
             }
             if let Some(on_change) = on_change.clone() {
+                let stepping = stops.clone();
+                let stepped_change = on_change.clone();
                 let stops = stops.clone();
-                knob = knob.on_step(move |s: &mut S, delta: i32, tx: &mut Tx| {
-                    let share = stepped(share, &stops, delta > 0);
-                    on_change(s, toward((low, high), which, share), tx);
-                });
+                // A handle takes its own presses, so it follows the pointer from where it stood
+                // at the press rather than jumping to the pointer's centre.
+                knob = knob
+                    .cursor(Cursor::Grab)
+                    .on_step(move |s: &mut S, delta: i32, tx: &mut Tx| {
+                        let share = stepped(share, &stepping, delta > 0);
+                        stepped_change(s, toward((low, high), which, share), tx);
+                    })
+                    .on_drag(move |s: &mut S, drag: &mut Drag, tx: &mut Tx| {
+                        if drag.phase == Phase::Down {
+                            drag.data = share;
+                            return;
+                        }
+                        if drag.cancelled() {
+                            on_change(s, (low, high), tx);
+                            return;
+                        }
+                        let share = snap((drag.data + drag.dx / travel).clamp(0., 1.), &stops);
+                        on_change(s, toward((low, high), which, share), tx);
+                    });
             }
             knob
         };
@@ -290,7 +313,7 @@ impl<S: 'static> RangeScrubber<S> {
 
         // The group names the pair; the surface under it takes the pointer, and stays out of
         // the tree so it is not read as a nameless button.
-        let mut scrubber = rune::col().key(key.clone()).role("group").w_full();
+        let mut scrubber = rune::col().key(key.clone()).role("group").w(width);
         if let Some(name) = name {
             scrubber = scrubber.label(name);
         }
@@ -306,7 +329,6 @@ impl<S: 'static> RangeScrubber<S> {
         };
         scrubber.child(
             surface.on_drag(move |s: &mut S, drag: &mut Drag, tx: &mut Tx| {
-                let travel = (drag.w - pin * 2.).max(f32::EPSILON);
                 let low_at = |x: f32| ((x - pin / 2.) / travel).clamp(0., 1.);
                 let high_at = |x: f32| ((x - pin * 1.5) / travel).clamp(0., 1.);
                 if drag.phase == Phase::Down {

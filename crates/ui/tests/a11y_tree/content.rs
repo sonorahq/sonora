@@ -110,7 +110,7 @@ struct Range {
 
 fn range(s: &Range, _: &mut Cx<Range>) -> El {
     col().w(300.).child(
-        RangeScrubber::new("years", s.value)
+        RangeScrubber::new("years", s.value, 300.)
             .name("Year")
             .values("1990", "2020")
             .on_change(|s: &mut Range, value, _| s.value = value)

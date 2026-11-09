@@ -64,8 +64,8 @@ pub use artwork::{Art, Artwork, Avatar, Cover, Fetch, PREFETCH_REACH, Spawn, ava
 pub use button::{Button, SMALL_INSET};
 pub use card::Card;
 pub use checkbox::Checkbox;
-pub use controls::{TrafficLightControls, WindowControls};
 pub use color::{Hsla, Rgba, black, hsla, mix, rgb, rgba, transparent, white};
+pub use controls::{TrafficLightControls, WindowControls};
 pub use deck::Deck;
 pub use drag::{Carry, Edge, Ghost, drop_gap, drop_into, drop_marker, grip};
 pub use dropdown::Dropdown;
@@ -84,7 +84,7 @@ pub use label::{
 };
 pub use layout::{ALWAYS, MIN_CONTENT, ROOMY, Room, SNUG, VAST, WIDE};
 pub use level_meter::LevelMeter;
-pub use menu::{MenuItem, Menu, MenuSearch, TRIGGER_GAP};
+pub use menu::{Menu, MenuItem, MenuSearch, TRIGGER_GAP};
 pub use metrics::{LEADING, Metrics, Rounding, Text, tucked};
 pub use modal::{Modal, corners};
 pub use motion::{Motion, PRESS_SCALE, PRESS_SCALE_CARD, Pace, Saver, Springs, Stillness};
@@ -104,7 +104,9 @@ pub use response_graph::{
     GraphEdit, ResponseAxes, ResponseGraph, ResponseGraphState, ResponseNode, ResponsePoint,
 };
 pub use response_sketch::ResponseSketch;
-pub use scroller::{ScrollMemory, ScrollWatch, Shelf, perch_room, perched, return_reach, return_top};
+pub use scroller::{
+    ScrollMemory, ScrollWatch, Shelf, perch_room, perched, return_reach, return_top,
+};
 pub use scrubber::{Scrubber, ScrubberState};
 pub use separator::Separator;
 pub use shield::shield;
@@ -117,9 +119,8 @@ pub use table::{
 };
 pub use tabs::{TabBar, Tabs};
 pub use theme::{
-    BACKDROP_TRANSPARENCY, Backdrop, CoverFill, Look, MAX_FONT, MAX_LYRICS_SCALE,
-    MAX_TRANSPARENCY, MIN_FONT, MIN_LYRICS_SCALE, Theme, ThemeKind, ThemeOverrides, WINDOW_BLUR,
-    backdrop,
+    BACKDROP_TRANSPARENCY, Backdrop, CoverFill, Look, MAX_FONT, MAX_LYRICS_SCALE, MAX_TRANSPARENCY,
+    MIN_FONT, MIN_LYRICS_SCALE, Theme, ThemeKind, ThemeOverrides, WINDOW_BLUR, backdrop,
 };
 pub use time::{TABULAR, clock, runtime};
 pub use toast::Toast;
