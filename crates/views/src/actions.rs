@@ -12,7 +12,7 @@ pub(crate) fn run(ui: &mut Ui, action: Action, tx: &mut Tx) {
             ui.store.outputs.on_quit();
             tx.quit();
         }
-        Action::Refresh => crate::shells::workspace::refresh(ui),
+        Action::Refresh => crate::chrome::title_bar::refresh(ui),
         Action::TogglePlayback => ui.store.toggle_play(),
         Action::SongPrevious => ui.store.previous_track(),
         Action::SongNext => ui.store.next_track(),

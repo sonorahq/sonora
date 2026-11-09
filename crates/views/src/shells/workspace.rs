@@ -131,7 +131,8 @@ pub(crate) fn refresh(ui: &mut Ui) {
 
 /// Opens the shown page's filter field, for pages that have one.
 pub(crate) fn open_filter(ui: &mut Ui, tx: &mut Tx) {
-    let _ = (ui, tx);
+    let _ = tx;
+    crate::chrome::toolbar::focus(ui);
 }
 
 /// Closes whatever is open on top of the page: a menu, a popover, a dialog.
