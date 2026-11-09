@@ -126,8 +126,9 @@ impl CardGrid {
                 move |ui: &Ui, at: usize| Cow::Owned(format!("row-{}", named(ui, at * columns))),
                 move |ui: &Ui, at: usize| {
                     let first = at * columns;
-                    let cards = (first..(first + columns).min(count))
-                        .map(|index| card(ui, index, layout.card).position_in_set(index + 1, count));
+                    let cards = (first..(first + columns).min(count)).map(|index| {
+                        card(ui, index, layout.card).position_in_set(index + 1, count)
+                    });
                     let line = card_row(layout, cards);
                     match at + 1 < rows {
                         true => col().w_full().pb(row_gap).child(line),
@@ -160,7 +161,9 @@ pub(crate) fn album_grid(
         },
         move |ui: &Ui, at: usize, width: f32| {
             let Some(album) = albums(ui).get(at) else {
-                return Card::skeleton(format!("{tag}-{at}")).tile(width).build(&ui.theme);
+                return Card::skeleton(format!("{tag}-{at}"))
+                    .tile(width)
+                    .build(&ui.theme);
             };
             cards::album_card(
                 ui,

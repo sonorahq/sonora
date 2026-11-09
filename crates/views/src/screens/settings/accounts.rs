@@ -7,16 +7,14 @@ use std::path::PathBuf;
 use i18n::t;
 use music::{AccountChoice, SignIn, SignInPrompt};
 use router::{Destination, SettingsPage};
-use rune::{
-    Cursor, Cx, El, FileDialogOptions, FileDialogResult, GrowthSpec, TextEdit, Transition, Tx, col,
-    el, icon, row, text,
-};
-use state::{Failure, Outcome, SessionState, Toasts};
+use rune::{Cursor, Cx, El, GrowthSpec, TextEdit, Transition, Tx, col, el, icon, row, text};
+use state::{Failure, SessionState};
 use ui::{Button, Initials, Modal, Radio, Skeleton, Text, Theme, Weight, font};
 
-use super::{Layout, Row, drill, group, whole};
+use super::{Layout, drill, group, whole};
 use crate::shared::device_code::device_code;
 use crate::shared::popups::{CookiePrompt, account_picker, cookie_hint};
+use crate::shared::trouble::short;
 use crate::{Ui, act, act_tx};
 
 /// The icon beside a provider's sign-in error.
@@ -125,7 +123,12 @@ pub(super) fn view(ui: &Ui, _cx: &mut Cx<Ui>, layer: &mut Vec<El>, _layout: &Lay
 
 /// The music folders page: one row per watched folder with its remove button, then the row
 /// that adds a folder or scans them all again, with how the last scan went.
-pub(super) fn folders(ui: &Ui, _cx: &mut Cx<Ui>, _layer: &mut Vec<El>, _layout: &Layout) -> Vec<El> {
+pub(super) fn folders(
+    ui: &Ui,
+    _cx: &mut Cx<Ui>,
+    _layer: &mut Vec<El>,
+    _layout: &Layout,
+) -> Vec<El> {
     let theme = &ui.theme;
     let paths = ui.store.session.local_paths();
     let scan = &ui.store.scan;
@@ -149,7 +152,7 @@ pub(super) fn folders(ui: &Ui, _cx: &mut Cx<Ui>, _layer: &mut Vec<El>, _layout: 
         .icon("icons/folder-plus.svg")
         .small()
         .primary()
-        .on_press_tx(|_: &mut Ui, tx: &mut Tx| choose_folder(tx))
+        .on_press_tx(|_: &mut Ui, tx: &mut Tx| crate::shared::local::choose_folder(tx))
         .build(theme);
     let rescan = (!paths.is_empty()).then(|| {
         Button::new("rescan-local-folder")
@@ -168,10 +171,14 @@ pub(super) fn folders(ui: &Ui, _cx: &mut Cx<Ui>, _layer: &mut Vec<El>, _layout: 
 
     let count = paths.len();
     let list = match count {
-        0 => ui::spoken("local-folders-empty", t!("settings-local-folder-none"), theme)
-            .color(theme.muted_foreground.color())
-            .h(theme.metrics.list_row)
-            .transition(Transition::opacity()),
+        0 => ui::spoken(
+            "local-folders-empty",
+            t!("settings-local-folder-none"),
+            theme,
+        )
+        .color(theme.muted_foreground.color())
+        .h(theme.metrics.list_row)
+        .transition(Transition::opacity()),
         _ => col()
             .key("local-folders")
             .role("list")
@@ -210,7 +217,11 @@ pub(super) fn folders(ui: &Ui, _cx: &mut Cx<Ui>, _layer: &mut Vec<El>, _layout: 
         theme,
         None,
         None,
-        [col().key("settings-row-folders").w_full().child(list).child(actions)],
+        [col()
+            .key("settings-row-folders")
+            .w_full()
+            .child(list)
+            .child(actions)],
     )]
 }
 
@@ -246,31 +257,14 @@ fn folder_item(theme: &Theme, index: usize, count: usize, path: String) -> El {
                 .small()
                 .tooltip(t!("settings-remove-folder"))
                 .tint(theme.muted_foreground)
-                .on_press(act(move |ui: &mut Ui| ui.store.remove_local_folder(&removed)))
+                .on_press(act(move |ui: &mut Ui| {
+                    ui.store.remove_local_folder(&removed)
+                }))
                 .build(theme)
                 .w(theme.metrics.control)
                 .px(0.)
                 .justify_center(),
         )
-}
-
-/// Asks for folders to watch in the system's folder dialog and adds the one picked.
-fn choose_folder(tx: &mut Tx) {
-    let options = FileDialogOptions {
-        title: t!("settings-choose-folder").into_owned(),
-        ..Default::default()
-    };
-    tx.open_folder(options, |ui: &mut Ui, result: FileDialogResult, _: &mut Tx| {
-        match result {
-            Ok(Some(path)) => ui.store.add_local_folder(path),
-            Ok(None) => {}
-            Err(error) => {
-                log::warn!("settings: cannot open the folder dialog: {error}");
-                Toasts::show(Outcome::Failed, "toast-file-dialog-failed", &mut ui.store.cx);
-            }
-        }
-        ui.settle();
-    });
 }
 
 /// The signed-in profile above the services: the picture, the name, and the provider and
@@ -644,10 +638,7 @@ fn provider_row(theme: &Theme, row_: ProviderRow) -> El {
     .a11y_hidden();
     let trailing = match offer {
         Offer::Choice { leave } => {
-            let mut slot = row()
-                .key("leave")
-                .w(theme.metrics.control_small)
-                .center();
+            let mut slot = row().key("leave").w(theme.metrics.control_small).center();
             if !active {
                 slot = slot.group_opacity(0., 1.);
             }
@@ -655,7 +646,11 @@ fn provider_row(theme: &Theme, row_: ProviderRow) -> El {
                 .center_y()
                 .gap(theme.font_size * 0.5)
                 .child(slot.children(leave))
-                .child(Radio::new(format!("{key}-radio"), active).silent().build(theme))
+                .child(
+                    Radio::new(format!("{key}-radio"), active)
+                        .silent()
+                        .build(theme),
+                )
         }
         Offer::SignIn => row().child(
             text(hint.clone().unwrap_or_default())
@@ -735,7 +730,12 @@ fn provider_row(theme: &Theme, row_: ProviderRow) -> El {
                         .grow(1.)
                         .shrink()
                         .min_w(0.)
-                        .child(account_error(theme, &error)),
+                        .child(match error.problem {
+                            Some(music::SignInProblem::Subscription) => {
+                                crate::shared::trouble::trouble(error, false, theme)
+                            }
+                            _ => account_error(theme, &error),
+                        }),
                 ),
         );
     }
@@ -855,7 +855,9 @@ fn start_manual(ui: &mut Ui, slug: &'static str, provider: &'static str) {
     let state = st(ui);
     state.manual_secret = Some((slug, provider));
     state.secret.focused = true;
-    ui.store.session.sign_in_with_cookies(slug, &mut ui.store.cx);
+    ui.store
+        .session
+        .sign_in_with_cookies(slug, &mut ui.store.cx);
 }
 
 fn clear_secret(ui: &mut Ui) {
@@ -998,7 +1000,10 @@ fn method_button(
     pending: bool,
 ) -> El {
     let (key, label) = match &method {
-        SignIn::Default => (format!("connect-{slug}"), t!("login-sign-in", provider = provider)),
+        SignIn::Default => (
+            format!("connect-{slug}"),
+            t!("login-sign-in", provider = provider),
+        ),
         SignIn::Anonymous => (format!("connect-{slug}-guest"), t!("login-guest-use")),
         SignIn::Secret => (
             format!("connect-{slug}-cookies"),
@@ -1043,9 +1048,12 @@ fn credentials_prompt(ui: &Ui, layer: &mut Vec<El>) {
         .width(SERVER_WIDTH)
         .detail(t!("login-server-detail"))
         .child(
-            field("settings-server", &state.server, "login-server-hint", |ui| {
-                &mut st(ui).server
-            })
+            field(
+                "settings-server",
+                &state.server,
+                "login-server-hint",
+                |ui| &mut st(ui).server,
+            )
             .build(theme),
         )
         .child(
@@ -1164,54 +1172,3 @@ const YOUTUBE: u32 = 0xff0033;
 const DEEZER: u32 = 0xa238ff;
 const APPLE: u32 = 0xfa2d48;
 const SUBSONIC: u32 = 0xffa31a;
-
-/// A sign-in failure's message alone, for a line with room for one. Kept here until
-/// `shared::trouble` carries the one every screen uses.
-fn short(failure: &Failure) -> String {
-    match failure.problem {
-        Some(problem) => i18n::lookup(reason(problem), None).into_owned(),
-        None => sentence(&failure.summary, failure.detail.as_deref()),
-    }
-}
-
-/// The Fluent key saying what went wrong for a known sign-in problem.
-fn reason(problem: music::SignInProblem) -> &'static str {
-    use music::SignInProblem as P;
-    match problem {
-        P::Premium => "login-problem-premium",
-        P::Subscription => "login-problem-subscription",
-        P::Region => "login-problem-region",
-        P::Credentials => "login-problem-credentials",
-        P::Network => "login-problem-network",
-        P::Cancelled => "login-problem-cancelled",
-        P::Refused => "login-problem-refused",
-    }
-}
-
-fn sentence(summary: &str, detail: Option<&str>) -> String {
-    let summary = summary.trim_end_matches('.');
-    match detail.map(unwrapped_reason) {
-        Some(reason) => format!("{summary}: {reason}"),
-        None => format!("{summary}."),
-    }
-}
-
-fn unwrapped_reason(text: &str) -> String {
-    let inner = text
-        .split_once('{')
-        .and_then(|(_, rest)| rest.rsplit_once('}'))
-        .map(|(inner, _)| inner)
-        .unwrap_or(text)
-        .trim();
-    let reason = inner
-        .split_once("with reason:")
-        .map(|(_, reason)| reason)
-        .unwrap_or(inner)
-        .trim()
-        .trim_end_matches('.');
-    let mut letters = reason.chars();
-    match letters.next() {
-        Some(first) => format!("{}{}.", first.to_lowercase(), letters.as_str()),
-        None => String::new(),
-    }
-}

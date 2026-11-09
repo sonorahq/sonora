@@ -1,9 +1,17 @@
 //! The window's chrome: the title bar, both sidebars, the player bar and the toast stack.
 
 pub(crate) mod aside;
+pub(crate) mod downloads;
+pub(crate) mod jam;
+pub(crate) mod members;
+pub(crate) mod notice;
+pub(crate) mod output_picker;
 pub(crate) mod player_bar;
+pub(crate) mod session;
+pub(crate) mod sessions_button;
 pub(crate) mod sidebar_left;
 pub(crate) mod sidebar_right;
+pub(crate) mod theme_invite;
 pub(crate) mod title_bar;
 pub(crate) mod toasts;
 pub(crate) mod toolbar;
@@ -34,6 +42,12 @@ pub struct ChromeState {
     /// The shown page's search field in the title bar.
     pub toolbar: toolbar::State,
     pub player_bar: player_bar::State,
+    pub toasts: toasts::State,
+    pub sessions: sessions_button::State,
+    pub output_picker: output_picker::State,
+    /// The Jam's and the Sonora Session's dialogs.
+    pub jam: jam::State,
+    pub session: session::State,
     pub aside: sidebar_right::State,
 }
 
@@ -51,6 +65,11 @@ impl ChromeState {
             title_bar: title_bar::State::default(),
             toolbar: toolbar::State::default(),
             player_bar: player_bar::State::default(),
+            toasts: toasts::State::default(),
+            sessions: sessions_button::State::default(),
+            output_picker: output_picker::State::default(),
+            jam: jam::State::default(),
+            session: session::State::default(),
             aside: sidebar_right::State::default(),
         }
     }

@@ -1,16 +1,23 @@
 //! The settings page: one tab of sections at a time under the floating header, or the settings
 //! that answer a search, each opening its page and scrolling to its row.
 
+mod about;
+mod accounts;
 mod appearance;
 mod connect;
 mod discord;
 mod general;
 mod header;
 mod layout;
+mod lyrics;
 mod now_playing;
+mod playback;
 mod player_bar;
+mod preview;
 mod rows;
+mod scrobbling;
 mod sessions;
+mod sound;
 mod storage;
 mod themes;
 
@@ -61,8 +68,8 @@ pub struct State {
     pub theme_variants: Option<String>,
     /// The user's theme family waiting for the user to confirm its deletion.
     pub deleting_theme: Option<String>,
-    /// The cache of played tracks and the downloads: the slider, the limit a drag points at
-    /// until it lets go, the confirmation before every download goes, and the measuring.
+    /// The cache of played tracks: the slider, the limit a drag points at until it lets go, and
+    /// the measuring of what the cache and the downloads take.
     pub storage: storage::State,
     /// The field for the custom name Sonora goes by in Spotify's device list.
     pub connect_name: connect::State,
@@ -70,6 +77,13 @@ pub struct State {
     pub sessions_server: sessions::State,
     /// The still spectra the visualizer cards draw.
     pub visualizers: now_playing::State,
+    /// What the pages the other settings files draw keep between frames.
+    pub accounts: accounts::State,
+    pub playback: playback::State,
+    pub scrobbling: scrobbling::State,
+    pub lyrics: lyrics::State,
+    /// What the previews keep running or picked while settings are open.
+    pub previews: preview::Previews,
 }
 
 impl State {
@@ -619,7 +633,6 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
         }
     });
     themes::delete_modal(ui, layer);
-    storage::confirm_modal(ui, layer);
     frame(ui, cx, layer, &destination, named, scroll, body)
 }
 
@@ -673,14 +686,19 @@ fn content(
         SettingsPage::NowPlaying => now_playing::view(ui, cx, layer, layout),
         SettingsPage::Storage => storage::view(ui, cx, layer),
         SettingsPage::Discord => discord::view(ui, cx, layer),
-        SettingsPage::Providers
-        | SettingsPage::MusicFolders
-        | SettingsPage::Lyrics
-        | SettingsPage::LyricsSources
-        | SettingsPage::Playback
-        | SettingsPage::Sound
-        | SettingsPage::Scrobbling
-        | SettingsPage::About => Vec::new(),
+        SettingsPage::Providers => accounts::view(ui, cx, layer, layout),
+        SettingsPage::MusicFolders => accounts::folders(ui, cx, layer, layout),
+        SettingsPage::Playback => {
+            let mut groups = playback::view(ui, cx, layer, layout);
+            groups.push(sessions::view(ui, cx, layer));
+            groups.extend(connect::view(ui, cx, layer));
+            groups
+        }
+        SettingsPage::Scrobbling => scrobbling::view(ui, cx, layer, layout),
+        SettingsPage::Lyrics => lyrics::view(ui, cx, layer, layout),
+        SettingsPage::LyricsSources => lyrics::sources(ui, cx, layer, layout),
+        SettingsPage::Sound => sound::view(ui, cx, layer, layout),
+        SettingsPage::About => about::view(ui, cx, layer, layout),
     }
 }
 
@@ -719,26 +737,78 @@ fn shown(ui: &Ui, slug: &str) -> bool {
 /// Every setting that answers the query, best match first, with its title. Ties keep the order
 /// of the pages. The query may span the title and the detail, and a hit in the title alone
 /// counts on top.
-fn found(ui: &Ui, query: &str) -> Vec<(&'static Entry, String)> {
-    let mut hits: Vec<(u32, usize, &'static Entry, String)> = ENTRIES
-        .iter()
+fn found(ui: &Ui, query: &str) -> Vec<Hit> {
+    let mut hits: Vec<(u32, usize, Hit)> = settings(ui)
+        .into_iter()
         .enumerate()
-        .filter(|(_, entry)| shown(ui, entry.slug))
-        .filter_map(|(order, entry)| {
-            let title = i18n::lookup(entry.title, None).into_owned();
-            let detail = match entry.detail.is_empty() {
-                true => String::new(),
-                false => i18n::lookup(entry.detail, None).into_owned(),
-            };
-            let whole = fuzzy(&format!("{title} {detail}"), query)?;
-            let titled = fuzzy(&title, query).unwrap_or(0) * TITLE_WEIGHT;
-            Some((whole + titled, order, entry, title))
+        .filter_map(|(order, hit)| {
+            let whole = fuzzy(&format!("{} {}", hit.title, hit.detail), query)?;
+            let titled = fuzzy(&hit.title, query).unwrap_or(0) * TITLE_WEIGHT;
+            Some((whole + titled, order, hit))
         })
         .collect();
-    hits.sort_by_key(|(score, order, ..)| (Reverse(*score), *order));
-    hits.into_iter()
-        .map(|(_, _, entry, title)| (entry, title))
-        .collect()
+    hits.sort_by_key(|(score, order, _)| (Reverse(*score), *order));
+    hits.into_iter().map(|(_, _, hit)| hit).collect()
+}
+
+/// One setting as a search reads it: where it lives, the slug its row is keyed by, and its
+/// title and detail resolved.
+struct Hit {
+    page: SettingsPage,
+    slug: String,
+    title: String,
+    detail: String,
+}
+
+/// Every setting that stands on its page now, in the order of the pages, with the details that
+/// change with what the app holds (the accounts, the Widevine module, a failed output, each
+/// scrobbling service) read afresh.
+fn settings(ui: &Ui) -> Vec<Hit> {
+    let lookup = |key: &str| match key.is_empty() {
+        true => String::new(),
+        false => i18n::lookup(key, None).into_owned(),
+    };
+    let mut hits = Vec::new();
+    for entry in ENTRIES.iter().filter(|entry| shown(ui, entry.slug)) {
+        let mut detail = lookup(entry.detail);
+        match entry.slug {
+            "accounts" => detail = format!("{detail} {}", accounts::account_words(ui)),
+            "widevine" => detail = playback::widevine_detail(ui),
+            _ => {}
+        }
+        hits.push(Hit {
+            page: entry.page,
+            slug: entry.slug.to_owned(),
+            title: lookup(entry.title),
+            detail,
+        });
+        if entry.slug == "output-device" && ui.store.outputs.failure().is_some() {
+            let (title, detail) = sound_failure(ui);
+            hits.push(Hit {
+                page: entry.page,
+                slug: "output-failure".to_owned(),
+                title,
+                detail,
+            });
+        }
+    }
+    for (index, row) in ui.store.scrobbling.rows().iter().enumerate() {
+        if let Some((title, detail)) = scrobbling::scrobble_meta(ui, index) {
+            hits.push(Hit {
+                page: SettingsPage::Scrobbling,
+                slug: format!("scrobble-{}", row.id()),
+                title,
+                detail,
+            });
+        }
+    }
+    hits
+}
+
+/// The failed output's title and detail, as the Sound page words them.
+fn sound_failure(ui: &Ui) -> (String, String) {
+    let _ = ui;
+    (String::new(), String::new())
 }
 
 /// What a search shows instead of the page: every setting that answers it, the matched letters
@@ -766,7 +836,7 @@ fn results(ui: &Ui) -> El {
         .children(
             hits.into_iter()
                 .enumerate()
-                .map(|(index, (entry, title))| result(theme, entry, title, &query, index, count)),
+                .map(|(index, hit)| result(theme, hit, &query, index, count)),
         )
 }
 
@@ -774,13 +844,13 @@ fn results(ui: &Ui) -> El {
 /// query found lit, and the page it lives on under it.
 fn result(
     theme: &Theme,
-    entry: &'static Entry,
-    title: String,
+    Hit {
+        page, slug, title, ..
+    }: Hit,
     query: &str,
     index: usize,
     count: usize,
 ) -> El {
-    let page = entry.page;
     let tab = page.tab();
     let place = match page.parent() {
         Some(_) => i18n::t!(
@@ -827,9 +897,9 @@ fn result(
                 .truncate()
                 .a11y_hidden(),
         );
-    let slug = entry.slug;
+    let key = format!("settings-result-{}-{}", page.id(), slug);
     row()
-        .key(format!("settings-result-{}-{}", page.id(), slug))
+        .key(key)
         .role("button")
         .label(title)
         .description(place)
@@ -845,7 +915,7 @@ fn result(
         .press(theme.secondary_active.color())
         .press_scale(PRESS_SCALE)
         .on_press_tx(crate::act_tx(move |ui: &mut Ui, _: &mut Tx| {
-            open_result(ui, page, slug)
+            open_result(ui, page, &slug)
         }))
         .child(art)
         .child(words)

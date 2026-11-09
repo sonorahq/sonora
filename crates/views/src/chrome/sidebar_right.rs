@@ -84,15 +84,6 @@ pub(crate) fn shown_tab(ui: &Ui) -> SideTab {
     }
 }
 
-/// Opens or closes the sidebar on the tab it last showed.
-pub(crate) fn toggle(ui: &mut Ui) {
-    ui.chrome.right_open = !ui.chrome.right_open;
-    if ui.chrome.right_open {
-        arrive(ui);
-    }
-    remember(ui);
-}
-
 /// Shows `tab`, or closes the sidebar when it already shows it, as the player bar's queue,
 /// lyrics and members buttons do. Lyrics stay shut while they are turned off.
 pub(crate) fn show(ui: &mut Ui, tab: SideTab) {

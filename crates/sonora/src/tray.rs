@@ -120,7 +120,10 @@ struct Tray {
 pub fn start(ui: &Ui, http: crate::http::Client) {
     let io = ui.store.cx.io.clone();
     io.spawn(async move {
-        let hosted = tokio::task::spawn_blocking(Icon::probe).await.ok().flatten();
+        let hosted = tokio::task::spawn_blocking(Icon::probe)
+            .await
+            .ok()
+            .flatten();
         crate::handle().update(move |ui: &mut Ui, _| {
             if let Some(hosted) = hosted {
                 install(ui, hosted, http);

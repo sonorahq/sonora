@@ -42,13 +42,7 @@ fn set_icons(window: u32) -> Result<()> {
         }));
     }
     connection
-        .change_property32(
-            PropMode::REPLACE,
-            window,
-            atom,
-            AtomEnum::CARDINAL,
-            &pixels,
-        )?
+        .change_property32(PropMode::REPLACE, window, atom, AtomEnum::CARDINAL, &pixels)?
         .check()?;
     connection.flush().context("cannot flush the window icons")
 }

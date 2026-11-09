@@ -18,23 +18,38 @@ pub fn items(shown: &crate::tray::Shown) -> Vec<rune::MenuItem<views::Ui>> {
     use rune::MenuItem;
 
     vec![
-        MenuItem::new(shown.toggle.clone(), |ui, tx| run(ui, Event::Toggle, tx))
-            .id("dock.toggle")
-            .dock(),
-        MenuItem::new(shown.previous.clone(), |ui, tx| run(ui, Event::Previous, tx))
-            .id("dock.previous")
-            .dock(),
-        MenuItem::new(shown.next.clone(), |ui, tx| run(ui, Event::Next, tx))
-            .id("dock.next")
-            .dock(),
+        MenuItem::new(
+            shown.toggle.clone(),
+            |ui: &mut views::Ui, tx: &mut rune::Tx| run(ui, Event::Toggle, tx),
+        )
+        .id("dock.toggle")
+        .dock(),
+        MenuItem::new(
+            shown.previous.clone(),
+            |ui: &mut views::Ui, tx: &mut rune::Tx| run(ui, Event::Previous, tx),
+        )
+        .id("dock.previous")
+        .dock(),
+        MenuItem::new(
+            shown.next.clone(),
+            |ui: &mut views::Ui, tx: &mut rune::Tx| run(ui, Event::Next, tx),
+        )
+        .id("dock.next")
+        .dock(),
         MenuItem::separator().dock(),
-        MenuItem::new(shown.shuffle.clone(), |ui, tx| run(ui, Event::Shuffle, tx))
-            .id("dock.shuffle")
-            .checked(shown.shuffle_on)
-            .dock(),
-        MenuItem::new(shown.repeat.clone(), |ui, tx| run(ui, Event::Repeat, tx))
-            .id("dock.repeat")
-            .checked(shown.repeat_on)
-            .dock(),
+        MenuItem::new(
+            shown.shuffle.clone(),
+            |ui: &mut views::Ui, tx: &mut rune::Tx| run(ui, Event::Shuffle, tx),
+        )
+        .id("dock.shuffle")
+        .checked(shown.shuffle_on)
+        .dock(),
+        MenuItem::new(
+            shown.repeat.clone(),
+            |ui: &mut views::Ui, tx: &mut rune::Tx| run(ui, Event::Repeat, tx),
+        )
+        .id("dock.repeat")
+        .checked(shown.repeat_on)
+        .dock(),
     ]
 }

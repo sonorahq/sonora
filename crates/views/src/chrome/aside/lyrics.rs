@@ -171,7 +171,6 @@ struct PlanKey {
 /// One line, split where it may wrap and into the words its timing names, and broken into rows.
 #[derive(Clone, Default)]
 struct Wrapped {
-    fragments: Vec<String>,
     /// The word each fragment belongs to.
     spoken: Vec<usize>,
     rows: Vec<Range<usize>>,
@@ -247,7 +246,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
         (None, LyricsState::Ready) => match hit.map(|hit| &hit.lyrics) {
             Some(music::Lyrics::Plain { text, romanized }) => {
                 let plain = plain(text, romanized.as_ref(), look, theme);
-                scroller(ui, plain, look, &take, None, theme)
+                scroller(plain, look, &take, None, theme)
             }
             _ => wordless("lyrics-missing", "icons/mic-off.svg", theme),
         },
@@ -522,13 +521,12 @@ fn sheet(
         .items_start()
         .children(rows)
         .children(credit);
-    scroller(ui, content, look, take, edges, theme)
+    scroller(content, look, take, edges, theme)
 }
 
 /// The scroll viewport a sheet reads in, which a wheel takes out of following the song. A new
 /// answer comes in out of a blur.
 fn scroller(
-    _ui: &Ui,
     content: El,
     look: Look,
     take: &(Option<String>, u64),
@@ -609,7 +607,6 @@ fn verse_row(
         .py(look.verse * VERSE_PADDING)
         .radius(theme.radius)
         .hover(theme.table_hover.color())
-        .press_scale(PRESSED)
         .scale(match active {
             true => active_verse_size(look.verse) / look.verse,
             false => 1.,
@@ -698,6 +695,7 @@ fn verse_row(
         .min_w(0.)
         .cursor(Cursor::Pointer)
         .focusable(true)
+        .press_scale(PRESSED)
         .motion(Springs::BASE)
         .opacity(1. - VEIL * haze)
         .blur(stepped(look.verse * BLUR * haze))
@@ -1181,7 +1179,6 @@ fn wrap(parts: &[(String, usize)], style: TextStyle, width: f32) -> Option<Wrapp
     Some(Wrapped {
         spans: word_spans(&spoken, &widths),
         evenly: evenly_filled(&fragments, &spoken),
-        fragments,
         spoken,
         rows,
         widths,

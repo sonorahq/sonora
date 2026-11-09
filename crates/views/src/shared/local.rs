@@ -35,32 +35,36 @@ pub(crate) fn choose_folder(tx: &mut Tx) {
         title: t!("settings-choose-folder").into_owned(),
         ..Default::default()
     };
-    tx.open_folder(options, |ui: &mut Ui, result: FileDialogResult, _: &mut Tx| {
-        match result {
+    tx.open_folder(
+        options,
+        |ui: &mut Ui, result: FileDialogResult, _: &mut Tx| match result {
             Ok(Some(path)) => {
                 ui.store.add_local_folders(vec![path]);
                 ui.settle();
             }
             Ok(None) => {}
             Err(error) => failed(ui, &error.0),
-        }
-    });
+        },
+    );
 }
 
 /// Asks for an M3U or M3U8 file and reads it into a new local playlist.
 pub(crate) fn import_playlist(tx: &mut Tx) {
     let options = FileDialogOptions::default().filter("M3U", &["m3u", PLAYLIST_EXTENSION]);
-    tx.open_file(options, |ui: &mut Ui, result: FileDialogResult, _: &mut Tx| {
-        match result {
+    tx.open_file(
+        options,
+        |ui: &mut Ui, result: FileDialogResult, _: &mut Tx| match result {
             Ok(Some(path)) => {
                 let store = &mut ui.store;
-                store.library.import_playlist(path, &store.session, &mut store.cx);
+                store
+                    .library
+                    .import_playlist(path, &store.session, &mut store.cx);
                 ui.settle();
             }
             Ok(None) => {}
             Err(error) => failed(ui, &error.0),
-        }
-    });
+        },
+    );
 }
 
 /// Asks where to save a local playlist and writes it there as M3U8.
@@ -77,22 +81,29 @@ pub(crate) fn export_playlist(playlist: &Playlist, tx: &mut Tx) {
         ..Default::default()
     };
     let id = playlist.id.clone();
-    tx.save_file(options, move |ui: &mut Ui, result: FileDialogResult, _: &mut Tx| {
-        match result {
+    tx.save_file(
+        options,
+        move |ui: &mut Ui, result: FileDialogResult, _: &mut Tx| match result {
             Ok(Some(path)) => {
                 let store = &mut ui.store;
-                store.library.export_playlist(id, path, &store.session, &mut store.cx);
+                store
+                    .library
+                    .export_playlist(id, path, &store.session, &mut store.cx);
                 ui.settle();
             }
             Ok(None) => {}
             Err(error) => failed(ui, &error.0),
-        }
-    });
+        },
+    );
 }
 
 /// Says a file dialog could not open.
 fn failed(ui: &mut Ui, error: &str) {
     log::warn!("library: cannot open the file dialog: {error}");
-    state::Toasts::show(Outcome::Failed, "toast-file-dialog-failed", &mut ui.store.cx);
+    state::Toasts::show(
+        Outcome::Failed,
+        "toast-file-dialog-failed",
+        &mut ui.store.cx,
+    );
     ui.settle();
 }

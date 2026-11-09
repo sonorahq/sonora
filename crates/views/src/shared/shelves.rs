@@ -101,10 +101,14 @@ impl<'a> Shelves<'a> {
 
     pub(crate) fn build(self, ui: &Ui) -> El {
         let theme = &ui.theme;
-        let sections = self.sections.iter().enumerate().map(|(place, section)| match self.mode {
-            Mode::Grid => self.rail(ui, place, section),
-            Mode::List => self.lane(ui, place, section),
-        });
+        let sections = self
+            .sections
+            .iter()
+            .enumerate()
+            .map(|(place, section)| match self.mode {
+                Mode::Grid => self.rail(ui, place, section),
+                Mode::List => self.lane(ui, place, section),
+            });
         col()
             .key(self.key.to_owned())
             .gap(STACK_GAP)
@@ -200,12 +204,11 @@ impl<'a> Shelves<'a> {
             .key(format!("{}-lane-{place}", self.key))
             .px(theme.metrics.inset)
             .gap(HEADING_GAP)
-            .child(
-                row()
-                    .items_end()
-                    .h(head(theme))
-                    .child(heading(format!("{}-heading-{place}", self.key), title, theme)),
-            )
+            .child(row().items_end().h(head(theme)).child(heading(
+                format!("{}-heading-{place}", self.key),
+                title,
+                theme,
+            )))
             .child(spread(columns))
     }
 }
@@ -282,7 +285,12 @@ impl<'a> Rail<'a> {
     }
 
     /// The rail while its cards are on their way: the heading over skeleton tiles.
-    pub(crate) fn pending(key: &str, title: impl Into<String>, layout: CardLayout, theme: &Theme) -> El {
+    pub(crate) fn pending(
+        key: &str,
+        title: impl Into<String>,
+        layout: CardLayout,
+        theme: &Theme,
+    ) -> El {
         let tiles = (0..=layout.columns).map(|place| {
             Card::skeleton(format!("{key}-pending-{place}"))
                 .tile(layout.card)
@@ -344,7 +352,9 @@ pub(crate) fn grid(
             move |ui: &Ui, at: usize| {
                 Cow::Owned(format!(
                     "row-{}",
-                    keyed(ui).get(at * lanes).map_or("", |genre| genre.id.as_str())
+                    keyed(ui)
+                        .get(at * lanes)
+                        .map_or("", |genre| genre.id.as_str())
                 ))
             },
             move |ui: &Ui, at: usize| {
@@ -379,14 +389,17 @@ pub(crate) fn lanes(width: f32) -> usize {
 
 /// Deals list rows into lanes side by side.
 fn spread(columns: Vec<Vec<El>>) -> El {
-    row().w_full().gap(LANE_GAP).children(columns.into_iter().map(|column| {
-        col()
-            .grow(1.)
-            .shrink()
-            .min_w(0.)
-            .gap(LANE_GAP)
-            .children(column)
-    }))
+    row()
+        .w_full()
+        .gap(LANE_GAP)
+        .children(columns.into_iter().map(|column| {
+            col()
+                .grow(1.)
+                .shrink()
+                .min_w(0.)
+                .gap(LANE_GAP)
+                .children(column)
+        }))
 }
 
 /// How tall a section's heading row stands.

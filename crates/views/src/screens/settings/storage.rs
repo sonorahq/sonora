@@ -6,9 +6,10 @@ use std::time::Duration;
 use i18n::t;
 use rune::{Cx, El, Tx, row, text};
 use state::Job;
-use ui::{Button, Modal, Scrubber, ScrubberState, Text, Theme, Weight, font};
+use ui::{Button, Scrubber, ScrubberState, Text, Theme, Weight, font};
 
 use super::{Row, group, switch};
+use crate::shared::confirm::{self, Kind};
 use crate::{Ui, act};
 
 /// The bytes in a gigabyte, the unit the cache limit is set in.
@@ -31,8 +32,6 @@ pub struct State {
     cache: ScrubberState,
     /// The cache size a drag of its slider points at, until it lets go.
     pending: Option<u32>,
-    /// Whether the question before every download is removed is up.
-    confirming: bool,
     /// Measures the cache and the downloads every so often while the section shows.
     poll: Option<Job>,
 }
@@ -214,42 +213,15 @@ fn downloads_used(ui: &Ui) -> El {
                 .small()
                 .outline()
                 .disabled(used.is_none_or(|used| used == 0))
-                .on_press(|ui: &mut Ui| ui.screens.settings.storage.confirming = true)
+                .on_press(|ui: &mut Ui| {
+                    confirm::ask(ui, Kind::Downloads, |ui: &mut Ui| {
+                        ui.store.remove_all_downloads();
+                        ui.settle();
+                    })
+                })
                 .build(theme),
         );
     Row::new("downloads-used", t!("settings-downloads-used"), control).build(theme)
-}
-
-/// The question before every download is removed, pushed into `layer` while it is up.
-pub(super) fn confirm_modal(ui: &Ui, layer: &mut Vec<El>) {
-    if !ui.screens.settings.storage.confirming {
-        return;
-    }
-    let theme = &ui.theme;
-    Modal::new(
-        "remove-downloads-confirm",
-        t!("confirm-remove-downloads-title"),
-    )
-    .detail(t!("confirm-remove-downloads"))
-    .action(
-        Button::new("cancel-remove-downloads")
-            .ghost()
-            .label(t!("common-cancel"))
-            .on_press(|ui: &mut Ui| ui.screens.settings.storage.confirming = false)
-            .build(theme),
-    )
-    .action(
-        Button::new("apply-remove-downloads")
-            .destructive()
-            .label(t!("settings-downloads-remove"))
-            .on_press(act(|ui: &mut Ui| {
-                ui.screens.settings.storage.confirming = false;
-                ui.store.remove_all_downloads();
-            }))
-            .build(theme),
-    )
-    .on_dismiss(|ui: &mut Ui| ui.screens.settings.storage.confirming = false)
-    .build(theme, layer);
 }
 
 /// A line of static text screen readers reach under `key`, in `ink`.

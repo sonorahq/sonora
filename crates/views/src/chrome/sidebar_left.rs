@@ -78,12 +78,9 @@ const HINT_HEIGHT: f32 = 42.;
 const VACANCY_HEIGHT: f32 = 88.;
 /// How far the pin mark on a library row falls back from the accent.
 const PIN_MARK: f32 = 0.7;
-/// The space between two rows, the old `gap_1`.
-const ROW_GAP: f32 = 4.;
-/// The space between a row's icon and its label, the old `gap_2p5`.
-const ICON_GAP: f32 = 10.;
 const ICON: f32 = 16.;
-/// The side padding of a regular button, which a navigation row keeps.
+/// The side padding of a regular button, which a navigation row keeps; a fixed size, unlike the
+/// spacing around it.
 const ROW_INSET: f32 = 12.;
 /// The space under the pinned section's header.
 const HEADER_FOOT: f32 = 2.;
@@ -242,7 +239,6 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
             )
             .child(
                 panel
-                    .key("sidebar-left-floating")
                     .absolute(0., 0.)
                     .fill(theme.sidebar.color())
                     .transition(Transition::offset(-SLIDE, 0.).combined(Transition::opacity())),
@@ -388,10 +384,10 @@ fn rows(ui: &Ui, width: f32, theme: &Theme) -> El {
     };
     let count = pinned.0.len() + pinned.1.len();
     let list_row = theme.metrics.list_row.round();
-    let nav = (NAV.len() as f32) * (theme.metrics.control + ROW_GAP);
+    let nav = (NAV.len() as f32) * (theme.metrics.control + gap(theme));
     let heights = std::iter::once(nav)
         .chain(shown.then_some(theme.metrics.control_small + theme.metrics.pad))
-        .chain((0..count).map(|_| list_row + ROW_GAP));
+        .chain((0..count).map(|_| list_row + gap(theme)));
     let deck = ui::Deck::new("sidebar-deck").rows(heights).build(
         move |ui: &Ui, index| row_key(ui, shown, index),
         move |ui: &Ui, index| draw(ui, shown, index),
@@ -449,9 +445,9 @@ fn row_key(ui: &Ui, shown: bool, index: usize) -> Cow<'static, str> {
 
 fn draw(ui: &Ui, shown: bool, index: usize) -> El {
     let theme = &ui.theme;
-    let pad = theme.metrics.pad * 1.5;
+    let pad = rems(theme, 0.75);
     match (index, shown) {
-        (0, _) => navigation(ui).px(pad).pt(pad).pb(ROW_GAP).w_full(),
+        (0, _) => navigation(ui).px(pad).pt(pad).pb(gap(theme)).w_full(),
         (1, true) => pins_head(ui).px(pad).w_full(),
         _ => {
             let (pins, rest) = pinned(ui);
@@ -472,7 +468,7 @@ fn draw(ui: &Ui, shown: bool, index: usize) -> El {
                 .px(pad)
                 .pb(match last {
                     true => ui::perch_room(theme),
-                    false => ROW_GAP,
+                    false => gap(theme),
                 })
                 .child(row)
         }
@@ -483,6 +479,7 @@ fn draw(ui: &Ui, shown: bool, index: usize) -> El {
 /// growth stack, so a group folding open pushes the rows under it down on a spring rather than
 /// in one step.
 fn navigation(ui: &Ui) -> El {
+    let theme = &ui.theme;
     let store = &ui.store;
     let at = ui.nav.current();
     // A shelf with rows on it belongs in the sidebar even before the session has restored,
@@ -504,7 +501,7 @@ fn navigation(ui: &Ui) -> El {
         .children(entries.into_iter().enumerate().map(|(place, index)| {
             let entry = nav_entry(ui, index, &at);
             let entry = match place < last {
-                true => entry.pb(ROW_GAP),
+                true => entry.pb(gap(theme)),
                 false => entry,
             };
             entry.fold_glide(Springs::BASE)
@@ -569,7 +566,7 @@ fn tabs(group: Group, at: &Destination, theme: &Theme) -> El {
         .items(items)
         .build(theme)
         .key(format!("{}-tabs", group.name()))
-        .mt(ROW_GAP)
+        .mt(gap(theme))
         .transition(Transition::opacity())
 }
 
@@ -596,7 +593,7 @@ fn nav_row(
         .min_w(0.)
         .h(theme.metrics.control)
         .px(ROW_INSET)
-        .gap(ICON_GAP)
+        .gap(rems(theme, 0.625))
         .center_y()
         .radius(theme.radius)
         .focusable(true)
@@ -684,10 +681,10 @@ fn pins_head(ui: &Ui) -> El {
         .h(theme.metrics.control_small)
         .center_y()
         .justify_between()
-        .pl(theme.metrics.pad)
+        .pl(rems(theme, 0.5))
         // Narrower on the right than on the left, so the sort glyph falls on the same line as
         // the chevrons of the rows above.
-        .pr(theme.metrics.pad / 2.)
+        .pr(rems(theme, 0.25))
         .child(toggle);
     if open {
         header = header.child(sort_trigger(ui));
@@ -905,13 +902,12 @@ fn caption(kind: &str, marked: bool, theme: &Theme) -> El {
 
 /// Where a dragged pin can land in an empty section.
 fn hint(theme: &Theme) -> El {
-    let pad = theme.metrics.pad;
     row()
         .key("sidebar-pin-hint")
         .min_h(HINT_HEIGHT)
-        .mx(pad)
-        .px(pad)
-        .py(pad / 2.)
+        .mx(rems(theme, 0.5))
+        .px(rems(theme, 0.5))
+        .py(rems(theme, 0.25))
         .center()
         .radius(theme.radius)
         .border(1., theme.sidebar_border.color())
@@ -935,7 +931,7 @@ fn vacancy(theme: &Theme) -> El {
         .build(theme)
         .key("sidebar-vacancy")
         .h(VACANCY_HEIGHT)
-        .px(theme.metrics.pad)
+        .px(rems(theme, 0.5))
 }
 
 /// A pin's context menu: its page where the card does not open it, play, and pin or unpin.
@@ -1112,6 +1108,16 @@ fn add_into(ui: &mut Ui, target: &Pin, song: &Pin) {
     store
         .library
         .add_to_playlist(playlist, song.id.clone(), &store.session, &mut store.cx);
+}
+
+/// `n` of the old layout's rem, which follows the theme's text size: its `p_3` is `rems(.., 0.75)`.
+fn rems(theme: &Theme, n: f32) -> f32 {
+    theme.font_size * n
+}
+
+/// The space between two rows, the old `gap_1`.
+fn gap(theme: &Theme) -> f32 {
+    rems(theme, 0.25)
 }
 
 /// The page a pin opens.

@@ -54,6 +54,8 @@ pub fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
             .child(chrome::title_bar::view(ui, cx, &mut layer))
             .child(shells::workspace::view(ui, cx, &mut layer)),
     };
+    // a theme a link offers is asked about wherever the window is, the sign-in page included
+    chrome::theme_invite::mount(ui, cx, &mut layer);
     ui::root(base, layer)
 }
 

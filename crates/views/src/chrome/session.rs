@@ -114,7 +114,12 @@ fn code(ui: &Ui, layer: &mut Vec<El>) {
         .key("session-code-digits")
         .role("text")
         .label(spaced(&room.code))
-        .child(OtpSlots::new(room.code.clone()).grouped(GROUP).build(theme).a11y_hidden());
+        .child(
+            OtpSlots::new(room.code.clone())
+                .grouped(GROUP)
+                .build(theme)
+                .a11y_hidden(),
+        );
     Modal::<Ui>::new("session-code", t!("devices-session-code-title"))
         .width(theme.metrics.cover * WIDTH)
         .detail(t!("devices-session-code-detail", provider = provider))

@@ -518,9 +518,7 @@ impl Hero {
             .gap(theme.font_size * COVER_GAP)
             .pb(BOTTOM);
         if self.padded {
-            hero = hero
-                .px(theme.metrics.inset)
-                .pt(theme.metrics.inset);
+            hero = hero.px(theme.metrics.inset).pt(theme.metrics.inset);
         }
         let lines = col()
             .key("hero-lines")
@@ -534,7 +532,8 @@ impl Hero {
         if self.pending {
             let display = theme.text(Text::Display);
             let small = theme.text(Text::Small);
-            let line = |size: f32, bar: El| row().h((size * ui::LEADING).round()).center_y().child(bar);
+            let line =
+                |size: f32, bar: El| row().h((size * ui::LEADING).round()).center_y().child(bar);
             return hero
                 .child(Skeleton::new().build(theme).size(art, art).radius(corner))
                 .child(
@@ -610,10 +609,10 @@ impl Hero {
             .child(title)
             .children(badge);
         hero.child(cover).child(
-            lines
-                .child(heading)
-                .children(self.meta)
-                .children(self.actions.map(|actions| row().pt(ACTIONS_DROP).child(actions))),
+            lines.child(heading).children(self.meta).children(
+                self.actions
+                    .map(|actions| row().pt(ACTIONS_DROP).child(actions)),
+            ),
         )
     }
 }

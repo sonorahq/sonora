@@ -64,25 +64,34 @@ fn app_items() -> Vec<rune::MenuItem<views::Ui>> {
     };
     vec![
         with(
-            MenuItem::new(t!("app-settings").to_string(), |ui, tx| {
-                crate::window::show();
-                views::run_action(ui, input::Action::OpenSettings, tx);
-            })
+            MenuItem::new(
+                t!("app-settings").to_string(),
+                |ui: &mut views::Ui, tx: &mut rune::Tx| {
+                    crate::window::show();
+                    views::run_action(ui, input::Action::OpenSettings, tx);
+                },
+            )
             .id("app.settings"),
             "cmd+comma",
         ),
         MenuItem::separator(),
         with(
-            MenuItem::new(t!("app-refresh").to_string(), |ui, tx| {
-                views::run_action(ui, input::Action::Refresh, tx);
-            })
+            MenuItem::new(
+                t!("app-refresh").to_string(),
+                |ui: &mut views::Ui, tx: &mut rune::Tx| {
+                    views::run_action(ui, input::Action::Refresh, tx);
+                },
+            )
             .id("app.refresh"),
             "cmd+r",
         ),
-        MenuItem::new(t!("app-sign-out").to_string(), |ui, _| {
-            ui.store.sign_out();
-            ui.settle();
-        })
+        MenuItem::new(
+            t!("app-sign-out").to_string(),
+            |ui: &mut views::Ui, _: &mut rune::Tx| {
+                ui.store.sign_out();
+                ui.settle();
+            },
+        )
         .id("app.sign-out"),
         MenuItem::separator(),
     ]

@@ -4,17 +4,20 @@
 
 use i18n::t;
 use rune::{Cx, El, Tx, row, text};
-use ui::{Menu, MenuItem, Picker, Spinner, Text, Weight};
+use ui::{MenuItem, Picker, Spinner, Text, Weight};
 
 use crate::chrome::player_bar::rems;
+use crate::shared::device_menu::{self, DeviceMenu, device_rows};
 use crate::{Ui, act};
 
 /// The popover key of the device menu among the chrome's popovers.
 const OUTPUT_DEVICES: &str = "output-devices";
-/// How tall the device menu grows before it scrolls, and how wide it is. A longer name is cut
-/// short rather than widening the menu.
-const MENU_HEIGHT: f32 = 360.;
-const MENU_WIDTH: f32 = 320.;
+
+/// The picker's own state: which of the device menu's submenus is open.
+#[derive(Default)]
+pub struct State {
+    menu: DeviceMenu,
+}
 
 /// The picker, with the spinner before it while a device is being switched to.
 pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
@@ -50,13 +53,16 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
         .map(|device| device.name.clone());
     let mut default = MenuItem::<Ui>::new("output-system", t!("settings-output-device-system"))
         .selected(chosen.is_none())
-        .on_press(act(|ui: &mut Ui| ui.store.outputs.choose(None, &mut ui.store.cx)));
+        .on_press(act(|ui: &mut Ui| {
+            ui.store.outputs.choose(None, &mut ui.store.cx)
+        }));
     if let Some(current) = current {
         default = default.detail(detail(current));
     }
-    let items = devices.iter().map(|device| {
+    let item = |index: usize, label: String| {
+        let device = &devices[index];
         let id = device.id.clone();
-        let mut item = MenuItem::<Ui>::new(format!("output-device-{id}"), device.name.clone())
+        let mut item = MenuItem::<Ui>::new(format!("output-device-{id}"), label)
             .selected(chosen == Some(id.as_str()))
             .on_press(act(move |ui: &mut Ui| {
                 ui.store.outputs.choose(Some(id.clone()), &mut ui.store.cx)
@@ -64,8 +70,15 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
         if let Some(about) = device.detail.clone() {
             item = item.detail(detail(about));
         }
-        item
-    });
+        vec![item]
+    };
+    let items = ui.chrome.output_picker.menu.items(
+        device_rows(devices, |_| true),
+        devices,
+        |device| chosen == Some(device.id.as_str()),
+        item,
+        |ui: &mut Ui| &mut ui.chrome.output_picker.menu,
+    );
     let picker = Picker::new(
         OUTPUT_DEVICES,
         &ui.chrome.popovers,
@@ -75,14 +88,11 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
     .name(t!("settings-output-device"))
     // a device plugged in since the list was read is only found by asking again
     .on_open(|ui: &mut Ui, _: &mut Tx| {
+        ui.chrome.output_picker.menu.reset();
         ui.store.outputs.refresh(&mut ui.store.cx);
         ui.settle();
     })
-    .menu(
-        Menu::new("output-devices-menu")
-            .width(MENU_WIDTH)
-            .max_height(MENU_HEIGHT),
-    )
+    .menu(device_menu::menu("output-devices-menu"))
     .disabled(switching)
     .item(default)
     .items(items)
@@ -92,7 +102,11 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
 
     let mut line = row().key("output-picker").center_y().gap(rems(theme, 0.5));
     if switching {
-        line = line.child(Spinner::new().name(t!("settings-output-device-loading")).build(theme));
+        line = line.child(
+            Spinner::new()
+                .name(t!("settings-output-device-loading"))
+                .build(theme),
+        );
     }
     line.child(picker)
 }

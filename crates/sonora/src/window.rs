@@ -269,9 +269,8 @@ pub fn poll(ui: &mut Ui, clock: f64) -> bool {
     }
 
     let fullscreen = matches!(ui.nav.current(), Destination::Fullscreen);
-    let announced = HOST.with_borrow_mut(|host| {
-        std::mem::replace(&mut host.fullscreen_view, Some(fullscreen)) != Some(fullscreen)
-    });
+    let announced =
+        HOST.with_borrow_mut(|host| host.fullscreen_view.replace(fullscreen) != Some(fullscreen));
     if announced {
         let Store {
             wake,
@@ -342,9 +341,7 @@ fn round(ui: &Ui) {
             true => ui::Rounding::Square,
             false => ui.store.settings.window_rounding(),
         };
-        let changed = HOST.with_borrow_mut(|host| {
-            std::mem::replace(&mut host.rounded, Some(wanted)) != Some(wanted)
-        });
+        let changed = HOST.with_borrow_mut(|host| host.rounded.replace(wanted) != Some(wanted));
         if changed {
             state::apply_window_rounding(wanted);
         }

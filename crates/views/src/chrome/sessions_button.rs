@@ -9,7 +9,7 @@ use rune::{Cx, El, Tx};
 use state::SideTab;
 use ui::{Menu, MenuItem, Picker};
 
-use crate::chrome::{jam, members, player_bar, session};
+use crate::chrome::{jam, members, session, sidebar_right};
 use crate::{Ui, act, act_tx};
 
 /// The popover key of the Sessions menu among the chrome's popovers.
@@ -168,16 +168,10 @@ fn members_item(ui: &Ui) -> Option<MenuItem<Ui>> {
         MenuItem::new("members", t!("members-title"))
             .icon("icons/user.svg")
             .trailing(jam::faces(ui, &people, MEMBER_FACES, size, 0.))
-            .on_press(act(|ui: &mut Ui| reveal_members(ui))),
+            .on_press(act(|ui: &mut Ui| {
+                sidebar_right::reveal(ui, SideTab::Members)
+            })),
     )
-}
-
-/// Shows the Members panel, leaving the sidebar open when it already shows it.
-fn reveal_members(ui: &mut Ui) {
-    if ui.chrome.right_open && ui.chrome.right_tab == SideTab::Members {
-        return;
-    }
-    player_bar::show_side(ui, SideTab::Members);
 }
 
 /// Starting or joining a Sonora Session, or what to do with the one the listener is in.
@@ -208,7 +202,9 @@ fn session_items(ui: &Ui) -> Vec<MenuItem<Ui>> {
             },
         )
         .icon("icons/log-out.svg")
-        .on_press(act(|ui: &mut Ui| ui.store.listening.leave(&mut ui.store.cx))),
+        .on_press(act(|ui: &mut Ui| {
+            ui.store.listening.leave(&mut ui.store.cx)
+        })),
     ]
 }
 

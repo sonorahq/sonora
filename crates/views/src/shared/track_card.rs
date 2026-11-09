@@ -91,7 +91,8 @@ impl<'a> TrackCard<'a> {
                 .build(theme)
         });
 
-        let mut card = cards::track_card(ui, format!("{}-{place}", self.key), track, Fit::Row, None);
+        let mut card =
+            cards::track_card(ui, format!("{}-{place}", self.key), track, Fit::Row, None);
         if let Some(artists) = artists {
             card = card.bare_meta(artists);
         }
@@ -102,9 +103,8 @@ impl<'a> TrackCard<'a> {
             card = card.action(remove);
         }
         if let Some(context) = self.context {
-            card = card.menu(move |ui: &mut Ui, at: PointerPress, tx: &mut Tx| {
-                context(ui, place, at, tx)
-            });
+            card = card
+                .menu(move |ui: &mut Ui, at: PointerPress, tx: &mut Tx| context(ui, place, at, tx));
         }
         let seed = track.clone();
         let started = self.start.clone();

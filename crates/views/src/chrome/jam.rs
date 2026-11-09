@@ -265,7 +265,9 @@ pub(crate) fn name(member: &JamMember) -> &str {
 pub(crate) fn face(ui: &Ui, member: &JamMember, size: f32) -> El {
     let theme = &ui.theme;
     if let Some(image) = &member.image {
-        return Avatar::new(ui.artwork(), Some(image)).size(size).build(theme);
+        return Avatar::new(ui.artwork(), Some(image))
+            .size(size)
+            .build(theme);
     }
     let color = color_of(&member.id);
     let disc = row()
@@ -307,8 +309,9 @@ pub(crate) fn faces(ui: &Ui, members: &[JamMember], limit: usize, size: f32, spr
     // a ring in the strip's colour keeps a face apart from the one it covers, and fades once
     // they spread and no longer overlap
     let ring = theme.popover.opacity(1. - spread).color();
-    let strip = el().size(width, outer).children(
-        members.iter().take(limit).enumerate().map(|(at, member)| {
+    let strip = el()
+        .size(width, outer)
+        .children(members.iter().take(limit).enumerate().map(|(at, member)| {
             row()
                 .key(format!("face-{}", member.id))
                 .absolute(pitch * at as f32, 0.)
@@ -317,8 +320,7 @@ pub(crate) fn faces(ui: &Ui, members: &[JamMember], limit: usize, size: f32, spr
                 .border(RING, ring)
                 .center()
                 .child(face(ui, member, size))
-        }),
-    );
+        }));
     let mut line = row()
         .center_y()
         .gap(size * FACE_GAP)
@@ -347,25 +349,6 @@ fn more_label(label: String, size: f32, theme: &Theme) -> El {
             text(label)
                 .font(ui::font(theme, Text::Tiny, Weight::NORMAL))
                 .color(theme.muted_foreground.color()),
-        )
-}
-
-/// A small tag beside a member's name, which screen readers reach under `key`.
-pub(crate) fn badge(key: impl Into<String>, label: impl Into<String>, theme: &Theme) -> El {
-    let label = label.into();
-    row()
-        .key(key)
-        .role("text")
-        .label(label.clone())
-        .px(rems(theme, 0.5))
-        .py(rems(theme, 0.125))
-        .radius(9999.)
-        .fill(theme.muted.color())
-        .child(
-            text(label)
-                .font(ui::font(theme, Text::Tiny, Weight::NORMAL))
-                .color(theme.muted_foreground.color())
-                .a11y_hidden(),
         )
 }
 

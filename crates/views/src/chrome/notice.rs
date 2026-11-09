@@ -19,6 +19,8 @@ const LEADING: f32 = 1.4;
 const REACH: f32 = 400.;
 /// Where the README says what to install alongside Sonora.
 const INSTALL: &str = "https://github.com/sonorahq/sonora#linux";
+/// GPUI's `shadow_md`, the alert's lift off the page, as y, blur, spread and the black's alpha.
+const SHADOW: [[f32; 4]; 2] = [[4., 6., -1., 0.1], [2., 4., -2., 0.1]];
 /// How far a card slides in from as it appears.
 const ENTER: f32 = -12.;
 
@@ -128,8 +130,14 @@ fn update_card(ui: &Ui) -> Option<Card> {
         true => t!("update-detail", running = state::version()),
         false => t!("update-detail-notes", running = state::version()),
     });
-    let notes = (!page.is_empty())
-        .then(|| link("update-notes", t!("update-notes").into_owned(), &page, theme));
+    let notes = (!page.is_empty()).then(|| {
+        link(
+            "update-notes",
+            t!("update-notes").into_owned(),
+            &page,
+            theme,
+        )
+    });
     let actions = (installable && !failed)
         .then(|| {
             Button::new("update-now")
@@ -140,7 +148,9 @@ fn update_card(ui: &Ui) -> Option<Card> {
                     true => t!("update-working"),
                     false => t!("update-now"),
                 })
-                .on_press(act(|ui: &mut Ui| ui.store.updates.install(&mut ui.store.cx)))
+                .on_press(act(|ui: &mut Ui| {
+                    ui.store.updates.install(&mut ui.store.cx)
+                }))
                 .build(theme)
         })
         .into_iter()
@@ -153,9 +163,7 @@ fn update_card(ui: &Ui) -> Option<Card> {
         close: Rc::new(|ui: &mut Ui| ui.store.updates.dismiss()),
         never: t!("update-never").into_owned(),
         silence: Rc::new(|ui: &mut Ui| {
-            ui.store
-                .settings
-                .set_check_updates(false, &mut ui.store.cx);
+            ui.store.settings.set_check_updates(false, &mut ui.store.cx);
             ui.store.updates.dismiss();
         }),
         link: notes,
@@ -225,7 +233,7 @@ fn card_element(card: Card, theme: &Theme) -> El {
                     .build(theme),
             ),
     );
-    let mut card = row()
+    let mut card = shadow_md(row())
         .key(format!("{key}-card"))
         .role("alert")
         .label(title)
@@ -235,7 +243,6 @@ fn card_element(card: Card, theme: &Theme) -> El {
         .py(rems(theme, 0.75))
         .radius(outer)
         .border(1., theme.border.color())
-        .shadow(4., 12., ui::black().opacity(0.25).color())
         .fill(theme.popover.color())
         .transition(Transition::offset(0., ENTER).combined(Transition::opacity()))
         .child(
@@ -282,4 +289,18 @@ fn link(key: &str, label: String, url: &str, theme: &Theme) -> El {
             }
         }))
         .build(theme)
+}
+
+/// Lifts `e` off the page the way GPUI's `shadow_md` does.
+fn shadow_md(e: El) -> El {
+    SHADOW.into_iter().fold(e, |e, [y, blur, spread, alpha]| {
+        e.box_shadow(rune::Shadow {
+            x: 0.,
+            y,
+            blur,
+            spread,
+            color: rune::Color::BLACK.alpha(alpha),
+            inset: false,
+        })
+    })
 }

@@ -70,21 +70,20 @@ pub(crate) fn bar(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>, options: Option
     let leading = decorated && settings.controls_on_left();
     // macOS draws its traffic lights over the bar's start; the bar's content starts past them.
     let inset = cx.titlebar_inset();
-    let pad = theme.metrics.pad;
     let start = match (leading, inset > 0.) {
-        (true, _) => pad,
+        (true, _) => rems(theme, 0.5),
         (false, true) => inset,
-        (false, false) => pad * 1.5,
+        (false, false) => rems(theme, 0.75),
     };
 
     let mut first = row()
         .key("title-bar-start")
         .center_y()
-        .gap(pad / 2.)
+        .gap(rems(theme, 0.25))
         .pl(start)
         .pr(match navigation {
-            true => pad / 2.,
-            false => pad * 1.5,
+            true => rems(theme, 0.25),
+            false => rems(theme, 0.75),
         });
     if leading {
         first = first.child(window_controls(ui, true));
@@ -98,10 +97,10 @@ pub(crate) fn bar(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>, options: Option
         .grow(1.)
         .min_w(0.)
         .center_y()
-        .gap(pad / 2.)
+        .gap(rems(theme, 0.25))
         .pr(match right.is_some() {
-            true => pad / 2.,
-            false => pad * 1.5,
+            true => rems(theme, 0.25),
+            false => rems(theme, 0.75),
         });
     if navigation {
         middle = middle.child(history(ui, theme));
@@ -139,7 +138,7 @@ pub(crate) fn bar(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>, options: Option
         bar = bar.child(
             row()
                 .key("title-bar-end")
-                .pr(pad * 1.5)
+                .pr(rems(theme, 0.75))
                 .child(aside_toggle(ui, open)),
         );
     }
@@ -147,7 +146,7 @@ pub(crate) fn bar(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>, options: Option
         bar = bar.child(
             row()
                 .key("title-bar-controls")
-                .pr(pad)
+                .pr(rems(theme, 0.5))
                 .child(window_controls(ui, false)),
         );
     }
@@ -357,6 +356,12 @@ fn loading(ui: &Ui, at: &Destination) -> Option<bool> {
         | Destination::Equalizer
         | Destination::Fullscreen => return None,
     })
+}
+
+/// `n` of the old layout's rem, which follows the theme's text size: its `pl_3` is
+/// `rems(.., 0.75)`.
+fn rems(theme: &Theme, n: f32) -> f32 {
+    theme.font_size * n
 }
 
 /// An icon-only small button as a square, its icon centred.

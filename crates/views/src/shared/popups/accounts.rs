@@ -1,7 +1,7 @@
 //! The dialog a sign-in raises when the account it reached holds several profiles to choose from.
 
-use rune::{Cursor, El, col, row, text};
 use music::AccountChoice;
+use rune::{Cursor, El, col, row, text};
 use ui::{Button, Initials, Modal, Text, Theme, Weight};
 
 use crate::Ui;

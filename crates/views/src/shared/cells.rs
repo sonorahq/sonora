@@ -260,7 +260,10 @@ pub(crate) fn length(frame: El, value: Duration, muted: Hsla, theme: &Theme) -> 
 fn said(line: El, key: &str, value: &str) -> El {
     match value.is_empty() {
         true => line.a11y_hidden(),
-        false => line.key(key.to_owned()).role("text").label(value.to_owned()),
+        false => line
+            .key(key.to_owned())
+            .role("text")
+            .label(value.to_owned()),
     }
 }
 
@@ -339,13 +342,9 @@ pub(crate) fn title(frame: El, title: Title, theme: &Theme) -> El {
         liked,
         press,
     } = title;
-    let mut label = line(
-        name.clone(),
-        color.unwrap_or(theme.foreground),
-        theme,
-    )
-    .key("track-title")
-    .label(name);
+    let mut label = line(name.clone(), color.unwrap_or(theme.foreground), theme)
+        .key("track-title")
+        .label(name);
     label = match press {
         Some(press) => label
             .role("link")

@@ -223,7 +223,8 @@ impl<'a> Picks<'a> {
             .min_w(0.)
             .children(
                 self.eyebrow
-                    .map(|label| spoken_eyebrow(format!("{key}-eyebrow"), label, theme)),
+                    .as_ref()
+                    .map(|label| spoken_eyebrow(format!("{key}-eyebrow"), label.clone(), theme)),
             )
             .child(spoken_heading(format!("{key}-heading"), title, 2, theme));
         let head = row()
@@ -273,8 +274,7 @@ impl<'a> Picks<'a> {
                     .map(|slot| {
                         let place = start + at * ROWS + slot;
                         match empty {
-                            true => Card::skeleton(format!("{key}-skeleton-{place}"))
-                                .build(theme),
+                            true => Card::skeleton(format!("{key}-skeleton-{place}")).build(theme),
                             false => self
                                 .row(ui, place)
                                 .unwrap_or_else(|| row().key(format!("gap-{slot}")).h(row_height)),

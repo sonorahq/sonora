@@ -156,7 +156,10 @@ impl CookiePrompt {
                     .self_start(),
             )
             .child(steps(
-                guide.steps.iter().map(|key| lookup(key, Some(&args)).into_owned()),
+                guide
+                    .steps
+                    .iter()
+                    .map(|key| lookup(key, Some(&args)).into_owned()),
                 theme,
             ))
             .child(

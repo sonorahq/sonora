@@ -12,7 +12,9 @@ use crate::Ui;
 /// The width of the content area between the sidebars less `inset`, never under the narrowest
 /// a page lays out at. The view runs again as it changes.
 pub(crate) fn content_width(cx: &Cx<Ui>, inset: f32) -> f32 {
-    let width = cx.layout_with("content", |rect| rect[2].round()).unwrap_or(0.);
+    let width = cx
+        .layout_with("content", |rect| rect[2].round())
+        .unwrap_or(0.);
     (width - inset).max(ui::MIN_CONTENT)
 }
 

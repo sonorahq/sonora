@@ -88,7 +88,6 @@ pub(crate) fn view(ui: &Ui, _cx: &mut Cx<Ui>, _layer: &mut Vec<El>) -> El {
                 .label(status.clone())
                 .items_center()
                 .gap(theme.metrics.pad / 2.)
-                .max_w(f32::MAX)
                 .child(faces(ui, &people, theme))
                 .child(
                     text(status)

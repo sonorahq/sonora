@@ -97,16 +97,12 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
     )
     .menu(menu)
     .build(theme, layer);
-    row()
-        .key("downloads")
-        .center_y()
-        .child(picker)
-        .child(
-            cancel("downloads-cancel-all", theme)
-                .tooltip(t!("downloads-cancel-all"))
-                .on_press(act(|ui: &mut Ui| ui.store.cancel_all_downloads()))
-                .build(theme),
-        )
+    row().key("downloads").center_y().child(picker).child(
+        cancel("downloads-cancel-all", theme)
+            .tooltip(t!("downloads-cancel-all"))
+            .on_press(act(|ui: &mut Ui| ui.store.cancel_all_downloads()))
+            .build(theme),
+    )
 }
 
 /// The scrolling list of rows, as tall as they are up to `LIST`.

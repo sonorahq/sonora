@@ -8,9 +8,7 @@
 
 use i18n::FluentArgs;
 use router::{Destination, SettingsPage};
-use rune::{
-    Cx, Drag, El, Live, Phase, Spring, SpringPair, Transition, Tx, col, el,
-};
+use rune::{Cx, Drag, El, Live, Phase, Spring, SpringPair, Transition, Tx, col, el};
 use state::{Outcome, Target, Toast, ToastButton};
 use ui::Springs;
 
@@ -296,7 +294,8 @@ fn card(ui: &Ui, toast: &Toast, place: &Place, width: f32, below: f32) -> El {
         card = card.live_offset(state.offset.smooth(FOLLOW));
     }
     if place.active {
-        card = card.on_drag(move |ui: &mut Ui, drag: &mut Drag, tx: &mut Tx| swipe(ui, id, drag, tx));
+        card =
+            card.on_drag(move |ui: &mut Ui, drag: &mut Drag, tx: &mut Tx| swipe(ui, id, drag, tx));
     }
     card
 }
@@ -392,10 +391,10 @@ fn damped(moved: f32) -> f32 {
 /// The page a toast's target opens.
 fn destination(target: Target) -> Destination {
     match target {
-        Target::Song(id) => Destination::Song(id),
-        Target::Album(id) => Destination::Album(id),
-        Target::Artist(id) => Destination::Artist(id),
-        Target::Playlist(id) => Destination::Playlist(id),
+        Target::Song(id) => Destination::Song(id.as_ref().into()),
+        Target::Album(id) => Destination::Album(id.as_ref().into()),
+        Target::Artist(id) => Destination::Artist(id.as_ref().into()),
+        Target::Playlist(id) => Destination::Playlist(id.as_ref().into()),
         Target::PlaybackSettings => Destination::Settings(SettingsPage::Playback),
         Target::ProviderSettings => Destination::Settings(SettingsPage::Providers),
     }

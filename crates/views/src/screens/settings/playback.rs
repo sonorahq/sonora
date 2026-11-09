@@ -97,7 +97,12 @@ pub(super) fn view(ui: &Ui, _cx: &mut Cx<Ui>, layer: &mut Vec<El>, layout: &Layo
     match capabilities.qualities.len() {
         0 => {}
         1 => groups.push(group(theme, quality, None, [stream_quality_row(ui)])),
-        _ => groups.push(group(theme, quality, Some(quality_cards(ui, layer, layout)), [])),
+        _ => groups.push(group(
+            theme,
+            quality,
+            Some(quality_cards(ui, layer, layout)),
+            [],
+        )),
     }
     if capabilities.transcode {
         groups.push(group(
@@ -170,11 +175,14 @@ fn quality_cards(ui: &Ui, layer: &mut Vec<El>, layout: &Layout) -> El {
         })
         .collect();
     // a short ladder keeps the width of a longer one rather than stretching across
-    col().key("settings-row-stream-quality").w_full().child(grid(
-        "quality",
-        columns(steps.max(QUALITY_COLUMNS), layout.room()),
-        cards,
-    ))
+    col()
+        .key("settings-row-stream-quality")
+        .w_full()
+        .child(grid(
+            "quality",
+            columns(steps.max(QUALITY_COLUMNS), layout.room()),
+            cards,
+        ))
 }
 
 /// The format a server converts tracks into, or the one it sends, as one segmented control.
@@ -301,18 +309,18 @@ fn widevine_row(ui: &Ui) -> El {
         CdmState::Declined | CdmState::Missing | CdmState::Ready(Origin::Installed)
     );
     let removable = matches!(state, CdmState::Ready(Origin::Fetched));
-    let busy = matches!(state, CdmState::Offering | CdmState::Installing | CdmState::Looking);
+    let busy = matches!(
+        state,
+        CdmState::Offering | CdmState::Installing | CdmState::Looking
+    );
     let detail = i18n::lookup(detail, None).into_owned();
 
-    let mut action = row()
-        .center_y()
-        .gap(theme.font_size * 0.5)
-        .child(
-            ui::spoken("settings-widevine-note", i18n::lookup(note, None), theme)
-                .font(font(theme, Text::Label, Weight::NORMAL))
-                .color(theme.muted_foreground.color())
-                .transition(Transition::opacity()),
-        );
+    let mut action = row().center_y().gap(theme.font_size * 0.5).child(
+        ui::spoken("settings-widevine-note", i18n::lookup(note, None), theme)
+            .font(font(theme, Text::Label, Weight::NORMAL))
+            .color(theme.muted_foreground.color())
+            .transition(Transition::opacity()),
+    );
     if busy {
         action = action.child(
             ui::Spinner::new()

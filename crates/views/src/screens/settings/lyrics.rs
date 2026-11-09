@@ -8,8 +8,8 @@ use router::{Destination, SettingsPage};
 use rune::{Cursor, Cx, Drag, El, Phase, Transition, Tx, col, row, text};
 use state::LYRICS_SOURCES;
 use ui::{
-    Carry, Edge, Ghost, MAX_LYRICS_SCALE, MIN_LYRICS_SCALE, MenuItem, Picker, TABULAR, Text,
-    Theme, Weight, drop_marker, font, grip,
+    Carry, Edge, Ghost, MAX_LYRICS_SCALE, MIN_LYRICS_SCALE, MenuItem, Picker, TABULAR, Text, Theme,
+    Weight, drop_marker, font, grip,
 };
 
 use super::{Layout, Row, drill, group, switch, toggle, whole};
@@ -194,7 +194,12 @@ fn size_row(
     let control = row()
         .center_y()
         .gap(theme.font_size * 0.5)
-        .child(step("smaller", "\u{2212}", "settings-font-smaller", -SIZE_STEP))
+        .child(step(
+            "smaller",
+            "\u{2212}",
+            "settings-font-smaller",
+            -SIZE_STEP,
+        ))
         .child(
             ui::spoken(format!("{slug}-value"), value, theme)
                 .font(font(theme, Text::Body, Weight::NORMAL).features(TABULAR)),
@@ -235,7 +240,8 @@ fn romanized_row(ui: &Ui, layer: &mut Vec<El>) -> El {
                 }))
         }))
         .build(theme, layer);
-        control = control.child(picker.transition(Transition::scale(0.9).combined(Transition::opacity())));
+        control = control
+            .child(picker.transition(Transition::scale(0.9).combined(Transition::opacity())));
     }
     control = control.child(toggle(
         theme,
@@ -379,7 +385,14 @@ fn source_on(ui: &Ui, index: usize, provider: String, count: usize, total: usize
 /// Follows a drag of the source at `index` among the `count` that are on: the chip follows the
 /// pointer, the marker moves to the gap under it, and the drop places the source there. A move
 /// that changes nothing but the chip's place runs no view.
-fn drag_source(ui: &mut Ui, drag: &mut Drag, tx: &mut Tx, provider: &str, index: usize, count: usize) {
+fn drag_source(
+    ui: &mut Ui,
+    drag: &mut Drag,
+    tx: &mut Tx,
+    provider: &str,
+    index: usize,
+    count: usize,
+) {
     match drag.phase {
         Phase::Down => {
             let state = st(ui);

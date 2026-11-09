@@ -465,9 +465,7 @@ impl TrackRows {
 
     /// Whether a row shows the track `id`.
     pub(crate) fn holds(&self, ui: &Ui, id: &str) -> bool {
-        self.order(ui)
-            .display(id)
-            .is_some()
+        self.order(ui).display(id).is_some()
     }
 
     /// The tracks of the rows keyed `keys`, in the order given.
@@ -510,7 +508,11 @@ impl TrackRows {
         let Some(track) = order.source(display).and_then(|at| tracks.get(at)) else {
             return;
         };
-        let current = ui.store.playback.track().and_then(|track| track.id.as_deref());
+        let current = ui
+            .store
+            .playback
+            .track()
+            .and_then(|track| track.id.as_deref());
         match current.is_some() && current == track.id.as_deref() {
             true => {
                 ui.store.toggle_play();
@@ -798,9 +800,8 @@ impl TrackTable {
             }
         });
         let lit = order.clone();
-        table = table.playing(move |_: &Ui, at: usize| {
-            playing_at.is_some() && lit.source(at) == playing_at
-        });
+        table = table
+            .playing(move |_: &Ui, at: usize| playing_at.is_some() && lit.source(at) == playing_at);
         let tipped = (rows.clone(), order.clone());
         table = table.tip(move |ui: &Ui, at: usize| {
             let (rows, order) = &tipped;
@@ -813,7 +814,8 @@ impl TrackTable {
             Some(i18n::lookup(reason.key(), Some(&args)).into_owned())
         });
         let filled = rows.clone();
-        table = table.populated(move |ui: &Ui, field: TrackField| populated(filled.tracks(ui), field));
+        table =
+            table.populated(move |ui: &Ui, field: TrackField| populated(filled.tracks(ui), field));
         if let Some(lead) = lead {
             table = table.lead(lead);
         }
@@ -917,7 +919,8 @@ fn cell_of(
             let playing = (shown.playing_at == Some(at))
                 .then_some(shown.control)
                 .flatten();
-            let number = number(track, shown.numbering).unwrap_or_else(|| (cell.row + 1).to_string());
+            let number =
+                number(track, shown.numbering).unwrap_or_else(|| (cell.row + 1).to_string());
             let press = plays_now.then(|| -> Act {
                 let rows = rows.clone();
                 let key = key.to_owned();
@@ -948,9 +951,13 @@ fn cell_of(
             },
             theme,
         ),
-        TrackField::Artists => {
-            cells::artists(frame, &track.artist_refs, track.artists.clone(), detail, theme)
-        }
+        TrackField::Artists => cells::artists(
+            frame,
+            &track.artist_refs,
+            track.artists.clone(),
+            detail,
+            theme,
+        ),
         TrackField::Album => match track.album_id.as_deref() {
             Some(album) => cells::link(
                 frame,

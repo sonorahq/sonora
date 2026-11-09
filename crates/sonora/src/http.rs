@@ -256,7 +256,6 @@ fn cache_entry(path: &Path) -> bool {
         .is_some_and(|name| name.len() == 64 && name.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

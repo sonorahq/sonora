@@ -5,7 +5,7 @@
 use router::Destination;
 use rune::{Cx, El, Transition, Tx, col, row};
 
-use crate::chrome::{player_bar, sidebar_left, sidebar_right, toasts};
+use crate::chrome::{jam, notice, player_bar, session, sidebar_left, sidebar_right, toasts};
 use crate::screens;
 use crate::Ui;
 
@@ -47,9 +47,18 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
 
     let toasts = toasts::view(ui, cx, layer);
     layer.push(toasts);
-    let bar = player_bar::view(ui, cx, layer);
+    let mut bar = player_bar::view(ui, cx, layer);
+    // a translucent bar floats over the foot of the page, which scrolls on under its blur;
+    // pages keep their last row clear of it with `player_bar::bottom`
+    if ui.store.settings.player_bar_translucent() {
+        bar = bar.pin(Some(0.), None, Some(0.), Some(0.));
+    }
+    // the notices sit over the page's top left corner, under every menu and dialog
+    let notices = notice::view(ui, cx, layer);
     // The context menu and the dialogs go over everything else in the layer.
     crate::shared::dialogs::view(ui, cx, layer);
+    jam::mount(ui, cx, layer);
+    session::mount(ui, cx, layer);
     col()
         .key("workspace-shell")
         .grow(1.)
@@ -58,6 +67,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
         .fill(theme.background.color())
         .child(body)
         .child(bar)
+        .child(notices)
 }
 
 /// The screen that draws `destination`.

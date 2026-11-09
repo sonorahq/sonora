@@ -31,9 +31,10 @@ pub fn watch(io: &state::Io, handle: AppHandle<Ui>) {
     io.spawn(async move {
         loop {
             tokio::time::sleep(INTERVAL).await;
-            let probed = tokio::task::spawn_blocking(|| (footprint().unwrap_or_default(), resident()))
-                .await
-                .unwrap_or_default();
+            let probed =
+                tokio::task::spawn_blocking(|| (footprint().unwrap_or_default(), resident()))
+                    .await
+                    .unwrap_or_default();
             handle.update(move |ui: &mut Ui, _| report(probed, ui));
         }
     });
@@ -41,7 +42,10 @@ pub fn watch(io: &state::Io, handle: AppHandle<Ui>) {
 
 fn report(probed: (Footprint, Option<usize>), ui: &Ui) {
     let (footprint, resident) = probed;
-    let (entries, bytes) = ui.artwork.as_ref().map_or((0, 0), |artwork| artwork.usage());
+    let (entries, bytes) = ui
+        .artwork
+        .as_ref()
+        .map_or((0, 0), |artwork| artwork.usage());
     let queue = &ui.store.queue;
     let past = queue.past().len();
     let ahead = queue.upcoming().len();

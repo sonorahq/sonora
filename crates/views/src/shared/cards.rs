@@ -92,10 +92,7 @@ fn menu(card: Card, item: GenreItem, on_item: Option<&OnItem>) -> Card {
 
 /// Whether the player plays from `origin` right now.
 fn playing_from(ui: &Ui, origin: &Origin) -> bool {
-    ui.store
-        .playback
-        .playing_from(origin, &ui.store.queue)
-        == Some(true)
+    ui.store.playback.playing_from(origin, &ui.store.queue) == Some(true)
 }
 
 /// The play button of a collection's card: pauses or resumes while the queue came from it,

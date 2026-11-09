@@ -10,13 +10,14 @@ use i18n::t;
 use music::Track;
 use router::Destination;
 use rune::{Cx, El, SpringPair, Transition, Tx, WheelEvent, col, el, icon, row, text};
-use state::{PlayerBarLayout, QueuePlacement, Repeat, SideTab, Store};
+use state::{PlayerBarLayout, Repeat, SideTab, Store};
 use ui::{
-    Button, Cover, ExplicitBadge, InlineLink, InlineLinks, Menu, MenuItem, Popup, Room, Scrubber,
-    ScrubberState, Springs, Text, Theme, Weight,
+    Button, Cover, ExplicitBadge, InlineLink, InlineLinks, Room, Scrubber, ScrubberState, Springs,
+    Text, Theme, Weight,
 };
 
-use crate::chrome::sessions_button;
+use crate::chrome::{sessions_button, sidebar_right};
+use crate::shared::menus;
 use crate::{Ui, act};
 
 /// The widest the column of transport and seek bar grows.
@@ -43,8 +44,7 @@ const FADED: f32 = 0.55;
 const POP: rune::Spring = rune::Spring::new(0.42, 0.5);
 const POP_FROM: f32 = 0.4;
 
-/// The player bar's own view state: the sliders, what the pointer points at on them, and the
-/// context menu on the playing track.
+/// The player bar's own view state: the sliders and what the pointer points at on them.
 pub struct State {
     pub volume: ScrubberState,
     /// The fraction a drag on the seek bar holds, which the seek lands on once let go. While it
@@ -55,8 +55,6 @@ pub struct State {
     volume_held: bool,
     /// The level before muting, which unmuting brings back.
     muted: Option<f32>,
-    /// Where the context menu on the playing track opened, while it is open.
-    menu: Option<(f32, f32)>,
 }
 
 impl Default for State {
@@ -68,7 +66,6 @@ impl Default for State {
             over_volume: None,
             volume_held: false,
             muted: None,
-            menu: None,
         }
     }
 }
@@ -82,16 +79,15 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
     let translucent = settings.player_bar_translucent();
     let height = height(ui, cx);
     let show_track = room.fits(Room::Snug);
-    let centered_wing =
-        theme.metrics.control * 4. + VOLUME_WIDTH + theme.metrics.pad * 3.;
+    let centered_wing = theme.metrics.control * 4. + VOLUME_WIDTH + theme.metrics.pad * 3.;
 
     let surface = |base: El| {
         let base = base
-        .role("toolbar")
-        .label(t!("settings-page-player-bar"))
-        .w_full()
-        .h(height)
-        .px(rems(theme, 1.25))
+            .role("toolbar")
+            .label(t!("settings-page-player-bar"))
+            .w_full()
+            .h(height)
+            .px(rems(theme, 1.25))
             .border_sides([1., 0., 0., 0.], theme.border.color());
         match (translucent, theme.transparent) {
             (true, _) => ui::bar_surface(base, theme).color(theme.popover_foreground.color()),
@@ -100,7 +96,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
         }
     };
 
-    let right = |volume: f32| {
+    let mut right = |volume: f32| {
         [
             buttons(ui, cx, layer),
             sound(ui, volume),
@@ -165,9 +161,7 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
         (false, PlayerBarLayout::Compact) => surface(row())
             .center_y()
             .gap(rems(theme, 0.75))
-            .child(
-                now_playing(ui, show_track, layout, stacked).max_w(theme.metrics.cover * 1.6),
-            )
+            .child(now_playing(ui, show_track, layout, stacked).max_w(theme.metrics.cover * 1.6))
             .child(transport(ui, false))
             .child(col().grow(1.).min_w(0.).child(seek(ui)))
             .children(right(VOLUME_WIDTH)),
@@ -196,14 +190,6 @@ pub(crate) fn view(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
             ),
     };
 
-    if let Some(at) = ui.chrome.player_bar.menu
-        && let Some(track) = ui.store.playback.shown_track(&ui.store.devices)
-    {
-        Popup::new("player-track-menu", at, track_menu(ui, &track))
-            .above()
-            .on_close(|ui: &mut Ui| ui.chrome.player_bar.menu = None)
-            .build(theme, layer);
-    }
     content
 }
 
@@ -233,21 +219,6 @@ pub(crate) fn bottom(ui: &Ui, cx: &Cx<Ui>) -> f32 {
 /// `n` rems, which GPUI's spacing steps were and which follow the text size.
 pub(crate) fn rems(theme: &Theme, n: f32) -> f32 {
     theme.font_size * n
-}
-
-/// Shows `tab` in the right sidebar, or closes the sidebar when it already shows it, as the
-/// panel buttons and the shortcuts that name a panel do.
-pub(crate) fn show_side(ui: &mut Ui, tab: SideTab) {
-    if tab == SideTab::Lyrics && !ui.store.settings.lyrics_enabled() {
-        return;
-    }
-    let chrome = &mut ui.chrome;
-    let open = !(chrome.right_open && chrome.right_tab == tab);
-    chrome.right_open = open;
-    chrome.right_tab = tab;
-    let settings = &mut ui.store.settings;
-    settings.set_sidebar_right_tab(tab, &mut ui.store.cx);
-    settings.set_sidebar_right_open(open, &mut ui.store.cx);
 }
 
 /// Centered needs room for its three columns; smaller windows keep every control reachable in
@@ -321,7 +292,9 @@ fn artwork(ui: &Ui, layout: PlayerBarLayout, stacked: bool) -> El {
             .role("link")
             .focusable(true)
             .cursor(rune::Cursor::Pointer)
-            .on_press(act(move |ui: &mut Ui| ui.go(Destination::Album(id.clone().into())))),
+            .on_press(act(move |ui: &mut Ui| {
+                ui.go(Destination::Album(id.clone().into()))
+            })),
         None => face.role("img"),
     }
 }
@@ -374,24 +347,20 @@ fn track_details(ui: &Ui, centered: bool) -> El {
                     false => 1.,
                 }
                 + theme.metrics.pad;
-            row()
-                .w_full()
-                .justify_center()
-                .px(clearance)
-                .child(
-                    row()
-                        .center_y()
-                        .min_w(0.)
-                        .min_h(theme.text(Text::Body) * ui::LEADING)
-                        .child(title)
-                        // a box of no width after the title, which the actions hang from
-                        .child(
-                            el().w(0.).h_full().child(
-                                actions
-                                    .pin(Some(theme.metrics.pad * 0.5), Some(0.), None, Some(0.)),
-                            ),
-                        ),
-                )
+            row().w_full().justify_center().px(clearance).child(
+                row()
+                    .center_y()
+                    .min_w(0.)
+                    .min_h(theme.text(Text::Body) * ui::LEADING)
+                    .child(title)
+                    // a box of no width after the title, which the actions hang from
+                    .child(el().w(0.).h_full().child(actions.pin(
+                        Some(theme.metrics.pad * 0.5),
+                        Some(0.),
+                        None,
+                        Some(0.),
+                    ))),
+            )
         }
         false => row()
             .w_full()
@@ -401,11 +370,7 @@ fn track_details(ui: &Ui, centered: bool) -> El {
             .child(title)
             .child(actions),
     };
-    let mut details = col()
-        .justify_center()
-        .grow(1.)
-        .min_w(0.)
-        .child(headline);
+    let mut details = col().justify_center().grow(1.).min_w(0.).child(headline);
     if centered {
         details = details.items_center().w_full();
     }
@@ -526,9 +491,10 @@ fn toggle(ui: &Ui, big: bool) -> El {
     let theme = &ui.theme;
     let store = &ui.store;
     let steered = store.playback.steered(&store.devices);
-    let playing = steered
-        .as_ref()
-        .map_or_else(|| store.playback.wants_playing(), |remote| remote.state.playing);
+    let playing = steered.as_ref().map_or_else(
+        || store.playback.wants_playing(),
+        |remote| remote.state.playing,
+    );
     let idle = store.playback.track().is_none() && steered.is_none();
     let ink = match idle {
         true => theme.muted_foreground.opacity(FADED),
@@ -635,11 +601,7 @@ fn seek(ui: &Ui) -> El {
     let theme = &ui.theme;
     let state = &ui.chrome.player_bar;
     let (_, total) = ui.store.playback.shown_time(&ui.store.devices);
-    let seekable = ui
-        .store
-        .playback
-        .shown_track(&ui.store.devices)
-        .is_some();
+    let seekable = ui.store.playback.shown_track(&ui.store.devices).is_some();
     let size = theme.text(Text::Tiny);
     let width = size
         * match total.as_secs() >= 3600 {
@@ -658,7 +620,7 @@ fn seek(ui: &Ui) -> El {
                 false => rune::Align::Start,
             })
             .w(width)
-        };
+    };
     let mut bar = Scrubber::<Ui>::live("player-seek-bar", &ui.live.seek)
         .name(t!("song-position"))
         .colors(
@@ -785,10 +747,7 @@ fn turn_volume(ui: &mut Ui, wheel: WheelEvent, _: &mut Tx) -> bool {
 fn buttons(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
     let theme = &ui.theme;
     let settings = &ui.store.settings;
-    let mut group = row()
-        .key("player-panels")
-        .center_y()
-        .gap(rems(theme, 0.25));
+    let mut group = row().key("player-panels").center_y().gap(rems(theme, 0.25));
     let picker = settings.sessions_button()
         && (ui.store.devices.available() || ui.store.listening.available(&ui.store.session));
     if picker {
@@ -812,7 +771,7 @@ fn buttons(ui: &Ui, cx: &mut Cx<Ui>, layer: &mut Vec<El>) -> El {
                 true => theme.foreground,
                 false => theme.muted_foreground,
             })
-            .on_press(act(move |ui: &mut Ui| show_side(ui, side)))
+            .on_press(act(move |ui: &mut Ui| sidebar_right::show(ui, side)))
             .build(theme)
     };
     if settings.lyrics_enabled() {
@@ -841,112 +800,12 @@ fn fullscreen_button(theme: &Theme) -> El {
         .build(theme)
 }
 
-/// Opens the context menu of the playing track where the secondary press landed.
+/// Opens the shared track menu on whatever is playing, where the secondary press landed.
 fn open_menu(ui: &mut Ui, press: rune::PointerPress, _: &mut Tx) {
-    if ui.store.playback.shown_track(&ui.store.devices).is_none() {
+    let Some(track) = ui.store.playback.shown_track(&ui.store.devices) else {
         return;
-    }
-    ui.chrome.player_bar.menu = Some((press.x, press.y));
-}
-
-/// The playing track's context menu: queueing, its station, the pages it leads to and the heart.
-// A stand-in for the shared track menu, which owns playlists, downloads, pins and tags; the bar
-// moves to it once it lands.
-fn track_menu(ui: &Ui, track: &Track) -> Menu<Ui> {
-    let saved = track
-        .id
-        .as_deref()
-        .is_some_and(|id| ui.store.library.saved(id));
-    let queue = |key: &str, label: &str, path: &str, placement: QueuePlacement| {
-        let track = track.clone();
-        let mut item = MenuItem::<Ui>::new(key, i18n::lookup(label, None)).icon(path);
-        match track.playable {
-            true => {
-                item = item.on_press(act(move |ui: &mut Ui| {
-                    ui.store
-                        .enqueue_tracks(vec![track.clone()], None, placement)
-                }))
-            }
-            false => item = item.disabled(),
-        }
-        item
     };
-    let mut items = vec![
-        queue(
-            "play-next",
-            "menu-play-next",
-            "icons/list-start.svg",
-            QueuePlacement::Next,
-        ),
-        queue(
-            "add-to-queue",
-            "menu-add-to-queue",
-            "icons/list-plus.svg",
-            QueuePlacement::End,
-        ),
-        queue(
-            "play-last",
-            "menu-play-last",
-            "icons/list-end.svg",
-            QueuePlacement::Last,
-        ),
-    ];
-    let radio = MenuItem::<Ui>::new("song-radio", t!("menu-song-radio")).icon("icons/radio.svg");
-    items.push(match track.id.is_some() && track.playable {
-        true => {
-            let seed = track.clone();
-            radio.on_press(act(move |ui: &mut Ui| ui.store.play_radio(&seed)))
-        }
-        false => radio.disabled(),
-    });
-    items.push(MenuItem::separator("go-separator"));
-    let album = MenuItem::<Ui>::new("go-to-album", t!("menu-go-to-album")).icon("icons/disc-3.svg");
-    items.push(match track.album_id.clone() {
-        Some(id) => album.on_press(act(move |ui: &mut Ui| {
-            ui.go(Destination::Album(id.clone().into()))
-        })),
-        None => album.disabled(),
-    });
-    let artists: Vec<(String, String)> = track
-        .artist_refs
-        .iter()
-        .filter_map(|artist| Some((artist.name.clone(), artist.id.clone()?)))
-        .collect();
-    let artist = MenuItem::<Ui>::new("go-to-artist", t!("menu-go-to-artist")).icon("icons/user.svg");
-    items.push(match artists.first() {
-        None => artist.disabled(),
-        Some((_, id)) => {
-            let id = id.clone();
-            artist.on_press(act(move |ui: &mut Ui| {
-                ui.go(Destination::Artist(id.clone().into()))
-            }))
-        }
-    });
-    let details =
-        MenuItem::<Ui>::new("view-details", t!("menu-view-details")).icon("icons/info.svg");
-    items.push(match track.id.clone() {
-        Some(id) => details.on_press(act(move |ui: &mut Ui| {
-            ui.go(Destination::Song(id.clone().into()))
-        })),
-        None => details.disabled(),
-    });
-    items.push(MenuItem::separator("library-separator"));
-    let heart = MenuItem::<Ui>::new(
-        "toggle-library",
-        match saved {
-            true => t!("menu-remove-from-library"),
-            false => t!("menu-add-to-library"),
-        },
-    )
-    .icon(match saved {
-        true => "icons/heart-filled.svg",
-        false => "icons/heart.svg",
-    });
-    items.push(match track.id.is_some() {
-        true => heart.on_press(act(|ui: &mut Ui| toggle_liked(&mut ui.store))),
-        false => heart.disabled(),
-    });
-    Menu::new("player-track-menu").name(track.name.clone()).items(items)
+    menus::open(ui, menus::Target::track(track), press);
 }
 
 fn volume_icon(level: f32) -> &'static str {
