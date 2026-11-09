@@ -101,10 +101,6 @@ impl Workspace {
         self.sidebar.update(cx, |sidebar, cx| sidebar.toggle(cx));
     }
 
-    pub fn toggle_sidebar_right(&self, cx: &mut Context<Self>) {
-        self.sidebar_right.update(cx, |panel, cx| panel.toggle(cx));
-    }
-
     pub fn show_side(&self, tab: SideTab, cx: &mut Context<Self>) {
         self.sidebar_right
             .update(cx, |panel, cx| panel.show(tab, cx));
@@ -179,7 +175,6 @@ impl Shell for Workspace {
         TitleBarOptions {
             navigation: true,
             sidebar_open: self.sidebar.read(cx).is_open(),
-            sidebar_right: Some(self.sidebar_right.read(cx).is_open()),
             border: true,
             content,
             transparent: false,

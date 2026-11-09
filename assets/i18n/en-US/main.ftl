@@ -39,7 +39,6 @@ nav-local = Local Music
 nav-back = Back
 nav-forward = Forward
 nav-sidebar = Toggle sidebar
-nav-sidebar-right = Show or hide lyrics and queue
 nav-pinned = Pinned
 nav-unpin = Unpin
 nav-pin-hint = Drop here to pin

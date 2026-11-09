@@ -32,7 +32,6 @@ nav-local = Musik Lokal
 nav-back = Kembali
 nav-forward = Maju
 nav-sidebar = Buka/tutup bilah sisi
-nav-sidebar-right = Tampilkan atau sembunyikan lirik dan antrean
 nav-pinned = Disematkan
 nav-unpin = Lepas sematan
 nav-pin-hint = Letakkan di sini untuk menyematkan

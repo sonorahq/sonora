@@ -32,7 +32,6 @@ nav-local = Локальная музыка
 nav-back = Назад
 nav-forward = Вперёд
 nav-sidebar = Показать или скрыть боковую панель
-nav-sidebar-right = Показать или скрыть текст и очередь
 nav-pinned = Закреплённое
 nav-unpin = Открепить
 nav-pin-hint = Перетащите сюда, чтобы закрепить

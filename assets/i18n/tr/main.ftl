@@ -32,7 +32,6 @@ nav-local = Yerel Müzik
 nav-back = Geri
 nav-forward = İleri
 nav-sidebar = Kenar çubuğunu aç veya kapat
-nav-sidebar-right = Şarkı sözlerini ve sırayı göster veya gizle
 nav-pinned = Sabitlenenler
 nav-unpin = Sabitlemeyi kaldır
 nav-pin-hint = Sabitlemek için buraya bırak

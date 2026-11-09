@@ -32,7 +32,6 @@ nav-local = Musique locale
 nav-back = Retour
 nav-forward = Suivant
 nav-sidebar = Afficher ou masquer la barre latérale
-nav-sidebar-right = Afficher ou masquer les paroles et la file d'attente
 nav-pinned = Épinglés
 nav-unpin = Détacher
 nav-pin-hint = Déposer ici pour épingler

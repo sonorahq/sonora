@@ -32,7 +32,6 @@ nav-local = Música local
 nav-back = Atrás
 nav-forward = Adelante
 nav-sidebar = Mostrar u ocultar la barra lateral
-nav-sidebar-right = Mostrar u ocultar la letra y la cola
 nav-pinned = Fijados
 nav-unpin = Dejar de fijar
 nav-pin-hint = Suelta aquí para fijar

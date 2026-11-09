@@ -32,7 +32,6 @@ nav-local = Muzikë lokale
 nav-back = Mbrapa
 nav-forward = Përpara
 nav-sidebar = Shfaq ose fshih shiritin anësor
-nav-sidebar-right = Shfaq ose fshih tekstet dhe radhën
 nav-pinned = Të fiksuara
 nav-unpin = Hiq fiksimin
 nav-pin-hint = Lësho këtu për ta fiksuar

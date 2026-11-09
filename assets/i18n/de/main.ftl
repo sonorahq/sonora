@@ -32,7 +32,6 @@ nav-local = Lokale Musik
 nav-back = Zurück
 nav-forward = Vorwärts
 nav-sidebar = Seitenleiste umschalten
-nav-sidebar-right = Songtext und Warteschlange ein- oder ausblenden
 nav-pinned = Angeheftet
 nav-unpin = Lösen
 nav-pin-hint = Zum Anheften hier ablegen

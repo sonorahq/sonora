@@ -11,7 +11,6 @@ use ui::TrafficLightControls;
 use ui::WindowControls;
 use ui::{ActiveTheme as _, Button, Spin};
 
-use crate::chrome::SidebarRight;
 use crate::chrome::downloads::DownloadsButton;
 use input::Refresh;
 use router::Navigation;
@@ -43,7 +42,6 @@ const TRAFFIC_LIGHTS_SPAN: f32 = 65.;
 pub(crate) struct TitleBarOptions {
     pub navigation: bool,
     pub sidebar_open: bool,
-    pub sidebar_right: Option<bool>,
     pub border: bool,
     pub content: Option<AnyView>,
     /// Lets the fullscreen ambient background show through behind the controls.
@@ -55,7 +53,6 @@ impl Default for TitleBarOptions {
         Self {
             navigation: false,
             sidebar_open: false,
-            sidebar_right: None,
             border: true,
             content: None,
             transparent: false,
@@ -65,7 +62,6 @@ impl Default for TitleBarOptions {
 
 pub(crate) enum TitleBarEvent {
     ToggleSidebar,
-    ToggleSidebarRight,
 }
 
 pub(crate) struct TitleBar {
@@ -195,29 +191,6 @@ impl TitleBar {
             })
     }
 
-    fn lyrics_toggle(&self, open: bool, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .occlude()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                Button::new("sidebar-right-toggle")
-                    .ghost()
-                    .small()
-                    .icon(match open {
-                        true => "icons/panel-right-close.svg",
-                        false => "icons/panel-right-open.svg",
-                    })
-                    .tooltip("nav-sidebar-right")
-                    .aria_expanded(open)
-                    .on_click(
-                        cx.listener(|_, _, _, cx| cx.emit(TitleBarEvent::ToggleSidebarRight)),
-                    ),
-            )
-    }
-
     fn toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let icon = match self.options.sidebar_open {
             true => "icons/panel-left-close.svg",
@@ -248,10 +221,6 @@ impl Render for TitleBar {
         let theme = cx.theme();
         let height = ui::snapped(theme.metrics.title_bar, window);
         let navigation = self.options.navigation;
-        let sidebar_right = self
-            .options
-            .sidebar_right
-            .filter(|_| SidebarRight::available(window));
         let content = self.options.content.clone();
         let window_fullscreen = window.is_fullscreen();
         let settings = self.settings.read(cx);
@@ -261,7 +230,7 @@ impl Render for TitleBar {
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let controls = settings.window_controls() && !window_fullscreen;
         // Fullscreen hides the traffic lights, so the toggle sits as far from the left edge as
-        // the right sidebar's toggle does from the right.
+        // the bar's last control does from the right.
         let inset = traffic_lights_inset(settings, height).filter(|_| !window_fullscreen);
         let decorated = cfg!(not(target_os = "macos")) && controls;
         let leading = decorated && settings.controls_on_left();
@@ -357,14 +326,8 @@ impl Render for TitleBar {
                         )
                     })
                     .children(content)
-                    .map(|this| match sidebar_right.is_some() {
-                        true => this.pr_1(),
-                        false => this.pr_3(),
-                    }),
+                    .pr_3(),
             )
-            .when_some(sidebar_right, |this, open| {
-                this.child(div().flex_none().pr_3().child(self.lyrics_toggle(open, cx)))
-            })
             .when(decorated && !leading, |this| {
                 this.child(
                     div()

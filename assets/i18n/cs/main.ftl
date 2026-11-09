@@ -32,7 +32,6 @@ nav-local = Místní hudba
 nav-back = Zpět
 nav-forward = Vpřed
 nav-sidebar = Přepnout postranní panel
-nav-sidebar-right = Zobrazit nebo skrýt texty a frontu
 nav-pinned = Připnuté
 nav-unpin = Odepnout
 nav-pin-hint = Přetažením sem připneš

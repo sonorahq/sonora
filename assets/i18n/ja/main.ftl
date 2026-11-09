@@ -32,7 +32,6 @@ nav-local = ローカル音楽
 nav-back = 戻る
 nav-forward = 進む
 nav-sidebar = サイドバーを切り替え
-nav-sidebar-right = 歌詞と再生キューを表示・非表示
 nav-pinned = ピン留め
 nav-unpin = ピン留めを解除
 nav-pin-hint = ここにドロップしてピン留め

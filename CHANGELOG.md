@@ -10,6 +10,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Nightly updates reuse released executables after a stable release, so they become available sooner.
+- The title bar no longer has a lyrics and queue button, since the player bar's buttons open
+  the same sidebar.
 
 ### Fixed
 

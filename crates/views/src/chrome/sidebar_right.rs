@@ -64,10 +64,6 @@ impl SidebarRight {
         }
     }
 
-    pub(crate) fn is_open(&self) -> bool {
-        self.open
-    }
-
     pub(crate) fn available(window: &Window) -> bool {
         !fills_content(window.viewport_size().width)
     }
@@ -91,16 +87,6 @@ impl SidebarRight {
             false => Pixels::ZERO,
             true => self.width,
         }
-    }
-
-    pub(crate) fn toggle(&mut self, cx: &mut Context<Self>) {
-        self.open = !self.open;
-        if self.open && self.tab != SideTab::Members {
-            let tab = self.tab;
-            self.aside.update(cx, |aside, cx| aside.show(tab, cx));
-        }
-        self.remember(cx);
-        cx.notify();
     }
 
     pub(crate) fn show(&mut self, tab: SideTab, cx: &mut Context<Self>) {
