@@ -34,6 +34,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Song, album, artist and playlist menus open with a row of buttons to like, add to the library, download and pin, filled in while they are on, and the download button shows how far a download has got. Playlists sit under Add to playlist, and a checked playlist takes the song out again.
 - The device picker in the equalizer's device rules lists devices the way the output picker does, with sound card outputs grouped and Direct to hardware devices in their own submenu.
 - A song's right-click menu lists Go to artist, Go to album, Go to song radio and View details directly again instead of under Go to.
+- Everyone in a Sonora Session now hears the same moment of a song to within a fraction of a second, and the end of a song is no longer cut short for some listeners when the session moves to the next one.
 
 ### Fixed
 
