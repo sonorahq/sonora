@@ -9,7 +9,7 @@ use gpui::{
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
     Render, ScrollWheelEvent, SharedString, SpringConfig, SpringState, Task, TextShadow,
 };
-use gpui::{Window, canvas, deferred, div, phi, point, px, relative};
+use gpui::{Div, Window, canvas, deferred, div, phi, point, px, relative};
 use i18n::t;
 use input::{ToggleFullscreen, ToggleWindowFullscreen, WORKSPACE_CONTEXT};
 use router::{Destination, navigate};
@@ -50,10 +50,11 @@ const META_GAP: f32 = 0.25;
 const DOCK: f32 = 1.15;
 const DOCK_FULL: f32 = 1.7;
 const SINK: f32 = 24.;
-/// The names the pill and the seek bar with the transport are seen under, so each slides to
-/// where a panel moves it.
-const PILL_FLIGHT: &str = "fullscreen-pill";
+/// The name the seek bar with the transport is seen under, so it slides to where a panel
+/// moves it.
 const DECK_FLIGHT: &str = "fullscreen-deck";
+/// The space between the volume, the pill and the leave button in the corner.
+const CORNER_GAP: f32 = 8.;
 /// A closed panel fading out, a little quicker than one comes in.
 const PANEL_LEAVE: SpringConfig = ui::spring(0.24, 0.);
 const LEAVE_DROP: f32 = 2.;
@@ -166,7 +167,6 @@ impl FullscreenView {
         cx.observe(&settings, |this, settings, cx| {
             if this.panel == Some(SideTab::Lyrics) && !settings.read(cx).lyrics_enabled() {
                 this.panel = None;
-                this.over_pill = false;
             }
             cx.notify();
         })
@@ -256,11 +256,6 @@ impl FullscreenView {
         if panel != self.panel && !cx.reduce_motion() {
             self.switch = Some(Sprung::at(1.));
             self.leaving = (panel.is_none() && self.switching_from_rest()).then(|| Sprung::at(1.));
-        }
-        if panel.is_some() != self.panel.is_some() {
-            // The pill changes parents between the cover and panel layouts, so its old
-            // hover listener cannot report a leave after it is removed.
-            self.over_pill = false;
         }
         self.panel = panel;
         self.settings
@@ -907,16 +902,10 @@ impl FullscreenView {
             .child(label("fullscreen-total", total, false))
     }
 
-    /// The pill, the seek bar and the transport row. Below `Room::Roomy` the row spans the
-    /// whole window, so the volume button steps one control in from the right edge to leave the
-    /// corner to the leave button.
+    /// The seek bar and the transport row. Below `Room::Roomy` the corner holds too little room
+    /// for the row to stay centred beside it, so the row starts from the left instead.
     fn controls(&self, room: Room, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = *cx.theme();
-        let inline = self.panel.is_none();
-        let clear = match room.fits(Room::Roomy) {
-            true => Pixels::ZERO,
-            false => theme.metrics.control_small,
-        };
+        let centred = room.fits(Room::Roomy);
 
         div()
             .id("fullscreen-controls")
@@ -928,14 +917,6 @@ impl FullscreenView {
             .max_w(px(SEEK_MAX))
             .flex_none()
             .on_click(|_, _, cx| cx.stop_propagation())
-            .when(inline, |this| {
-                this.child(travelling(
-                    "fullscreen-pill",
-                    PILL_FLIGHT,
-                    self.switch.is_some(),
-                    self.pill(cx),
-                ))
-            })
             // The seek bar and the transport travel as one when a panel moves them between
             // the bottom of the window and the column under the cover.
             .child(travelling(
@@ -952,25 +933,17 @@ impl FullscreenView {
                     .child(
                         div()
                             .id("fullscreen-transport")
-                            .relative()
                             .w_full()
                             .flex()
-                            .justify_center()
+                            .map(|this| match centred {
+                                true => this.justify_center(),
+                                false => this.justify_start(),
+                            })
                             .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
                                 this.over_transport = *hovering;
                                 cx.notify();
                             }))
-                            .child(transport(&self.playback, true, cx))
-                            .child(
-                                div()
-                                    .absolute()
-                                    .right(clear)
-                                    .top_0()
-                                    .bottom_0()
-                                    .flex()
-                                    .items_center()
-                                    .child(self.sound(cx)),
-                            ),
+                            .child(transport(&self.playback, true, cx)),
                     ),
             ))
     }
@@ -1256,29 +1229,6 @@ impl FullscreenView {
             })
     }
 
-    fn floating(&self, hide: f32, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .absolute()
-            .bottom_3()
-            .w_full()
-            .flex()
-            .justify_center()
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .block_mouse_except_scroll()
-                    .opacity(1. - hide)
-                    .top(px(SINK) * hide)
-                    .child(travelling(
-                        "fullscreen-pill",
-                        PILL_FLIGHT,
-                        self.switch.is_some(),
-                        self.pill(cx),
-                    )),
-            )
-    }
-
     fn menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let (track, position) = self.context_menu.clone()?;
 
@@ -1292,42 +1242,67 @@ impl FullscreenView {
         )
     }
 
-    /// The leave button in the bottom right corner, centred on a player bar's height at every
-    /// width, so the breakpoint that stacks the chrome player bar cannot move it, and nudged
-    /// down by `LEAVE_DROP` to sit level with the volume button's glyph. It sinks and
-    /// fades with the idle spring rather than with the controls, so a pointer move still brings
-    /// it back when the controls are set to stay hidden. The column occludes, so hovering it
-    /// never reaches whatever sits behind it.
-    fn leave(&self, idle: f32, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The bottom right corner: the volume, the pill that picks what shows beside the cover, and
+    /// the leave button, in one row that never moves with the layout, so a panel coming or going
+    /// leaves the pill under the pointer that switched it. The row is centred on a player bar's
+    /// height at every width, so the breakpoint that stacks the chrome player bar cannot move it,
+    /// and nudged down by `LEAVE_DROP` to sit level with the transport. The volume and the pill
+    /// sink and fade with the controls. The leave button follows the idle spring instead, so a
+    /// pointer move still brings it back when the controls are set to stay hidden. The row
+    /// occludes, so hovering it never reaches whatever sits behind it.
+    fn corner(
+        &self,
+        hide: f32,
+        idle: f32,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = *cx.theme();
         let frosted = ambient::shown(cx);
+        let sunk =
+            |element: gpui::Div, by: f32| element.relative().top(px(SINK) * by).opacity(1. - by);
 
         div()
-            .id("leave-fullscreen-hover")
+            .id("fullscreen-corner")
             .occlude()
             .absolute()
-            .bottom(px(SINK) * -idle - px(LEAVE_DROP))
+            .bottom(-px(LEAVE_DROP))
             .right_5()
             .h(snapped(theme.metrics.player_bar, window))
             .flex()
-            .flex_col()
-            .justify_center()
-            .opacity(1. - idle)
+            .items_center()
+            .gap(px(CORNER_GAP))
             .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
                 this.over_leave = *hovering;
                 cx.notify();
             }))
-            .child(
-                Button::new("leave-fullscreen")
-                    .ghost()
-                    .when(frosted, Button::frosted)
-                    .small()
-                    .icon("icons/minimize.svg")
-                    .tooltip_above("player-fullscreen-leave")
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(ToggleFullscreen), cx)
-                    }),
-            )
+            .when(hide < 1., |this| {
+                this.child(sunk(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(CORNER_GAP))
+                        .child(self.sound(cx))
+                        .child(self.pill(cx)),
+                    hide,
+                ))
+            })
+            .when(idle < 1., |this| {
+                this.child(sunk(
+                    div().child(
+                        Button::new("leave-fullscreen")
+                            .ghost()
+                            .when(frosted, Button::frosted)
+                            .small()
+                            .icon("icons/minimize.svg")
+                            .tooltip_above("player-fullscreen-leave")
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(ToggleFullscreen), cx)
+                            }),
+                    ),
+                    idle,
+                ))
+            })
     }
 }
 
@@ -1662,8 +1637,7 @@ impl Render for FullscreenView {
                                 .child(entering(
                                     div().size_full().min_h_0().child(self.aside.clone()),
                                     switching,
-                                ))
-                                .when(shown, |this| this.child(self.floating(hide, cx))),
+                                )),
                         )
                     }),
             )
@@ -1694,7 +1668,9 @@ impl Render for FullscreenView {
                     cx,
                 ))
             })
-            .when(idle < 1., |this| this.child(self.leave(idle, window, cx)))
+            .when(idle < 1. || hide < 1., |this| {
+                this.child(self.corner(hide, idle, window, cx))
+            })
             .children(self.menu(cx))
     }
 }
