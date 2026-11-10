@@ -202,15 +202,21 @@ impl OtpInput {
     /// Adds the digits of `text` after the ones already typed, as many as fit.
     fn push(&mut self, text: &str, cx: &mut Context<Self>) {
         let room = self.length - self.value.len();
+        let before = self.value.len();
         self.value
             .extend(text.chars().filter(char::is_ascii_digit).take(room));
+        if self.value.len() != before {
+            crate::hear_typing(cx);
+        }
         cx.notify();
     }
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
         if self.value.pop().is_none() {
             window.play_system_bell();
+            return;
         }
+        crate::hear_typing(cx);
         cx.notify();
     }
 

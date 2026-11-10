@@ -100,6 +100,17 @@ const RESUME_STEP: Duration = Duration::from_secs(5);
 const STALE_PAUSE: Duration = Duration::from_secs(5 * 60);
 const TAPER_DB: f32 = 50.;
 const SIMILAR_LIMIT: usize = 20;
+/// How loud the music stays while typing, as a fraction of the slider's gain. About −11 dB, soft
+/// enough to hear keys without burying the track.
+const DUCK_LEVEL: f32 = 0.28;
+/// How long the gain takes to fall when typing starts.
+const DUCK_ATTACK: Duration = Duration::from_millis(280);
+/// How long after the last keystroke before the music rises again.
+const DUCK_HOLD: Duration = Duration::from_millis(900);
+/// How long the gain takes to return once typing has stopped.
+const DUCK_RELEASE: Duration = Duration::from_millis(550);
+/// How often the ducking gain steps toward its target.
+const DUCK_TICK: Duration = Duration::from_millis(16);
 
 /// How few tracks may be left to play before radio asks for the next batch of suggestions.
 /// Asking this early keeps the wait for the station off the gap between two tracks.
@@ -421,6 +432,14 @@ pub struct Playback {
     level: f32,
     /// The level the volume slider is being dragged to, heard and shown but not yet saved.
     sliding: Option<f32>,
+    /// Multiplier on top of the slider's gain while typing softens playback. 1 is full volume.
+    duck: f32,
+    /// Where `duck` is moving: `DUCK_LEVEL` while typing, 1 once typing has stopped.
+    duck_target: f32,
+    /// When the hold after the last keystroke ends and the release toward 1 may begin.
+    duck_until: Option<Instant>,
+    /// Steps `duck` toward `duck_target` until both rest at full volume.
+    duck_task: Option<Task<()>>,
     normalisation: bool,
     gapless: bool,
     transcode: Transcode,
@@ -609,6 +628,10 @@ impl Playback {
             settings,
             level,
             sliding: None,
+            duck: 1.,
+            duck_target: 1.,
+            duck_until: None,
+            duck_task: None,
             normalisation,
             gapless,
             transcode,
@@ -2335,15 +2358,99 @@ impl Playback {
         self.set_volume(level, cx);
     }
 
-    /// Sends the gain for the current level to both engines.
+    /// Sends the gain for the current level, after typing duck, to both engines.
     fn apply_gain(&self) {
-        let level = gain(self.level);
+        let level = gain(self.level) * self.duck.clamp(DUCK_LEVEL, 1.);
         if let Some(engine) = self.engine.as_ref() {
             engine.set_gain(level);
         }
         if let Some(engine) = self.local_engine.as_ref() {
             engine.set_gain(level);
         }
+    }
+
+    /// Softens playback while typing is on, restarting the hold so continuous typing stays ducked.
+    pub fn note_typing(&mut self, cx: &mut Context<Self>) {
+        if !self.settings.read(cx).duck_while_typing() {
+            return;
+        }
+        self.duck_target = DUCK_LEVEL;
+        self.duck_until = Some(Instant::now() + DUCK_HOLD);
+        self.ensure_duck_task(cx);
+    }
+
+    /// Whether typing softens the music.
+    pub fn duck_while_typing(&self, cx: &App) -> bool {
+        self.settings.read(cx).duck_while_typing()
+    }
+
+    /// Turns typing duck on or off. Off restores the full gain at once.
+    pub fn set_duck_while_typing(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.settings
+            .update(cx, |settings, cx| settings.set_duck_while_typing(on, cx));
+        if !on {
+            self.clear_duck();
+        }
+        cx.notify();
+    }
+
+    /// Returns the gain to full volume and stops the ducking task.
+    fn clear_duck(&mut self) {
+        self.duck = 1.;
+        self.duck_target = 1.;
+        self.duck_until = None;
+        self.duck_task = None;
+        self.apply_gain();
+    }
+
+    /// Keeps a task stepping `duck` toward its target until the music is fully restored.
+    fn ensure_duck_task(&mut self, cx: &mut Context<Self>) {
+        if self.duck_task.is_some() {
+            return;
+        }
+        self.duck_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(DUCK_TICK).await;
+                let done = this
+                    .update(cx, |this, _| {
+                        this.step_duck();
+                        this.duck >= 1. - f32::EPSILON
+                            && this.duck_target >= 1. - f32::EPSILON
+                            && this.duck_until.is_none()
+                    })
+                    .ok();
+                match done {
+                    Some(true) => {
+                        this.update(cx, |this, _| this.duck_task = None).ok();
+                        break;
+                    }
+                    Some(false) => {}
+                    None => break,
+                }
+            }
+        }));
+    }
+
+    /// Moves `duck` one tick toward its target, starting the release once the hold has elapsed.
+    fn step_duck(&mut self) {
+        if self.duck_until.is_some_and(|until| Instant::now() >= until) {
+            self.duck_target = 1.;
+            self.duck_until = None;
+        }
+        let span = 1. - DUCK_LEVEL;
+        let rate = match self.duck > self.duck_target {
+            true => DUCK_ATTACK,
+            false => DUCK_RELEASE,
+        };
+        let step = span * (DUCK_TICK.as_secs_f32() / rate.as_secs_f32().max(0.001));
+        if (self.duck - self.duck_target).abs() <= step {
+            self.duck = self.duck_target;
+        } else if self.duck < self.duck_target {
+            self.duck = (self.duck + step).min(self.duck_target);
+        } else {
+            self.duck = (self.duck - step).max(self.duck_target);
+        }
+        self.apply_gain();
     }
 
     pub fn normalisation(&self) -> bool {

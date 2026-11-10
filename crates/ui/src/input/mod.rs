@@ -1,11 +1,12 @@
 use std::ops::Range;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::actions;
 use gpui::{
-    App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ShapedLine, SharedString,
-    UTF16Selection, Window, point, px,
+    App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, Global,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ShapedLine,
+    SharedString, UTF16Selection, Window, point, px,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -90,6 +91,25 @@ pub fn refresh_primary_paste(_cx: &mut App) {}
 /// Whether a middle click in a field pastes the primary selection right now.
 fn primary_paste() -> bool {
     PRIMARY_SELECTION && PRIMARY_PASTE.load(Ordering::Relaxed)
+}
+
+/// Who hears that the user typed, pasted or composed text into a field. Playback installs one so
+/// it can soften the music while typing without the field knowing about playback.
+struct TypingSink(Arc<dyn Fn(&mut App)>);
+
+impl Global for TypingSink {}
+
+/// Installs `notify` as the one listener for typing in any field. Replaces any earlier listener.
+pub fn watch_typing(cx: &mut App, notify: impl Fn(&mut App) + 'static) {
+    cx.set_global(TypingSink(Arc::new(notify)));
+}
+
+/// Tells the installed listener that a field's text changed through typing, pasting or IME.
+pub fn hear_typing(cx: &mut App) {
+    let Some(notify) = cx.try_global::<TypingSink>().map(|sink| sink.0.clone()) else {
+        return;
+    };
+    notify(cx);
 }
 
 /// `text` on one line: every line break becomes one space, `\r\n` included. A field holds one
@@ -872,6 +892,7 @@ impl EntityInputHandler for Input {
         self.selected_range = caret..caret;
         self.selection_reversed = false;
         self.marked_range.take();
+        hear_typing(cx);
         cx.notify();
     }
 
@@ -896,6 +917,7 @@ impl EntityInputHandler for Input {
             .unwrap_or(caret..caret);
         self.selected_range = clamp_range(&self.content, &selected);
         self.selection_reversed = false;
+        hear_typing(cx);
         cx.notify();
     }
 

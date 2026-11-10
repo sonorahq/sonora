@@ -33,7 +33,7 @@ const SLEEP_LAST: usize = (SLEEP_MAX_MINUTES - SLEEP_MIN_MINUTES + 1) as usize
 impl SettingsView {
     pub(super) fn playback_groups(&self, cx: &App) -> Vec<Group> {
         let capabilities = self.session.read(cx).capabilities();
-        let mut playing = vec![Slot::Normalisation, Slot::Gapless];
+        let mut playing = vec![Slot::Normalisation, Slot::Gapless, Slot::DuckWhileTyping];
         playing.extend([Slot::Sleep, Slot::StayAwake]);
         let mut groups = vec![Group::new("settings-group-playing", "icons/play.svg").rows(playing)];
         // one level is nothing to choose between, so it is stated in a row rather than offered
@@ -95,6 +95,21 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.playback
                         .update(cx, |playback, cx| playback.set_gapless(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+
+    pub(super) fn duck_while_typing_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.playback.read(cx).duck_while_typing(cx);
+
+        self.row(
+            t!("settings-duck-while-typing"),
+            Switch::new("duck-while-typing", on)
+                .name(t!("settings-duck-while-typing"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.playback
+                        .update(cx, |playback, cx| playback.set_duck_while_typing(!on, cx));
                 }))
                 .into_any_element(),
         )
