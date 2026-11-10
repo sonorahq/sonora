@@ -1,15 +1,15 @@
 use std::rc::Rc;
 
 use ui::{
-    ActiveTheme as _, Card, Deck, DraggedPin, Edge, MenuItem, Panel, Picker, Pin, PinKind,
-    Pinnable as _, Popup, ROOMY, SNUG, Scroller, Shield, Side, Spot, Tabs, Text, Vacancy, drop_gap,
-    drop_into, drop_marker,
+    ActiveTheme as _, Button, Card, Deck, DraggedPin, Edge, Menu, MenuItem, Panel, Picker, Pin,
+    PinKind, Pinnable as _, Popover, Popup, ROOMY, SNUG, Scroller, Shield, Side, Spot, Tabs, Text,
+    Vacancy, drop_gap, drop_into, drop_marker,
 };
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Div, DragMoveEvent, ElementId, Entity, MouseButton, MouseDownEvent,
+    AnyElement, App, Context, DragMoveEvent, ElementId, Entity, MouseButton, MouseDownEvent,
     Pixels, Point, Render, ScrollHandle, SharedString, svg,
 };
 use gpui::{Window, div, px};
@@ -62,11 +62,11 @@ pub(crate) const NAV: [(Option<NavEntry>, &str, Destination); 6] = [
     ),
 ];
 
-const LIBRARY_TABS: [(&str, &str, LibraryTab); 4] = [
-    ("nav-songs", "icons/music.svg", LibraryTab::Songs),
-    ("nav-albums", "icons/disc-3.svg", LibraryTab::Albums),
-    ("nav-artists", "icons/user.svg", LibraryTab::Artists),
-    ("nav-playlists", "icons/list.svg", LibraryTab::Playlists),
+const LIBRARY_TABS: [(&str, LibraryTab); 4] = [
+    ("nav-songs", LibraryTab::Songs),
+    ("nav-albums", LibraryTab::Albums),
+    ("nav-artists", LibraryTab::Artists),
+    ("nav-playlists", LibraryTab::Playlists),
 ];
 
 const MIN_WIDTH: Pixels = px(160.);
@@ -79,13 +79,8 @@ const PIN_MARK: f32 = 0.7;
 const ROW_GAP: Pixels = px(4.);
 /// The rail's side padding in rem, matching its `px_2`.
 const RAIL_INSET: f32 = 0.5;
-/// How far, in rem, an expanded group's frame reaches into the rail's side padding.
-const FOLD_REACH: f32 = 0.25;
-/// How much of the sidebar accent an expanded group's frame is filled with, kept well under a
-/// selected entry's so the two never read alike.
-const FOLD_FILL: f32 = 0.35;
-/// How strongly an expanded group's frame is outlined, from the muted foreground.
-const FOLD_EDGE: f32 = 0.3;
+/// How far past the rail's edge a group's menu opens.
+const FLYOUT_GAP: Pixels = px(4.);
 const BORDER: Pixels = px(1.);
 
 /// The two navigation entries that expand into tabs rather than navigate.
@@ -96,11 +91,29 @@ enum Group {
 }
 
 impl Group {
+    const ALL: [Self; 2] = [Self::Library, Self::Local];
+
     fn of(destination: &Destination) -> Option<Self> {
         match destination {
             Destination::Library(_) => Some(Self::Library),
             Destination::Local(_) => Some(Self::Local),
             _ => None,
+        }
+    }
+
+    /// The Fluent key of the group's name, which also keys the menu it opens on the rail.
+    fn key(self) -> &'static str {
+        match self {
+            Self::Library => "nav-library",
+            Self::Local => "nav-local",
+        }
+    }
+
+    /// Where `tab` of the group leads.
+    fn at(self, tab: LibraryTab) -> Destination {
+        match self {
+            Self::Library => Destination::Library(tab),
+            Self::Local => Destination::Local(tab),
         }
     }
 }
@@ -362,8 +375,8 @@ impl SidebarLeft {
         cx.refresh_windows();
     }
 
-    /// The navigation entries, each followed by its tabs while its group is open. On the rail
-    /// an open group's entry and tabs share one frame, so the entry reads as their header.
+    /// The navigation entries, each followed by its tabs while its group is open. The rail lists
+    /// the entries alone, since a group there opens its tabs in a menu beside it.
     fn navigation(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
         // A shelf with rows on it belongs in the sidebar even before the session has restored,
         // since a snapshot fills it while the provider is still answering.
@@ -378,26 +391,15 @@ impl SidebarLeft {
             if group == Some(Group::Library) && !stocked {
                 continue;
             }
-            let row = self.nav(index, cx);
-            match group.filter(|group| self.opened(*group)) {
-                Some(group) if self.folded() => rows.push(
-                    fold(window, cx)
-                        .child(row)
-                        .child(self.tabs(group, cx))
-                        .into_any_element(),
-                ),
-                Some(group) => {
-                    rows.push(row);
-                    rows.push(self.tabs(group, cx));
-                }
-                None => rows.push(row),
+            rows.push(self.nav(index, window, cx));
+            if let Some(group) = group.filter(|group| !self.folded() && self.opened(*group)) {
+                rows.push(self.tabs(group, cx));
             }
         }
         rows
     }
 
-    /// The pinned section: its header, and its entries once it is expanded. On the rail an
-    /// expanded section sits in a frame, as an open group does.
+    /// The pinned section: its header, and its entries once it is expanded.
     fn pins(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
         if !self.settings.read(cx).nav_shown(NavEntry::Pins.id()) {
             return Vec::new();
@@ -408,17 +410,9 @@ impl SidebarLeft {
             return vec![header];
         }
 
-        let entries = self.pin_entries(window, cx);
-        match self.folded() {
-            true => vec![
-                fold(window, cx)
-                    .mt(cx.theme().metrics.pad)
-                    .child(header)
-                    .children(entries)
-                    .into_any_element(),
-            ],
-            false => std::iter::once(header).chain(entries).collect(),
-        }
+        std::iter::once(header)
+            .chain(self.pin_entries(window, cx))
+            .collect()
     }
 
     /// The pinned entries, as a `Deck` so only the ones on screen are ever built, or what stands
@@ -519,10 +513,8 @@ impl SidebarLeft {
                     // same line as the chevrons of the rows above.
                     .pr_1()
             })
-            // An open section on the rail is framed, and the frame keeps the spacing instead.
-            .when(!(folded && open), |header| {
-                header.mt(theme.metrics.pad).mb(px(2.))
-            })
+            .mt(theme.metrics.pad)
+            .mb(px(2.))
             .child(toggle)
             .when(open && !folded, |header| header.child(self.sort_picker(cx)))
             // Dragging over the header aims at the top of the list, which is otherwise
@@ -724,9 +716,9 @@ impl SidebarLeft {
             .into_any_element()
     }
 
-    /// One navigation entry. An expandable one flips its group open and shut, any other one
-    /// navigates and is lit while its section is current.
-    fn nav(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+    /// One navigation entry. An expandable one flips its group open and shut, or on the rail
+    /// opens the group's menu. Any other one navigates and is lit while its section is current.
+    fn nav(&self, index: usize, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
         let accent = theme.sidebar_accent;
         let (entry, icon, destination) = NAV[index].clone();
@@ -748,79 +740,90 @@ impl SidebarLeft {
         };
 
         match group {
+            Some(group) if rail => {
+                self.flyout(group, row.when(active, |row| row.bg(accent)), window, cx)
+            }
             Some(group) => row
-                .when(!rail, |row| row.trailing(chevron(self.opened(group))))
-                .when(rail && active && !self.opened(group), |row| row.bg(accent))
+                .trailing(chevron(self.opened(group)))
                 .aria_expanded(self.opened(group))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.flip(group);
                     cx.notify();
-                })),
+                }))
+                .into_any_element(),
             None => row
                 .when(active, |button| button.bg(accent).aria_selected(true))
                 .on_click(move |_, _, cx| match destination.in_settings() {
                     true => open_settings(cx),
                     false => navigate(destination.clone(), cx),
-                }),
+                })
+                .into_any_element(),
         }
-        .into_any_element()
     }
 
-    /// The tabs under an expanded group. On the rail they are a bare column, which the caller
-    /// frames together with the group's entry.
+    /// A group's entry on the rail. `button` opens a menu just past the rail's edge that names
+    /// the group and lists its tabs, each with its glyph and full name, and picking one
+    /// navigates there.
+    fn flyout(&self, group: Group, button: Button, window: &Window, cx: &App) -> AnyElement {
+        let current = self.trail.read(cx).current();
+        let name = i18n::lookup(group.key(), None);
+        let gap = window.rem_size() * RAIL_INSET + BORDER + FLYOUT_GAP;
+        let items = LIBRARY_TABS.into_iter().map(|(key, tab)| {
+            let destination = group.at(tab);
+
+            MenuItem::new(key, i18n::lookup(key, None))
+                .icon(tab.icon())
+                .selected(destination == current)
+                .on_click(move |_, _, cx| navigate(destination.clone(), cx))
+        });
+        let menu = Menu::new(group.key())
+            .name(name.clone())
+            .w(Picker::NARROW)
+            .beside(gap)
+            .header(ui::eyebrow(name, cx).px_3().pt_1())
+            .items(items);
+
+        Popover::new(group.key(), self.popovers.clone())
+            .button(button)
+            .menu(menu)
+            .commands()
+            .w_full()
+            .into_any_element()
+    }
+
+    /// The tabs under an expanded group, which only the full sidebar draws. They carry no
+    /// glyphs, since the names beside them already say everything.
     fn tabs(&self, group: Group, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
         let accent = theme.sidebar_accent;
         let current = self.trail.read(cx).current();
-        let rail = self.folded();
-        let tab =
-            |id: ElementId, key: &'static str, icon: &'static str, destination: Destination| {
-                let chosen = destination == current;
-                let tint = match chosen {
-                    true => theme.foreground,
-                    false => theme.muted_foreground,
-                };
-
-                match rail {
-                    true => nav_icon(id, key, icon, tint, accent).small(),
-                    false => nav_row(id, key, tint, accent).icon(icon).flex_1(),
-                }
-                .when(chosen, |button| button.bg(accent).aria_selected(true))
-                .on_click(move |_, _, cx| navigate(destination.clone(), cx))
+        let tab = |id: ElementId, key: &'static str, destination: Destination| {
+            let chosen = destination == current;
+            let tint = match chosen {
+                true => theme.foreground,
+                false => theme.muted_foreground,
             };
 
-        let items: Vec<_> = match group {
-            Group::Library => LIBRARY_TABS
-                .into_iter()
-                .map(|(name, icon, tab_id)| {
-                    tab(name.into(), name, icon, Destination::Library(tab_id))
-                })
-                .collect(),
-            Group::Local => LIBRARY_TABS
-                .into_iter()
-                .enumerate()
-                .map(|(slot, (name, icon, tab_id))| {
-                    tab(
-                        ("local-tab", slot).into(),
-                        name,
-                        icon,
-                        Destination::Local(tab_id),
-                    )
-                })
-                .collect(),
+            nav_row(id, key, tint, accent)
+                .flex_1()
+                .when(chosen, |button| button.bg(accent).aria_selected(true))
+                .on_click(move |_, _, cx| navigate(destination.clone(), cx))
         };
 
-        match rail {
-            true => div()
-                .flex()
-                .flex_col()
-                .flex_none()
-                .gap_1()
-                .w_full()
-                .children(items)
-                .into_any_element(),
-            false => Tabs::new().items(items).into_any_element(),
-        }
+        Tabs::new()
+            .items(
+                LIBRARY_TABS
+                    .into_iter()
+                    .enumerate()
+                    .map(|(slot, (name, tab_id))| {
+                        let id = match group {
+                            Group::Library => name.into(),
+                            Group::Local => ("local-tab", slot).into(),
+                        };
+                        tab(id, name, group.at(tab_id))
+                    }),
+            )
+            .into_any_element()
     }
 
     /// Whether `target` takes the dragged `song`: a playlist the listener may edit, on the same
@@ -909,6 +912,14 @@ impl Render for SidebarLeft {
 
         let overlaid = self.overlays();
         let rail = self.folded();
+        // A group's menu belongs to the rail, so one left open must not come back with it.
+        if !rail
+            && Group::ALL
+                .iter()
+                .any(|group| self.popovers.shows(group.key()))
+        {
+            self.popovers.close();
+        }
         // The edge drags past the rail to zero, so a drag can close the sidebar.
         let panel = Panel::new("sidebar-left", Side::Left, self.breadth())
             .limits(Pixels::ZERO, MAX_WIDTH)
@@ -1026,26 +1037,6 @@ pub(crate) fn sidebar_width(settings: &AppSettings) -> Pixels {
 fn rail_width(window: &Window, cx: &App) -> Pixels {
     let row = cx.theme().metrics.list_row;
     ui::snapped(row + window.rem_size() * (RAIL_INSET * 2.) + BORDER, window)
-}
-
-/// The frame an expanded group takes on the rail, holding its entry on top of what it expands
-/// to. It is drawn mostly by its outline, which shows in both themes, over a fill too faint to
-/// pass for a selected entry. It reaches into the rail's padding so what it holds keeps the
-/// rail's full width.
-fn fold(window: &Window, cx: &App) -> Div {
-    let theme = cx.theme();
-
-    div()
-        .flex()
-        .flex_col()
-        .flex_none()
-        .gap_1()
-        .mx(-(window.rem_size() * FOLD_REACH))
-        .p_0p5()
-        .rounded(theme.radius)
-        .border_1()
-        .border_color(theme.muted_foreground.opacity(FOLD_EDGE))
-        .bg(theme.sidebar_accent.opacity(FOLD_FILL))
 }
 
 /// The kind of an entry, behind a dimmed pin when it is one of the pinned ones.

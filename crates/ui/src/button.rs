@@ -230,7 +230,8 @@ impl Button {
         self
     }
 
-    /// Tells screen readers whether the menu or panel this button opens is showing.
+    /// Tells screen readers whether the menu or panel this button opens is showing. While it
+    /// shows, the button drops its tooltip, which would otherwise sit over what it opened.
     pub fn expanded(mut self, expanded: bool) -> Self {
         self.expanded = Some(expanded);
         self
@@ -529,9 +530,10 @@ impl RenderOnce for Button {
                 this.border_1().border_color(border)
             })
             .when(interactive, |this| this.cursor_pointer())
-            .when_some(tooltip.filter(|_| interactive), |this, (key, perch)| {
-                this.tip(key, perch)
-            })
+            .when_some(
+                tooltip.filter(|_| interactive && expanded != Some(true)),
+                |this, (key, perch)| this.tip(key, perch),
+            )
             .when_some(hovered, |this, style| this.hover(move |_| style))
             .when_some(pressed, |this, style| this.active(move |_| style))
             .when_some(icon, |this, path| {

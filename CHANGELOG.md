@@ -43,7 +43,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Turn off Show lyrics in the lyrics settings to hide the lyrics buttons in the player bar and
   Now playing, and stop Sonora looking lyrics up.
 - Drag the left sidebar's edge all the way in to fold it down to icons, with each name shown
-  beside its icon on hover. Songs, Albums, Artists and Playlists now have icons of their own.
+  beside its icon on hover. Your Library and Local Music open a menu beside the folded sidebar
+  that lists Songs, Albums, Artists and Playlists by name.
   Keep dragging to close it, and the toggle brings it back as it was. A narrowing window folds
   the sidebar to icons before hiding it.
 
