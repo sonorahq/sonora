@@ -15,8 +15,8 @@ use state::{
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ui::WindowFrame;
 use ui::{
-    ActiveTheme as _, Dismiss, Entrance, INPUT_CONTEXT, Look, Stillness, Theme, ThemeKind,
-    clear_listing,
+    ActiveTheme as _, Dismiss, Entrance, INPUT_CONTEXT, Look, Springs, Sprung, Stillness, Theme,
+    ThemeKind, clear_listing,
 };
 
 use crate::chrome::{
@@ -32,6 +32,12 @@ use crate::{
     Adaptive, ArtistView, DetailView, EqualizerView, FullscreenView, GenreView, HistoryView,
     HomeView, LibraryView, LoginView, SettingsView, SongView, UserView,
 };
+
+/// How much smaller than its size the fullscreen player starts as it opens, zooming up to fill
+/// the window.
+const SHELL_ZOOM: f32 = 0.03;
+/// How close the opening zoom comes to its end before it counts as landed.
+const SHELL_ZOOM_REST: f32 = 1e-3;
 
 struct Screens {
     home: Entity<HomeView>,
@@ -110,6 +116,9 @@ pub struct Root {
     navigation_transition: Option<Task<()>>,
     /// The entrance the shell plays as the window moves from one shell to another.
     shell_entrance: Option<Entrance>,
+    /// How much of the fullscreen player its opening still hides, springing from 1 as it opens
+    /// to 0, where it lets go. The player fades in as it zooms up from a little smaller.
+    shell_zoom: Option<Sprung>,
     /// The OS fullscreen move the next render owes the fullscreen view, true as it opens and
     /// false as it closes.
     os_follow: Option<bool>,
@@ -143,6 +152,7 @@ impl Root {
             if matches!(session.read(cx).state(), SessionState::SignedOut) {
                 this.navigation_transition = None;
                 this.shell_entrance = None;
+                this.shell_zoom = None;
                 this.shells
                     .workspace
                     .update(cx, |workspace, cx| workspace.finish_transition(cx));
@@ -332,6 +342,7 @@ impl Root {
             pending: None,
             navigation_transition: None,
             shell_entrance: None,
+            shell_zoom: None,
             os_follow: None,
             os_entered: false,
             screens: Screens {
@@ -721,12 +732,13 @@ impl Root {
         }
     }
 
-    /// Moves to `destination`. A move to another shell plays the entrance over the whole
-    /// window, a move within the workspace plays it over the page, and reduced motion skips
-    /// both.
+    /// Moves to `destination`. Opening the fullscreen player zooms it in, a move back to the
+    /// workspace plays the entrance over the whole window, a move within the workspace plays it
+    /// over the page, and reduced motion skips them all.
     fn transition_to(&mut self, destination: Destination, cx: &mut Context<Self>) {
         self.navigation_transition = None;
         self.shell_entrance = None;
+        self.shell_zoom = None;
 
         let next = RootView::of(&destination);
         let moving = next != self.view;
@@ -736,7 +748,10 @@ impl Root {
                 .update(cx, |workspace, cx| workspace.finish_transition(cx));
             self.show(destination, cx);
             if moving && !cx.reduce_motion() {
-                self.reveal_shell(cx);
+                match next {
+                    RootView::Fullscreen => self.shell_zoom = Some(Sprung::at(1.)),
+                    RootView::Workspace => self.reveal_shell(cx),
+                }
             }
             return;
         }
@@ -805,6 +820,24 @@ impl Root {
             }
         }
         entrance.hidden()
+    }
+
+    /// How much of the fullscreen player its opening zoom still hides, stepping the spring and
+    /// asking for the next frame while it runs. The player holds cached views, which replay the
+    /// opacity they were first painted with, so every frame of the fade repaints the window.
+    fn fullscreen_hidden(&mut self, window: &mut Window, cx: &Context<Self>) -> f32 {
+        let Some(zoom) = self.shell_zoom.as_mut() else {
+            return 0.;
+        };
+        let hidden = match self.view {
+            RootView::Fullscreen => zoom.follow(0., Springs::shell(), SHELL_ZOOM_REST, window, cx),
+            RootView::Workspace => 0.,
+        };
+        match hidden > 0. {
+            true => window.on_next_frame(|window, _| window.refresh()),
+            false => self.shell_zoom = None,
+        }
+        hidden
     }
 
     /// Loads the screen on show again, which is what a page that gave up while the network was
@@ -1137,6 +1170,13 @@ impl Render for Root {
         // until the veil lifted.
         let hidden = self.shell_hidden(window, cx);
         let dissolving = theme.transparent;
+        // Opening fullscreen fades the player in while it zooms up from a little smaller. The zoom is a paint filter, which drops the backdrop
+        // blurs inside it, so it lets go as soon as what is left of it is under half a pixel and
+        // the frosted controls get their blur back while the fade finishes.
+        let zooming = self.fullscreen_hidden(window, cx);
+        let viewport = window.viewport_size();
+        let reach = f32::from(viewport.width.max(viewport.height));
+        let zoom = (zooming * SHELL_ZOOM * reach / 2. >= 0.5).then_some(1. - SHELL_ZOOM * zooming);
         let shell = match self.view {
             RootView::Workspace => self.shells.workspace.clone().into_any_element(),
             RootView::Fullscreen => self.shells.fullscreen.clone().into_any_element(),
@@ -1154,6 +1194,8 @@ impl Render for Root {
                     .flex_1()
                     .min_h_0()
                     .when(hidden > 0. && dissolving, |this| this.opacity(1. - hidden))
+                    .when(zooming > 0., |this| this.opacity(1. - zooming))
+                    .when_some(zoom, |this, zoom| this.layer_scale(zoom))
                     .child(shell),
             )
             .when(hidden > 0. && !dissolving, |this| {
