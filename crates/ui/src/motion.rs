@@ -54,6 +54,9 @@ impl Springs {
     pub const SWAP_IN: SpringConfig = spring(0.3, 0.);
     /// The icon it replaced shrinking away, a little quicker.
     pub const SWAP_OUT: SpringConfig = spring(0.24, 0.);
+    /// Something large travelling to a new place, such as the playing cover flying into the
+    /// fullscreen player or sliding aside for a panel.
+    pub const FLIGHT: SpringConfig = spring(0.42, 0.);
 
     /// A whole shell arriving, such as the fullscreen player zooming in, at the listener's pace.
     pub fn shell() -> SpringConfig {
@@ -537,6 +540,11 @@ impl Sprung {
             },
             beat: None,
         }
+    }
+
+    /// Where the spring stands now.
+    pub fn position(&self) -> f32 {
+        self.state.position
     }
 
     /// Whether the spring has come to rest where it was last sent, rather than moving.

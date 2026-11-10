@@ -9,6 +9,7 @@ mod drag;
 mod dropdown;
 mod explicit;
 mod filters;
+mod flight;
 mod form;
 mod glass;
 mod glide;
@@ -79,6 +80,7 @@ pub use explicit::ExplicitBadge;
 pub use filters::{
     Filter, FilterChange, FlagAxis, RangeAxis, RangeScrubber, RangeState, SortAxis, Unit,
 };
+pub use flight::Flight;
 pub use form::{FORM_CONTEXT, Submit};
 pub use glass::{
     GLASS_BLUR, GLASS_FILL, bar_surface, blurring, frost, glass, popover_fill, popover_surface,
