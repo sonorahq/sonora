@@ -47,8 +47,13 @@ impl Springs {
     /// A release with a little life in it, for a pressed control springing back and a swapped
     /// icon popping in. Keep it to presses and confirmations.
     pub const RELEASE: SpringConfig = spring(0.25, 0.15);
-    /// A control growing or shrinking to fit what it now says.
+    /// A control growing or shrinking to fit what it now says, and a label gliding to where its
+    /// new text sits.
     pub const RESIZE: SpringConfig = spring(0.18, 0.);
+    /// A swapped icon growing into place.
+    pub const SWAP_IN: SpringConfig = spring(0.3, 0.);
+    /// The icon it replaced shrinking away, a little quicker.
+    pub const SWAP_OUT: SpringConfig = spring(0.24, 0.);
 
     /// A whole shell arriving, such as the fullscreen player zooming in, at the listener's pace.
     pub fn shell() -> SpringConfig {

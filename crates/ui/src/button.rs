@@ -5,8 +5,8 @@ use std::sync::Arc;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, ClickEvent, Div, ElementId, Hsla, Interactivity, MouseButton, Pixels,
-    SharedString, Stateful, StyleRefinement, TextStyleRefinement, Transformation, Window, canvas,
-    div, px, radians, relative, size, svg,
+    SharedString, Stateful, StyleRefinement, Svg, TextStyleRefinement, Transformation, Window,
+    canvas, div, px, radians, relative, size, svg,
 };
 
 use crate::glass::{blurring, frost};
@@ -34,7 +34,7 @@ const BORDER: Pixels = px(1.);
 /// How small a swapped icon starts as it pops in.
 const POP_FROM: f32 = 0.6;
 /// How close, in pixels and in scale, a resize and a pop come before they count as landed.
-const RESIZE_REST: f32 = 0.25;
+const RESIZE_REST: f32 = 0.02;
 const POP_REST: f32 = 1e-3;
 /// How far the drawn width may sit from the width the content asks for, borders included, and
 /// still count as the content's. Further off, something else sizes the button.
@@ -62,6 +62,10 @@ struct Shape {
     drawn: Option<f32>,
     icon: Option<SharedString>,
     pop: Sprung,
+    /// The icon a swap replaced and how much of it is left, from 1 as it starts to shrink away.
+    leaving: Option<(SharedString, Sprung)>,
+    /// How far the label sits into a reserved slot, which glides as the label changes.
+    inset: Option<Sprung>,
 }
 
 #[derive(IntoElement)]
@@ -146,8 +150,9 @@ impl Button {
         self
     }
 
-    /// Keeps room for the widest of `labels` and centres the shown label in it. Pass every
-    /// label the button can show, the current one included.
+    /// Keeps room for the widest of `labels` and centres the shown label in it. A new label
+    /// starts where the last one started and glides to the middle. Pass every label the button
+    /// can show, the current one included.
     pub fn reserve(mut self, labels: impl IntoIterator<Item = impl Into<SharedString>>) -> Self {
         self.reserve = labels.into_iter().map(Into::into).collect();
         self
@@ -410,6 +415,8 @@ impl RenderOnce for Button {
                     drawn: None,
                     icon: icon.clone(),
                     pop: Sprung::at(1.),
+                    leaving: None,
+                    inset: None,
                 })
             },
         );
@@ -495,20 +502,25 @@ impl RenderOnce for Button {
             true => palette.foreground,
             false => tint.unwrap_or(palette.foreground),
         };
+        // The reserved slot's width, and how wide the label shown in it sets.
         let reserved = (!reserve.is_empty()).then(|| {
             let size = small.then(|| TextStyleRefinement {
                 font_size: Some(theme.text(Text::Label).into()),
                 ..Default::default()
             });
-            window
-                .with_text_style(size, |window| {
-                    reserve
-                        .into_iter()
-                        .map(|label| text_width(label, window))
-                        .max()
-                        .unwrap_or_default()
-                })
-                .ceil()
+            window.with_text_style(size, |window| {
+                let slot = reserve
+                    .into_iter()
+                    .map(|label| text_width(label, window))
+                    .max()
+                    .unwrap_or_default()
+                    .ceil();
+                let shown = label
+                    .as_ref()
+                    .map(|label| text_width(label.clone(), window))
+                    .unwrap_or_default();
+                (slot, shown)
+            })
         });
         let (height, padding, gap) = match small {
             true => (theme.metrics.control_small, SMALL_INSET, px(4.)),
@@ -547,7 +559,7 @@ impl RenderOnce for Button {
                 + parts.iter().flatten().copied().sum::<Pixels>()
                 + gap * (count - 1.)
         });
-        let (resizing, pop) = {
+        let (resizing, pop, leaving, inset) = {
             let mut shape = shape.read(cx).borrow_mut();
             if natural.is_none() {
                 shape.width = None;
@@ -565,17 +577,35 @@ impl RenderOnce for Button {
                 let at = width.follow(target, Springs::RESIZE, RESIZE_REST, window, cx);
                 ((at - target).abs() > RESIZE_REST).then(|| px(at))
             });
+            // A new icon grows in from small while the one it replaces shrinks away over it.
             if shape.icon != icon {
-                if shape.icon.is_some() && icon.is_some() {
-                    shape.pop.jump(POP_FROM);
+                if let (Some(old), Some(_)) = (shape.icon.clone(), icon.as_ref()) {
+                    shape.pop.jump(0.);
+                    shape.leaving = Some((old, Sprung::at(1.)));
                 }
                 shape.icon = icon.clone();
             }
-            let pop = shape.pop.follow(1., Springs::RELEASE, POP_REST, window, cx);
-            (resizing, pop)
+            let pop = shape.pop.follow(1., Springs::SWAP_IN, POP_REST, window, cx);
+            let leaving = shape.leaving.as_mut().map(|(path, left)| {
+                let left = left.follow(0., Springs::SWAP_OUT, POP_REST, window, cx);
+                (path.clone(), left)
+            });
+            let leaving = leaving.filter(|(_, left)| *left > 0.);
+            if leaving.is_none() {
+                shape.leaving = None;
+            }
+            // A changed label in a reserved slot starts where the last one started and glides to
+            // its own place in the middle.
+            let inset = reserved.map(|(slot, shown)| {
+                let target = (f32::from(slot - shown) / 2.).max(0.);
+                let inset = shape.inset.get_or_insert_with(|| Sprung::at(target));
+                px(inset.follow(target, Springs::RESIZE, RESIZE_REST, window, cx))
+            });
+            if inset.is_none() {
+                shape.inset = None;
+            }
+            (resizing, pop, leaving, inset)
         };
-        // A new icon fades in as it grows from small.
-        let icon_alpha = ((pop - POP_FROM) / (1. - POP_FROM)).clamp(0., 1.);
         // A node reaches the tree only with a role, and an icon-only button has
         // no label of its own, so its tooltip key doubles as the accessible
         // name the same way the hover text does.
@@ -646,31 +676,42 @@ impl RenderOnce for Button {
             .when_some(hovered, |this, style| this.hover(move |_| style))
             .when_some(pressed, |this, style| this.active(move |_| style))
             .when_some(icon, |this, path| {
-                this.child(
-                    svg()
-                        .path(icons::path(path))
-                        .size(ICON)
-                        .flex_none()
-                        .text_color(foreground.opacity(icon_alpha))
-                        .with_transformation(
-                            Transformation::rotate(radians(turn * TAU))
-                                .with_scaling(size(pop, pop)),
+                let shown = glyph(path, foreground, turn, pop);
+                match leaving {
+                    Some((old, left)) => this.child(
+                        div().relative().flex_none().size(ICON).child(shown).child(
+                            glyph(old, foreground, turn, left)
+                                .absolute()
+                                .top_0()
+                                .left_0(),
                         ),
-                )
+                    ),
+                    None => this.child(shown),
+                }
             })
             .children(leading)
-            .when_some(label, |this, label| {
-                this.child(
+            .when_some(label, |this, label| match reserved.zip(inset) {
+                // The slot keeps the widest label's room and the label glides inside it, off the
+                // pixel grid so it moves by fractions rather than whole pixels. A label wider
+                // than what is left of the slot runs on into the padding for the moment it
+                // starts there.
+                Some(((slot, _), inset)) => this.child(
+                    div().flex_none().w(slot).pixel_snap(false).child(
+                        div()
+                            .pixel_snap(false)
+                            .ml(inset)
+                            .whitespace_nowrap()
+                            .child(label),
+                    ),
+                ),
+                None => this.child(
                     div()
                         .min_w_0()
                         .truncate()
                         .when(trailing.is_some() || detail.is_some(), |this| this.flex_1())
                         .when(resizing.is_some(), |this| this.flex_none())
-                        .when_some(reserved, |this, width| {
-                            this.flex_none().w(width).text_center()
-                        })
                         .child(label),
-                )
+                ),
             })
             .when_some(detail, |this, detail| {
                 this.child(
@@ -746,6 +787,20 @@ impl RenderOnce for Button {
         button.style().refine(&overrides);
         button
     }
+}
+
+/// The button's icon at `presence` of the way in, from 0 gone to 1 in place: it grows from
+/// [`POP_FROM`] of its size and fades in as it comes.
+fn glyph(path: SharedString, color: Hsla, turn: f32, presence: f32) -> Svg {
+    let scale = POP_FROM + (1. - POP_FROM) * presence;
+    svg()
+        .path(icons::path(path))
+        .size(ICON)
+        .flex_none()
+        .text_color(color.opacity(presence.clamp(0., 1.)))
+        .with_transformation(
+            Transformation::rotate(radians(turn * TAU)).with_scaling(size(scale, scale)),
+        )
 }
 
 /// Whether a button's caller left its width to what it holds, so the button may spring between
