@@ -92,6 +92,7 @@ enum Slot {
     FullscreenLyricsSize,
     LyricsSources,
     LyricsPriority,
+    WordSyncedFirst,
     LyricsForLocal,
     Normalisation,
     Gapless,
@@ -860,6 +861,10 @@ impl SettingsView {
                 t!("settings-lyrics-priority"),
                 t!("settings-lyrics-priority-detail"),
             ),
+            Slot::WordSyncedFirst => (
+                t!("settings-lyrics-word-synced-first"),
+                t!("settings-lyrics-word-synced-first-detail"),
+            ),
             Slot::Lyrics => (t!("settings-lyrics"), t!("settings-lyrics-detail")),
             Slot::Karaoke => (
                 t!("settings-karaoke-lyrics"),
@@ -1004,6 +1009,7 @@ impl SettingsView {
             Slot::Equalizer => self.equalizer_row(cx),
             Slot::LyricsSources => self.lyrics_sources_row(cx),
             Slot::LyricsPriority => self.lyrics_priority(cx),
+            Slot::WordSyncedFirst => self.word_synced_first_row(cx),
             Slot::Lyrics => self.lyrics_row(cx),
             Slot::Karaoke => self.karaoke_lyrics_row(cx),
             Slot::Romanized => self.romanized_lyrics_row(cx),
