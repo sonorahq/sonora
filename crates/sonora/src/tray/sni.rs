@@ -199,12 +199,22 @@ impl ksni::Tray for Item {
 }
 
 fn watched() -> Result<bool> {
-    let bus = zbus::blocking::Connection::session().context("cannot reach the session bus")?;
     let name = zbus::names::BusName::try_from(WATCHER).context("cannot name the watcher")?;
-    zbus::blocking::fdo::DBusProxy::new(&bus)
-        .context("cannot reach the bus daemon")?
-        .name_has_owner(name)
-        .context("cannot ask for the watcher")
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("cannot start the bus runtime")?
+        .block_on(async {
+            let bus = zbus::Connection::session()
+                .await
+                .context("cannot reach the session bus")?;
+            zbus::fdo::DBusProxy::new(&bus)
+                .await
+                .context("cannot reach the bus daemon")?
+                .name_has_owner(name)
+                .await
+                .context("cannot ask for the watcher")
+        })
 }
 
 fn sandboxed() -> bool {

@@ -68,7 +68,7 @@ impl SettingsView {
             .collect::<Vec<_>>();
 
         if missing {
-            let name = t!("theme-unavailable", name = selected.clone());
+            let name = t!("theme-unavailable", name = selected);
             cards.push(
                 OptionCard::new("unavailable-theme")
                     .choice(name.clone(), true, count - 1, count)

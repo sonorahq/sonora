@@ -5,7 +5,7 @@
 
 use anyhow::{Context as _, Result, bail};
 use blowfish::Blowfish;
-use blowfish::cipher::{BlockDecryptMut, InnerIvInit, KeyInit, block_padding::NoPadding};
+use blowfish::cipher::{BlockModeDecrypt, InnerIvInit, KeyInit, block_padding::NoPadding};
 use md5::{Digest, Md5};
 
 /// Deezer's encryption block size.
@@ -33,7 +33,10 @@ pub type Secret = [u8; 16];
 /// Derives the Blowfish key of one track: the two halves of the MD5 hex of the track id,
 /// XORed against each other and against the master secret.
 pub fn track_key(track_id: &str, secret: &Secret) -> Secret {
-    let hash = format!("{:x}", Md5::digest(track_id.as_bytes()));
+    let hash: String = Md5::digest(track_id.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     let hash = hash.as_bytes();
     let mut key = [0u8; 16];
     for i in 0..16 {
@@ -63,7 +66,7 @@ impl Cipher {
         }
         let decryptor =
             cbc::Decryptor::<Blowfish>::inner_iv_init(self.blowfish.clone(), &IV.into());
-        if let Err(error) = decryptor.decrypt_padded_mut::<NoPadding>(block) {
+        if let Err(error) = decryptor.decrypt_padded::<NoPadding>(block) {
             log::warn!("deezer: cannot decrypt block {index}: {error}");
         }
     }
@@ -165,7 +168,10 @@ async fn fetch_secret(http: &reqwest::Client) -> Result<Secret> {
         secret[i * 2] = first[i];
         secret[i * 2 + 1] = second[i];
     }
-    let hash = format!("{:x}", Md5::digest(secret));
+    let hash: String = Md5::digest(secret)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     if hash != SECRET_MD5 {
         bail!("the extracted stream secret fails validation ({hash})");
     }

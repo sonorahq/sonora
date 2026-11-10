@@ -644,7 +644,7 @@ pub fn track_from_file(
             id: Some(track_id(path)),
             name,
             playable: is_playable(path),
-            artists: artist.clone(),
+            artists: artist,
             artist_refs: track_artist_refs,
             album: album_name,
             album_id,

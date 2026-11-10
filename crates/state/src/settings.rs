@@ -1304,7 +1304,7 @@ impl AppSettings {
                     .iter()
                     .find(|variant| variant.is_light() == light)
             })
-            .or(family.variants.first())
+            .or_else(|| family.variants.first())
     }
 
     pub fn adaptive_theme(&self) -> bool {

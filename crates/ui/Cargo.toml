@@ -28,3 +28,6 @@ ashpd.workspace = true
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 gpui_platform.workspace = true
+
+[lints]
+workspace = true
