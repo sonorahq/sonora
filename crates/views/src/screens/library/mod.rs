@@ -139,10 +139,10 @@ impl Section {
     fn glyph(self, shape: Shape) -> &'static str {
         match (self, shape) {
             (Section::Songs, Shape::Saved) => "icons/heart.svg",
-            (Section::Songs, Shape::Catalog(_)) => "icons/music.svg",
-            (Section::Albums, _) => "icons/disc-3.svg",
-            (Section::Playlists, _) => "icons/list-music.svg",
-            (Section::Artists, _) => "icons/user-round.svg",
+            (Section::Songs, Shape::Catalog(_)) => LibraryTab::Songs.icon(),
+            (Section::Albums, _) => LibraryTab::Albums.icon(),
+            (Section::Playlists, _) => LibraryTab::Playlists.icon(),
+            (Section::Artists, _) => LibraryTab::Artists.icon(),
         }
     }
 
@@ -644,10 +644,10 @@ impl LibraryView {
         }
         let (title, icon, eyebrow) = match (self.shape(cx), self.shelf) {
             (Shape::Catalog(_), Shelf::Local) => {
-                (t!("nav-songs"), "icons/disc-3.svg", t!("nav-local"))
+                (t!("nav-songs"), LibraryTab::Songs.icon(), t!("nav-local"))
             }
             (Shape::Catalog(_), Shelf::Streaming) => {
-                (t!("nav-songs"), "icons/disc-3.svg", t!("nav-library"))
+                (t!("nav-songs"), LibraryTab::Songs.icon(), t!("nav-library"))
             }
             (Shape::Saved, _) => (
                 t!("library-liked-songs"),
