@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
@@ -51,10 +51,16 @@ pub(crate) const QUALITIES: &[Offer] = &[
 /// Position reports that can still come from before a seek or load: one already in the channel
 /// and one for a packet decoded before the player read the command.
 const STALE_POSITIONS: u8 = 2;
+/// How much of another track the output may still hold ahead of a write before its event waits
+/// for that to be heard. Less than this is within a packet of the sound.
+const AUDIBLE: Duration = Duration::from_millis(5);
 
-/// The engine's events, with one correction: librespot says `Playing` when the decoder is
-/// ready and `Seeked` when it has moved, both before it has buffered or written anything. Each
-/// waits here for the sink's next write, which the same player thread makes strictly after it.
+/// The engine's events, with two corrections. librespot says `Playing` when the decoder is
+/// ready and `Seeked` when it has moved, both before it has buffered or written anything, so
+/// each waits here for the sink's next write, which the same player thread makes strictly after
+/// it, and after a gapless join also for the end of the track before it to be heard. And every
+/// position librespot gives is the decoder's, which runs ahead of the sound by what the output
+/// has queued, so that is taken off.
 pub struct Events {
     player: UnboundedReceiver<PlayerEvent>,
     output: UnboundedReceiver<()>,
@@ -64,9 +70,63 @@ pub struct Events {
     signals: UnboundedReceiver<PlaybackEvent>,
     /// The `Playing` or `Seeked` waiting for the sink; a newer one replaces an older one.
     held: Option<PlaybackEvent>,
+    /// When the held event's audio is heard, once its write went through behind the end of the
+    /// track before it.
+    release: Option<Instant>,
+    /// The track whose audio was last let through, which a resume carries on.
+    heard: Option<String>,
     /// Position reports seen while the cue refuses writes. A seek or load that took keeps the
     /// player thread busy, so a run of them means it never left the old position.
     stale: u8,
+}
+
+impl Events {
+    /// Lets the held event out once its first write is through. What the output still holds
+    /// ahead of that write is the track carrying on after a resume, so it comes off the
+    /// position, and the end of another track after a gapless join, so the event waits it out.
+    fn arrived(&mut self) -> Option<PlaybackEvent> {
+        let event = self.held.take()?;
+        let ahead = self.cue.until_heard();
+        if ahead < AUDIBLE {
+            return Some(self.let_through(event));
+        }
+        let resumed = event
+            .id()
+            .is_some_and(|id| self.heard.as_deref() == Some(id));
+        match (resumed, event) {
+            (true, PlaybackEvent::Playing { id, at }) if at >= ahead => {
+                Some(self.let_through(PlaybackEvent::Playing { id, at: at - ahead }))
+            }
+            (_, event) => {
+                self.held = Some(event);
+                self.release = Some(Instant::now() + ahead);
+                None
+            }
+        }
+    }
+
+    fn let_through(&mut self, event: PlaybackEvent) -> PlaybackEvent {
+        self.release = None;
+        self.heard = event.id().map(str::to_owned);
+        event
+    }
+
+    /// `event` with the decoder's lead over the sound taken off its position. `None` while the
+    /// output still plays the track before the one the decoder reports.
+    fn heard(&self, event: PlaybackEvent) -> Option<PlaybackEvent> {
+        let ahead = self.cue.queued();
+        match event {
+            PlaybackEvent::Position { id, at } => Some(PlaybackEvent::Position {
+                id,
+                at: at.checked_sub(ahead)?,
+            }),
+            PlaybackEvent::Paused { id, at } => Some(PlaybackEvent::Paused {
+                id,
+                at: at.saturating_sub(ahead),
+            }),
+            event => Some(event),
+        }
+    }
 }
 
 #[async_trait]
@@ -84,6 +144,7 @@ impl PlaybackEvents for Events {
                         PlaybackEvent::Playing { .. } | PlaybackEvent::Seeked { .. } => {
                             self.stale = 0;
                             self.held = Some(event);
+                            self.release = None;
                         }
                         PlaybackEvent::Position { .. } if self.cue.cleared() => {
                             self.stale += 1;
@@ -95,19 +156,31 @@ impl PlaybackEvents for Events {
                             return Some(event);
                         }
                         PlaybackEvent::Position { .. } | PlaybackEvent::Length { .. } => {
-                            return Some(event);
+                            // a report for a track the output has not reached is no use yet
+                            if let Some(event) = self.heard(event) {
+                                return Some(event);
+                            }
                         }
                         event => {
                             self.held = None;
+                            self.release = None;
                             self.stale = 0;
-                            return Some(event);
+                            if let Some(event) = self.heard(event) {
+                                return Some(event);
+                            }
                         }
                     }
                 }
                 written = self.written.recv() => {
                     written?;
-                    if let Some(event) = self.held.take() {
+                    if let Some(event) = self.arrived() {
                         return Some(event);
+                    }
+                }
+                () = sleep_until(self.release), if self.release.is_some() => {
+                    self.release = None;
+                    if let Some(event) = self.held.take() {
+                        return Some(self.let_through(event));
                     }
                 }
                 changed = self.output.recv() => {
@@ -200,6 +273,8 @@ impl Engine {
             written,
             signals: signal_rx,
             held: None,
+            release: None,
+            heard: None,
             stale: 0,
         };
         let engine = Self {
@@ -381,6 +456,14 @@ fn forward(mut events: UnboundedReceiver<PlayerEvent>, cue: Cue) -> UnboundedRec
         log::error!("playback: cannot spawn the spotify event thread: {error}");
     }
     received
+}
+
+/// Waits until `at`, or for ever without one.
+async fn sleep_until(at: Option<Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at.into()).await,
+        None => std::future::pending().await,
+    }
 }
 
 pub(crate) fn track_uri(track_id: &str) -> Result<SpotifyUri> {
