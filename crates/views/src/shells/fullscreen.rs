@@ -15,10 +15,9 @@ use input::{ToggleFullscreen, ToggleWindowFullscreen, WORKSPACE_CONTEXT};
 use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
 use ui::{
-    ActiveTheme as _, Artwork, Button, Entrance, ExplicitBadge, Fading as _, Flight, GLASS_BLUR,
-    GLASS_FILL, InlineLink, InlineLinks, Motion, Motioned as _, Popup, Rising as _, Room,
-    Scrollbar, Scrubber, ScrubberState, Springs, TabBar, Tails as _, Text, Visualizer, clock,
-    entering, snapped,
+    ActiveTheme as _, Artwork, Button, ExplicitBadge, Fading as _, Flight, GLASS_BLUR, GLASS_FILL,
+    InlineLink, InlineLinks, Motion, Motioned as _, Popup, Rising as _, Room, Scrollbar, Scrubber,
+    ScrubberState, Springs, Sprung, TabBar, Tails as _, Text, Visualizer, clock, entering, snapped,
 };
 
 use crate::chrome::{Aside, TitleBarOptions};
@@ -96,9 +95,11 @@ pub struct FullscreenView {
     settings: Entity<AppSettings>,
     aside: Entity<Aside>,
     panel: Option<SideTab>,
-    /// The entrance the content plays after the pill shows another tab, the same one a settings
-    /// page plays. The pill itself never takes part.
-    switch: Option<Entrance>,
+    /// How much of the content the pill just switched to is still hidden, springing from 1 to 0
+    /// at the pace the cover travels, so a panel fades in while the cover slides aside. A spring
+    /// steps from the first frame the content draws, so a slow first layout cannot eat the
+    /// entrance. The pill itself never takes part.
+    switch: Option<Sprung>,
     seek: ScrubberState,
     pending: Option<f32>,
     over_seek: Option<f32>,
@@ -229,7 +230,7 @@ impl FullscreenView {
     /// Selects the fullscreen panel and restarts the controls' idle timer.
     fn show(&mut self, panel: Option<SideTab>, cx: &mut Context<Self>) {
         if panel != self.panel && !cx.reduce_motion() {
-            self.switch = Some(Entrance::start());
+            self.switch = Some(Sprung::at(1.));
         }
         if panel.is_some() != self.panel.is_some() {
             // The pill changes parents between the cover and panel layouts, so its old
@@ -401,15 +402,14 @@ impl FullscreenView {
     /// How much of the tab just shown is still hidden, from 1 as the switch starts to 0 once it
     /// ends. It asks for another frame while the switch runs.
     fn switching(&mut self, window: &mut Window, cx: &App) -> f32 {
-        let Some(switch) = self.switch else {
+        let Some(switch) = self.switch.as_mut() else {
             return 0.;
         };
-        if cx.reduce_motion() || !switch.running() {
+        let hidden = switch.follow(0., Springs::FLIGHT, SPRING_REST, window, cx);
+        if hidden <= 0. {
             self.switch = None;
-            return 0.;
         }
-        window.request_animation_frame();
-        switch.hidden()
+        hidden.clamp(0., 1.)
     }
 
     fn volume_open(&self) -> bool {
@@ -1530,7 +1530,10 @@ impl Render for FullscreenView {
                                         "fullscreen-meta",
                                         self.meta(hide, lift, window, cx),
                                     )
-                                    .unscaled(),
+                                    .unscaled()
+                                    // The column's own layer would clip the line while it
+                                    // is still outside the column's new bounds.
+                                    .above(),
                                 )
                                 .when(split, |this| {
                                     this.child(self.dock(
