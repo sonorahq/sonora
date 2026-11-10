@@ -195,6 +195,8 @@ pub struct Playback {
     pub quality: String,
     pub duration: Option<Duration>,
     pub loudness: Option<Loudness>,
+    /// How the granted stream is encoded, when Tidal said enough to tell.
+    pub encoding: Option<Encoding>,
 }
 
 impl std::fmt::Display for Stale {
@@ -1043,11 +1045,13 @@ impl TidalClient {
             .and_then(|track| wire::number(&track, "duration"))
             .filter(|seconds| *seconds > 0)
             .map(Duration::from_secs);
+        let encoding = encoding(&answer, manifest.codec());
         Ok(Playback {
             manifest,
             quality,
             duration,
             loudness,
+            encoding,
         })
     }
 }
@@ -1768,4 +1772,59 @@ pub(crate) fn http() -> Result<reqwest::Client> {
         .read_timeout(STALL)
         .build()
         .context("cannot build the tidal http client")
+}
+
+/// How a stream Tidal granted is encoded, from its codec and what the playback answer says of
+/// it: FLAC at the bit depth and rate it names, AAC at the bit rate of its quality level.
+fn encoding(answer: &Value, codec: &str) -> Option<Encoding> {
+    let codec = codec.to_ascii_lowercase();
+    if codec.starts_with("flac") {
+        return Some(Encoding::Flac {
+            depth: wire::count(answer, "bitDepth")?,
+            rate: wire::count(answer, "sampleRate")?,
+        });
+    }
+    if codec.starts_with("mp4a") {
+        let kbps = match wire::text(answer, "audioQuality")? {
+            "HIGH" => 320,
+            "LOW" => 96,
+            _ => return None,
+        };
+        return Some(Encoding::Aac { kbps });
+    }
+    Some(Encoding::Other)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{Encoding, encoding};
+
+    #[test]
+    fn flac_reports_the_depth_and_rate_tidal_names() {
+        let answer =
+            json!({"audioQuality": "HI_RES_LOSSLESS", "bitDepth": 24, "sampleRate": 96_000});
+        assert_eq!(
+            encoding(&answer, "flac"),
+            Some(Encoding::Flac {
+                depth: 24,
+                rate: 96_000
+            })
+        );
+        assert_eq!(encoding(&json!({"bitDepth": 16}), "FLAC"), None);
+    }
+
+    #[test]
+    fn aac_reports_the_bit_rate_of_its_level() {
+        let at = |level: &str| encoding(&json!({"audioQuality": level}), "mp4a.40.2");
+        assert_eq!(at("HIGH"), Some(Encoding::Aac { kbps: 320 }));
+        assert_eq!(at("LOW"), Some(Encoding::Aac { kbps: 96 }));
+        assert_eq!(at("LOSSLESS"), None);
+    }
+
+    #[test]
+    fn a_codec_with_no_name_here_is_other() {
+        assert_eq!(encoding(&json!({}), "eac3"), Some(Encoding::Other));
+    }
 }
