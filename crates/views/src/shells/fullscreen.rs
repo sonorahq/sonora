@@ -1259,8 +1259,7 @@ impl FullscreenView {
     ) -> impl IntoElement {
         let theme = *cx.theme();
         let frosted = ambient::shown(cx);
-        let sunk =
-            |element: gpui::Div, by: f32| element.relative().top(px(SINK) * by).opacity(1. - by);
+        let sunk = |element: Div, by: f32| element.relative().top(px(SINK) * by).opacity(1. - by);
 
         div()
             .id("fullscreen-corner")
