@@ -49,6 +49,8 @@ const META_GAP: f32 = 0.25;
 const DOCK: f32 = 1.15;
 const DOCK_FULL: f32 = 1.7;
 const SINK: f32 = 24.;
+/// How far above its place a panel starts as it comes in, as a share of the window's height.
+const PANEL_DROP: f32 = 0.08;
 const LEAVE_DROP: f32 = 2.;
 const PILL_GAP: f32 = 2.;
 const SEEK_MAX: f32 = 420.;
@@ -1558,10 +1560,21 @@ impl Render for FullscreenView {
                                 .min_h_0()
                                 .h_full()
                                 .on_click(|_, _, cx| cx.stop_propagation())
-                                .child(entering(
-                                    div().size_full().min_h_0().child(self.aside.clone()),
-                                    switching,
-                                ))
+                                // The panel comes down into place from a little above as it
+                                // fades in.
+                                .child(
+                                    entering(
+                                        div().size_full().min_h_0().child(self.aside.clone()),
+                                        switching,
+                                    )
+                                    .when(
+                                        switching > 0.,
+                                        |this| {
+                                            let drop = viewport.height * PANEL_DROP * switching;
+                                            this.layer_translate(point(Pixels::ZERO, -drop))
+                                        },
+                                    ),
+                                )
                                 .when(shown, |this| this.child(self.floating(hide, cx))),
                         )
                     }),
