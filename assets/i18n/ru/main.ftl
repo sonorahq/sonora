@@ -1001,7 +1001,9 @@ settings-romanized-lyrics = Романизация текста
 settings-romanized-lyrics-detail = Показывать локально собранное произношение для выбранных систем письма
 settings-romanization-writing-systems = Системы письма
 settings-lyrics-priority = Приоритет источников
-settings-lyrics-providers-detail = Выберите сервисы для поиска текстов песен
+settings-lyrics-word-synced-first = Сначала тексты с таймингами по словам
+settings-lyrics-word-synced-first-detail = Показывать текст с таймингами по словам первым, даже если его источник стоит ниже в списке
+settings-lyrics-providers-detail =Выберите сервисы для поиска текстов песен
 settings-lyrics-providers-selected = { $count ->
     [one] Выбран { $count } источник
     [few] Выбрано { $count } источника

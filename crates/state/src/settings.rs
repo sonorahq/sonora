@@ -421,6 +421,9 @@ struct Values {
     /// Every known lyrics source, the preferred one first. Lyrics of the same kind from two
     /// sources go to the one listed higher.
     lyrics_provider_priority: Vec<String>,
+    /// Whether lyrics timed word by word are shown ahead of any others, whatever source they
+    /// come from. The source order then only settles lyrics of the same kind.
+    lyrics_word_synced_first: bool,
     karaoke_lyrics: bool,
     blur_lyrics: bool,
     romanized_lyrics: bool,
@@ -626,6 +629,7 @@ impl Default for Values {
                 .iter()
                 .map(|name| name.to_string())
                 .collect(),
+            lyrics_word_synced_first: false,
             karaoke_lyrics: true,
             blur_lyrics: true,
             romanized_lyrics: true,
@@ -1123,6 +1127,11 @@ impl AppSettings {
         }
         self.values.lyrics_provider_priority = order;
         self.schedule_save(cx);
+    }
+
+    /// Whether lyrics timed word by word are shown ahead of any others, whatever their source.
+    pub fn lyrics_word_synced_first(&self) -> bool {
+        self.values.lyrics_word_synced_first
     }
 
     pub fn lyrics_provider_enabled(&self, provider: &str) -> bool {
@@ -1715,6 +1724,11 @@ impl AppSettings {
             self.values.lyrics_providers.push(provider.to_owned());
         }
         self.values.lyrics_providers.sort();
+        self.schedule_save(cx);
+    }
+
+    pub fn set_lyrics_word_synced_first(&mut self, first: bool, cx: &mut Context<Self>) {
+        self.values.lyrics_word_synced_first = first;
         self.schedule_save(cx);
     }
 

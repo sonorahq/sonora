@@ -1037,7 +1037,9 @@ settings-romanized-lyrics-detail = Show locally generated pronunciation for sele
 settings-romanization-writing-systems = Writing systems
 settings-lyrics-priority = Provider priority
 settings-lyrics-priority-detail = Sonora shows synced lyrics from the highest source that has them
-settings-lyrics-providers-detail = Choose which services to search for lyrics
+settings-lyrics-word-synced-first = Prioritize word-synced lyrics
+settings-lyrics-word-synced-first-detail = Show lyrics timed word by word first, even from a source lower in the list
+settings-lyrics-providers-detail =Choose which services to search for lyrics
 settings-lyrics-providers-selected = { $count ->
     [one] { $count } selected
    *[other] { $count } selected
