@@ -580,7 +580,14 @@ impl RenderOnce for PageHero {
                             }),
                     )
                     .children(self.meta)
-                    .children(self.actions.map(|actions| div().pt_1().child(actions))),
+                    // A button in the row may spring to a new width as its label changes, so the
+                    // row lays out off the pixel grid and the buttons after it glide along
+                    // rather than stepping a pixel at a time.
+                    .children(
+                        self.actions.map(|actions| {
+                            div().pt_1().child(div().pixel_snap(false).child(actions))
+                        }),
+                    ),
             )
     }
 }

@@ -618,9 +618,17 @@ impl RenderOnce for Button {
             .px(padding)
             .rounded(radius)
             // Mid-resize the box is narrower or wider than what it holds, so the content keeps
-            // its own width from the leading edge and the box clips it as it grows.
+            // its own width from the leading edge and the box clips it as it grows. It leaves the
+            // pixel grid while it springs, so its edge glides instead of stepping a pixel at a
+            // time, and only its width keeps a fraction.
             .when_some(resizing, |this, width| {
-                this.w(width).overflow_hidden().justify_start()
+                this.w(width)
+                    .h(window.pixel_snap(height))
+                    .px(window.pixel_snap(padding))
+                    .gap(window.pixel_snap(gap))
+                    .overflow_hidden()
+                    .justify_start()
+                    .pixel_snap(false)
             })
             .text_color(foreground)
             .when(small, |this| this.text_size(theme.text(Text::Label)))
