@@ -47,6 +47,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that lists Songs, Albums, Artists and Playlists by name.
   Keep dragging to close it, and the toggle brings it back as it was. A narrowing window folds
   the sidebar to icons before hiding it.
+- Right-click an album or a playlist and pick Go to album or Go to playlist to open its page.
 
 ### Changed
 
