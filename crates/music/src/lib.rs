@@ -47,7 +47,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use jiff::fmt::temporal::DateTimeParser;
 
-pub use audio::Meter;
+pub use audio::{Meter, Muffle};
 pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
@@ -421,6 +421,8 @@ pub struct PlaybackConfig {
     /// Shared like `equalizer`: every output the engine opens lets it hear the music ahead of the
     /// equalizer while it is watched.
     pub analyzer: Analyzer,
+    /// Softens the highs while typing, shared like `gain` so a change reaches every open stream.
+    pub muffle: Muffle,
     /// Where tracks are kept, the downloads and, while caching is on, the ones that played.
     pub vault: Option<Arc<vault::Vault>>,
 }

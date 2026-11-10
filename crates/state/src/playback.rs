@@ -9,8 +9,8 @@ use gpui::{App, AppContext as _, Context, Entity, EventEmitter, SharedString, Ta
 use music::connect::{self, Command, Repeat};
 use music::vault::Vault;
 use music::{
-    Analyzer, Meter, MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent, PlaybackEvents,
-    PlaybackFactory, Player, Quality, Spectrum, Track, TrackSignal, Transcode,
+    Analyzer, Meter, Muffle, MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent,
+    PlaybackEvents, PlaybackFactory, Player, Quality, Spectrum, Track, TrackSignal, Transcode,
 };
 use ui::{Pin, PinKind};
 
@@ -440,6 +440,8 @@ pub struct Playback {
     duck_until: Option<Instant>,
     /// Steps `duck` toward `duck_target` until both rest at full volume.
     duck_task: Option<Task<()>>,
+    /// Softens the highs while typing, shared with every engine like the equalizer reader.
+    muffle: Muffle,
     normalisation: bool,
     gapless: bool,
     transcode: Transcode,
@@ -632,6 +634,7 @@ impl Playback {
             duck_target: 1.,
             duck_until: None,
             duck_task: None,
+            muffle: Muffle::new(),
             normalisation,
             gapless,
             transcode,
@@ -2358,9 +2361,12 @@ impl Playback {
         self.set_volume(level, cx);
     }
 
-    /// Sends the gain for the current level, after typing duck, to both engines.
+    /// Sends the gain for the current level, after typing duck, to both engines, and how far
+    /// typing muffling has closed the highs.
     fn apply_gain(&self) {
         let level = gain(self.level) * self.duck.clamp(DUCK_LEVEL, 1.);
+        let amount = ((1. - self.duck) / (1. - DUCK_LEVEL)).clamp(0., 1.);
+        self.muffle.set(amount);
         if let Some(engine) = self.engine.as_ref() {
             engine.set_gain(level);
         }
@@ -2394,12 +2400,13 @@ impl Playback {
         cx.notify();
     }
 
-    /// Returns the gain to full volume and stops the ducking task.
+    /// Returns the gain and highs to full and stops the ducking task.
     fn clear_duck(&mut self) {
         self.duck = 1.;
         self.duck_target = 1.;
         self.duck_until = None;
         self.duck_task = None;
+        self.muffle.set(0.);
         self.apply_gain();
     }
 
@@ -2789,6 +2796,7 @@ impl Playback {
             equalizer: self.equalizer.clone(),
             meter: self.meter.clone(),
             analyzer: self.analyzer.clone(),
+            muffle: self.muffle.clone(),
             vault: Some(self.vault.clone()),
         };
         let (engine, events) = playback.start(config);
@@ -2816,6 +2824,7 @@ impl Playback {
             equalizer: self.equalizer.clone(),
             meter: self.meter.clone(),
             analyzer: self.analyzer.clone(),
+            muffle: self.muffle.clone(),
             vault: Some(self.vault.clone()),
         };
         let (engine, events) = playback.start(config);

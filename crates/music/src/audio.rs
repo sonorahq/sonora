@@ -13,6 +13,13 @@ pub const RAMP: Duration = Duration::from_millis(25);
 /// The loudest sample an integer device takes: the largest `f32` below one, since one itself
 /// overflows a 24-bit sample and wraps to the far end of the scale.
 const FULL_SCALE: f32 = 1. - f32::EPSILON / 2.;
+/// How many channels the typing muffler keeps state for. Streams wider than this skip the filter.
+const MUFFLE_CHANNELS: usize = 8;
+/// Open cutoff while typing muffling is off, in hertz.
+const MUFFLE_OPEN_HZ: f32 = 14_000.;
+/// Cutoff at full typing muffling, in hertz — enough to bury clarity without killing the beat.
+const MUFFLE_CLOSED_HZ: f32 = 1_600.;
+
 #[derive(Clone)]
 pub struct Volume(Arc<AtomicU32>);
 
@@ -27,6 +34,32 @@ impl Volume {
 
     fn get(&self) -> f32 {
         f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+}
+
+/// How strongly typing softens the highs, from 0 (open) to 1 (muffled). Shared like `Volume`, so
+/// playback can change it without restarting an engine.
+#[derive(Clone, Default)]
+pub struct Muffle(Arc<AtomicU32>);
+
+impl Muffle {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set(&self, amount: f32) {
+        self.0
+            .store(amount.clamp(0., 1.).to_bits(), Ordering::Relaxed);
+    }
+
+    fn get(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+}
+
+impl std::fmt::Debug for Muffle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Muffle").field(&self.get()).finish()
     }
 }
 
@@ -129,10 +162,12 @@ impl Frames {
 }
 
 /// What sits between the queue and the device: the analyzer listening ahead of the equalizer,
-/// then the equalizer and the volume ramp, with the spectrum tap and the meter listening at the
-/// end. Every engine builds one and hands it to the output.
+/// then the equalizer, the typing muffler and the volume ramp, with the spectrum tap and the
+/// meter listening at the end. Every engine builds one and hands it to the output.
 pub struct Chain {
     pub volume: Volume,
+    /// Softens the highs while the listener types, shared like `volume`.
+    pub muffle: Muffle,
     /// Hears the music ahead of the equalizer for the equalizer screen, shared like `meter`.
     pub analyzer: Analyzer,
     pub equalizer: Equalizer,
@@ -163,6 +198,7 @@ pub(crate) struct Chained<I> {
     probe: Probe,
     equalizer: FilterStage,
     volume: Volume,
+    muffle: Muffle,
     tap: Tap,
     /// Whether the tap hears the samples from before the gain. It is read once per frame so
     /// every channel of a frame agrees.
@@ -177,6 +213,10 @@ pub(crate) struct Chained<I> {
     step: f32,
     frames_left: u32,
     ramp_frames: u32,
+    /// How far the muffler has moved toward the shared amount, so a step is not a zipper.
+    muffle_amount: f32,
+    /// One-pole state per channel for the typing muffler.
+    muffle_z: [f32; MUFFLE_CHANNELS],
 }
 
 impl<I: Source> Chained<I> {
@@ -188,6 +228,7 @@ impl<I: Source> Chained<I> {
             probe: chain.analyzer.probe(),
             equalizer: FilterStage::new(chain.equalizer.clone()),
             volume: chain.volume.clone(),
+            muffle: chain.muffle.clone(),
             tap: chain.spectrum.attach(),
             unscaled: false,
             meter: chain.meter.clone(),
@@ -197,6 +238,8 @@ impl<I: Source> Chained<I> {
             step: 0.0,
             frames_left: 0,
             ramp_frames: 1,
+            muffle_amount: chain.muffle.get(),
+            muffle_z: [0.; MUFFLE_CHANNELS],
         }
     }
 
@@ -247,9 +290,14 @@ impl<I: Source> Iterator for Chained<I> {
         }
 
         let equalized = self.equalizer.process(usize::from(place.channel), sample);
-        let output = equalized * self.current;
+        if place.channel == 0 {
+            let target = self.muffle.get();
+            self.muffle_amount += (target - self.muffle_amount) * 0.08;
+        }
+        let softened = self.muffle_sample(place.channel, equalized);
+        let output = softened * self.current;
         let heard = match self.unscaled {
-            true => equalized,
+            true => softened,
             false => output,
         };
         self.tap.push(place.channel, heard);
@@ -259,6 +307,30 @@ impl<I: Source> Iterator for Chained<I> {
             true => output.clamp(-1., FULL_SCALE),
             false => output,
         })
+    }
+}
+
+impl<I> Chained<I> {
+    /// A one-pole low-pass that closes as typing muffling rises, blended in so a small amount is
+    /// almost transparent.
+    fn muffle_sample(&mut self, channel: u16, sample: f32) -> f32 {
+        let amount = self.muffle_amount;
+        let channel = usize::from(channel);
+        if amount < 1e-3 || channel >= MUFFLE_CHANNELS {
+            if channel < MUFFLE_CHANNELS {
+                self.muffle_z[channel] = sample;
+            }
+            return sample;
+        }
+        let cutoff = MUFFLE_OPEN_HZ + (MUFFLE_CLOSED_HZ - MUFFLE_OPEN_HZ) * amount;
+        let rate = self.frames.rate().max(1) as f32;
+        let alpha = {
+            let x = std::f32::consts::TAU * cutoff / rate;
+            x / (1. + x)
+        };
+        let z = self.muffle_z[channel] + alpha * (sample - self.muffle_z[channel]);
+        self.muffle_z[channel] = z;
+        sample + (z - sample) * amount
     }
 }
 

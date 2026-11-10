@@ -455,6 +455,7 @@ async fn engine_loop<F: Fetch>(
     let heard_audio = heard.clone();
     let chain = Chain {
         volume: Volume::new(config.gain),
+        muffle: config.muffle.clone(),
         equalizer: config.equalizer.clone(),
         spectrum,
         meter: config.meter.clone(),
