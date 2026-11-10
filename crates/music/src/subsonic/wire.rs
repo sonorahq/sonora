@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use opensubsonic::data::{AlbumId3, ArtistId3, Child, RecordLabel};
+use opensubsonic::data::{AlbumId3, ArtistId3, Child, ItemGenre, RecordLabel};
 
 use crate::{
     Album, ArtistRef, Playlist, ReleaseType, SavedArtist, Track, UserProfile, iso_8601_to_epoch,
@@ -30,10 +30,31 @@ pub fn track(song: Child, cover: Option<String>) -> Track {
         explicit: song.explicit_status.as_deref() == Some("explicit"),
         track_number: song.track.unwrap_or(0).max(0) as u32,
         disc_number: song.disc_number.unwrap_or(1).max(1) as u32,
-        tags: Vec::new(),
+        tags: genres(song.genres.as_deref(), song.genre),
         languages: Vec::new(),
         credits: Vec::new(),
     }
+}
+
+/// The genres a song is filed under. An OpenSubsonic server lists each of them, and any other
+/// server names one genre at most.
+fn genres(listed: Option<&[ItemGenre]>, single: Option<String>) -> Vec<String> {
+    let listed: Vec<String> = listed
+        .unwrap_or_default()
+        .iter()
+        .map(|genre| genre.name.trim())
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if !listed.is_empty() {
+        return listed;
+    }
+
+    single
+        .map(|genre| genre.trim().to_owned())
+        .filter(|genre| !genre.is_empty())
+        .into_iter()
+        .collect()
 }
 
 pub fn album(source: AlbumId3, cover: Option<String>, cover_large: Option<String>) -> Album {

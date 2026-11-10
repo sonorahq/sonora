@@ -13,6 +13,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Open YouTube handle links on their artist pages.
 - Preview music links in search suggestions and search by their titles or artist names.
 - Prioritize word-synced lyrics over the source order with a switch in Lyrics sources.
+- Turn on a Genre column in song lists and sort by it, for local files, Subsonic servers and Apple Music.
 
 ### Changed
 
