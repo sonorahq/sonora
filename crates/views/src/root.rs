@@ -26,7 +26,7 @@ use crate::screens::search::SearchView;
 use crate::screens::settings::SettingsHeader;
 use crate::shared::ambient::{self, Ambient};
 use crate::shared::tracks::{LIBRARY_COLUMNS, album_columns};
-use crate::shared::transport::CoverAway;
+use crate::shared::transport::{CoverAway, CoverFade};
 use crate::shells::Shell;
 use crate::shells::workspace::Workspace;
 use crate::{
@@ -1211,6 +1211,10 @@ impl Render for Root {
         let away = zooming > 0. || left.is_some_and(|left| left > 0.);
         if cx.try_global::<CoverAway>().is_none_or(|was| was.0 != away) {
             cx.set_global(CoverAway(away));
+        }
+        let fade = 1. - zooming;
+        if cx.try_global::<CoverFade>().is_none_or(|was| was.0 != fade) {
+            cx.set_global(CoverFade(fade));
         }
         let viewport = window.viewport_size();
         let reach = f32::from(viewport.width.max(viewport.height));

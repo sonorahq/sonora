@@ -24,7 +24,7 @@ use ui::{
 use crate::chrome::{Aside, TitleBarOptions};
 use crate::shared::menus::ItemMenu;
 use crate::shared::transport::{
-    COVER_FLIGHT, NOTCH, fraction, like, moved, percent, transport, volume_icon,
+    COVER_FLIGHT, CoverFade, NOTCH, fraction, like, moved, percent, transport, volume_icon,
 };
 use crate::shared::visualizer::VisualizerDrive;
 use crate::shared::{self, ambient};
@@ -50,10 +50,6 @@ const META_GAP: f32 = 0.25;
 const DOCK: f32 = 1.15;
 const DOCK_FULL: f32 = 1.7;
 const SINK: f32 = 24.;
-/// How far above its place a panel starts as it comes in, as a share of the window's height.
-const PANEL_DROP: f32 = 0.3;
-/// How far a closed panel rises as it fades out, as a share of the window's height.
-const PANEL_RISE: f32 = 0.08;
 /// The names the pill and the seek bar with the transport are seen under, so each slides to
 /// where a panel moves it.
 const PILL_FLIGHT: &str = "fullscreen-pill";
@@ -147,6 +143,8 @@ pub struct FullscreenView {
     /// Whether the player is the shell on show. While it fades out over the workspace its cover
     /// flies back into the player bar.
     on_show: bool,
+    /// The player's own top left corner, which a fading panel is placed against.
+    root_origin: Rc<Cell<Point<Pixels>>>,
     /// Where the panel last drew, which is where it fades out once the pill closes it.
     panel_bounds: Rc<Cell<Bounds<Pixels>>>,
     /// How much of a panel the pill just closed is still showing, springing from 1 to 0.
@@ -223,6 +221,7 @@ impl FullscreenView {
             root_bounds: Rc::new(Cell::new(Bounds::default())),
             cover_zoom: Rc::default(),
             on_show: false,
+            root_origin: Rc::default(),
             panel_bounds: Rc::new(Cell::new(Bounds::default())),
             leaving: None,
             meta_bounds: Rc::new(Cell::new(Bounds::default())),
@@ -525,8 +524,11 @@ impl FullscreenView {
         let revision = self.revision;
         let waiting = !local && album.is_some() && cover_large.is_none();
 
+        // As the player opens, its cover comes into view with the rest of it while it flies.
+        let fade = cx.try_global::<CoverFade>().map_or(1., |fade| fade.0);
         let cover = div()
             .id("fullscreen-artwork")
+            .when(fade < 1., |this| this.opacity(fade))
             .relative()
             .size(layout_side)
             .flex_none()
@@ -1526,6 +1528,16 @@ impl Render for FullscreenView {
                     .absolute()
                     .size_full(),
             )
+            .child({
+                let root_origin = self.root_origin.clone();
+                canvas(
+                    move |bounds, _, _| root_origin.set(bounds.origin),
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+            })
             .when(visualizer_on, |this| {
                 this.child(
                     Visualizer::new(self.visualizer.levels(), visualizer_max)
@@ -1636,31 +1648,18 @@ impl Render for FullscreenView {
                                     .absolute()
                                     .size_full()
                                 })
-                                // The panel comes down into place from a little above as it
-                                // fades in.
-                                .child(
-                                    entering(
-                                        div().size_full().min_h_0().child(self.aside.clone()),
-                                        switching,
-                                    )
-                                    .when(
-                                        switching > 0.,
-                                        |this| {
-                                            let drop = viewport.height * PANEL_DROP * switching;
-                                            this.layer_translate(point(Pixels::ZERO, -drop))
-                                        },
-                                    ),
-                                )
+                                .child(entering(
+                                    div().size_full().min_h_0().child(self.aside.clone()),
+                                    switching,
+                                ))
                                 .when(shown, |this| this.child(self.floating(hide, cx))),
                         )
                     }),
             )
-            // A panel the pill closed fades out where it stood, rising the way it came, while
-            // the cover takes the middle.
+            // A panel the pill closed fades out where it stood while the cover takes the middle.
             .when_some(leaving.filter(|_| self.panel.is_none()), |this, left| {
                 let at = self.panel_bounds.get();
-                let origin = at.origin - self.root_bounds.get().origin;
-                let rise = viewport.height * PANEL_RISE * (1. - left);
+                let origin = at.origin - self.root_origin.get();
                 this.child(
                     div()
                         .absolute()
@@ -1669,7 +1668,6 @@ impl Render for FullscreenView {
                         .w(at.size.width)
                         .h(at.size.height)
                         .opacity(left)
-                        .layer_translate(point(Pixels::ZERO, -rise))
                         .child(self.aside.clone()),
                 )
             })

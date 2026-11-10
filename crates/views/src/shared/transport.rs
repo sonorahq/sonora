@@ -19,6 +19,12 @@ pub(crate) const COVER_FLIGHT: &str = "playing-cover";
 pub(crate) struct CoverAway(pub(crate) bool);
 
 impl Global for CoverAway {}
+
+/// How much of the opening fullscreen player shows yet, from 0 to 1, which its cover fades in
+/// by while it flies above the fade the rest of the player is under.
+pub(crate) struct CoverFade(pub(crate) f32);
+
+impl Global for CoverFade {}
 const STEP: f32 = 0.004;
 
 /// The other device playback is on, which the player shows instead of this app's own.

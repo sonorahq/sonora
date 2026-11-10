@@ -17,7 +17,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Nightly updates reuse released executables after a stable release, so they become available sooner.
 - Opening the fullscreen player flies the cover up from the player bar while the rest fades in.
-- The fullscreen cover and controls slide aside when lyrics or the queue open, which drop into place, and back when they close.
+- The fullscreen cover and controls slide aside when lyrics or the queue open, which fade into place, and back when they close.
 - Leaving the fullscreen player fades it out over the page below while the cover flies back down into the player bar, its corners easing between the two shapes.
 - Buttons and cards shrink a little under a click and spring back on release.
 - Turning Play to Pause slides the label into place and swaps the icons, while the button keeps its width.
