@@ -1474,6 +1474,9 @@ impl Render for FullscreenView {
             Some(spectrum) => self.visualizer.show(cx.entity_id(), spectrum, window),
             None => self.visualizer.hide(),
         }
+        // The spectrum grows in from the floor and sinks back out, so it is drawn for as long
+        // as any of it shows rather than for as long as it is wanted.
+        let visualizer_presence = self.visualizer.presence();
         let bottom = |bounds: Bounds<Pixels>| bounds.origin.y + bounds.size.height;
         // The peaks stop an inset short of the artist line, so the glow never reaches the text.
         let visualizer_max =
@@ -1540,9 +1543,10 @@ impl Render for FullscreenView {
                 .top_0()
                 .left_0()
             })
-            .when(visualizer_on, |this| {
+            .when(visualizer_presence > 0., |this| {
                 this.child(
                     Visualizer::new(self.visualizer.levels(), visualizer_max)
+                        .opacity(visualizer_presence)
                         .style_kind(style)
                         .when_some(visualizer_tint, |this, tint| this.tint(tint))
                         .when_some(corner, |this, radius| this.corner_radius(radius))
