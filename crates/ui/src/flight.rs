@@ -5,6 +5,7 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
@@ -19,6 +20,9 @@ const OFFSET_REST: f32 = 0.01;
 const SCALE_REST: f32 = 1e-4;
 /// How far layout has to move an element, in pixels, before it flies there rather than jumps.
 const MOVED: f32 = 0.5;
+/// How long ago an element may have been seen and still count as just replaced, for a flight
+/// that only starts from a [`recent`](Flight::recent) sighting.
+const RECENT: Duration = Duration::from_millis(300);
 
 /// Where a flight is drawn this frame relative to its layout: shifted by `offset` and scaled by
 /// `scale` about its centre. Shared with the inner element that paints it.
@@ -33,6 +37,9 @@ pub struct Flight {
     pose: Pose,
     seen_as: Option<SharedString>,
     lands_from: Option<SharedString>,
+    recent: bool,
+    follows: bool,
+    reach: Rc<Cell<Pixels>>,
     above: bool,
     scales: bool,
     spring: SpringConfig,
@@ -51,7 +58,7 @@ struct Course {
 
 /// Where each named flight was last seen, for another to start from as it appears.
 #[derive(Default)]
-struct Sightings(HashMap<SharedString, Bounds<Pixels>>);
+struct Sightings(HashMap<SharedString, (Bounds<Pixels>, Instant)>);
 
 impl Global for Sightings {}
 
@@ -59,23 +66,29 @@ impl Global for Sightings {}
 struct Posed {
     child: AnyElement,
     pose: Pose,
+    reach: Rc<Cell<Pixels>>,
 }
 
 impl Flight {
     pub fn new(id: impl Into<ElementId>, child: impl IntoElement) -> Self {
         let pose: Pose = Rc::new(Cell::new((Point::default(), 1.)));
+        let reach = Rc::new(Cell::new(Pixels::ZERO));
         Self {
             id: id.into(),
             inner: Some(
                 Posed {
                     child: child.into_any_element(),
                     pose: pose.clone(),
+                    reach: reach.clone(),
                 }
                 .into_any_element(),
             ),
             pose,
             seen_as: None,
             lands_from: None,
+            recent: false,
+            follows: true,
+            reach,
             above: false,
             scales: true,
             spring: Springs::FLIGHT,
@@ -94,6 +107,29 @@ impl Flight {
     /// seen, and flies it to its own place.
     pub fn lands_from(mut self, name: impl Into<SharedString>) -> Self {
         self.lands_from = Some(name.into());
+        self
+    }
+
+    /// Lands only from a sighting of the last few frames, for an element that stands in for one
+    /// just removed, such as controls that move to another part of the layout. Without it a
+    /// sighting never goes stale, which suits one inside a cached view that stays put.
+    pub fn recent(mut self) -> Self {
+        self.recent = true;
+        self
+    }
+
+    /// Whether a move by layout starts a flight. Pass `false` while the element moves on a
+    /// motion of its own, which a flight would trail behind, and it only lands from a sighting.
+    /// A flight already under way still comes to rest.
+    pub fn follows(mut self, follows: bool) -> Self {
+        self.follows = follows;
+        self
+    }
+
+    /// How far past its layout the element paints, which the flying layer keeps room for
+    /// rather than clipping.
+    pub fn reach(self, reach: Pixels) -> Self {
+        self.reach.set(reach);
         self
     }
 
@@ -165,11 +201,14 @@ impl Element for Flight {
         cx: &mut App,
     ) -> bool {
         let viewport = window.viewport_size();
+        let recent = self.recent;
         let sighting = self
             .lands_from
             .as_ref()
-            .and_then(|name| cx.try_global::<Sightings>()?.0.get(name).copied());
-        let (spring, scales) = (self.spring, self.scales);
+            .and_then(|name| cx.try_global::<Sightings>()?.0.get(name).copied())
+            .filter(|(_, seen)| !recent || seen.elapsed() < RECENT)
+            .map(|(bounds, _)| bounds);
+        let (spring, scales, follows) = (self.spring, self.scales, self.follows);
         let (offset, scale) = window.with_element_state(
             id.expect("a flight has an id"),
             |course: Option<Course>, window| {
@@ -181,7 +220,7 @@ impl Element for Flight {
                     scale: Sprung::at(1.),
                 });
                 let start = match course.drawn {
-                    Some(last) if course.viewport == viewport && moved(last, bounds) => {
+                    Some(last) if follows && course.viewport == viewport && moved(last, bounds) => {
                         Some(course.shown(last))
                     }
                     Some(_) => None,
@@ -212,7 +251,7 @@ impl Element for Flight {
         if let Some(name) = &self.seen_as {
             cx.default_global::<Sightings>()
                 .0
-                .insert(name.clone(), posed(bounds, offset, scale));
+                .insert(name.clone(), (posed(bounds, offset, scale), Instant::now()));
         }
 
         let flying = offset != Point::default() || scale != 1.;
@@ -305,7 +344,7 @@ impl Element for Posed {
             scale: Some(scale),
             ..LayerFilter::default()
         };
-        window.with_filter(bounds, filter, Pixels::ZERO, |window| {
+        window.with_filter(bounds, filter, self.reach.get(), |window| {
             self.child.paint(window, cx)
         });
     }

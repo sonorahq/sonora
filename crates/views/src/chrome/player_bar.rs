@@ -23,7 +23,7 @@ use crate::chrome::{Chrome, SidebarRight};
 use crate::shared::menus::ItemMenu;
 use crate::shared::pins::Pinned as _;
 use crate::shared::transport::{
-    COVER_FLIGHT, NOTCH, fraction, like, moved, percent, transport, volume_icon,
+    COVER_FLIGHT, COVER_RETURN, NOTCH, fraction, like, moved, percent, transport, volume_icon,
 };
 
 const SEEK_MAX: f32 = 560.;
@@ -330,7 +330,10 @@ impl PlayerBar {
             })
             .child(
                 Flight::new("now-playing-cover", Artwork::new(cover).size(artwork))
-                    .seen_as(COVER_FLIGHT),
+                    .seen_as(COVER_FLIGHT)
+                    .lands_from(COVER_RETURN)
+                    .recent()
+                    .above(),
             )
             .flex_none()
     }

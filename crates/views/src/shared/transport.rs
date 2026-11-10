@@ -13,6 +13,9 @@ pub(crate) const NOTCH: f32 = 0.05;
 /// The name the playing cover is seen under, so the fullscreen player's cover flies in from the
 /// player bar's.
 pub(crate) const COVER_FLIGHT: &str = "playing-cover";
+/// The name the fullscreen cover is seen under, so the player bar's cover flies back down from
+/// it as fullscreen closes.
+pub(crate) const COVER_RETURN: &str = "fullscreen-cover";
 const STEP: f32 = 0.004;
 
 /// The other device playback is on, which the player shows instead of this app's own.

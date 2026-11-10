@@ -23,7 +23,7 @@ use ui::{
 use crate::chrome::{Aside, TitleBarOptions};
 use crate::shared::menus::ItemMenu;
 use crate::shared::transport::{
-    COVER_FLIGHT, NOTCH, fraction, like, moved, percent, transport, volume_icon,
+    COVER_FLIGHT, COVER_RETURN, NOTCH, fraction, like, moved, percent, transport, volume_icon,
 };
 use crate::shared::visualizer::VisualizerDrive;
 use crate::shared::{self, ambient};
@@ -53,6 +53,10 @@ const SINK: f32 = 24.;
 const PANEL_DROP: f32 = 0.3;
 /// How far a closed panel rises as it fades out, as a share of the window's height.
 const PANEL_RISE: f32 = 0.08;
+/// The names the pill and the seek bar with the transport are seen under, so each slides to
+/// where a panel moves it.
+const PILL_FLIGHT: &str = "fullscreen-pill";
+const DECK_FLIGHT: &str = "fullscreen-deck";
 /// A closed panel fading out, a little quicker than one comes in.
 const PANEL_LEAVE: SpringConfig = ui::spring(0.24, 0.);
 const LEAVE_DROP: f32 = 2.;
@@ -557,8 +561,14 @@ impl FullscreenView {
             );
         // The cover flies in from the player bar as fullscreen opens, and slides and grows to
         // its new place when a panel comes or goes, above everything while it travels.
+        // The controls falling asleep move the cover on a spring of their own, so layout only
+        // sends it flying while a panel is coming or going. The layer keeps room for how far
+        // the resting cover grows past its layout.
         Flight::new("fullscreen-cover", cover)
             .lands_from(COVER_FLIGHT)
+            .seen_as(COVER_RETURN)
+            .follows(self.switch.is_some())
+            .reach((raster_side - layout_side) / 2. + pad)
             .above()
     }
 
@@ -899,31 +909,45 @@ impl FullscreenView {
             .max_w(px(SEEK_MAX))
             .flex_none()
             .on_click(|_, _, cx| cx.stop_propagation())
-            .when(inline, |this| this.child(self.pill(cx)))
-            .child(self.seek(cx))
-            .child(
+            .when(inline, |this| {
+                this.child(travelling("fullscreen-pill", PILL_FLIGHT, self.pill(cx)))
+            })
+            // The seek bar and the transport travel as one when a panel moves them between
+            // the bottom of the window and the column under the cover.
+            .child(travelling(
+                "fullscreen-deck",
+                DECK_FLIGHT,
                 div()
-                    .id("fullscreen-transport")
-                    .relative()
-                    .w_full()
                     .flex()
-                    .justify_center()
-                    .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
-                        this.over_transport = *hovering;
-                        cx.notify();
-                    }))
-                    .child(transport(&self.playback, true, cx))
+                    .flex_col()
+                    .items_center()
+                    .gap_3()
+                    .w_full()
+                    .child(self.seek(cx))
                     .child(
                         div()
-                            .absolute()
-                            .right(clear)
-                            .top_0()
-                            .bottom_0()
+                            .id("fullscreen-transport")
+                            .relative()
+                            .w_full()
                             .flex()
-                            .items_center()
-                            .child(self.sound(cx)),
+                            .justify_center()
+                            .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
+                                this.over_transport = *hovering;
+                                cx.notify();
+                            }))
+                            .child(transport(&self.playback, true, cx))
+                            .child(
+                                div()
+                                    .absolute()
+                                    .right(clear)
+                                    .top_0()
+                                    .bottom_0()
+                                    .flex()
+                                    .items_center()
+                                    .child(self.sound(cx)),
+                            ),
                     ),
-            )
+            ))
     }
 
     /// The transport controls under the cover or along the bottom. A dock that `collapses` gives
@@ -1221,7 +1245,7 @@ impl FullscreenView {
                     .block_mouse_except_scroll()
                     .opacity(1. - hide)
                     .top(px(SINK) * hide)
-                    .child(self.pill(cx)),
+                    .child(travelling("fullscreen-pill", PILL_FLIGHT, self.pill(cx))),
             )
     }
 
@@ -1558,6 +1582,7 @@ impl Render for FullscreenView {
                                         self.meta(hide, lift, window, cx),
                                     )
                                     .unscaled()
+                                    .follows(self.switch.is_some())
                                     // The column's own layer would clip the line while it
                                     // is still outside the column's new bounds.
                                     .above(),
@@ -1646,6 +1671,20 @@ impl Render for FullscreenView {
             .when(idle < 1., |this| this.child(self.leave(idle, window, cx)))
             .children(self.menu(cx))
     }
+}
+
+/// Wraps a control that a panel moves to another part of the layout, so it slides there from
+/// where the one it replaces just stood rather than jumping. It keeps its size as it goes and
+/// draws above the layers it crosses. Any other move is the controls' own, so it follows
+/// layout at once.
+fn travelling(id: &'static str, name: &'static str, element: impl IntoElement) -> Flight {
+    Flight::new(id, element)
+        .seen_as(name)
+        .lands_from(name)
+        .recent()
+        .follows(false)
+        .unscaled()
+        .above()
 }
 
 /// Places `element` `offset` below where layout puts it: the whole device pixels through layout
