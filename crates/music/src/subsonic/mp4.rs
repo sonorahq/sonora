@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use reqwest::header::{CONTENT_RANGE, ETAG, IF_RANGE, LAST_MODIFIED, RANGE};
+use reqwest::header::{CONTENT_RANGE, DATE, ETAG, IF_RANGE, LAST_MODIFIED, RANGE};
 use symphonia::core::io::MediaSourceStreamOptions;
 
 use crate::stream::{Reader, Stream};
@@ -11,6 +11,8 @@ use crate::stream::{Reader, Stream};
 /// The largest metadata suffix retained separately from the sequential download.
 const METADATA_LIMIT: u64 = 16 * 1024 * 1024;
 const RANGE_PATIENCE: Duration = Duration::from_secs(5);
+/// Allows for second-resolution modification times and clock skew between HTTP dates.
+const VALIDATOR_AGE: time::Duration = time::Duration::seconds(60);
 
 /// A validated suffix in the original file's byte coordinates.
 pub(super) struct Tail {
@@ -36,12 +38,7 @@ impl Remote {
     pub(super) fn new(response: &reqwest::Response) -> Option<Self> {
         Some(Self {
             url: response.url().clone(),
-            validator: response
-                .headers()
-                .get(ETAG)
-                .filter(|value| !value.as_bytes().starts_with(b"W/"))
-                .or_else(|| response.headers().get(LAST_MODIFIED))
-                .cloned(),
+            validator: range_validator(response.headers()),
             total: response.content_length()?,
         })
     }
@@ -209,6 +206,33 @@ impl Seek for Input {
     }
 }
 
+/// Selects a strong If-Range validator. A date is usable only without an ETag and with
+/// enough separation from Date to account for timestamp resolution and clock skew.
+fn range_validator(headers: &reqwest::header::HeaderMap) -> Option<reqwest::header::HeaderValue> {
+    if let Some(etag) = headers.get(ETAG) {
+        let bytes = etag.as_bytes();
+        let strong = bytes.len() >= 2
+            && bytes.first() == Some(&b'"')
+            && bytes.last() == Some(&b'"')
+            && bytes[1..bytes.len() - 1]
+                .iter()
+                .all(|byte| *byte == 0x21 || (0x23..=0x7e).contains(byte) || *byte >= 0x80);
+        return strong.then(|| etag.clone());
+    }
+    let modified = headers.get(LAST_MODIFIED)?;
+    let modified_at = time::OffsetDateTime::parse(
+        modified.to_str().ok()?,
+        &time::format_description::well_known::Rfc2822,
+    )
+    .ok()?;
+    let dated_at = time::OffsetDateTime::parse(
+        headers.get(DATE)?.to_str().ok()?,
+        &time::format_description::well_known::Rfc2822,
+    )
+    .ok()?;
+    (dated_at - modified_at >= VALIDATOR_AGE).then(|| modified.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,6 +364,55 @@ mod tests {
             validator: Some("\"test-version\"".parse().unwrap()),
         };
         (reqwest::Client::new(), remote, requests, task)
+    }
+
+    #[test]
+    fn date_validators_require_a_conservative_age_without_an_etag() {
+        use reqwest::header::HeaderMap;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            LAST_MODIFIED,
+            "Tue, 15 Nov 1994 12:45:26 GMT".parse().unwrap(),
+        );
+        assert!(range_validator(&headers).is_none());
+        for (date, accepted) in [
+            ("Tue, 15 Nov 1994 12:45:26 GMT", false),
+            ("Tue, 15 Nov 1994 12:46:25 GMT", false),
+            ("Tue, 15 Nov 1994 12:46:26 GMT", true),
+            ("Tue, 15 Nov 1994 12:44:26 GMT", false),
+            ("invalid date", false),
+        ] {
+            headers.insert(DATE, date.parse().unwrap());
+            assert_eq!(range_validator(&headers).is_some(), accepted, "{date}");
+        }
+        headers.insert(DATE, "Tue, 15 Nov 1994 12:46:26 GMT".parse().unwrap());
+        headers.insert(ETAG, "W/\"version\"".parse().unwrap());
+        assert!(range_validator(&headers).is_none());
+        headers.remove(ETAG);
+        headers.insert(LAST_MODIFIED, "invalid date".parse().unwrap());
+        assert!(range_validator(&headers).is_none());
+    }
+
+    #[test]
+    fn only_strong_well_formed_etags_can_be_used_for_ranges() {
+        use reqwest::header::HeaderMap;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            LAST_MODIFIED,
+            "Tue, 15 Nov 1994 12:45:26 GMT".parse().unwrap(),
+        );
+        headers.insert(DATE, "Tue, 15 Nov 1994 12:46:26 GMT".parse().unwrap());
+        for (etag, accepted) in [
+            ("\"version\"", true),
+            ("\"\"", true),
+            ("W/\"version\"", false),
+            ("unquoted", false),
+            ("\"has space\"", false),
+            ("\"has\"quote\"", false),
+        ] {
+            headers.insert(ETAG, etag.parse().unwrap());
+            assert_eq!(range_validator(&headers).is_some(), accepted, "{etag}");
+        }
     }
 
     #[tokio::test]
