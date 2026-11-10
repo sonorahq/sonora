@@ -7,7 +7,7 @@ use gpui::prelude::*;
 use gpui::{
     AnyView, App, Bounds, ClickEvent, Context, Entity, FocusHandle, FontWeight, KeyDownEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    Render, ScrollWheelEvent, SharedString, SpringState, Task, TextShadow,
+    Render, ScrollWheelEvent, SharedString, SpringConfig, SpringState, Task, TextShadow,
 };
 use gpui::{Window, canvas, deferred, div, phi, point, px, relative};
 use i18n::t;
@@ -51,6 +51,8 @@ const DOCK_FULL: f32 = 1.7;
 const SINK: f32 = 24.;
 /// How far above its place a panel starts as it comes in, as a share of the window's height.
 const PANEL_DROP: f32 = 0.08;
+/// A closed panel fading out, a little quicker than one comes in.
+const PANEL_LEAVE: SpringConfig = ui::spring(0.24, 0.);
 const LEAVE_DROP: f32 = 2.;
 const PILL_GAP: f32 = 2.;
 const SEEK_MAX: f32 = 420.;
@@ -133,6 +135,10 @@ pub struct FullscreenView {
     focus: FocusHandle,
     visualizer: VisualizerDrive,
     root_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// Where the panel last drew, which is where it fades out once the pill closes it.
+    panel_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// How much of a panel the pill just closed is still showing, springing from 1 to 0.
+    leaving: Option<Sprung>,
     meta_bounds: Rc<Cell<Bounds<Pixels>>>,
     /// The height the controls take with nothing clamping them, measured a frame ago. The dock
     /// shrinks from it while it fades, so the column moves in step with the cover.
@@ -203,6 +209,8 @@ impl FullscreenView {
             focus: cx.focus_handle(),
             visualizer: VisualizerDrive::default(),
             root_bounds: Rc::new(Cell::new(Bounds::default())),
+            panel_bounds: Rc::new(Cell::new(Bounds::default())),
+            leaving: None,
             meta_bounds: Rc::new(Cell::new(Bounds::default())),
             dock_natural: Rc::new(Cell::new(Pixels::ZERO)),
         }
@@ -233,6 +241,7 @@ impl FullscreenView {
     fn show(&mut self, panel: Option<SideTab>, cx: &mut Context<Self>) {
         if panel != self.panel && !cx.reduce_motion() {
             self.switch = Some(Sprung::at(1.));
+            self.leaving = (panel.is_none() && self.switching_from_rest()).then(|| Sprung::at(1.));
         }
         if panel.is_some() != self.panel.is_some() {
             // The pill changes parents between the cover and panel layouts, so its old
@@ -246,6 +255,11 @@ impl FullscreenView {
             self.aside.update(cx, |aside, cx| aside.show(tab, cx));
         }
         self.stir(cx);
+    }
+
+    /// Whether the panel on show had finished coming in, so it has a whole self to fade out.
+    fn switching_from_rest(&self) -> bool {
+        self.switch.is_none_or(|switch| switch.resting())
     }
 
     fn stir(&mut self, cx: &mut Context<Self>) {
@@ -1310,6 +1324,15 @@ impl Render for FullscreenView {
         self.watch(window, cx);
         let idle = self.hidden(window, cx);
         let switching = self.switching(window, cx);
+        let leaving = self.leaving.as_mut().map(|leaving| {
+            leaving
+                .follow(0., PANEL_LEAVE, SPRING_REST, window, cx)
+                .clamp(0., 1.)
+        });
+        if leaving.is_none_or(|left| left <= 0.) {
+            self.leaving = None;
+        }
+        let leaving = leaving.filter(|left| *left > 0.);
         let hide = match self.settings.read(cx).fullscreen_controls_autohide() {
             FullscreenControlsAutohide::Automatic => idle,
             FullscreenControlsAutohide::AlwaysShown => 0.,
@@ -1560,6 +1583,15 @@ impl Render for FullscreenView {
                                 .min_h_0()
                                 .h_full()
                                 .on_click(|_, _, cx| cx.stop_propagation())
+                                .child({
+                                    let panel_bounds = self.panel_bounds.clone();
+                                    canvas(
+                                        move |bounds, _, _| panel_bounds.set(bounds),
+                                        |_, _, _, _| {},
+                                    )
+                                    .absolute()
+                                    .size_full()
+                                })
                                 // The panel comes down into place from a little above as it
                                 // fades in.
                                 .child(
@@ -1579,6 +1611,24 @@ impl Render for FullscreenView {
                         )
                     }),
             )
+            // A panel the pill closed fades out where it stood, rising the way it came, while
+            // the cover takes the middle.
+            .when_some(leaving.filter(|_| self.panel.is_none()), |this, left| {
+                let at = self.panel_bounds.get();
+                let origin = at.origin - self.root_bounds.get().origin;
+                let rise = viewport.height * PANEL_DROP * (1. - left);
+                this.child(
+                    div()
+                        .absolute()
+                        .left(origin.x)
+                        .top(origin.y)
+                        .w(at.size.width)
+                        .h(at.size.height)
+                        .opacity(left)
+                        .layer_translate(point(Pixels::ZERO, -rise))
+                        .child(self.aside.clone()),
+                )
+            })
             .when(!split && self.panel.is_some(), |this| {
                 this.child(self.strip(hide, window, cx))
             })
