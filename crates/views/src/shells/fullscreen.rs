@@ -50,7 +50,9 @@ const DOCK: f32 = 1.15;
 const DOCK_FULL: f32 = 1.7;
 const SINK: f32 = 24.;
 /// How far above its place a panel starts as it comes in, as a share of the window's height.
-const PANEL_DROP: f32 = 0.08;
+const PANEL_DROP: f32 = 0.3;
+/// How far a closed panel rises as it fades out, as a share of the window's height.
+const PANEL_RISE: f32 = 0.08;
 /// A closed panel fading out, a little quicker than one comes in.
 const PANEL_LEAVE: SpringConfig = ui::spring(0.24, 0.);
 const LEAVE_DROP: f32 = 2.;
@@ -1616,7 +1618,7 @@ impl Render for FullscreenView {
             .when_some(leaving.filter(|_| self.panel.is_none()), |this, left| {
                 let at = self.panel_bounds.get();
                 let origin = at.origin - self.root_bounds.get().origin;
-                let rise = viewport.height * PANEL_DROP * (1. - left);
+                let rise = viewport.height * PANEL_RISE * (1. - left);
                 this.child(
                     div()
                         .absolute()
