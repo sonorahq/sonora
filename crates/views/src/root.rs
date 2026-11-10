@@ -160,6 +160,8 @@ impl Root {
                 this.navigation_transition = None;
                 this.shell_entrance = None;
                 this.shell_zoom = None;
+                this.shell_leave = None;
+                this.shell_left = false;
                 this.shells
                     .workspace
                     .update(cx, |workspace, cx| workspace.finish_transition(cx));
@@ -861,7 +863,9 @@ impl Root {
     fn fullscreen_left(&mut self, window: &mut Window, cx: &Context<Self>) -> Option<f32> {
         let leave = self.shell_leave.as_mut()?;
         let left = match self.view {
-            RootView::Workspace => leave.follow(0., Springs::FLIGHT, SHELL_ZOOM_REST, window, cx),
+            RootView::Workspace => {
+                leave.follow(0., Springs::ARTWORK_FLIGHT, SHELL_ZOOM_REST, window, cx)
+            }
             RootView::Fullscreen => 0.,
         };
         if left <= 0. && std::mem::replace(&mut self.shell_left, true) {

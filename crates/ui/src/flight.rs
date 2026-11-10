@@ -81,10 +81,12 @@ pub struct Flight {
     above: bool,
     scales: bool,
     spring: SpringConfig,
+    transfer_spring: Option<SpringConfig>,
 }
 
 /// What a flight remembers between frames.
 struct Course {
+    spring: SpringConfig,
     /// Its layout bounds last frame.
     drawn: Option<Bounds<Pixels>>,
     /// The window size last frame: a window that resizes moves everything, and nothing flies.
@@ -135,6 +137,7 @@ impl Flight {
             above: false,
             scales: true,
             spring: Springs::FLIGHT,
+            transfer_spring: None,
         }
     }
 
@@ -208,6 +211,13 @@ impl Flight {
         self.spring = spring;
         self
     }
+
+    /// Uses a separate spring when arriving from or leaving for another named element.
+    /// Moves within the current layout keep the regular spring.
+    pub fn transfer_spring(mut self, spring: SpringConfig) -> Self {
+        self.transfer_spring = Some(spring);
+        self
+    }
 }
 
 impl Course {
@@ -266,6 +276,7 @@ impl Element for Flight {
             .filter(|(_, seen)| !recent || seen.elapsed() < RECENT)
             .map(|(bounds, _)| bounds);
         let (spring, scales, follows) = (self.spring, self.scales, self.follows);
+        let transfer_spring = self.transfer_spring.unwrap_or(spring);
         let heading = self
             .heads_to
             .as_ref()
@@ -275,6 +286,7 @@ impl Element for Flight {
             id.expect("a flight has an id"),
             |course: Option<Course>, window| {
                 let mut course = course.unwrap_or_else(|| Course {
+                    spring: transfer_spring,
                     drawn: None,
                     viewport,
                     x: Sprung::at(0.),
@@ -285,6 +297,7 @@ impl Element for Flight {
                 });
                 let start = match course.drawn {
                     Some(last) if follows && course.viewport == viewport && moved(last, bounds) => {
+                        course.spring = spring;
                         Some(course.shown(last))
                     }
                     Some(_) => None,
@@ -308,6 +321,10 @@ impl Element for Flight {
                 course.drawn = Some(bounds);
                 course.viewport = viewport;
                 // Home is its own layout, unless it is leaving for where another stands.
+                if heading.is_some() {
+                    course.spring = transfer_spring;
+                }
+                let spring = course.spring;
                 let (home, size) = match heading.filter(|_| bounds.size.width > Pixels::ZERO) {
                     Some(there) => (
                         there.center() - bounds.center(),

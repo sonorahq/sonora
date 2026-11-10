@@ -15,6 +15,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The album cover moves faster when opening and closing the fullscreen player.
 - Nightly updates reuse released executables after a stable release, so they become available sooner.
 - Opening the fullscreen player flies the cover up from the player bar while the rest fades in.
 - The fullscreen cover and controls slide aside when lyrics or the queue open, which fade into place, and back when they close.
@@ -25,6 +26,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Closing lyrics or the queue during its entrance no longer flashes the panel at full opacity.
+- Dragging a card releases its pressed appearance, and play buttons keep their blur while a card is pressed.
+- Fullscreen controls hide reliably after the pointer leaves, and pressed controls release when the window loses focus.
 - Reduce redraw work when scrolling large Favorites collections.
 - Song durations stay aligned when hovering over an artist's favorite songs.
 

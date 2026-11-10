@@ -255,8 +255,9 @@ impl FullscreenView {
     /// Selects the fullscreen panel and restarts the controls' idle timer.
     fn show(&mut self, panel: Option<SideTab>, cx: &mut Context<Self>) {
         if panel != self.panel && !cx.reduce_motion() {
+            let from_rest = self.switching_from_rest();
             self.switch = Some(Sprung::at(1.));
-            self.leaving = (panel.is_none() && self.switching_from_rest()).then(|| Sprung::at(1.));
+            self.leaving = (panel.is_none() && from_rest).then(|| Sprung::at(1.));
         }
         self.panel = panel;
         self.settings
@@ -298,7 +299,10 @@ impl FullscreenView {
         }));
     }
 
-    fn hover(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn hover(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if !window.is_window_hovered() || !window.is_window_active() {
+            return;
+        }
         let pad = cx.theme().metrics.pad;
         let seek = self.seek.hovered(event.position, pad);
         if moved(self.over_seek, seek) {
@@ -365,13 +369,13 @@ impl FullscreenView {
     /// event the pointer has to be present for, so the ones still set when it left the window are
     /// dropped here instead. Crossing the window edge repaints on its own, so this is never late.
     fn watch(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let inside = window.is_window_hovered() && !self.left;
+        let inside = window.is_window_hovered() && window.is_window_active() && !self.left;
         if inside == self.inside {
             return;
         }
         self.inside = inside;
         if !inside {
-            self.over_seek = None;
+            self.unpark();
             self.last_pos = None;
             self.stir(cx);
         }
@@ -578,6 +582,7 @@ impl FullscreenView {
         // sends it flying while a panel is coming or going. The layer keeps room for how far
         // the resting cover grows past its layout.
         Flight::new("fullscreen-cover", cover)
+            .transfer_spring(Springs::ARTWORK_FLIGHT)
             .lands_from(COVER_FLIGHT)
             // Once the player closes, its cover flies back down onto the player bar's.
             .heads_to((!self.on_show).then_some(COVER_FLIGHT))
@@ -1033,9 +1038,9 @@ impl FullscreenView {
         let frosted = ambient::shown(cx);
         let lyrics = self.settings.read(cx).lyrics_enabled();
         let gap = px(PILL_GAP);
-        let linger = cx.listener(|this: &mut Self, hovering: &bool, _, cx| {
+        let linger = cx.listener(|this: &mut Self, hovering: &bool, window, cx| {
             this.over_pill = *hovering;
-            if *hovering {
+            if *hovering && window.is_window_hovered() && window.is_window_active() && !this.left {
                 this.poke(cx);
             }
             cx.notify();

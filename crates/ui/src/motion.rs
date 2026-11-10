@@ -58,6 +58,9 @@ impl Springs {
     /// fullscreen player or sliding aside for a panel.
     pub const FLIGHT: SpringConfig = spring(0.42, 0.);
 
+    /// Moves artwork between the player bar and fullscreen without a bounce.
+    pub const ARTWORK_FLIGHT: SpringConfig = spring(0.32, 0.);
+
     /// A whole shell arriving, such as the fullscreen player zooming in, at the listener's pace.
     pub fn shell() -> SpringConfig {
         spring(0.3 * pace().scale(), 0.)
@@ -592,13 +595,12 @@ impl Sprung {
 struct Held {
     down: bool,
     scale: Sprung,
+    _activation: gpui::Subscription,
 }
 
-/// Shrinks `element` to `depth` of its size while the left button holds it down, and springs it
-/// back with a little overshoot on release. The shrink is paint only, so layout and hit area
-/// stay put. `id` is the element's own id, which keys the state across frames. Call it last,
-/// after the element's own mouse handlers, so a handler that stops propagation still lets the
-/// press be seen.
+/// Animates a paint-only press without changing layout or hitboxes, cancelling it on drag,
+/// pointer exit or loss of window activation. Call this after the element's mouse handlers
+/// and keep `id` stable across frames.
 pub fn pressing<E: InteractiveElement + Styled>(
     element: E,
     id: &ElementId,
@@ -607,11 +609,23 @@ pub fn pressing<E: InteractiveElement + Styled>(
     cx: &mut App,
 ) -> E {
     let key = ElementId::NamedChild(Arc::new(id.clone()), "press".into());
-    let held = window.use_keyed_state(key, cx, |_, _| Held {
-        down: false,
-        scale: Sprung::at(1.),
+    let held = window.use_keyed_state(key, cx, |window, cx| {
+        let activation = cx.observe_window_activation(window, |held: &mut Held, window, cx| {
+            if !window.is_window_active() && held.down {
+                held.down = false;
+                cx.notify();
+            }
+        });
+        Held {
+            down: false,
+            scale: Sprung::at(1.),
+            _activation: activation,
+        }
     });
     let scale = held.update(cx, |held, cx| {
+        if cx.has_active_drag() {
+            held.down = false;
+        }
         let (target, config) = match held.down {
             true => (depth, Springs::PRESS),
             false => (1., Springs::RELEASE),
@@ -626,7 +640,8 @@ pub fn pressing<E: InteractiveElement + Styled>(
             });
         }
     };
-    let (down, up, out) = (held.clone(), held.clone(), held);
+    let (down, up, out, moved, exited) =
+        (held.clone(), held.clone(), held.clone(), held.clone(), held);
 
     let element = match (scale - 1.).abs() > SCALE_REST {
         true => element.layer_scale(scale),
@@ -641,6 +656,12 @@ pub fn pressing<E: InteractiveElement + Styled>(
         })
         .on_mouse_up(MouseButton::Left, move |_, _, cx| release(&up, cx))
         .on_mouse_up_out(MouseButton::Left, move |_, _, cx| release(&out, cx))
+        .on_mouse_move(move |event, _, cx| {
+            if event.pressed_button != Some(MouseButton::Left) {
+                release(&moved, cx);
+            }
+        })
+        .on_mouse_exit(move |_, _, cx| release(&exited, cx))
 }
 
 pub(crate) struct Movement {
