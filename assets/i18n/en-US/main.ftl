@@ -160,6 +160,7 @@ menu-play-tracks-last = { $count ->
 menu-song-radio = Go to song radio
 menu-go-to-album = Go to album
 menu-go-to-artist = Go to artist
+menu-go-to-playlist = Go to playlist
 menu-view-details = View details
 menu-copy-link = Copy link
 menu-cut = Cut

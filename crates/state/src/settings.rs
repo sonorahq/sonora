@@ -678,6 +678,7 @@ struct StateValues {
     volume: f32,
     sidebar_width: f32,
     sidebar_open: bool,
+    sidebar_rail: bool,
     sidebar_right_width: f32,
     sidebar_right_open: bool,
     sidebar_right_tab: SideTab,
@@ -710,6 +711,7 @@ impl Default for StateValues {
             volume: DEFAULT_VOLUME,
             sidebar_width: DEFAULT_SIDEBAR_WIDTH,
             sidebar_open: true,
+            sidebar_rail: false,
             sidebar_right_width: DEFAULT_SIDEBAR_RIGHT_WIDTH,
             sidebar_right_open: false,
             sidebar_right_tab: SideTab::Queue,
@@ -1214,6 +1216,10 @@ impl AppSettings {
 
     pub fn sidebar_open(&self) -> bool {
         self.state.sidebar_open
+    }
+
+    pub fn sidebar_rail(&self) -> bool {
+        self.state.sidebar_rail
     }
 
     pub fn sidebar_right_width(&self) -> f32 {
@@ -1940,9 +1946,10 @@ impl AppSettings {
         self.schedule_state_save(cx);
     }
 
-    pub fn set_sidebar(&mut self, width: f32, open: bool, cx: &mut Context<Self>) {
+    pub fn set_sidebar(&mut self, width: f32, open: bool, rail: bool, cx: &mut Context<Self>) {
         self.state.sidebar_width = width;
         self.state.sidebar_open = open;
+        self.state.sidebar_rail = rail;
         self.schedule_state_save(cx);
     }
 
