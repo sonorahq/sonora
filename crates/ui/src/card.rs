@@ -461,7 +461,12 @@ impl RenderOnce for Card {
                                     .bg(theme.overlay)
                                     .role(gpui::accesskit::Role::Button)
                                     .aria_label(i18n::lookup(hint, None))
-                                    .tip(hint, Perch::Below)
+                                    // A glance card is little more than its cover, so the
+                                    // scrim over it shows the title the card would.
+                                    .map(|this| match glance {
+                                        true => this.tip_label(title.clone(), Perch::Trailing),
+                                        false => this.tip(hint, Perch::Below),
+                                    })
                                     .child(
                                         svg()
                                             .path(icons::path(glyph))
