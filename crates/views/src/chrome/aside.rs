@@ -1888,7 +1888,7 @@ impl Aside {
         let remote = !listing.editable();
         let from = listing
             .origin(cx)
-            .and_then(|origin| self.playing_from(origin, cx));
+            .and_then(|origin| self.playing_from(&origin, cx));
         let drop_gap = self.drop_gap;
         let upcoming = sections.upcoming;
         let audible = listing.playing;
