@@ -8,6 +8,8 @@
 	<string>sonora</string>
 	<key>CFBundleIconFile</key>
 	<string>sonora</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.nolight.sonora</string>
 	<key>CFBundleInfoDictionaryVersion</key>

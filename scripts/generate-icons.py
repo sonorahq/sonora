@@ -302,6 +302,37 @@ def main():
             icns.append((kind, blob))
         write_icns(icns, assets / "macos" / "sonora.icns")
 
+        if shutil.which("actool"):
+            icon_doc = assets / "macos" / "AppIcon.icon"
+            if icon_doc.exists():
+                target_car = assets / "macos" / "Assets.car"
+                target_car.unlink(missing_ok=True)
+                out_car = workdir / "car_out"
+                out_car.mkdir(parents=True, exist_ok=True)
+                subprocess.run(
+                    [
+                        "actool",
+                        "--compile",
+                        str(out_car),
+                        "--platform",
+                        "macosx",
+                        "--minimum-deployment-target",
+                        "11.0",
+                        "--app-icon",
+                        "AppIcon",
+                        str(icon_doc),
+                        "--output-partial-info-plist",
+                        str(out_car / "partial.plist"),
+                    ],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                )
+
+                compiled_car = out_car / "Assets.car"
+                if not compiled_car.exists():
+                    sys.exit("icons: actool did not produce Assets.car")
+                shutil.copy(compiled_car, target_car)
+
         ico = [
             (
                 pixels,
@@ -321,8 +352,10 @@ def main():
         for obsolete in ["template-32.png", "template-64.png", "sonora.png"]:
             (tray / obsolete).unlink(missing_ok=True)
 
+    has_car = (assets / "macos" / "Assets.car").exists()
     print(
-        f"icons: {len(LINUX_SIZES)} linux png, 1 linux svg, 1 icns, 1 ico,"
+        f"icons: {len(LINUX_SIZES)} linux png, 1 linux svg, 1 icns,"
+        f" {'1 Assets.car, ' if has_car else ''}1 ico,"
         f" {len(TRAY_SIZES)} tray png, 1 readme svg, 1 macos svg, 1 windows svg"
     )
 
