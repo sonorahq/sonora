@@ -1224,11 +1224,7 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
     sections(
         item_shell("playlist-context-menu", tiles),
         vec![
-            open_item(
-                Destination::Playlist(id.clone().into()),
-                "menu-go-to-playlist",
-                cx,
-            ),
+            open_item(Destination::Playlist(id.into()), "menu-go-to-playlist", cx),
             collection_queue_items(from, playback),
             actions,
             match imported {
