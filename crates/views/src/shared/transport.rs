@@ -10,6 +10,9 @@ use ui::{ActiveTheme as _, Button};
 use crate::shared::ambient;
 
 pub(crate) const NOTCH: f32 = 0.05;
+/// The name the playing cover is seen under, so the fullscreen player's cover flies in from the
+/// player bar's.
+pub(crate) const COVER_FLIGHT: &str = "playing-cover";
 const STEP: f32 = 0.004;
 
 /// The other device playback is on, which the player shows instead of this app's own.

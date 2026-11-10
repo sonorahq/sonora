@@ -15,7 +15,7 @@ use input::{ToggleFullscreen, ToggleWindowFullscreen, WORKSPACE_CONTEXT};
 use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
 use ui::{
-    ActiveTheme as _, Artwork, Button, Entrance, ExplicitBadge, Fading as _, GLASS_BLUR,
+    ActiveTheme as _, Artwork, Button, Entrance, ExplicitBadge, Fading as _, Flight, GLASS_BLUR,
     GLASS_FILL, InlineLink, InlineLinks, Motion, Motioned as _, Popup, Rising as _, Room,
     Scrollbar, Scrubber, ScrubberState, Springs, TabBar, Tails as _, Text, Visualizer, clock,
     entering, snapped,
@@ -23,7 +23,9 @@ use ui::{
 
 use crate::chrome::{Aside, TitleBarOptions};
 use crate::shared::menus::ItemMenu;
-use crate::shared::transport::{NOTCH, fraction, like, moved, percent, transport, volume_icon};
+use crate::shared::transport::{
+    COVER_FLIGHT, NOTCH, fraction, like, moved, percent, transport, volume_icon,
+};
 use crate::shared::visualizer::VisualizerDrive;
 use crate::shared::{self, ambient};
 use crate::shells::Shell;
@@ -486,7 +488,7 @@ impl FullscreenView {
         let revision = self.revision;
         let waiting = !local && album.is_some() && cover_large.is_none();
 
-        div()
+        let cover = div()
             .id("fullscreen-artwork")
             .relative()
             .size(layout_side)
@@ -534,7 +536,12 @@ impl FullscreenView {
                                 )
                             }),
                     ),
-            )
+            );
+        // The cover flies in from the player bar as fullscreen opens, and slides and grows to
+        // its new place when a panel comes or goes, above everything while it travels.
+        Flight::new("fullscreen-cover", cover)
+            .lands_from(COVER_FLIGHT)
+            .above()
     }
 
     fn open_context_menu(
@@ -1516,7 +1523,15 @@ impl Render for FullscreenView {
                                 // holds still while the panel beside it enters.
                                 .when(!split, |this| entering(this, switching))
                                 .child(self.artwork(side, raster_side, cover_scale, cx))
-                                .child(self.meta(hide, lift, window, cx))
+                                // The title and artist travel with the cover when a panel
+                                // comes or goes.
+                                .child(
+                                    Flight::new(
+                                        "fullscreen-meta",
+                                        self.meta(hide, lift, window, cx),
+                                    )
+                                    .unscaled(),
+                                )
                                 .when(split, |this| {
                                     this.child(self.dock(
                                         theme.metrics.player_bar * DOCK,

@@ -14,15 +14,17 @@ use i18n::t;
 use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
 use state::{AppSettings, Playback, PlayerBarLayout, Queue, SideTab, Sonora};
 use ui::{
-    Artwork, Button, ExplicitBadge, InlineLink, InlineLinks, Pinnable, Popup, Room, Scrollbar,
-    Scrubber, ScrubberState, clock, tabular,
+    Artwork, Button, ExplicitBadge, Flight, InlineLink, InlineLinks, Pinnable, Popup, Room,
+    Scrollbar, Scrubber, ScrubberState, clock, tabular,
 };
 
 use crate::chrome::sessions_button::SessionsButton;
 use crate::chrome::{Chrome, SidebarRight};
 use crate::shared::menus::ItemMenu;
 use crate::shared::pins::Pinned as _;
-use crate::shared::transport::{NOTCH, fraction, like, moved, percent, transport, volume_icon};
+use crate::shared::transport::{
+    COVER_FLIGHT, NOTCH, fraction, like, moved, percent, transport, volume_icon,
+};
 
 const SEEK_MAX: f32 = 560.;
 const VOLUME_WIDTH: f32 = 110.;
@@ -326,7 +328,10 @@ impl PlayerBar {
                     }),
                 )
             })
-            .child(Artwork::new(cover).size(artwork))
+            .child(
+                Flight::new("now-playing-cover", Artwork::new(cover).size(artwork))
+                    .seen_as(COVER_FLIGHT),
+            )
             .flex_none()
     }
 

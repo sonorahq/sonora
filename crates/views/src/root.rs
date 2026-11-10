@@ -1181,12 +1181,24 @@ impl Render for Root {
             RootView::Workspace => self.shells.workspace.clone().into_any_element(),
             RootView::Fullscreen => self.shells.fullscreen.clone().into_any_element(),
         };
+        // While fullscreen opens, the workspace it leaves fades out under it, and nothing in it
+        // answers the pointer.
+        let leaving = (zooming > 0. && matches!(self.view, RootView::Fullscreen)).then(|| {
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .flex_col()
+                .opacity(zooming)
+                .child(self.shells.workspace.clone())
+        });
         let shell = div()
             .relative()
             .flex()
             .flex_col()
             .flex_1()
             .min_h_0()
+            .children(leaving)
             .child(
                 div()
                     .flex()
@@ -1194,7 +1206,7 @@ impl Render for Root {
                     .flex_1()
                     .min_h_0()
                     .when(hidden > 0. && dissolving, |this| this.opacity(1. - hidden))
-                    .when(zooming > 0., |this| this.opacity(1. - zooming))
+                    .when(zooming > 0., |this| this.opacity(1. - zooming).occlude())
                     .when_some(zoom, |this, zoom| this.layer_scale(zoom))
                     .child(shell),
             )
