@@ -456,7 +456,7 @@ impl<S: TableSource> TableDelegate<S> {
             .map(|spec| Toggle {
                 key: spec.key,
                 label: spec.label(),
-                visible: !self.layout.hides(spec.key),
+                visible: !self.layout.hides(spec),
             })
             .collect()
     }
@@ -993,8 +993,12 @@ impl<S: TableSource> TableState<S> {
     }
 
     fn toggle_column(&mut self, key: &str, cx: &mut Context<Self>) {
+        let columns = self.delegate.source.columns();
+        let Some(spec) = columns.iter().find(|spec| spec.key == key) else {
+            return;
+        };
         let mut layout = self.delegate.layout.clone();
-        layout.toggle(key);
+        layout.toggle(spec);
         self.delegate.set_layout(layout, cx);
         cx.emit(TableEvent::LayoutChanged);
         cx.notify();

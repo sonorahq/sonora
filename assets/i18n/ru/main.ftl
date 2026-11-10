@@ -85,6 +85,7 @@ column-index = #
 column-title = Название
 column-artist = Исполнитель
 column-album = Альбом
+column-genre = Жанр
 column-date-added = Дата добавления
 column-added-by = Добавил
 column-modified = Изменён

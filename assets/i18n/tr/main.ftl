@@ -85,6 +85,7 @@ column-index = #
 column-title = Başlık
 column-artist = Sanatçı
 column-album = Albüm
+column-genre = Tür
 column-date-added = Eklenme tarihi
 column-added-by = Ekleyen
 column-modified = Değiştirilme

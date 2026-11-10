@@ -85,6 +85,7 @@ column-index = #
 column-title = Titulli
 column-artist = Artisti
 column-album = Albumi
+column-genre = Zhanri
 column-date-added = Data e shtimit
 column-added-by = Shtuar nga
 column-modified = Ndryshuar

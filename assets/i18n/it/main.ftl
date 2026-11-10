@@ -85,6 +85,7 @@ column-index = #
 column-title = Titolo
 column-artist = Artista
 column-album = Album
+column-genre = Genere
 column-date-added = Data aggiunta
 column-added-by = Aggiunto da
 column-modified = Modificato
