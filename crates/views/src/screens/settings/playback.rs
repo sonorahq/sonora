@@ -16,6 +16,12 @@ use crate::shared::confirm::{Confirm, Kind};
 /// How many quality cards a row is laid out for, however few levels a service has.
 const QUALITY_COLUMNS: usize = 4;
 const STREAM_BITRATES: &str = "stream-bitrates";
+const DUCK_DELAYS: &str = "duck-while-typing-delays";
+/// How much quieter the music may get while typing, as a percent from soft to strong.
+const DUCK_AMOUNT_MIN: u8 = 20;
+const DUCK_AMOUNT_MAX: u8 = 90;
+/// How long typing may wait before softening starts.
+const DUCK_DELAY_OPTIONS: [u32; 5] = [0, 150, 300, 500, 1000];
 /// How wide the sleep slider and the time beside it stand, in covers.
 const SLEEP_WIDTH: f32 = 1.;
 const SLEEP_LABEL: f32 = 0.7;
@@ -34,6 +40,9 @@ impl SettingsView {
     pub(super) fn playback_groups(&self, cx: &App) -> Vec<Group> {
         let capabilities = self.session.read(cx).capabilities();
         let mut playing = vec![Slot::Normalisation, Slot::Gapless, Slot::DuckWhileTyping];
+        if self.playback.read(cx).duck_while_typing(cx) {
+            playing.extend([Slot::DuckWhileTypingAmount, Slot::DuckWhileTypingDelay]);
+        }
         playing.extend([Slot::Sleep, Slot::StayAwake]);
         let mut groups = vec![Group::new("settings-group-playing", "icons/play.svg").rows(playing)];
         // one level is nothing to choose between, so it is stated in a row rather than offered
@@ -111,6 +120,99 @@ impl SettingsView {
                     this.playback
                         .update(cx, |playback, cx| playback.set_duck_while_typing(!on, cx));
                 }))
+                .into_any_element(),
+        )
+    }
+
+    /// How much quieter the music gets while typing, as a slider with the percent before it.
+    pub(super) fn duck_while_typing_amount_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
+        let current = self
+            .pending_duck_amount
+            .unwrap_or_else(|| self.playback.read(cx).duck_while_typing_amount(cx));
+        let span = f32::from(DUCK_AMOUNT_MAX - DUCK_AMOUNT_MIN);
+        let fraction = f32::from(current.saturating_sub(DUCK_AMOUNT_MIN)) / span;
+
+        let control = div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(
+                ui::spoken(
+                    "settings-duck-while-typing-amount-value",
+                    t!("settings-duck-while-typing-amount-value", percent = i64::from(current)),
+                )
+                .flex_none()
+                .w(theme.metrics.cover * SLEEP_LABEL)
+                .whitespace_nowrap()
+                .text_right(),
+            )
+            .child(
+                div()
+                    .id("settings-duck-while-typing-amount-slider")
+                    .role(Role::Group)
+                    .aria_label(t!("settings-duck-while-typing-amount"))
+                    .w(theme.metrics.cover * SLEEP_WIDTH)
+                    .child(
+                        Scrubber::new(&self.duck_amount, fraction)
+                            .name(t!("settings-duck-while-typing-amount"))
+                            .value(t!(
+                                "settings-duck-while-typing-amount-value",
+                                percent = i64::from(current)
+                            ))
+                            .colors(
+                                theme.progress_bar,
+                                theme.muted_foreground.opacity(0.3),
+                                theme.foreground,
+                            )
+                            .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
+                                this.pending_duck_amount = Some(
+                                    DUCK_AMOUNT_MIN
+                                        + (fraction.clamp(0., 1.) * span).round() as u8,
+                                );
+                                cx.notify();
+                            }))
+                            .on_release(cx.listener(|this, _: &MouseUpEvent, _, cx| {
+                                let Some(amount) = this.pending_duck_amount.take() else {
+                                    return;
+                                };
+                                this.playback.update(cx, |playback, cx| {
+                                    playback.set_duck_while_typing_amount(amount, cx)
+                                });
+                            })),
+                    ),
+            );
+
+        self.row(
+            t!("settings-duck-while-typing-amount"),
+            control.into_any_element(),
+        )
+    }
+
+    /// How long typing must go on before softening starts.
+    pub(super) fn duck_while_typing_delay_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let current = self.playback.read(cx).duck_while_typing_delay_ms(cx);
+
+        let picker = Picker::new(DUCK_DELAYS, &self.popovers, duck_delay_label(current))
+            .width(Picker::REGULAR)
+            .items(DUCK_DELAY_OPTIONS.map(|delay_ms| {
+                MenuItem::new(
+                    SharedString::from(delay_ms.to_string()),
+                    duck_delay_label(delay_ms),
+                )
+                .selected(delay_ms == current)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.playback.update(cx, |playback, cx| {
+                        playback.set_duck_while_typing_delay_ms(delay_ms, cx)
+                    });
+                    cx.notify();
+                }))
+            }));
+
+        self.row(
+            t!("settings-duck-while-typing-delay"),
+            picker
+                .name(t!("settings-duck-while-typing-delay"))
                 .into_any_element(),
         )
     }
@@ -485,6 +587,16 @@ pub(super) fn widevine_copy(state: &CdmState) -> (&'static str, &'static str) {
         CdmState::Declined | CdmState::Missing => {
             ("settings-widevine-none", "settings-widevine-missing")
         }
+    }
+}
+
+fn duck_delay_label(delay_ms: u32) -> SharedString {
+    match delay_ms {
+        0 => t!("settings-duck-while-typing-delay-immediate"),
+        ms => t!(
+            "settings-duck-while-typing-delay-ms",
+            milliseconds = i64::from(ms)
+        ),
     }
 }
 

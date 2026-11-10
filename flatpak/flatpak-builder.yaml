@@ -13,6 +13,8 @@ finish-args:
   - --socket=fallback-x11 # Permission needed to show the window on legacy windowing systems
   - --socket=pulseaudio # Play audio
   - --device=dri # GPU acceleration
+  # Soften-while-typing reads /dev/input keyboards so typing outside Sonora can duck the music.
+  - --device=input
   - --share=network # Internet access
   - --share=ipc
   - --filesystem=xdg-run/pipewire-0:ro # Spotify flatpak has this

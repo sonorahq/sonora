@@ -9,7 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Soften while typing gently lowers and muffles the music while you type anywhere on this computer, then brings it back when you stop.
+- Soften while typing gently lowers and muffles the music while you type anywhere on this computer, then brings it back when you stop. You can set how much quieter it gets and whether it starts on the first key or after a short delay.
 - Open music links from the search field or send browser pages to Sonora with a bookmark.
 - Open YouTube handle links on their artist pages.
 - Preview music links in search suggestions and search by their titles or artist names.

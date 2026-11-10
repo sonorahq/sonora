@@ -96,6 +96,8 @@ enum Slot {
     Normalisation,
     Gapless,
     DuckWhileTyping,
+    DuckWhileTypingAmount,
+    DuckWhileTypingDelay,
     KeepTracks,
     CacheSize,
     CacheUsage,
@@ -250,6 +252,9 @@ pub struct SettingsView {
     cache: ScrubberState,
     /// The cache size a drag of its slider points at, until it lets go.
     pending_cache: Option<u32>,
+    duck_amount: ScrubberState,
+    /// How much quieter a drag of the soften slider points at, until it lets go.
+    pending_duck_amount: Option<u8>,
     popovers: Popovers,
     /// The theme family whose variant menu opened last, which owns that menu's popover.
     theme_variants: Option<String>,
@@ -430,6 +435,8 @@ impl SettingsView {
             pending_sleep: None,
             cache: ScrubberState::new("cache-size"),
             pending_cache: None,
+            duck_amount: ScrubberState::new("duck-while-typing-amount"),
+            pending_duck_amount: None,
             popovers,
             theme_variants: None,
             deleting_theme: None,
@@ -808,6 +815,14 @@ impl SettingsView {
                 t!("settings-duck-while-typing"),
                 t!("settings-duck-while-typing-detail"),
             ),
+            Slot::DuckWhileTypingAmount => (
+                t!("settings-duck-while-typing-amount"),
+                t!("settings-duck-while-typing-amount-detail"),
+            ),
+            Slot::DuckWhileTypingDelay => (
+                t!("settings-duck-while-typing-delay"),
+                t!("settings-duck-while-typing-delay-detail"),
+            ),
             Slot::KeepTracks => (
                 t!("settings-keep-tracks"),
                 t!("settings-keep-tracks-detail"),
@@ -991,6 +1006,8 @@ impl SettingsView {
             Slot::Normalisation => self.playback_row(cx),
             Slot::Gapless => self.gapless_row(cx),
             Slot::DuckWhileTyping => self.duck_while_typing_row(cx),
+            Slot::DuckWhileTypingAmount => self.duck_while_typing_amount_row(cx),
+            Slot::DuckWhileTypingDelay => self.duck_while_typing_delay_row(cx),
             Slot::KeepTracks => self.keep_tracks_row(cx),
             Slot::CacheSize => self.cache_size_row(cx),
             Slot::CacheUsage => self.cache_usage_row(cx),

@@ -88,7 +88,12 @@ fn start(playback: Entity<Playback>, cx: &mut App) -> Option<Watch> {
             let Some(playback) = playback.upgrade() else {
                 break;
             };
-            playback.update(cx, |playback, cx| playback.note_typing(cx));
+            if playback
+                .update(cx, |playback, cx| playback.note_typing(cx))
+                .is_err()
+            {
+                break;
+            }
             cx.background_executor().timer(PULSE).await;
             while rx.try_recv().is_ok() {
                 pending.store(false, Ordering::Relaxed);
@@ -186,7 +191,13 @@ mod platform {
                     while GetMessageW(&mut msg, ptr::null_mut(), 0, 0) > 0 {}
                     UnhookWindowsHookEx(hook);
                 }
-                *shared.lock().unwrap() = None;
+                if let Ok(mut slot) = shared.lock()
+                    && slot
+                        .as_ref()
+                        .is_some_and(|held| Arc::ptr_eq(&held.stop, &stop))
+                {
+                    *slot = None;
+                }
                 let _ = watcher.join();
             })
             .ok()
@@ -397,17 +408,16 @@ mod platform {
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod platform {
     use super::*;
+    use std::ffi::{c_char, c_int, c_void};
     use std::fs::{self, File};
     use std::io::Read;
     use std::os::fd::AsRawFd;
     use std::path::PathBuf;
+    use std::ptr;
     use std::time::Duration;
 
     const EV_KEY: u16 = 1;
     const KEY_A: usize = 30;
-    const KEY_Z: usize = 44;
-    const KEY_1: usize = 2;
-    const KEY_0: usize = 11;
     const KEY_SPACE: usize = 57;
     const KEY_ENTER: usize = 28;
     const KEY_BACKSPACE: usize = 14;
@@ -418,11 +428,12 @@ mod platform {
     const KEY_RIGHTCTRL: usize = 97;
     const KEY_RIGHTALT: usize = 100;
     const KEY_RIGHTMETA: usize = 126;
+    /// X11 keycodes on a PC keyboard are the Linux evdev codes plus eight.
+    const X11_EVDEV_OFFSET: u8 = 8;
 
     #[repr(C)]
     struct InputEvent {
-        _sec: isize,
-        _usec: isize,
+        _time: libc::timeval,
         type_: u16,
         code: u16,
         value: i32,
@@ -433,11 +444,27 @@ mod platform {
         stop: Arc<AtomicBool>,
         pending: Arc<AtomicBool>,
     ) -> Option<JoinHandle<()>> {
+        if let Some(handle) = spawn_evdev(tx.clone(), stop.clone(), pending.clone()) {
+            return Some(handle);
+        }
+        if let Some(handle) = spawn_x11(tx, stop, pending) {
+            return Some(handle);
+        }
+        log::warn!(
+            "typing: no system keyboard observer (needs /dev/input access, Flatpak device=input, or an X11 display); in-app fields still duck"
+        );
+        None
+    }
+
+    /// Reads kernel keyboards when the process may open them (input group, Flatpak
+    /// `device=input`, or a native install that already can).
+    fn spawn_evdev(
+        tx: mpsc::UnboundedSender<()>,
+        stop: Arc<AtomicBool>,
+        pending: Arc<AtomicBool>,
+    ) -> Option<JoinHandle<()>> {
         let devices = keyboards();
         if devices.is_empty() {
-            log::warn!(
-                "typing: no readable /dev/input keyboards (join the input group for system-wide duck)"
-            );
             return None;
         }
         std::thread::Builder::new()
@@ -501,6 +528,104 @@ mod platform {
             .ok()
     }
 
+    /// Polls the X keymap when `/dev/input` is closed off. Works for X11 sessions and for
+    /// apps under XWayland when Sonora itself is on X11; pure Wayland needs device access.
+    fn spawn_x11(
+        tx: mpsc::UnboundedSender<()>,
+        stop: Arc<AtomicBool>,
+        pending: Arc<AtomicBool>,
+    ) -> Option<JoinHandle<()>> {
+        // Only attempt an X connection when a display is advertised.
+        if std::env::var_os("DISPLAY").is_none() {
+            return None;
+        }
+        type OpenDisplay = unsafe extern "C" fn(*const c_char) -> *mut c_void;
+        type QueryKeymap = unsafe extern "C" fn(*mut c_void, *mut u8) -> c_int;
+        type CloseDisplay = unsafe extern "C" fn(*mut c_void) -> c_int;
+        let lib = [c"libX11.so.6", c"libX11.so"].into_iter().find_map(|name| {
+            let lib = unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_LAZY) };
+            (!lib.is_null()).then_some(lib)
+        })?;
+        let load = |name: &std::ffi::CStr| -> Option<*mut c_void> {
+            let sym = unsafe { libc::dlsym(lib, name.as_ptr()) };
+            (!sym.is_null()).then_some(sym)
+        };
+        let Some(open) = load(c"XOpenDisplay") else {
+            unsafe {
+                libc::dlclose(lib);
+            }
+            return None;
+        };
+        let Some(query) = load(c"XQueryKeymap") else {
+            unsafe {
+                libc::dlclose(lib);
+            }
+            return None;
+        };
+        let Some(close) = load(c"XCloseDisplay") else {
+            unsafe {
+                libc::dlclose(lib);
+            }
+            return None;
+        };
+        let open: OpenDisplay = unsafe { std::mem::transmute(open) };
+        let query: QueryKeymap = unsafe { std::mem::transmute(query) };
+        let close: CloseDisplay = unsafe { std::mem::transmute(close) };
+        let display = unsafe { open(ptr::null()) };
+        if display.is_null() {
+            unsafe {
+                libc::dlclose(lib);
+            }
+            return None;
+        }
+        std::thread::Builder::new()
+            .name("typing-duck".into())
+            .spawn(move || {
+                let mut prev = [0u8; 32];
+                unsafe {
+                    query(display, prev.as_mut_ptr());
+                }
+                while !stop.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(25));
+                    let mut keys = [0u8; 32];
+                    unsafe {
+                        query(display, keys.as_mut_ptr());
+                    }
+                    for (byte_i, (now, was)) in keys.iter().zip(prev.iter()).enumerate() {
+                        let pressed = now & !was;
+                        if pressed == 0 {
+                            continue;
+                        }
+                        for bit in 0..8 {
+                            if pressed & (1 << bit) == 0 {
+                                continue;
+                            }
+                            let x_code = (byte_i * 8 + bit) as u8;
+                            let Some(evdev) = x_code.checked_sub(X11_EVDEV_OFFSET) else {
+                                continue;
+                            };
+                            if typing_key(u16::from(evdev)) && !x11_shortcut_held(&keys) {
+                                pulse::kick(&tx, &pending);
+                            }
+                        }
+                    }
+                    prev = keys;
+                }
+                unsafe {
+                    close(display);
+                    libc::dlclose(lib);
+                }
+            })
+            .ok()
+            .or_else(|| {
+                unsafe {
+                    close(display);
+                    libc::dlclose(lib);
+                }
+                None
+            })
+    }
+
     fn keyboards() -> Vec<PathBuf> {
         let Ok(entries) = fs::read_dir("/dev/input") else {
             return Vec::new();
@@ -528,7 +653,7 @@ mod platform {
         if got < 0 {
             return true;
         }
-        bit(&bits, KEY_A) || bit(&bits, KEY_Z) || bit(&bits, KEY_SPACE)
+        bit(&bits, KEY_A) || bit(&bits, KEY_SPACE)
     }
 
     fn eviocgbit(ev: u16, len: usize) -> libc::c_ulong {
@@ -557,13 +682,53 @@ mod platform {
         mods[idx] = down;
     }
 
+    /// Ctrl/Alt/Super held in an X keymap, using the same evdev+8 mapping as the keys.
+    fn x11_shortcut_held(keys: &[u8; 32]) -> bool {
+        [
+            KEY_LEFTCTRL,
+            KEY_RIGHTCTRL,
+            KEY_LEFTALT,
+            KEY_RIGHTALT,
+            KEY_LEFTMETA,
+            KEY_RIGHTMETA,
+        ]
+        .iter()
+        .any(|&code| {
+            let x_code = code + usize::from(X11_EVDEV_OFFSET);
+            keys.get(x_code / 8)
+                .is_some_and(|byte| byte & (1 << (x_code % 8)) != 0)
+        })
+    }
+
+    /// Linux keycodes that mean the user is writing text, not steering the desktop.
     fn typing_key(code: u16) -> bool {
-        let c = code as usize;
-        (KEY_1..=KEY_0).contains(&c)
-            || (KEY_A..=KEY_Z).contains(&c)
-            || matches!(c, KEY_SPACE | KEY_ENTER | KEY_BACKSPACE | KEY_TAB)
-            || (16..=27).contains(&c)
-            || (2..=13).contains(&c)
+        matches!(
+            code as usize,
+            2..=13 // digits, '-', '='
+            | 16..=27 // Q..P, '[', ']'
+            | 30..=41 // A..L, ';', '\'', '`'
+            | 43..=53 // '\\', Z..M, ',', '.', '/'
+            | KEY_SPACE
+            | KEY_ENTER
+            | KEY_BACKSPACE
+            | KEY_TAB
+        )
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::typing_key;
+
+        #[test]
+        fn typing_key_covers_letters_not_shift() {
+            assert!(typing_key(30)); // A
+            assert!(typing_key(45)); // X
+            assert!(typing_key(50)); // M
+            assert!(typing_key(53)); // /
+            assert!(!typing_key(42)); // Left Shift
+            assert!(!typing_key(54)); // Right Shift
+            assert!(!typing_key(29)); // Left Ctrl
+        }
     }
 }
 

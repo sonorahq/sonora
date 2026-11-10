@@ -335,8 +335,12 @@ struct Held {
 struct Values {
     normalisation: bool,
     gapless: bool,
-    /// Whether playback softens gently while the user types in a text field.
+    /// Whether playback softens gently while the user types anywhere on the computer.
     duck_while_typing: bool,
+    /// How much quieter the music gets while typing, as a percent from 20 to 90.
+    duck_while_typing_amount: u8,
+    /// How long typing must go on before softening starts, in milliseconds.
+    duck_while_typing_delay_ms: u32,
     /// Whether played tracks are kept, sealed, so playing one again downloads nothing.
     keep_tracks: bool,
     /// How many gigabytes the cache of played tracks may take. Downloads do not count.
@@ -586,6 +590,8 @@ impl Default for Values {
             normalisation: false,
             gapless: true,
             duck_while_typing: false,
+            duck_while_typing_amount: 70,
+            duck_while_typing_delay_ms: 0,
             keep_tracks: true,
             offline_mode: false,
             cache_gb: crate::vault::CACHE_GB,
@@ -967,6 +973,22 @@ impl AppSettings {
 
     pub fn duck_while_typing(&self) -> bool {
         self.values.duck_while_typing
+    }
+
+    /// How much quieter the music gets while typing, clamped to the setting's range.
+    pub fn duck_while_typing_amount(&self) -> u8 {
+        self.values.duck_while_typing_amount.clamp(20, 90)
+    }
+
+    /// How long typing must go on before softening starts, snapped to a known step.
+    pub fn duck_while_typing_delay_ms(&self) -> u32 {
+        match self.values.duck_while_typing_delay_ms {
+            0 => 0,
+            1..=200 => 150,
+            201..=400 => 300,
+            401..=750 => 500,
+            _ => 1000,
+        }
     }
 
     pub fn keep_tracks(&self) -> bool {
@@ -1572,6 +1594,22 @@ impl AppSettings {
 
     pub fn set_duck_while_typing(&mut self, duck_while_typing: bool, cx: &mut Context<Self>) {
         self.values.duck_while_typing = duck_while_typing;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_duck_while_typing_amount(&mut self, amount: u8, cx: &mut Context<Self>) {
+        self.values.duck_while_typing_amount = amount.clamp(20, 90);
+        self.schedule_save(cx);
+    }
+
+    pub fn set_duck_while_typing_delay_ms(&mut self, delay_ms: u32, cx: &mut Context<Self>) {
+        self.values.duck_while_typing_delay_ms = match delay_ms {
+            0 => 0,
+            1..=200 => 150,
+            201..=400 => 300,
+            401..=750 => 500,
+            _ => 1000,
+        };
         self.schedule_save(cx);
     }
 

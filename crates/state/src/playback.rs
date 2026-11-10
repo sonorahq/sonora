@@ -100,9 +100,8 @@ const RESUME_STEP: Duration = Duration::from_secs(5);
 const STALE_PAUSE: Duration = Duration::from_secs(5 * 60);
 const TAPER_DB: f32 = 50.;
 const SIMILAR_LIMIT: usize = 20;
-/// How loud the music stays while typing, as a fraction of the slider's gain. About −11 dB, soft
-/// enough to hear keys without burying the track.
-const DUCK_LEVEL: f32 = 0.28;
+/// Fallback for how loud the music stays while typing, when settings have not been read yet.
+const DUCK_LEVEL: f32 = 0.30;
 /// How long the gain takes to fall when typing starts.
 const DUCK_ATTACK: Duration = Duration::from_millis(280);
 /// How long after the last keystroke before the music rises again.
@@ -438,6 +437,10 @@ pub struct Playback {
     duck_target: f32,
     /// When the hold after the last keystroke ends and the release toward 1 may begin.
     duck_until: Option<Instant>,
+    /// When the current stretch of typing began, used to wait out the soften delay.
+    duck_since: Option<Instant>,
+    /// How loud the music may fall while typing, as a fraction of the slider's gain.
+    duck_level: f32,
     /// Steps `duck` toward `duck_target` until both rest at full volume.
     duck_task: Option<Task<()>>,
     /// Softens the highs while typing, shared with every engine like the equalizer reader.
@@ -633,6 +636,8 @@ impl Playback {
             duck: 1.,
             duck_target: 1.,
             duck_until: None,
+            duck_since: None,
+            duck_level: DUCK_LEVEL,
             duck_task: None,
             muffle: Muffle::new(),
             normalisation,
@@ -2364,8 +2369,9 @@ impl Playback {
     /// Sends the gain for the current level, after typing duck, to both engines, and how far
     /// typing muffling has closed the highs.
     fn apply_gain(&self) {
-        let level = gain(self.level) * self.duck.clamp(DUCK_LEVEL, 1.);
-        let amount = ((1. - self.duck) / (1. - DUCK_LEVEL)).clamp(0., 1.);
+        let floor = self.duck_level.clamp(0.05, 0.95);
+        let level = gain(self.level) * self.duck.clamp(floor, 1.);
+        let amount = ((1. - self.duck) / (1. - floor).max(0.05)).clamp(0., 1.);
         self.muffle.set(amount);
         if let Some(engine) = self.engine.as_ref() {
             engine.set_gain(level);
@@ -2377,17 +2383,34 @@ impl Playback {
 
     /// Softens playback while typing is on, restarting the hold so continuous typing stays ducked.
     pub fn note_typing(&mut self, cx: &mut Context<Self>) {
-        if !self.settings.read(cx).duck_while_typing() {
+        let settings = self.settings.read(cx);
+        if !settings.duck_while_typing() {
             return;
         }
-        self.duck_target = DUCK_LEVEL;
-        self.duck_until = Some(Instant::now() + DUCK_HOLD);
+        let delay = Duration::from_millis(u64::from(settings.duck_while_typing_delay_ms()));
+        self.duck_level = 1. - f32::from(settings.duck_while_typing_amount()) / 100.;
+        let now = Instant::now();
+        let since = *self.duck_since.get_or_insert(now);
+        self.duck_until = Some(now + DUCK_HOLD);
+        if now.saturating_duration_since(since) >= delay {
+            self.duck_target = self.duck_level;
+        }
         self.ensure_duck_task(cx);
     }
 
     /// Whether typing softens the music.
     pub fn duck_while_typing(&self, cx: &App) -> bool {
         self.settings.read(cx).duck_while_typing()
+    }
+
+    /// How much quieter the music gets while typing, as a percent.
+    pub fn duck_while_typing_amount(&self, cx: &App) -> u8 {
+        self.settings.read(cx).duck_while_typing_amount()
+    }
+
+    /// How long typing must go on before softening starts, in milliseconds.
+    pub fn duck_while_typing_delay_ms(&self, cx: &App) -> u32 {
+        self.settings.read(cx).duck_while_typing_delay_ms()
     }
 
     /// Turns typing duck on or off. Off restores the full gain at once.
@@ -2400,11 +2423,33 @@ impl Playback {
         cx.notify();
     }
 
+    /// Sets how much quieter the music gets while typing.
+    pub fn set_duck_while_typing_amount(&mut self, amount: u8, cx: &mut Context<Self>) {
+        self.settings.update(cx, |settings, cx| {
+            settings.set_duck_while_typing_amount(amount, cx)
+        });
+        self.duck_level = 1. - f32::from(self.settings.read(cx).duck_while_typing_amount()) / 100.;
+        if self.duck_target < 1. {
+            self.duck_target = self.duck_level;
+        }
+        self.apply_gain();
+        cx.notify();
+    }
+
+    /// Sets how long typing must go on before softening starts.
+    pub fn set_duck_while_typing_delay_ms(&mut self, delay_ms: u32, cx: &mut Context<Self>) {
+        self.settings.update(cx, |settings, cx| {
+            settings.set_duck_while_typing_delay_ms(delay_ms, cx)
+        });
+        cx.notify();
+    }
+
     /// Returns the gain and highs to full and stops the ducking task.
     fn clear_duck(&mut self) {
         self.duck = 1.;
         self.duck_target = 1.;
         self.duck_until = None;
+        self.duck_since = None;
         self.duck_task = None;
         self.muffle.set(0.);
         self.apply_gain();
@@ -2419,8 +2464,8 @@ impl Playback {
             loop {
                 cx.background_executor().timer(DUCK_TICK).await;
                 let done = this
-                    .update(cx, |this, _| {
-                        this.step_duck();
+                    .update(cx, |this, cx| {
+                        this.step_duck(cx);
                         this.duck >= 1. - f32::EPSILON
                             && this.duck_target >= 1. - f32::EPSILON
                             && this.duck_until.is_none()
@@ -2439,12 +2484,24 @@ impl Playback {
     }
 
     /// Moves `duck` one tick toward its target, starting the release once the hold has elapsed.
-    fn step_duck(&mut self) {
-        if self.duck_until.is_some_and(|until| Instant::now() >= until) {
+    fn step_duck(&mut self, cx: &App) {
+        let now = Instant::now();
+        if self.duck_until.is_some_and(|until| now >= until) {
             self.duck_target = 1.;
             self.duck_until = None;
+            self.duck_since = None;
+        } else if self.duck_target >= 1. - f32::EPSILON {
+            if let Some(since) = self.duck_since {
+                let settings = self.settings.read(cx);
+                let delay = Duration::from_millis(u64::from(settings.duck_while_typing_delay_ms()));
+                if now.saturating_duration_since(since) >= delay {
+                    self.duck_level = 1. - f32::from(settings.duck_while_typing_amount()) / 100.;
+                    self.duck_target = self.duck_level;
+                }
+            }
         }
-        let span = 1. - DUCK_LEVEL;
+        let floor = self.duck_level.clamp(0.05, 0.95);
+        let span = 1. - floor;
         let rate = match self.duck > self.duck_target {
             true => DUCK_ATTACK,
             false => DUCK_RELEASE,
