@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use gpui::accesskit::Toggled;
 use gpui::prelude::*;
-use gpui::{App, Entity, SharedString, div};
+use gpui::{App, Entity, Global, SharedString, div};
 use i18n::t;
 use state::{Elsewhere, Playback, Repeat, Sonora};
 use ui::{ActiveTheme as _, Button};
@@ -13,9 +13,12 @@ pub(crate) const NOTCH: f32 = 0.05;
 /// The name the playing cover is seen under, so the fullscreen player's cover flies in from the
 /// player bar's.
 pub(crate) const COVER_FLIGHT: &str = "playing-cover";
-/// The name the fullscreen cover is seen under, so the player bar's cover flies back down from
-/// it as fullscreen closes.
-pub(crate) const COVER_RETURN: &str = "fullscreen-cover";
+
+/// Whether the playing cover is in the air between the player bar and the fullscreen player,
+/// so the player bar leaves its own undrawn until the flight lands.
+pub(crate) struct CoverAway(pub(crate) bool);
+
+impl Global for CoverAway {}
 const STEP: f32 = 0.004;
 
 /// The other device playback is on, which the player shows instead of this app's own.

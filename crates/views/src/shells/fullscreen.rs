@@ -17,13 +17,14 @@ use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, Sid
 use ui::{
     ActiveTheme as _, Artwork, Button, ExplicitBadge, Fading as _, Flight, GLASS_BLUR, GLASS_FILL,
     InlineLink, InlineLinks, Motion, Motioned as _, Popup, Rising as _, Room, Scrollbar, Scrubber,
-    ScrubberState, Springs, Sprung, TabBar, Tails as _, Text, Visualizer, clock, entering, snapped,
+    ScrubberState, Springs, Sprung, TabBar, Tails as _, Text, Visualizer, Zoom, clock, entering,
+    snapped,
 };
 
 use crate::chrome::{Aside, TitleBarOptions};
 use crate::shared::menus::ItemMenu;
 use crate::shared::transport::{
-    COVER_FLIGHT, COVER_RETURN, NOTCH, fraction, like, moved, percent, transport, volume_icon,
+    COVER_FLIGHT, NOTCH, fraction, like, moved, percent, transport, volume_icon,
 };
 use crate::shared::visualizer::VisualizerDrive;
 use crate::shared::{self, ambient};
@@ -141,6 +142,11 @@ pub struct FullscreenView {
     focus: FocusHandle,
     visualizer: VisualizerDrive,
     root_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// How far the cover is scaled as it flies in from the player bar.
+    cover_zoom: Rc<Cell<Zoom>>,
+    /// Whether the player is the shell on show. While it fades out over the workspace its cover
+    /// flies back into the player bar.
+    on_show: bool,
     /// Where the panel last drew, which is where it fades out once the pill closes it.
     panel_bounds: Rc<Cell<Bounds<Pixels>>>,
     /// How much of a panel the pill just closed is still showing, springing from 1 to 0.
@@ -215,6 +221,8 @@ impl FullscreenView {
             focus: cx.focus_handle(),
             visualizer: VisualizerDrive::default(),
             root_bounds: Rc::new(Cell::new(Bounds::default())),
+            cover_zoom: Rc::default(),
+            on_show: false,
             panel_bounds: Rc::new(Cell::new(Bounds::default())),
             leaving: None,
             meta_bounds: Rc::new(Cell::new(Bounds::default())),
@@ -229,6 +237,7 @@ impl FullscreenView {
     /// Starts the idle clock as the view opens and stops it as the view closes, so it never
     /// hides the cursor over the workspace. Either way the view next shows with its controls up.
     pub fn set_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.on_show = shown;
         self.flip(true);
         self.hidden = SpringState {
             position: 0.,
@@ -475,7 +484,13 @@ impl FullscreenView {
         presentation_scale: f32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let radius = cx.theme().radius * 2.;
+        // The cover leaves the player bar with that cover's tight corners, which round out to
+        // its own as it lands, and tighten again on the way back.
+        let (tight, round) = (Artwork::rounding(cx), cx.theme().radius * 2.);
+        let radius = match self.on_show {
+            true => self.cover_zoom.get().radius(tight, round),
+            false => self.cover_zoom.get().radius(round, tight),
+        };
         let pad = px(COVER_LAYER_PAD);
         let inset = (layout_side - raster_side) / 2. - pad;
         let (album, small, local_id, named) = match self.playback.read(cx).shown_track(cx) {
@@ -566,7 +581,9 @@ impl FullscreenView {
         // the resting cover grows past its layout.
         Flight::new("fullscreen-cover", cover)
             .lands_from(COVER_FLIGHT)
-            .seen_as(COVER_RETURN)
+            // Once the player closes, its cover flies back down onto the player bar's.
+            .heads_to((!self.on_show).then_some(COVER_FLIGHT))
+            .reports(self.cover_zoom.clone())
             .follows(self.switch.is_some())
             .reach((raster_side - layout_side) / 2. + pad)
             .above()

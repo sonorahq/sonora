@@ -28,6 +28,42 @@ const RECENT: Duration = Duration::from_millis(300);
 /// `scale` about its centre. Shared with the inner element that paints it.
 type Pose = Rc<Cell<(Point<Pixels>, f32)>>;
 
+/// How far a flight has scaled its element, for an owner that corrects what the scale distorts.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Zoom {
+    /// The scale the element is drawn at this frame, 1 once it has landed.
+    pub now: f32,
+    /// The scale its flight started from.
+    pub from: f32,
+    /// The scale its flight ends at: 1 for one landing in its own place, and the size of what
+    /// it heads for, against its own, for one leaving.
+    pub to: f32,
+}
+
+impl Default for Zoom {
+    fn default() -> Self {
+        Self {
+            now: 1.,
+            from: 1.,
+            to: 1.,
+        }
+    }
+}
+
+impl Zoom {
+    /// The corner radius to draw the element with so that, once scaled, its corners turn
+    /// smoothly from `from`, the radius where the flight starts, to `to`, the radius where it
+    /// ends.
+    pub fn radius(self, from: Pixels, to: Pixels) -> Pixels {
+        let span = self.to - self.from;
+        let progress = match span.abs() > f32::EPSILON {
+            true => ((self.now - self.from) / span).clamp(0., 1.),
+            false => 1.,
+        };
+        (from + (to - from) * progress) / self.now.max(f32::EPSILON)
+    }
+}
+
 /// Carries its child from where it last drew to where layout puts it, sliding and scaling it
 /// through the compositor so it moves by fractions of a pixel. Keep the id stable across frames.
 /// Scaling is uniform, by the change in width, so it suits square things such as a cover.
@@ -37,9 +73,11 @@ pub struct Flight {
     pose: Pose,
     seen_as: Option<SharedString>,
     lands_from: Option<SharedString>,
+    heads_to: Option<SharedString>,
     recent: bool,
     follows: bool,
     reach: Rc<Cell<Pixels>>,
+    zoom: Option<Rc<Cell<Zoom>>>,
     above: bool,
     scales: bool,
     spring: SpringConfig,
@@ -54,6 +92,9 @@ struct Course {
     x: Sprung,
     y: Sprung,
     scale: Sprung,
+    /// The scale the flight under way started from, and the one it ends at.
+    from: f32,
+    to: f32,
 }
 
 /// Where each named flight was last seen, for another to start from as it appears.
@@ -86,9 +127,11 @@ impl Flight {
             pose,
             seen_as: None,
             lands_from: None,
+            heads_to: None,
             recent: false,
             follows: true,
             reach,
+            zoom: None,
             above: false,
             scales: true,
             spring: Springs::FLIGHT,
@@ -107,6 +150,13 @@ impl Flight {
     /// seen, and flies it to its own place.
     pub fn lands_from(mut self, name: impl Into<SharedString>) -> Self {
         self.lands_from = Some(name.into());
+        self
+    }
+
+    /// Flies this element away to where the element seen as `name` stands, and holds it there,
+    /// for one that hands over to its counterpart as its screen closes. `None` flies it home.
+    pub fn heads_to(mut self, name: Option<impl Into<SharedString>>) -> Self {
+        self.heads_to = name.map(Into::into);
         self
     }
 
@@ -130,6 +180,13 @@ impl Flight {
     /// rather than clipping.
     pub fn reach(self, reach: Pixels) -> Self {
         self.reach.set(reach);
+        self
+    }
+
+    /// Reports how far the flight scales the element into `zoom` every frame, for the owner to
+    /// read as it next renders.
+    pub fn reports(mut self, zoom: Rc<Cell<Zoom>>) -> Self {
+        self.zoom = Some(zoom);
         self
     }
 
@@ -209,7 +266,12 @@ impl Element for Flight {
             .filter(|(_, seen)| !recent || seen.elapsed() < RECENT)
             .map(|(bounds, _)| bounds);
         let (spring, scales, follows) = (self.spring, self.scales, self.follows);
-        let (offset, scale) = window.with_element_state(
+        let heading = self
+            .heads_to
+            .as_ref()
+            .and_then(|name| cx.try_global::<Sightings>()?.0.get(name).copied())
+            .map(|(bounds, _)| bounds);
+        let (offset, zoom) = window.with_element_state(
             id.expect("a flight has an id"),
             |course: Option<Course>, window| {
                 let mut course = course.unwrap_or_else(|| Course {
@@ -218,6 +280,8 @@ impl Element for Flight {
                     x: Sprung::at(0.),
                     y: Sprung::at(0.),
                     scale: Sprung::at(1.),
+                    from: 1.,
+                    to: 1.,
                 });
                 let start = match course.drawn {
                     Some(last) if follows && course.viewport == viewport && moved(last, bounds) => {
@@ -236,17 +300,44 @@ impl Element for Flight {
                     course.x.jump(f32::from(from.x));
                     course.y.jump(f32::from(from.y));
                     if scales {
-                        course.scale.jump(start.size.width / bounds.size.width);
+                        course.from = start.size.width / bounds.size.width;
+                        course.to = 1.;
+                        course.scale.jump(course.from);
                     }
                 }
                 course.drawn = Some(bounds);
                 course.viewport = viewport;
-                let x = course.x.follow(0., spring, OFFSET_REST, window, cx);
-                let y = course.y.follow(0., spring, OFFSET_REST, window, cx);
-                let scale = course.scale.follow(1., spring, SCALE_REST, window, cx);
-                ((point(px(x), px(y)), scale), course)
+                // Home is its own layout, unless it is leaving for where another stands.
+                let (home, size) = match heading.filter(|_| bounds.size.width > Pixels::ZERO) {
+                    Some(there) => (
+                        there.center() - bounds.center(),
+                        there.size.width / bounds.size.width,
+                    ),
+                    None => (Point::default(), 1.),
+                };
+                if course.to != size {
+                    course.from = course.scale.position();
+                    course.to = size;
+                }
+                let x = course
+                    .x
+                    .follow(f32::from(home.x), spring, OFFSET_REST, window, cx);
+                let y = course
+                    .y
+                    .follow(f32::from(home.y), spring, OFFSET_REST, window, cx);
+                let scale = course.scale.follow(size, spring, SCALE_REST, window, cx);
+                let zoom = Zoom {
+                    now: scale,
+                    from: course.from,
+                    to: course.to,
+                };
+                ((point(px(x), px(y)), zoom), course)
             },
         );
+        let scale = zoom.now;
+        if let Some(report) = &self.zoom {
+            report.set(zoom);
+        }
         self.pose.set((offset, scale));
         if let Some(name) = &self.seen_as {
             cx.default_global::<Sightings>()

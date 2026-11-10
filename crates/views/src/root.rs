@@ -26,6 +26,7 @@ use crate::screens::search::SearchView;
 use crate::screens::settings::SettingsHeader;
 use crate::shared::ambient::{self, Ambient};
 use crate::shared::tracks::{LIBRARY_COLUMNS, album_columns};
+use crate::shared::transport::CoverAway;
 use crate::shells::Shell;
 use crate::shells::workspace::Workspace;
 use crate::{
@@ -119,6 +120,12 @@ pub struct Root {
     /// How much of the fullscreen player its opening still hides, springing from 1 as it opens
     /// to 0, where it lets go. The player fades in as it zooms up from a little smaller.
     shell_zoom: Option<Sprung>,
+    /// How much of the fullscreen player is still showing over the workspace it gave way to,
+    /// springing from 1 as it closes to 0.
+    shell_leave: Option<Sprung>,
+    /// Whether the closing player has faded out and draws one last frame, in which the player
+    /// bar takes its cover back under the one that just landed on it.
+    shell_left: bool,
     /// The OS fullscreen move the next render owes the fullscreen view, true as it opens and
     /// false as it closes.
     os_follow: Option<bool>,
@@ -343,6 +350,8 @@ impl Root {
             navigation_transition: None,
             shell_entrance: None,
             shell_zoom: None,
+            shell_leave: None,
+            shell_left: false,
             os_follow: None,
             os_entered: false,
             screens: Screens {
@@ -739,6 +748,8 @@ impl Root {
         self.navigation_transition = None;
         self.shell_entrance = None;
         self.shell_zoom = None;
+        self.shell_leave = None;
+        self.shell_left = false;
 
         let next = RootView::of(&destination);
         let moving = next != self.view;
@@ -750,7 +761,10 @@ impl Root {
             if moving && !cx.reduce_motion() {
                 match next {
                     RootView::Fullscreen => self.shell_zoom = Some(Sprung::at(1.)),
-                    RootView::Workspace => self.reveal_shell(cx),
+                    RootView::Workspace => {
+                        self.shell_leave = Some(Sprung::at(1.));
+                        self.reveal_shell(cx);
+                    }
                 }
             }
             return;
@@ -838,6 +852,25 @@ impl Root {
             false => self.shell_zoom = None,
         }
         hidden
+    }
+
+    /// How much of the fullscreen player still shows over the workspace as it closes, stepping
+    /// the spring and repainting the window for every frame of the fade, as its opening does.
+    /// It runs at the pace the cover flies back to the player bar, and answers 0 for one frame
+    /// more once it is done, `None` when no player is closing.
+    fn fullscreen_left(&mut self, window: &mut Window, cx: &Context<Self>) -> Option<f32> {
+        let leave = self.shell_leave.as_mut()?;
+        let left = match self.view {
+            RootView::Workspace => leave.follow(0., Springs::FLIGHT, SHELL_ZOOM_REST, window, cx),
+            RootView::Fullscreen => 0.,
+        };
+        if left <= 0. && std::mem::replace(&mut self.shell_left, true) {
+            self.shell_leave = None;
+            self.shell_left = false;
+            return None;
+        }
+        window.on_next_frame(|window, _| window.refresh());
+        Some(left)
     }
 
     /// Loads the screen on show again, which is what a page that gave up while the network was
@@ -1174,6 +1207,11 @@ impl Render for Root {
         // blurs inside it, so it lets go as soon as what is left of it is under half a pixel and
         // the frosted controls get their blur back while the fade finishes.
         let zooming = self.fullscreen_hidden(window, cx);
+        let left = self.fullscreen_left(window, cx);
+        let away = zooming > 0. || left.is_some_and(|left| left > 0.);
+        if cx.try_global::<CoverAway>().is_none_or(|was| was.0 != away) {
+            cx.set_global(CoverAway(away));
+        }
         let viewport = window.viewport_size();
         let reach = f32::from(viewport.width.max(viewport.height));
         let zoom = (zooming * SHELL_ZOOM * reach / 2. >= 0.5).then_some(1. - SHELL_ZOOM * zooming);
@@ -1218,6 +1256,19 @@ impl Render for Root {
                         .when_some(radius, |this, radius| this.rounded_b(radius))
                         .bg(theme.background)
                         .opacity(hidden),
+                )
+            })
+            // The fullscreen player fades out over the workspace it gives way to.
+            // Its cover draws above the fade and flies down onto the player bar's.
+            .when_some(left, |this, left| {
+                this.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .flex_col()
+                        .opacity(left * left)
+                        .child(self.shells.fullscreen.clone()),
                 )
             })
             .child(self.jam_invite.clone())

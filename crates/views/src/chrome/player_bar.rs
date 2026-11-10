@@ -23,7 +23,7 @@ use crate::chrome::{Chrome, SidebarRight};
 use crate::shared::menus::ItemMenu;
 use crate::shared::pins::Pinned as _;
 use crate::shared::transport::{
-    COVER_FLIGHT, COVER_RETURN, NOTCH, fraction, like, moved, percent, transport, volume_icon,
+    COVER_FLIGHT, CoverAway, NOTCH, fraction, like, moved, percent, transport, volume_icon,
 };
 
 const SEEK_MAX: f32 = 560.;
@@ -304,6 +304,7 @@ impl PlayerBar {
             },
             window,
         );
+        let away = cx.try_global::<CoverAway>().is_some_and(|away| away.0);
         let shown = self.playback.read(cx).shown_track(cx);
         let track = shown.as_ref();
         let cover = track.and_then(|track| track.cover.clone());
@@ -329,11 +330,15 @@ impl PlayerBar {
                 )
             })
             .child(
-                Flight::new("now-playing-cover", Artwork::new(cover).size(artwork))
-                    .seen_as(COVER_FLIGHT)
-                    .lands_from(COVER_RETURN)
-                    .recent()
-                    .above(),
+                // The fullscreen player's cover flies to and from this one, which stays undrawn
+                // while that one is in the air.
+                Flight::new(
+                    "now-playing-cover",
+                    div()
+                        .when(away, |this| this.invisible())
+                        .child(Artwork::new(cover).size(artwork)),
+                )
+                .seen_as(COVER_FLIGHT),
             )
             .flex_none()
     }
