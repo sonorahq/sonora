@@ -16,8 +16,8 @@ const BASE: Duration = Duration::from_millis(200);
 const SLOW: Duration = Duration::from_millis(320);
 
 const ENTRANCE_EXTRA: Duration = Duration::from_millis(50);
-const ENTRANCE_BLUR: Pixels = px(1.5);
-const ENTRANCE_ZOOM: f32 = 0.01;
+pub(crate) const ENTRANCE_BLUR: Pixels = px(1.5);
+pub(crate) const ENTRANCE_ZOOM: f32 = 0.01;
 
 /// How far a pressed control shrinks.
 pub const PRESS_SCALE: f32 = 0.96;

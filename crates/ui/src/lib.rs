@@ -21,6 +21,7 @@ mod label;
 mod layout;
 mod lazy;
 mod level_meter;
+mod linger;
 mod menu;
 mod metrics;
 mod modal;
@@ -102,6 +103,7 @@ pub use label::{
 pub use layout::{ALWAYS, MIN_CONTENT, ROOMY, Room, SNUG, VAST, WIDE};
 pub use lazy::Lazy;
 pub use level_meter::LevelMeter;
+pub use linger::{Linger, lingers};
 pub use menu::{MENU_CONTEXT, Menu, MenuItem, MenuSearch, SubmenuState, close_menu};
 pub use metrics::{LEADING, Metrics, Rounding, Text, snapped, tucked};
 pub use modal::{Modal, corners};

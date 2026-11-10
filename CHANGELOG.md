@@ -21,8 +21,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The fullscreen cover and controls slide aside when lyrics or the queue open, which fade into place, and back when they close.
 - The fullscreen switch between the cover, lyrics and queue stays in the bottom right corner beside the leave button, so it no longer jumps out from under the pointer.
 - Leaving the fullscreen player fades it out over the page below while the cover flies back down into the player bar, its corners easing between the two shapes.
-- Buttons and cards shrink a little under a click and spring back on release.
+- Buttons, cards and menu items shrink a little under a click and spring back on release.
 - Turning Play to Pause slides the label into place and swaps the icons, while the button keeps its width.
+- Menus and dialogs fade out as they close, the way they fade in.
+- The fullscreen visualizer rises from the bottom edge as it appears and sinks back as it goes.
 
 ### Fixed
 
