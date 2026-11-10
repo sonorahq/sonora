@@ -929,13 +929,19 @@ impl FullscreenView {
             .flex_none()
             .on_click(|_, _, cx| cx.stop_propagation())
             .when(inline, |this| {
-                this.child(travelling("fullscreen-pill", PILL_FLIGHT, self.pill(cx)))
+                this.child(travelling(
+                    "fullscreen-pill",
+                    PILL_FLIGHT,
+                    self.switch.is_some(),
+                    self.pill(cx),
+                ))
             })
             // The seek bar and the transport travel as one when a panel moves them between
             // the bottom of the window and the column under the cover.
             .child(travelling(
                 "fullscreen-deck",
                 DECK_FLIGHT,
+                self.switch.is_some(),
                 div()
                     .flex()
                     .flex_col()
@@ -1264,7 +1270,12 @@ impl FullscreenView {
                     .block_mouse_except_scroll()
                     .opacity(1. - hide)
                     .top(px(SINK) * hide)
-                    .child(travelling("fullscreen-pill", PILL_FLIGHT, self.pill(cx))),
+                    .child(travelling(
+                        "fullscreen-pill",
+                        PILL_FLIGHT,
+                        self.switch.is_some(),
+                        self.pill(cx),
+                    )),
             )
     }
 
@@ -1690,14 +1701,19 @@ impl Render for FullscreenView {
 
 /// Wraps a control that a panel moves to another part of the layout, so it slides there from
 /// where the one it replaces just stood rather than jumping. It keeps its size as it goes and
-/// draws above the layers it crosses. Any other move is the controls' own, so it follows
-/// layout at once.
-fn travelling(id: &'static str, name: &'static str, element: impl IntoElement) -> Flight {
+/// draws above the layers it crosses. It flies only while `switching`, as a panel comes or goes:
+/// any other move is the controls' own, falling asleep or waking, and follows layout at once.
+fn travelling(
+    id: &'static str,
+    name: &'static str,
+    switching: bool,
+    element: impl IntoElement,
+) -> Flight {
     Flight::new(id, element)
         .seen_as(name)
         .lands_from(name)
         .recent()
-        .follows(false)
+        .follows(switching)
         .unscaled()
         .above()
 }
