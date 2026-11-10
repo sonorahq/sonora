@@ -3,6 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
+use jiff::SignedDuration;
+use jiff::fmt::rfc2822::DateTimeParser;
 use reqwest::header::{CONTENT_RANGE, DATE, ETAG, IF_RANGE, LAST_MODIFIED, RANGE};
 use symphonia::core::io::MediaSourceStreamOptions;
 
@@ -12,7 +14,7 @@ use crate::stream::{Reader, Stream};
 const METADATA_LIMIT: u64 = 16 * 1024 * 1024;
 const RANGE_PATIENCE: Duration = Duration::from_secs(5);
 /// Allows for second-resolution modification times and clock skew between HTTP dates.
-const VALIDATOR_AGE: time::Duration = time::Duration::seconds(60);
+const VALIDATOR_AGE: SignedDuration = SignedDuration::from_secs(60);
 
 /// A validated suffix in the original file's byte coordinates.
 pub(super) struct Tail {
@@ -220,17 +222,10 @@ fn range_validator(headers: &reqwest::header::HeaderMap) -> Option<reqwest::head
         return strong.then(|| etag.clone());
     }
     let modified = headers.get(LAST_MODIFIED)?;
-    let modified_at = time::OffsetDateTime::parse(
-        modified.to_str().ok()?,
-        &time::format_description::well_known::Rfc2822,
-    )
-    .ok()?;
-    let dated_at = time::OffsetDateTime::parse(
-        headers.get(DATE)?.to_str().ok()?,
-        &time::format_description::well_known::Rfc2822,
-    )
-    .ok()?;
-    (dated_at - modified_at >= VALIDATOR_AGE).then(|| modified.clone())
+    let dates = DateTimeParser::new();
+    let modified_at = dates.parse_timestamp(modified.as_bytes()).ok()?;
+    let dated_at = dates.parse_timestamp(headers.get(DATE)?.as_bytes()).ok()?;
+    (dated_at.duration_since(modified_at) >= VALIDATOR_AGE).then(|| modified.clone())
 }
 
 #[cfg(test)]
