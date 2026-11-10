@@ -167,7 +167,11 @@ impl SidebarLeft {
         cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
         let me = cx.entity_id();
         let playlist_scrollbar = cx.new(|_| ui::Scrollbar::inset().watching(me));
-        let scrollbar = cx.new(|_| ui::Scrollbar::new(ScrollHandle::new()).watching(me));
+        let scrollbar = cx.new(|_| {
+            ui::Scrollbar::new(ScrollHandle::new())
+                .passive()
+                .watching(me)
+        });
         let width = sidebar_width(settings.read(cx));
         let open = settings.read(cx).sidebar_open();
         let rail = settings.read(cx).sidebar_rail();
@@ -924,7 +928,6 @@ impl Render for SidebarLeft {
         let panel = Panel::new("sidebar-left", Side::Left, self.breadth())
             .limits(Pixels::ZERO, MAX_WIDTH)
             .reach(self.ceiling(window, cx))
-            .clears_scrollbar()
             .grip_above(super::Chrome::bottom(cx))
             .on_resize(cx.listener(|this, width: &Pixels, _, cx| this.resize(*width, cx)))
             .on_drag_move(cx.listener(|this, _: &DragMoveEvent<DraggedPin>, _, cx| {
