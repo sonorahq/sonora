@@ -18,7 +18,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Nightly updates reuse released executables after a stable release, so they become available sooner.
 - The fullscreen player fades in as it zooms up into view.
 - Buttons and cards shrink a little under a click and spring back on release.
-- Buttons glide to their new width as their label changes, such as Play turning to Pause on a playlist.
+- The Play button's icon pops in as it turns to Pause, while the button keeps its width.
 
 ### Fixed
 

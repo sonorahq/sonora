@@ -260,14 +260,13 @@ impl HeroPlayButton {
         }
     }
 
-    /// The labels the Play button switches between. The button springs between their widths
-    /// as playback starts and stops, and the buttons beside it glide along.
+    /// The labels the Play button switches between. They are kept short and its width fits the
+    /// wider of them, so the buttons beside it stay put as playback starts and stops.
     fn labels() -> [SharedString; 2] {
         [t!("common-play"), t!("play-pause")]
     }
 
-    /// How wide the button draws at most, with the wider of its labels, for a row that has to
-    /// fit it whichever one it shows.
+    /// How wide the button draws, the same whatever its label says.
     pub(crate) fn width(&self, window: &Window) -> Pixels {
         match self.shuffled {
             true => Button::width(std::iter::empty::<SharedString>(), window),
@@ -323,6 +322,7 @@ impl RenderOnce for HeroPlayButton {
             }
         };
         let [play, pause] = Self::labels();
+        let reserve = [play.clone(), pause.clone()];
         let (label, icon) = match playing {
             Some(true) => (pause, "icons/pause.svg"),
             Some(false) | None => (play, "icons/play.svg"),
@@ -334,6 +334,7 @@ impl RenderOnce for HeroPlayButton {
         div().flex().child(
             Button::new(self.id)
                 .label(label)
+                .reserve(reserve)
                 .icon(icon)
                 .primary()
                 .disabled(disabled)
@@ -580,14 +581,7 @@ impl RenderOnce for PageHero {
                             }),
                     )
                     .children(self.meta)
-                    // A button in the row may spring to a new width as its label changes, so the
-                    // row lays out off the pixel grid and the buttons after it glide along
-                    // rather than stepping a pixel at a time.
-                    .children(
-                        self.actions.map(|actions| {
-                            div().pt_1().child(div().pixel_snap(false).child(actions))
-                        }),
-                    ),
+                    .children(self.actions.map(|actions| div().pt_1().child(actions))),
             )
     }
 }
