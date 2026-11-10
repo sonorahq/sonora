@@ -53,7 +53,8 @@ const SINK: f32 = 24.;
 /// The name the seek bar with the transport is seen under, so it slides to where a panel
 /// moves it.
 const DECK_FLIGHT: &str = "fullscreen-deck";
-/// The space between the volume, the pill and the leave button in the corner.
+/// The space between the pill and the leave button in the corner, and between the transport and
+/// the volume where the volume follows it.
 const CORNER_GAP: f32 = 8.;
 /// A closed panel fading out, a little quicker than one comes in.
 const PANEL_LEAVE: SpringConfig = ui::spring(0.24, 0.);
@@ -902,10 +903,11 @@ impl FullscreenView {
             .child(label("fullscreen-total", total, false))
     }
 
-    /// The seek bar and the transport row. Below `Room::Roomy` the corner holds too little room
-    /// for the row to stay centred beside it, so the row starts from the left instead.
+    /// The seek bar and the transport row, with the volume at the row's right end. Below
+    /// `Room::Wide` the row along the bottom would run into the corner, so it starts from the
+    /// left instead and the volume follows the transport rather than the row's end.
     fn controls(&self, room: Room, cx: &mut Context<Self>) -> impl IntoElement {
-        let centred = room.fits(Room::Roomy);
+        let centred = room.fits(Room::Wide);
 
         div()
             .id("fullscreen-controls")
@@ -933,17 +935,35 @@ impl FullscreenView {
                     .child(
                         div()
                             .id("fullscreen-transport")
+                            .relative()
                             .w_full()
                             .flex()
+                            .items_center()
                             .map(|this| match centred {
                                 true => this.justify_center(),
-                                false => this.justify_start(),
+                                false => this.justify_start().gap(px(CORNER_GAP)),
                             })
                             .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
                                 this.over_transport = *hovering;
                                 cx.notify();
                             }))
-                            .child(transport(&self.playback, true, cx)),
+                            .child(transport(&self.playback, true, cx))
+                            .map(|this| {
+                                let sound = self.sound(cx);
+                                match centred {
+                                    true => this.child(
+                                        div()
+                                            .absolute()
+                                            .right_0()
+                                            .top_0()
+                                            .bottom_0()
+                                            .flex()
+                                            .items_center()
+                                            .child(sound),
+                                    ),
+                                    false => this.child(sound),
+                                }
+                            }),
                     ),
             ))
     }
@@ -1242,12 +1262,12 @@ impl FullscreenView {
         )
     }
 
-    /// The bottom right corner: the volume, the pill that picks what shows beside the cover, and
-    /// the leave button, in one row that never moves with the layout, so a panel coming or going
+    /// The bottom right corner: the pill that picks what shows beside the cover, and the leave
+    /// button, in one row that never moves with the layout, so a panel coming or going
     /// leaves the pill under the pointer that switched it. The row is centred on a player bar's
     /// height at every width, so the breakpoint that stacks the chrome player bar cannot move it,
-    /// and nudged down by `LEAVE_DROP` to sit level with the transport. The volume and the pill
-    /// sink and fade with the controls. The leave button follows the idle spring instead, so a
+    /// and nudged down by `LEAVE_DROP` to sit level with the transport. The pill sinks and fades
+    /// with the controls. The leave button follows the idle spring instead, so a
     /// pointer move still brings it back when the controls are set to stay hidden. The row
     /// occludes, so hovering it never reaches whatever sits behind it.
     fn corner(
@@ -1276,15 +1296,7 @@ impl FullscreenView {
                 cx.notify();
             }))
             .when(hide < 1., |this| {
-                this.child(sunk(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(CORNER_GAP))
-                        .child(self.sound(cx))
-                        .child(self.pill(cx)),
-                    hide,
-                ))
+                this.child(sunk(div().child(self.pill(cx)), hide))
             })
             .when(idle < 1., |this| {
                 this.child(sunk(
