@@ -1,9 +1,12 @@
+use std::f32::consts::TAU;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Animation, AnimationElement, AnimationExt as _, App, ElementId, Hsla, IntoElement, Pixels,
-    Rgba, SharedString, SpringConfig, Styled, ease_in_out, ease_out_quint, px,
+    Animation, AnimationElement, AnimationExt as _, App, ElementId, Entity, Hsla,
+    InteractiveElement, IntoElement, MouseButton, Pixels, Rgba, SharedString, SpringConfig,
+    SpringState, Styled, Window, ease_in_out, ease_out_quint, px,
 };
 use i18n::t;
 
@@ -15,6 +18,16 @@ const SLOW: Duration = Duration::from_millis(320);
 const ENTRANCE_EXTRA: Duration = Duration::from_millis(50);
 const ENTRANCE_BLUR: Pixels = px(1.5);
 const ENTRANCE_ZOOM: f32 = 0.01;
+
+/// How far a pressed control shrinks.
+pub const PRESS_SCALE: f32 = 0.96;
+/// How far a pressed card or tile shrinks; larger things move less.
+pub const PRESS_SCALE_CARD: f32 = 0.975;
+/// How far a scale may sit from its target and still count as landed.
+const SCALE_REST: f32 = 1e-4;
+/// The longest step a stepped spring takes in one frame, so a frame that comes late after a
+/// stall resumes the motion rather than jumping to its end.
+const STEP_STALL: Duration = Duration::from_millis(64);
 
 /// Shared physical-motion presets. Call sites still own their stopping threshold and maximum
 /// timestep because those values depend on whether the spring moves pixels, opacity, or scale.
@@ -29,6 +42,25 @@ impl Springs {
     pub const RESPONSIVE: SpringConfig = SpringConfig::new(360., 38., 1.);
     /// A soft spring that overshoots a little and swings back, for an icon settling after it spun.
     pub const SETTLE: SpringConfig = SpringConfig::new(160., 17., 1.);
+    /// A press going down: barely a spring, so the shrink follows the hand without lagging it.
+    pub const PRESS: SpringConfig = spring(0.1, 0.);
+    /// A release with a little life in it, for a pressed control springing back and a swapped
+    /// icon popping in. Keep it to presses and confirmations.
+    pub const RELEASE: SpringConfig = spring(0.25, 0.15);
+    /// A control growing or shrinking to fit what it now says.
+    pub const RESIZE: SpringConfig = spring(0.18, 0.);
+
+    /// A whole shell arriving, such as the fullscreen player zooming in, at the listener's pace.
+    pub fn shell() -> SpringConfig {
+        spring(0.3 * pace().scale(), 0.)
+    }
+}
+
+/// A spring described the way people tune one: how long it takes, in seconds, and how much it
+/// overshoots, 0 for none. Bounce stays below 1.
+pub const fn spring(duration: f32, bounce: f32) -> SpringConfig {
+    let omega = TAU / duration;
+    SpringConfig::new(omega * omega, 2. * (1. - bounce) * omega, 1.)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -477,6 +509,125 @@ impl HoverFade {
             false => (self.from - travelled).max(target),
         }
     }
+}
+
+/// A spring an element keeps across frames and steps each time it draws, for motion on an
+/// element that has to stay itself, since an animation wrapper hides its role from the
+/// accessibility tree. Keep one in `window.use_keyed_state` and read it with
+/// [`Sprung::follow`] while rendering.
+#[derive(Clone, Copy, Debug)]
+pub struct Sprung {
+    state: SpringState,
+    /// When the spring last stepped, `None` while it rests.
+    beat: Option<Instant>,
+}
+
+impl Sprung {
+    /// A spring resting at `position`.
+    pub fn at(position: f32) -> Self {
+        Self {
+            state: SpringState {
+                position,
+                velocity: 0.,
+            },
+            beat: None,
+        }
+    }
+
+    /// Whether the spring has come to rest where it was last sent, rather than moving.
+    pub fn resting(&self) -> bool {
+        self.beat.is_none()
+    }
+
+    /// Sets the spring at `position` at once, keeping nothing of where it was going, as the
+    /// start of a motion that springs from there.
+    pub fn jump(&mut self, position: f32) {
+        *self = Self::at(position);
+    }
+
+    /// Steps the spring towards `target` on `config` and answers where it stands. It asks for the
+    /// next frame while it moves, counts as landed within `epsilon` of the target, and lands at
+    /// once under reduced motion. A target that changes mid-flight turns the spring from where
+    /// it stands, velocity and all.
+    pub fn follow(
+        &mut self,
+        target: f32,
+        config: SpringConfig,
+        epsilon: f32,
+        window: &Window,
+        cx: &App,
+    ) -> f32 {
+        if cx.reduce_motion() || config.is_settled(self.state, target, epsilon) {
+            self.jump(target);
+            return target;
+        }
+        let now = Instant::now();
+        let elapsed = self.beat.map_or(Duration::ZERO, |beat| {
+            now.duration_since(beat).min(STEP_STALL)
+        });
+        self.beat = Some(now);
+        self.state = config.step(self.state, target, elapsed.as_secs_f32());
+        match config.is_settled(self.state, target, epsilon) {
+            true => self.jump(target),
+            false => window.request_animation_frame(),
+        }
+        self.state.position
+    }
+}
+
+/// Whether a pressable element is held down, and the scale it shrinks on.
+struct Held {
+    down: bool,
+    scale: Sprung,
+}
+
+/// Shrinks `element` to `depth` of its size while the left button holds it down, and springs it
+/// back with a little overshoot on release. The shrink is paint only, so layout and hit area
+/// stay put. `id` is the element's own id, which keys the state across frames. Call it last,
+/// after the element's own mouse handlers, so a handler that stops propagation still lets the
+/// press be seen.
+pub fn pressing<E: InteractiveElement + Styled>(
+    element: E,
+    id: &ElementId,
+    depth: f32,
+    window: &mut Window,
+    cx: &mut App,
+) -> E {
+    let key = ElementId::NamedChild(Arc::new(id.clone()), "press".into());
+    let held = window.use_keyed_state(key, cx, |_, _| Held {
+        down: false,
+        scale: Sprung::at(1.),
+    });
+    let scale = held.update(cx, |held, cx| {
+        let (target, config) = match held.down {
+            true => (depth, Springs::PRESS),
+            false => (1., Springs::RELEASE),
+        };
+        held.scale.follow(target, config, SCALE_REST, window, cx)
+    });
+    let release = |held: &Entity<Held>, cx: &mut App| {
+        if held.read(cx).down {
+            held.update(cx, |held, cx| {
+                held.down = false;
+                cx.notify();
+            });
+        }
+    };
+    let (down, up, out) = (held.clone(), held.clone(), held);
+
+    let element = match (scale - 1.).abs() > SCALE_REST {
+        true => element.layer_scale(scale),
+        false => element,
+    };
+    element
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            down.update(cx, |held, cx| {
+                held.down = true;
+                cx.notify();
+            });
+        })
+        .on_mouse_up(MouseButton::Left, move |_, _, cx| release(&up, cx))
+        .on_mouse_up_out(MouseButton::Left, move |_, _, cx| release(&out, cx))
 }
 
 pub(crate) struct Movement {

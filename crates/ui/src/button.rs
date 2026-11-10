@@ -1,14 +1,17 @@
+use std::cell::RefCell;
 use std::f32::consts::TAU;
+use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, ClickEvent, Div, ElementId, Hsla, Interactivity, MouseButton, Pixels,
-    SharedString, Stateful, StyleRefinement, TextStyleRefinement, Transformation, Window, div, px,
-    radians, relative, svg,
+    SharedString, Stateful, StyleRefinement, TextStyleRefinement, Transformation, Window, canvas,
+    div, px, radians, relative, size, svg,
 };
 
 use crate::glass::{blurring, frost};
 use crate::metrics::{Text, text_width};
+use crate::motion::{PRESS_SCALE, Springs, Sprung, pressing};
 use crate::theme::ActiveTheme as _;
 use crate::tooltip::{Perch, Tipped as _};
 
@@ -28,6 +31,14 @@ const INSET: Pixels = px(12.);
 const GAP: Pixels = px(6.);
 const ICON: Pixels = px(16.);
 const BORDER: Pixels = px(1.);
+/// How small a swapped icon starts as it pops in.
+const POP_FROM: f32 = 0.6;
+/// How close, in pixels and in scale, a resize and a pop come before they count as landed.
+const RESIZE_REST: f32 = 0.25;
+const POP_REST: f32 = 1e-3;
+/// How far the drawn width may sit from the width the content asks for, borders included, and
+/// still count as the content's. Further off, something else sizes the button.
+const FIT_SLACK: f32 = 3.;
 
 type Click = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
@@ -39,8 +50,23 @@ enum Variant {
     Destructive,
 }
 
+/// What a button remembers between frames: the width it springs on as its label changes, and
+/// the icon it showed last, so a new one pops in. It sits in a cell so the button can step it
+/// while it holds the theme.
+struct Shape {
+    width: Option<Sprung>,
+    /// The width the content asked for last frame.
+    natural: f32,
+    /// How wide the button drew last, which tells a button its content sizes from one a column
+    /// stretches.
+    drawn: Option<f32>,
+    icon: Option<SharedString>,
+    pop: Sprung,
+}
+
 #[derive(IntoElement)]
 pub struct Button {
+    id: ElementId,
     base: Stateful<Div>,
     label: Option<SharedString>,
     /// Labels the button may switch between. The label slot is as wide as the widest of them,
@@ -82,8 +108,10 @@ pub struct Button {
 impl Button {
     #[track_caller]
     pub fn new(id: impl Into<ElementId>) -> Self {
+        let id = id.into();
         Self {
-            base: div().id(id),
+            base: div().id(id.clone()),
+            id,
             label: None,
             reserve: Vec::new(),
             name: None,
@@ -342,6 +370,7 @@ struct Palette {
 impl RenderOnce for Button {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Self {
+            id,
             mut base,
             label,
             reserve,
@@ -370,6 +399,28 @@ impl RenderOnce for Button {
             tooltip,
             on_click,
         } = self;
+
+        let shape = window.use_keyed_state(
+            ElementId::NamedChild(Arc::new(id.clone()), "shape".into()),
+            cx,
+            |_, _| {
+                RefCell::new(Shape {
+                    width: None,
+                    natural: 0.,
+                    drawn: None,
+                    icon: icon.clone(),
+                    pop: Sprung::at(1.),
+                })
+            },
+        );
+        // A button that sizes itself to an icon, a label and a trailing icon springs to its new
+        // width as the label changes. One the caller sizes, or with parts of its own, keeps to
+        // plain layout.
+        let fits = label.is_some()
+            && reserve.is_empty()
+            && leading.is_none()
+            && detail.is_none()
+            && sized_by_content(base.style());
 
         let theme = cx.theme();
         // A plain ghost floats over flat paint, so it hovers with the themed
@@ -473,6 +524,58 @@ impl RenderOnce for Button {
         };
         let pressed = state_style(active, pressed, frosting);
         let overrides = std::mem::take(base.style());
+        let natural = label.as_ref().filter(|_| fits).map(|label| {
+            let mut text = TextStyleRefinement::default();
+            if small {
+                text.font_size = Some(theme.text(Text::Label).into());
+            }
+            text.refine(&overrides.text);
+            let label =
+                window.with_text_style(Some(text), |window| text_width(label.clone(), window));
+            let parts = [
+                icon.as_ref().map(|_| ICON),
+                Some(label.ceil()),
+                trailing.as_ref().map(|_| ICON),
+            ];
+            let count = parts.iter().flatten().count() as f32;
+            let border = match palette.border.is_some() {
+                true => BORDER * 2.,
+                false => Pixels::ZERO,
+            };
+            padding * 2.
+                + border
+                + parts.iter().flatten().copied().sum::<Pixels>()
+                + gap * (count - 1.)
+        });
+        let (resizing, pop) = {
+            let mut shape = shape.read(cx).borrow_mut();
+            if natural.is_none() {
+                shape.width = None;
+            }
+            let resizing = natural.and_then(|natural| {
+                let target = f32::from(natural);
+                let (last, drawn) = (shape.natural, shape.drawn);
+                shape.natural = target;
+                let width = shape.width.get_or_insert_with(|| Sprung::at(target));
+                // A button at rest that drew wider or narrower than its content was sized by
+                // its parent, so it takes the new width without springing to it.
+                if width.resting() && drawn.is_some_and(|drawn| (drawn - last).abs() > FIT_SLACK) {
+                    width.jump(target);
+                }
+                let at = width.follow(target, Springs::RESIZE, RESIZE_REST, window, cx);
+                ((at - target).abs() > RESIZE_REST).then(|| px(at))
+            });
+            if shape.icon != icon {
+                if shape.icon.is_some() && icon.is_some() {
+                    shape.pop.jump(POP_FROM);
+                }
+                shape.icon = icon.clone();
+            }
+            let pop = shape.pop.follow(1., Springs::RELEASE, POP_REST, window, cx);
+            (resizing, pop)
+        };
+        // A new icon fades in as it grows from small.
+        let icon_alpha = ((pop - POP_FROM) / (1. - POP_FROM)).clamp(0., 1.);
         // A node reaches the tree only with a role, and an icon-only button has
         // no label of its own, so its tooltip key doubles as the accessible
         // name the same way the hover text does.
@@ -492,7 +595,7 @@ impl RenderOnce for Button {
             ),
         };
 
-        let mut button = base
+        let button = base
             .role(match tab {
                 true => gpui::accesskit::Role::Tab,
                 false => gpui::accesskit::Role::Button,
@@ -514,6 +617,11 @@ impl RenderOnce for Button {
             .h(height)
             .px(padding)
             .rounded(radius)
+            // Mid-resize the box is narrower or wider than what it holds, so the content keeps
+            // its own width from the leading edge and the box clips it as it grows.
+            .when_some(resizing, |this, width| {
+                this.w(width).overflow_hidden().justify_start()
+            })
             .text_color(foreground)
             .when(small, |this| this.text_size(theme.text(Text::Label)))
             .when_some(palette.background, |this, background| this.bg(background))
@@ -535,8 +643,11 @@ impl RenderOnce for Button {
                         .path(icons::path(path))
                         .size(ICON)
                         .flex_none()
-                        .text_color(foreground)
-                        .with_transformation(Transformation::rotate(radians(turn * TAU))),
+                        .text_color(foreground.opacity(icon_alpha))
+                        .with_transformation(
+                            Transformation::rotate(radians(turn * TAU))
+                                .with_scaling(size(pop, pop)),
+                        ),
                 )
             })
             .children(leading)
@@ -546,6 +657,7 @@ impl RenderOnce for Button {
                         .min_w_0()
                         .truncate()
                         .when(trailing.is_some() || detail.is_some(), |this| this.flex_1())
+                        .when(resizing.is_some(), |this| this.flex_none())
                         .when_some(reserved, |this, width| {
                             this.flex_none().w(width).text_center()
                         })
@@ -597,6 +709,21 @@ impl RenderOnce for Button {
                         .bg(color),
                 )
             })
+            // Notes how wide the button drew, so the next label change can tell whether its
+            // content or its parent sized it.
+            .when(natural.is_some(), |this| {
+                let shape = shape.clone();
+                this.child(
+                    canvas(
+                        move |bounds, _, cx| {
+                            shape.read(cx).borrow_mut().drawn = Some(f32::from(bounds.size.width));
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .inset_0(),
+                )
+            })
             .when(interactive, |this| {
                 this.when_some(on_click, |this, handler| {
                     this.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -604,9 +731,26 @@ impl RenderOnce for Button {
                 })
             });
 
+        let mut button = match interactive {
+            true => pressing(button, &id, PRESS_SCALE, window, cx),
+            false => button,
+        };
         button.style().refine(&overrides);
         button
     }
+}
+
+/// Whether a button's caller left its width to what it holds, so the button may spring between
+/// the widths its content gives it.
+fn sized_by_content(overrides: &StyleRefinement) -> bool {
+    overrides.size.width.is_none()
+        && overrides.min_size.width.is_none()
+        && overrides.max_size.width.is_none()
+        && overrides.flex_grow.is_none()
+        && overrides.flex_basis.is_none()
+        && overrides.padding.left.is_none()
+        && overrides.padding.right.is_none()
+        && overrides.gap.width.is_none()
 }
 
 fn state_style(

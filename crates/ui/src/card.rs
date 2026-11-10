@@ -14,6 +14,7 @@ use crate::button::Button;
 use crate::glass::{GLASS_BLUR, blurring};
 use crate::label::{Tails as _, upper};
 use crate::metrics::{LEADING, Text, snapped};
+use crate::motion::{PRESS_SCALE_CARD, pressing};
 use crate::skeleton::Skeleton;
 use crate::theme::ActiveTheme as _;
 use crate::tooltip::{Perch, Tipped as _};
@@ -38,6 +39,7 @@ type DragStart = Rc<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>;
 
 #[derive(IntoElement)]
 pub struct Card {
+    id: ElementId,
     base: Stateful<Div>,
     title: SharedString,
     eyebrow: Option<SharedString>,
@@ -77,8 +79,10 @@ pub struct Card {
 impl Card {
     #[track_caller]
     pub fn new(id: impl Into<ElementId>, title: impl Into<SharedString>) -> Self {
+        let id = id.into();
         Self {
-            base: div().id(id),
+            base: div().id(id.clone()),
+            id,
             title: title.into(),
             eyebrow: None,
             description: None,
@@ -312,6 +316,7 @@ impl StatefulInteractiveElement for Card {}
 impl RenderOnce for Card {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Self {
+            id,
             mut base,
             title,
             eyebrow,
@@ -532,7 +537,8 @@ impl RenderOnce for Card {
                 .child(meta),
         });
 
-        let mut card = base
+        let pressable = press.is_some();
+        let card = base
             // A card that opens something reads as one button named for its
             // title, while a still card is a group so the title stays reachable.
             .role(match press.is_some() {
@@ -650,6 +656,10 @@ impl RenderOnce for Card {
                     .child(action)
             }));
 
+        let mut card = match pressable {
+            true => pressing(card, &id, PRESS_SCALE_CARD, window, cx),
+            false => card,
+        };
         card.style().refine(&overrides);
         card
     }
