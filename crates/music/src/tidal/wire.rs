@@ -334,7 +334,7 @@ pub fn playlist(wrapper: &Value, user_id: &str) -> Option<Playlist> {
     // `id` reads Tidal's editorial creator id, zero, as no id at all.
     let editorial = owner_id.is_empty();
     let owner = text(creator, "name")
-        .or(editorial.then_some("TIDAL"))
+        .or_else(|| editorial.then_some("TIDAL"))
         .unwrap_or_default()
         .to_owned();
     let modified_at = text(value, "lastUpdated")

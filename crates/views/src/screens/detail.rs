@@ -366,7 +366,7 @@ impl DetailView {
         let header = self.detail.read(cx).header();
         let kind = header
             .map(|header| header.kind)
-            .or(self.detail.read(cx).kind())
+            .or_else(|| self.detail.read(cx).kind())
             .unwrap_or(Collection::Album);
         let release = header
             .and_then(|header| header.release)

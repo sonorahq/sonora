@@ -107,10 +107,7 @@ impl SessionsButton {
                         },
                     )
                     .icon("icons/log-out.svg")
-                    .on_click({
-                        let devices = devices.clone();
-                        move |_, _, cx| devices.update(cx, |devices, cx| devices.leave(cx))
-                    }),
+                    .on_click(move |_, _, cx| devices.update(cx, |devices, cx| devices.leave(cx))),
                 );
             }
             None => {
@@ -125,11 +122,8 @@ impl SessionsButton {
                 entries.push(
                     MenuItem::new("jam-join", t!("devices-jam-join"))
                         .icon("icons/link.svg")
-                        .on_click({
-                            let devices = devices.clone();
-                            move |_, _, cx| {
-                                devices.update(cx, |devices, cx| devices.show_join(true, cx))
-                            }
+                        .on_click(move |_, _, cx| {
+                            devices.update(cx, |devices, cx| devices.show_join(true, cx))
                         }),
                 );
             }
@@ -158,7 +152,7 @@ impl SessionsButton {
             theme.metrics.control_small * MEMBER_FACE,
             0.,
             window,
-            theme,
+            &theme,
         );
         Some(
             MenuItem::new("members", t!("members-title"))

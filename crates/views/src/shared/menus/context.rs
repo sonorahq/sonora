@@ -263,12 +263,11 @@ impl ItemMenu {
                             .when(!album, MenuItem::stays_open);
                     if album {
                         let library = library.clone();
-                        let playlist_id = playlist.id.clone();
                         let addition = addition.clone();
                         return item.on_click(move |_, _, cx| {
                             library.update(cx, |library, cx| {
                                 library.add_tracks_to_playlist(
-                                    playlist_id.clone(),
+                                    playlist.id.clone(),
                                     addition.clone(),
                                     cx,
                                 )
@@ -279,13 +278,12 @@ impl ItemMenu {
                         true => item.disabled(),
                         false => {
                             let library = library.clone();
-                            let playlist_id = playlist.id.clone();
                             let track_ids = ids.clone();
                             item.on_click(move |_, _, cx| {
                                 if held {
                                     library.update(cx, |library, cx| {
                                         library.remove_tracks_from_playlist(
-                                            playlist_id.clone(),
+                                            playlist.id.clone(),
                                             track_ids.clone(),
                                             cx,
                                         )
@@ -295,7 +293,7 @@ impl ItemMenu {
                                 let missing: Vec<String> = track_ids
                                     .iter()
                                     .filter(|id| {
-                                        !library.read(cx).holds(&playlist_id, id).unwrap_or(false)
+                                        !library.read(cx).holds(&playlist.id, id).unwrap_or(false)
                                     })
                                     .cloned()
                                     .collect();
@@ -304,7 +302,7 @@ impl ItemMenu {
                                 }
                                 library.update(cx, |library, cx| {
                                     library.add_tracks_to_playlist(
-                                        playlist_id.clone(),
+                                        playlist.id.clone(),
                                         Addition::Tracks(missing),
                                         cx,
                                     )

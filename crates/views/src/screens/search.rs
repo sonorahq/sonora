@@ -1022,7 +1022,7 @@ impl SearchView {
         let me = cx.entity().downgrade();
         let card = Card::new("best", title)
             .art(theme.metrics.cover * 0.45)
-            .cover(cover(hit).clone())
+            .cover(cover(hit))
             .when(matches!(kind, Kind::Artist), Card::circle)
             .eyebrow(noun(kind))
             .size(Text::Title)
@@ -1293,13 +1293,12 @@ impl SearchView {
         let scroll = bar.read(cx).scroll().clone();
         let me = cx.entity().downgrade();
         let measured = self.lead.clone();
-        let tracked = scroll.clone();
         let deck = Deck::new(format!("{id}-deck"))
             .rows((0..seats.len()).map(|_| row))
             .gap(theme.font_size * ROW_GAP)
             .when(lead.is_some(), |deck| {
                 deck.on_measure(move |top, _, _| {
-                    let content = tracked.bounds().origin.y - scrolled(&tracked);
+                    let content = scroll.bounds().origin.y - scrolled(&scroll);
                     measured.set(top - content);
                 })
             })

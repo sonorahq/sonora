@@ -684,10 +684,6 @@ impl SettingsView {
     /// The title and detail a search is matched against, without building the row. Kept next
     /// to the slots: a new row needs its pair here to be found. A slot with no pair is left out
     /// of searches.
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one arm per row keeps the keys beside the rows"
-    )]
     fn slot_meta(&self, slot: Slot, cx: &App) -> Option<(SharedString, SharedString)> {
         let meta = match slot {
             Slot::Folders => return None,
