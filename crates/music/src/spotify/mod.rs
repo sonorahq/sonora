@@ -6,6 +6,7 @@ mod client;
 mod collection;
 mod collection2;
 mod connect;
+mod descriptors;
 mod links;
 mod lyrics;
 mod offline;

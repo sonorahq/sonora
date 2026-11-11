@@ -1114,6 +1114,7 @@ fn song_as(value: &Resource, id: String, root: &str) -> Option<Track> {
         duration: Duration::from_millis(attributes.duration_in_millis.as_u64().unwrap_or(0)),
         added_at: moment(attributes.date_added.as_str()),
         added_by: None,
+        year: calendar::year(attributes.release_date.as_str()).unwrap_or_default(),
         playcount: None,
         popularity: 0,
         explicit: attributes.content_rating.as_str() == Some("explicit"),

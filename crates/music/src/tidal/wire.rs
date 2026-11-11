@@ -154,6 +154,7 @@ pub fn track(wrapper: &Value) -> Option<Track> {
         duration: Duration::from_secs(number(value, "duration").unwrap_or(0)),
         added_at: added(wrapper),
         added_by: None,
+        year: calendar::year(text(album, "releaseDate")).unwrap_or_default(),
         playcount: None,
         popularity: count(value, "popularity").unwrap_or(0),
         explicit: value

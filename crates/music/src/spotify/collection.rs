@@ -138,6 +138,12 @@ fn track_from(uri: &str, track: &TrackMessage) -> Track {
         duration: Duration::from_millis(track.duration.unwrap_or_default().max(0) as u64),
         added_at: None,
         added_by: None,
+        year: track
+            .album
+            .as_ref()
+            .and_then(|album| album.date.as_ref())
+            .map(|date| date.year())
+            .unwrap_or(0),
         playcount: None,
         popularity: track.popularity.unwrap_or_default().clamp(0, 100) as u32,
         explicit: track.explicit.unwrap_or_default(),

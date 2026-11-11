@@ -7,10 +7,11 @@ use i18n::t;
 use music::Track;
 use state::{History, HistoryState, Playback, Sonora};
 use ui::{
-    ActiveTheme as _, Button, Listing as _, Modal, Scrollbar, Scroller, TableDelegate, TableEvent,
-    TableState, runtime, table, vacant,
+    ActiveTheme as _, Button, FilterChange, Listing as _, Modal, Popovers, Scrollbar, Scroller,
+    TableDelegate, TableEvent, TableState, table, vacant,
 };
 
+use crate::chrome::tools::{self, Sliders};
 use crate::chrome::{Searchable, Toolbar, Tooled};
 use crate::shared::cells;
 use crate::shared::hero::{HeroMetaStrip, PageHero};
@@ -36,6 +37,8 @@ pub(crate) struct HistoryView {
     scrollbar: Entity<Scrollbar>,
     table: Entity<TableState<TrackSource>>,
     toolbar: Entity<Toolbar>,
+    popovers: Popovers,
+    sliders: Sliders,
     clearing: bool,
 }
 
@@ -102,6 +105,8 @@ impl HistoryView {
             scrollbar,
             table,
             toolbar,
+            popovers: Popovers::default(),
+            sliders: Sliders::with_choices(crate::shared::tracks::choice_filters(), id, cx),
             clearing: false,
         }
     }
@@ -128,28 +133,25 @@ impl HistoryView {
             let duration: std::time::Duration = tracks.iter().map(|track| track.duration).sum();
             (tracks.len(), duration)
         };
-        let mut strip = HeroMetaStrip::new().text(t!("count-songs", count = count));
-        if !duration.is_zero() {
-            strip = strip.text(runtime(duration));
-        }
+        let strip = HeroMetaStrip::new()
+            .text(t!("count-songs", count = count))
+            .duration(duration);
 
         PageHero::new("history-hero", t!("nav-history"))
             .fallback("icons/rotate-ccw-clock.svg")
             .accent()
-            .eyebrow(t!("detail-playlist"))
+            .top_bar(t!("detail-playlist"), self.toolbar.clone())
             .meta(strip)
             .actions(
-                div().flex().items_center().child(
-                    Button::new("clear-history")
-                        .outline()
-                        .icon("icons/trash-2.svg")
-                        .label(t!("history-clear"))
-                        .disabled(count == 0)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.clearing = true;
-                            cx.notify();
-                        })),
-                ),
+                Button::new("clear-history")
+                    .outline()
+                    .icon("icons/trash-2.svg")
+                    .label(t!("history-clear"))
+                    .disabled(count == 0)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.clearing = true;
+                        cx.notify();
+                    })),
             )
             .into_any_element()
     }
@@ -236,7 +238,22 @@ impl Tooled for HistoryView {
         self.toolbar.clone()
     }
 
-    fn tools(&self, _cx: &App) -> Vec<AnyElement> {
-        Vec::new()
+    fn tools(&self, cx: &App) -> Vec<AnyElement> {
+        let axes = self.table.filters(cx);
+        if axes.is_empty() && !self.table.narrowed(cx) {
+            return Vec::new();
+        }
+        let table = self.table.clone();
+        let toolbar = self.toolbar.clone();
+        vec![tools::filters(
+            &self.popovers,
+            &self.sliders,
+            axes,
+            move |change: FilterChange, cx| {
+                table.filter(change, cx);
+                toolbar.update(cx, |_, cx| cx.notify());
+            },
+            cx,
+        )]
     }
 }

@@ -125,6 +125,7 @@ menu-import-playlist = Import playlist…
 menu-edit-tags = Edit tags
 menu-no-playlists = No playlists
 menu-search-playlists = Search a playlist
+menu-search-filter = Search
 menu-save-library = Library
 menu-add-to-library = Add to Favorites
 menu-remove-from-library = Remove from Favorites
@@ -317,9 +318,17 @@ history-clear-title = Clear listening history
 history-clear-confirm = Every play is removed from this device. This cannot be undone.
 filter-library = Filter your library
 filter-album = Filter album tracks
+filter-playlist = Filter tracks
 filter-reset = Reset filters
+filter-collaborations = Collaborations
 filter-duration = Duration
 filter-year = Year
+filter-play-count = Play count
+filter-popularity = Popularity
+filter-bpm = BPM
+filter-genre = Genre
+filter-mood = Mood
+filter-tag = Tag
 filter-hide-explicit = Hide explicit
 filter-playable = Playable only
 filter-favorites = Favorites only
@@ -1498,3 +1507,12 @@ response-graph-readout = { $frequency } · { $direction ->
         [down] -{ $gain }
        *[flat] { $gain }
     } dB
+
+stats-mood-energetic = Energetic
+stats-mood-danceable = Danceable
+stats-mood-positive = Positive
+stats-mood-negative = Negative
+stats-mood-sad = Sad
+stats-mood-calming = Calming
+stats-mood-instrumental = Instrumental
+stats-mood-acoustic = Acoustic

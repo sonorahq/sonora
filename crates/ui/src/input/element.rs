@@ -360,10 +360,12 @@ impl Render for Input {
             .rounded(radius)
             // a field tucked into a frosted menu takes the menu's own translucent row fill, since
             // a flat one would sit on the frost as a solid slab
-            .map(|this| match (self.blurred, self.tucked, blurring(cx)) {
-                (true, _, true) => glass(this, cx),
-                (false, true, true) => this.bg(theme.secondary_hover),
-                _ => this.bg(theme.secondary),
+            .when(!self.transparent, |this| {
+                match (self.blurred, self.tucked, blurring(cx)) {
+                    (true, _, true) => glass(this, cx),
+                    (false, true, true) => this.bg(theme.secondary_hover),
+                    _ => this.bg(theme.secondary),
+                }
             })
             .when(self.blurred, |this| this.shadow_sm())
             .when_else(
@@ -418,7 +420,10 @@ impl Render for Input {
                         .path(icons::path(path))
                         .size_4()
                         .flex_none()
-                        .text_color(theme.muted_foreground),
+                        .text_color(match self.icon_foreground {
+                            true => theme.foreground,
+                            false => theme.muted_foreground,
+                        }),
                 )
             })
             .child(Text { input: cx.entity() })

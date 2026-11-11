@@ -105,6 +105,25 @@ pub fn translate(key: &str) -> SharedString {
     SharedString::from(key.to_owned())
 }
 
+/// Groups a signed integer using the active locale, unless it is below `threshold`.
+pub fn grouped_number(value: i128, threshold: u128) -> SharedString {
+    if value.unsigned_abs() < threshold {
+        return value.to_string().into();
+    }
+    let digits = value.unsigned_abs().to_string();
+    let groups: Vec<&str> = digits
+        .as_bytes()
+        .rchunks(3)
+        .rev()
+        .map(|chunk| std::str::from_utf8(chunk).unwrap_or_default())
+        .collect();
+    let sign = match value < 0 {
+        true => "-",
+        false => "",
+    };
+    format!("{sign}{}", groups.join(&t!("number-group"))).into()
+}
+
 fn format(language: Language, key: &str, args: Option<&FluentArgs>) -> Option<SharedString> {
     let bundle = BUNDLES
         .get(language as usize)?
