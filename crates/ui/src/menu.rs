@@ -17,7 +17,7 @@ use crate::input::Input;
 use crate::label::Tails as _;
 use crate::linger::Linger;
 use crate::metrics::snapped;
-use crate::motion::{Fading as _, PRESS_SCALE, Rising as _, pressing};
+use crate::motion::{Fading as _, Glow, PRESS_SCALE, Rising as _, glow_fill, pressing};
 use crate::scrollbar::Scrollbar;
 use crate::scroller::middle_scroll;
 use crate::separator::Separator;
@@ -904,6 +904,18 @@ impl RenderOnce for Menu {
             let detailed = detail.is_some();
             let pressable = press.is_some() && !disabled;
             let row_id = id.clone();
+            // The row keeps its hover fill for a short fade after the pointer leaves. It feeds the
+            // glow itself, since a row with a submenu already listens for hover.
+            let glow = Glow::keyed(&row_id, row_window, row_cx);
+            let marked = selected || highlighted || cursor == Some(place);
+            let fill = match disabled {
+                true => None,
+                false => {
+                    let level = glow.update(row_cx, |glow, cx| glow.level(false, row_window, cx));
+                    let rest = marked.then_some(theme.secondary_active);
+                    glow_fill(rest, theme.secondary_hover, level)
+                }
+            };
 
             let row = div()
                 .id(id)
@@ -935,12 +947,8 @@ impl RenderOnce for Menu {
                     |this| this.text_color(theme.muted_foreground).cursor_default(),
                     |this| this.cursor_pointer(),
                 )
-                .when(selected || highlighted || cursor == Some(place), |this| {
-                    this.bg(theme.secondary_active)
-                })
-                .when(!disabled, |this| {
-                    this.hover(move |this| this.bg(theme.secondary_hover))
-                })
+                .when(marked, |this| this.bg(theme.secondary_active))
+                .when_some(fill, |this, fill| this.bg(fill))
                 // the label column fills the row, so a detail wraps at the menu's width rather
                 // than at the label's
                 .child(
@@ -997,10 +1005,14 @@ impl RenderOnce for Menu {
                 .when(submenu.is_some(), |this| {
                     this.child(div().flex_none().child("›"))
                 })
-                .when_some(submenu_state, |this, state| {
-                    this.on_hover(move |hovered, window, cx| {
-                        state.near(Near::Item, *hovered, window.window_handle(), cx)
-                    })
+                .on_hover(move |hovered, window, cx| {
+                    glow.update(cx, |glow, cx| {
+                        glow.hover(*hovered);
+                        cx.notify();
+                    });
+                    if let Some(state) = submenu_state.as_ref() {
+                        state.near(Near::Item, *hovered, window.window_handle(), cx);
+                    }
                 })
                 .when_some(tooltip.clone(), |this, key| {
                     this.aria_description(i18n::lookup(&key, None))

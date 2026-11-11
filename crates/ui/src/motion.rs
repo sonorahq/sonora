@@ -4,9 +4,10 @@ use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Animation, AnimationElement, AnimationExt as _, App, ElementId, Entity, Hsla,
-    InteractiveElement, IntoElement, MouseButton, Pixels, Rgba, SharedString, SpringConfig,
-    SpringState, Styled, Window, ease_in_out, ease_out_quint, px,
+    Animation, AnimationElement, AnimationExt as _, App, ElementId, Entity, HoverListenerMode,
+    Hsla, InteractiveElement, IntoElement, MouseButton, Pixels, RenderOnce, Rgba, SharedString,
+    SpringConfig, SpringState, StatefulInteractiveElement, StyleRefinement, Styled, Window,
+    ease_in_out, ease_out_quint, px,
 };
 use i18n::t;
 
@@ -18,6 +19,12 @@ const SLOW: Duration = Duration::from_millis(320);
 const ENTRANCE_EXTRA: Duration = Duration::from_millis(50);
 pub(crate) const ENTRANCE_BLUR: Pixels = px(1.5);
 pub(crate) const ENTRANCE_ZOOM: f32 = 0.01;
+
+/// How long a hover highlight takes to fade out, before the listener's pace stretches it.
+const DIM: Duration = Duration::from_millis(100);
+/// How much of a lit row's fill the pointer alone brings up, so the row under the pointer
+/// reads as lighter than the one that marks where the app is.
+pub const LIT_HOVER: f32 = 0.5;
 
 /// How far a pressed control shrinks.
 pub const PRESS_SCALE: f32 = 0.96;
@@ -31,6 +38,8 @@ const PRESS_LANDED: f32 = 0.85;
 /// The longest step a stepped spring takes in one frame, so a frame that comes late after a
 /// stall resumes the motion rather than jumping to its end.
 const STEP_STALL: Duration = Duration::from_millis(64);
+
+type Hover = Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>;
 
 /// Shared physical-motion presets. Call sites still own their stopping threshold and maximum
 /// timestep because those values depend on whether the spring moves pixels, opacity, or scale.
@@ -206,6 +215,12 @@ impl Saver {
 /// Stretches or shortens `span` by the chosen pace, for motion that sets its own length.
 pub fn paced(span: Duration) -> Duration {
     span.mul_f32(pace().scale())
+}
+
+/// How long a hover highlight takes to fade out, at the listener's pace. A view that fades a
+/// hover of its own reads the span here, so every hover goes out alike.
+pub fn dim_span() -> Duration {
+    paced(DIM)
 }
 
 pub fn entrance_span() -> Duration {
@@ -525,6 +540,229 @@ impl HoverFade {
             false => (self.from - travelled).max(target),
         }
     }
+}
+
+/// A highlight that comes on at once and fades out. It stands at 1 while the pointer or its
+/// owner lights the element and eases to 0 over `DIM` once both let go. [`glowing`] keeps one
+/// for an element, and an element with a hover listener of its own feeds one from
+/// [`Glow::keyed`].
+#[derive(Default)]
+pub struct Glow {
+    hovered: bool,
+    /// The level the last read showed while something lit the element, 0 once nothing did.
+    lit: f32,
+    /// When the light went off and the level it fades from, while the fade still runs.
+    dimming: Option<(Instant, f32)>,
+}
+
+impl Glow {
+    /// The glow kept for the element `id`, which has to be stable across frames and unique
+    /// within the view.
+    pub fn keyed(id: &ElementId, window: &mut Window, cx: &mut App) -> Entity<Self> {
+        let key = ElementId::NamedChild(Arc::new(id.clone()), "glow".into());
+        window.use_keyed_state(key, cx, |_, _| Self::default())
+    }
+
+    /// Tells the glow whether the pointer is over its element.
+    pub fn hover(&mut self, hovered: bool) {
+        self.hovered = hovered;
+    }
+
+    /// How lit the element is, from 0 to 1, counting it lit while `on` as well as under the
+    /// pointer. It asks for the next frame while the fade runs and goes dark at once under
+    /// reduced motion.
+    pub fn level(&mut self, on: bool, window: &Window, cx: &App) -> f32 {
+        self.peaked(on, 1., window, cx)
+    }
+
+    /// The same as [`level`](Self::level), with the pointer alone bringing the element up to
+    /// `hover` rather than all the way, for a row whose full light marks the current one.
+    pub fn peaked(&mut self, on: bool, hover: f32, window: &Window, cx: &App) -> f32 {
+        let peak = match (on, self.hovered) {
+            (true, _) => 1.,
+            (false, true) => hover,
+            (false, false) => 0.,
+        };
+        if peak > 0. {
+            self.lit = peak;
+            self.dimming = None;
+            return peak;
+        }
+        let from = std::mem::take(&mut self.lit);
+        if from > 0. && !cx.reduce_motion() {
+            self.dimming = Some((Instant::now(), from));
+        }
+        let Some((since, from)) = self.dimming else {
+            return 0.;
+        };
+        let passed = since.elapsed().as_secs_f32() / dim_span().as_secs_f32().max(f32::EPSILON);
+        if passed >= 1. {
+            self.dimming = None;
+            return 0.;
+        }
+        window.request_animation_frame();
+        from * (1. - ease_out_quad(passed))
+    }
+}
+
+/// Follows the pointer over `element` and answers how lit it is, as [`Glow::peaked`] counts it
+/// with `on` and `hover`. The caller paints the highlight from that level. `id` keys the glow, so keep it
+/// stable across frames and unique within the view. The element takes no other `on_hover`.
+pub fn glowing<E: StatefulInteractiveElement>(
+    element: E,
+    id: &ElementId,
+    on: bool,
+    hover: f32,
+    window: &mut Window,
+    cx: &mut App,
+) -> (E, f32) {
+    let glow = Glow::keyed(id, window, cx);
+    let level = glow.update(cx, |glow, cx| glow.peaked(on, hover, window, cx));
+    (hearing(element, glow, None), level)
+}
+
+/// The colour a highlight shows at `level`, on its way from `rest` to `fill`. `None` means the
+/// element keeps what it has. A highlight over nothing fades by its own opacity.
+pub fn glow_fill(rest: Option<Hsla>, fill: Hsla, level: f32) -> Option<Hsla> {
+    if level <= 0. {
+        return None;
+    }
+    Some(match rest.filter(|rest| rest.a > 0.) {
+        Some(rest) => mix(rest, fill, level),
+        None => fill.opacity(level),
+    })
+}
+
+/// The solid colour `style` fills its element with, if it sets one.
+pub(crate) fn solid_fill(style: &StyleRefinement) -> Option<Hsla> {
+    style.background.as_ref()?.color()?.as_solid()
+}
+
+/// Hover highlights that fade out, in place of `hover`. Each needs an element with an id that
+/// is unique within the view, and leaves it no `on_hover` for anything else.
+pub trait Glowing: StatefulInteractiveElement + Styled + Sized {
+    /// Fills the element with `fill` under the pointer at once, and lets the fill fade back to
+    /// the element's own background once the pointer leaves. Call it after `bg`.
+    fn glow(self, fill: Hsla, window: &mut Window, cx: &mut App) -> Self {
+        Light::Fill(fill).shine(self, None, window, cx)
+    }
+
+    /// Turns the element's text from `rest` to `fill` under the pointer at once, and fades it
+    /// back once the pointer leaves.
+    fn glow_text(self, rest: Hsla, fill: Hsla, window: &mut Window, cx: &mut App) -> Self {
+        Light::Text(rest, fill).shine(self, None, window, cx)
+    }
+
+    /// The same as [`glow`](Self::glow) where no window is at hand. It wraps the element, so
+    /// it is the last call on it.
+    fn glowed(self, fill: Hsla) -> Glowed<Self>
+    where
+        Self: IntoElement + 'static,
+    {
+        Glowed {
+            element: self,
+            light: Light::Fill(fill),
+            heard: None,
+        }
+    }
+
+    /// The same as [`glow_text`](Self::glow_text) where no window is at hand. It wraps the
+    /// element, so it is the last call on it.
+    fn glowed_text(self, rest: Hsla, fill: Hsla) -> Glowed<Self>
+    where
+        Self: IntoElement + 'static,
+    {
+        Glowed {
+            element: self,
+            light: Light::Text(rest, fill),
+            heard: None,
+        }
+    }
+}
+
+impl<E: StatefulInteractiveElement + Styled> Glowing for E {}
+
+/// An element that lights up under the pointer once it renders, from [`Glowing::glowed`].
+#[derive(IntoElement)]
+pub struct Glowed<E: StatefulInteractiveElement + Styled + IntoElement + 'static> {
+    element: E,
+    light: Light,
+    heard: Option<Hover>,
+}
+
+impl<E: StatefulInteractiveElement + Styled + IntoElement + 'static> Glowed<E> {
+    /// Tells `listener` as the pointer comes and goes, since the glow holds the element's own
+    /// `on_hover`.
+    pub fn on_hover(mut self, listener: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        self.heard = Some(Box::new(listener));
+        self
+    }
+}
+
+impl<E: StatefulInteractiveElement + Styled + IntoElement + 'static> RenderOnce for Glowed<E> {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        self.light.shine(self.element, self.heard, window, cx)
+    }
+}
+
+/// What a glow changes on its element.
+#[derive(Clone, Copy)]
+enum Light {
+    /// The background, on its way to this fill.
+    Fill(Hsla),
+    /// The text, from its colour at rest to the lit one.
+    Text(Hsla, Hsla),
+}
+
+impl Light {
+    /// Paints `element` as lit as the pointer leaves it, and passes hover on to `heard`. An
+    /// element with no id has nothing to key a fade by, so it hovers the plain way.
+    fn shine<E: StatefulInteractiveElement + Styled>(
+        self,
+        mut element: E,
+        heard: Option<Hover>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> E {
+        let Some(id) = element.interactivity().element_id.clone() else {
+            return match self {
+                Self::Fill(fill) => element.hover(move |style| style.bg(fill)),
+                Self::Text(rest, fill) => element
+                    .text_color(rest)
+                    .hover(move |style| style.text_color(fill)),
+            };
+        };
+        let glow = Glow::keyed(&id, window, cx);
+        let level = glow.update(cx, |glow, cx| glow.level(false, window, cx));
+        let rest = solid_fill(element.style());
+        let element = hearing(element, glow, heard);
+        match self {
+            Self::Fill(fill) => match glow_fill(rest, fill, level) {
+                Some(color) => element.bg(color),
+                None => element,
+            },
+            Self::Text(rest, fill) => element.text_color(mix(rest, fill, level)),
+        }
+    }
+}
+
+/// Feeds `glow` from the pointer over `element`, and tells `heard` the same.
+fn hearing<E: StatefulInteractiveElement>(
+    element: E,
+    glow: Entity<Glow>,
+    heard: Option<Hover>,
+) -> E {
+    element
+        .hover_listener_mode(HoverListenerMode::InputModalityIndependent)
+        .on_hover(move |hovered, window, cx| {
+            glow.update(cx, |glow, cx| {
+                glow.hover(*hovered);
+                cx.notify();
+            });
+            if let Some(heard) = heard.as_ref() {
+                heard(hovered, window, cx);
+            }
+        })
 }
 
 /// A spring an element keeps across frames and steps each time it draws, for motion on an

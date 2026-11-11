@@ -3,7 +3,7 @@ use gpui::{AnyElement, App, Context, MouseButton, Pixels, SharedString, div, px,
 use i18n::t;
 use router::{Destination, navigate};
 use state::Outputs;
-use ui::{ActiveTheme as _, Button, Picker, Switch, Text};
+use ui::{ActiveTheme as _, Button, Glowing as _, Picker, Switch, Text};
 
 use super::{Group, Row, SettingsView, Slot};
 use crate::shared::equalizer::sound_picker;
@@ -239,7 +239,6 @@ impl SettingsView {
             .px_3()
             .rounded(theme.radius)
             .cursor_pointer()
-            .hover(|style| style.bg(theme.secondary_hover))
             .on_click(|_, _, cx| navigate(Destination::Equalizer, cx))
             .when_some(note.clone(), |row, note| row.py_2().aria_description(note))
             .child(
@@ -285,6 +284,7 @@ impl SettingsView {
                     .flex_none()
                     .text_color(theme.muted_foreground),
             )
+            .glowed(theme.secondary_hover)
             .into_any_element()
     }
 }

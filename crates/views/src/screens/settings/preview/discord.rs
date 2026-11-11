@@ -15,6 +15,7 @@ use gpui::{
 use i18n::t;
 use state::DiscordName;
 use ui::ActiveTheme as _;
+use ui::Glowing as _;
 use ui::{Artwork, tabular};
 
 use super::Tick;
@@ -248,11 +249,11 @@ pub(in crate::screens::settings) fn preview(
                         .justify_center()
                         .rounded(BUTTON_RADIUS)
                         .bg(rgb(BUTTON))
-                        .hover(|style| style.bg(rgb(BUTTON_HOVER)))
                         .text_size(BUTTON_SIZE)
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(rgb(BUTTON_TEXT))
                         .child(label)
+                        .glowed(rgb(BUTTON_HOVER).into())
                 }),
             ))
         });

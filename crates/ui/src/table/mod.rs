@@ -20,6 +20,7 @@ use crate::filters::FilterChange;
 use crate::glass::{bar_surface, blurring, popover_surface};
 use crate::menu::{Menu, MenuItem};
 use crate::metrics::{snapped, text_width};
+use crate::motion::Glowing as _;
 use crate::pin::{Pin, Pinnable};
 use crate::popup::Popup;
 use crate::skeleton::Skeleton;
@@ -1042,7 +1043,13 @@ impl<S: TableSource> TableState<S> {
         cx.notify();
     }
 
-    fn header(&self, head: Pixels, top: Corners<Pixels>, cx: &mut Context<Self>) -> Div {
+    fn header(
+        &self,
+        head: Pixels,
+        top: Corners<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let theme = *cx.theme();
         let table = cx.entity().downgrade();
         let last = self.delegate.columns.len().saturating_sub(1);
@@ -1152,7 +1159,12 @@ impl<S: TableSource> TableState<S> {
                         .when(dragged, |this| this.bg(theme.table_active))
                         .when(sortable, |this| {
                             this.cursor_pointer()
-                                .hover(move |style| style.text_color(theme.foreground))
+                                .glow_text(
+                                    theme.table_head_foreground,
+                                    theme.foreground,
+                                    window,
+                                    cx,
+                                )
                                 .on_mouse_up(
                                     MouseButton::Left,
                                     cx.listener(move |this, _: &MouseUpEvent, _, cx| {
@@ -1225,7 +1237,13 @@ impl<S: TableSource> TableState<S> {
             })
     }
 
-    fn rows(&self, head: Pixels, row_height: Pixels, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn rows(
+        &self,
+        head: Pixels,
+        row_height: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         let theme = *cx.theme();
         let count = self.delegate.order.len();
         let first = self.viewport.first(head, row_height);
@@ -1285,9 +1303,7 @@ impl<S: TableSource> TableState<S> {
                     })
                     .when(playing, |this| this.bg(theme.muted))
                     .when(selected, |this| this.bg(theme.table_active))
-                    .when(!selected, |this| {
-                        this.hover(move |style| style.bg(theme.table_hover))
-                    })
+                    .when(!selected, |this| this.glow(theme.table_hover, window, cx))
                     .when_some(self.delegate.source.pin(row, cx), Pinnable::pin)
                     .when_some(self.delegate.source.tip(row, cx), |this, text| {
                         this.tip_label(text, Perch::Follow)
@@ -1532,7 +1548,7 @@ impl<S: TableSource> Render for TableState<S> {
                             .right_0()
                             .h(height)
                             .children(match placeholders {
-                                0 => self.rows(head, row, cx),
+                                0 => self.rows(head, row, window, cx),
                                 count => self.skeletons(head, row, count, cx),
                             }),
                     ),
@@ -1547,7 +1563,7 @@ impl<S: TableSource> Render for TableState<S> {
                     .when_some(backdrop, |this, backdrop| this.bg(backdrop))
                     .rounded_tl(top.top_left)
                     .rounded_tr(top.top_right)
-                    .child(self.header(head, top, cx)),
+                    .child(self.header(head, top, window, cx)),
             )
             .when_some(context_menu, |this, menu| this.child(menu))
             .when_some(column_menu, |this, menu| this.child(menu))
