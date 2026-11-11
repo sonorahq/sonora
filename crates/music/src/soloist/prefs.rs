@@ -35,7 +35,14 @@ pub(crate) fn write(data: &Path, normalise: bool, gapless: bool, quality: Qualit
     let managed = |key: &str| key == CROSSFADE_TIME || ours.iter().any(|(ours, _)| *ours == key);
 
     for store in stores(data) {
-        let kept = std::fs::read_to_string(&store).unwrap_or_default();
+        // a store that is there and cannot be read is left alone, with what the program keeps in it
+        let kept = match std::fs::read_to_string(&store) {
+            Ok(kept) => kept,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => {
+                return Err(error).with_context(|| format!("cannot read {}", store.display()));
+            }
+        };
         let mut lines: Vec<String> = kept
             .lines()
             .filter(|line| !managed(line.split('=').next().unwrap_or_default()))

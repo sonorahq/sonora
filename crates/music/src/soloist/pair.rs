@@ -7,6 +7,7 @@
 
 use std::ffi::OsStr;
 use std::path::Path;
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use tokio::process::Child;
@@ -14,13 +15,18 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot;
 
 use super::daemon::{RUNNING, follow, launch, stop};
-use super::{binary, data, enable, keep_key, paired_in, pairing, recheck};
+use super::{binary, data, enable, home, keep_key, paired_in, pairing, recheck};
 
 /// How long the listener gets to pick the device before pairing gives up.
 const PATIENCE: Duration = Duration::from_secs(10 * 60);
 
 /// How long a program that is still playing gets to let go of the data folder.
 const BUSY: Duration = Duration::from_secs(5);
+
+/// Held while the pairing folder is emptied or takes the place of the data folder. Both run as
+/// blocking work that outlives a pairing the listener gives up, so the lock that covers the
+/// pairing itself cannot keep them apart.
+static ADOPTING: Mutex<()> = Mutex::new(());
 
 /// What the program prints when Spotify turns its sign-in down, which the key decides.
 const REFUSED: &str = "login failed";
@@ -65,7 +71,7 @@ pub async fn pair(
         .await
         .map_err(|_| Trouble::Failed("soloist is still playing".to_owned()))?;
 
-    blocking(|| fresh(&pairing())).await??;
+    blocking(fresh).await??;
     let flags = ["--pair", "--verbose"].map(OsStr::new);
     let mut child = launch(&key, &pairing(), &flags).map_err(failed)?;
     let mut lines = follow(&mut child, &key);
@@ -99,12 +105,7 @@ pub async fn pair(
         log::warn!("soloist: paired with another account than the one signed in");
         return Err(Trouble::Account(paired));
     }
-    // a setup the listener just went through is one they want on
-    blocking(move || {
-        adopt()?;
-        keep_key(&key).and_then(|()| enable(true)).map_err(failed)
-    })
-    .await??;
+    blocking(move || adopt(&key)).await??;
     recheck();
     log::info!("soloist: paired");
     Ok(())
@@ -152,28 +153,47 @@ fn port_in(line: &str) -> Option<u16> {
     rest.split_whitespace().next()?.parse().ok()
 }
 
-/// Empties `folder`, so the program starts in it with no sign-in and a new device identity,
-/// and leaves it readable by the owner alone.
-fn fresh(folder: &Path) -> Result<(), Trouble> {
-    match std::fs::remove_dir_all(folder) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(failed(error)),
-    }
-    std::fs::create_dir_all(folder).map_err(failed)?;
-    private(folder).map_err(failed)
+/// Empties the pairing folder, so the program starts in it with no sign-in and a new device
+/// identity, and leaves it readable by the owner alone. It waits for an adoption still under
+/// way, which a pairing given up at its last moment leaves running.
+fn fresh() -> Result<(), Trouble> {
+    let _held = ADOPTING.lock().unwrap_or_else(PoisonError::into_inner);
+    let folder = pairing();
+    clear(&folder)?;
+    std::fs::create_dir_all(&folder).map_err(failed)?;
+    private(&folder).map_err(failed)
 }
 
-/// Puts the pairing just made in the place of the one before it. Nothing runs on either folder
-/// while this is called, since the caller holds `RUNNING`.
-fn adopt() -> Result<(), Trouble> {
-    let data = data();
-    match std::fs::remove_dir_all(&data) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+/// Puts the pairing just made in the place of the one before it and stores `key`. The old
+/// pairing is moved aside first and put back if the new one cannot take its place, so the
+/// listener is never left with neither.
+fn adopt(key: &str) -> Result<(), Trouble> {
+    let _held = ADOPTING.lock().unwrap_or_else(PoisonError::into_inner);
+    let (data, aside) = (data(), home().join("replaced"));
+    clear(&aside)?;
+    let had = match std::fs::rename(&data, &aside) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
         Err(error) => return Err(failed(error)),
+    };
+    if let Err(error) = std::fs::rename(pairing(), &data) {
+        if had {
+            std::fs::rename(&aside, &data).ok();
+        }
+        return Err(failed(error));
     }
-    std::fs::rename(pairing(), &data).map_err(failed)
+    std::fs::remove_dir_all(&aside).ok();
+    // a setup the listener just went through is one they want on
+    keep_key(key).and_then(|()| enable(true)).map_err(failed)
+}
+
+/// Removes a folder, which may not be there.
+fn clear(folder: &Path) -> Result<(), Trouble> {
+    match std::fs::remove_dir_all(folder) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(failed(error)),
+    }
 }
 
 #[cfg(unix)]
