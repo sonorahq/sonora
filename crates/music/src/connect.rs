@@ -156,9 +156,9 @@ pub enum Command {
     },
     /// Plays a collection or a track list, from this app's side only.
     Start(Start),
-    /// Replaces the remote queue around the current track without restarting playback.
+    /// Replaces what plays after the current track without restarting playback. History is not
+    /// part of an edit.
     SetQueue {
-        previous: Vec<QueuedTrack>,
         upcoming: Vec<QueuedTrack>,
     },
     /// Another device took playback over, so this app has to let go of it.
