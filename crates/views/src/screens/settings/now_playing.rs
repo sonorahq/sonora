@@ -1,8 +1,10 @@
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Context, Pixels, Window, div, px, svg};
 use i18n::t;
-use state::FullscreenControlsAutohide;
-use ui::{ActiveTheme as _, Levels, OptionCard, Switch, Visualizer, VisualizerStyle};
+use state::{FullscreenControlsAutohide, SideTab};
+use ui::{
+    ActiveTheme as _, Levels, MenuItem, OptionCard, Picker, Switch, Visualizer, VisualizerStyle,
+};
 
 use super::rows::{Announced as _, grid, segmented};
 use super::{Group, Row, SettingsView, Slot};
@@ -13,6 +15,21 @@ const GLYPH: Pixels = px(18.);
 const SPECTRUM: f32 = 0.8;
 /// How thick a card's border is, which the spectrum sits inside.
 const EDGE: Pixels = px(1.);
+/// The views of the fullscreen player the visualizer can be drawn in, with the id each one's
+/// menu item goes by and the key of its name. `None` is the cover alone.
+const SCREENS: [(Option<SideTab>, &str, &str); 3] = [
+    (None, "visualizer-screen-cover", "fullscreen-artwork"),
+    (
+        Some(SideTab::Lyrics),
+        "visualizer-screen-lyrics",
+        "lyrics-title",
+    ),
+    (
+        Some(SideTab::Queue),
+        "visualizer-screen-queue",
+        "queue-title",
+    ),
+];
 /// The band levels a visualizer card draws, a spectrum caught at one moment.
 const STILL: [f32; 16] = [
     0.42, 0.66, 0.84, 0.7, 0.5, 0.58, 0.76, 0.6, 0.44, 0.52, 0.64, 0.46, 0.34, 0.4, 0.28, 0.22,
@@ -30,7 +47,9 @@ impl SettingsView {
                     settings
                         .visualizer_style()
                         .shown()
-                        .then_some(Slot::VisualizerAbsolute),
+                        .then_some([Slot::VisualizerScreens, Slot::VisualizerAbsolute])
+                        .into_iter()
+                        .flatten(),
                 ),
             Group::new("settings-group-controls", "icons/sliders-horizontal.svg")
                 .rows([Slot::FullscreenControlsAutohide, Slot::OsFullscreen]),
@@ -129,6 +148,37 @@ impl SettingsView {
                     }),
             )
             .into_any_element()
+    }
+
+    /// Which views of the fullscreen player draw the visualizer. The menu stays open so several
+    /// can be flipped in a row.
+    pub(super) fn visualizer_screens_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let screens = self.settings.read(cx).visualizer_screens();
+        let picker = Picker::new(
+            "visualizer-screens",
+            &self.popovers,
+            t!("settings-visualizer-screens-pick"),
+        )
+        .width(Picker::NARROW)
+        .sticky()
+        .items(SCREENS.map(|(panel, id, name)| {
+            let shown = screens.contains(panel);
+            MenuItem::new(id, i18n::lookup(name, None))
+                .selected(shown)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_visualizer_screen(panel, !shown, cx);
+                    });
+                    cx.notify();
+                }))
+        }));
+
+        self.row(
+            t!("settings-visualizer-screens"),
+            picker
+                .name(t!("settings-visualizer-screens"))
+                .into_any_element(),
+        )
     }
 
     pub(super) fn visualizer_absolute_row(&self, cx: &mut Context<Self>) -> AnyElement {

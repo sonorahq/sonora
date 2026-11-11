@@ -79,6 +79,7 @@ enum Slot {
     Ambient,
     AmbientMotion,
     Visualizer,
+    VisualizerScreens,
     VisualizerAbsolute,
     PlayerBarLayout,
     PlayerBarTransparent,
@@ -731,6 +732,10 @@ impl SettingsView {
                 t!("settings-player-bar-transparent"),
                 t!("settings-player-bar-transparent-detail"),
             ),
+            Slot::VisualizerScreens => (
+                t!("settings-visualizer-screens"),
+                t!("settings-visualizer-screens-detail"),
+            ),
             Slot::VisualizerAbsolute => (
                 t!("settings-visualizer-absolute"),
                 t!("settings-visualizer-absolute-detail"),
@@ -957,6 +962,7 @@ impl SettingsView {
             Slot::Visualizer => div().into_any_element(),
             Slot::PlayerBarLayout => div().into_any_element(),
             Slot::PlayerBarTransparent => self.player_bar_transparent_row(cx),
+            Slot::VisualizerScreens => self.visualizer_screens_row(cx),
             Slot::VisualizerAbsolute => self.visualizer_absolute_row(cx),
             Slot::Opacity => self.opacity_row(cx),
             Slot::WindowBlur => self.blur_window_row(cx),
