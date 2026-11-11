@@ -344,6 +344,8 @@ impl SettingsView {
             .detach();
         let chrome = Chrome::entity(cx);
         cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
+        cx.observe_global::<ui::WindowBlur>(|this, cx| this.remeasure(cx))
+            .detach();
         let me = cx.entity_id();
         let focus = cx.focus_handle();
         let languages = SearchPopup::new("settings-language-search", me, focus.clone(), cx);
@@ -545,7 +547,7 @@ impl SettingsView {
     fn groups(&self, page: SettingsPage, cx: &App) -> Vec<Group> {
         match page {
             SettingsPage::Providers => self.accounts_groups(),
-            SettingsPage::Appearance => self.appearance_groups(),
+            SettingsPage::Appearance => self.appearance_groups(cx),
             SettingsPage::PlayerBar => self.player_bar_groups(),
             SettingsPage::NowPlaying => self.now_playing_groups(cx),
             SettingsPage::Lyrics => self.lyrics_groups(cx),

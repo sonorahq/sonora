@@ -311,8 +311,10 @@ impl Root {
             .detach();
         update_focus_for_wake(window, cx);
 
+        ui::WindowBlur::update(window, cx);
         window
-            .observe_window_appearance(|_, cx| {
+            .observe_window_appearance(|window, cx| {
+                ui::WindowBlur::update(window, cx);
                 let settings = Sonora::global(cx).settings.clone();
                 let reported = ThemeKind::reported(cx);
                 let changed = ThemeKind::assumed() != Some(reported);
@@ -1191,6 +1193,8 @@ impl Render for Root {
         // background quad correct and costs nothing.
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let radius = crate::chrome::window_radius(Sonora::global(cx).settings.read(cx), cx, window);
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        window.set_window_corner_radius(radius.unwrap_or_default());
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<gpui::Pixels> = None;
 
