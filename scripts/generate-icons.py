@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import json
 import math
 import re
 import shutil
@@ -37,6 +38,9 @@ SQUIRCLE_SMOOTHING = 0.6
 WINDOWS_RADIUS = 0.1875
 
 OPTICAL_STROKE = [(16, 4.0), (24, 3.2), (32, 2.8), (48, 2.3)]
+
+ICON_CANVAS = 1024
+NAMED_COLORS = {"white": "#ffffff", "black": "#000000"}
 
 
 class Master:
@@ -205,6 +209,94 @@ def rounded_svg(master, pixels):
     )
 
 
+def layer_svg(master):
+    """Draws the bars alone on the Icon Composer canvas, leaving the background to icon.json."""
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{ICON_CANVAS}"'
+        f' height="{ICON_CANVAS}" viewBox="0 0 {master.span:g} {master.span:g}">\n'
+        f"{master.glyph(master.stroke)}\n"
+        f"</svg>\n"
+    )
+
+
+def srgb(color):
+    """Converts a master color to the opaque sRGB string icon.json expects."""
+    hex_color = NAMED_COLORS.get(color, color).lstrip("#")
+    if not re.fullmatch(r"[0-9a-fA-F]{6}", hex_color):
+        sys.exit(f"icons: unsupported color {color!r}")
+    channels = ",".join(
+        f"{int(hex_color[i:i + 2], 16) / 255:.5f}" for i in (0, 2, 4)
+    )
+    return f"srgb:{channels},1.00000"
+
+
+def write_icon_bundle(master, path):
+    """Writes the Icon Composer bundle macOS 26 derives its dark, clear and tinted icons from.
+
+    Returns whether anything changed, since actool never compiles the same Assets.car twice.
+    """
+    background = {"solid": srgb(master.background)}
+    # actool swaps any dark background for its own system-dark, so only the glyph varies.
+    manifest = {
+        "fill": background,
+        "groups": [
+            {
+                "layers": [
+                    {
+                        "image-name": "glyph.svg",
+                        "name": "glyph",
+                        # Clear and tinted both draw the "tinted" variant, lit by luminance.
+                        "fill-specializations": [
+                            {"appearance": appearance, "value": background}
+                            for appearance in ("dark", "tinted")
+                        ],
+                    }
+                ],
+                "shadow": {"kind": "neutral", "opacity": 0.5},
+                "translucency": {"enabled": True, "value": 0.5},
+            }
+        ],
+        "supported-platforms": {"squares": ["macOS"]},
+    }
+    files = {
+        path / "icon.json": json.dumps(manifest, indent=2) + "\n",
+        path / "Assets" / "glyph.svg": layer_svg(master),
+    }
+    if all(
+        file.exists() and file.read_text(encoding="utf-8") == text
+        for file, text in files.items()
+    ):
+        return False
+
+    shutil.rmtree(path, ignore_errors=True)
+    (path / "Assets").mkdir(parents=True)
+    for file, text in files.items():
+        file.write_text(text, encoding="utf-8")
+    return True
+
+
+def compile_icon_bundle(bundle, workdir, target):
+    """Compiles the bundle with actool, which needs macOS and Xcode 26 or later."""
+    out = workdir / "actool"
+    out.mkdir()
+    subprocess.run(
+        [
+            "xcrun", "actool", str(bundle),
+            "--compile", str(out),
+            "--app-icon", bundle.stem,
+            "--include-all-app-icons",
+            "--platform", "macosx",
+            "--minimum-deployment-target", "11.0",
+            "--output-partial-info-plist", str(out / "partial.plist"),
+            "--errors", "--warnings",
+            "--output-format", "human-readable-text",
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    shutil.copyfile(out / "Assets.car", target)
+
+
 def rasterize(svg_text, pixels, workdir, name):
     """Renders directly from vector artwork onto a transparent pixel canvas."""
     source = workdir / f"{name}.svg"
@@ -321,9 +413,20 @@ def main():
         for obsolete in ["template-32.png", "template-64.png", "sonora.png"]:
             (tray / obsolete).unlink(missing_ok=True)
 
+        # Last, so an actool failure leaves every other icon already written.
+        bundle = assets / "macos" / "sonora.icon"
+        car = assets / "macos" / "Assets.car"
+        compiled = False
+        if sys.platform != "darwin":
+            print("icons: actool needs macOS, sonora.icon and Assets.car left as they were")
+        elif write_icon_bundle(master, bundle) or not car.exists():
+            compile_icon_bundle(bundle, workdir, car)
+            compiled = True
+
     print(
         f"icons: {len(LINUX_SIZES)} linux png, 1 linux svg, 1 icns, 1 ico,"
         f" {len(TRAY_SIZES)} tray png, 1 readme svg, 1 macos svg, 1 windows svg"
+        f"{', 1 icon bundle, 1 car' if compiled else ''}"
     )
 
 
