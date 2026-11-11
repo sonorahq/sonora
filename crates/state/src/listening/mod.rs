@@ -838,11 +838,18 @@ impl Listening {
         }
     }
 
+    /// Compares playback here with the session's every `CHECK`. A state held back for the track
+    /// here to play out is tried again first, so a track that stalled and stopped notifying
+    /// cannot hold it past `LATE`.
     fn check_every(&self, cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(CHECK).await;
-                if this.update(cx, |this, cx| this.realign(DRIFT, cx)).is_err() {
+                let alive = this.update(cx, |this, cx| match this.waiting.is_some() {
+                    true => this.catch_up(cx),
+                    false => this.realign(DRIFT, cx),
+                });
+                if alive.is_err() {
                     break;
                 }
             }
