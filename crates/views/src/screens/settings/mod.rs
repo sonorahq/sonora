@@ -128,6 +128,7 @@ enum Slot {
     DiscordAnonymous,
     DiscordHideOnConnect,
     DiscordButtons,
+    DiscordServerArtwork,
     ArtworkForLocal,
     Scrobble(usize),
     Startup,
@@ -936,6 +937,10 @@ impl SettingsView {
                 t!("settings-discord-buttons"),
                 t!("settings-discord-buttons-detail"),
             ),
+            Slot::DiscordServerArtwork => (
+                t!("settings-discord-server-artwork"),
+                t!("settings-discord-server-artwork-detail"),
+            ),
             Slot::Scrobble(index) => self.scrobble_meta(index, cx)?,
             Slot::Version => (t!("settings-version"), t!("settings-version-detail")),
             Slot::Updates => (
@@ -1044,6 +1049,7 @@ impl SettingsView {
             Slot::DiscordAnonymous => self.discord_anonymous_row(cx),
             Slot::DiscordHideOnConnect => self.discord_hide_on_connect_row(cx),
             Slot::DiscordButtons => self.discord_buttons_row(cx),
+            Slot::DiscordServerArtwork => self.discord_server_artwork_row(cx),
             Slot::Scrobble(index) => match index < self.scrobbling.read(cx).rows().len() {
                 true => self.scrobble_row(index, cx),
                 false => div().into_any_element(),

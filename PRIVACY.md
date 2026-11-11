@@ -39,6 +39,8 @@ Opening a spotify.link or Deezer short link (link.deezer.com, deezer.page.link o
 
 Discord rich presence is off by default. When it is turned on and Discord is running on the same computer, Sonora sends Discord the title, artist and album of the playing track, a link to its cover, and when it started. Discord shows this on the user's profile. By default the status also carries a button linking to the track on its provider. The settings can hide the track details, so the status only says that music is playing.
 
+For Navidrome, Sonora can send Discord a signed link to the server's album cover. This reveals the server's address and lets Discord fetch that image, without sharing account credentials. Private server addresses use Deezer automatically. Turn off Use server artwork in Discord settings to search Deezer for a public-looking address that Discord cannot reach.
+
 When the track's provider has no public cover, or the track is a local file, Sonora searches Deezer's public catalog for one by the track's artist and album, or its title when it has no album, and sends that cover to Discord instead. For local files this search can be turned off in the settings.
 
 ## Scrobbling

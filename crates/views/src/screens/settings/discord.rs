@@ -4,7 +4,7 @@ use i18n::t;
 use state::{DiscordName, Sonora};
 use ui::{Button, MenuItem, Picker, Switch, TabBar};
 
-use super::{Group, SettingsView, Slot};
+use super::{Group, Row, SettingsView, Slot};
 
 const DISCORD_NAME: &str = "discord-name";
 
@@ -24,6 +24,7 @@ impl SettingsView {
                         Slot::DiscordName,
                         Slot::DiscordShowPaused,
                         Slot::DiscordBadge,
+                        Slot::DiscordServerArtwork,
                         Slot::DiscordAnonymous,
                     ])
                     .rows(connect.then_some(Slot::DiscordHideOnConnect)),
@@ -108,6 +109,31 @@ impl SettingsView {
                 }))
                 .into_any_element(),
         )
+    }
+
+    /// Lets a listener use Deezer when Discord cannot reach their music server.
+    pub(super) fn discord_server_artwork_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).discord_server_artwork();
+        let disabled = !self
+            .session
+            .read(cx)
+            .client()
+            .is_some_and(|client| client.can_share_album_artwork());
+
+        Row::new(
+            t!("settings-discord-server-artwork"),
+            Switch::new("discord-server-artwork", on && !disabled)
+                .name(t!("settings-discord-server-artwork"))
+                .disabled(disabled)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_discord_server_artwork(!on, cx)
+                    });
+                }))
+                .into_any_element(),
+        )
+        .disabled(disabled)
+        .into_any_element()
     }
 
     pub(super) fn artwork_for_local_files_row(&self, cx: &mut Context<Self>) -> AnyElement {

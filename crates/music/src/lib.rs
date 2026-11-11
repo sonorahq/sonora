@@ -128,6 +128,12 @@ pub trait MusicApi: Send + Sync {
         None
     }
 
+    /// Whether this client can offer album artwork at a potentially public address.
+    /// This excludes private server URLs but cannot guarantee another service can reach it.
+    fn can_share_album_artwork(&self) -> bool {
+        false
+    }
+
     /// An album cover that another service can fetch without account credentials.
     /// Returns `None` when the provider cannot supply a public URL.
     async fn public_album_cover(&self, _album_id: &str) -> Result<Option<String>> {

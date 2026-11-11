@@ -224,7 +224,8 @@ impl Discord {
         let client = query
             .album
             .as_deref()
-            .and_then(|album| self.session.read(cx).client_of(Shelf::of(album)));
+            .and_then(|album| self.session.read(cx).client_of(Shelf::of(album)))
+            .filter(|client| client.can_share_album_artwork());
         let io = self.io.clone();
         self.lookup = Some(cx.spawn(async move |this, cx| {
             let wanted = query.clone();
@@ -362,7 +363,12 @@ impl Discord {
             return own;
         }
         let query = ArtworkRequest {
-            album: track.album_id.clone().filter(|id| !id.is_empty()),
+            album: self
+                .settings
+                .read(cx)
+                .discord_server_artwork()
+                .then(|| track.album_id.clone().filter(|id| !id.is_empty()))
+                .flatten(),
             query: ArtworkQuery::for_track(track),
         };
         if query.album.is_none() && query.query.is_none() {

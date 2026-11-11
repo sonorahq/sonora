@@ -428,6 +428,8 @@ struct Values {
     discord_hide_on_connect: bool,
     discord_sonora_button: bool,
     discord_provider_button: bool,
+    /// Whether Discord uses a server's public cover before looking up artwork on Deezer.
+    discord_server_artwork: bool,
     artwork_for_local_files: bool,
     lyrics_for_local_files: bool,
     /// The output device to play on, as a cpal device id, or `None` to follow the system's
@@ -654,6 +656,7 @@ impl Default for Values {
             discord_hide_on_connect: false,
             discord_sonora_button: true,
             discord_provider_button: true,
+            discord_server_artwork: true,
             artwork_for_local_files: true,
             lyrics_for_local_files: true,
             output_device: None,
@@ -1096,6 +1099,11 @@ impl AppSettings {
     /// Whether the Discord status carries a button that opens the track on its provider.
     pub fn discord_provider_button(&self) -> bool {
         self.values.discord_provider_button
+    }
+
+    /// Whether Discord asks the server for public artwork before searching Deezer.
+    pub fn discord_server_artwork(&self) -> bool {
+        self.values.discord_server_artwork
     }
 
     /// Whether a local file's artist and album may be sent to a public catalogue to find a cover
@@ -1724,6 +1732,12 @@ impl AppSettings {
 
     pub fn set_discord_provider_button(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.values.discord_provider_button = enabled;
+        self.schedule_save(cx);
+    }
+
+    /// Uses the server's public artwork when enabled, or Deezer when disabled.
+    pub fn set_discord_server_artwork(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.discord_server_artwork = enabled;
         self.schedule_save(cx);
     }
 

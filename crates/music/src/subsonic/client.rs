@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -356,7 +357,14 @@ impl SubsonicClient {
 
 #[async_trait]
 impl MusicApi for SubsonicClient {
+    fn can_share_album_artwork(&self) -> bool {
+        reqwest::Url::parse(&self.server).is_ok_and(|url| public_server_url(&url))
+    }
+
     async fn public_album_cover(&self, album_id: &str) -> Result<Option<String>> {
+        if !self.can_share_album_artwork() {
+            return Ok(None);
+        }
         let info = self
             .client
             .get_album_info2(album_id)
@@ -1305,15 +1313,71 @@ fn public_cover_url(raw: &str) -> Option<reqwest::Url> {
         && token
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
-    (url.scheme() == "https"
-        && url.username().is_empty()
-        && url.password().is_none()
+    (public_server_url(&url)
         && url.fragment().is_none()
         && signed
         && url
             .query_pairs()
             .all(|(key, _)| matches!(key.as_ref(), "size" | "square")))
     .then_some(url)
+}
+
+/// Rejects addresses that Discord cannot fetch outside the listener's local network.
+/// A public-looking hostname can still be private or blocked, so it remains a manual choice.
+fn public_server_url(url: &reqwest::Url) -> bool {
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
+        return false;
+    }
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim_end_matches('.');
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => {
+            let [a, b, _, _] = ip.octets();
+            !ip.is_private()
+                && !ip.is_loopback()
+                && !ip.is_link_local()
+                && !ip.is_documentation()
+                && !ip.is_multicast()
+                && a != 0
+                && a < 240
+                && !(a == 100 && (64..=127).contains(&b))
+                && !(a == 198 && (18..=19).contains(&b))
+        }
+        Ok(IpAddr::V6(ip)) => {
+            if let Some(ip) = ip.to_ipv4_mapped() {
+                let url = reqwest::Url::parse(&format!("https://{ip}"));
+                return url.is_ok_and(|url| public_server_url(&url));
+            }
+            !ip.is_loopback()
+                && !ip.is_unspecified()
+                && !ip.is_unique_local()
+                && !ip.is_unicast_link_local()
+                && !ip.is_multicast()
+                && !(ip.segments()[0] == 0x2001 && ip.segments()[1] == 0xdb8)
+        }
+        Err(_) => {
+            let host = host.to_ascii_lowercase();
+            host.contains('.')
+                && ![
+                    ".localhost",
+                    ".local",
+                    ".localdomain",
+                    ".lan",
+                    ".home",
+                    ".internal",
+                    ".test",
+                    ".invalid",
+                    ".arpa",
+                ]
+                .iter()
+                .any(|suffix| host.ends_with(suffix))
+        }
+    }
 }
 
 /// The major and minor numbers of a version such as `0.61.0` or `0.61.0 (a1b2c3)`.

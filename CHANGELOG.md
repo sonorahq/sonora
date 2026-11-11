@@ -39,6 +39,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - Discord shows Navidrome's own album covers, including compilations that Deezer cannot match.
+- Turn off Use server artwork in Discord settings to look up covers on Deezer for a private server.
+- Use server artwork stays unavailable when Subsonic is inactive or its address is private.
 - Closing lyrics or the queue during its entrance no longer flashes the panel at full opacity.
 - Dragging a card releases its pressed appearance, and play buttons keep their blur while cards or buttons are pressed.
 - Fullscreen controls hide reliably after the pointer leaves, and pressed controls release when the window loses focus.
