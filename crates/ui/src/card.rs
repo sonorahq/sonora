@@ -15,7 +15,9 @@ use crate::button::Button;
 use crate::glass::{GLASS_BLUR, blurring};
 use crate::label::{Tails as _, upper};
 use crate::metrics::{LEADING, Text, snapped};
-use crate::motion::{PRESS_SCALE, PRESS_SCALE_CARD, pressing};
+use crate::motion::{
+    LIT_HOVER, PRESS_SCALE, PRESS_SCALE_CARD, glow_fill, glowing, pressing, solid_fill,
+};
 use crate::skeleton::Skeleton;
 use crate::theme::ActiveTheme as _;
 use crate::tooltip::{Perch, Tipped as _};
@@ -62,6 +64,8 @@ pub struct Card {
     explicit: bool,
     fill: bool,
     hovered: Option<StyleRefinement>,
+    /// Whether the card is lit, and the fill it is lit with.
+    lit: Option<(bool, Hsla)>,
     press: Option<Press>,
     loading: bool,
     tile: Option<Pixels>,
@@ -105,6 +109,7 @@ impl Card {
             explicit: false,
             fill: true,
             hovered: None,
+            lit: None,
             press: None,
             loading: false,
             tile: None,
@@ -311,6 +316,14 @@ impl Card {
         self.chosen = chosen;
         self
     }
+
+    /// Fills the card with `color` while `lit`, for a row that marks where the app is. Under the
+    /// pointer alone the card takes `LIT_HOVER` of that fill. Either comes on at once and fades
+    /// out the way a hover does.
+    pub fn lit(mut self, lit: bool, color: Hsla) -> Self {
+        self.lit = Some((lit, color));
+        self
+    }
 }
 
 impl Styled for Card {
@@ -355,6 +368,7 @@ impl RenderOnce for Card {
             explicit,
             fill,
             hovered,
+            lit,
             press,
             loading,
             tile,
@@ -384,11 +398,22 @@ impl RenderOnce for Card {
         let art = art
             .or(tile)
             .unwrap_or_else(|| snapped(height - inset * 2., window));
-        let hovered = match (hovered, fill) {
+        let mut hovered = match (hovered, fill) {
             (Some(style), _) => Some(style),
             (None, true) => Some(StyleRefinement::default().bg(theme.table_hover)),
             (None, false) => None,
         };
+        // The hover's fill fades out, so the glow paints it and gpui applies only what is left
+        // of the hover style.
+        let hover_fill = hovered.as_mut().and_then(|style| {
+            let fill = solid_fill(style)?;
+            style.background = None;
+            Some(fill)
+        });
+        let glow_color = lit
+            .map(|(_, color)| color)
+            .or(hover_fill)
+            .filter(|_| !chosen);
         let overrides = std::mem::take(base.style());
 
         let leading = match loading {
@@ -723,6 +748,19 @@ impl RenderOnce for Card {
             false => card,
         };
         card.style().refine(&overrides);
-        card
+        let Some(fill) = glow_color else {
+            return card;
+        };
+        let rest = solid_fill(&overrides);
+        let hover = match lit {
+            Some(_) => LIT_HOVER,
+            None => 1.,
+        };
+        let lit = lit.is_some_and(|(lit, _)| lit);
+        let (card, level) = glowing(card, &id, lit, hover, window, cx);
+        match glow_fill(rest, fill, level) {
+            Some(color) => card.bg(color),
+            None => card,
+        }
     }
 }

@@ -20,6 +20,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Hover highlights fade out when the pointer leaves instead of cutting off.
+- The player bar keeps its playback buttons and seek bar centred as the window narrows: the volume slider shrinks first and folds into a button with a slider that rises on hover only when space runs out.
+- The left sidebar keeps its full width in narrower windows and folds to icons only when the page would get too cramped.
+- In a narrow window the fullscreen player lays out its controls like the player bar, so the fullscreen button stays where it was.
 - The album cover moves faster when opening and closing the fullscreen player.
 - Accounts Spotify refuses to play on are offered the Soloist setup at launch and from the playback key error.
 - Nightly updates reuse released executables after a stable release, so they become available sooner.

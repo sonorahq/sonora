@@ -10,6 +10,7 @@ use gpui::{
 };
 
 use crate::glide::Glide;
+use crate::motion::Glowing as _;
 use crate::theme::ActiveTheme as _;
 
 const BAR: Pixels = px(6.);
@@ -566,7 +567,7 @@ pub fn update_middle_scroll(position: Point<Pixels>, window: &mut Window, cx: &m
 }
 
 impl Render for Scrollbar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let target = self.target();
         let viewport = target.viewport();
         let hidden = self.maximum.unwrap_or_else(|| target.hidden());
@@ -687,7 +688,7 @@ impl Render for Scrollbar {
                     .h(thumb)
                     .rounded_full()
                     .bg(theme.muted_foreground.opacity(resting))
-                    .hover(move |style| style.bg(theme.muted_foreground.opacity(ACTIVE)))
+                    .glow(theme.muted_foreground.opacity(ACTIVE), window, cx)
                     .cursor_pointer()
                     .on_mouse_down(
                         MouseButton::Left,

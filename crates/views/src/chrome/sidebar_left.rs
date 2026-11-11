@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use ui::{
     ActiveTheme as _, Button, Card, Deck, DraggedPin, Edge, Menu, MenuItem, Panel, Picker, Pin,
-    PinKind, Pinnable as _, Popover, Popup, ROOMY, SNUG, Scroller, Shield, Side, Spot, Tabs, Text,
+    PinKind, Pinnable as _, Popover, Popup, SNUG, Scroller, Shield, Side, Spot, Tabs, Text,
     Vacancy, drop_gap, drop_into, drop_marker,
 };
 
@@ -311,7 +311,7 @@ impl SidebarLeft {
         let reserved = match self.overlays() {
             true => Pixels::ZERO,
             // Held to the room that keeps it unfolded, so a drag never widens it onto the rail.
-            false => ROOMY + super::Chrome::reserved_right(cx),
+            false => SNUG + super::Chrome::reserved_right(cx),
         };
 
         super::cap(MIN_WIDTH, MAX_WIDTH, reserved, window)
@@ -319,15 +319,15 @@ impl SidebarLeft {
 
     /// Steps the sidebar down as the window narrows, from the room left once `right` pixels
     /// are held back for the right sidebar: a full sidebar folds onto the rail once it would
-    /// leave the content less than `ROOMY`, and either one goes cramped when even the rail
-    /// leaves less than `SNUG`. This runs inside a render, where a notify schedules nothing,
+    /// leave the content less than `SNUG`, and either one goes cramped when even the rail
+    /// leaves less than that. This runs inside a render, where a notify schedules nothing,
     /// so a flip asks for a full window refresh too. That effect lands once the draw is over.
     pub fn adapt(&mut self, right: Pixels, window: &Window, cx: &mut Context<Self>) {
         self.width = ui::snapped(self.width, window);
         self.rail_width = rail_width(window, cx);
 
         let room = window.viewport_size().width - right;
-        let narrow = room - self.width < ROOMY;
+        let narrow = room - self.width < SNUG;
         let cramped = room - self.rail_width < SNUG;
         if narrow == self.narrow && cramped == self.cramped {
             return;
@@ -671,9 +671,8 @@ impl SidebarLeft {
                 false => theme.muted_foreground,
             })
             .meta(caption(pin.kind.key(), marked, cx))
-            .when(active && !aimed, |card| card.bg(accent))
+            .lit(active && !aimed, accent)
             .chosen(aimed)
-            .hover(move |style| style.bg(accent))
             .press(move |_, _, cx| navigate(destination.clone(), cx))
             .menu(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
                 this.track_menu.reset(cx);
@@ -749,9 +748,7 @@ impl SidebarLeft {
         };
 
         match group {
-            Some(group) if rail => {
-                self.flyout(group, row.when(active, |row| row.bg(accent)), window, cx)
-            }
+            Some(group) if rail => self.flyout(group, row.lit(active, accent), window, cx),
             Some(group) => row
                 .trailing(chevron(self.opened(group)))
                 .aria_expanded(self.opened(group))
@@ -761,7 +758,8 @@ impl SidebarLeft {
                 }))
                 .into_any_element(),
             None => row
-                .when(active, |button| button.bg(accent).aria_selected(true))
+                .lit(active, accent)
+                .when(active, |button| button.aria_selected(true))
                 .on_click(move |_, _, cx| match destination.in_settings() {
                     true => open_settings(cx),
                     false => navigate(destination.clone(), cx),
@@ -815,7 +813,8 @@ impl SidebarLeft {
 
             nav_row(id, key, tint, accent)
                 .flex_1()
-                .when(chosen, |button| button.bg(accent).aria_selected(true))
+                .lit(chosen, accent)
+                .when(chosen, |button| button.aria_selected(true))
                 .on_click(move |_, _, cx| navigate(destination.clone(), cx))
         };
 

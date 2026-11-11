@@ -4,14 +4,16 @@ use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, ClickEvent, Div, ElementId, Hsla, Interactivity, MouseButton, Pixels,
-    SharedString, Stateful, StyleRefinement, Svg, TextStyleRefinement, Transformation, Window,
-    canvas, div, point, px, radians, relative, size, svg,
+    AnyElement, App, ClickEvent, Div, ElementId, HoverListenerMode, Hsla, Interactivity,
+    MouseButton, Pixels, SharedString, Stateful, StyleRefinement, Svg, TextStyleRefinement,
+    Transformation, Window, canvas, div, point, px, radians, relative, size, svg,
 };
 
-use crate::glass::{blurring, frost};
+use crate::glass::{GLASS_BLUR, blurring, frost};
 use crate::metrics::{Text, text_width};
-use crate::motion::{PRESS_SCALE, Springs, Sprung, pressing};
+use crate::motion::{
+    Glow, LIT_HOVER, PRESS_SCALE, Springs, Sprung, glow_fill, pressing, solid_fill,
+};
 use crate::panel::Side;
 use crate::theme::ActiveTheme as _;
 use crate::tooltip::{Perch, Tipped as _};
@@ -47,6 +49,7 @@ const POP_REST: f32 = 1e-3;
 const FIT_SLACK: f32 = 3.;
 
 type Click = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
+type Hover = Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>;
 
 enum Variant {
     Ghost,
@@ -77,6 +80,8 @@ struct Shape {
     belt: Sprung,
     /// How far the label sits into a reserved slot, which glides as the label changes.
     inset: Option<Sprung>,
+    /// The hover fill, which outlasts the pointer by a short fade.
+    glow: Glow,
 }
 
 #[derive(IntoElement)]
@@ -118,10 +123,14 @@ pub struct Button {
     belt: Option<Side>,
     hovered: Option<StyleRefinement>,
     fill: Option<(Hsla, Hsla)>,
+    /// Whether the button is lit, and the fill it is lit with.
+    lit: Option<(bool, Hsla)>,
     pressed: Option<StyleRefinement>,
     tint: Option<Hsla>,
     tooltip: Option<(SharedString, Perch)>,
     on_click: Option<Click>,
+    /// The caller's hover listener, which the button calls from its own.
+    on_hover: Option<Hover>,
 }
 
 impl Button {
@@ -155,10 +164,12 @@ impl Button {
             belt: None,
             hovered: None,
             fill: None,
+            lit: None,
             pressed: None,
             tint: None,
             tooltip: None,
             on_click: None,
+            on_hover: None,
         }
     }
 
@@ -272,6 +283,14 @@ impl Button {
     /// press state follows the hover.
     pub fn fill(mut self, background: Hsla, hover: Hsla) -> Self {
         self.fill = Some((background, hover));
+        self
+    }
+
+    /// Fills the button with `color` while `lit`, for a row that marks where the app is. Under
+    /// the pointer alone the button takes `LIT_HOVER` of that fill. Either comes on at once and
+    /// fades out the way a hover does. It changes nothing for screen readers.
+    pub fn lit(mut self, lit: bool, color: Hsla) -> Self {
+        self.lit = Some((lit, color));
         self
     }
 
@@ -396,6 +415,11 @@ impl InteractiveElement for Button {
 }
 
 impl StatefulInteractiveElement for Button {
+    fn on_hover(mut self, listener: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        self.on_hover = Some(Box::new(listener));
+        self
+    }
+
     fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self {
         self.pressed = Some(f(self.pressed.take().unwrap_or_default()));
         self
@@ -439,10 +463,12 @@ impl RenderOnce for Button {
             belt,
             hovered,
             fill,
+            lit,
             pressed,
             tint,
             tooltip,
             on_click,
+            on_hover,
         } = self;
 
         let shape = window.use_keyed_state(
@@ -459,6 +485,7 @@ impl RenderOnce for Button {
                     sent: 0.,
                     belt: Sprung::at(0.),
                     inset: None,
+                    glow: Glow::default(),
                 })
             },
         );
@@ -572,10 +599,27 @@ impl RenderOnce for Button {
             true => (palette.hover, palette.active),
             false => (None, None),
         };
-        let hovered = match hoverless {
+        let mut hovered = match hoverless {
             true => None,
-            false => state_style(hover, hovered, frosting),
+            false => state_style(hover, hovered, false),
         };
+        // The hover's fill fades out, so the glow paints it and gpui applies only what is left
+        // of the hover style, which still comes and goes at once.
+        let hover_fill = hovered.as_mut().and_then(|style| {
+            let fill = solid_fill(style)?;
+            style.background = None;
+            Some(fill)
+        });
+        // The blur under a frosted hover follows the glow as well. A fill the glow cannot fade
+        // stays in the hover style, and its blur with it.
+        if frosting && hover_fill.is_none() {
+            hovered = hovered.map(|style| match style.background.is_some() {
+                true => frost(style),
+                false => style,
+            });
+        }
+        let glow_color = lit.map(|(_, color)| color).or(hover_fill);
+        let tracked = interactive && !hoverless && glow_color.is_some();
         let pressed = state_style(active, pressed, frosting);
         let overrides = std::mem::take(base.style());
         let natural = label.as_ref().filter(|_| fits).map(|label| {
@@ -601,8 +645,20 @@ impl RenderOnce for Button {
                 + parts.iter().flatten().copied().sum::<Pixels>()
                 + gap * (count - 1.)
         });
-        let (resizing, pop, leaving, inset, belted) = {
+        let (resizing, pop, leaving, inset, belted, glow) = {
             let mut shape = shape.read(cx).borrow_mut();
+            if !tracked {
+                shape.glow.hover(false);
+            }
+            // A lit button marks where the app is, so the pointer alone lights it only part of
+            // the way.
+            let hover = match lit {
+                Some(_) => LIT_HOVER,
+                None => 1.,
+            };
+            let glow = shape
+                .glow
+                .peaked(lit.is_some_and(|(on, _)| on), hover, window, cx);
             if natural.is_none() {
                 shape.width = None;
             }
@@ -664,7 +720,7 @@ impl RenderOnce for Button {
                 }
                 (side, at.fract())
             });
-            (resizing, pop, leaving, inset, belted)
+            (resizing, pop, leaving, inset, belted, glow)
         };
         // A node reaches the tree only with a role, and an icon-only button has
         // no label of its own, so its tooltip key doubles as the accessible
@@ -736,6 +792,21 @@ impl RenderOnce for Button {
             )
             .when_some(hovered, |this, style| this.hover(move |_| style))
             .when_some(pressed, |this, style| this.active(move |_| style))
+            .when(tracked || on_hover.is_some(), |this| {
+                let shape = shape.clone();
+                this.hover_listener_mode(HoverListenerMode::InputModalityIndependent)
+                    .on_hover(move |hovered, window, cx| {
+                        if tracked {
+                            shape.update(cx, |shape, cx| {
+                                shape.get_mut().glow.hover(*hovered);
+                                cx.notify();
+                            });
+                        }
+                        if let Some(listener) = on_hover.as_ref() {
+                            listener(hovered, window, cx);
+                        }
+                    })
+            })
             .when_some(icon, |this, path| {
                 let tinted = |presence: f32| foreground.opacity(presence.clamp(0., 1.));
                 let popped = |presence: f32| POP_FROM + (1. - POP_FROM) * presence;
@@ -910,7 +981,20 @@ impl RenderOnce for Button {
             false => button,
         };
         button.style().refine(&overrides);
-        button
+        // The glow goes on last, over whatever fill the variant and the caller chose.
+        let rest = solid_fill(&overrides)
+            .or_else(|| (selected && !backgroundless).then_some(selected_background))
+            .or(palette.background);
+        let button = match glow_color.and_then(|fill| glow_fill(rest, fill, glow)) {
+            Some(color) => button.bg(color),
+            None => button,
+        };
+        // A frosted hover blurs what is under it for as long as its tint shows, and the blur
+        // thins out with the tint instead of dropping away under it.
+        match frosting && hover_fill.is_some() && glow > 0. {
+            true => button.backdrop_blur(GLASS_BLUR * glow),
+            false => button,
+        }
     }
 }
 

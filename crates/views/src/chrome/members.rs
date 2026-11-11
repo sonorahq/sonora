@@ -8,7 +8,7 @@ use gpui::{Context, Entity, Render, SharedString, Window, div};
 use i18n::t;
 use music::connect::JamMember;
 use state::{Devices, Listening, Sonora};
-use ui::{ActiveTheme as _, Button, Text, eyebrow, snapped, vacant};
+use ui::{ActiveTheme as _, Button, Glowing as _, Text, eyebrow, snapped, vacant};
 
 use crate::chrome::{jam, session};
 
@@ -197,7 +197,6 @@ impl Render for Members {
                 .h(theme.metrics.row)
                 .px_2()
                 .rounded(theme.radius)
-                .hover(|this| this.bg(theme.secondary_hover))
                 .child(jam::face(member, theme.metrics.control_small))
                 .child(div().flex_1().min_w_0().truncate().child(shown))
                 .when(member.host, |this| {
@@ -219,6 +218,7 @@ impl Render for Members {
                             }),
                     )
                 })
+                .glowed(theme.secondary_hover)
         });
 
         root.child(
