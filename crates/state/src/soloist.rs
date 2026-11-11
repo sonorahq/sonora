@@ -327,7 +327,11 @@ impl Soloist {
                 this.blocked = None;
                 match paired {
                     Ok(Ok(())) => {
-                        this.settle(cx);
+                        // A pairing that replaces one already in use changes nothing `settle`
+                        // can see, and the engine still has to start over on the new sign-in.
+                        if !this.settle(cx) {
+                            cx.emit(SoloistSwitched);
+                        }
                         Toasts::show(Outcome::Done, "toast-soloist-ready", cx);
                     }
                     Ok(Err(trouble)) => {
@@ -368,22 +372,41 @@ impl Soloist {
         self.settle(cx);
     }
 
-    /// Removes the setup and the program, which puts Spotify back on librespot.
+    /// Removes the setup and the program, which puts Spotify back on librespot. Soloist is
+    /// switched off and its program stopped first, since a running program holds its own files.
+    /// A removal that fails leaves whatever is still on disk, with Remove still on offer.
     pub fn remove(&mut self, cx: &mut Context<Self>) {
         self.stop_pairing();
-        self.state = SoloistState::Looking;
         cx.notify();
 
         let io = self.io.clone();
         self.task = Some(cx.spawn(async move |this, cx| {
-            let removed = io.spawn_blocking(soloist::remove).await;
+            if let Ok(Err(error)) = io.spawn_blocking(|| soloist::enable(false)).await {
+                log::warn!("soloist: cannot switch off before removing: {error:#}");
+            }
+            // the engine lets go of Soloist here, and the program stops with it
+            this.update(cx, |this, cx| {
+                this.settle(cx);
+                this.state = SoloistState::Looking;
+            })
+            .ok();
+            io.spawn(soloist::stopped()).await.ok();
+            let removed = io
+                .spawn_blocking(|| {
+                    let removed = soloist::remove();
+                    if removed.is_err() {
+                        soloist::reload();
+                    }
+                    (removed, soloist::installed())
+                })
+                .await;
             this.update(cx, |this, cx| {
                 this.task = None;
-                let error = match removed {
-                    Ok(Ok(())) => None,
-                    Ok(Err(error)) => Some(format!("{error:#}")),
-                    Err(error) => Some(error.to_string()),
+                let (removed, build) = match removed {
+                    Ok((removed, build)) => (removed.map_err(|error| format!("{error:#}")), build),
+                    Err(error) => (Err(error.to_string()), None),
                 };
+                let error = removed.err();
                 if let Some(error) = error {
                     log::warn!("soloist: cannot remove the setup: {error}");
                     Toasts::with_detail(
@@ -394,7 +417,7 @@ impl Soloist {
                         cx,
                     );
                 }
-                this.build = None;
+                this.build = build;
                 this.settle(cx);
             })
             .ok();
@@ -432,16 +455,18 @@ impl Soloist {
     }
 
     /// Takes the state from what is on disk and tells the engine when Soloist started or
-    /// stopped being what plays.
-    fn settle(&mut self, cx: &mut Context<Self>) {
+    /// stopped being what plays. Answers whether it told the engine.
+    fn settle(&mut self, cx: &mut Context<Self>) -> bool {
         let ready = soloist::ready();
         self.state = match (&self.build, soloist::set_up()) {
             (Some(build), true) => SoloistState::Ready(build.clone()),
             _ => SoloistState::Off,
         };
-        if std::mem::replace(&mut self.in_use, ready) != ready {
+        let switched = std::mem::replace(&mut self.in_use, ready) != ready;
+        if switched {
             cx.emit(SoloistSwitched);
         }
         cx.notify();
+        switched
     }
 }

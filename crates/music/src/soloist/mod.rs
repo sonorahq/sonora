@@ -188,6 +188,14 @@ pub(crate) fn granted() {
     std::fs::remove_file(denial()).ok();
 }
 
+/// Forgets what was read from the disk, so the next question reads it again. For after a
+/// removal that failed halfway, when what is left is not what memory says.
+pub fn reload() {
+    for standing in [&STANDING, &SWITCH, &DENIED] {
+        standing.store(UNKNOWN, Ordering::Relaxed);
+    }
+}
+
 /// Removes what belongs to the account: the API key, the paired sign-in, the playback cache
 /// and the memory of a denied key. Soloist is off from here on, and the program stays for the
 /// next setup. Blocking.
