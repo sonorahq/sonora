@@ -23,6 +23,11 @@ const HOSTS: [&str; 2] = ["spotifycdn.com", "spotify.com"];
 
 const REDIRECTS: usize = 5;
 
+/// How long the download server gets to answer, and how long the whole archive may take on a
+/// slow line before the download is given up.
+const CONNECT_PATIENCE: Duration = Duration::from_secs(15);
+const DOWNLOAD_PATIENCE: Duration = Duration::from_secs(10 * 60);
+
 /// The most an archive may weigh. A real one is about 14 MB.
 const ARCHIVE_LIMIT: usize = 64 * 1024 * 1024;
 
@@ -160,6 +165,8 @@ async fn download(url: &str) -> Result<Vec<u8>> {
     });
     let http = reqwest::Client::builder()
         .redirect(redirects)
+        .connect_timeout(CONNECT_PATIENCE)
+        .timeout(DOWNLOAD_PATIENCE)
         .build()
         .context("cannot build an http client")?;
     let mut response = http

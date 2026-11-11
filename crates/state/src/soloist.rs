@@ -84,6 +84,9 @@ pub struct Soloist {
     blocked: Option<u16>,
     /// Waits for that port and that long.
     hint: Option<Task<()>>,
+    /// The download the listener asked for, kept apart from `task` so closing the dialog or
+    /// looking at the disk again does not lose what it brings.
+    download: Option<Task<()>>,
     /// Whether Spotify denied this account an audio key during this run.
     denied: bool,
     /// Whether the setup was offered unasked this run, which happens once.
@@ -114,6 +117,7 @@ impl Soloist {
             pairing: None,
             blocked: None,
             hint: None,
+            download: None,
             denied: false,
             asked: false,
             offered: false,
@@ -235,8 +239,9 @@ impl Soloist {
         }));
     }
 
-    /// Opens the setup dialog, on the download when the program is not here yet and on the key
-    /// when it is. A setup that is only switched off is switched back on instead.
+    /// Opens the setup dialog: on the download when the program is not here yet, on its progress
+    /// when it is on its way, and on the key when it is here. A setup that is only switched off
+    /// is switched back on instead.
     pub fn begin(&mut self, cx: &mut Context<Self>) {
         if matches!(self.state, SoloistState::Setup(_)) {
             return;
@@ -247,9 +252,11 @@ impl Soloist {
         self.task = None;
         self.problem = None;
         self.offered = false;
-        self.state = SoloistState::Setup(match self.build {
-            Some(_) => SoloistStep::Key,
-            None => SoloistStep::Consent,
+        // a download the listener started before closing the dialog is still on its way
+        self.state = SoloistState::Setup(match (&self.download, &self.build) {
+            (Some(_), _) => SoloistStep::Fetching,
+            (None, Some(_)) => SoloistStep::Key,
+            (None, None) => SoloistStep::Consent,
         });
         cx.notify();
     }
@@ -262,23 +269,29 @@ impl Soloist {
         cx.notify();
 
         let io = self.io.clone();
-        self.task = Some(cx.spawn(async move |this, cx| {
+        self.download = Some(cx.spawn(async move |this, cx| {
             let fetched = io.spawn(soloist::fetch()).await;
             this.update(cx, |this, cx| {
-                this.task = None;
+                this.download = None;
                 let fetched = match fetched {
                     Ok(fetched) => fetched.map_err(|error| format!("{error:#}")),
                     Err(error) => Err(error.to_string()),
                 };
+                // a dialog closed meanwhile stays closed, and the program is kept all the same
+                let waiting = this.state == SoloistState::Setup(SoloistStep::Fetching);
                 match fetched {
                     Ok(build) => {
                         this.build = Some(build);
-                        this.state = SoloistState::Setup(SoloistStep::Key);
+                        if waiting {
+                            this.state = SoloistState::Setup(SoloistStep::Key);
+                        }
                     }
                     Err(error) => {
                         log::warn!("soloist: cannot download the program: {error}");
-                        this.problem = Some(SoloistProblem::Download(error));
-                        this.state = SoloistState::Setup(SoloistStep::Consent);
+                        if waiting {
+                            this.problem = Some(SoloistProblem::Download(error));
+                            this.state = SoloistState::Setup(SoloistStep::Consent);
+                        }
                     }
                 }
                 cx.notify();
@@ -377,6 +390,7 @@ impl Soloist {
     /// A removal that fails leaves whatever is still on disk, with Remove still on offer.
     pub fn remove(&mut self, cx: &mut Context<Self>) {
         self.stop_pairing();
+        self.download = None;
         cx.notify();
 
         let io = self.io.clone();
@@ -446,11 +460,11 @@ impl Soloist {
     }
 
     fn stop_pairing(&mut self) {
-        self.task = None;
         self.hint = None;
         self.blocked = None;
         if let Some(pairing) = self.pairing.take() {
             pairing.abort();
+            self.task = None;
         }
     }
 
