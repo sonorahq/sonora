@@ -128,6 +128,12 @@ pub trait MusicApi: Send + Sync {
         None
     }
 
+    /// An album cover that another service can fetch without account credentials.
+    /// Returns `None` when the provider cannot supply a public URL.
+    async fn public_album_cover(&self, _album_id: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+
     fn share_url(&self, kind: MediaKind, id: &str) -> Option<String>;
     async fn profile(&self) -> Result<UserProfile>;
 

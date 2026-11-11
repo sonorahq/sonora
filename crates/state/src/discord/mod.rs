@@ -7,7 +7,9 @@ use music::artwork::{ArtworkQuery, ArtworkSearch};
 use music::{MediaKind, MusicProvider, Track};
 use tokio::sync::watch;
 
-use crate::{AppSettings, Cover, Devices, DiscordName, Io, Playback, Session, Shelf, join};
+use crate::{
+    AppSettings, Cover, Devices, DiscordName, Io, Playback, Session, SessionEvent, Shelf, join,
+};
 
 #[cfg(unix)]
 mod socket;
@@ -113,6 +115,13 @@ impl Timing {
     }
 }
 
+/// Identifies the provider's album and the metadata used for the catalogue fallback.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ArtworkRequest {
+    album: Option<String>,
+    query: Option<ArtworkQuery>,
+}
+
 /// Watches playback and settings, and hands each new presence to the worker.
 struct Discord {
     playback: Entity<Playback>,
@@ -124,12 +133,12 @@ struct Discord {
     timing: Timing,
     io: Io,
     artwork: ArtworkSearch,
-    /// Covers found by name, and the queries that found nothing, so neither is asked twice.
-    found: HashMap<ArtworkQuery, Option<String>>,
+    /// Public covers and misses, kept until the provider session ends.
+    found: HashMap<ArtworkRequest, Option<String>>,
     /// The query the last presence had no cover for, taken by `look_up` once it is published.
-    wanted: Option<ArtworkQuery>,
+    wanted: Option<ArtworkRequest>,
     /// The query last sent to the search. A failed one is not retried until another was asked.
-    asked: Option<ArtworkQuery>,
+    asked: Option<ArtworkRequest>,
     lookup: Option<Task<()>>,
     _worker: Task<()>,
 }
@@ -159,6 +168,16 @@ impl Discord {
         cx.observe(&cover, |this, _, cx| this.publish(cx)).detach();
         cx.observe(&devices, |this, _, cx| this.publish(cx))
             .detach();
+        cx.subscribe(&session, |this, _, event, _| {
+            if matches!(event, SessionEvent::SignedOut) {
+                this.lookup = None;
+                this.wanted = None;
+                this.asked = None;
+                this.found.clear();
+                this.sender.send_replace(Shown::Off);
+            }
+        })
+        .detach();
 
         Self {
             playback,
@@ -202,10 +221,26 @@ impl Discord {
         self.asked = Some(query.clone());
 
         let search = self.artwork.clone();
+        let client = query
+            .album
+            .as_deref()
+            .and_then(|album| self.session.read(cx).client_of(Shelf::of(album)));
         let io = self.io.clone();
         self.lookup = Some(cx.spawn(async move |this, cx| {
             let wanted = query.clone();
-            let found = join(io.spawn(async move { search.find(&wanted).await })).await;
+            let found = join(io.spawn(async move {
+                if let Some(client) = client
+                    && let Some(album) = wanted.album.as_deref()
+                    && let Ok(Some(cover)) = client.public_album_cover(album).await
+                {
+                    return Ok(Some(cover));
+                }
+                match wanted.query.as_ref() {
+                    Some(query) => search.find(query).await,
+                    None => Ok(None),
+                }
+            }))
+            .await;
 
             this.update(cx, |this, cx| {
                 this.lookup = None;
@@ -303,9 +338,8 @@ impl Discord {
 
     /// Cover art for the track. The provider's own art is used only when it is public, since
     /// Discord fetches the image through its own proxy, so a path on disk is unreachable and a
-    /// self-hosted url would hand over the credentials that fetch it. Without it, and when
-    /// `lookup` allows, the cover is one found by name, and a search not yet made is left in
-    /// `wanted` for `look_up`.
+    /// self-hosted URL may carry account credentials. Otherwise ask the provider for a public
+    /// album cover before searching by name. `lookup` controls both requests.
     fn artwork(
         &mut self,
         track: &Track,
@@ -327,7 +361,13 @@ impl Discord {
         if own.is_some() || !lookup {
             return own;
         }
-        let query = ArtworkQuery::for_track(track)?;
+        let query = ArtworkRequest {
+            album: track.album_id.clone().filter(|id| !id.is_empty()),
+            query: ArtworkQuery::for_track(track),
+        };
+        if query.album.is_none() && query.query.is_none() {
+            return None;
+        }
         match self.found.get(&query) {
             Some(found) => found.clone(),
             None => {

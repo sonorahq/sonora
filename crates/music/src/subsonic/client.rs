@@ -356,6 +356,43 @@ impl SubsonicClient {
 
 #[async_trait]
 impl MusicApi for SubsonicClient {
+    async fn public_album_cover(&self, album_id: &str) -> Result<Option<String>> {
+        let info = self
+            .client
+            .get_album_info2(album_id)
+            .await
+            .map_err(bare)
+            .context("cannot load the public album cover")?;
+        let cover = [
+            info.large_image_url,
+            info.medium_image_url,
+            info.small_image_url,
+        ]
+        .into_iter()
+        .flatten()
+        .find_map(|cover| public_cover_url(&cover));
+        let Some(cover) = cover else {
+            return Ok(None);
+        };
+
+        // This client has no account cookies or default authorization headers. Check that
+        // the public link serves an image before giving it to Discord.
+        let response = self
+            .http
+            .get(cover.clone())
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .context("cannot fetch the public album cover")?;
+        let image = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("image/"));
+        Ok((response.status().is_success() && image).then(|| cover.to_string()))
+    }
+
     fn share_url(&self, _kind: MediaKind, _id: &str) -> Option<String> {
         None
     }
@@ -1258,6 +1295,25 @@ fn source_genre(source: SourceGenre) -> Genre {
         name,
         cover: None,
     }
+}
+
+/// Accepts Navidrome's image-only signed links without forwarding account authentication.
+fn public_cover_url(raw: &str) -> Option<reqwest::Url> {
+    let url = reqwest::Url::parse(raw).ok()?;
+    let (_, token) = url.path().rsplit_once("/share/img/")?;
+    let signed = !token.is_empty()
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+    (url.scheme() == "https"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.fragment().is_none()
+        && signed
+        && url
+            .query_pairs()
+            .all(|(key, _)| matches!(key.as_ref(), "size" | "square")))
+    .then_some(url)
 }
 
 /// The major and minor numbers of a version such as `0.61.0` or `0.61.0 (a1b2c3)`.
