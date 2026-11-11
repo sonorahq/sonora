@@ -12,6 +12,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Open music links from the search field or send browser pages to Sonora with a bookmark.
 - Open YouTube handle links on their artist pages.
 - Preview music links in search suggestions and search by their titles or artist names.
+- Choose which Now playing views show the visualizer: the artwork, the lyrics or the queue.
 
 ### Changed
 
@@ -24,7 +25,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Buttons, cards and menu items shrink a little under a click and spring back on release.
 - Turning Play to Pause slides the label into place and swaps the icons, while the button keeps its width.
 - Menus and dialogs fade out as they close, the way they fade in.
+- The visualizer draws the wave alone unless another style is chosen.
 - The fullscreen visualizer rises from the bottom edge as it appears and sinks back as it goes.
+- The play button swaps its play and pause icons with a pop, and the next and previous icons slide on like a belt when clicked.
+- Play on a pinned or library card starts sooner, and its icon answers the click at once.
 
 ### Fixed
 
