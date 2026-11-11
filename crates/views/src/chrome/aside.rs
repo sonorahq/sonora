@@ -95,6 +95,12 @@ const PRESSED: f32 = 0.955;
 const RESOLVE_BLUR: f32 = 0.2;
 const RESOLVE_FADE: f32 = 0.5;
 const SETTLE: std::time::Duration = std::time::Duration::from_secs(4);
+/// How long the sheet may go undrawn before the song counts as having moved on without it. A
+/// sheet that comes back later than this, to a verse more than one row from the one it left,
+/// is put there at once rather than scrolled across everything it missed.
+const AWAY: std::time::Duration = std::time::Duration::from_secs(1);
+/// How far the place a put verse belongs may drift, in pixels, before the sheet is put again.
+const PUT_REST: f32 = 0.5;
 const INSTRUMENTAL_BREAK: std::time::Duration = std::time::Duration::from_secs(5);
 const SWEEP_LEAST: std::time::Duration = std::time::Duration::from_millis(180);
 // karaoke sweep ceiling
@@ -207,6 +213,13 @@ pub(crate) struct Aside {
     verse_of: Option<String>,
     verse_take: u64,
     placing: bool,
+    /// The verse the sheet was last put on without a glide, and the offset it was put at. While
+    /// that verse is still the one followed, the sheet is put again whenever layout moves the
+    /// place it belongs, since the rows only reach their final sizes a few frames after the
+    /// sheet first shows.
+    put: Option<(usize, Pixels)>,
+    /// When the verses were last followed, which tells a sheet that was off screen for a while.
+    drawn: std::time::Instant,
     context_menu: Option<ContextMenuState>,
     track_menu: ItemMenu,
     drop_gap: Option<usize>,
@@ -313,6 +326,8 @@ impl Aside {
             verse_of: None,
             verse_take: 0,
             placing: false,
+            put: None,
+            drawn: std::time::Instant::now(),
             context_menu: None,
             track_menu: ItemMenu::new(playlist_scrollbar, cx),
             drop_gap: None,
@@ -502,6 +517,7 @@ impl Aside {
 
     fn forget_verse(&mut self) {
         self.flying = false;
+        self.put = None;
         self.pinning = None;
         self.previous_active_line = None;
         self.departing_line = None;
@@ -1753,10 +1769,23 @@ impl Aside {
         let scroll = self.verse_bar.read(cx).scroll().clone();
         let resting = scroll.offset().y;
         let nudges = self.verse_bar.read(cx).nudges();
+        // A sheet that was off screen while the song went on, behind the fullscreen player or
+        // a closed sidebar, comes back to a verse far from the one it left. It is put there
+        // rather than scrolled across everything in between.
+        let away = self.drawn.elapsed() >= AWAY;
+        self.drawn = std::time::Instant::now();
+        let far =
+            matches!((self.followed, sung), (Some(left), Some(now)) if left.abs_diff(now) > 1);
+        if away && far {
+            self.flying = false;
+            self.drifts.clear();
+            self.placing = true;
+        }
         if self.nudges != nudges {
             self.nudges = nudges;
             self.pinned = false;
             self.flying = false;
+            self.put = None;
             self.drifts.clear();
             self.nudged = Some(std::time::Instant::now());
         }
@@ -1785,13 +1814,11 @@ impl Aside {
             window.request_animation_frame();
             return;
         }
-        if !self.aiming {
-            return;
-        }
-        let Some(item) = sung.and_then(|index| scroll.bounds_for_item(index)) else {
+        let Some((row, item)) =
+            sung.and_then(|index| Some((index, scroll.bounds_for_item(index)?)))
+        else {
             return;
         };
-        self.aiming = false;
         let view = scroll.bounds();
         // Preserve the fractional target. Spring scrolls are presented by the compositor, so the
         // text never has to walk the raster grid while the layer is settling.
@@ -1801,10 +1828,30 @@ impl Aside {
             view.size.height,
             scroll.max_offset().y,
         );
+        if !self.aiming {
+            // The verse was put before its rows had their final sizes, so the place it belongs
+            // has moved under it. Put it again, without dragging the rows along.
+            let moved = self
+                .put
+                .is_some_and(|(put, at)| put == row && f32::from(goal - at).abs() > PUT_REST);
+            if moved {
+                self.flying = false;
+                self.put = Some((row, goal));
+                self.verse_bar.update(cx, |bar, _| bar.place(goal));
+            }
+            return;
+        }
+        self.aiming = false;
         self.flown(goal, scroll.offset().y);
         match std::mem::take(&mut self.placing) || cx.reduce_motion() {
-            true => self.verse_bar.update(cx, |bar, _| bar.place(goal)),
-            false => self.verse_bar.update(cx, |bar, _| bar.aim(goal, window)),
+            true => {
+                self.put = Some((row, goal));
+                self.verse_bar.update(cx, |bar, _| bar.place(goal));
+            }
+            false => {
+                self.put = None;
+                self.verse_bar.update(cx, |bar, _| bar.aim(goal, window));
+            }
         }
     }
 
