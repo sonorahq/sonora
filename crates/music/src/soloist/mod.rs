@@ -211,7 +211,7 @@ pub fn forget() -> Result<()> {
 /// Removes everything [`forget`] does and the program too. Blocking.
 pub fn remove() -> Result<()> {
     forget()?;
-    clear(&binary::store())
+    binary::uninstall()
 }
 
 fn clear(folder: &Path) -> Result<()> {

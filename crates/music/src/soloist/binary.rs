@@ -7,6 +7,8 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result, bail, ensure};
@@ -31,6 +33,14 @@ const LIFE: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 
 /// The age past which a build is replaced, two weeks short of its end.
 const KEEP: Duration = Duration::from_secs(76 * 24 * 60 * 60);
+
+/// Held while the program's folder is written or cleared, so an install and a removal never
+/// run into each other.
+static STORE: Mutex<()> = Mutex::new(());
+
+/// How many times the program has been removed. A download that started before a removal must
+/// not install after it, or removing Soloist would not be the end of it.
+static REMOVALS: AtomicU64 = AtomicU64::new(0);
 
 /// What the program exits with once its build is too old.
 pub(crate) const EXPIRED: i32 = 10;
@@ -126,8 +136,9 @@ pub async fn fetch() -> Result<Build> {
     let name = archive().context("spotify builds no soloist for this computer")?;
     let url = format!("{CDN}/{name}");
     log::info!("soloist: fetching {name} from spotify");
+    let removals = REMOVALS.load(Ordering::Relaxed);
     let bytes = download(&url).await?;
-    let build = tokio::task::spawn_blocking(move || install(&bytes, name))
+    let build = tokio::task::spawn_blocking(move || install(&bytes, name, removals))
         .await
         .context("the soloist install stopped")??;
     log::info!("soloist: {} is installed", build.version);
@@ -173,9 +184,23 @@ async fn download(url: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Removes the program and its folder, and has any download still under way come to nothing.
+/// Blocking.
+pub(super) fn uninstall() -> Result<()> {
+    let _held = STORE.lock().unwrap_or_else(PoisonError::into_inner);
+    REMOVALS.fetch_add(1, Ordering::Relaxed);
+    super::clear(&store())
+}
+
 /// Unpacks the program beside the installed one, runs it once, and only then moves it into
-/// place. Blocking.
-fn install(bytes: &[u8], name: &str) -> Result<Build> {
+/// place. `removals` is the count of removals when the download began, and an install that a
+/// removal has overtaken is given up. Blocking.
+fn install(bytes: &[u8], name: &str, removals: u64) -> Result<Build> {
+    let _held = STORE.lock().unwrap_or_else(PoisonError::into_inner);
+    ensure!(
+        REMOVALS.load(Ordering::Relaxed) == removals,
+        "soloist was removed while it downloaded"
+    );
     let program = archive::extract(bytes, name, &program())?;
     let folder = store();
     std::fs::create_dir_all(&folder)

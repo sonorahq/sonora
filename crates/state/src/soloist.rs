@@ -363,8 +363,8 @@ impl Soloist {
         cx.notify();
     }
 
-    /// Closes the setup dialog wherever it stands. A download or a pairing under way is
-    /// dropped.
+    /// Closes the setup dialog wherever it stands. A pairing under way is stopped. A download
+    /// under way carries on, so the program is there the next time the setup opens.
     pub fn close(&mut self, cx: &mut Context<Self>) {
         self.stop_pairing();
         self.problem = None;
