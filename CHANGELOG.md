@@ -19,6 +19,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Blur the desktop behind a see-through window on Linux compositors that support it, such as KDE Plasma and niri.
 - Tidal tracks show their bit depth or bit rate in the signal path.
 - Keep plays from the signed-in provider out of Last.fm and the other linked services with a switch in Scrobbling, for accounts that already scrobble on their own.
+- Sonora's app icon follows the dark, clear and tinted icon styles on macOS 26 and later.
 
 ### Changed
 
