@@ -7,10 +7,27 @@ use crate::Track;
 const ALBUMS: &str = "https://api.deezer.com/search/album";
 const TRACKS: &str = "https://api.deezer.com/search/track";
 const RESULTS: &str = "10";
+const ITUNES: &str = "https://itunes.apple.com/search";
+/// The size iTunes names in its thumbnail urls, and the size asked for in its place.
+const ITUNES_THUMB: &str = "100x100bb";
+const ITUNES_LARGE: &str = "600x600bb";
+const MUSICBRAINZ: &str = "https://musicbrainz.org/ws/2/release-group";
+const MUSICBRAINZ_RESULTS: &str = "5";
+/// The lowest score MusicBrainz may give a release group for its art to be trusted.
+const MUSICBRAINZ_SCORE: u32 = 90;
+const COVER_ART: &str = "https://coverartarchive.org/release-group";
+/// MusicBrainz refuses a client that does not say who it is.
+const AGENT: &str = concat!(
+    "sonora/",
+    env!("CARGO_PKG_VERSION"),
+    " (https://github.com/sonorahq/sonora)"
+);
 
-/// Finds cover art by name in Deezer's public catalogue, which needs no account and serves every
-/// image from a public https url. It is for a track whose own art cannot be handed to someone
-/// else, so a miss is `None` rather than an error.
+/// Finds cover art by name in public catalogues that need no account and serve every image from
+/// a public https url: Deezer first, then iTunes, then MusicBrainz with the Cover Art Archive. A
+/// catalogue that lacks the album, or refuses or cannot be reached, hands over to the next. It is
+/// for a track whose own art cannot be handed to someone else, so a miss is `None` rather than an
+/// error.
 #[derive(Clone, Default)]
 pub struct ArtworkSearch {
     http: reqwest::Client,
@@ -44,6 +61,52 @@ struct FoundTrack {
     title: String,
     artist: Named,
     album: Covered,
+}
+
+/// A catalogue `ArtworkSearch` asks, in the order it asks them.
+#[derive(Clone, Copy, Debug)]
+enum Source {
+    Deezer,
+    Itunes,
+    MusicBrainz,
+}
+
+impl Source {
+    const ALL: [Self; 3] = [Self::Deezer, Self::Itunes, Self::MusicBrainz];
+}
+
+#[derive(Deserialize)]
+struct ItunesPage {
+    #[serde(default)]
+    results: Vec<ItunesFound>,
+}
+
+#[derive(Deserialize)]
+struct ItunesFound {
+    #[serde(rename = "artistName")]
+    artist: String,
+    #[serde(rename = "collectionName")]
+    album: Option<String>,
+    #[serde(rename = "trackName")]
+    title: Option<String>,
+    #[serde(rename = "artworkUrl100")]
+    artwork: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ReleaseGroups {
+    #[serde(rename = "release-groups", default)]
+    groups: Vec<ReleaseGroup>,
+}
+
+#[derive(Deserialize)]
+struct ReleaseGroup {
+    id: String,
+    title: String,
+    #[serde(default)]
+    score: u32,
+    #[serde(rename = "artist-credit", default)]
+    credit: Vec<Named>,
 }
 
 #[derive(Deserialize)]
@@ -87,9 +150,35 @@ impl ArtworkSearch {
         Self::default()
     }
 
-    /// The url of a cover for `query`, or `None` when no result names the same artist and a
-    /// close enough album or title to trust. A wrong cover is worse than none.
+    /// The url of a cover for `query`, or `None` when no catalogue has a result that names the
+    /// same artist and a close enough album or title to trust. A wrong cover is worse than none.
+    /// It fails only when every catalogue failed, so an outage is never taken for a miss.
     pub async fn find(&self, query: &ArtworkQuery) -> Result<Option<String>> {
+        let mut answered = false;
+        let mut failure = None;
+        for source in Source::ALL {
+            let found = match source {
+                Source::Deezer => self.deezer(query).await,
+                Source::Itunes => self.itunes(query).await,
+                Source::MusicBrainz => self.musicbrainz(query).await,
+            };
+            match found {
+                Ok(Some(cover)) => return Ok(Some(cover)),
+                Ok(None) => answered = true,
+                Err(error) => {
+                    log::debug!("artwork: {source:?} failed: {error:#}");
+                    failure.get_or_insert(error);
+                }
+            }
+        }
+        match (answered, failure) {
+            (false, Some(error)) => Err(error),
+            _ => Ok(None),
+        }
+    }
+
+    /// The cover Deezer has for `query`.
+    async fn deezer(&self, query: &ArtworkQuery) -> Result<Option<String>> {
         match query.album.is_empty() {
             false => {
                 let found: Vec<FoundAlbum> = self.search(ALBUMS, &query.album, query).await?;
@@ -108,6 +197,113 @@ impl ArtworkSearch {
                 Ok(closest(candidates, &query.title))
             }
         }
+    }
+
+    /// The cover iTunes has for `query`, asked for at a larger size than its search answers with.
+    async fn itunes(&self, query: &ArtworkQuery) -> Result<Option<String>> {
+        let (entity, name) = match query.album.is_empty() {
+            false => ("album", &query.album),
+            true => ("song", &query.title),
+        };
+        let terms = format!("{} {name}", query.artist);
+        let page: ItunesPage = self
+            .http
+            .get(ITUNES)
+            .query(&[
+                ("term", terms.as_str()),
+                ("entity", entity),
+                ("limit", RESULTS),
+            ])
+            .send()
+            .await
+            .context("cannot reach itunes")?
+            .error_for_status()
+            .context("cannot search itunes")?
+            .json()
+            .await
+            .context("cannot read the itunes search")?;
+        let candidates = page
+            .results
+            .into_iter()
+            .filter(|found| same_artist(&found.artist, &query.artist))
+            .map(|found| {
+                let title = match query.album.is_empty() {
+                    false => found.album,
+                    true => found.title,
+                };
+                let cover = found
+                    .artwork
+                    .map(|artwork| artwork.replace(ITUNES_THUMB, ITUNES_LARGE));
+                (title.unwrap_or_default(), cover)
+            });
+        Ok(closest(candidates, name))
+    }
+
+    /// The front cover the Cover Art Archive holds for the release group MusicBrainz matches to
+    /// `query`. MusicBrainz knows albums only, so a query by title finds nothing here.
+    async fn musicbrainz(&self, query: &ArtworkQuery) -> Result<Option<String>> {
+        if query.album.is_empty() {
+            return Ok(None);
+        }
+        let terms = format!(
+            "releasegroup:\"{}\" AND artist:\"{}\"",
+            quoted(&query.album),
+            quoted(&query.artist)
+        );
+        let found: ReleaseGroups = self
+            .http
+            .get(MUSICBRAINZ)
+            .header(reqwest::header::USER_AGENT, AGENT)
+            .query(&[
+                ("query", terms.as_str()),
+                ("fmt", "json"),
+                ("limit", MUSICBRAINZ_RESULTS),
+            ])
+            .send()
+            .await
+            .context("cannot reach musicbrainz")?
+            .error_for_status()
+            .context("cannot search musicbrainz")?
+            .json()
+            .await
+            .context("cannot read the musicbrainz search")?;
+        let candidates = found
+            .groups
+            .into_iter()
+            .filter(|group| group.score >= MUSICBRAINZ_SCORE)
+            .filter(|group| {
+                group
+                    .credit
+                    .first()
+                    .is_some_and(|artist| same_artist(&artist.name, &query.artist))
+            })
+            .map(|group| {
+                (
+                    group.title,
+                    Some(format!("{COVER_ART}/{}/front-500", group.id)),
+                )
+            });
+        let Some(cover) = closest(candidates, &query.album) else {
+            return Ok(None);
+        };
+
+        // the archive answers a group without art with 404, and a found one with a redirect to
+        // the image, whose final address is the one that never moves again
+        let response = self
+            .http
+            .head(&cover)
+            .header(reqwest::header::USER_AGENT, AGENT)
+            .send()
+            .await
+            .context("cannot reach the cover art archive")?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let response = response
+            .error_for_status()
+            .context("cannot read the cover art archive")?;
+        let url = response.url().as_str();
+        Ok(url.starts_with("https://").then(|| url.to_owned()))
     }
 
     /// One page of results for the artist and `name`. Deezer reports a refused search, such as
@@ -195,6 +391,11 @@ fn searchable(text: &str) -> String {
         }
     }
     kept.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// `text` made safe inside a quoted Lucene term, which MusicBrainz searches are.
+fn quoted(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// `text` lowercased, with every run of punctuation and spaces turned into one space.

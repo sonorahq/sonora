@@ -23,6 +23,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- When a track's own cover cannot be shown on the Discord status, Sonora looks it up on Deezer, then iTunes, then MusicBrainz, so an album one of them lacks, or a service your network blocks, no longer leaves the status without a cover.
 - Hover highlights fade out when the pointer leaves instead of cutting off.
 - The player bar keeps its playback buttons and seek bar centred as the window narrows: the volume slider shrinks first and folds into a button with a slider that rises on hover only when space runs out.
 - The left sidebar keeps its full width in narrower windows and folds to icons only when the page would get too cramped.
