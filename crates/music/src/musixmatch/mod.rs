@@ -217,6 +217,9 @@ fn hit(calls: &Calls) -> Option<LyricsHit> {
         album: (!track.album_name.is_empty()).then(|| track.album_name.clone()),
         duration: (track.track_length > 0).then(|| Duration::from_secs(track.track_length)),
         writers: writers(calls),
+        origin: None,
+        contributors: Vec::new(),
+        expires: None,
     })
 }
 

@@ -47,6 +47,7 @@ mod themes;
 pub use header::SettingsHeader;
 use layout::section_title;
 pub(crate) use layout::{Layout, frame};
+use lyrics::SPICY_LYRICS;
 pub(crate) use rows::Row;
 
 /// The space between two groups of a page.
@@ -95,6 +96,7 @@ enum Slot {
     LyricsPriority,
     WordSyncedFirst,
     LyricsForLocal,
+    SpicyLyricsKey,
     Normalisation,
     Gapless,
     KeepTracks,
@@ -272,6 +274,8 @@ pub struct SettingsView {
     connect_name: Entity<Input>,
     /// The address of the listener's own Sonora Sessions server.
     sessions_server: Entity<Input>,
+    /// The Spicy Lyrics key, saved as it is typed.
+    spicy_key: Entity<Input>,
     /// The service whose link dialog is open, by slug.
     scrobble_prompt: Option<&'static str>,
     /// The provider whose sign-in choice is up, by slug and name.
@@ -412,6 +416,20 @@ impl SettingsView {
         // what is typed is kept only once the Save button finds its server answers
         cx.observe(&sessions_server, |_, _, cx| cx.notify())
             .detach();
+        let spicy_key = cx.new(|cx| {
+            Input::new("settings-spicy-lyrics-key-hint", cx)
+                .compact()
+                .masked()
+        });
+        let key = settings.read(cx).lyrics_key(SPICY_LYRICS).to_owned();
+        spicy_key.update(cx, |input, cx| input.set_text(key, cx));
+        cx.observe(&spicy_key, |this, input, cx| {
+            let text = input.read(cx).text().to_owned();
+            this.settings.update(cx, |settings, cx| {
+                settings.set_lyrics_key(SPICY_LYRICS, &text, cx)
+            });
+        })
+        .detach();
 
         let popovers = Popovers::default();
         let output_picker = cx.new(|cx| OutputPicker::new(outputs.clone(), popovers.clone(), cx));
@@ -459,6 +477,7 @@ impl SettingsView {
             scrobble_second: cx.new(|cx| Input::new("settings-scrobble-secret", cx)),
             connect_name,
             sessions_server,
+            spicy_key,
             scrobble_prompt: None,
             languages,
             typefaces,
@@ -893,6 +912,10 @@ impl SettingsView {
                 t!("settings-lyrics-for-local-files"),
                 t!("settings-lyrics-for-local-files-detail"),
             ),
+            Slot::SpicyLyricsKey => (
+                t!("settings-spicy-lyrics-key"),
+                t!("settings-spicy-lyrics-key-detail"),
+            ),
             Slot::SpotifyConnect => (
                 t!("settings-spotify-connect"),
                 t!("settings-spotify-connect-detail"),
@@ -1032,6 +1055,7 @@ impl SettingsView {
             Slot::Karaoke => self.karaoke_lyrics_row(cx),
             Slot::Romanized => self.romanized_lyrics_row(cx),
             Slot::LyricsForLocal => self.lyrics_for_local_files_row(cx),
+            Slot::SpicyLyricsKey => self.spicy_lyrics_key_row(),
             Slot::SpotifyConnect => self.spotify_connect_row(cx),
             Slot::SpotifyConnectName => self.spotify_connect_name_row(cx),
             Slot::SpotifyConnectCustom => self.spotify_connect_custom_row(),

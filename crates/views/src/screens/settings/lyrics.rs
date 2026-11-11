@@ -15,6 +15,9 @@ use ui::{
 use super::rows::drill;
 use super::{Group, SettingsView, Slot};
 
+/// The lyrics source that needs a key of the user's own, by the name its provider reports.
+pub(super) const SPICY_LYRICS: &str = "Spicy Lyrics";
+
 /// A lyrics source being dragged within the priority list. It draws as a chip under the cursor
 /// and changes the saved order only when dropped.
 #[derive(Clone)]
@@ -26,10 +29,15 @@ pub(super) struct DraggedSource {
 }
 
 impl SettingsView {
+    /// The lyrics groups. The Spicy Lyrics key row only stands while that source is on.
     pub(super) fn lyrics_groups(&self, cx: &App) -> Vec<Group> {
         let mut groups = vec![Group::untitled().rows([Slot::Lyrics])];
         if !self.settings.read(cx).lyrics_enabled() {
             return groups;
+        }
+        let mut sources = vec![Slot::LyricsSources, Slot::LyricsForLocal];
+        if self.settings.read(cx).lyrics_provider_enabled(SPICY_LYRICS) {
+            sources.push(Slot::SpicyLyricsKey);
         }
         groups.push(
             Group::new("settings-group-display", "icons/mic-vocal.svg").rows([
@@ -40,10 +48,7 @@ impl SettingsView {
                 Slot::FullscreenLyricsSize,
             ]),
         );
-        groups.push(
-            Group::new("settings-group-sources", "icons/list-music.svg")
-                .rows([Slot::LyricsSources, Slot::LyricsForLocal]),
-        );
+        groups.push(Group::new("settings-group-sources", "icons/list-music.svg").rows(sources));
         groups
     }
 
@@ -151,6 +156,16 @@ impl SettingsView {
             .child(step("larger", "+", "settings-font-larger", 0.1));
 
         self.row(i18n::lookup(title, None), actions.into_any_element())
+    }
+
+    pub(super) fn spicy_lyrics_key_row(&self) -> AnyElement {
+        self.row(
+            t!("settings-spicy-lyrics-key"),
+            div()
+                .w(Picker::WIDE)
+                .child(self.spicy_key.clone())
+                .into_any_element(),
+        )
     }
 
     pub(super) fn lyrics_for_local_files_row(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -474,6 +489,7 @@ pub(super) fn source_name(provider: &str) -> SharedString {
         "LrcLib" => "settings-lyrics-provider-lrclib",
         "Kugou" => "settings-lyrics-provider-kugou",
         "NetEase" => "settings-lyrics-provider-netease",
+        SPICY_LYRICS => "settings-lyrics-provider-spicy",
         _ => return SharedString::from(provider.to_owned()),
     };
     i18n::lookup(key, None)
