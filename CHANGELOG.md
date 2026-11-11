@@ -17,6 +17,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Turn on a Genre column in song lists and sort by it, for local files, Subsonic servers and Apple Music.
 - Play Spotify through Soloist, Spotify's own player, including lossless. Set it up under Settings, Playback.
 - Blur the desktop behind a see-through window on Linux compositors that support it, such as KDE Plasma and niri.
+- Tidal tracks show their bit depth or bit rate in the signal path.
 
 ### Changed
 
