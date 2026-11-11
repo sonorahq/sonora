@@ -1,14 +1,18 @@
+use std::cell::RefCell;
 use std::f32::consts::TAU;
+use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, ClickEvent, Div, ElementId, Hsla, Interactivity, MouseButton, Pixels,
-    SharedString, Stateful, StyleRefinement, TextStyleRefinement, Transformation, Window, div, px,
-    radians, relative, svg,
+    SharedString, Stateful, StyleRefinement, Svg, TextStyleRefinement, Transformation, Window,
+    canvas, div, point, px, radians, relative, size, svg,
 };
 
 use crate::glass::{blurring, frost};
 use crate::metrics::{Text, text_width};
+use crate::motion::{PRESS_SCALE, Springs, Sprung, pressing};
+use crate::panel::Side;
 use crate::theme::ActiveTheme as _;
 use crate::tooltip::{Perch, Tipped as _};
 
@@ -28,6 +32,19 @@ const INSET: Pixels = px(12.);
 const GAP: Pixels = px(6.);
 const ICON: Pixels = px(16.);
 const BORDER: Pixels = px(1.);
+/// How small a swapped icon starts as it pops in.
+const POP_FROM: f32 = 0.6;
+/// How far an icon on a belt travels between its place and where it has faded out.
+const BELT_TRAVEL: Pixels = px(14.);
+/// How close to the next icon the belt comes before it counts as there. A spring spends a
+/// long while on its last hundredth, and a faint copy of the icon would hang beside it.
+const BELT_REST: f32 = 0.01;
+/// How close, in pixels and in scale, a resize and a pop come before they count as landed.
+const RESIZE_REST: f32 = 0.02;
+const POP_REST: f32 = 1e-3;
+/// How far the drawn width may sit from the width the content asks for, borders included, and
+/// still count as the content's. Further off, something else sizes the button.
+const FIT_SLACK: f32 = 3.;
 
 type Click = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
@@ -39,8 +56,32 @@ enum Variant {
     Destructive,
 }
 
+/// What a button remembers between frames: the width it springs on as its label changes, and
+/// the icon it showed last, so a new one pops in. It sits in a cell so the button can step it
+/// while it holds the theme.
+struct Shape {
+    width: Option<Sprung>,
+    /// The width the content asked for last frame.
+    natural: f32,
+    /// How wide the button drew last, which tells a button its content sizes from one a column
+    /// stretches.
+    drawn: Option<f32>,
+    icon: Option<SharedString>,
+    pop: Sprung,
+    /// The icon a swap replaced and how much of it is left, from 1 as it starts to shrink away.
+    leaving: Option<(SharedString, Sprung)>,
+    /// How many icons the belt was sent on by, one for each click not yet settled.
+    sent: f32,
+    /// How many of them it has moved by. The part past the whole number is how far the icon
+    /// in view has left and the next one has come in.
+    belt: Sprung,
+    /// How far the label sits into a reserved slot, which glides as the label changes.
+    inset: Option<Sprung>,
+}
+
 #[derive(IntoElement)]
 pub struct Button {
+    id: ElementId,
     base: Stateful<Div>,
     label: Option<SharedString>,
     /// Labels the button may switch between. The label slot is as wide as the widest of them,
@@ -71,6 +112,10 @@ pub struct Button {
     hoverless: bool,
     frosted: bool,
     turn: f32,
+    /// Whether a swapped icon fades into the one it replaces in place, with no pop.
+    blend: bool,
+    /// The side the icon leaves towards on a click, for a button whose icon rides a belt.
+    belt: Option<Side>,
     hovered: Option<StyleRefinement>,
     fill: Option<(Hsla, Hsla)>,
     pressed: Option<StyleRefinement>,
@@ -82,8 +127,10 @@ pub struct Button {
 impl Button {
     #[track_caller]
     pub fn new(id: impl Into<ElementId>) -> Self {
+        let id = id.into();
         Self {
-            base: div().id(id),
+            base: div().id(id.clone()),
+            id,
             label: None,
             reserve: Vec::new(),
             name: None,
@@ -104,6 +151,8 @@ impl Button {
             hoverless: false,
             frosted: false,
             turn: 0.,
+            blend: false,
+            belt: None,
             hovered: None,
             fill: None,
             pressed: None,
@@ -118,8 +167,9 @@ impl Button {
         self
     }
 
-    /// Keeps room for the widest of `labels` and centres the shown label in it. Pass every
-    /// label the button can show, the current one included.
+    /// Keeps room for the widest of `labels` and centres the shown label in it. A new label
+    /// starts where the last one started and glides to the middle. Pass every label the button
+    /// can show, the current one included.
     pub fn reserve(mut self, labels: impl IntoIterator<Item = impl Into<SharedString>>) -> Self {
         self.reserve = labels.into_iter().map(Into::into).collect();
         self
@@ -230,7 +280,8 @@ impl Button {
         self
     }
 
-    /// Tells screen readers whether the menu or panel this button opens is showing.
+    /// Tells screen readers whether the menu or panel this button opens is showing. While it
+    /// shows, the button drops its tooltip, which would otherwise sit over what it opened.
     pub fn expanded(mut self, expanded: bool) -> Self {
         self.expanded = Some(expanded);
         self
@@ -282,6 +333,21 @@ impl Button {
         self
     }
 
+    /// Swaps icons by fading one into the other where it stands, for two icons that share most
+    /// of their shape. The strokes they share stay solid and only what differs fades, where the
+    /// usual pop would show one icon shrinking inside the other.
+    pub fn blending(mut self) -> Self {
+        self.blend = true;
+        self
+    }
+
+    /// Puts the icon on a belt. Each click slides it out towards `side`, shrinking and fading,
+    /// while a copy comes in from the other side, and clicks in a row keep the belt running.
+    pub fn belt(mut self, side: Side) -> Self {
+        self.belt = Some(side);
+        self
+    }
+
     /// Rotates the icon by `turn` of a full turn, for an owner that animates it with `Spin`.
     pub fn turned(mut self, turn: f32) -> Self {
         self.turn = turn;
@@ -295,6 +361,11 @@ impl Button {
 
     pub fn tooltip_above(mut self, key: impl Into<SharedString>) -> Self {
         self.tooltip = Some((key.into(), Perch::Above));
+        self
+    }
+
+    pub fn tooltip_trailing(mut self, key: impl Into<SharedString>) -> Self {
+        self.tooltip = Some((key.into(), Perch::Trailing));
         self
     }
 
@@ -342,6 +413,7 @@ struct Palette {
 impl RenderOnce for Button {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Self {
+            id,
             mut base,
             label,
             reserve,
@@ -363,6 +435,8 @@ impl RenderOnce for Button {
             hoverless,
             frosted,
             turn,
+            blend,
+            belt,
             hovered,
             fill,
             pressed,
@@ -370,6 +444,32 @@ impl RenderOnce for Button {
             tooltip,
             on_click,
         } = self;
+
+        let shape = window.use_keyed_state(
+            ElementId::NamedChild(Arc::new(id.clone()), "shape".into()),
+            cx,
+            |_, _| {
+                RefCell::new(Shape {
+                    width: None,
+                    natural: 0.,
+                    drawn: None,
+                    icon: icon.clone(),
+                    pop: Sprung::at(1.),
+                    leaving: None,
+                    sent: 0.,
+                    belt: Sprung::at(0.),
+                    inset: None,
+                })
+            },
+        );
+        // A button that sizes itself to an icon, a label and a trailing icon springs to its new
+        // width as the label changes. One the caller sizes, or with parts of its own, keeps to
+        // plain layout.
+        let fits = label.is_some()
+            && reserve.is_empty()
+            && leading.is_none()
+            && detail.is_none()
+            && sized_by_content(base.style());
 
         let theme = cx.theme();
         // A plain ghost floats over flat paint, so it hovers with the themed
@@ -444,20 +544,25 @@ impl RenderOnce for Button {
             true => palette.foreground,
             false => tint.unwrap_or(palette.foreground),
         };
+        // The reserved slot's width, and how wide the label shown in it sets.
         let reserved = (!reserve.is_empty()).then(|| {
             let size = small.then(|| TextStyleRefinement {
                 font_size: Some(theme.text(Text::Label).into()),
                 ..Default::default()
             });
-            window
-                .with_text_style(size, |window| {
-                    reserve
-                        .into_iter()
-                        .map(|label| text_width(label, window))
-                        .max()
-                        .unwrap_or_default()
-                })
-                .ceil()
+            window.with_text_style(size, |window| {
+                let slot = reserve
+                    .into_iter()
+                    .map(|label| text_width(label, window))
+                    .max()
+                    .unwrap_or_default()
+                    .ceil();
+                let shown = label
+                    .as_ref()
+                    .map(|label| text_width(label.clone(), window))
+                    .unwrap_or_default();
+                (slot, shown)
+            })
         });
         let (height, padding, gap) = match small {
             true => (theme.metrics.control_small, SMALL_INSET, px(4.)),
@@ -473,6 +578,94 @@ impl RenderOnce for Button {
         };
         let pressed = state_style(active, pressed, frosting);
         let overrides = std::mem::take(base.style());
+        let natural = label.as_ref().filter(|_| fits).map(|label| {
+            let mut text = TextStyleRefinement::default();
+            if small {
+                text.font_size = Some(theme.text(Text::Label).into());
+            }
+            text.refine(&overrides.text);
+            let label =
+                window.with_text_style(Some(text), |window| text_width(label.clone(), window));
+            let parts = [
+                icon.as_ref().map(|_| ICON),
+                Some(label.ceil()),
+                trailing.as_ref().map(|_| ICON),
+            ];
+            let count = parts.iter().flatten().count() as f32;
+            let border = match palette.border.is_some() {
+                true => BORDER * 2.,
+                false => Pixels::ZERO,
+            };
+            padding * 2.
+                + border
+                + parts.iter().flatten().copied().sum::<Pixels>()
+                + gap * (count - 1.)
+        });
+        let (resizing, pop, leaving, inset, belted) = {
+            let mut shape = shape.read(cx).borrow_mut();
+            if natural.is_none() {
+                shape.width = None;
+            }
+            let resizing = natural.and_then(|natural| {
+                let target = f32::from(natural);
+                let (last, drawn) = (shape.natural, shape.drawn);
+                shape.natural = target;
+                let width = shape.width.get_or_insert_with(|| Sprung::at(target));
+                // A button at rest that drew wider or narrower than its content was sized by
+                // its parent, so it takes the new width without springing to it.
+                if width.resting() && drawn.is_some_and(|drawn| (drawn - last).abs() > FIT_SLACK) {
+                    width.jump(target);
+                }
+                let at = width.follow(target, Springs::RESIZE, RESIZE_REST, window, cx);
+                ((at - target).abs() > RESIZE_REST).then(|| px(at))
+            });
+            // A new icon grows in from small while the one it replaces shrinks away over it.
+            if shape.icon != icon {
+                if let (Some(old), Some(_)) = (shape.icon.clone(), icon.as_ref()) {
+                    shape.pop.jump(0.);
+                    shape.leaving = Some((old, Sprung::at(1.)));
+                }
+                shape.icon = icon.clone();
+            }
+            let pop = shape.pop.follow(1., Springs::SWAP_IN, POP_REST, window, cx);
+            // A blend keeps the old icon for as long as the new one is coming in, so the two
+            // always add up to solid strokes where they agree.
+            let leaving = shape.leaving.as_mut().map(|(path, left)| {
+                let left = match blend {
+                    true => 1. - pop,
+                    false => left.follow(0., Springs::SWAP_OUT, POP_REST, window, cx),
+                };
+                (path.clone(), left)
+            });
+            let leaving = leaving.filter(|(_, left)| *left > 0.);
+            if leaving.is_none() {
+                shape.leaving = None;
+            }
+            // A changed label in a reserved slot starts where the last one started and glides to
+            // its own place in the middle.
+            let inset = reserved.map(|(slot, shown)| {
+                let target = (f32::from(slot - shown) / 2.).max(0.);
+                let inset = shape.inset.get_or_insert_with(|| Sprung::at(target));
+                px(inset.follow(target, Springs::RESIZE, RESIZE_REST, window, cx))
+            });
+            if inset.is_none() {
+                shape.inset = None;
+            }
+            // The belt runs to where the clicks sent it. Once there the count starts over,
+            // since only the part past the whole number shows.
+            let belted = belt.map(|side| {
+                let sent = shape.sent;
+                let at = shape
+                    .belt
+                    .follow(sent, Springs::BELT, BELT_REST, window, cx);
+                if shape.belt.resting() {
+                    shape.sent = 0.;
+                    shape.belt.jump(0.);
+                }
+                (side, at.fract())
+            });
+            (resizing, pop, leaving, inset, belted)
+        };
         // A node reaches the tree only with a role, and an icon-only button has
         // no label of its own, so its tooltip key doubles as the accessible
         // name the same way the hover text does.
@@ -492,7 +685,7 @@ impl RenderOnce for Button {
             ),
         };
 
-        let mut button = base
+        let button = base
             .role(match tab {
                 true => gpui::accesskit::Role::Tab,
                 false => gpui::accesskit::Role::Button,
@@ -514,6 +707,19 @@ impl RenderOnce for Button {
             .h(height)
             .px(padding)
             .rounded(radius)
+            // Mid-resize the box is narrower or wider than what it holds, so the content keeps
+            // its own width from the leading edge and the box clips it as it grows. It leaves the
+            // pixel grid while it springs, so its edge glides instead of stepping a pixel at a
+            // time, and only its width keeps a fraction.
+            .when_some(resizing, |this, width| {
+                this.w(width)
+                    .h(window.pixel_snap(height))
+                    .px(window.pixel_snap(padding))
+                    .gap(window.pixel_snap(gap))
+                    .overflow_hidden()
+                    .justify_start()
+                    .pixel_snap(false)
+            })
             .text_color(foreground)
             .when(small, |this| this.text_size(theme.text(Text::Label)))
             .when_some(palette.background, |this, background| this.bg(background))
@@ -524,33 +730,104 @@ impl RenderOnce for Button {
                 this.border_1().border_color(border)
             })
             .when(interactive, |this| this.cursor_pointer())
-            .when_some(tooltip.filter(|_| interactive), |this, (key, perch)| {
-                this.tip(key, perch)
-            })
+            .when_some(
+                tooltip.filter(|_| interactive && expanded != Some(true)),
+                |this, (key, perch)| this.tip(key, perch),
+            )
             .when_some(hovered, |this, style| this.hover(move |_| style))
             .when_some(pressed, |this, style| this.active(move |_| style))
             .when_some(icon, |this, path| {
-                this.child(
-                    svg()
-                        .path(icons::path(path))
-                        .size(ICON)
-                        .flex_none()
-                        .text_color(foreground)
-                        .with_transformation(Transformation::rotate(radians(turn * TAU))),
-                )
+                let tinted = |presence: f32| foreground.opacity(presence.clamp(0., 1.));
+                let popped = |presence: f32| POP_FROM + (1. - POP_FROM) * presence;
+                let still = Pixels::ZERO;
+                match belted.filter(|(_, moved)| *moved > 0.) {
+                    // The icon in view moves off as the next one comes in behind it, each
+                    // shrinking towards its far end. The fade runs on the square of how much of
+                    // an icon is left, so both are faint for most of the way and the two never
+                    // read as a pair side by side.
+                    Some((side, moved)) => {
+                        let travel = match side {
+                            Side::Left => -BELT_TRAVEL,
+                            Side::Right => BELT_TRAVEL,
+                        };
+                        let left = 1. - moved;
+                        let coming = glyph(
+                            path.clone(),
+                            tinted(moved * moved),
+                            turn,
+                            popped(moved),
+                            travel * (moved - 1.),
+                        );
+                        let going = glyph(
+                            path,
+                            tinted(left * left),
+                            turn,
+                            popped(left),
+                            travel * moved,
+                        );
+                        this.child(
+                            div()
+                                .relative()
+                                .flex_none()
+                                .size(ICON)
+                                .child(coming)
+                                .child(going.absolute().top_0().left_0()),
+                        )
+                    }
+                    None => {
+                        // A blend fades each icon over half the swap, the new one first, so
+                        // one of the two is always whole.
+                        let (shown, gone) = match blend {
+                            true => (
+                                glyph(path, tinted(pop * 2.), turn, 1., still),
+                                leaving.map(|(old, left)| {
+                                    glyph(old, tinted(left * 2.), turn, 1., still)
+                                }),
+                            ),
+                            false => (
+                                glyph(path, tinted(pop), turn, popped(pop), still),
+                                leaving.map(|(old, left)| {
+                                    glyph(old, tinted(left), turn, popped(left), still)
+                                }),
+                            ),
+                        };
+                        match gone {
+                            Some(gone) => this.child(
+                                div()
+                                    .relative()
+                                    .flex_none()
+                                    .size(ICON)
+                                    .child(shown)
+                                    .child(gone.absolute().top_0().left_0()),
+                            ),
+                            None => this.child(shown),
+                        }
+                    }
+                }
             })
             .children(leading)
-            .when_some(label, |this, label| {
-                this.child(
+            .when_some(label, |this, label| match reserved.zip(inset) {
+                // The slot keeps the widest label's room and the label glides inside it, off the
+                // pixel grid so it moves by fractions rather than whole pixels. A label wider
+                // than what is left of the slot runs on into the padding for the moment it
+                // starts there.
+                Some(((slot, _), inset)) => this.child(
+                    div().flex_none().w(slot).pixel_snap(false).child(
+                        div()
+                            .pixel_snap(false)
+                            .ml(inset)
+                            .whitespace_nowrap()
+                            .child(label),
+                    ),
+                ),
+                None => this.child(
                     div()
                         .min_w_0()
                         .truncate()
                         .when(trailing.is_some() || detail.is_some(), |this| this.flex_1())
-                        .when_some(reserved, |this, width| {
-                            this.flex_none().w(width).text_center()
-                        })
+                        .when(resizing.is_some(), |this| this.flex_none())
                         .child(label),
-                )
+                ),
             })
             .when_some(detail, |this, detail| {
                 this.child(
@@ -597,16 +874,72 @@ impl RenderOnce for Button {
                         .bg(color),
                 )
             })
+            // Notes how wide the button drew, so the next label change can tell whether its
+            // content or its parent sized it.
+            .when(natural.is_some(), |this| {
+                let shape = shape.clone();
+                this.child(
+                    canvas(
+                        move |bounds, _, cx| {
+                            shape.read(cx).borrow_mut().drawn = Some(f32::from(bounds.size.width));
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .inset_0(),
+                )
+            })
             .when(interactive, |this| {
                 this.when_some(on_click, |this, handler| {
+                    let shape = shape.clone();
                     this.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_click(move |event, window, cx| handler(event, window, cx))
+                        .on_click(move |event, window, cx| {
+                            if belt.is_some() {
+                                shape.update(cx, |shape, cx| {
+                                    shape.get_mut().sent += 1.;
+                                    cx.notify();
+                                });
+                            }
+                            handler(event, window, cx)
+                        })
                 })
             });
 
+        let mut button = match interactive {
+            true => pressing(button, &id, PRESS_SCALE, window, cx),
+            false => button,
+        };
         button.style().refine(&overrides);
         button
     }
+}
+
+/// The button's icon in `color`, turned by `turn` of a full turn, drawn at `scale` of its size
+/// and moved `shift` sideways from its place.
+fn glyph(path: SharedString, color: Hsla, turn: f32, scale: f32, shift: Pixels) -> Svg {
+    svg()
+        .path(icons::path(path))
+        .size(ICON)
+        .flex_none()
+        .text_color(color)
+        .with_transformation(
+            Transformation::rotate(radians(turn * TAU))
+                .with_scaling(size(scale, scale))
+                .with_translation(point(shift, Pixels::ZERO)),
+        )
+}
+
+/// Whether a button's caller left its width to what it holds, so the button may spring between
+/// the widths its content gives it.
+fn sized_by_content(overrides: &StyleRefinement) -> bool {
+    overrides.size.width.is_none()
+        && overrides.min_size.width.is_none()
+        && overrides.max_size.width.is_none()
+        && overrides.flex_grow.is_none()
+        && overrides.flex_basis.is_none()
+        && overrides.padding.left.is_none()
+        && overrides.padding.right.is_none()
+        && overrides.gap.width.is_none()
 }
 
 fn state_style(

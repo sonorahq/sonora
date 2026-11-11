@@ -204,7 +204,7 @@ impl Render for Members {
                     this.child(jam::badge(
                         ("member-host", index),
                         t!("devices-jam-host"),
-                        theme,
+                        &theme,
                     ))
                 })
                 .when(removable && !member.host && !member.you, |this| {
@@ -247,7 +247,7 @@ impl Render for Members {
                             theme.metrics.control,
                             0.,
                             window,
-                            theme,
+                            &theme,
                         ))
                         .child(
                             div()

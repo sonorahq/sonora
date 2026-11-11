@@ -263,7 +263,7 @@ impl Engine {
             player_config,
             session.clone(),
             Box::new(NoOpVolume),
-            move || OutputSink::boxed(sink_cue, chain, output_tx.clone()),
+            move || OutputSink::boxed(sink_cue, chain, output_tx),
         );
 
         let events = Events {

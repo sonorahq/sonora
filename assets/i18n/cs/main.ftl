@@ -85,6 +85,7 @@ column-index = #
 column-title = Název
 column-artist = Interpret
 column-album = Album
+column-genre = Žánr
 column-date-added = Datum přidání
 column-added-by = Přidáno uživatelem
 column-modified = Změněno
@@ -943,6 +944,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kan.
 }
+settings-lyrics = Zobrazovat texty písní
+settings-lyrics-detail = Vypnutím skryjete texty písní všude a přestanou se vyhledávat
 settings-panel-lyrics-size = Velikost textu (panel)
 settings-panel-lyrics-size-detail = Velikost textu písně v postranním panelu nad základní velikostí písma
 settings-fullscreen-lyrics-size = Velikost textu (celá obrazovka)

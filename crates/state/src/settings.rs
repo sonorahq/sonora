@@ -233,6 +233,48 @@ impl Default for RomanizationScripts {
     }
 }
 
+/// The views of the fullscreen player the visualizer is drawn in. Only the cover has it by
+/// default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VisualizerScreens {
+    cover: bool,
+    lyrics: bool,
+    queue: bool,
+}
+
+impl VisualizerScreens {
+    /// Whether the visualizer is drawn while the fullscreen player shows `panel`, which is the
+    /// cover alone when there is none. The members panel never shows there.
+    pub fn contains(self, panel: Option<SideTab>) -> bool {
+        match panel {
+            None => self.cover,
+            Some(SideTab::Lyrics) => self.lyrics,
+            Some(SideTab::Queue) => self.queue,
+            Some(SideTab::Members) => false,
+        }
+    }
+
+    fn set(&mut self, panel: Option<SideTab>, shown: bool) {
+        match panel {
+            None => self.cover = shown,
+            Some(SideTab::Lyrics) => self.lyrics = shown,
+            Some(SideTab::Queue) => self.queue = shown,
+            Some(SideTab::Members) => {}
+        }
+    }
+}
+
+impl Default for VisualizerScreens {
+    fn default() -> Self {
+        Self {
+            cover: true,
+            lyrics: false,
+            queue: false,
+        }
+    }
+}
+
 /// A window's saved position and size in logical pixels, plus whether it was maximized.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -415,10 +457,15 @@ struct Values {
     /// Set once Subsonic has been added to a list saved before it existed, so a user who turns it
     /// off afterwards is not given it back.
     subsonic_lyrics_offered: bool,
+    /// Whether lyrics show anywhere and are looked up at all.
+    lyrics_enabled: bool,
     lyrics_providers: Vec<String>,
     /// Every known lyrics source, the preferred one first. Lyrics of the same kind from two
     /// sources go to the one listed higher.
     lyrics_provider_priority: Vec<String>,
+    /// Whether lyrics timed word by word are shown ahead of any others, whatever source they
+    /// come from. The source order then only settles lyrics of the same kind.
+    lyrics_word_synced_first: bool,
     karaoke_lyrics: bool,
     blur_lyrics: bool,
     romanized_lyrics: bool,
@@ -501,6 +548,7 @@ struct Appearance {
     visualizer_style: String,
     /// Whether the visualizer draws the track at its own level rather than at the volume.
     visualizer_absolute: bool,
+    visualizer_screens: VisualizerScreens,
     player_bar_layout: String,
     player_bar_transparent: bool,
     icons: String,
@@ -617,12 +665,14 @@ impl Default for Values {
             stream_quality: Quality::default().id().to_owned(),
             local_lyrics_offered: false,
             subsonic_lyrics_offered: false,
+            lyrics_enabled: true,
             lyrics_provider_priority: lyrics_priority(&[]),
             // Kugou and NetEase, the last two, start switched off.
             lyrics_providers: LYRICS_SOURCES[..7]
                 .iter()
                 .map(|name| name.to_string())
                 .collect(),
+            lyrics_word_synced_first: false,
             karaoke_lyrics: true,
             blur_lyrics: true,
             romanized_lyrics: true,
@@ -671,6 +721,7 @@ struct StateValues {
     volume: f32,
     sidebar_width: f32,
     sidebar_open: bool,
+    sidebar_rail: bool,
     sidebar_right_width: f32,
     sidebar_right_open: bool,
     sidebar_right_tab: SideTab,
@@ -703,6 +754,7 @@ impl Default for StateValues {
             volume: DEFAULT_VOLUME,
             sidebar_width: DEFAULT_SIDEBAR_WIDTH,
             sidebar_open: true,
+            sidebar_rail: false,
             sidebar_right_width: DEFAULT_SIDEBAR_RIGHT_WIDTH,
             sidebar_right_open: false,
             sidebar_right_tab: SideTab::Queue,
@@ -801,6 +853,7 @@ impl Default for Appearance {
             visualizer: true,
             visualizer_style: ui::VisualizerStyle::default().id().to_owned(),
             visualizer_absolute: false,
+            visualizer_screens: VisualizerScreens::default(),
             player_bar_layout: PlayerBarLayout::default().id().to_owned(),
             player_bar_transparent: true,
             icons: icons::BASE.to_owned(),
@@ -1090,6 +1143,10 @@ impl AppSettings {
         Quality::from_id(&self.values.stream_quality).unwrap_or_default()
     }
 
+    pub fn lyrics_enabled(&self) -> bool {
+        self.values.lyrics_enabled
+    }
+
     pub fn lyrics_providers(&self) -> &[String] {
         &self.values.lyrics_providers
     }
@@ -1116,6 +1173,11 @@ impl AppSettings {
         }
         self.values.lyrics_provider_priority = order;
         self.schedule_save(cx);
+    }
+
+    /// Whether lyrics timed word by word are shown ahead of any others, whatever their source.
+    pub fn lyrics_word_synced_first(&self) -> bool {
+        self.values.lyrics_word_synced_first
     }
 
     pub fn lyrics_provider_enabled(&self, provider: &str) -> bool {
@@ -1200,6 +1262,10 @@ impl AppSettings {
         self.state.sidebar_open
     }
 
+    pub fn sidebar_rail(&self) -> bool {
+        self.state.sidebar_rail
+    }
+
     pub fn sidebar_right_width(&self) -> f32 {
         self.state.sidebar_right_width
     }
@@ -1208,14 +1274,20 @@ impl AppSettings {
         self.state.sidebar_right_open
     }
 
+    /// The queue stands in for the lyrics while they are turned off.
     pub fn sidebar_right_tab(&self) -> SideTab {
-        self.state.sidebar_right_tab
+        match self.state.sidebar_right_tab {
+            SideTab::Lyrics if !self.lyrics_enabled() => SideTab::Queue,
+            tab => tab,
+        }
     }
 
     /// The panel the fullscreen view last showed beside the cover, or `None` when it showed the
-    /// artwork alone.
+    /// artwork alone, or while lyrics are turned off.
     pub fn fullscreen_tab(&self) -> Option<SideTab> {
-        self.state.fullscreen_tab
+        self.state
+            .fullscreen_tab
+            .filter(|tab| *tab != SideTab::Lyrics || self.lyrics_enabled())
     }
 
     pub fn shuffle(&self) -> bool {
@@ -1285,7 +1357,7 @@ impl AppSettings {
                     .iter()
                     .find(|variant| variant.is_light() == light)
             })
-            .or(family.variants.first())
+            .or_else(|| family.variants.first())
     }
 
     pub fn adaptive_theme(&self) -> bool {
@@ -1339,6 +1411,11 @@ impl AppSettings {
     /// Whether the visualizer ignores Sonora's volume and draws the track at its own level.
     pub fn visualizer_absolute(&self) -> bool {
         self.values.appearance.visualizer_absolute
+    }
+
+    /// The views of the fullscreen player the visualizer is drawn in.
+    pub fn visualizer_screens(&self) -> VisualizerScreens {
+        self.values.appearance.visualizer_screens
     }
 
     pub fn fullscreen_controls_autohide(&self) -> FullscreenControlsAutohide {
@@ -1655,6 +1732,11 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    pub fn set_lyrics_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.lyrics_enabled = enabled;
+        self.schedule_save(cx);
+    }
+
     pub fn set_lyrics_for_local_files(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.values.lyrics_for_local_files = enabled;
         self.schedule_save(cx);
@@ -1697,6 +1779,11 @@ impl AppSettings {
             self.values.lyrics_providers.push(provider.to_owned());
         }
         self.values.lyrics_providers.sort();
+        self.schedule_save(cx);
+    }
+
+    pub fn set_lyrics_word_synced_first(&mut self, first: bool, cx: &mut Context<Self>) {
+        self.values.lyrics_word_synced_first = first;
         self.schedule_save(cx);
     }
 
@@ -1908,9 +1995,10 @@ impl AppSettings {
         self.schedule_state_save(cx);
     }
 
-    pub fn set_sidebar(&mut self, width: f32, open: bool, cx: &mut Context<Self>) {
+    pub fn set_sidebar(&mut self, width: f32, open: bool, rail: bool, cx: &mut Context<Self>) {
         self.state.sidebar_width = width;
         self.state.sidebar_open = open;
+        self.state.sidebar_rail = rail;
         self.schedule_state_save(cx);
     }
 
@@ -2180,6 +2268,18 @@ impl AppSettings {
 
     pub fn set_visualizer_absolute(&mut self, absolute: bool, cx: &mut Context<Self>) {
         self.values.appearance.visualizer_absolute = absolute;
+        self.schedule_save(cx);
+    }
+
+    /// Draws the visualizer, or stops drawing it, while the fullscreen player shows `panel`,
+    /// which is the cover alone when there is none.
+    pub fn set_visualizer_screen(
+        &mut self,
+        panel: Option<SideTab>,
+        shown: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.values.appearance.visualizer_screens.set(panel, shown);
         self.schedule_save(cx);
     }
 

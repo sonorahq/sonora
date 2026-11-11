@@ -9,6 +9,7 @@ mod drag;
 mod dropdown;
 mod explicit;
 mod filters;
+mod flight;
 mod form;
 mod glass;
 mod glide;
@@ -20,6 +21,7 @@ mod label;
 mod layout;
 mod lazy;
 mod level_meter;
+mod linger;
 mod menu;
 mod metrics;
 mod modal;
@@ -79,6 +81,7 @@ pub use explicit::ExplicitBadge;
 pub use filters::{
     Filter, FilterChange, FlagAxis, RangeAxis, RangeScrubber, RangeState, SortAxis, Unit,
 };
+pub use flight::{Flight, Zoom};
 pub use form::{FORM_CONTEXT, Submit};
 pub use glass::{
     GLASS_BLUR, GLASS_FILL, bar_surface, blurring, frost, glass, popover_fill, popover_surface,
@@ -100,13 +103,15 @@ pub use label::{
 pub use layout::{ALWAYS, MIN_CONTENT, ROOMY, Room, SNUG, VAST, WIDE};
 pub use lazy::Lazy;
 pub use level_meter::LevelMeter;
+pub use linger::{Linger, lingers};
 pub use menu::{MENU_CONTEXT, Menu, MenuItem, MenuSearch, SubmenuState, close_menu};
 pub use metrics::{LEADING, Metrics, Rounding, Text, snapped, tucked};
 pub use modal::{Modal, corners};
 pub use motion::{
-    Entrance, Fading, HoverFade, Motion, Motioned, Pace, Rising, Saver, Springs, Stillness,
-    css_ease, css_ease_out, ease_in_out_cubic, ease_in_out_expo, ease_out_cubic, ease_out_expo,
-    ease_out_quad, entering, entrance_span, mix, paced, veiled,
+    Entrance, Fading, HoverFade, Motion, Motioned, PRESS_SCALE, PRESS_SCALE_CARD, Pace, Rising,
+    Saver, Springs, Sprung, Stillness, css_ease, css_ease_out, ease_in_out_cubic, ease_in_out_expo,
+    ease_out_cubic, ease_out_expo, ease_out_quad, entering, entrance_span, mix, paced, pressing,
+    spring, veiled,
 };
 pub use notice::Notice;
 pub use option_card::OptionCard;

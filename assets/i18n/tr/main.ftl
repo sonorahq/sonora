@@ -85,6 +85,7 @@ column-index = #
 column-title = Başlık
 column-artist = Sanatçı
 column-album = Albüm
+column-genre = Tür
 column-date-added = Eklenme tarihi
 column-added-by = Ekleyen
 column-modified = Değiştirilme
@@ -906,6 +907,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kanal
 }
+settings-lyrics = Şarkı sözlerini göster
+settings-lyrics-detail = Şarkı sözlerini her yerde gizlemek ve aramayı durdurmak için kapatın
 settings-panel-lyrics-size = Şarkı sözü boyutu (panel)
 settings-panel-lyrics-size-detail = Yan paneldeki şarkı sözü metninin, temel yazı boyutuna eklenen boyutu
 settings-fullscreen-lyrics-size = Şarkı sözü boyutu (tam ekran)

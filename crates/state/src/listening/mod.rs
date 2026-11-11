@@ -524,7 +524,7 @@ impl Listening {
                     .session
                     .read(cx)
                     .account(&slug)
-                    .map_or(slug.clone(), |(name, _)| name.to_owned());
+                    .map_or_else(|| slug.clone(), |(name, _)| name.to_owned());
                 return Toasts::about(Outcome::Failed, "toast-session-provider", name, cx);
             }
             Reason::Busy | Reason::Version | Reason::Invalid | Reason::Unknown => {

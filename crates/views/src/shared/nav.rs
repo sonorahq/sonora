@@ -20,3 +20,21 @@ pub(crate) fn nav_row(
         .hover(move |style| style.bg(accent))
         .active(move |style| style.bg(accent))
 }
+
+/// A navigation row reduced to its icon, named by a tooltip beside it.
+pub(crate) fn nav_icon(
+    id: impl Into<ElementId>,
+    key: &'static str,
+    icon: &'static str,
+    tint: Hsla,
+    accent: Hsla,
+) -> Button {
+    Button::new(id)
+        .ghost()
+        .icon(icon)
+        .tooltip_trailing(key)
+        .tint(tint)
+        .w_full()
+        .hover(move |style| style.bg(accent))
+        .active(move |style| style.bg(accent))
+}

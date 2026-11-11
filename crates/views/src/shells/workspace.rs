@@ -116,11 +116,6 @@ impl Workspace {
             .update(cx, |panel, cx| panel.reveal(tab, cx));
     }
 
-    #[allow(dead_code)]
-    pub fn content(&self) -> &AnyView {
-        &self.content
-    }
-
     /// Shows a page, with the header it wants above it or none, and laid out `cached` or not.
     /// The three arrive together so a header can never outlive its screen.
     pub fn set_content(
@@ -167,22 +162,14 @@ impl Workspace {
         }
         transition.hidden()
     }
-
-    #[allow(dead_code)]
-    pub fn player_bar(&self) -> &Entity<PlayerBar> {
-        &self.player_bar
-    }
 }
 
 impl Shell for Workspace {
     fn title_bar(&self, content: Option<AnyView>, cx: &App) -> TitleBarOptions {
-        let sidebar = self.sidebar.read(cx);
-
         TitleBarOptions {
             navigation: true,
-            sidebar_open: sidebar.is_open(),
+            sidebar_open: self.sidebar.read(cx).is_open(),
             sidebar_right: Some(self.sidebar_right.read(cx).is_open()),
-            offset: sidebar.occupied_width(),
             border: true,
             content,
             transparent: false,

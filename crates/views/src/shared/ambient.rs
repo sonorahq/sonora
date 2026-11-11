@@ -16,7 +16,7 @@
 use std::time::Instant;
 
 use gpui::prelude::*;
-use gpui::{App, Context, Hsla, Pixels, Render, Rgba, Task, WeakEntity, Window, div};
+use gpui::{App, Context, Hsla, Pixels, Render, Rgba, Task, Window, div};
 use state::Sonora;
 use ui::{ActiveTheme as _, CoverPalette, Theme};
 
@@ -31,12 +31,6 @@ const SHADE: f32 = 0.55;
 /// Time constant of the exponential ease onto a new palette, in seconds. The
 /// field lands within a few percent of the target after about three of these.
 const WASH: f32 = 0.8;
-/// How many times a second the drifting field is redrawn. The drift is slow enough that 30 frames
-/// read as smooth, and every frame repaints the whole window through the shader.
-const DRIFT_RATE: f32 = 30.;
-/// How early a display tick may come and still count as the next drift frame, in seconds. It keeps
-/// the frames on a steady share of the ticks, every second one at 60 Hz and every fourth at 120.
-const DRIFT_SLACK: f32 = 0.004;
 /// How many times smaller across each side the field behind the window is drawn before it is
 /// stretched back over it. Nothing in it is sharper than a heavy blur, so the stretch does not show,
 /// and the shader runs on a sixteenth of the pixels.
@@ -49,7 +43,7 @@ pub(crate) struct Ambient {
     stepped: Instant,
     painted: Option<[Hsla; COLORS]>,
     /// Whether a wait for the next drift frame is already running.
-    pacing: bool,
+    pacing: Option<Task<()>>,
     /// The palette of the cover a framed field follows, `None` for the one behind the window.
     framed: Option<Sampled>,
 }
@@ -74,7 +68,7 @@ impl Ambient {
             started: now,
             stepped: now,
             painted: None,
-            pacing: false,
+            pacing: None,
             framed: None,
         }
     }
@@ -127,16 +121,28 @@ impl Ambient {
         }
     }
 
-    /// Asks for the next drift frame `DRIFT_RATE` times a second. It counts display ticks rather
-    /// than running a timer of its own, since a timer is never in phase with the refresh and slow
-    /// motion would land on one vsync, skip the next and double the one after, which reads as a
-    /// twitch.
+    /// Schedules the next drift update without keeping display callbacks pending between updates.
     fn pace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pacing {
+        if self.pacing.is_some() {
             return;
         }
-        self.pacing = true;
-        wait_for_drift(cx.entity().downgrade(), Instant::now(), window);
+        let timer = super::animation::next(4, cx);
+        let handle = window.window_handle();
+        self.pacing = Some(cx.spawn(async move |this, cx| {
+            timer.await;
+            if this
+                .update(cx, |this, cx| {
+                    this.pacing = None;
+                    cx.notify();
+                })
+                .is_err()
+            {
+                return;
+            }
+            handle
+                .update(cx, |_, window, _| window.on_next_frame(|_, _| {}))
+                .ok();
+        }));
     }
 
     /// Eases the painted colours one frame toward `target` and returns them.
@@ -286,21 +292,6 @@ impl Render for Ambient {
                 }
             })
     }
-}
-
-/// Waits out display ticks until the next drift frame is due, then redraws `field`.
-fn wait_for_drift(field: WeakEntity<Ambient>, drawn: Instant, window: &mut Window) {
-    window.on_next_frame(move |window, cx| {
-        if drawn.elapsed().as_secs_f32() < 1. / DRIFT_RATE - DRIFT_SLACK {
-            return wait_for_drift(field, drawn, window);
-        }
-        field
-            .update(cx, |field, cx| {
-                field.pacing = false;
-                cx.notify();
-            })
-            .ok();
-    });
 }
 
 /// Whether the ambient background is on. Fullscreen reads it for the frosted

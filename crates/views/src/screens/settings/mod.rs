@@ -79,11 +79,13 @@ enum Slot {
     Ambient,
     AmbientMotion,
     Visualizer,
+    VisualizerScreens,
     VisualizerAbsolute,
     PlayerBarLayout,
     PlayerBarTransparent,
     FullscreenControlsAutohide,
     OsFullscreen,
+    Lyrics,
     Karaoke,
     BlurLyrics,
     Romanized,
@@ -91,6 +93,7 @@ enum Slot {
     FullscreenLyricsSize,
     LyricsSources,
     LyricsPriority,
+    WordSyncedFirst,
     LyricsForLocal,
     Normalisation,
     Gapless,
@@ -539,7 +542,7 @@ impl SettingsView {
             SettingsPage::Appearance => self.appearance_groups(),
             SettingsPage::PlayerBar => self.player_bar_groups(),
             SettingsPage::NowPlaying => self.now_playing_groups(cx),
-            SettingsPage::Lyrics => self.lyrics_groups(),
+            SettingsPage::Lyrics => self.lyrics_groups(cx),
             SettingsPage::Playback => self.playback_groups(cx),
             SettingsPage::Sound => self.sound_groups(cx),
             SettingsPage::Storage => self.storage_groups(cx),
@@ -683,10 +686,6 @@ impl SettingsView {
     /// The title and detail a search is matched against, without building the row. Kept next
     /// to the slots: a new row needs its pair here to be found. A slot with no pair is left out
     /// of searches.
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one arm per row keeps the keys beside the rows"
-    )]
     fn slot_meta(&self, slot: Slot, cx: &App) -> Option<(SharedString, SharedString)> {
         let meta = match slot {
             Slot::Folders => return None,
@@ -729,6 +728,10 @@ impl SettingsView {
             Slot::PlayerBarTransparent => (
                 t!("settings-player-bar-transparent"),
                 t!("settings-player-bar-transparent-detail"),
+            ),
+            Slot::VisualizerScreens => (
+                t!("settings-visualizer-screens"),
+                t!("settings-visualizer-screens-detail"),
             ),
             Slot::VisualizerAbsolute => (
                 t!("settings-visualizer-absolute"),
@@ -863,6 +866,11 @@ impl SettingsView {
                 t!("settings-lyrics-priority"),
                 t!("settings-lyrics-priority-detail"),
             ),
+            Slot::WordSyncedFirst => (
+                t!("settings-lyrics-word-synced-first"),
+                t!("settings-lyrics-word-synced-first-detail"),
+            ),
+            Slot::Lyrics => (t!("settings-lyrics"), t!("settings-lyrics-detail")),
             Slot::Karaoke => (
                 t!("settings-karaoke-lyrics"),
                 t!("settings-karaoke-lyrics-detail"),
@@ -955,6 +963,7 @@ impl SettingsView {
             Slot::Visualizer => div().into_any_element(),
             Slot::PlayerBarLayout => div().into_any_element(),
             Slot::PlayerBarTransparent => self.player_bar_transparent_row(cx),
+            Slot::VisualizerScreens => self.visualizer_screens_row(cx),
             Slot::VisualizerAbsolute => self.visualizer_absolute_row(cx),
             Slot::Opacity => self.opacity_row(cx),
             Slot::WindowBlur => self.blur_window_row(cx),
@@ -1006,6 +1015,8 @@ impl SettingsView {
             Slot::Equalizer => self.equalizer_row(cx),
             Slot::LyricsSources => self.lyrics_sources_row(cx),
             Slot::LyricsPriority => self.lyrics_priority(cx),
+            Slot::WordSyncedFirst => self.word_synced_first_row(cx),
+            Slot::Lyrics => self.lyrics_row(cx),
             Slot::Karaoke => self.karaoke_lyrics_row(cx),
             Slot::Romanized => self.romanized_lyrics_row(cx),
             Slot::LyricsForLocal => self.lyrics_for_local_files_row(cx),

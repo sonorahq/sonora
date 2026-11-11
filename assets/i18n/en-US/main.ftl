@@ -103,6 +103,7 @@ column-index = #
 column-title = Title
 column-artist = Artist
 column-album = Album
+column-genre = Genre
 column-date-added = Date added
 column-added-by = Added by
 column-modified = Modified
@@ -160,6 +161,7 @@ menu-play-tracks-last = { $count ->
 menu-song-radio = Go to song radio
 menu-go-to-album = Go to album
 menu-go-to-artist = Go to artist
+menu-go-to-playlist = Go to playlist
 menu-view-details = View details
 menu-copy-link = Copy link
 menu-cut = Cut
@@ -404,6 +406,11 @@ artist-popular-eyebrow = Explore this artist
 artist-popular-empty = Nothing to play from this artist yet
 artist-popular-more = Show all
 artist-popular-less = Show less
+artist-favorite-songs = Your favorite songs
+artist-favorite-songs-count = { $count ->
+    [one] { $count } song in your Favorites
+   *[other] { $count } songs in your Favorites
+}
 artist-releases = Releases
 artist-releases-more = Show all
 artist-releases-less = Show less
@@ -452,6 +459,7 @@ home-collection-albums = Albums from your collection
 search-placeholder = What do you want to listen to?
 search-browse = Browse all
 search-submit = Search
+search-open-link = Open link in Sonora
 search-recent = Recent searches
 search-forget = Remove from history
 genre-empty = Nothing to show here yet
@@ -641,6 +649,9 @@ settings-visualizer-style-none = Off
 settings-visualizer-style-bars = Bars
 settings-visualizer-style-wave = Wave
 settings-visualizer-style-both = Bars and wave
+settings-visualizer-screens = Show in
+settings-visualizer-screens-detail = The Now playing views the spectrum is drawn in
+settings-visualizer-screens-pick = Choose views
 settings-visualizer-absolute = Ignore volume
 settings-visualizer-absolute-detail = Draw the spectrum at the track's own level, however loud Sonora plays it
 settings-preview-title = Song title
@@ -1005,6 +1016,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } ch
 }
+settings-lyrics = Show lyrics
+settings-lyrics-detail = Turn off to hide lyrics everywhere and stop looking them up
 settings-panel-lyrics-size = Text size in the panel
 settings-panel-lyrics-size-detail = Size of the lyrics text in the side panel, on top of the base font size
 settings-fullscreen-lyrics-size = Text size in Now playing
@@ -1029,7 +1042,9 @@ settings-romanized-lyrics-detail = Show locally generated pronunciation for sele
 settings-romanization-writing-systems = Writing systems
 settings-lyrics-priority = Provider priority
 settings-lyrics-priority-detail = Sonora shows synced lyrics from the highest source that has them
-settings-lyrics-providers-detail = Choose which services to search for lyrics
+settings-lyrics-word-synced-first = Prioritize word-synced lyrics
+settings-lyrics-word-synced-first-detail = Show lyrics timed word by word first, even from a source lower in the list
+settings-lyrics-providers-detail =Choose which services to search for lyrics
 settings-lyrics-providers-selected = { $count ->
     [one] { $count } selected
    *[other] { $count } selected

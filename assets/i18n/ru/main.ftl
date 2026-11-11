@@ -85,6 +85,7 @@ column-index = #
 column-title = Название
 column-artist = Исполнитель
 column-album = Альбом
+column-genre = Жанр
 column-date-added = Дата добавления
 column-added-by = Добавил
 column-modified = Изменён
@@ -635,6 +636,9 @@ settings-visualizer-style-none = Выключен
 settings-visualizer-style-bars = Столбики
 settings-visualizer-style-wave = Волна
 settings-visualizer-style-both = Столбики и волна
+settings-visualizer-screens = Показывать на экранах
+settings-visualizer-screens-detail = На каких экранах полноэкранного режима рисуется спектр
+settings-visualizer-screens-pick = Выбрать экраны
 settings-visualizer-absolute = Не учитывать громкость
 settings-visualizer-absolute-detail = Рисовать спектр по уровню самого трека, как бы громко ни играла Sonora
 settings-preview-title = Название трека
@@ -976,6 +980,8 @@ equalizer-status-channels = { $from ->
     [2] стерео
    *[other] { $to } кан.
 }
+settings-lyrics = Показывать тексты песен
+settings-lyrics-detail = Выключите, чтобы скрыть тексты песен везде и перестать их искать
 settings-panel-lyrics-size = Размер текста песни (панель)
 settings-panel-lyrics-size-detail = Размер строк текста песни на боковой панели поверх базового размера шрифта
 settings-fullscreen-lyrics-size = Размер текста песни (полный экран)
@@ -999,7 +1005,9 @@ settings-romanized-lyrics = Романизация текста
 settings-romanized-lyrics-detail = Показывать локально собранное произношение для выбранных систем письма
 settings-romanization-writing-systems = Системы письма
 settings-lyrics-priority = Приоритет источников
-settings-lyrics-providers-detail = Выберите сервисы для поиска текстов песен
+settings-lyrics-word-synced-first = Сначала тексты с таймингами по словам
+settings-lyrics-word-synced-first-detail = Показывать текст с таймингами по словам первым, даже если его источник стоит ниже в списке
+settings-lyrics-providers-detail =Выберите сервисы для поиска текстов песен
 settings-lyrics-providers-selected = { $count ->
     [one] Выбран { $count } источник
     [few] Выбрано { $count } источника

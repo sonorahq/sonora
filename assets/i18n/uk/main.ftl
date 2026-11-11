@@ -85,6 +85,7 @@ column-index = #
 column-title = Назва
 column-artist = Виконавець
 column-album = Альбом
+column-genre = Жанр
 column-date-added = Дата додавання
 column-added-by = Додав
 column-modified = Змінено
@@ -946,6 +947,8 @@ equalizer-status-channels = { $from ->
     [2] стерео
    *[other] { $to } кан.
 }
+settings-lyrics = Показувати тексти пісень
+settings-lyrics-detail = Вимкніть, щоб приховати тексти пісень усюди й припинити їх пошук
 settings-panel-lyrics-size = Розмір тексту пісні (панель)
 settings-panel-lyrics-size-detail = Розмір рядків тексту пісні на бічній панелі поверх базового розміру шрифту
 settings-fullscreen-lyrics-size = Розмір тексту пісні (повний екран)

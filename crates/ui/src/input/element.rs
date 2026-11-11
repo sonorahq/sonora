@@ -421,9 +421,7 @@ impl Render for Input {
                         .text_color(theme.muted_foreground),
                 )
             })
-            .child(Text {
-                input: cx.entity().clone(),
-            })
+            .child(Text { input: cx.entity() })
             .when_some(self.suffix.clone(), |this, key| {
                 this.child(
                     div()

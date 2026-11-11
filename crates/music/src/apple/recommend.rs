@@ -97,7 +97,8 @@ pub(crate) async fn artist_tracks(client: &AppleClient, artist_id: &str) -> Resu
             }
         };
         let outline = wire::outline(&body);
-        let mut songs = outline.read(&wire::song);
+        let mut songs =
+            outline.read(&|row: &wire::Resource<'_>| wire::song(row, client.root_genre()));
         songs.retain(|track| track.id.as_ref().is_some_and(|id| seen.insert(id.clone())));
         let exhausted = songs.is_empty() || !outline.next.is_present();
         tracks.extend(songs);

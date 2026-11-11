@@ -85,6 +85,7 @@ column-index = #
 column-title = Titel
 column-artist = Künstler
 column-album = Album
+column-genre = Genre
 column-date-added = Hinzugefügt am
 column-added-by = Hinzugefügt von
 column-modified = Geändert
@@ -917,6 +918,8 @@ equalizer-status-channels = { $from ->
     [2] Stereo
    *[other] { $to } Kanäle
 }
+settings-lyrics = Lyrics anzeigen
+settings-lyrics-detail = Ausschalten, um Lyrics überall auszublenden und nicht mehr danach zu suchen
 settings-panel-lyrics-size = Lyricsgröße (panel)
 settings-panel-lyrics-size-detail = Größe des Lyrics-Textes in der Seitenleiste, auf der Basis der Basis-Schriftgröße
 settings-fullscreen-lyrics-size = Lyricsgröße (fullscreen)
