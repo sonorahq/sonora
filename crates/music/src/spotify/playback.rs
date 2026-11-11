@@ -74,6 +74,12 @@ pub struct Events {
     /// When the held event's audio is heard, once its write went through behind the end of the
     /// track before it.
     release: Option<Instant>,
+    /// The session whose runtime waits `release` out. `next` is awaited on the app's own
+    /// executor, where a Tokio timer has no reactor and panics, so the wait runs over there
+    /// and its deadline comes back on `due`.
+    session: Session,
+    waited: UnboundedSender<Instant>,
+    due: UnboundedReceiver<Instant>,
     /// The track whose audio was last let through, which a resume carries on.
     heard: Option<String>,
     /// Position reports seen while the cue refuses writes. A seek or load that took keeps the
@@ -99,8 +105,14 @@ impl Events {
                 Some(self.let_through(PlaybackEvent::Playing { id, at: at - ahead }))
             }
             (_, event) => {
+                let at = Instant::now() + ahead;
                 self.held = Some(event);
-                self.release = Some(Instant::now() + ahead);
+                self.release = Some(at);
+                let waited = self.waited.clone();
+                self.session.spawn(async move {
+                    tokio::time::sleep_until(at.into()).await;
+                    waited.send(at).ok();
+                });
                 None
             }
         }
@@ -178,7 +190,11 @@ impl PlaybackEvents for Events {
                         return Some(event);
                     }
                 }
-                () = sleep_until(self.release), if self.release.is_some() => {
+                Some(at) = self.due.recv() => {
+                    // a wait that a newer event called off still reports its deadline
+                    if self.release != Some(at) {
+                        continue;
+                    }
                     self.release = None;
                     if let Some(event) = self.held.take() {
                         return Some(self.let_through(event));
@@ -403,6 +419,8 @@ impl Engine {
             analyzer: config.analyzer.clone(),
         };
         let (output_tx, output_rx) = unbounded_channel();
+        let (waited, due) = unbounded_channel();
+        let waiting = session.clone();
         let player = Player::new(player_config, session, Box::new(NoOpVolume), move || {
             OutputSink::boxed(sink_cue, chain, output_tx)
         });
@@ -415,6 +433,9 @@ impl Engine {
             signals: signal_rx,
             held: None,
             release: None,
+            session: waiting,
+            waited,
+            due,
             heard: None,
             stale: 0,
         };
@@ -584,14 +605,6 @@ fn forward(mut events: UnboundedReceiver<PlayerEvent>, cue: Cue) -> UnboundedRec
         log::error!("playback: cannot spawn the spotify event thread: {error}");
     }
     received
-}
-
-/// Waits until `at`, or for ever without one.
-async fn sleep_until(at: Option<Instant>) {
-    match at {
-        Some(at) => tokio::time::sleep_until(at.into()).await,
-        None => std::future::pending().await,
-    }
 }
 
 pub(crate) fn track_uri(track_id: &str) -> Result<SpotifyUri> {
