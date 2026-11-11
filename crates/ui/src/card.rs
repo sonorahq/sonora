@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
@@ -14,7 +15,7 @@ use crate::button::Button;
 use crate::glass::{GLASS_BLUR, blurring};
 use crate::label::{Tails as _, upper};
 use crate::metrics::{LEADING, Text, snapped};
-use crate::motion::{PRESS_SCALE_CARD, pressing};
+use crate::motion::{PRESS_SCALE, PRESS_SCALE_CARD, pressing};
 use crate::skeleton::Skeleton;
 use crate::theme::ActiveTheme as _;
 use crate::tooltip::{Perch, Tipped as _};
@@ -36,6 +37,7 @@ pub const CARD_GROUP: &str = "card";
 type Press = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 type Summon = Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>;
 type DragStart = Rc<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>;
+type Warm = Rc<dyn Fn(&mut Window, &mut App) + 'static>;
 
 #[derive(IntoElement)]
 pub struct Card {
@@ -64,6 +66,7 @@ pub struct Card {
     loading: bool,
     tile: Option<Pixels>,
     play: Option<Press>,
+    warm: Option<Warm>,
     hint: bool,
     underline: bool,
     playing: bool,
@@ -105,6 +108,7 @@ impl Card {
             loading: false,
             tile: None,
             play: None,
+            warm: None,
             hint: false,
             underline: false,
             playing: false,
@@ -152,6 +156,13 @@ impl Card {
     ) -> Self {
         self.play = Some(Box::new(handler));
         self.playing = playing;
+        self
+    }
+
+    /// Runs `handler` when the pointer comes to rest on the play button, so the caller can
+    /// fetch ahead what a press would start.
+    pub fn warm(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.warm = Some(Rc::new(handler));
         self
     }
 
@@ -340,6 +351,7 @@ impl RenderOnce for Card {
             loading,
             tile,
             play,
+            warm,
             hint,
             underline,
             playing,
@@ -402,6 +414,13 @@ impl RenderOnce for Card {
                             .absolute()
                             .right(PLAY_INSET)
                             .bottom(PLAY_INSET)
+                            .when_some(warm.clone(), |this, warm| {
+                                this.on_hover(move |hovered, window, cx| {
+                                    if *hovered {
+                                        warm(window, cx);
+                                    }
+                                })
+                            })
                             .when(!playing, |this| {
                                 this.invisible()
                                     .group_hover(CARD_GROUP, |style| style.visible())
@@ -463,11 +482,7 @@ impl RenderOnce for Card {
                                             .flex_none()
                                             .text_color(theme.overlay_foreground),
                                     )
-                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                        cx.stop_propagation()
-                                    })
                                     .on_click(move |event, window, cx| {
-                                        cx.stop_propagation();
                                         play(event, window, cx);
                                     }),
                             )
@@ -475,13 +490,34 @@ impl RenderOnce for Card {
                     }
                 };
 
-                div()
+                let cover = div()
                     .relative()
                     .flex_none()
                     .size(art)
                     .child(leading)
-                    .child(control)
-                    .into_any_element()
+                    .child(control);
+                match tile {
+                    Some(_) => cover.into_any_element(),
+                    // The scrim fills the cover, so the cover is what takes the press: it keeps
+                    // the press and the click from reaching the card, and shrinks as a whole,
+                    // artwork and scrim together, the way a button does. What the click starts
+                    // may take a while to load, and nothing else would show the press landed.
+                    None => {
+                        let held = ElementId::NamedChild(Arc::new(id.clone()), "play".into());
+                        let cover = cover
+                            .id("card-cover")
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(|_, _, cx| cx.stop_propagation())
+                            .when_some(warm, |this, warm| {
+                                this.on_hover(move |hovered, window, cx| {
+                                    if *hovered {
+                                        warm(window, cx);
+                                    }
+                                })
+                            });
+                        pressing(cover, &held, PRESS_SCALE, window, cx).into_any_element()
+                    }
+                }
             }
         };
 

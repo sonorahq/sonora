@@ -502,7 +502,8 @@ impl SidebarLeft {
         };
 
         let origin = Origin::from(&pin);
-        let playing = self.playback.read(cx).playing_from(&origin, cx) == Some(true);
+        let playing = self.playback.read(cx).engaged(&origin, cx);
+        let warmed = origin.clone();
 
         let key = format!("{}-{}", pin.kind.key(), pin.id);
         let card = Card::new(SharedString::from(format!("pinned-{key}")), pin.label())
@@ -517,6 +518,10 @@ impl SidebarLeft {
                         .update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
                 }),
             )
+            .warm({
+                let playback = self.playback.clone();
+                move |_, cx| playback.update(cx, |playback, cx| playback.warm_origin(&warmed, cx))
+            })
             .tint(match active {
                 true => theme.foreground,
                 false => theme.muted_foreground,
