@@ -15,6 +15,9 @@ use crate::theme::ActiveTheme as _;
 
 const MARGIN: Pixels = px(8.);
 const OFFSET: Pixels = px(6.);
+/// How long the pointer rests on an element before a perched tooltip shows. Long enough that
+/// a pointer pausing on its way to a click raises none.
+const DELAY: Duration = Duration::from_millis(800);
 
 /// Where a tooltip sits relative to the element that owns it.
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -211,6 +214,7 @@ where
             let host = Rc::new(Cell::new(None));
             element
                 .child(recorder(host.clone()))
+                .tooltip_show_delay(DELAY)
                 .tooltip(move |window, cx| {
                     let text = text.clone();
                     let host = host.get().unwrap_or_else(|| {
