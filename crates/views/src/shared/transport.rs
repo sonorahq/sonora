@@ -5,7 +5,7 @@ use gpui::prelude::*;
 use gpui::{App, Entity, Global, SharedString, div};
 use i18n::t;
 use state::{Elsewhere, Playback, Repeat, Sonora};
-use ui::{ActiveTheme as _, Button};
+use ui::{ActiveTheme as _, Button, Side};
 
 use crate::shared::ambient;
 
@@ -112,12 +112,13 @@ pub(crate) fn toggle(playback: &Entity<Playback>, big: bool, frosted: bool, cx: 
     let idle = held.track().is_none() && steered.is_none();
     let playback = playback.clone();
 
-    let (id, icon, tooltip) = match playing {
-        true => ("pause", "icons/pause.svg", "play-pause"),
-        false => ("play", "icons/play.svg", "play-resume"),
+    let (icon, tooltip) = match playing {
+        true => ("icons/pause.svg", "play-pause"),
+        false => ("icons/play.svg", "play-resume"),
     };
 
-    Button::new(id)
+    // One id for both states, so the button keeps its press and swaps one icon for the other.
+    Button::new("play-pause")
         .ghost()
         .when(frosted, Button::frosted)
         .when(!big, Button::small)
@@ -164,6 +165,7 @@ fn repeat(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
             Repeat::One => "icons/repeat-one.svg",
             _ => "icons/repeat.svg",
         })
+        .blending()
         .indicator(repeat != Repeat::Off)
         .tooltip_above(match repeat {
             Repeat::Off => "player-repeat",
@@ -189,6 +191,7 @@ fn previous(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
         .when(frosted, Button::frosted)
         .small()
         .icon("icons/skip-back.svg")
+        .belt(Side::Left)
         .tooltip_above("player-previous")
         .disabled(!enabled)
         .on_click(move |_, _, cx| {
@@ -206,6 +209,7 @@ fn next(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
         .when(frosted, Button::frosted)
         .small()
         .icon("icons/skip-forward.svg")
+        .belt(Side::Right)
         .tooltip_above("player-next")
         .disabled(!enabled)
         .on_click(move |_, _, cx| {

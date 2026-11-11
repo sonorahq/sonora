@@ -6,12 +6,13 @@ use gpui::prelude::*;
 use gpui::{
     AnyElement, App, ClickEvent, Div, ElementId, Hsla, Interactivity, MouseButton, Pixels,
     SharedString, Stateful, StyleRefinement, Svg, TextStyleRefinement, Transformation, Window,
-    canvas, div, px, radians, relative, size, svg,
+    canvas, div, point, px, radians, relative, size, svg,
 };
 
 use crate::glass::{blurring, frost};
 use crate::metrics::{Text, text_width};
 use crate::motion::{PRESS_SCALE, Springs, Sprung, pressing};
+use crate::panel::Side;
 use crate::theme::ActiveTheme as _;
 use crate::tooltip::{Perch, Tipped as _};
 
@@ -33,6 +34,11 @@ const ICON: Pixels = px(16.);
 const BORDER: Pixels = px(1.);
 /// How small a swapped icon starts as it pops in.
 const POP_FROM: f32 = 0.6;
+/// How far an icon on a belt travels between its place and where it has faded out.
+const BELT_TRAVEL: Pixels = px(14.);
+/// How close to the next icon the belt comes before it counts as there. A spring spends a
+/// long while on its last hundredth, and a faint copy of the icon would hang beside it.
+const BELT_REST: f32 = 0.01;
 /// How close, in pixels and in scale, a resize and a pop come before they count as landed.
 const RESIZE_REST: f32 = 0.02;
 const POP_REST: f32 = 1e-3;
@@ -64,6 +70,11 @@ struct Shape {
     pop: Sprung,
     /// The icon a swap replaced and how much of it is left, from 1 as it starts to shrink away.
     leaving: Option<(SharedString, Sprung)>,
+    /// How many icons the belt was sent on by, one for each click not yet settled.
+    sent: f32,
+    /// How many of them it has moved by. The part past the whole number is how far the icon
+    /// in view has left and the next one has come in.
+    belt: Sprung,
     /// How far the label sits into a reserved slot, which glides as the label changes.
     inset: Option<Sprung>,
 }
@@ -101,6 +112,10 @@ pub struct Button {
     hoverless: bool,
     frosted: bool,
     turn: f32,
+    /// Whether a swapped icon fades into the one it replaces in place, with no pop.
+    blend: bool,
+    /// The side the icon leaves towards on a click, for a button whose icon rides a belt.
+    belt: Option<Side>,
     hovered: Option<StyleRefinement>,
     fill: Option<(Hsla, Hsla)>,
     pressed: Option<StyleRefinement>,
@@ -136,6 +151,8 @@ impl Button {
             hoverless: false,
             frosted: false,
             turn: 0.,
+            blend: false,
+            belt: None,
             hovered: None,
             fill: None,
             pressed: None,
@@ -315,6 +332,21 @@ impl Button {
         self
     }
 
+    /// Swaps icons by fading one into the other where it stands, for two icons that share most
+    /// of their shape. The strokes they share stay solid and only what differs fades, where the
+    /// usual pop would show one icon shrinking inside the other.
+    pub fn blending(mut self) -> Self {
+        self.blend = true;
+        self
+    }
+
+    /// Puts the icon on a belt. Each click slides it out towards `side`, shrinking and fading,
+    /// while a copy comes in from the other side, and clicks in a row keep the belt running.
+    pub fn belt(mut self, side: Side) -> Self {
+        self.belt = Some(side);
+        self
+    }
+
     /// Rotates the icon by `turn` of a full turn, for an owner that animates it with `Spin`.
     pub fn turned(mut self, turn: f32) -> Self {
         self.turn = turn;
@@ -397,6 +429,8 @@ impl RenderOnce for Button {
             hoverless,
             frosted,
             turn,
+            blend,
+            belt,
             hovered,
             fill,
             pressed,
@@ -416,6 +450,8 @@ impl RenderOnce for Button {
                     icon: icon.clone(),
                     pop: Sprung::at(1.),
                     leaving: None,
+                    sent: 0.,
+                    belt: Sprung::at(0.),
                     inset: None,
                 })
             },
@@ -559,7 +595,7 @@ impl RenderOnce for Button {
                 + parts.iter().flatten().copied().sum::<Pixels>()
                 + gap * (count - 1.)
         });
-        let (resizing, pop, leaving, inset) = {
+        let (resizing, pop, leaving, inset, belted) = {
             let mut shape = shape.read(cx).borrow_mut();
             if natural.is_none() {
                 shape.width = None;
@@ -586,8 +622,13 @@ impl RenderOnce for Button {
                 shape.icon = icon.clone();
             }
             let pop = shape.pop.follow(1., Springs::SWAP_IN, POP_REST, window, cx);
+            // A blend keeps the old icon for as long as the new one is coming in, so the two
+            // always add up to solid strokes where they agree.
             let leaving = shape.leaving.as_mut().map(|(path, left)| {
-                let left = left.follow(0., Springs::SWAP_OUT, POP_REST, window, cx);
+                let left = match blend {
+                    true => 1. - pop,
+                    false => left.follow(0., Springs::SWAP_OUT, POP_REST, window, cx),
+                };
                 (path.clone(), left)
             });
             let leaving = leaving.filter(|(_, left)| *left > 0.);
@@ -604,7 +645,20 @@ impl RenderOnce for Button {
             if inset.is_none() {
                 shape.inset = None;
             }
-            (resizing, pop, leaving, inset)
+            // The belt runs to where the clicks sent it. Once there the count starts over,
+            // since only the part past the whole number shows.
+            let belted = belt.map(|side| {
+                let sent = shape.sent;
+                let at = shape
+                    .belt
+                    .follow(sent, Springs::BELT, BELT_REST, window, cx);
+                if shape.belt.resting() {
+                    shape.sent = 0.;
+                    shape.belt.jump(0.);
+                }
+                (side, at.fract())
+            });
+            (resizing, pop, leaving, inset, belted)
         };
         // A node reaches the tree only with a role, and an icon-only button has
         // no label of its own, so its tooltip key doubles as the accessible
@@ -676,17 +730,72 @@ impl RenderOnce for Button {
             .when_some(hovered, |this, style| this.hover(move |_| style))
             .when_some(pressed, |this, style| this.active(move |_| style))
             .when_some(icon, |this, path| {
-                let shown = glyph(path, foreground, turn, pop);
-                match leaving {
-                    Some((old, left)) => this.child(
-                        div().relative().flex_none().size(ICON).child(shown).child(
-                            glyph(old, foreground, turn, left)
-                                .absolute()
-                                .top_0()
-                                .left_0(),
-                        ),
-                    ),
-                    None => this.child(shown),
+                let tinted = |presence: f32| foreground.opacity(presence.clamp(0., 1.));
+                let popped = |presence: f32| POP_FROM + (1. - POP_FROM) * presence;
+                let still = Pixels::ZERO;
+                match belted.filter(|(_, moved)| *moved > 0.) {
+                    // The icon in view moves off as the next one comes in behind it, each
+                    // shrinking towards its far end. The fade runs on the square of how much of
+                    // an icon is left, so both are faint for most of the way and the two never
+                    // read as a pair side by side.
+                    Some((side, moved)) => {
+                        let travel = match side {
+                            Side::Left => -BELT_TRAVEL,
+                            Side::Right => BELT_TRAVEL,
+                        };
+                        let left = 1. - moved;
+                        let coming = glyph(
+                            path.clone(),
+                            tinted(moved * moved),
+                            turn,
+                            popped(moved),
+                            travel * (moved - 1.),
+                        );
+                        let going = glyph(
+                            path,
+                            tinted(left * left),
+                            turn,
+                            popped(left),
+                            travel * moved,
+                        );
+                        this.child(
+                            div()
+                                .relative()
+                                .flex_none()
+                                .size(ICON)
+                                .child(coming)
+                                .child(going.absolute().top_0().left_0()),
+                        )
+                    }
+                    None => {
+                        // A blend fades each icon over half the swap, the new one first, so
+                        // one of the two is always whole.
+                        let (shown, gone) = match blend {
+                            true => (
+                                glyph(path, tinted(pop * 2.), turn, 1., still),
+                                leaving.map(|(old, left)| {
+                                    glyph(old, tinted(left * 2.), turn, 1., still)
+                                }),
+                            ),
+                            false => (
+                                glyph(path, tinted(pop), turn, popped(pop), still),
+                                leaving.map(|(old, left)| {
+                                    glyph(old, tinted(left), turn, popped(left), still)
+                                }),
+                            ),
+                        };
+                        match gone {
+                            Some(gone) => this.child(
+                                div()
+                                    .relative()
+                                    .flex_none()
+                                    .size(ICON)
+                                    .child(shown)
+                                    .child(gone.absolute().top_0().left_0()),
+                            ),
+                            None => this.child(shown),
+                        }
+                    }
                 }
             })
             .children(leading)
@@ -775,8 +884,17 @@ impl RenderOnce for Button {
             })
             .when(interactive, |this| {
                 this.when_some(on_click, |this, handler| {
+                    let shape = shape.clone();
                     this.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_click(move |event, window, cx| handler(event, window, cx))
+                        .on_click(move |event, window, cx| {
+                            if belt.is_some() {
+                                shape.update(cx, |shape, cx| {
+                                    shape.get_mut().sent += 1.;
+                                    cx.notify();
+                                });
+                            }
+                            handler(event, window, cx)
+                        })
                 })
             });
 
@@ -789,17 +907,18 @@ impl RenderOnce for Button {
     }
 }
 
-/// The button's icon at `presence` of the way in, from 0 gone to 1 in place: it grows from
-/// [`POP_FROM`] of its size and fades in as it comes.
-fn glyph(path: SharedString, color: Hsla, turn: f32, presence: f32) -> Svg {
-    let scale = POP_FROM + (1. - POP_FROM) * presence;
+/// The button's icon in `color`, turned by `turn` of a full turn, drawn at `scale` of its size
+/// and moved `shift` sideways from its place.
+fn glyph(path: SharedString, color: Hsla, turn: f32, scale: f32, shift: Pixels) -> Svg {
     svg()
         .path(icons::path(path))
         .size(ICON)
         .flex_none()
-        .text_color(color.opacity(presence.clamp(0., 1.)))
+        .text_color(color)
         .with_transformation(
-            Transformation::rotate(radians(turn * TAU)).with_scaling(size(scale, scale)),
+            Transformation::rotate(radians(turn * TAU))
+                .with_scaling(size(scale, scale))
+                .with_translation(point(shift, Pixels::ZERO)),
         )
 }
 

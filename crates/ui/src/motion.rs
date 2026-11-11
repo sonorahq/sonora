@@ -25,6 +25,9 @@ pub const PRESS_SCALE: f32 = 0.96;
 pub const PRESS_SCALE_CARD: f32 = 0.975;
 /// How far a scale may sit from its target and still count as landed.
 const SCALE_REST: f32 = 1e-4;
+/// How much of the way down a press goes before it may spring back, so a click shorter than
+/// the press still shows one.
+const PRESS_LANDED: f32 = 0.85;
 /// The longest step a stepped spring takes in one frame, so a frame that comes late after a
 /// stall resumes the motion rather than jumping to its end.
 const STEP_STALL: Duration = Duration::from_millis(64);
@@ -52,6 +55,8 @@ impl Springs {
     pub const RESIZE: SpringConfig = spring(0.18, 0.);
     /// A swapped icon growing into place.
     pub const SWAP_IN: SpringConfig = spring(0.3, 0.);
+    /// A belt of icons moving on by one icon.
+    pub const BELT: SpringConfig = spring(0.4, 0.);
     /// The icon it replaced shrinking away, a little quicker.
     pub const SWAP_OUT: SpringConfig = spring(0.24, 0.);
     /// Something large travelling to a new place, such as the playing cover flying into the
@@ -594,6 +599,9 @@ impl Sprung {
 /// Whether a pressable element is held down, and the scale it shrinks on.
 struct Held {
     down: bool,
+    /// Whether the press still has to land. A click lets go before the scale gets anywhere, so
+    /// the scale keeps going down until it has landed and only then springs back.
+    landing: bool,
     scale: Sprung,
     _activation: gpui::Subscription,
 }
@@ -611,13 +619,15 @@ pub fn pressing<E: InteractiveElement + Styled>(
     let key = ElementId::NamedChild(Arc::new(id.clone()), "press".into());
     let held = window.use_keyed_state(key, cx, |window, cx| {
         let activation = cx.observe_window_activation(window, |held: &mut Held, window, cx| {
-            if !window.is_window_active() && held.down {
+            if !window.is_window_active() && (held.down || held.landing) {
                 held.down = false;
+                held.landing = false;
                 cx.notify();
             }
         });
         Held {
             down: false,
+            landing: false,
             scale: Sprung::at(1.),
             _activation: activation,
         }
@@ -625,12 +635,22 @@ pub fn pressing<E: InteractiveElement + Styled>(
     let scale = held.update(cx, |held, cx| {
         if cx.has_active_drag() {
             held.down = false;
+            held.landing = false;
         }
-        let (target, config) = match held.down {
+        let (target, config) = match held.down || held.landing {
             true => (depth, Springs::PRESS),
             false => (1., Springs::RELEASE),
         };
-        held.scale.follow(target, config, SCALE_REST, window, cx)
+        let scale = held.scale.follow(target, config, SCALE_REST, window, cx);
+        if held.landing && 1. - scale >= (1. - depth) * PRESS_LANDED {
+            held.landing = false;
+            // the scale may have come to rest at the bottom, where nothing asks for the frame
+            // that starts it back up
+            if !held.down {
+                window.request_animation_frame();
+            }
+        }
+        scale
     });
     let release = |held: &Entity<Held>, cx: &mut App| {
         if held.read(cx).down {
@@ -651,6 +671,11 @@ pub fn pressing<E: InteractiveElement + Styled>(
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             down.update(cx, |held, cx| {
                 held.down = true;
+                held.landing = true;
+                // a press that lands on the spring-back of the last one starts from where the
+                // scale stands, without the speed that was carrying it back up
+                let at = held.scale.position();
+                held.scale.jump(at);
                 cx.notify();
             });
         })
