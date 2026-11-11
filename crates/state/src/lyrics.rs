@@ -46,6 +46,8 @@ pub struct Lyrics {
     /// The order of the sources the answer on show was ranked by. A new order looks the track
     /// up again, from what is held, so the source now ranked first is the one shown.
     priority: Vec<String>,
+    /// Whether the answer on show was ranked with word-by-word lyrics ahead of the source order.
+    worded_first: bool,
     playback: Entity<Playback>,
     session: Entity<Session>,
     settings: Entity<AppSettings>,
@@ -79,13 +81,18 @@ impl Lyrics {
             let on = settings.lyrics_enabled();
             let enabled = settings.lyrics_providers();
             let priority = settings.lyrics_provider_priority();
-            if on == this.enabled && enabled == this.enabled_providers && priority == this.priority
+            let worded_first = settings.lyrics_word_synced_first();
+            if on == this.enabled
+                && enabled == this.enabled_providers
+                && priority == this.priority
+                && worded_first == this.worded_first
             {
                 return;
             }
             this.enabled = on;
             this.enabled_providers = enabled.to_vec();
             this.priority = priority;
+            this.worded_first = worded_first;
             this.task = None;
             this.ahead = None;
             this.ahead_of = None;
@@ -96,6 +103,7 @@ impl Lyrics {
         let enabled = settings.read(cx).lyrics_enabled();
         let enabled_providers = settings.read(cx).lyrics_providers().to_vec();
         let priority = settings.read(cx).lyrics_provider_priority();
+        let worded_first = settings.read(cx).lyrics_word_synced_first();
         let store = Sheets::new(storage::Cache::standard());
         let moving = store.clone();
         let migration = cx
@@ -116,6 +124,7 @@ impl Lyrics {
             enabled,
             enabled_providers,
             priority,
+            worded_first,
             playback,
             session,
             settings,
@@ -214,10 +223,11 @@ impl Lyrics {
             .cloned()
             .collect();
         let priority = settings.lyrics_provider_priority();
+        let worded_first = settings.lyrics_word_synced_first();
         let instrumental = music::lyrics::instrumental(query, &hits);
         self.task = None;
         self.settled = true;
-        self.hits = ordered(query, hits, &priority);
+        self.hits = ordered(query, hits, &priority, worded_first);
         self.state = state_for(&self.hits, instrumental);
         cx.notify();
         self.prefetch(cx);
@@ -370,6 +380,7 @@ impl Lyrics {
     fn fetch(&mut self, id: String, track: Track, cx: &mut Context<Self>) -> Task<()> {
         let settings = self.settings.read(cx);
         let priority = settings.lyrics_provider_priority();
+        let worded_first = settings.lyrics_word_synced_first();
         let enabled: Vec<&'static str> = self
             .providers
             .iter()
@@ -442,7 +453,7 @@ impl Lyrics {
             while let Some((from, mut found)) = incoming.recv().await {
                 pending.retain(|name| Some(*name) != from);
                 hits.append(&mut found);
-                let ranked = ordered(&ranking, hits.clone(), &priority);
+                let ranked = ordered(&ranking, hits.clone(), &priority, worded_first);
                 let Some(best) = ranked.first().cloned() else {
                     continue;
                 };
@@ -450,10 +461,11 @@ impl Lyrics {
                     synced = best.lyrics.synced();
                     displayed = Some(best);
                 }
-                // Full synced lyrics can only lose to a source ranked higher, anything else to
-                // whichever source answers next.
+                // The best kind of lyrics can only lose to a source ranked higher, anything else
+                // to whichever source answers next.
                 let waiting = displayed.as_ref().is_some_and(|displayed| {
-                    let place = match music::lyrics::fully_synced(&ranking, &displayed.lyrics) {
+                    let best = music::lyrics::best_kind(&ranking, &displayed.lyrics, worded_first);
+                    let place = match best {
                         true => rank_in(&priority, displayed.source),
                         false => usize::MAX,
                     };
@@ -479,7 +491,7 @@ impl Lyrics {
                         this.keep(id, cached, &hits, answered, cx);
                         if current {
                             let instrumental = music::lyrics::instrumental(&ranking, &hits);
-                            let ranked = ordered(&ranking, hits, &priority);
+                            let ranked = ordered(&ranking, hits, &priority, worded_first);
                             this.settle(ranked, displayed.as_ref(), instrumental, cx);
                         }
                     }
@@ -667,8 +679,13 @@ fn same(left: &LyricsHit, right: &LyricsHit) -> bool {
         && left.lyrics.worded() == right.lyrics.worded()
 }
 
-fn ordered(query: &LyricsQuery, hits: Vec<LyricsHit>, priority: &[String]) -> Vec<LyricsHit> {
-    let mut ranked = music::lyrics::rank_with_priority(query, hits, priority);
+fn ordered(
+    query: &LyricsQuery,
+    hits: Vec<LyricsHit>,
+    priority: &[String],
+    worded_first: bool,
+) -> Vec<LyricsHit> {
+    let mut ranked = music::lyrics::rank_with_priority(query, hits, priority, worded_first);
     music::lyrics::reshape(&mut ranked);
     ranked
 }

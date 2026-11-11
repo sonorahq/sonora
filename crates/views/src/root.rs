@@ -342,7 +342,7 @@ impl Root {
             login,
             title_bar,
             shells: Shells {
-                workspace: workspace.clone(),
+                workspace,
                 fullscreen,
             },
             view: RootView::Workspace,

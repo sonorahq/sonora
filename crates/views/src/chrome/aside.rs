@@ -738,7 +738,7 @@ impl Aside {
                     .text_size(theme.text(Text::Small))
                     .truncate(),
                 )
-                .when_some(added, |this, added| this.child(adder(added, theme))),
+                .when_some(added, |this, added| this.child(adder(added, &theme))),
         )
         .tint(title)
         .when(track.explicit, Card::explicit)
@@ -1355,12 +1355,12 @@ impl Aside {
                     };
 
                     let primary = match (primary_karaoke, line.words.as_ref(), wrapped) {
-                        (true, Some(words), Some(plan)) => {
-                            karaoke_lane(plan, line.start, words, position, verse, line.voice, sung)
-                                .into_any_element()
-                        }
+                        (true, Some(words), Some(plan)) => karaoke_lane(
+                            plan, line.start, words, position, verse, line.voice, &sung,
+                        )
+                        .into_any_element(),
                         (_, _, Some(plan)) => {
-                            fixed_lyrics_lane(&plan.text, line.voice, sung).into_any_element()
+                            fixed_lyrics_lane(&plan.text, line.voice, &sung).into_any_element()
                         }
                         _ => div()
                             .child(SharedString::from(line.text.clone()))
@@ -1418,7 +1418,7 @@ impl Aside {
                                     position,
                                     dimming.filter(|_| sung_by_end),
                                     line.voice,
-                                    sung,
+                                    &sung,
                                 )
                             }),
                         );
@@ -1589,7 +1589,7 @@ impl Aside {
                                                 Some(rows) => fixed_lyrics_lane(
                                                     &rows[index],
                                                     Voice::Lead,
-                                                    sung,
+                                                    &sung,
                                                 ),
                                                 None => {
                                                     div().child(SharedString::from(line.to_owned()))
@@ -1935,7 +1935,7 @@ impl Aside {
         let remote = !listing.editable();
         let from = listing
             .origin(cx)
-            .and_then(|origin| self.playing_from(origin, cx));
+            .and_then(|origin| self.playing_from(&origin, cx));
         let drop_gap = self.drop_gap;
         let upcoming = sections.upcoming;
         let audible = listing.playing;
@@ -2025,7 +2025,7 @@ impl Render for Aside {
         }
         let queue_track = listing
             .track(QueuePosition::Current, cx)
-            .and_then(|track| track.id.clone());
+            .and_then(|track| track.id);
         if self.queue_track != queue_track {
             self.queue_track = queue_track;
             self.anchor = true;
@@ -2111,7 +2111,7 @@ impl Render for Aside {
 
 /// The part of a queue row that names who queued the song: a bullet, their round picture or
 /// initials, and "Added by NAME".
-fn adder(added: &Contributor, theme: ui::Theme) -> Div {
+fn adder(added: &Contributor, theme: &ui::Theme) -> Div {
     let face = theme.text(Text::Small) * ADDER_FACE;
     div()
         .flex()
@@ -2163,7 +2163,7 @@ fn source_link(name: SharedString, to: Destination, cx: &App) -> impl IntoElemen
 /// Rows that `lyrics_wrap_rows` already broke, one line each. They never wrap again, because at
 /// some window sizes gpui finds a row that measured as fitting a hair too wide and would push its
 /// last word onto a line of its own.
-fn fixed_lyrics_lane(rows: &[SharedString], voice: Voice, sung: Sung) -> Div {
+fn fixed_lyrics_lane(rows: &[SharedString], voice: Voice, sung: &Sung) -> Div {
     div()
         .flex()
         .flex_col()
@@ -2185,23 +2185,23 @@ pub(crate) fn verse(
     line: &music::LyricsLine,
     look: VerseLook,
     position: std::time::Duration,
-    theme: ui::Theme,
+    theme: &ui::Theme,
 ) -> Div {
     let karaoke = look.karaoke && effects();
     let ended = line_has_passed(line, position);
     let worded = karaoke && line.worded() && line.words.is_some();
     let tint = match (look.active, ended) {
-        (true, _) if worded => quiet(&theme),
+        (true, _) if worded => quiet(theme),
         (true, _) => theme.foreground,
-        (false, true) => quiet(&theme).opacity(PAST),
-        (false, false) => quiet(&theme).opacity(AHEAD),
+        (false, true) => quiet(theme).opacity(PAST),
+        (false, false) => quiet(theme).opacity(AHEAD),
     };
     let mirrored = right_to_left(&line.text);
     let sung = Sung {
         karaoke,
         lane: look.lane,
         scripts: look.scripts,
-        theme,
+        theme: *theme,
         karaoke_tint: mix(
             theme.foreground,
             tint,
@@ -2225,14 +2225,14 @@ pub(crate) fn verse(
             position,
             look.size,
             line.voice,
-            sung,
+            &sung,
         ),
         _ => lifted(
             div()
                 .w_full()
                 .when(hugs_end(line.voice, mirrored), |this| this.text_right())
                 .child(SharedString::from(line.text.clone())),
-            sung,
+            &sung,
         ),
     };
     let active_size = active_verse_size(look.size);
@@ -2263,7 +2263,7 @@ pub(crate) fn verse(
                 .child(primary)
                 .when_some(
                     selected_romanization(&line.romanized, look.scripts),
-                    |this, text| this.child(romanized_lyrics_lane(text, look.lane, &theme)),
+                    |this, text| this.child(romanized_lyrics_lane(text, look.lane, theme)),
                 ),
         )
         .when(haze > 0., |this| this.opacity(1. - VEIL * haze))
@@ -2315,7 +2315,7 @@ fn karaoke_lane(
     position: std::time::Duration,
     verse: Pixels,
     voice: Voice,
-    sung: Sung,
+    sung: &Sung,
 ) -> Div {
     let edge_fade = verse * REVEAL;
     let Wrapped {
@@ -2491,7 +2491,7 @@ fn secondary_lyrics_lane(
     position: std::time::Duration,
     dimming: Option<u64>,
     voice: Voice,
-    sung: Sung,
+    sung: &Sung,
 ) -> gpui::AnyElement {
     let theme = &sung.theme;
     let passed = line_passed || lane.sung_end().is_some_and(|end| position >= end);
@@ -2513,13 +2513,13 @@ fn secondary_lyrics_lane(
     let size = sung.lane;
     let karaoke_capable = sung.karaoke && lane.worded();
     // a lane holds still while the line above it grows
-    let still = Sung { lift: 1., ..sung };
+    let still = Sung { lift: 1., ..*sung };
     let lyrics =
         div()
             .text_size(size)
             .map(|this| match (karaoke_capable, lane.words.as_ref(), plan) {
                 (true, Some(words), Some(plan)) => this.child(karaoke_lane(
-                    plan, lane.start, words, position, size, voice, still,
+                    plan, lane.start, words, position, size, voice, &still,
                 )),
                 (true, Some(words), None) => this.child(karaoke_lane(
                     &loose_plan(&lane.text, words),
@@ -2528,9 +2528,9 @@ fn secondary_lyrics_lane(
                     position,
                     size,
                     voice,
-                    still,
+                    &still,
                 )),
-                (_, _, Some(plan)) => this.child(fixed_lyrics_lane(&plan.text, voice, still)),
+                (_, _, Some(plan)) => this.child(fixed_lyrics_lane(&plan.text, voice, &still)),
                 _ => this.child(SharedString::from(lane.text.clone())),
             });
     let held = shade(true);
@@ -2720,7 +2720,7 @@ fn ramp(at: std::time::Instant, window: &mut Window) -> f32 {
 }
 
 /// Scales one line of text without touching the space between it and the next.
-fn lifted(row: Div, sung: Sung) -> Div {
+fn lifted(row: Div, sung: &Sung) -> Div {
     match sung.lift == 1. {
         true => row,
         false => row.layer_scale(sung.lift).layer_scale_origin(sung.from),

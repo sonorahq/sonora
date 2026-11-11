@@ -178,7 +178,7 @@ impl FullscreenView {
         })
         .detach();
         let panel = settings.read(cx).fullscreen_tab();
-        let shown = panel.unwrap_or(match settings.read(cx).lyrics_enabled() {
+        let shown = panel.unwrap_or_else(|| match settings.read(cx).lyrics_enabled() {
             true => SideTab::Lyrics,
             false => SideTab::Queue,
         });

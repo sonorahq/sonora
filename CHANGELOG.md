@@ -13,6 +13,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Open YouTube handle links on their artist pages.
 - Preview music links in search suggestions and search by their titles or artist names.
 - Choose which Now playing views show the visualizer: the artwork, the lyrics or the queue.
+- Prioritize word-synced lyrics over the source order with a switch in Lyrics sources.
+- Turn on a Genre column in song lists and sort by it, for local files, Subsonic servers and Apple Music.
 
 ### Changed
 
@@ -37,6 +39,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Fullscreen controls hide reliably after the pointer leaves, and pressed controls release when the window loses focus.
 - Reduce redraw work when scrolling large Favorites collections.
 - Song durations stay aligned when hovering over an artist's favorite songs.
+- Reduce fullscreen visualizer redraws while keeping animation at up to 120 FPS.
 
 - Mixed English and Japanese lyrics no longer show duplicate English romanizations or misplaced spaces inside parentheses.
 
@@ -49,6 +52,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- M4A tracks on Subsonic servers start before downloading in full, including files with metadata at the end when the server supports byte ranges.
 - Opening an artist's favorite songs no longer crashes when a song appears under the pointer.
 - Back and forward buttons stay beside the sidebar toggle with enough space between them.
 - App and tray icons stay sharp at more display scales, and Linux windows show the Sonora icon without desktop integration.
@@ -56,6 +60,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Apple Music lyrics can be found when the album has a different edition name in the lyrics catalogue.
 - Lyrics sources retry when their cached answers cannot be shown, and newly found lyrics stay available after restarting.
 - On macOS, Widevine is also found in registered browsers that have been renamed or moved.
+- The queue names the album or playlist Now playing comes from when another device plays through Spotify Connect.
 
 ## [0.48.0] - 2026-11-07
 
@@ -71,6 +76,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An artist's page links to the songs of theirs you have in your Favorites, so you can see and play them together, and take one out with the X that appears when you point at it.
 - Turn off Show lyrics in the lyrics settings to hide the lyrics buttons in the player bar and
   Now playing, and stop Sonora looking lyrics up.
+- Drag the left sidebar's edge all the way in to fold it down to icons, with each name shown
+  beside its icon on hover. Your Library and Local Music open a menu beside the folded sidebar
+  that lists Songs, Albums, Artists and Playlists by name.
+  Keep dragging to close it, and the toggle brings it back as it was. A narrowing window folds
+  the sidebar to icons before hiding it.
+- Right-click an album or a playlist and pick Go to album or Go to playlist to open its page.
 
 ### Changed
 

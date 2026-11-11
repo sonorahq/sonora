@@ -85,6 +85,7 @@ column-index = #
 column-title = タイトル
 column-artist = アーティスト
 column-album = アルバム
+column-genre = ジャンル
 column-date-added = 追加日
 column-added-by = 追加者
 column-modified = 更新日

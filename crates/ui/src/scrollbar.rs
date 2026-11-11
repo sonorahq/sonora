@@ -137,6 +137,8 @@ pub struct Scrollbar {
     awake: bool,
     hovered: bool,
     always_visible: bool,
+    /// Whether the bar only shows where the region is while it scrolls and takes no pointer.
+    passive: bool,
     track_inset: Pixels,
     track_top: Pixels,
     track_bottom: Pixels,
@@ -159,6 +161,7 @@ impl Scrollbar {
             awake: false,
             hovered: false,
             always_visible: false,
+            passive: false,
             track_inset: Pixels::ZERO,
             track_top: Pixels::ZERO,
             track_bottom: Pixels::ZERO,
@@ -187,6 +190,14 @@ impl Scrollbar {
 
     pub fn always_visible(mut self) -> Self {
         self.always_visible = true;
+        self
+    }
+
+    /// Makes the bar a mark of where the region is scrolled to, drawn only while it moves. It
+    /// never appears under the pointer and cannot be dragged or clicked, so it claims no strip
+    /// along the region's edge. The wheel and the middle button scroll the region as before.
+    pub fn passive(mut self) -> Self {
+        self.passive = true;
         self
     }
 
@@ -592,11 +603,42 @@ impl Render for Scrollbar {
         let jump = target.clone();
         let drag = target.clone();
         let started = target.clone();
-        let released = target;
         let owner = cx.entity_id();
         let hover_guard = self.hover_guard.clone();
         let anchor = self.middle_scroll.map(|middle| middle.origin);
         let marker = theme.metrics.control;
+        let mark = anchor.map(|anchor| {
+            deferred(
+                anchored()
+                    .position(anchor)
+                    .offset(point(-marker / 2., -marker / 2.))
+                    .child(
+                        div()
+                            .size(marker)
+                            .child(img(icons::path(MIDDLE_SCROLL_MARKER)).size_full()),
+                    ),
+            )
+        });
+
+        if self.passive {
+            return div()
+                .absolute()
+                .top(self.track_inset + self.track_top)
+                .right(THUMB_INSET)
+                .w(BAR)
+                .h(track)
+                .child(
+                    div()
+                        .absolute()
+                        .top(travel * progress)
+                        .w(BAR)
+                        .h(thumb)
+                        .rounded_full()
+                        .bg(theme.muted_foreground.opacity(resting)),
+                )
+                .children(mark)
+                .into_any_element();
+        }
 
         div()
             // The entity id keeps every bar distinct, since ids alone would
@@ -659,13 +701,13 @@ impl Render for Scrollbar {
                     .on_mouse_up(
                         MouseButton::Left,
                         cx.listener({
-                            let released = released.clone();
+                            let released = target.clone();
                             move |_, _, _, _| released.drag_ended()
                         }),
                     )
                     .on_mouse_up_out(
                         MouseButton::Left,
-                        cx.listener(move |_, _, _, _| released.drag_ended()),
+                        cx.listener(move |_, _, _, _| target.drag_ended()),
                     )
                     .on_drag(
                         Grab {
@@ -695,18 +737,7 @@ impl Render for Scrollbar {
                         }),
                     ),
             )
-            .when_some(anchor, |bar, anchor| {
-                bar.child(deferred(
-                    anchored()
-                        .position(anchor)
-                        .offset(point(-marker / 2., -marker / 2.))
-                        .child(
-                            div()
-                                .size(marker)
-                                .child(img(icons::path(MIDDLE_SCROLL_MARKER)).size_full()),
-                        ),
-                ))
-            })
+            .children(mark)
             .into_any_element()
     }
 }

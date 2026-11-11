@@ -893,7 +893,10 @@ fn wash(base: Hsla, tint: Hsla, strength: f32) -> Hsla {
 }
 
 fn parse_color(value: &str) -> Option<Hsla> {
-    let value = value.trim().strip_prefix('#').unwrap_or(value.trim());
+    let value = value
+        .trim()
+        .strip_prefix('#')
+        .unwrap_or_else(|| value.trim());
     let parsed = u32::from_str_radix(value, 16).ok()?;
     match value.len() {
         6 => Some(rgb(parsed).into()),

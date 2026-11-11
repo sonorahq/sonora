@@ -85,6 +85,7 @@ column-index = #
 column-title = 标题
 column-artist = 歌手
 column-album = 专辑
+column-genre = 流派
 column-date-added = 添加日期
 column-added-by = 添加者
 column-modified = 修改时间

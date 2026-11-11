@@ -256,7 +256,6 @@ impl Shelves {
                     .track_scroll(&handle)
                     .on_scroll_wheel({
                         let scroll = handle.clone();
-                        let glide = glide.clone();
                         move |event: &ScrollWheelEvent, window, cx| {
                             ui::hold_swipe(event, &scroll, cx);
                             if !sideways(event) {

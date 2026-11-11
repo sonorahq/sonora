@@ -594,6 +594,8 @@ pub struct Menu {
     trigger: Option<Trigger>,
     pressed: Option<Point<Pixels>>,
     above: bool,
+    /// How far from its trigger the panel opens when it stands beside it rather than under it.
+    beside: Option<Pixels>,
 }
 
 impl Menu {
@@ -615,6 +617,7 @@ impl Menu {
             trigger: None,
             pressed: None,
             above: false,
+            beside: None,
         }
     }
 
@@ -662,6 +665,14 @@ impl Menu {
     /// trigger already says which side to open on.
     pub(crate) fn above(mut self) -> Self {
         self.above = true;
+        self
+    }
+
+    /// Opens the panel to the right of its trigger, `gap` clear of it and level with its top,
+    /// rather than under it. The window's edges push it back in where it would not fit. A menu
+    /// with no trigger ignores it.
+    pub fn beside(mut self, gap: Pixels) -> Self {
+        self.beside = Some(gap);
         self
     }
 
@@ -753,6 +764,7 @@ impl RenderOnce for Menu {
             trigger,
             pressed,
             above,
+            beside,
         } = self;
 
         if let Some(search) = search.as_ref() {
@@ -1178,18 +1190,23 @@ impl RenderOnce for Menu {
             (true, true) => Anchor::BottomRight,
             (false, true) => Anchor::BottomLeft,
         };
-        let perch = trigger
-            .as_ref()
-            .and_then(|trigger| trigger.bounds())
-            .map(|bounds| {
-                let x = match right {
-                    true => bounds.right(),
-                    false => bounds.left(),
-                };
-                let position = point(x, bounds.top() - TRIGGER_GAP);
-                let offset = point(Pixels::ZERO, bounds.size.height + TRIGGER_GAP + TRIGGER_GAP);
-                (position, offset)
-            });
+        let perch =
+            trigger
+                .as_ref()
+                .and_then(|trigger| trigger.bounds())
+                .map(|bounds| match beside {
+                    Some(gap) => (point(bounds.right() + gap, bounds.top()), None),
+                    None => {
+                        let x = match right {
+                            true => bounds.right(),
+                            false => bounds.left(),
+                        };
+                        let position = point(x, bounds.top() - TRIGGER_GAP);
+                        let offset =
+                            point(Pixels::ZERO, bounds.size.height + TRIGGER_GAP + TRIGGER_GAP);
+                        (position, Some(offset))
+                    }
+                });
         let frosting = blurring(cx);
         let fill = popover_fill(cx);
         let panel_looks = div()
@@ -1268,7 +1285,12 @@ impl RenderOnce for Menu {
             true => {
                 let anchored = anchored().anchor(corner);
                 match perch {
-                    Some((position, offset)) => anchored.position(position).offset(offset),
+                    Some((position, Some(offset))) => anchored.position(position).offset(offset),
+                    // A panel beside its trigger has no other side to switch to, so the window
+                    // pushes it back in instead.
+                    Some((position, None)) => anchored
+                        .position(position)
+                        .snap_to_window_with_margin(WINDOW_MARGIN),
                     None => anchored.snap_to_window_with_margin(WINDOW_MARGIN),
                 }
                 .child(frosted)

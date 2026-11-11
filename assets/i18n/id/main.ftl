@@ -85,6 +85,7 @@ column-index = #
 column-title = Judul
 column-artist = Artis
 column-album = Album
+column-genre = Genre
 column-date-added = Tanggal Ditambahkan
 column-added-by = Ditambahkan Oleh
 column-modified = Diubah

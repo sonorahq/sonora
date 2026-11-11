@@ -72,6 +72,7 @@ pub struct Card {
     playing: bool,
     chosen: bool,
     tucked: bool,
+    glance: bool,
     action: Option<AnyElement>,
     /// Whether the hover action takes no room until the card is hovered.
     collapsed: bool,
@@ -114,6 +115,7 @@ impl Card {
             playing: false,
             chosen: false,
             tucked: false,
+            glance: false,
             action: None,
             collapsed: false,
             drag_start: None,
@@ -299,6 +301,12 @@ impl Card {
         self
     }
 
+    /// Draws only the cover, with the title in a tooltip beside it.
+    pub fn glance(mut self) -> Self {
+        self.glance = true;
+        self
+    }
+
     pub fn chosen(mut self, chosen: bool) -> Self {
         self.chosen = chosen;
         self
@@ -357,6 +365,7 @@ impl RenderOnce for Card {
             playing,
             chosen,
             tucked,
+            glance,
             action,
             collapsed,
             drag_start,
@@ -372,7 +381,9 @@ impl RenderOnce for Card {
         let play_fill =
             theme.cover_fill(cover.as_deref().and_then(|cover| cover_palette(cover, cx)));
         let art_radius = art_radius.or_else(|| tile.map(|_| theme.radius));
-        let art = art.or(tile).unwrap_or(snapped(height - inset * 2., window));
+        let art = art
+            .or(tile)
+            .unwrap_or_else(|| snapped(height - inset * 2., window));
         let hovered = match (hovered, fill) {
             (Some(style), _) => Some(style),
             (None, true) => Some(StyleRefinement::default().bg(theme.table_hover)),
@@ -474,7 +485,12 @@ impl RenderOnce for Card {
                                     .bg(theme.overlay)
                                     .role(gpui::accesskit::Role::Button)
                                     .aria_label(i18n::lookup(hint, None))
-                                    .tip(hint, Perch::Below)
+                                    // A glance card is little more than its cover, so the
+                                    // scrim over it shows the title the card would.
+                                    .map(|this| match glance {
+                                        true => this.tip_label(title.clone(), Perch::Trailing),
+                                        false => this.tip(hint, Perch::Below),
+                                    })
                                     .child(
                                         svg()
                                             .path(icons::path(glyph))
@@ -533,6 +549,7 @@ impl RenderOnce for Card {
         .collect::<Vec<_>>()
         .join(", ");
         let name = title.clone();
+        let name_tip = title.clone();
         let title = div()
             .id("card-title")
             .min_w_0()
@@ -598,6 +615,10 @@ impl RenderOnce for Card {
             .when(listed, |this| {
                 this.flex_none().h(height).py(inset).w_full().min_w_0()
             })
+            .when(glance, |this| {
+                this.justify_center()
+                    .tip_label(name_tip.clone(), Perch::Trailing)
+            })
             .when(chosen, |this| this.bg(theme.table_active))
             .when_some(hovered.filter(|_| !chosen), |this, style| {
                 this.hover(move |_| style)
@@ -632,6 +653,7 @@ impl RenderOnce for Card {
                     .overflow_hidden()
                     .line_height(relative(LEADING))
                     .when(tile.is_some(), |this| this.w_full().flex_none())
+                    .when(glance, |this| this.hidden())
                     .when_else(
                         loading,
                         |this| {
@@ -662,8 +684,12 @@ impl RenderOnce for Card {
                         },
                     ),
             )
-            .children(trailing.map(|trailing| div().flex_none().child(trailing)))
-            .children(action.map(|action| {
+            .children(
+                trailing
+                    .filter(|_| !glance)
+                    .map(|trailing| div().flex_none().child(trailing)),
+            )
+            .children(action.filter(|_| !glance).map(|action| {
                 div()
                     .id("card-action")
                     .flex_none()

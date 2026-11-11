@@ -86,7 +86,7 @@ impl Store {
                        ORDER BY played_at DESC
                        LIMIT ?2
                    )",
-                params![scope, LOCAL_LIMIT],
+                params![scope, LOCAL_LIMIT as i64],
             )
             .context("cannot trim listening history")?;
         Ok(())
@@ -183,7 +183,7 @@ impl Store {
             )
             .context("cannot prepare listening history read")?;
         let rows = query
-            .query_map(params![scope, LOCAL_LIMIT], |row| {
+            .query_map(params![scope, LOCAL_LIMIT as i64], |row| {
                 let refs = row.get_ref(5)?.as_str()?;
                 let artist_refs: Vec<ArtistRef> = serde_json::from_str(refs).unwrap_or_default();
                 let played_at: i64 = row.get(1)?;

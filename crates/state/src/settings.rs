@@ -463,6 +463,9 @@ struct Values {
     /// Every known lyrics source, the preferred one first. Lyrics of the same kind from two
     /// sources go to the one listed higher.
     lyrics_provider_priority: Vec<String>,
+    /// Whether lyrics timed word by word are shown ahead of any others, whatever source they
+    /// come from. The source order then only settles lyrics of the same kind.
+    lyrics_word_synced_first: bool,
     karaoke_lyrics: bool,
     blur_lyrics: bool,
     romanized_lyrics: bool,
@@ -669,6 +672,7 @@ impl Default for Values {
                 .iter()
                 .map(|name| name.to_string())
                 .collect(),
+            lyrics_word_synced_first: false,
             karaoke_lyrics: true,
             blur_lyrics: true,
             romanized_lyrics: true,
@@ -717,6 +721,7 @@ struct StateValues {
     volume: f32,
     sidebar_width: f32,
     sidebar_open: bool,
+    sidebar_rail: bool,
     sidebar_right_width: f32,
     sidebar_right_open: bool,
     sidebar_right_tab: SideTab,
@@ -749,6 +754,7 @@ impl Default for StateValues {
             volume: DEFAULT_VOLUME,
             sidebar_width: DEFAULT_SIDEBAR_WIDTH,
             sidebar_open: true,
+            sidebar_rail: false,
             sidebar_right_width: DEFAULT_SIDEBAR_RIGHT_WIDTH,
             sidebar_right_open: false,
             sidebar_right_tab: SideTab::Queue,
@@ -1169,6 +1175,11 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    /// Whether lyrics timed word by word are shown ahead of any others, whatever their source.
+    pub fn lyrics_word_synced_first(&self) -> bool {
+        self.values.lyrics_word_synced_first
+    }
+
     pub fn lyrics_provider_enabled(&self, provider: &str) -> bool {
         self.values
             .lyrics_providers
@@ -1249,6 +1260,10 @@ impl AppSettings {
 
     pub fn sidebar_open(&self) -> bool {
         self.state.sidebar_open
+    }
+
+    pub fn sidebar_rail(&self) -> bool {
+        self.state.sidebar_rail
     }
 
     pub fn sidebar_right_width(&self) -> f32 {
@@ -1342,7 +1357,7 @@ impl AppSettings {
                     .iter()
                     .find(|variant| variant.is_light() == light)
             })
-            .or(family.variants.first())
+            .or_else(|| family.variants.first())
     }
 
     pub fn adaptive_theme(&self) -> bool {
@@ -1767,6 +1782,11 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    pub fn set_lyrics_word_synced_first(&mut self, first: bool, cx: &mut Context<Self>) {
+        self.values.lyrics_word_synced_first = first;
+        self.schedule_save(cx);
+    }
+
     pub fn set_karaoke_lyrics(&mut self, karaoke: bool, cx: &mut Context<Self>) {
         self.values.karaoke_lyrics = karaoke;
         self.schedule_save(cx);
@@ -1975,9 +1995,10 @@ impl AppSettings {
         self.schedule_state_save(cx);
     }
 
-    pub fn set_sidebar(&mut self, width: f32, open: bool, cx: &mut Context<Self>) {
+    pub fn set_sidebar(&mut self, width: f32, open: bool, rail: bool, cx: &mut Context<Self>) {
         self.state.sidebar_width = width;
         self.state.sidebar_open = open;
+        self.state.sidebar_rail = rail;
         self.schedule_state_save(cx);
     }
 

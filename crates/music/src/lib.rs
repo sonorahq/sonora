@@ -39,16 +39,13 @@ pub mod vault;
 pub mod youtube;
 
 use std::collections::{HashMap, HashSet};
-use std::num::NonZero;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use time::format_description::well_known::Iso8601;
-use time::parsing::Parsed;
-use time::{Month, OffsetDateTime};
+use jiff::fmt::temporal::DateTimeParser;
 
 pub use audio::Meter;
 pub use equalizer::Equalizer;
@@ -1088,21 +1085,22 @@ pub trait MusicProvider: Send + Sync {
 /// Leniently convert an ISO8601 timestamp to unix epoch seconds. Accepts only
 /// the date portion, date and time portions, or full date and time with offset.
 pub fn iso_8601_to_epoch(value: Option<&str>) -> Option<i64> {
-    let time_str = value?.as_bytes();
-    let defaults = Parsed::new()
-        .with_month(Month::January)
-        .and_then(|d| d.with_day(NonZero::<u8>::new(1)?))
-        .and_then(|d| d.with_hour_24(0))
-        .and_then(|d| d.with_minute(0))
-        .and_then(|d| d.with_second(0))
-        .and_then(|d| d.with_subsecond(0))
-        .and_then(|d| d.with_offset_hour(0))
-        .and_then(|d| d.with_offset_minute_signed(0))
-        .and_then(|d| d.with_offset_second_signed(0))?;
-    let timestamp = OffsetDateTime::parse_with_defaults(time_str, &Iso8601::PARSING, defaults)
-        .ok()?
-        .unix_timestamp();
-    Some(timestamp)
+    let value = value?;
+    let parser = DateTimeParser::new();
+    let timestamp = parser
+        .parse_timestamp(value)
+        .or_else(|_| {
+            parser
+                .parse_datetime(value)
+                .and_then(|datetime| jiff::tz::TimeZone::UTC.to_timestamp(datetime))
+        })
+        .or_else(|_| {
+            parser
+                .parse_date(value)
+                .and_then(|date| jiff::tz::TimeZone::UTC.to_timestamp(date.at(0, 0, 0, 0)))
+        })
+        .ok()?;
+    Some(timestamp.as_second())
 }
 
 /// Keeps playable songs credited to the artist in their supplied order, collapsing repeat
@@ -1184,8 +1182,6 @@ fn remaster_note(note: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use time::macros::datetime;
-
     use super::*;
 
     #[test]
@@ -1205,29 +1201,35 @@ mod tests {
         );
 
         // A specific date with/without time/offset
-        assert_eq!(
-            iso_8601_to_epoch(Some("2021-03-20")),
-            Some(datetime!(2021-03-20 00:00:00 UTC).unix_timestamp())
-        );
+        let date = jiff::civil::date(2021, 3, 20);
+        let midnight = jiff::tz::TimeZone::UTC
+            .to_timestamp(date.at(0, 0, 0, 0))
+            .unwrap()
+            .as_second();
+        let afternoon = jiff::tz::TimeZone::UTC
+            .to_timestamp(date.at(13, 45, 7, 0))
+            .unwrap()
+            .as_second();
+        assert_eq!(iso_8601_to_epoch(Some("2021-03-20")), Some(midnight));
         assert_eq!(
             iso_8601_to_epoch(Some("2021-03-20T13:45:07")),
-            Some(datetime!(2021-03-20 13:45:07 UTC).unix_timestamp())
+            Some(afternoon)
         );
         assert_eq!(
             iso_8601_to_epoch(Some("2021-03-20T13:45:07.123456")),
-            Some(datetime!(2021-03-20 13:45:07 UTC).unix_timestamp())
+            Some(afternoon)
         );
         assert_eq!(
             iso_8601_to_epoch(Some("2021-03-20T13:45:07Z")),
-            Some(datetime!(2021-03-20 13:45:07 UTC).unix_timestamp())
+            Some(afternoon)
         );
         assert_eq!(
             iso_8601_to_epoch(Some("2021-03-20T13:45:07+00:00")),
-            Some(datetime!(2021-03-20 13:45:07 UTC).unix_timestamp())
+            Some(afternoon)
         );
         assert_eq!(
             iso_8601_to_epoch(Some("2021-03-20T10:45:07-03:00")),
-            Some(datetime!(2021-03-20 13:45:07 UTC).unix_timestamp())
+            Some(afternoon)
         );
     }
 }
