@@ -564,6 +564,14 @@ impl Playback {
         equalizer: &Entity<Equalizer>,
         cx: &mut Context<Self>,
     ) -> Self {
+        // An engine can run a program of its own, as Soloist does. Letting go of the engine
+        // stops it, and the app waits for that before it is gone.
+        cx.on_app_quit(|this, _| {
+            this.task = None;
+            this.engine = None;
+            music::soloist::stopped()
+        })
+        .detach();
         cx.subscribe(&session, |this, session, event, cx| match event {
             SessionEvent::SignedIn => {
                 let Some(playback) = session.read(cx).playback() else {
@@ -2736,6 +2744,14 @@ impl Playback {
         }
     }
 
+    /// Rebuilds the streaming engine after the provider changed which engine it plays through,
+    /// and lifts a refusal the old one ran into.
+    pub(crate) fn switch_engine(&mut self, cx: &mut Context<Self>) {
+        self.refused = None;
+        self.failures = 0;
+        self.restart_engine(cx);
+    }
+
     /// Rebuilds every running engine on the audio device it should play on now, as when the
     /// device is chosen in settings.
     pub(crate) fn restart_outputs(&mut self, cx: &mut Context<Self>) {
@@ -3267,7 +3283,9 @@ impl Playback {
         cx.notify();
     }
 
-    /// Records that Spotify denied an audio key and stops for the rest of the session.
+    /// Records that Spotify denied an audio key, or that Soloist can no longer sign in, and
+    /// stops for the rest of the session. Where Soloist runs, the toast leads to its setup, which
+    /// is the way past either. Elsewhere it explains the refusal.
     fn refuse(&mut self, cx: &mut Context<Self>) {
         let first = self.refused.is_none();
         self.refused = Some(Refusal::Keys);
@@ -3283,12 +3301,25 @@ impl Playback {
                  this session"
             );
         }
-        Toasts::post(
-            Toast::new(Outcome::Failed, "toast-keys-error")
-                .note("toast-keys-refused")
-                .visit("toast-why", KEYS_FAQ),
-            cx,
-        );
+        let note = match music::soloist::ready() {
+            true => "toast-soloist-refused",
+            false => "toast-keys-refused",
+        };
+        let toast = Toast::new(Outcome::Failed, "toast-keys-error").note(note);
+        let toast = match music::soloist::supported() {
+            true => toast.lead("toast-soloist-setup", Target::PlaybackSettings, |cx| {
+                let soloist = Sonora::global(cx).soloist.clone();
+                soloist.update(cx, |soloist, cx| soloist.begin(cx));
+            }),
+            false => toast.visit("toast-why", KEYS_FAQ),
+        };
+        Toasts::post(toast, cx);
+        if let Some(soloist) = cx
+            .try_global::<Sonora>()
+            .map(|sonora| sonora.soloist.clone())
+        {
+            soloist.update(cx, |soloist, cx| soloist.refused(cx));
+        }
         cx.notify();
     }
 }

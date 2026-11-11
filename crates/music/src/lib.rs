@@ -28,6 +28,7 @@ pub mod progress;
 mod redact;
 pub mod scrobble;
 mod sink;
+pub mod soloist;
 mod spectrum;
 pub mod spotify;
 mod stream;
@@ -528,6 +529,9 @@ pub struct TrackSignal {
     pub rate: u32,
     pub channels: u16,
     pub normalisation: Normalisation,
+    /// Whether the engine plays it to the system's output by itself, as Soloist does. Nothing
+    /// of Sonora's own sound path then touches it: no equalizer, no resampler, no chosen device.
+    pub direct: bool,
 }
 
 /// What loudness normalisation does to a track.
@@ -536,8 +540,8 @@ pub enum Normalisation {
     Off,
     /// A fixed gain in decibels, zero when nothing says how loud the track is.
     Gain(f32),
-    /// librespot normalises inside its own player with a limiter, so the gain is not known
-    /// and changes with the music.
+    /// Spotify's players, librespot and Soloist, normalise inside themselves with a limiter, so
+    /// the gain is not known and changes with the music.
     Limited,
 }
 
@@ -758,6 +762,13 @@ impl Fraction {
 
 pub trait PlaybackFactory: Send + Sync {
     fn start(&self, config: PlaybackConfig) -> (Box<dyn Player>, Box<dyn PlaybackEvents>);
+
+    /// The stream levels the next engine serves, when they differ from the ones the provider
+    /// signed in with. A provider with a second way to play answers here, since which one is in
+    /// use can change while the account stays signed in.
+    fn qualities(&self) -> Option<&'static [Offer]> {
+        None
+    }
 }
 
 /// What a provider's library is made of. It decides which `MusicApi` methods fill the library
@@ -1046,6 +1057,11 @@ pub trait MusicProvider: Send + Sync {
     /// Whether this provider's tracks need the Widevine module to play. The app fetches the
     /// module once such a provider has an account, and does not go near it otherwise.
     fn protected(&self) -> bool {
+        false
+    }
+    /// Whether this provider can play through Soloist, Spotify's own headless player, on this
+    /// computer. The app offers its setup while such a provider is the current one.
+    fn soloist(&self) -> bool {
         false
     }
     /// Whether the artwork urls this provider hands out can be given to another service. A path

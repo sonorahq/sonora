@@ -16,6 +16,7 @@ use tokio::sync::oneshot;
 use crate::audio::{Chain, Volume};
 
 use crate::sink::Cue;
+use crate::soloist;
 use crate::spectrum::Spectrum;
 use crate::spotify::offline::{self, Kept};
 use crate::spotify::sink::OutputSink;
@@ -26,11 +27,11 @@ use crate::{
 };
 
 const TRACK_PREFIX: &str = "spotify:track:";
-/// The levels Spotify serves, best first: Ogg Vorbis at 320, 160 and 96 kbps.
 /// The pause between Spotify downloads once Spotify has refused one. It refuses audio keys asked
 /// for in a burst, the same keys playback needs, so after a refusal downloads ask about as often as
 /// listening does.
 pub(crate) const DOWNLOAD_GAP: Duration = Duration::from_secs(4);
+/// The levels librespot is served, best first: Ogg Vorbis at 320, 160 and 96 kbps.
 pub(crate) const QUALITIES: &[Offer] = &[
     Offer {
         quality: Quality::High,
@@ -193,19 +194,166 @@ impl PlaybackEvents for Events {
     }
 }
 
-/// Builds a Spotify engine on a connected session.
-pub struct Factory(Session);
+/// Builds a Spotify engine on a session: Soloist's while the listener has it set up, and
+/// librespot's otherwise.
+pub struct Factory {
+    session: Session,
+    /// Whether Soloist may play. A session that never connects plays downloads through
+    /// librespot whatever is set up, since Soloist only streams.
+    soloist: bool,
+}
 
 impl Factory {
     pub fn new(session: Session) -> Self {
-        Self(session)
+        Self {
+            session,
+            soloist: true,
+        }
+    }
+
+    /// A factory for a session that never connects.
+    pub fn offline(session: Session) -> Self {
+        Self {
+            session,
+            soloist: false,
+        }
+    }
+
+    fn official(&self) -> bool {
+        self.soloist && soloist::ready()
     }
 }
 
 impl PlaybackFactory for Factory {
     fn start(&self, config: PlaybackConfig) -> (Box<dyn MusicPlayer>, Box<dyn PlaybackEvents>) {
-        let (engine, events) = Engine::start(self.0.clone(), config);
+        if self.official() {
+            let keeper = Keeper::new(&self.session, &config);
+            let (engine, events) = soloist::start(&config);
+            return (Box::new(Official { engine, keeper }), Box::new(events));
+        }
+        let (engine, events) = Engine::start(self.session.clone(), config);
         (Box::new(engine), Box::new(events))
+    }
+
+    fn qualities(&self) -> Option<&'static [Offer]> {
+        self.official().then_some(soloist::QUALITIES)
+    }
+}
+
+/// The downloads of a Spotify account. Both engines keep one, since librespot is what fetches
+/// a download whichever of them plays.
+struct Keeper {
+    /// The session downloads are fetched on.
+    session: Session,
+    /// Where downloads are kept, which librespot also plays them from.
+    shelf: Option<Shelf>,
+    /// The level downloads are fetched at, the same one librespot plays ask for.
+    bitrate: Bitrate,
+}
+
+impl Keeper {
+    fn new(session: &Session, config: &PlaybackConfig) -> Self {
+        Self {
+            session: session.clone(),
+            shelf: config.vault.as_ref().map(|vault| vault.shelf("spotify")),
+            bitrate: bitrate(config.quality),
+        }
+    }
+
+    fn download(&self, track_id: &str, progress: Fraction) -> BoxFuture<'static, Result<()>> {
+        let Some(shelf) = self.shelf.clone() else {
+            return Box::pin(async { Err(anyhow!("spotify keeps no downloads here")) });
+        };
+        let (done, answer) = oneshot::channel();
+        let session = self.session.clone();
+        let id = track_id.to_owned();
+        let bitrate = self.bitrate;
+        self.session.spawn(async move {
+            let fetched = offline::download(&session, &shelf, &id, bitrate).await;
+            progress.set(1.0);
+            done.send(fetched).ok();
+        });
+        Box::pin(async move { answer.await.context("the spotify session stopped")? })
+    }
+
+    fn holds(&self, track_id: &str) -> bool {
+        self.shelf
+            .as_ref()
+            .is_some_and(|shelf| shelf.holds(track_id))
+    }
+
+    fn may_hold(&self, track_id: &str) -> bool {
+        self.shelf
+            .as_ref()
+            .is_some_and(|shelf| shelf.may_hold(track_id))
+    }
+
+    fn discard(&self, track_id: &str) {
+        if let Some(shelf) = &self.shelf {
+            shelf.discard(track_id);
+        }
+    }
+}
+
+/// Soloist as the Spotify engine. It streams every track, a downloaded one too, so nothing
+/// plays without a network while it is in use. A track is only fetched ahead as the next in the
+/// queue, which Soloist then joins to the current one by itself.
+struct Official {
+    engine: soloist::Engine,
+    keeper: Keeper,
+}
+
+impl MusicPlayer for Official {
+    fn download(&self, track_id: &str, progress: Fraction) -> BoxFuture<'static, Result<()>> {
+        self.keeper.download(track_id, progress)
+    }
+
+    fn downloaded(&self, track_id: &str) -> bool {
+        self.keeper.holds(track_id)
+    }
+
+    fn plays_offline(&self, _track_id: &str) -> bool {
+        false
+    }
+
+    fn discard(&self, track_id: &str) {
+        self.keeper.discard(track_id);
+    }
+
+    fn load(&self, track_id: &str, at: Duration, _seamless: bool) -> Result<()> {
+        track_uri(track_id)?;
+        self.engine.load(track_id, at, true);
+        Ok(())
+    }
+
+    fn load_paused_at(&self, track_id: &str, at: Duration) -> Result<()> {
+        track_uri(track_id)?;
+        self.engine.load(track_id, at, false);
+        Ok(())
+    }
+
+    fn preload(&self, track_id: &str, segue: bool) -> Result<()> {
+        track_uri(track_id)?;
+        if segue {
+            self.engine.line_up(track_id);
+        }
+        Ok(())
+    }
+
+    fn play(&self) {
+        self.engine.play();
+    }
+
+    fn pause(&self) {
+        self.engine.pause();
+    }
+
+    fn seek(&self, position: Duration) {
+        self.engine.seek(position);
+    }
+
+    fn set_gain(&self, gain: f32) {
+        self.engine.set_gain(gain);
     }
 }
 
@@ -222,12 +370,7 @@ pub struct Engine {
     normalisation: bool,
     /// The encoding of the offer the quality asks librespot for.
     encoding: Option<Encoding>,
-    /// The session downloads are fetched on.
-    session: Session,
-    /// Where downloads are kept, which librespot also plays them from.
-    shelf: Option<Shelf>,
-    /// The level downloads are fetched at, the same one plays ask for.
-    bitrate: Bitrate,
+    keeper: Keeper,
 }
 
 impl Engine {
@@ -237,8 +380,9 @@ impl Engine {
         let spectrum = Spectrum::new();
         let (signals, signal_rx) = unbounded_channel();
 
-        let shelf = config.vault.as_ref().map(|vault| vault.shelf("spotify"));
-        let offline = shelf
+        let keeper = Keeper::new(&session, &config);
+        let offline = keeper
+            .shelf
             .clone()
             .map(|shelf| Arc::new(Kept(shelf)) as Arc<dyn Offline>);
         let player_config = PlayerConfig {
@@ -259,12 +403,9 @@ impl Engine {
             analyzer: config.analyzer.clone(),
         };
         let (output_tx, output_rx) = unbounded_channel();
-        let player = Player::new(
-            player_config,
-            session.clone(),
-            Box::new(NoOpVolume),
-            move || OutputSink::boxed(sink_cue, chain, output_tx),
-        );
+        let player = Player::new(player_config, session, Box::new(NoOpVolume), move || {
+            OutputSink::boxed(sink_cue, chain, output_tx)
+        });
 
         let events = Events {
             player: forward(player.get_player_event_channel(), cue.clone()),
@@ -286,9 +427,7 @@ impl Engine {
             gapless: config.gapless,
             normalisation: config.normalisation,
             encoding: offered(config.quality),
-            session,
-            shelf,
-            bitrate: bitrate(config.quality),
+            keeper,
         };
         (engine, events)
     }
@@ -355,6 +494,7 @@ impl Engine {
                 true => Normalisation::Limited,
                 false => Normalisation::Off,
             },
+            direct: false,
         };
         let id = track_id.to_owned();
         self.signals.send(PlaybackEvent::Signal { id, track }).ok();
@@ -363,37 +503,19 @@ impl Engine {
 
 impl MusicPlayer for Engine {
     fn download(&self, track_id: &str, progress: Fraction) -> BoxFuture<'static, Result<()>> {
-        let Some(shelf) = self.shelf.clone() else {
-            return Box::pin(async { Err(anyhow!("spotify keeps no downloads here")) });
-        };
-        let (done, answer) = oneshot::channel();
-        let session = self.session.clone();
-        let id = track_id.to_owned();
-        let bitrate = self.bitrate;
-        self.session.spawn(async move {
-            let fetched = offline::download(&session, &shelf, &id, bitrate).await;
-            progress.set(1.0);
-            done.send(fetched).ok();
-        });
-        Box::pin(async move { answer.await.context("the spotify session stopped")? })
+        self.keeper.download(track_id, progress)
     }
 
     fn downloaded(&self, track_id: &str) -> bool {
-        self.shelf
-            .as_ref()
-            .is_some_and(|shelf| shelf.holds(track_id))
+        self.keeper.holds(track_id)
     }
 
     fn plays_offline(&self, track_id: &str) -> bool {
-        self.shelf
-            .as_ref()
-            .is_some_and(|shelf| shelf.may_hold(track_id))
+        self.keeper.may_hold(track_id)
     }
 
     fn discard(&self, track_id: &str) {
-        if let Some(shelf) = &self.shelf {
-            shelf.discard(track_id);
-        }
+        self.keeper.discard(track_id);
     }
 
     fn load(&self, track_id: &str, at: Duration, seamless: bool) -> Result<()> {
@@ -430,7 +552,8 @@ impl MusicPlayer for Engine {
 }
 
 /// Passes librespot's events on and arms `cue` the moment one says audio from a new track or
-/// position follows. Arming cannot wait for whoever reads the events: until it happens every
+/// position follows. It also keeps the memory of a denied audio key, which decides whether
+/// Soloist is offered at the next start: set on a denial and dropped once a track plays. Arming cannot wait for whoever reads the events: until it happens every
 /// write is refused at once, so librespot decodes on unheard and the track would start seconds
 /// in. Each event goes on before the cue is armed, so it is always ahead of the write the arm
 /// lets through.
@@ -440,6 +563,11 @@ fn forward(mut events: UnboundedReceiver<PlayerEvent>, cue: Cue) -> UnboundedRec
         .name("spotify-events".into())
         .spawn(move || {
             while let Some(event) = events.blocking_recv() {
+                match event {
+                    PlayerEvent::Unavailable { denied: true, .. } => soloist::denied(),
+                    PlayerEvent::Playing { .. } => soloist::granted(),
+                    _ => {}
+                }
                 let arms = matches!(
                     event,
                     PlayerEvent::Playing { .. } | PlayerEvent::Seeked { .. }

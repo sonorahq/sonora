@@ -468,13 +468,15 @@ impl Devices {
         self.ticking = None;
     }
 
-    /// Lists the app on the device network, or takes it off, as the setting says.
-    fn apply(&mut self, cx: &mut Context<Self>) {
+    /// Lists the app on the device network, or takes it off, as the setting says. It stays off
+    /// while Soloist plays: Soloist is a device of its own on that network, and the two would
+    /// keep taking playback from each other.
+    pub(crate) fn apply(&mut self, cx: &mut Context<Self>) {
         let Some(link) = self.link.clone() else {
             return;
         };
         let settings = self.settings.read(cx);
-        let wanted = settings.spotify_connect();
+        let wanted = settings.spotify_connect() && !music::soloist::ready();
         let naming = match settings.spotify_connect_name() {
             ConnectName::Sonora => Naming::App,
             ConnectName::Both => Naming::AppOnComputer,

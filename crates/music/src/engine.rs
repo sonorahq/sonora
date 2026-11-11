@@ -946,6 +946,7 @@ impl<F: Fetch> Playing<F> {
                 true => Normalisation::Gain(20. * gain.log10()),
                 false => Normalisation::Off,
             },
+            direct: false,
         };
         events
             .send(PlaybackEvent::Signal {
