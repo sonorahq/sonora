@@ -372,18 +372,7 @@ pub(crate) fn relative_stamp(seconds: Option<i64>) -> SharedString {
 }
 
 pub(crate) fn count(value: u64) -> SharedString {
-    let group = t!("number-group");
-    let digits = value.to_string();
-    let first = match digits.len() % 3 {
-        0 => 3,
-        remainder => remainder,
-    };
-    let mut grouped = digits[..first].to_owned();
-    for chunk in digits.as_bytes()[first..].chunks(3) {
-        grouped.push_str(&group);
-        grouped.push_str(std::str::from_utf8(chunk).unwrap_or_default());
-    }
-    SharedString::from(grouped)
+    i18n::grouped_number(value as i128, 1_000)
 }
 
 pub(crate) fn title<F>(

@@ -4578,6 +4578,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite 0.30.0",
+ "unicode-segmentation",
  "widevine",
  "windows 0.62.2",
  "ytmusic",

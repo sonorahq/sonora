@@ -652,6 +652,7 @@ pub fn track_from_file(
             duration,
             added_at: modified_at(path),
             added_by: None,
+            year: year.unwrap_or(0),
             playcount: None,
             popularity: 0,
             explicit: false,

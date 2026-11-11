@@ -3,6 +3,11 @@
 //! Every provider stamps when something was added or changed, and each spells it a little
 //! differently, so one tolerant reader serves them all rather than one per provider.
 
+/// Reads the leading year from a provider's release date.
+pub(crate) fn year(date: Option<&str>) -> Option<i32> {
+    date?.get(..4)?.parse().ok()
+}
+
 /// An ISO-8601 stamp as seconds since the epoch. It takes a bare date (`2026-09-15`), a date and
 /// time joined by `T` or a space, fractional seconds, and a `Z`, `+02:00` or `+0000` offset,
 /// which covers what Apple Music, Deezer and Tidal write. A missing month or day reads as the

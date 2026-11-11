@@ -52,8 +52,8 @@ pub use audio::Meter;
 pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
-    Contributor, CoverSize, Credit, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
-    ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsWord,
+    Contributor, CoverSize, Credit, Descriptors, Genre, GenreDetail, GenreItem, GenreSection,
+    HomeFeed, ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsWord,
     PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail, ReleaseType, RomanizedText,
     SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
 };
@@ -158,6 +158,12 @@ pub trait MusicApi: Send + Sync {
 
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile>;
     async fn artist_images(&self, ids: Vec<String>) -> Result<HashMap<String, String>>;
+
+    /// Genres, moods, tags and tempo for tracks by id. A track the provider does not describe is
+    /// left out, and a provider that describes none returns an empty map.
+    async fn descriptors(&self, _track_ids: &[String]) -> Result<HashMap<String, Descriptors>> {
+        Ok(HashMap::new())
+    }
 
     /// The tracks the user starred. On a `Shape::Saved` provider this is the whole songs
     /// library; on a `Shape::Catalog` one it only feeds the hearts and the favorites filter.

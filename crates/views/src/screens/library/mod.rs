@@ -28,7 +28,7 @@ use state::{
 use ui::{
     ActiveTheme as _, Button, Card, Deck, FilterChange, LEADING, Mode, Pinnable, Popovers, Popup,
     Scrollbar, Scroller, Sort, SortAxis, TableDelegate, TableEvent, TableSource, TableState, Text,
-    Vacancy, Viewport, heading, quantize, runtime, scrolled, snapped, table,
+    Vacancy, heading, scrolled, snapped, spoken_heading, table,
 };
 
 use crate::shared::album_grid::{AlbumGrid, CardGrid};
@@ -438,7 +438,7 @@ impl LibraryView {
             context_menu: None,
             toolbar,
             popovers: Popovers::default(),
-            sliders: Section::ALL.map(|_| Sliders::default()),
+            sliders: Section::ALL.map(|_| Sliders::with_choices(tracks::choice_filters(), id, cx)),
             me: me.downgrade(),
         };
         view.restore(cx);
@@ -618,14 +618,10 @@ impl LibraryView {
         cx.notify();
     }
 
-    fn viewport(scroll: &ScrollHandle, window: &Window) -> Viewport {
-        quantize(scroll, window);
-        let visible = scroll.bounds().size.height;
-
-        Viewport::measured(scrolled(scroll), visible, window)
-    }
-
-    fn header(&self, cx: &Context<Self>) -> AnyElement {
+    fn header(&self, cx: &App) -> AnyElement {
+        if self.section != Section::Songs {
+            return self.compact_header(cx);
+        }
         let state = self.tracks().read(cx);
         let delegate = state.delegate();
         let listed = delegate.row_count();
@@ -651,10 +647,9 @@ impl LibraryView {
                 duration
             }
         };
-        let mut strip = HeroMetaStrip::new().text(t!("count-songs", count = count));
-        if !duration.is_zero() {
-            strip = strip.text(runtime(duration));
-        }
+        let strip = HeroMetaStrip::new()
+            .text(t!("count-songs", count = count))
+            .duration(duration);
         let (title, icon, eyebrow) = match (self.shape(cx), self.shelf) {
             (Shape::Catalog(_), Shelf::Local) => {
                 (t!("nav-songs"), LibraryTab::Songs.icon(), t!("nav-local"))
@@ -672,7 +667,7 @@ impl LibraryView {
         PageHero::new("library-hero", title)
             .fallback(icon)
             .accent()
-            .eyebrow(eyebrow)
+            .top_bar(eyebrow, self.toolbar.clone())
             .meta(strip)
             .actions(
                 div()
@@ -691,6 +686,39 @@ impl LibraryView {
                     )),
             )
             .into_any_element()
+    }
+
+    /// A compact page heading gives list and card shelves a place for their section tools.
+    fn compact_header(&self, cx: &App) -> AnyElement {
+        let title = match self.section {
+            Section::Songs => t!("nav-songs"),
+            Section::Albums => t!("nav-albums"),
+            Section::Playlists => t!("nav-playlists"),
+            Section::Artists => t!("nav-artists"),
+        };
+        let inset = cx.theme().metrics.inset;
+
+        div()
+            .id(("library-section-heading", self.section.slot()))
+            .px(inset)
+            .py_3()
+            .child(page::row(
+                spoken_heading(("library-section-title", self.section.slot()), title, 1, cx)
+                    .flex_1()
+                    .min_w_0()
+                    .truncate(),
+                self.toolbar.clone(),
+            ))
+            .into_any_element()
+    }
+
+    /// Creates the shared scroller shell for every card view and its section tools.
+    fn card_scroller(&self, cx: &App) -> Scroller {
+        let inset = cx.theme().metrics.inset;
+        Scroller::new("library-cards", &self.card_scrollbar)
+            .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .pb(inset)
+            .child(self.header(cx))
     }
 
     fn play(&mut self, display: usize, cx: &mut Context<Self>) {
@@ -878,9 +906,7 @@ impl LibraryView {
             .max(1.) as usize;
         let circle = self.section == Section::Artists;
 
-        Scroller::new("library-cards", &self.card_scrollbar)
-            .bottom_inset(crate::chrome::Chrome::bottom(cx))
-            .py(inset)
+        self.card_scroller(cx)
             .child(
                 div()
                     .flex()
@@ -911,12 +937,17 @@ impl LibraryView {
         let gap = deck_gap(window);
         let tile = Card::tile_height(card, window, cx);
         let heading = head_height(window, cx);
-        let depth = (scrolled(&scroll) - inset).max(Pixels::ZERO);
+        let hero = scroll
+            .bounds_for_item(0)
+            .map(|bounds| bounds.size.height)
+            .unwrap_or_default();
+        let position = scrolled(&scroll);
+        let depth = (position - hero).max(Pixels::ZERO);
 
         let repacked = self.card_columns != columns
             || (self.card_tile - tile).abs() >= px(0.5)
             || (self.card_heading - heading).abs() >= px(0.5);
-        let anchor = (repacked && self.card_columns != 0 && !self.cards_dirty)
+        let anchor = (repacked && self.card_columns != 0 && !self.cards_dirty && position >= hero)
             .then(|| {
                 let heights = deck_heights(&self.card_rows, self.card_tile, self.card_heading);
                 let (index, offset) = Deck::at(&heights, gap, depth);
@@ -954,16 +985,14 @@ impl LibraryView {
                 .copied()
                 .unwrap_or(Pixels::ZERO);
             let into = heights.get(index).copied().unwrap_or(Pixels::ZERO) * share;
-            scroll.set_offset(point(Pixels::ZERO, -(top + into + inset)));
+            scroll.set_offset(point(Pixels::ZERO, -(top + into + hero)));
         }
 
         let rows = self.card_rows.clone();
         let section = self.section;
         let view = self.me.clone();
 
-        Scroller::new("library-cards", &self.card_scrollbar)
-            .bottom_inset(crate::chrome::Chrome::bottom(cx))
-            .py(inset)
+        self.card_scroller(cx)
             .child(
                 Deck::new("library-deck")
                     .rows(heights)
@@ -1161,10 +1190,11 @@ impl Render for LibraryView {
         if mode == Mode::List {
             self.table(self.section).claim(cx);
             let scroll = self.scrollbar.read(cx).scroll().clone();
-            let viewport = match self.section.listing() {
-                true => page::viewport(&scroll, inset, window),
-                false => Self::viewport(&scroll, window),
+            let inset = match self.section.listing() {
+                true => inset,
+                false => Pixels::ZERO,
             };
+            let viewport = page::viewport(&scroll, inset, window);
             self.table(self.section).set_viewport(viewport, cx);
         }
 
@@ -1193,8 +1223,16 @@ impl Render for LibraryView {
         let section = self.section;
         let note = self.note(cx);
         let content = match (self.section, mode) {
-            _ if self.unconfigured(cx) => local::unconfigured("configure-local-folder")
+            _ if self.unconfigured(cx) => div()
+                .flex()
+                .flex_col()
                 .size_full()
+                .child(self.header(cx))
+                .child(
+                    local::unconfigured("configure-local-folder")
+                        .flex_1()
+                        .min_h_0(),
+                )
                 .into_any_element(),
             (section, Mode::List) if section.listing() => {
                 Scroller::new("library-page", &self.scrollbar)
@@ -1209,12 +1247,16 @@ impl Render for LibraryView {
             (_, Mode::List) => Scroller::new("library-page", &self.scrollbar)
                 .bottom_inset(crate::chrome::Chrome::bottom(cx))
                 .pb(inset)
+                .child(self.header(cx))
                 .child(self.table(self.section).element())
                 .when_some(note, |this, note| this.child(note))
                 .into_any_element(),
             (_, Mode::Grid) if note.is_none() && self.waiting(cx) => self.pending_cards(window, cx),
             (_, Mode::Grid) => match note {
-                Some(note) => note.size_full().into_any_element(),
+                Some(note) => self
+                    .card_scroller(cx)
+                    .child(note.size_full())
+                    .into_any_element(),
                 None => self.cards(window, cx),
             },
         };
@@ -1301,7 +1343,6 @@ impl Tooled for LibraryView {
             Button::new("new-playlist")
                 .icon("icons/plus.svg")
                 .tooltip("menu-new-playlist")
-                .small()
                 .ghost()
                 .on_click(move |_, window, cx| {
                     created
@@ -1315,13 +1356,30 @@ impl Tooled for LibraryView {
             Button::new("import-playlist")
                 .icon("icons/file-music.svg")
                 .tooltip("menu-import-playlist")
-                .small()
                 .ghost()
                 .on_click(|_, _, cx| local::import_playlist(cx))
                 .into_any_element()
         });
 
+        let sort_first = self.section == Section::Albums && self.mode() == Mode::Grid;
+        let sortable =
+            self.section != Section::Songs && (self.section != Section::Albums || sort_first);
+        let sort = sortable.then(|| {
+            tools::sorts(
+                &self.popovers,
+                self.sorts(cx),
+                move |key, cx| {
+                    sorted.update(cx, |view, cx| view.set_sort(key, cx)).ok();
+                },
+                cx,
+            )
+        });
+        let (sort_before, sort_after) = match sort_first {
+            true => (sort, None),
+            false => (None, sort),
+        };
         let mut tools = Vec::new();
+        tools.extend(sort_before);
         tools.extend(create);
         tools.extend(import);
         let switchable = !self.section.listing();
@@ -1345,14 +1403,7 @@ impl Tooled for LibraryView {
                 cx,
             ));
         }
-        tools.push(tools::sorts(
-            &self.popovers,
-            self.sorts(cx),
-            move |key, cx| {
-                sorted.update(cx, |view, cx| view.set_sort(key, cx)).ok();
-            },
-            cx,
-        ));
+        tools.extend(sort_after);
         tools
     }
 }
@@ -1361,6 +1412,9 @@ impl LibraryView {
     fn filter(&mut self, change: FilterChange, cx: &mut Context<Self>) {
         self.cards_dirty = true;
         let section = self.section;
+        if matches!(change, FilterChange::Reset) {
+            page::clear_filters(&self.settings, section.key(self.shelf), cx);
+        }
         self.table(section).filter(change, cx);
         self.persist(section, cx);
         cx.notify();

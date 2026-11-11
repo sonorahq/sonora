@@ -32,7 +32,7 @@ impl Unit {
     pub fn say(self, value: f32) -> SharedString {
         match self {
             Unit::Clock => clock(std::time::Duration::from_secs_f32(value.max(0.))),
-            Unit::Plain => SharedString::from(format!("{}", value.round() as i64)),
+            Unit::Plain => i18n::grouped_number(value.round() as i128, 10_000),
         }
     }
 }
@@ -41,6 +41,7 @@ impl Unit {
 pub enum Filter {
     Range(RangeAxis),
     Flag(FlagAxis),
+    Choice(ChoiceAxis),
 }
 
 impl Filter {
@@ -48,14 +49,43 @@ impl Filter {
         match self {
             Self::Range(axis) => !axis.whole(),
             Self::Flag(axis) => axis.on,
+            Self::Choice(axis) => axis.picked().next().is_some(),
         }
     }
 }
 
 pub enum FilterChange {
-    Range(&'static str, (f32, f32)),
+    /// A range set to `None` is back at its full span, which narrows nothing.
+    Range(&'static str, Option<(f32, f32)>),
     Flag(&'static str, bool),
+    /// Turns one option of a choice axis on or off, by the option's id.
+    Choice(&'static str, SharedString, bool),
     Reset,
+}
+
+/// One option of a `ChoiceAxis`: a stable id the filter is kept by, the words it shows, and
+/// whether it is picked.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Choice {
+    pub id: SharedString,
+    pub label: SharedString,
+    pub on: bool,
+}
+
+/// A filter that keeps what matches any of the options picked, such as a genre. Nothing picked
+/// means untouched.
+#[derive(Clone)]
+pub struct ChoiceAxis {
+    pub key: &'static str,
+    pub label: SharedString,
+    pub options: Vec<Choice>,
+}
+
+impl ChoiceAxis {
+    /// The options picked, in the order the axis lists them.
+    pub fn picked(&self) -> impl Iterator<Item = &Choice> {
+        self.options.iter().filter(|option| option.on)
+    }
 }
 
 #[derive(Clone)]
@@ -112,6 +142,15 @@ impl RangeAxis {
         (pick(share.0), pick(share.1))
     }
 
+    /// The change for a handle position: the range it picks, or `None` where that is the whole.
+    pub fn narrowing(&self, share: (f32, f32)) -> Option<(f32, f32)> {
+        let moved = Self {
+            value: self.at(share),
+            ..self.clone()
+        };
+        (!moved.whole()).then_some(moved.value)
+    }
+
     pub fn stops(&self) -> Vec<f32> {
         let Some(steps) = self.steps() else {
             return Vec::new();
@@ -129,6 +168,9 @@ impl RangeAxis {
     }
 
     pub fn whole(&self) -> bool {
+        if self.bounds.1 - self.bounds.0 <= f32::EPSILON {
+            return true;
+        }
         let (low, high) = self.share();
         low <= f32::EPSILON && high >= 1. - f32::EPSILON
     }

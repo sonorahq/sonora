@@ -5,8 +5,9 @@ mod sort;
 use i18n::t;
 use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::rc::Rc;
-use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis, RangeAxis, Unit};
+use ui::{ActiveTheme as _, Choice, ChoiceAxis, Filter, FilterChange, RangeAxis, Unit};
 
 use crate::shared::menus::{ItemMenu, TrackColumns};
 use gpui::accesskit::Role;
@@ -16,7 +17,7 @@ use gpui::{
     AnyElement, App, Context, Entity, Hsla, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, WeakEntity, div,
 };
-use music::Track;
+use music::{Descriptors, Track};
 use router::Destination;
 use state::{Detail, History, Library, Network, Origin, Playback, Progress, Shelf, Sonora};
 use ui::{
@@ -34,7 +35,14 @@ pub(crate) use columns::{
 pub(crate) use sieve::TrackSieve;
 pub(crate) use sort::initial;
 
-use sort::hits;
+use sieve::{BPM, DURATION, FACETS, RANGES};
+use sort::{genres_of, hits};
+
+/// The keys of the filters that offer a list of options to pick from, each needing a submenu of
+/// its own.
+pub(crate) fn choice_filters() -> impl Iterator<Item = &'static str> {
+    FACETS.iter().map(|(key, _)| *key)
+}
 
 /// How strongly an unsaved track's heart shows on its row.
 const SETTLED: f32 = 0.5;
@@ -51,6 +59,12 @@ pub(crate) fn playback_status(playback: &Entity<Playback>, cx: &App) -> Playback
 pub(crate) trait Tracks: 'static {
     fn tracks<'a>(&self, cx: &'a App) -> &'a [Track];
     fn is_loading(&self, cx: &App) -> bool;
+
+    /// What the provider says of the tracks by id, for the filters by tempo, genre, mood and
+    /// tag. A list with no such facts leaves the default, and those filters stay out.
+    fn descriptors<'a>(&self, _cx: &'a App) -> Option<&'a HashMap<String, Descriptors>> {
+        None
+    }
 
     /// The skeleton rows the table draws before the first tracks arrive. A list that leaves
     /// the default fills the viewport with them while it loads.
@@ -175,12 +189,51 @@ pub(crate) struct TrackSource {
     menu: ItemMenu,
     table: Option<WeakEntity<TableState<TrackSource>>>,
     sieve: TrackSieve,
-    spread: RefCell<Option<Spread>>,
+    axes: RefCell<Option<(i18n::Language, Vec<Filter>)>>,
 }
 
-struct Spread {
-    stamp: usize,
-    extent: Option<(f32, f32)>,
+/// Builds a numeric filter from sorted values, with duration sliding freely between its ends.
+fn range_axis(key: &'static str, mut values: Vec<f32>, unit: Unit) -> Option<Filter> {
+    values.sort_by(f32::total_cmp);
+    values.dedup();
+    let bounds = (*values.first()?, *values.last()?);
+    (bounds.1 - bounds.0 > f32::EPSILON).then(|| {
+        Filter::Range(RangeAxis {
+            key,
+            label: i18n::lookup(key, None),
+            bounds,
+            value: bounds,
+            unit,
+            values: (key != DURATION && key != BPM).then_some(values),
+        })
+    })
+}
+
+/// Counts each option and offers the commonest first.
+fn choices<'a>(words: impl Iterator<Item = &'a String>) -> Vec<Choice> {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for word in words {
+        *counts.entry(word).or_default() += 1;
+    }
+    let mut ranked: Vec<_> = counts.into_iter().collect();
+    ranked.sort_by(|(a, x), (b, y)| y.cmp(x).then(a.cmp(b)));
+    ranked
+        .into_iter()
+        .map(|(id, _)| choice(id, false))
+        .collect()
+}
+
+/// One option for a word, picked or not.
+fn choice(id: &str, on: bool) -> Choice {
+    Choice {
+        id: id.to_owned().into(),
+        // Moods are Fluent keys, and a provider's other words are plain.
+        label: match id.starts_with("stats-mood-") {
+            true => i18n::lookup(id, None),
+            false => id.to_owned().into(),
+        },
+        on,
+    }
 }
 
 /// What the number at the head of a row counts.
@@ -222,7 +275,7 @@ impl TrackSource {
             menu: ItemMenu::new(playlist_scrollbar, cx),
             table: None,
             sieve: TrackSieve::default(),
-            spread: RefCell::new(None),
+            axes: RefCell::new(None),
         }
     }
 
@@ -232,29 +285,46 @@ impl TrackSource {
         changed
     }
 
-    /// The shortest and longest track in the whole list, `None` only when the list is empty.
-    /// The span deliberately ignores the sieve and the search, so narrowing the table can never
-    /// shrink the slider that did the narrowing and leave the user with no way back.
-    pub(crate) fn extent(&self, cx: &App) -> Option<(f32, f32)> {
-        let tracks = self.provider.tracks(cx);
-        let stamp = tracks.len();
-        if let Some(spread) = self.spread.borrow().as_ref()
-            && spread.stamp == stamp
+    /// Caches the whole list's filter options until the source rebuilds, so narrowing never
+    /// removes its own options. Embedded genres work even without extra provider metadata.
+    fn axes(&self, cx: &App) -> Vec<Filter> {
+        let language = i18n::language();
+        let mut cache = self.axes.borrow_mut();
+        if cache
+            .as_ref()
+            .is_some_and(|(cached, _)| *cached != language)
         {
-            return spread.extent;
+            *cache = None;
         }
-
-        let mut low = f32::MAX;
-        let mut high = f32::MIN;
-        for track in tracks {
-            let seconds = track.duration.as_secs_f32();
-            low = low.min(seconds);
-            high = high.max(seconds);
-        }
-        let extent = (low <= high).then_some((low, high));
-        *self.spread.borrow_mut() = Some(Spread { stamp, extent });
-
-        extent
+        cache
+            .get_or_insert_with(|| {
+                let tracks = self.provider.tracks(cx);
+                let found = self.provider.descriptors(cx);
+                let mut axes: Vec<_> = RANGES
+                    .iter()
+                    .filter_map(|(key, read, unit)| {
+                        range_axis(
+                            key,
+                            tracks
+                                .iter()
+                                .filter_map(|track| read(track, found))
+                                .collect(),
+                            *unit,
+                        )
+                    })
+                    .collect();
+                axes.extend(FACETS.iter().map(|(key, words)| {
+                    let options = choices(tracks.iter().flat_map(|track| words(track, found)));
+                    Filter::Choice(ChoiceAxis {
+                        key,
+                        label: i18n::lookup(key, None),
+                        options,
+                    })
+                }));
+                (language, axes)
+            })
+            .1
+            .clone()
     }
 
     // resolved when play starts
@@ -539,6 +609,10 @@ impl TrackSource {
 impl TableSource for TrackSource {
     type Field = TrackField;
 
+    fn invalidate(&mut self) {
+        *self.axes.get_mut() = None;
+    }
+
     fn columns(&self) -> &'static [ColumnSpec<TrackField>] {
         self.columns
     }
@@ -556,7 +630,12 @@ impl TableSource for TrackSource {
         match field {
             TrackField::Artists => tracks.iter().any(|track| !track.artists.is_empty()),
             TrackField::Album => tracks.iter().any(|track| !track.album.is_empty()),
-            TrackField::Genre => tracks.iter().any(|track| !track.tags.is_empty()),
+            TrackField::Genre => {
+                let found = self.provider.descriptors(cx);
+                tracks
+                    .iter()
+                    .any(|track| !genres_of(track, found).is_empty())
+            }
             TrackField::AddedAt | TrackField::PlayedAt => {
                 tracks.iter().any(|track| track.added_at.is_some())
             }
@@ -568,7 +647,7 @@ impl TableSource for TrackSource {
 
     fn matches(&self, row: usize, query: &str, cx: &App) -> bool {
         self.peek(row, cx).is_some_and(|track| {
-            if !self.sieve.keeps(track) {
+            if !self.sieve.keeps(track, self.provider.descriptors(cx)) {
                 return false;
             }
             if self.sieve.favorites && !self.starred(track, cx) {
@@ -587,79 +666,79 @@ impl TableSource for TrackSource {
     }
 
     fn filter_axes(&self, cx: &App) -> Vec<Filter> {
-        let duration = self.extent(cx).map(|bounds| {
-            Filter::Range(
-                RangeAxis {
-                    key: "filter-duration",
-                    label: t!("filter-duration"),
-                    bounds,
-                    value: self.sieve.duration.unwrap_or(bounds),
-                    unit: Unit::Clock,
-                    values: None,
+        if self.provider.tracks(cx).len() <= 1 && !self.sieve.active() {
+            return Vec::new();
+        }
+        let mut axes = self.axes(cx);
+        for axis in &mut axes {
+            match axis {
+                Filter::Range(axis) => {
+                    axis.value = self
+                        .sieve
+                        .ranges
+                        .get(axis.key)
+                        .copied()
+                        .unwrap_or(axis.bounds);
+                    *axis = axis.clone().clamped();
                 }
-                .clamped(),
-            )
-        });
-
-        let mut axes: Vec<Filter> = duration.into_iter().collect();
-        axes.extend([
-            Filter::Flag(FlagAxis {
-                key: "filter-hide-explicit",
-                label: t!("filter-hide-explicit"),
-                on: self.sieve.hide_explicit,
-            }),
-            Filter::Flag(FlagAxis {
-                key: "filter-playable",
-                label: t!("filter-playable"),
-                on: self.sieve.playable,
-            }),
-        ]);
-        if self.catalog(cx) {
-            axes.push(Filter::Flag(FlagAxis {
-                key: "filter-favorites",
-                label: t!("filter-favorites"),
-                on: self.sieve.favorites,
-            }));
+                Filter::Choice(axis) => {
+                    let picked = self.sieve.picks.get(axis.key);
+                    for option in &mut axis.options {
+                        option.on =
+                            picked.is_some_and(|picked| picked.contains(option.id.as_ref()));
+                    }
+                    // Keep stale picks visible so they can still be cleared.
+                    for id in picked.into_iter().flatten() {
+                        if !axis.options.iter().any(|option| option.id == id.as_str()) {
+                            axis.options.push(choice(id, true));
+                        }
+                    }
+                }
+                Filter::Flag(_) => {}
+            }
         }
-        // Offline mode already keeps a shelf to its downloads, so the filter would do nothing.
+        axes.retain(|axis| !matches!(axis, Filter::Choice(axis) if axis.options.is_empty()));
+        // Offline mode already keeps a shelf to its downloads, so that filter would do nothing.
         let offered = self.sieve.downloaded || !Sonora::global(cx).downloads.read(cx).is_empty();
-        if offered && !self.downloads_only(cx) {
-            axes.push(Filter::Flag(FlagAxis {
-                key: "filter-downloaded",
-                label: t!("filter-downloaded"),
-                on: self.sieve.downloaded,
-            }));
-        }
+        axes.extend(
+            self.sieve
+                .flags(self.catalog(cx), offered && !self.downloads_only(cx)),
+        );
         axes
     }
 
     fn filter(&mut self, change: FilterChange, _cx: &App) -> bool {
         match change {
-            FilterChange::Range("filter-duration", value) => {
-                self.sieve.duration = Some(value);
+            FilterChange::Range(key, value) => {
+                let known = RANGES.iter().any(|(known, ..)| *known == key);
+                if !known {
+                    return false;
+                }
+                match value {
+                    Some(value) => self.sieve.ranges.insert(key, value),
+                    None => self.sieve.ranges.remove(key),
+                };
                 true
             }
-            FilterChange::Flag("filter-hide-explicit", value) => {
-                self.sieve.hide_explicit = value;
+            FilterChange::Choice(key, id, on) => {
+                self.sieve.pick(key, &id, on);
                 true
             }
-            FilterChange::Flag("filter-playable", value) => {
-                self.sieve.playable = value;
-                true
-            }
-            FilterChange::Flag("filter-favorites", value) => {
-                self.sieve.favorites = value;
-                true
-            }
-            FilterChange::Flag("filter-downloaded", value) => {
-                self.sieve.downloaded = value;
+            FilterChange::Flag(key, value) => {
+                match key {
+                    "filter-hide-explicit" => self.sieve.hide_explicit = value,
+                    "filter-playable" => self.sieve.playable = value,
+                    "filter-collaborations" => self.sieve.collaborations = value,
+                    "filter-favorites" => self.sieve.favorites = value,
+                    "filter-downloaded" => self.sieve.downloaded = value,
+                    _ => return false,
+                }
                 true
             }
             FilterChange::Reset => {
                 self.sieve = Default::default();
                 true
             }
-            _ => false,
         }
     }
 
@@ -736,7 +815,11 @@ impl TableSource for TrackSource {
             TrackField::Title => self.title_cell(&cell, track, title, cx),
             TrackField::Artists => self.artist_cell(&cell, track, detail),
             TrackField::Album => self.album_cell(&cell, track, detail),
-            TrackField::Genre => cells::dim(&cell, track.tags.join(", "), detail),
+            TrackField::Genre => cells::dim(
+                &cell,
+                genres_of(track, self.provider.descriptors(cx)).join(", "),
+                detail,
+            ),
             TrackField::AddedAt => cells::credited(
                 &cell,
                 track.added_by.as_deref(),
@@ -800,11 +883,22 @@ impl TableSource for TrackSource {
     }
 
     fn compare(&self, field: TrackField, a: usize, b: usize, cx: &App) -> Ordering {
-        sort::compare(self.provider.tracks(cx), field, a, b)
+        sort::compare(
+            self.provider.tracks(cx),
+            self.provider.descriptors(cx),
+            field,
+            a,
+            b,
+        )
     }
 
     fn group(&self, field: TrackField, row: usize, cx: &App) -> Option<SharedString> {
-        sort::group(self.provider.tracks(cx), field, row)
+        sort::group(
+            self.provider.tracks(cx),
+            self.provider.descriptors(cx),
+            field,
+            row,
+        )
     }
 }
 

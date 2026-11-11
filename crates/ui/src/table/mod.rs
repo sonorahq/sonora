@@ -97,6 +97,9 @@ pub trait TableSource: 'static {
     fn columns(&self) -> &'static [ColumnSpec<Self::Field>];
     fn rows(&self, cx: &App) -> usize;
 
+    /// Clears cached source data before the table rebuilds after a content change.
+    fn invalidate(&mut self) {}
+
     fn populated(&self, _field: Self::Field, _cx: &App) -> bool {
         true
     }
@@ -919,6 +922,7 @@ impl<S: TableSource> TableState<S> {
     /// Reads the rows again after the source changed. An open context menu follows its items
     /// to their new rows, and closes when the source names no rows or one of the items left.
     pub fn rebuild(&mut self, cx: &mut Context<Self>) {
+        self.delegate.source.invalidate();
         self.delegate.rebuild(cx);
         self.context_menu = self
             .context_menu

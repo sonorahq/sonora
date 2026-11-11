@@ -1,12 +1,39 @@
 use std::cmp::Ordering;
 
+use std::collections::HashMap;
+
 use gpui::SharedString;
-use music::Track;
+use music::{Descriptors, Track};
 
 use super::TrackField;
 use crate::shared::text::{folded, holds};
 
-pub(super) fn compare(tracks: &[Track], field: TrackField, a: usize, b: usize) -> Ordering {
+/// What the provider says of the tracks by id, where it says anything.
+pub(super) type Found<'a> = Option<&'a HashMap<String, Descriptors>>;
+
+/// The provider's extra metadata for a track, when available.
+pub(super) fn described<'a>(track: &Track, found: Found<'a>) -> Option<&'a Descriptors> {
+    found?.get(track.id.as_deref()?)
+}
+
+/// The genres a track is filed under. Tags the provider put on the track win, and a track with
+/// none takes the genres the provider described it with, which arrive after the list does.
+pub(super) fn genres_of<'a>(track: &'a Track, found: Found<'a>) -> &'a [String] {
+    if !track.tags.is_empty() {
+        return &track.tags;
+    }
+    described(track, found)
+        .map(|found| found.genres.as_slice())
+        .unwrap_or_default()
+}
+
+pub(super) fn compare(
+    tracks: &[Track],
+    found: Found,
+    field: TrackField,
+    a: usize,
+    b: usize,
+) -> Ordering {
     let text =
         |index: usize, pick: fn(&Track) -> &str| tracks.get(index).map(pick).unwrap_or_default();
     let folded = |pick: fn(&Track) -> &str| folded(text(a, pick), text(b, pick));
@@ -15,7 +42,7 @@ pub(super) fn compare(tracks: &[Track], field: TrackField, a: usize, b: usize) -
         TrackField::Title => folded(|track| &track.name),
         TrackField::Artists => folded(|track| &track.artists),
         TrackField::Album => folded(|track| &track.album),
-        TrackField::Genre => genres(tags(tracks, a), tags(tracks, b)),
+        TrackField::Genre => genres(genres_at(tracks, found, a), genres_at(tracks, found, b)),
         TrackField::AddedAt | TrackField::PlayedAt => tracks
             .get(a)
             .and_then(|track| track.added_at)
@@ -33,14 +60,19 @@ pub(super) fn compare(tracks: &[Track], field: TrackField, a: usize, b: usize) -
     }
 }
 
-pub(super) fn group(tracks: &[Track], field: TrackField, row: usize) -> Option<SharedString> {
+pub(super) fn group(
+    tracks: &[Track],
+    found: Found,
+    field: TrackField,
+    row: usize,
+) -> Option<SharedString> {
     let track = tracks.get(row)?;
 
     match field {
         TrackField::Title => Some(initial(&track.name)),
         TrackField::Artists => Some(initial(&track.artists)),
         TrackField::Album => Some(initial(&track.album)),
-        TrackField::Genre => Some(match track.tags.first() {
+        TrackField::Genre => Some(match genres_of(track, found).first() {
             Some(genre) => SharedString::from(genre.clone()),
             None => initial(""),
         }),
@@ -49,10 +81,10 @@ pub(super) fn group(tracks: &[Track], field: TrackField, row: usize) -> Option<S
     }
 }
 
-fn tags(tracks: &[Track], index: usize) -> &[String] {
+fn genres_at<'a>(tracks: &'a [Track], found: Found<'a>, index: usize) -> &'a [String] {
     tracks
         .get(index)
-        .map(|track| track.tags.as_slice())
+        .map(|track| genres_of(track, found))
         .unwrap_or_default()
 }
 

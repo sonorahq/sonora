@@ -10,12 +10,13 @@ use librespot_protocol::playlist4_external::SelectedListContent as RootList;
 use protobuf::Message as _;
 
 use crate::spotify::{
-    albums, artists, collection, collection2, pathfinder, playlists, profiles, radio, search, wire,
+    albums, artists, collection, collection2, descriptors, pathfinder, playlists, profiles, radio,
+    search, wire,
 };
 use crate::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, CoverSize, Genre,
-    GenreDetail, GenreItem, GenreSection, HomeFeed, Playlist, PlaylistDetail, SUGGESTIONS,
-    SavedArtist, Track, UserDetail, UserProfile,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, CoverSize,
+    Descriptors, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed, Playlist, PlaylistDetail,
+    SUGGESTIONS, SavedArtist, Track, UserDetail, UserProfile,
 };
 
 const MADE_FOR_YOU: &str = "0JQ5DAt0tbjZptfcdMSKl3";
@@ -61,6 +62,10 @@ impl MusicApi for LibrespotClient {
             "https://open.spotify.com/{kind}/{}",
             escape::component(id)
         ))
+    }
+
+    async fn descriptors(&self, ids: &[String]) -> Result<HashMap<String, Descriptors>> {
+        descriptors::read(&self.session, ids).await
     }
 
     async fn profile(&self) -> Result<UserProfile> {

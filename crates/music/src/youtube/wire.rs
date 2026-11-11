@@ -39,6 +39,7 @@ pub fn track(source: ytmusic::Track, index: u32) -> Track {
         duration: source.duration.unwrap_or(Duration::ZERO),
         added_at: None,
         added_by: None,
+        year: 0,
         playcount: None,
         popularity: 0,
         explicit: source.explicit,

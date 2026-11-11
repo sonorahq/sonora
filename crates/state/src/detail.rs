@@ -1,10 +1,10 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gpui::{App, Context, Entity, Task};
 use music::{
-    Album, AlbumCatalogue, AlbumDetail, ArtistRef, Contributor, Playlist, PlaylistDetail,
-    ReleaseType, SavedArtist, Track,
+    Album, AlbumCatalogue, AlbumDetail, ArtistRef, Contributor, Descriptors, Playlist,
+    PlaylistDetail, ReleaseType, SavedArtist, Track,
 };
 use tokio::task::AbortHandle;
 
@@ -62,6 +62,8 @@ pub struct Detail {
     fill: Option<Task<()>>,
     filling_request: Option<AbortHandle>,
     mosaic: Option<Task<()>>,
+    described: HashMap<String, Descriptors>,
+    describing: Option<Task<()>>,
 }
 
 impl Detail {
@@ -73,6 +75,7 @@ impl Detail {
     ) -> Self {
         cx.subscribe(&session, |this, _, event, cx| match event {
             SessionEvent::SignedOut => {
+                this.described.clear();
                 if !this.id.as_deref().is_some_and(music::is_local_id) {
                     this.clear();
                     cx.notify();
@@ -90,7 +93,8 @@ impl Detail {
                     }
                 }
             }
-            SessionEvent::Reconnected | SessionEvent::WentOffline => {}
+            SessionEvent::Reconnected => this.describe(cx),
+            SessionEvent::WentOffline => {}
             SessionEvent::LocalChanged => {
                 if let (Some(kind), Some(id)) = (
                     this.kind,
@@ -188,6 +192,8 @@ impl Detail {
             fill: None,
             filling_request: None,
             mosaic: None,
+            described: HashMap::new(),
+            describing: None,
         }
     }
 
@@ -211,6 +217,11 @@ impl Detail {
 
     pub fn playlist(&self) -> Option<&Playlist> {
         self.playlist.as_ref()
+    }
+
+    /// The genres, moods, tags and tempo of the tracks the provider has described so far.
+    pub fn descriptors(&self) -> &HashMap<String, Descriptors> {
+        &self.described
     }
 
     pub fn tracks(&self) -> &[Track] {
@@ -284,6 +295,7 @@ impl Detail {
                             this.header = Some(playlist_header(playlist));
                         }
                         this.load_more(cx);
+                        this.describe(cx);
                     }
                     Err(error) => log::warn!("detail: cannot load more playlist tracks: {error:#}"),
                 }
@@ -553,6 +565,47 @@ impl Detail {
         }
         self.loaded = true;
         self.load_more(cx);
+        self.describe(cx);
+    }
+
+    /// Asks the provider about the tracks it has not been asked about, once the page holds them
+    /// all. A track it does not describe is kept empty so it is not asked about again, and a
+    /// provider that describes nothing makes this a quiet no-op.
+    fn describe(&mut self, cx: &mut Context<Self>) {
+        if Network::lost(cx) || self.continuation.is_some() || self.loading_more {
+            return;
+        }
+        let Some(client) = self.session.read(cx).client() else {
+            return;
+        };
+        let mut seen = HashSet::new();
+        let ids: Vec<String> = self
+            .tracks
+            .iter()
+            .filter_map(|track| track.id.clone())
+            .filter(|id| !music::is_local_id(id) && !self.described.contains_key(id))
+            .filter(|id| seen.insert(id.clone()))
+            .collect();
+        if ids.is_empty() {
+            return;
+        }
+        self.describing = Some(self.io.load(
+            async move {
+                let found = client.descriptors(&ids).await?;
+                Ok((ids, found))
+            },
+            |this, result, cx| match result {
+                Ok((ids, mut found)) => {
+                    for id in ids {
+                        let described = found.remove(&id).unwrap_or_default();
+                        this.described.insert(id, described);
+                    }
+                    cx.notify();
+                }
+                Err(error) => log::warn!("detail: cannot read track descriptors: {error:#}"),
+            },
+            cx,
+        ));
     }
 
     fn clear(&mut self) {
@@ -565,6 +618,7 @@ impl Detail {
             request.abort();
         }
         self.mosaic = None;
+        self.describing = None;
         self.id = None;
         self.header = None;
         self.kind = None;

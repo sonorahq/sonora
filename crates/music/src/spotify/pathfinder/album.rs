@@ -256,6 +256,7 @@ fn track_from(track: PathTrack, album: &Album) -> Result<Track> {
         duration: Duration::from_millis(track.duration.milliseconds),
         added_at: None,
         added_by: None,
+        year: album.year,
         playcount,
         popularity: 0,
         explicit: track.content_rating.label == "EXPLICIT",

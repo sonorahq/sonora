@@ -21,6 +21,7 @@ pub struct Picker {
     face: Face,
     /// What a screen reader calls the trigger, read before the current choice.
     name: Option<SharedString>,
+    button: Option<Button>,
     /// A small element drawn before the current choice on the trigger.
     leading: Option<AnyElement>,
     tooltip: Option<&'static str>,
@@ -55,6 +56,7 @@ impl Picker {
             group: group.clone(),
             face: Face::Label(current.into()),
             name: None,
+            button: None,
             leading: None,
             tooltip: None,
             above: false,
@@ -94,6 +96,12 @@ impl Picker {
     /// is read as its description rather than as its name.
     pub fn name(mut self, name: impl Into<SharedString>) -> Self {
         self.name = Some(name.into());
+        self
+    }
+
+    /// Uses a caller-styled trigger while retaining the shared picker menu and interactions.
+    pub fn button(mut self, button: Button) -> Self {
+        self.button = Some(button);
         self
     }
 
@@ -209,6 +217,7 @@ impl RenderOnce for Picker {
             group,
             face,
             name,
+            button,
             leading,
             tooltip,
             above,
@@ -233,7 +242,7 @@ impl RenderOnce for Picker {
             false => theme.metrics.control,
         } + TRIGGER_GAP;
 
-        let button = match face {
+        let button = button.unwrap_or_else(|| match face {
             Face::Label(current) => Button::new(SharedString::from(format!("{key}-picker")))
                 .label(current)
                 .trailing("icons/chevron-down.svg")
@@ -244,7 +253,7 @@ impl RenderOnce for Picker {
             Face::Icon(icon) => Button::new(SharedString::from(format!("{key}-picker")))
                 .icon(icon)
                 .ghost(),
-        };
+        });
         let button = button
             .when(small, Button::small)
             .when(ghost, Button::ghost)

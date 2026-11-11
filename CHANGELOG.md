@@ -19,6 +19,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Blur the desktop behind a see-through window on Linux compositors that support it, such as KDE Plasma and niri.
 - Tidal tracks show their bit depth or bit rate in the signal path.
 - Keep plays from the signed-in provider out of Last.fm and the other linked services with a switch in Scrobbling, for accounts that already scrobble on their own.
+- Filter tracks by release year, play count, popularity and collaborations, genre where providers supply it, and BPM, mood and tag on Spotify albums and playlists when available.
 
 ### Changed
 
@@ -41,6 +42,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The play button swaps its play and pause icons with a pop, and the next and previous icons slide on like a belt when clicked.
 - Play on a pinned or library card starts sooner, and its icon answers the click at once.
 - Everyone in a Sonora Session now hears the same moment of a song to within a fraction of a second, and the end of a song is no longer cut short for some listeners when the session moves to the next one.
+- Place page controls beside their content and show active filters on the filter button.
 
 ### Fixed
 

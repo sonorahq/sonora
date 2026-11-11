@@ -66,6 +66,20 @@ pub struct Credit {
     pub id: Option<String>,
 }
 
+/// What a provider says a track is about and how it sounds, for filtering a list by it. Every
+/// part may be empty, and a track the provider does not describe has none.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Descriptors {
+    /// Genres and other descriptive words, written for display.
+    pub genres: Vec<String>,
+    pub tags: Vec<String>,
+    /// The Fluent keys of the feelings the audio carries, such as `stats-mood-energetic`.
+    pub moods: Vec<String>,
+    /// Beats per minute, where the provider analysed the audio.
+    pub bpm: Option<f32>,
+}
+
 /// A song or episode as a provider lists it. The default is an unplayable track with no id, so a
 /// caller that builds one from `..Default::default()` sets `playable` itself.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +96,8 @@ pub struct Track {
     pub duration: Duration,
     pub added_at: Option<i64>,
     pub added_by: Option<Arc<Contributor>>,
+    /// Reported release year; zero means the provider did not supply one.
+    pub year: i32,
     pub playcount: Option<u64>,
     pub popularity: u32,
     pub explicit: bool,

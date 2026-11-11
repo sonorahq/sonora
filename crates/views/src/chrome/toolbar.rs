@@ -1,13 +1,11 @@
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable as _, Pixels, Render, SharedString,
-    Window, div, px,
+    AnyElement, App, Context, Entity, FocusHandle, Focusable as _, Render, SharedString,
+    Subscription, Window, div,
 };
-use ui::Button;
+use ui::{ActiveTheme as _, Button, SMALL_INSET};
 use ui::{Dismiss, Input};
-
-const WIDEST: Pixels = px(280.);
 
 type Apply = Box<dyn Fn(&str, &mut App)>;
 type Tools = Box<dyn Fn(&App) -> Vec<AnyElement>>;
@@ -36,8 +34,11 @@ pub(crate) struct Toolbar {
     apply: Option<Apply>,
     tools: Option<Tools>,
     open: bool,
+    query: String,
     /// Where focus was before the field took it, handed back when the field closes.
     restore: Option<FocusHandle>,
+    /// Closes the search when it loses focus empty. A new focus replaces it, so they never pile up.
+    blur: Option<Subscription>,
 }
 
 impl Toolbar {
@@ -45,11 +46,18 @@ impl Toolbar {
         let input = cx.new(|cx| {
             Input::new("common-search", cx)
                 .icon("icons/search.svg")
+                .icon_foreground()
                 .compact()
+                .tucked()
+                .transparent()
         });
 
         cx.observe(&input, |this, input, cx| {
             let query = input.read(cx).text().to_owned();
+            if this.query == query {
+                return;
+            }
+            this.query.clone_from(&query);
             if let Some(apply) = &this.apply {
                 apply(&query, cx);
             }
@@ -62,7 +70,9 @@ impl Toolbar {
             apply: None,
             tools: None,
             open: false,
+            query: String::new(),
             restore: None,
+            blur: None,
         }
     }
 
@@ -99,6 +109,11 @@ impl Toolbar {
         cx.notify();
     }
 
+    /// Sets the localized search hint for the current page.
+    pub fn set_hint(&mut self, key: &'static str, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| input.set_hint(key, cx));
+    }
+
     pub fn wire<V: Tooled>(&mut self, view: &Entity<V>, cx: &mut Context<Self>) {
         let source = view.downgrade();
         self.tools = Some(Box::new(move |cx| {
@@ -121,16 +136,23 @@ impl Toolbar {
         let own = self.input.read(cx).focus_handle(cx);
         if !own.is_focused(window) {
             self.restore = window.focused(cx);
+            self.blur = Some(cx.on_blur(&own, window, |this, window, cx| {
+                if this.open && this.input.read(cx).text().is_empty() {
+                    this.close(window, cx);
+                }
+            }));
         }
         window.focus(&own, cx);
         cx.notify();
     }
 
-    fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.open {
-            true => self.close(window, cx),
-            false => self.focus(window, cx),
-        }
+    /// Shows a restored query when its owning playlist changes.
+    pub fn switch_query(&mut self, query: &str, cx: &mut Context<Self>) {
+        self.open = !query.is_empty();
+        self.restore = None;
+        self.query = query.to_owned();
+        self.input.update(cx, |input, cx| input.set_text(query, cx));
+        cx.notify();
     }
 
     /// Empties and hides the field, and hands focus back to where it was before the field took
@@ -150,7 +172,7 @@ impl Toolbar {
 }
 
 impl Render for Toolbar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tools = match self.tools.as_ref() {
             Some(tools) => tools(cx),
             None => Vec::new(),
@@ -164,29 +186,76 @@ impl Render for Toolbar {
             })
             .flex()
             .min_w_0()
+            .flex_shrink(1.)
             .items_center()
-            .justify_end()
             .gap_1()
             .on_action(cx.listener(|this, _: &Dismiss, window, cx| this.close(window, cx)))
             .children(tools)
-            .when(self.apply.is_some(), |this| {
-                this.when(self.open, |this| {
-                    this.child(div().flex().w(WIDEST).min_w_0().child(self.input.clone()))
-                })
-                .child(
+            .when(self.apply.is_some() && !self.open, |this| {
+                this.child(
                     Button::new("search-toggle")
-                        .icon(match self.open {
-                            true => "icons/x.svg",
-                            false => "icons/search.svg",
-                        })
-                        .tooltip(match self.open {
-                            true => "common-dismiss",
-                            false => "common-search",
-                        })
+                        .icon("icons/search.svg")
+                        .tooltip("common-search")
                         .small()
                         .ghost()
-                        .aria_expanded(self.open)
-                        .on_click(cx.listener(|this, _, window, cx| this.toggle(window, cx))),
+                        .tint(cx.theme().foreground)
+                        .aria_expanded(false)
+                        .on_click(cx.listener(|this, _, window, cx| this.focus(window, cx))),
+                )
+            })
+            .when(self.apply.is_some() && self.open, |this| {
+                let theme = *cx.theme();
+                let input = self.input.read(cx);
+                let active = !input.text().is_empty();
+                let focused = input.focus_handle(cx).is_focused(window);
+                let width = ui::text_width(input.text().to_owned(), window)
+                    .max(ui::text_width(input.placeholder(), window))
+                    + theme.metrics.control * 2.
+                    + theme.metrics.pad * 3.
+                    + SMALL_INSET;
+                this.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .w(width)
+                        .min_w_0()
+                        .flex_shrink(1.)
+                        .h(theme.metrics.control_small)
+                        .px(SMALL_INSET)
+                        .rounded_full()
+                        .border_1()
+                        .border_color(match focused {
+                            true => theme.primary,
+                            false => theme.border,
+                        })
+                        .bg(theme.secondary)
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .h(theme.metrics.control_small)
+                                .rounded_full()
+                                .mr_1()
+                                .when(active, |field| {
+                                    field
+                                        .bg(super::tools::active_filter_background(cx))
+                                        .text_color(theme.primary)
+                                })
+                                .child(self.input.clone()),
+                        )
+                        .child(
+                            Button::new("search-dismiss")
+                                .icon("icons/x.svg")
+                                .tooltip("common-dismiss")
+                                .small()
+                                .ghost()
+                                .px_1()
+                                .when(active, |button| button.tint(theme.primary))
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.close(window, cx)),
+                                ),
+                        ),
                 )
             })
     }

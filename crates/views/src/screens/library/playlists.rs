@@ -1,14 +1,14 @@
 use std::cmp::Ordering;
-use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis};
+use ui::{ActiveTheme as _, Filter, FilterChange};
 
 use gpui::{AnyElement, App, Entity, TextAlign};
-use i18n::t;
 use music::Playlist;
 use router::Destination;
 use state::{Collection, Library, LibraryPart, Network, Origin, Playback, Shelf, Sonora};
 use ui::rank::{ESSENTIAL, HANDY, NICE, SPARE};
 use ui::{Cell, ColumnSpec, Menu, Pin, TableSource, Width};
 
+use crate::chrome::tools;
 use crate::shared::cells::{self, DATE, NUMBER, TRAILING};
 use crate::shared::menus::playlist_menu;
 use crate::shared::pins::Pinned as _;
@@ -134,19 +134,11 @@ impl TableSource for PlaylistSource {
     }
 
     fn filter_axes(&self, cx: &App) -> Vec<Filter> {
-        let mut axes = vec![Filter::Flag(FlagAxis {
-            key: "filter-owned",
-            label: t!("filter-owned"),
-            on: self.owned,
-        })];
+        let mut axes = vec![tools::flag("filter-owned", self.owned)];
         // Offline mode already keeps the shelf to its downloads, so the filter would do nothing.
         let offered = self.downloaded || !Sonora::global(cx).downloads.read(cx).is_empty();
         if offered && !Network::downloads_only(self.shelf, cx) {
-            axes.push(Filter::Flag(FlagAxis {
-                key: "filter-downloaded",
-                label: t!("filter-downloaded"),
-                on: self.downloaded,
-            }));
+            axes.push(tools::flag("filter-downloaded", self.downloaded));
         }
         axes
     }

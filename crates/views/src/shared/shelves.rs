@@ -12,6 +12,7 @@ use ui::{ActiveTheme as _, Button, Card, Deck, Glide, Mode, Skeleton, Text, head
 
 use crate::shared::album_grid::CardGrid;
 use crate::shared::cards;
+use crate::shared::page;
 
 const PLATE: Pixels = px(260.);
 const LANES: usize = 5;
@@ -330,21 +331,10 @@ impl Shelves {
         let glide = glide.clone();
         let me = me.clone();
 
-        Button::new(id)
-            .small()
-            .outline()
-            .icon(match forward {
-                true => "icons/chevron-right.svg",
-                false => "icons/chevron-left.svg",
-            })
-            .tooltip(match forward {
-                true => "common-next",
-                false => "common-previous",
-            })
-            .on_click(move |_, window, cx| {
-                slide(&handle, &glide, forward, window);
-                me.update(cx, |_, cx| cx.notify()).ok();
-            })
+        page::arrow_button(id, !forward).on_click(move |_, window, cx| {
+            slide(&handle, &glide, forward, window);
+            me.update(cx, |_, cx| cx.notify()).ok();
+        })
     }
 
     fn card(&self, id: usize, item: &GenreItem, tile: Option<Pixels>, cx: &App) -> Card {
@@ -660,21 +650,10 @@ fn arrow(
     let glide = glide.clone();
     let notify = notify.clone();
 
-    Button::new(id)
-        .small()
-        .outline()
-        .icon(match forward {
-            true => "icons/chevron-right.svg",
-            false => "icons/chevron-left.svg",
-        })
-        .tooltip(match forward {
-            true => "common-next",
-            false => "common-previous",
-        })
-        .on_click(move |_, window, cx| {
-            slide(&scroll, &glide, forward, window);
-            notify(cx);
-        })
+    page::arrow_button(id, !forward).on_click(move |_, window, cx| {
+        slide(&scroll, &glide, forward, window);
+        notify(cx);
+    })
 }
 
 fn slot(kind: &'static str, place: usize) -> ElementId {
