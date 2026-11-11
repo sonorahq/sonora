@@ -791,7 +791,7 @@ impl Devices {
             Command::Repeat(mode) => self.here(cx, |playback, cx| playback.set_repeat(mode, cx)),
             Command::Enqueue { id, added_by } => self.enqueue(id, added_by, cx),
             Command::Start(start) => self.start(start, cx),
-            Command::SetQueue { previous, upcoming } => self.set_queue(previous, upcoming, cx),
+            Command::SetQueue { upcoming } => self.set_queue(upcoming, cx),
             Command::Released => {
                 // another device took over, so this one stops without calling playback back
                 self.changing = None;
@@ -865,12 +865,8 @@ impl Devices {
     }
 
     /// Accepts queue edits made in another Spotify client without resetting the current song.
-    fn set_queue(
-        &mut self,
-        previous: Vec<QueuedTrack>,
-        upcoming: Vec<QueuedTrack>,
-        cx: &mut Context<Self>,
-    ) {
+    /// The history stays as it is here, since an edit only ever changes what is still to play.
+    fn set_queue(&mut self, upcoming: Vec<QueuedTrack>, cx: &mut Context<Self>) {
         let Some(state) = self.snapshot(cx) else {
             return;
         };
@@ -888,11 +884,7 @@ impl Devices {
         }
         self.start(
             Start {
-                state: Arc::new(Snapshot {
-                    previous,
-                    upcoming,
-                    ..state
-                }),
+                state: Arc::new(Snapshot { upcoming, ..state }),
                 preserve_queue: true,
                 restart: false,
             },

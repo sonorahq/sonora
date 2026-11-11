@@ -60,6 +60,8 @@ const CARRIED: usize = 80;
 const PREVIOUS: usize = 10;
 /// A fresh cluster snapshot carries the exact shuffled queue and previous-track order.
 const QUEUE_SNAPSHOT_AGE: Duration = Duration::from_secs(10);
+/// How many tracks of a queue a log line spells out.
+const OUTLINED: usize = 16;
 /// The metadata keys a queued track may name the person who queued it under.
 const ADDERS: [&str; 4] = ["added_by", "added_by_username", "adder", "queued_by"];
 /// How long a new name settles before it is put, so a name typed in is put once.
@@ -189,6 +191,8 @@ struct Worker {
     claimed_at: Option<Instant>,
     /// The id and sender of the last command handled, which the next state echoes back.
     last_command: (u32, String),
+    /// When that command came in. A state put since then has answered it already.
+    asked_at: Option<Instant>,
     ack_at: Option<Instant>,
     rename_at: Option<Instant>,
     /// The device that has playback on the account, as the last cluster said.
@@ -224,6 +228,7 @@ impl Worker {
             active_since: None,
             claimed_at: None,
             last_command: (0, String::new()),
+            asked_at: None,
             ack_at: None,
             rename_at: None,
             active_device: String::new(),
@@ -265,7 +270,12 @@ impl Worker {
                 () = acknowledge(self.start_at) => self.start().await,
                 () = acknowledge(self.ack_at) => {
                     self.ack_at = None;
-                    if self.now.is_some() {
+                    // the app usually acts at once, and the state it put then named the command
+                    let heard = self
+                        .asked_at
+                        .zip(self.last_put)
+                        .is_some_and(|(asked, put)| put >= asked);
+                    if self.now.is_some() && !heard {
                         self.want_put(PutStateReason::PLAYER_STATE_CHANGED).await;
                     }
                 }
@@ -777,7 +787,7 @@ impl Worker {
         self.last_put = Some(Instant::now());
         let state = &request.device.player_state;
         log::debug!(
-            "connect: putting {reason:?}, active {}, {} uid {:?} in {} at {:?}, run {}, play {}, {}ms, playing {}, paused {}, {} before, {} after",
+            "connect: putting {reason:?}, active {}, {} uid {:?} in {} at {:?}, run {}, play {}, {}ms, playing {}, paused {}, {} before, after: {}",
             request.is_active,
             state.track.uri,
             state.track.uid,
@@ -789,7 +799,7 @@ impl Worker {
             state.is_playing,
             state.is_paused,
             state.prev_tracks.len(),
-            state.next_tracks.len(),
+            outline(&state.next_tracks),
         );
         let answer = self
             .session
@@ -1037,6 +1047,7 @@ impl Worker {
 
     fn request(&mut self, (request, reply): RequestReply) {
         self.last_command = (request.message_id, request.sent_by_device_id.clone());
+        self.asked_at = Some(Instant::now());
         log::debug!("connect: asked, {}", request.command);
         if let Wire::Play(play) = request.command {
             self.play(*play);
@@ -1127,16 +1138,20 @@ impl Worker {
                     .collect()
             }
             Wire::SetQueue(queue) => {
-                let previous = listed(&queue.prev_tracks, queue.prev_tracks.len());
+                log::debug!(
+                    "connect: queue edit, {} before, after: {}",
+                    queue.prev_tracks.len(),
+                    outline(&queue.next_tracks),
+                );
                 // an edit that added songs runs past the window it was shown, and all of it counts
                 let upcoming = listed(&queue.next_tracks, queue.next_tracks.len());
                 // Acknowledge the edit with its new queue while the host resolves missing metadata.
+                // The history an edit carries is left alone: a phone sends its own or none at
+                // all, and no app can edit it, so taking it would only wipe what played here.
                 if let Some(now) = self.now.as_mut() {
-                    let now = Arc::make_mut(now);
-                    now.previous = previous.clone();
-                    now.upcoming = upcoming.clone();
+                    Arc::make_mut(now).upcoming = upcoming.clone();
                 }
-                vec![Command::SetQueue { previous, upcoming }]
+                vec![Command::SetQueue { upcoming }]
             }
             Wire::UpdateContext(_) => Vec::new(),
             Wire::Unknown(value) => {
@@ -1622,6 +1637,22 @@ fn is_queued(track: &ProvidedTrack) -> bool {
             .metadata
             .get("is_queued")
             .is_some_and(|value| value == "true")
+}
+
+/// How many tracks a queue holds and the first of them, each as where it comes from, the start
+/// of its id and its uid, so a log shows what an edit moved without listing a whole playlist.
+fn outline(tracks: &[ProvidedTrack]) -> String {
+    let shown = tracks
+        .iter()
+        .take(OUTLINED)
+        .map(|track| {
+            let id = track.uri.rsplit(':').next().unwrap_or_default();
+            let id = id.get(..6).unwrap_or(id);
+            format!("{}/{id}/{}", track.provider, track.uid)
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("{} [{shown}]", tracks.len())
 }
 
 /// The metadata keys a track carries, sorted, so a log shows what Spotify sends without the values.
