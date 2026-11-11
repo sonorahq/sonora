@@ -1198,7 +1198,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "gpui_util",
  "indexmap",
@@ -1792,7 +1792,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1855,7 +1855,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2113,7 +2113,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2680,7 +2680,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2750,7 +2750,7 @@ dependencies = [
 [[package]]
 name = "gpui_apple"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "anyhow",
  "async-task",
@@ -2791,7 +2791,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2835,7 +2835,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2874,7 +2874,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2885,7 +2885,7 @@ dependencies = [
 [[package]]
 name = "gpui_platform"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "anyhow",
  "gpui",
@@ -2897,7 +2897,7 @@ dependencies = [
 [[package]]
 name = "gpui_shared_string"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "schemars",
  "serde",
@@ -2907,7 +2907,7 @@ dependencies = [
 [[package]]
 name = "gpui_util"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "anyhow",
  "log",
@@ -2917,7 +2917,7 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2944,7 +2944,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -3202,7 +3202,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "anyhow",
  "bytes",
@@ -6107,7 +6107,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6429,7 +6429,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "derive_refineable",
 ]
@@ -6831,7 +6831,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6925,7 +6925,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7026,7 +7026,7 @@ dependencies = [
 [[package]]
 name = "scheduler"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "async-task",
  "backtrace",
@@ -7738,7 +7738,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "heapless",
  "rayon",
@@ -8116,7 +8116,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.6",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -9637,7 +9637,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -10056,7 +10056,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
 dependencies = [
  "cfg-if",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -10620,7 +10620,7 @@ dependencies = [
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 dependencies = [
  "tracing",
  "ztracing_macro",
@@ -10629,7 +10629,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=74cb5828755316fbdd2d79c2a64cbfc01d867c3d#74cb5828755316fbdd2d79c2a64cbfc01d867c3d"
+source = "git+https://github.com/sonorahq/gpui?rev=9d018dccdb83a6fe2c0b79f98f858ce581de150e#9d018dccdb83a6fe2c0b79f98f858ce581de150e"
 
 [[package]]
 name = "zune-core"
