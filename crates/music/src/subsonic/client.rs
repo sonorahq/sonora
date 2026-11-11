@@ -17,12 +17,14 @@ use tokio::task::JoinSet;
 use crate::cover::{self, CoverLimits};
 use crate::engine::Loudness;
 use crate::escape;
+use crate::smart::SmartPlaylistUpdate;
 use crate::subsonic::auth::Signature;
 use crate::subsonic::wire;
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, Codec, Genre, GenreDetail,
     GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail, Report,
-    SUGGESTIONS, SavedArtist, Track, Transcode, UserProfile, distinct_covers, iso_8601_to_epoch,
+    SUGGESTIONS, SavedArtist, SmartPlaylist, SmartRules, Track, Transcode, UserProfile,
+    distinct_covers, iso_8601_to_epoch,
 };
 
 const PORTRAIT_LIMIT: usize = 24;
@@ -40,6 +42,12 @@ const API_VERSION: &str = "1.16.1";
 const CLIENT_NAME: &str = "sonora";
 /// The first Navidrome that takes a playlist picture through its own API.
 const NAVIDROME_COVERS: (u32, u32) = (0, 61);
+/// The first Navidrome declared to take smart playlists through its own API. The create,
+/// edit and read contract is the same across the 0.64 releases (their playlist REST adapters
+/// differ only in delete error mapping, which these calls do not use), and the live exercise
+/// ran against 0.64.2. An earlier Navidrome may answer them, but only a version whose
+/// contract was verified is declared.
+const NAVIDROME_SMART: (u32, u32) = (0, 64);
 /// Navidrome takes up to 10 MB by default, and shows a cover at most this large.
 const PLAYLIST_COVER: CoverLimits = CoverLimits {
     side: 1500,
@@ -71,6 +79,12 @@ pub struct SubsonicClient {
     covers: String,
     /// Whether the server takes `reportPlayback`, asked the first time a report goes out.
     playback_report: Arc<OnceCell<bool>>,
+    /// The server's Navidrome release, asked the first time a Navidrome-only call needs it.
+    navidrome: Arc<OnceCell<Option<(u32, u32)>>>,
+    /// The account's token for Navidrome's own API, signed in once and reused: the sign-in
+    /// endpoint is rate-limited, so a run of playlist calls shares one token and signs in
+    /// again only after the server refuses it.
+    token: Arc<tokio::sync::Mutex<Option<String>>>,
 }
 
 /// What the server records about a track that playback wants before the decoder can tell.
@@ -109,30 +123,52 @@ impl SubsonicClient {
             http: reqwest::Client::new(),
             covers,
             playback_report: Arc::default(),
+            navidrome: Arc::default(),
+            token: Arc::default(),
         })
+    }
+
+    /// The server's Navidrome release, asked once per client: `Some(version)` when the ping
+    /// names a Navidrome, `None` for any other server or one that cannot be asked.
+    async fn navidrome_release(&self) -> Option<(u32, u32)> {
+        *self
+            .navidrome
+            .get_or_init(|| async {
+                let url = format!("{}/rest/ping?{}", self.server, self.signed);
+                let answer: serde_json::Value = match self.http.get(url).send().await {
+                    Ok(response) => response.json().await.unwrap_or_default(),
+                    Err(error) => {
+                        log::info!("subsonic: cannot ask what the server is: {error:#}");
+                        return None;
+                    }
+                };
+                let response = &answer["subsonic-response"];
+                match response["type"].as_str() == Some("navidrome") {
+                    true => response["serverVersion"].as_str().and_then(release),
+                    false => None,
+                }
+            })
+            .await
     }
 
     /// Whether the server is a Navidrome that takes playlist pictures. Only its own API does,
     /// and only from 0.61 on. A server that cannot be asked counts as not taking them.
     pub async fn takes_playlist_covers(&self) -> bool {
-        let url = format!("{}/rest/ping?{}", self.server, self.signed);
-        let answer: serde_json::Value = match self.http.get(url).send().await {
-            Ok(response) => response.json().await.unwrap_or_default(),
-            Err(error) => {
-                log::info!("subsonic: cannot ask what the server is: {error:#}");
-                return false;
-            }
-        };
-        let response = &answer["subsonic-response"];
-        response["type"].as_str() == Some("navidrome")
-            && response["serverVersion"]
-                .as_str()
-                .and_then(release)
-                .is_some_and(|version| version >= NAVIDROME_COVERS)
+        self.navidrome_release()
+            .await
+            .is_some_and(|version| version >= NAVIDROME_COVERS)
+    }
+
+    /// Whether the server is a Navidrome that creates and edits smart playlists through its
+    /// own API. Only its own API does: the Subsonic playlist calls carry no rules.
+    pub async fn takes_smart_playlists(&self) -> bool {
+        self.navidrome_release()
+            .await
+            .is_some_and(|version| version >= NAVIDROME_SMART)
     }
 
     /// Signs in to Navidrome's own API and answers the token its requests carry.
-    async fn navidrome_token(&self) -> Result<String> {
+    async fn navidrome_login(&self) -> Result<String> {
         let answer: serde_json::Value = self
             .http
             .post(format!("{}/auth/login", self.server))
@@ -152,6 +188,120 @@ impl SubsonicClient {
             .as_str()
             .map(str::to_owned)
             .context("navidrome's sign-in answered no token")
+    }
+
+    /// The account's token for Navidrome's own API, from the shared sign-in.
+    async fn navidrome_token(&self) -> Result<String> {
+        let mut cached = self.token.lock().await;
+        if let Some(token) = &*cached {
+            return Ok(token.clone());
+        }
+        let token = self.navidrome_login().await?;
+        *cached = Some(token.clone());
+        Ok(token)
+    }
+
+    /// Sends a request to Navidrome's own API with headers or body configured by `prepare`.
+    /// A reused token can lapse while the client is open, so a 401 signs in once more and
+    /// retries the call.
+    async fn navidrome_request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        prepare: impl Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response> {
+        let build = |token: &str| {
+            prepare(
+                self.http
+                    .request(method.clone(), format!("{}{path}", self.server))
+                    .header("X-ND-Authorization", format!("Bearer {token}")),
+            )
+        };
+        let token = self.navidrome_token().await?;
+        let response = build(&token)
+            .send()
+            .await
+            .context("cannot reach navidrome")?;
+        if response.status() != reqwest::StatusCode::UNAUTHORIZED {
+            return Ok(response);
+        }
+        let fresh = {
+            let mut cached = self.token.lock().await;
+            if let Some(current) = cached.as_ref().filter(|current| *current != &token) {
+                current.clone()
+            } else {
+                let fresh = self.navidrome_login().await?;
+                *cached = Some(fresh.clone());
+                fresh
+            }
+        };
+        build(&fresh).send().await.context("cannot reach navidrome")
+    }
+
+    /// Sends a request to Navidrome's own API with an optional json body. A reused token can
+    /// lapse while the client is open, so a 401 signs in once more and retries the call.
+    async fn navidrome_send(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<serde_json::Value>,
+    ) -> Result<reqwest::Response> {
+        self.navidrome_request(method, path, |request| match &body {
+            Some(body) => request.json(body),
+            None => request,
+        })
+        .await
+    }
+
+    /// The refusal a Navidrome playlist call answers with, spelled for the listener: a
+    /// forbidden edit is another owner's playlist, a conflict a playlist the server keeps
+    /// read-only, and an unprocessable body rules the server could not read.
+    async fn playlist_refusal(response: reqwest::Response) -> anyhow::Error {
+        let status = response.status();
+        let reason = response.text().await.unwrap_or_default();
+        let reason = reason.trim();
+        let detail = match reason.is_empty() {
+            true => String::new(),
+            false => format!(": {reason}"),
+        };
+        match status.as_u16() {
+            401 => anyhow::anyhow!("navidrome refused the account's sign-in{detail}"),
+            403 => anyhow::anyhow!("navidrome refuses the change for this account{detail}"),
+            404 => anyhow::anyhow!("navidrome no longer has the playlist{detail}"),
+            409 => anyhow::anyhow!("navidrome keeps the playlist read-only{detail}"),
+            422 => anyhow::anyhow!("navidrome could not read the rules{detail}"),
+            _ => anyhow::anyhow!("navidrome refused the playlist with {status}{detail}"),
+        }
+    }
+
+    /// The playlist as Navidrome's own API answers it: its rules, its owner and whether a
+    /// file sync can overwrite an edit. A `rules` of null marks an ordinary playlist.
+    fn read_smart_playlist(&self, value: &serde_json::Value) -> Result<SmartPlaylist> {
+        let rules =
+            match value["rules"].is_null() {
+                true => None,
+                false => Some(SmartRules::from_wire(&value["rules"]).map_err(|problem| {
+                    anyhow::anyhow!("navidrome's rules do not read: {problem}")
+                })?),
+            };
+        let owner = value["ownerName"].as_str().unwrap_or_default().to_owned();
+        Ok(SmartPlaylist {
+            id: value["id"]
+                .as_str()
+                .context("navidrome's playlist answer names no id")?
+                .to_owned(),
+            name: value["name"].as_str().unwrap_or_default().to_owned(),
+            comment: value["comment"].as_str().unwrap_or_default().to_owned(),
+            public: value["public"].as_bool().unwrap_or(false),
+            // Navidrome signs an account in under any spelling of its name, so ownership
+            // compares without case.
+            owned: !owner.is_empty() && owner.eq_ignore_ascii_case(&self.username),
+            rules,
+            synced: value["sync"].as_bool().unwrap_or(false)
+                && value["path"].as_str().is_some_and(|path| !path.is_empty()),
+            track_count: value["songCount"].as_u64().unwrap_or(0) as u32,
+            owner,
+        })
     }
 
     /// Whether the server lists the `playbackReport` extension, asked once per client. A plain
@@ -648,13 +798,8 @@ impl MusicApi for SubsonicClient {
     /// Goes through Navidrome's own API, since Subsonic has no way to upload a picture.
     /// Taking the picture off brings back the mosaic Navidrome draws.
     async fn set_playlist_cover(&self, playlist_id: &str, image: Option<&[u8]>) -> Result<()> {
-        let token = self.navidrome_token().await?;
-        let url = format!(
-            "{}/api/playlist/{}/image",
-            self.server,
-            escape::component(playlist_id)
-        );
-        let request = match image {
+        let path = format!("/api/playlist/{}/image", escape::component(playlist_id));
+        let (method, multipart) = match image {
             Some(image) => {
                 let jpeg = cover::square_jpeg(image, PLAYLIST_COVER)?;
                 let boundary = format!("sonora{:016x}", fastrand::u64(..));
@@ -664,21 +809,21 @@ impl MusicApi for SubsonicClient {
                 .into_bytes();
                 body.extend_from_slice(&jpeg);
                 body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-                self.http
-                    .post(url)
-                    .header(
-                        "Content-Type",
-                        format!("multipart/form-data; boundary={boundary}"),
-                    )
-                    .body(body)
+                (
+                    reqwest::Method::POST,
+                    Some((format!("multipart/form-data; boundary={boundary}"), body)),
+                )
             }
-            None => self.http.delete(url),
+            None => (reqwest::Method::DELETE, None),
         };
-        let response = request
-            .header("X-ND-Authorization", format!("Bearer {token}"))
-            .send()
-            .await
-            .context("cannot reach navidrome")?;
+        let response = self
+            .navidrome_request(method, &path, |request| match &multipart {
+                Some((content_type, body)) => request
+                    .header("Content-Type", content_type.clone())
+                    .body(body.clone()),
+                None => request,
+            })
+            .await?;
         let status = response.status();
         if !status.is_success() {
             let reason = response.text().await.unwrap_or_default();
@@ -688,6 +833,90 @@ impl MusicApi for SubsonicClient {
             );
         }
         Ok(())
+    }
+
+    /// Reads one playlist's rules and edit bookkeeping from Navidrome's own API, which the
+    /// Subsonic playlist calls have no answer for.
+    async fn smart_playlist(&self, playlist_id: &str) -> Result<SmartPlaylist> {
+        let response = self
+            .navidrome_send(
+                reqwest::Method::GET,
+                &format!("/api/playlist/{}", escape::component(playlist_id)),
+                None,
+            )
+            .await?;
+        if !response.status().is_success() {
+            return Err(Self::playlist_refusal(response).await);
+        }
+        let value: serde_json::Value = response
+            .json()
+            .await
+            .context("navidrome answered no json for the playlist")?;
+        Ok(self.read_smart_playlist(&value)?)
+    }
+
+    /// Creates a smart playlist from rules, going through Navidrome's own API since the
+    /// Subsonic create call carries none. The server owns the new playlist's id and owner.
+    async fn create_smart_playlist(&self, name: &str, rules: &SmartRules) -> Result<String> {
+        let problems = rules.problems();
+        if !problems.is_empty() {
+            anyhow::bail!("the rules are not ready to save: {}", describe(&problems));
+        }
+        let response = self
+            .navidrome_send(
+                reqwest::Method::POST,
+                "/api/playlist",
+                Some(serde_json::json!({
+                    "name": name,
+                    "rules": rules.to_wire(),
+                })),
+            )
+            .await?;
+        if !response.status().is_success() {
+            return Err(Self::playlist_refusal(response).await);
+        }
+        let value: serde_json::Value = response
+            .json()
+            .await
+            .context("navidrome answered no json for the new playlist")?;
+        value["id"]
+            .as_str()
+            .map(str::to_owned)
+            .context("navidrome answered no id for the new playlist")
+    }
+
+    /// Writes the fields `update` names through Navidrome's own API. The server changes only
+    /// the fields the body carries, so a save never sends a field the edit did not touch, and
+    /// rules the editor cannot show come back unchanged inside the tree.
+    async fn update_smart_playlist(
+        &self,
+        playlist_id: &str,
+        update: SmartPlaylistUpdate,
+    ) -> Result<SmartPlaylist> {
+        if update.is_empty() {
+            anyhow::bail!("the edit changes nothing");
+        }
+        if let Some(rules) = &update.rules {
+            let problems = rules.problems();
+            if !problems.is_empty() {
+                anyhow::bail!("the rules are not ready to save: {}", describe(&problems));
+            }
+        }
+        let response = self
+            .navidrome_send(
+                reqwest::Method::PUT,
+                &format!("/api/playlist/{}", escape::component(playlist_id)),
+                Some(update.to_wire()),
+            )
+            .await?;
+        if !response.status().is_success() {
+            return Err(Self::playlist_refusal(response).await);
+        }
+        let value: serde_json::Value = response
+            .json()
+            .await
+            .context("navidrome answered no json for the saved playlist")?;
+        Ok(self.read_smart_playlist(&value)?)
     }
 
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
@@ -1260,6 +1489,15 @@ fn source_genre(source: SourceGenre) -> Genre {
     }
 }
 
+/// The rule problems of one save, joined for an error message.
+fn describe(problems: &[crate::RuleProblem]) -> String {
+    problems
+        .iter()
+        .map(|problem| format!("{}: {}", problem.path, problem.problem))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 /// The major and minor numbers of a version such as `0.61.0` or `0.61.0 (a1b2c3)`.
 fn release(version: &str) -> Option<(u32, u32)> {
     let mut parts = version.split(|letter: char| !letter.is_ascii_digit());
@@ -1274,5 +1512,455 @@ fn bare(error: opensubsonic::Error) -> opensubsonic::Error {
     match error {
         opensubsonic::Error::Http(error) => opensubsonic::Error::Http(error.without_url()),
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+
+    use serde_json::{Value, json};
+
+    use super::*;
+    use crate::smart::{Condition, Operand, Operator, Rule, RuleGroup};
+
+    /// A canned Navidrome: one thread per request, routing on method and path, keeping what
+    /// it was asked so a test can check the exact payload that went out.
+    struct Server {
+        url: String,
+        requests: Arc<Mutex<Vec<(String, String, String)>>>,
+    }
+
+    impl Server {
+        fn start(playlists: Vec<Value>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
+            let url = format!("http://{}", listener.local_addr().expect("the address"));
+            let requests: Arc<Mutex<Vec<(String, String, String)>>> = Arc::default();
+            let store: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(playlists));
+            let thread = {
+                let requests = requests.clone();
+                let store = store.clone();
+                std::thread::spawn(move || {
+                    for stream in listener.incoming() {
+                        let Ok(mut stream) = stream else { return };
+                        let mut reader = BufReader::new(stream.try_clone().expect("a clone"));
+                        let mut request_line = String::new();
+                        if reader.read_line(&mut request_line).is_err() {
+                            return;
+                        }
+                        let mut length = 0;
+                        let mut authorization = String::new();
+                        loop {
+                            let mut header = String::new();
+                            if reader.read_line(&mut header).is_err() || header == "\r\n" {
+                                break;
+                            }
+                            if let Some((name, value)) = header.trim().split_once(':') {
+                                match name.to_ascii_lowercase().as_str() {
+                                    "content-length" => length = value.trim().parse().unwrap_or(0),
+                                    "x-nd-authorization" => authorization = value.trim().to_owned(),
+                                    _ => {}
+                                }
+                            }
+                        }
+                        let mut body = vec![0; length];
+                        if reader.read_exact(&mut body).is_err() {
+                            return;
+                        }
+                        let parts: Vec<&str> = request_line.split_whitespace().collect();
+                        let (method, path) = (
+                            parts.first().copied().unwrap_or_default().to_owned(),
+                            parts.get(1).copied().unwrap_or_default().to_owned(),
+                        );
+                        let body = String::from_utf8_lossy(&body).to_string();
+                        requests.lock().expect("the log").push((
+                            method.clone(),
+                            path.clone(),
+                            body.clone(),
+                        ));
+                        let (status, answer) = route(&method, &path, &body, &authorization, &store);
+                        let answer = answer.to_string();
+                        write!(
+                            stream,
+                            "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}",
+                            answer.len()
+                        )
+                        .expect("a response");
+                    }
+                })
+            };
+            let _ = thread;
+            Server { url, requests }
+        }
+
+        fn client(&self) -> SubsonicClient {
+            let signature = crate::subsonic::auth::sign("judith", "secret");
+            SubsonicClient::new(
+                self.url.clone(),
+                "judith".into(),
+                "secret".into(),
+                &signature,
+            )
+            .expect("a client")
+        }
+
+        fn requests(&self) -> Vec<(String, String, String)> {
+            self.requests.lock().expect("the log").clone()
+        }
+    }
+
+    fn route(
+        method: &str,
+        path: &str,
+        body: &str,
+        authorization: &str,
+        store: &Arc<Mutex<Vec<Value>>>,
+    ) -> (u16, Value) {
+        if path == "/auth/login" {
+            let credentials: Value = serde_json::from_str(body).unwrap_or_default();
+            return match credentials["password"].as_str() {
+                Some("secret") => (200, json!({"token": "the-token", "id": "u1"})),
+                _ => (401, json!({"error": "invalid credentials"})),
+            };
+        }
+        if path.starts_with("/rest/ping") {
+            return (
+                200,
+                json!({"subsonic-response": {
+                    "status": "ok",
+                    "type": "navidrome",
+                    "serverVersion": "0.64.2"
+                }}),
+            );
+        }
+        if authorization != "Bearer the-token" {
+            return (401, json!({"error": "unauthorized"}));
+        }
+        let playlists = store.lock().expect("the store");
+        if method == "POST" && path == "/api/playlist" {
+            let asked: Value = serde_json::from_str(body).unwrap_or_default();
+            return (200, json!({"id": "pl-new", "name": asked["name"]}));
+        }
+        if let Some(id) = path.strip_prefix("/api/playlist/") {
+            let found = playlists
+                .iter()
+                .find(|playlist| playlist["id"] == id)
+                .cloned();
+            return match (method, found) {
+                (_, None) => (404, json!({"error": "not found"})),
+                ("GET", Some(playlist)) => (200, playlist),
+                ("PUT", Some(playlist))
+                    if playlist["ownerName"]
+                        .as_str()
+                        .is_some_and(|owner| owner.eq_ignore_ascii_case("judith")) =>
+                {
+                    let mut updated = playlist.clone();
+                    let changes: Value = serde_json::from_str(body).unwrap_or_default();
+                    if let Some(fields) = changes.as_object() {
+                        for (key, value) in fields {
+                            updated[key] = value.clone();
+                        }
+                    }
+                    (200, updated)
+                }
+                ("PUT", Some(_)) => (403, json!({"error": "permission denied"})),
+                _ => (405, json!({"error": "method not allowed"})),
+            };
+        }
+        (404, json!({"error": "no route"}))
+    }
+
+    fn smart_playlist_json() -> Value {
+        json!({
+            "id": "pl-1",
+            "name": "Quiet mornings",
+            "comment": "",
+            "public": false,
+            "ownerId": "u1",
+            "ownerName": "Judith",
+            "songCount": 12,
+            "sync": false,
+            "path": "",
+            "rules": {
+                "all": [
+                    {"contains": {"title": "love"}},
+                    {"gt": {"playcount": 3}}
+                ],
+                "sort": "dateloved",
+                "order": "desc",
+                "limit": 50
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn the_capability_reads_the_ping_once() {
+        let server = Server::start(Vec::new());
+        let client = server.client();
+        assert!(client.takes_smart_playlists().await);
+        assert!(client.takes_playlist_covers().await);
+        let pings = server
+            .requests()
+            .into_iter()
+            .filter(|(_, path, _)| path.starts_with("/rest/ping"))
+            .count();
+        assert_eq!(pings, 1);
+    }
+
+    #[tokio::test]
+    async fn a_smart_playlist_reads_with_its_rules() {
+        let server = Server::start(vec![smart_playlist_json()]);
+        let client = server.client();
+        let playlist = client.smart_playlist("pl-1").await.expect("the playlist");
+        assert_eq!(playlist.name, "Quiet mornings");
+        assert!(playlist.owned, "ownership compares without case");
+        assert!(!playlist.synced);
+        assert_eq!(playlist.track_count, 12);
+        let rules = playlist.rules.expect("the rules");
+        assert_eq!(rules.sort.as_deref(), Some("dateloved"));
+        assert_eq!(rules.limit, Some(50));
+        assert_eq!(rules.group.rules().len(), 2);
+        let (_, _, body) = &server.requests()[1];
+        assert_eq!(server.requests()[0].1, "/auth/login");
+        assert!(body.is_empty(), "a read sends no body: {body}");
+    }
+
+    #[tokio::test]
+    async fn a_run_of_calls_signs_in_once() {
+        let server = Server::start(vec![smart_playlist_json()]);
+        let client = server.client();
+        client.smart_playlist("pl-1").await.expect("the read");
+        client
+            .smart_playlist("pl-1")
+            .await
+            .expect("the second read");
+        let logins = server
+            .requests()
+            .iter()
+            .filter(|(_, path, _)| path == "/auth/login")
+            .count();
+        assert_eq!(
+            logins, 1,
+            "navidrome rate-limits its sign-in, so calls share one token"
+        );
+        assert_eq!(server.requests()[1].1, "/api/playlist/pl-1");
+        assert_eq!(server.requests()[2].1, "/api/playlist/pl-1");
+    }
+
+    #[tokio::test]
+    async fn concurrent_expired_requests_share_one_refresh() {
+        let server = Server::start(vec![smart_playlist_json()]);
+        let client = server.client();
+        *client.token.lock().await = Some("expired-token".into());
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..8 {
+            let client = client.clone();
+            tasks.spawn(async move { client.smart_playlist("pl-1").await });
+        }
+        while let Some(result) = tasks.join_next().await {
+            result.expect("the task").expect("the refreshed read");
+        }
+        let logins = server
+            .requests()
+            .iter()
+            .filter(|(_, path, _)| path == "/auth/login")
+            .count();
+        assert_eq!(logins, 1, "expired requests must share their refresh");
+    }
+
+    #[tokio::test]
+    async fn a_failed_refresh_does_not_retry_login() {
+        let server = Server::start(vec![smart_playlist_json()]);
+        let mut client = server.client();
+        client.password = "incorrect".into();
+        *client.token.lock().await = Some("expired-token".into());
+        assert!(client.smart_playlist("pl-1").await.is_err());
+        let logins = server
+            .requests()
+            .iter()
+            .filter(|(_, path, _)| path == "/auth/login")
+            .count();
+        assert_eq!(logins, 1, "failed authentication must not loop");
+    }
+
+    #[tokio::test]
+    async fn a_synced_playlist_is_marked_for_the_warning() {
+        let mut synced = smart_playlist_json();
+        synced["sync"] = json!(true);
+        synced["path"] = json!("/music/playlists/quiet.nsp");
+        let server = Server::start(vec![synced]);
+        let playlist = server
+            .client()
+            .smart_playlist("pl-1")
+            .await
+            .expect("the playlist");
+        assert!(playlist.synced);
+    }
+
+    #[tokio::test]
+    async fn an_ordinary_playlist_reads_without_rules() {
+        let mut plain = smart_playlist_json();
+        plain["rules"] = Value::Null;
+        let server = Server::start(vec![plain]);
+        let playlist = server
+            .client()
+            .smart_playlist("pl-1")
+            .await
+            .expect("the playlist");
+        assert_eq!(playlist.rules, None);
+    }
+
+    #[tokio::test]
+    async fn a_create_sends_name_and_rules_nothing_else() {
+        let server = Server::start(Vec::new());
+        let client = server.client();
+        let rules = SmartRules::from_wire(&json!({
+            "all": [{"is": {"loved": true}}]
+        }))
+        .expect("the rules");
+        let id = client
+            .create_smart_playlist("Favorites", &rules)
+            .await
+            .expect("the id");
+        assert_eq!(id, "pl-new");
+        let (method, path, body) = &server.requests()[1];
+        assert_eq!((method.as_str(), path.as_str()), ("POST", "/api/playlist"));
+        let sent: Value = serde_json::from_str(body).expect("json");
+        assert_eq!(
+            sent,
+            json!({"name": "Favorites", "rules": {"all": [{"is": {"loved": true}}]}})
+        );
+    }
+
+    #[tokio::test]
+    async fn an_update_sends_only_the_changed_fields() {
+        let server = Server::start(vec![smart_playlist_json()]);
+        let client = server.client();
+        let update = SmartPlaylistUpdate {
+            public: Some(true),
+            ..SmartPlaylistUpdate::default()
+        };
+        let playlist = client
+            .update_smart_playlist("pl-1", update)
+            .await
+            .expect("the save");
+        assert!(playlist.public);
+        let (method, path, body) = &server.requests()[1];
+        assert_eq!(
+            (method.as_str(), path.as_str()),
+            ("PUT", "/api/playlist/pl-1")
+        );
+        let sent: Value = serde_json::from_str(body).expect("json");
+        assert_eq!(sent, json!({"public": true}), "no rules re-sent: {sent}");
+    }
+
+    #[tokio::test]
+    async fn a_rule_update_round_trips_through_the_server_answer() {
+        let server = Server::start(vec![smart_playlist_json()]);
+        let client = server.client();
+        let rules = SmartRules::from_wire(&json!({
+            "any": [{"is": {"loved": true}}],
+            "sort": "random"
+        }))
+        .expect("the rules");
+        let playlist = client
+            .update_smart_playlist(
+                "pl-1",
+                SmartPlaylistUpdate {
+                    rules: Some(rules),
+                    ..SmartPlaylistUpdate::default()
+                },
+            )
+            .await
+            .expect("the save");
+        let rules = playlist.rules.expect("the rules back");
+        assert!(matches!(rules.group, RuleGroup::Any(_)));
+        assert_eq!(rules.sort.as_deref(), Some("random"));
+    }
+
+    #[tokio::test]
+    async fn editing_another_owners_playlist_is_forbidden() {
+        let mut foreign = smart_playlist_json();
+        foreign["ownerName"] = json!("someone-else");
+        let server = Server::start(vec![foreign]);
+        let client = server.client();
+        let error = client
+            .update_smart_playlist(
+                "pl-1",
+                SmartPlaylistUpdate {
+                    name: Some("mine now".into()),
+                    ..SmartPlaylistUpdate::default()
+                },
+            )
+            .await
+            .expect_err("the refusal");
+        assert!(
+            format!("{error:#}").contains("refuses the change for this account"),
+            "the error reads for the listener: {error:#}"
+        );
+        let playlist = client.smart_playlist("pl-1").await.expect("the read");
+        assert!(!playlist.owned);
+    }
+
+    #[tokio::test]
+    async fn a_gone_playlist_says_so() {
+        let server = Server::start(Vec::new());
+        let error = server
+            .client()
+            .smart_playlist("pl-missing")
+            .await
+            .expect_err("the refusal");
+        assert!(format!("{error:#}").contains("no longer has the playlist"));
+    }
+
+    #[tokio::test]
+    async fn broken_rules_never_leave_the_client() {
+        let server = Server::start(Vec::new());
+        let client = server.client();
+        let mut rules = SmartRules::new(RuleGroup::All(Vec::new()));
+        let error = client
+            .create_smart_playlist("Empty", &rules)
+            .await
+            .expect_err("the refusal");
+        assert!(format!("{error:#}").contains("not ready to save"));
+        rules.order = Some("sideways".into());
+        rules.group.rules_mut().push(Rule::Condition(Condition {
+            operator: Operator::Is,
+            field: "loved".into(),
+            value: Operand::Boolean(true),
+        }));
+        let error = client
+            .update_smart_playlist(
+                "pl-1",
+                SmartPlaylistUpdate {
+                    rules: Some(rules),
+                    ..SmartPlaylistUpdate::default()
+                },
+            )
+            .await
+            .expect_err("the refusal");
+        assert!(format!("{error:#}").contains("not ready to save"));
+        // The checks run before any sign-in: no request carried broken rules.
+        assert!(server.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_refused_sign_in_reads_as_credentials() {
+        let server = Server::start(Vec::new());
+        let signature = crate::subsonic::auth::sign("judith", "wrong");
+        let client = SubsonicClient::new(
+            server.url.clone(),
+            "judith".into(),
+            "wrong".into(),
+            &signature,
+        )
+        .expect("a client");
+        let error = client
+            .smart_playlist("pl-1")
+            .await
+            .expect_err("the refusal");
+        assert!(format!("{error:#}").contains("refused the sign-in"));
     }
 }

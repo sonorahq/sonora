@@ -296,6 +296,18 @@ enum Left {
     Playlist(String),
 }
 
+/// What the rules editor works on: the provider's smart view of the playlist it opened, or
+/// why the read failed. `None` rules mark an ordinary playlist, which adding rules turns into
+/// a smart one.
+#[derive(Clone, Debug)]
+pub struct SmartEditing {
+    pub id: String,
+    pub outcome: Result<music::SmartPlaylist, String>,
+    /// The shelf's account epoch when the read was asked, so a save after a sign-out or an
+    /// account switch refuses instead of writing the old account's rules onto the new one.
+    epoch: u64,
+}
+
 struct PlaylistMutation {
     action: &'static str,
     /// The toast shown once the provider agrees, or `None` when `on_done` reports it itself.
@@ -995,6 +1007,8 @@ pub enum LibraryEvent {
     /// A playlist a failed change may have altered in part, or whose cover changed, so a page
     /// showing it loads it again.
     PlaylistChanged(String),
+    /// The provider answered `open_smart_playlist`; the rules editor reads `smart_editing`.
+    SmartPlaylistReady(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1151,6 +1165,11 @@ pub struct Library {
     raised: HashMap<Family, Raised>,
     /// The row removals whose toast is up, by playlist id.
     raised_rows: HashMap<String, RowsRaised>,
+    /// The smart playlist the rules editor has open, once `open_smart_playlist` answers.
+    pub smart_editing: Option<SmartEditing>,
+    /// Counts the opens so a slow read for an earlier playlist never lands over a later
+    /// one's answer.
+    smart_opening: u64,
 }
 
 impl Library {
@@ -1163,6 +1182,8 @@ impl Library {
         cx.subscribe(&session, |this, session, event, cx| match event {
             SessionEvent::SignedIn => {
                 this.epochs[Shelf::Streaming.slot()] += 1;
+                this.smart_opening += 1;
+                this.smart_editing = None;
                 this.pin_task = None;
                 if !session.read(cx).authenticated() {
                     this.pin_targets_task = None;
@@ -1191,6 +1212,8 @@ impl Library {
             }
             SessionEvent::SignedOut => {
                 this.epochs[Shelf::Streaming.slot()] += 1;
+                this.smart_opening += 1;
+                this.smart_editing = None;
                 this.sweeps.clear();
                 this.gathering.clear();
                 this.raised.clear();
@@ -1263,6 +1286,8 @@ impl Library {
             next_sweep: 0,
             raised: HashMap::new(),
             raised_rows: HashMap::new(),
+            smart_editing: None,
+            smart_opening: 0,
         };
         library.held_mut(Shelf::Streaming).state = LibraryState::Loading;
         library.held_mut(Shelf::Local).shape = Shape::Catalog(Catalog::Fixed);
@@ -1916,6 +1941,170 @@ impl Library {
                 }))
             },
             Self::insert_playlist,
+            cx,
+        );
+    }
+
+    /// Opens a playlist in the rules editor: the provider's smart view lands in
+    /// `smart_editing` and `LibraryEvent::SmartPlaylistReady` tells the editor. Ordinary
+    /// playlists answer with `None` rules, which adding rules turns smart.
+    pub fn open_smart_playlist(&mut self, id: String, shelf: Shelf, cx: &mut Context<Self>) {
+        self.smart_opening += 1;
+        let opening = self.smart_opening;
+        let epoch = self.epochs[shelf.slot()];
+        self.smart_editing = None;
+        let Some(client) = self.session.read(cx).client_of(shelf) else {
+            Toasts::show(Outcome::Failed, "toast-playlist-signed-out", cx);
+            return;
+        };
+        let io = self.io.clone();
+        let asked = id.clone();
+        cx.spawn(async move |this, cx| {
+            let result = join(io.spawn(async move { client.smart_playlist(&asked).await })).await;
+            this.update(cx, |this, cx| {
+                // A newer open answers instead, and an answer from before an account
+                // change belongs to the account that asked, not this one.
+                if this.smart_opening != opening || this.epochs[shelf.slot()] != epoch {
+                    return;
+                }
+                this.smart_editing = Some(SmartEditing {
+                    id: id.clone(),
+                    outcome: result.map_err(|error| format!("{error:#}")),
+                    epoch,
+                });
+                cx.emit(LibraryEvent::SmartPlaylistReady(id));
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Closes the rules editor: any read still out for it is too old to land.
+    pub fn close_smart_playlist(&mut self, cx: &mut Context<Self>) {
+        self.smart_opening += 1;
+        self.smart_editing = None;
+        cx.notify();
+    }
+
+    /// Makes a smart playlist from a name and its rules. The provider answers with the new
+    /// playlist, which joins the shelf like any other.
+    pub fn create_smart_playlist<F>(
+        &mut self,
+        name: String,
+        rules: music::SmartRules,
+        shelf: Shelf,
+        on_done: F,
+        cx: &mut Context<Self>,
+    ) where
+        F: FnOnce(&mut Self, bool, &mut Context<Self>) + 'static,
+    {
+        self.mutate_playlist_result(
+            PlaylistMutation {
+                action: "create smart playlist",
+                done: Some("toast-playlist-created"),
+                name: None,
+                target: None,
+                invalidated: Vec::new(),
+                shelf,
+            },
+            move |client| async move {
+                let id = client.create_smart_playlist(&name, &rules).await?;
+                let fetched = client.smart_playlist(&id).await;
+                Ok(fetched.unwrap_or_else(|error| {
+                    log::warn!("library: a new smart playlist is not readable yet: {error:#}");
+                    music::SmartPlaylist {
+                        id,
+                        name,
+                        owned: true,
+                        rules: Some(rules),
+                        ..Default::default()
+                    }
+                }))
+            },
+            |this, result, cx| match result {
+                Ok(created) => {
+                    this.insert_playlist(
+                        Playlist {
+                            id: created.id,
+                            name: created.name,
+                            owner: created.owner,
+                            owned: created.owned,
+                            public: created.public,
+                            track_count: created.track_count,
+                            ..Default::default()
+                        },
+                        cx,
+                    );
+                    on_done(this, true, cx);
+                }
+                Err(()) => on_done(this, false, cx),
+            },
+            cx,
+        );
+    }
+
+    /// Saves the fields a rules editor changed. Only the `Some` fields leave the app, so a
+    /// name the editor did not touch stays as it is. The playlist's cached pages go stale:
+    /// new rules make a different track list.
+    pub fn save_smart_playlist<F>(
+        &mut self,
+        id: String,
+        update: music::SmartPlaylistUpdate,
+        on_done: F,
+        cx: &mut Context<Self>,
+    ) where
+        F: FnOnce(&mut Self, bool, &mut Context<Self>) + 'static,
+    {
+        // An editor whose rules were read under another account must not write them here:
+        // the same playlist id on a new account is a different playlist's rules.
+        let epoch = self.epochs[Shelf::of(&id).slot()];
+        let fresh = self
+            .smart_editing
+            .as_ref()
+            .is_some_and(|editing| editing.id == id && editing.epoch == epoch);
+        if !fresh {
+            log::warn!("library: refusing a smart playlist save from a stale editor");
+            Toasts::show(Outcome::Failed, "toast-playlist-failed", cx);
+            on_done(self, false, cx);
+            return;
+        }
+        let changed = id.clone();
+        self.mutate_playlist_result(
+            PlaylistMutation {
+                action: "edit smart playlist",
+                done: Some("toast-playlist-updated"),
+                name: None,
+                target: None,
+                invalidated: vec![id.clone()],
+                shelf: Shelf::of(&id),
+            },
+            move |client| async move { client.update_smart_playlist(&id, update).await },
+            move |this, result, cx| match result {
+                Ok(saved) => {
+                    let name = saved.name.clone();
+                    let public = saved.public;
+                    let track_count = saved.track_count;
+                    this.amend_playlist(
+                        &changed,
+                        |playlist| {
+                            playlist.name = name;
+                            playlist.public = public;
+                            playlist.track_count = track_count;
+                        },
+                        cx,
+                    );
+                    if let Some(editing) = &mut this.smart_editing
+                        && editing.id == changed
+                    {
+                        editing.outcome = Ok(saved);
+                    }
+                    cx.emit(LibraryEvent::PlaylistChanged(changed.clone()));
+                    cx.emit(LibraryEvent::SmartPlaylistReady(changed));
+                    on_done(this, true, cx);
+                }
+                Err(()) => on_done(this, false, cx),
+            },
             cx,
         );
     }
@@ -2872,6 +3061,30 @@ impl Library {
         T: Send + 'static,
         A: FnOnce(&mut Self, T, &mut Context<Self>) + 'static,
     {
+        self.mutate_playlist_result(
+            mutation_info,
+            mutation,
+            |this, result, cx| {
+                if let Ok(outcome) = result {
+                    on_done(this, outcome, cx);
+                }
+            },
+            cx,
+        )
+    }
+
+    fn mutate_playlist_result<F, R, T, A>(
+        &mut self,
+        mutation_info: PlaylistMutation,
+        mutation: F,
+        on_result: A,
+        cx: &mut Context<Self>,
+    ) where
+        F: FnOnce(Arc<dyn MusicApi>) -> R + Send + 'static,
+        R: Future<Output = anyhow::Result<T>> + Send + 'static,
+        T: Send + 'static,
+        A: FnOnce(&mut Self, Result<T, ()>, &mut Context<Self>) + 'static,
+    {
         let PlaylistMutation {
             action,
             done,
@@ -2883,11 +3096,13 @@ impl Library {
         if self.playlist_task.is_some() {
             log::warn!("library: cannot {action} while another change is running");
             Toasts::show(Outcome::Failed, "toast-playlist-busy", cx);
+            on_result(self, Err(()), cx);
             return;
         }
         let Some(client) = self.session.read(cx).client_of(shelf) else {
             log::warn!("library: cannot {action} while signed out");
             Toasts::show(Outcome::Failed, "toast-playlist-signed-out", cx);
+            on_result(self, Err(()), cx);
             return;
         };
         let catalog = invalidated
@@ -2906,7 +3121,7 @@ impl Library {
                 this.playlist_task = None;
                 match result {
                     Ok(outcome) => {
-                        on_done(this, outcome, cx);
+                        on_result(this, Ok(outcome), cx);
                         match (done, name) {
                             (Some(done), Some(name)) => {
                                 Toasts::linked(Outcome::Done, done, name, target, cx)
@@ -2925,6 +3140,7 @@ impl Library {
                         for id in invalidated {
                             cx.emit(LibraryEvent::PlaylistChanged(id));
                         }
+                        on_result(this, Err(()), cx);
                     }
                 }
                 cx.notify();
