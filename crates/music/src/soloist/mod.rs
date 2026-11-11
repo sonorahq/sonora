@@ -244,6 +244,12 @@ fn data() -> PathBuf {
     home().join("data")
 }
 
+/// The folder a pairing is made in. It only takes the place of [`data`] once the pairing has
+/// gone through, so a pairing that fails leaves the one before it as it was.
+fn pairing() -> PathBuf {
+    home().join("pairing")
+}
+
 /// The folder for the audio the program has fetched, which it can fetch again.
 fn cache() -> PathBuf {
     credentials::root().join("soloist")
@@ -278,8 +284,13 @@ fn keep_key(key: &str) -> Result<()> {
 /// The account the program is paired with. Its folder under `settings/Users` is the only place
 /// the program writes that name down, as `<username>-user`.
 fn paired_account() -> Option<String> {
+    paired_in(&data())
+}
+
+/// The account a data folder holds a paired sign-in for.
+fn paired_in(data: &Path) -> Option<String> {
     const SUFFIX: &str = "-user";
-    std::fs::read_dir(data().join("settings").join("Users"))
+    std::fs::read_dir(data.join("settings").join("Users"))
         .ok()?
         .flatten()
         .filter(|entry| entry.path().is_dir())

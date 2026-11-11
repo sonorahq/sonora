@@ -1182,7 +1182,7 @@ async fn daemon(
         "127.0.0.1:0",
     ]
     .map(OsStr::new);
-    let mut child = match launch(&key, &flags) {
+    let mut child = match launch(&key, &data(), &flags) {
         Ok(child) => child,
         Err(error) => {
             log::error!("soloist: {error:#}");

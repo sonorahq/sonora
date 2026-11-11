@@ -6,6 +6,7 @@
 //! sign-in, so a wrong key shows up after the listener has picked the device, not before.
 
 use std::ffi::OsStr;
+use std::path::Path;
 use std::time::Duration;
 
 use tokio::process::Child;
@@ -13,7 +14,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot;
 
 use super::daemon::{RUNNING, follow, launch, stop};
-use super::{binary, data, enable, keep_key, paired_account, recheck};
+use super::{binary, data, enable, keep_key, paired_in, pairing, recheck};
 
 /// How long the listener gets to pick the device before pairing gives up.
 const PATIENCE: Duration = Duration::from_secs(10 * 60);
@@ -41,7 +42,9 @@ pub enum Trouble {
     Failed(String),
 }
 
-/// Pairs the program with whichever account picks it, then stores `key`. With `account` given,
+/// Pairs the program with whichever account picks it, then stores `key`. The pairing is made
+/// in a folder of its own and only replaces the one before it once it has gone through, so a
+/// pairing that fails or is given up costs the listener nothing they had. With `account` given,
 /// a pairing from any other account is thrown away and reported, since the library and the
 /// sound would otherwise belong to two different people. Dropping the future stops the program.
 ///
@@ -62,10 +65,9 @@ pub async fn pair(
         .await
         .map_err(|_| Trouble::Failed("soloist is still playing".to_owned()))?;
 
-    blocking(start_over).await??;
-    recheck();
+    blocking(|| fresh(&pairing())).await??;
     let flags = ["--pair", "--verbose"].map(OsStr::new);
-    let mut child = launch(&key, &flags).map_err(failed)?;
+    let mut child = launch(&key, &pairing(), &flags).map_err(failed)?;
     let mut lines = follow(&mut child, &key);
     let watched = tokio::time::timeout(PATIENCE, watch(&mut child, &mut lines, listening)).await;
     let code = match watched {
@@ -88,19 +90,21 @@ pub async fn pair(
         )));
     }
 
-    let paired = blocking(paired_account)
+    let paired = blocking(|| paired_in(&pairing()))
         .await?
         .ok_or_else(|| Trouble::Failed("soloist stored no sign-in".to_owned()))?;
     if let Some(account) = account
         && !same_account(&paired, &account)
     {
         log::warn!("soloist: paired with another account than the one signed in");
-        blocking(start_over).await??;
-        recheck();
         return Err(Trouble::Account(paired));
     }
     // a setup the listener just went through is one they want on
-    blocking(move || keep_key(&key).and_then(|()| enable(true)).map_err(failed)).await??;
+    blocking(move || {
+        adopt()?;
+        keep_key(&key).and_then(|()| enable(true)).map_err(failed)
+    })
+    .await??;
     recheck();
     log::info!("soloist: paired");
     Ok(())
@@ -148,27 +152,38 @@ fn port_in(line: &str) -> Option<u16> {
     rest.split_whitespace().next()?.parse().ok()
 }
 
-/// Empties the data folder, so the program starts with no sign-in and a new device identity,
+/// Empties `folder`, so the program starts in it with no sign-in and a new device identity,
 /// and leaves it readable by the owner alone.
-fn start_over() -> Result<(), Trouble> {
+fn fresh(folder: &Path) -> Result<(), Trouble> {
+    match std::fs::remove_dir_all(folder) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(failed(error)),
+    }
+    std::fs::create_dir_all(folder).map_err(failed)?;
+    private(folder).map_err(failed)
+}
+
+/// Puts the pairing just made in the place of the one before it. Nothing runs on either folder
+/// while this is called, since the caller holds `RUNNING`.
+fn adopt() -> Result<(), Trouble> {
     let data = data();
     match std::fs::remove_dir_all(&data) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(failed(error)),
     }
-    std::fs::create_dir_all(&data).map_err(failed)?;
-    private(&data).map_err(failed)
+    std::fs::rename(pairing(), &data).map_err(failed)
 }
 
 #[cfg(unix)]
-fn private(folder: &std::path::Path) -> std::io::Result<()> {
+fn private(folder: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
     std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o700))
 }
 
 #[cfg(not(unix))]
-fn private(_folder: &std::path::Path) -> std::io::Result<()> {
+fn private(_folder: &Path) -> std::io::Result<()> {
     Ok(())
 }
 

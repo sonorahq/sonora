@@ -395,8 +395,27 @@ impl Soloist {
 
         let io = self.io.clone();
         self.task = Some(cx.spawn(async move |this, cx| {
-            if let Ok(Err(error)) = io.spawn_blocking(|| soloist::enable(false)).await {
-                log::warn!("soloist: cannot switch off before removing: {error:#}");
+            // Without the switch off the engine would keep the program running, and waiting for
+            // it to stop would never end. The setup is left as it is for another try.
+            let off = match io.spawn_blocking(|| soloist::enable(false)).await {
+                Ok(off) => off.map_err(|error| format!("{error:#}")),
+                Err(error) => Err(error.to_string()),
+            };
+            if let Err(error) = off {
+                log::warn!("soloist: cannot switch off before removing: {error}");
+                this.update(cx, |this, cx| {
+                    this.task = None;
+                    Toasts::with_detail(
+                        Outcome::Failed,
+                        "toast-soloist-remove-failed",
+                        None,
+                        error,
+                        cx,
+                    );
+                    this.settle(cx);
+                })
+                .ok();
+                return;
             }
             // the engine lets go of Soloist here, and the program stops with it
             this.update(cx, |this, cx| {

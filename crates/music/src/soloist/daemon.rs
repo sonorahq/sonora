@@ -1,6 +1,7 @@
 //! Running the Soloist program: starting it, reading what it prints and stopping it.
 
 use std::ffi::OsStr;
+use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -10,7 +11,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
-use super::{DEVICE, binary, cache, data};
+use super::{DEVICE, binary, cache};
 
 /// How long the program gets to shut down by itself before it is killed.
 const GRACE: Duration = Duration::from_secs(2);
@@ -23,11 +24,11 @@ const INTERNAL: &str = " [f:";
 /// its successor asks.
 pub(super) static RUNNING: Mutex<()> = Mutex::const_new(());
 
-/// Starts the program on Sonora's data folder with `flags` after the ones every run takes. Its
+/// Starts the program on the data folder `data` with `flags` after the ones every run takes. Its
 /// output is piped, since anything it inherits would print the command line, key included, to
 /// Sonora's own terminal. The key travels on the command line because the program takes it no
 /// other way.
-pub(super) fn launch(key: &str, flags: &[&OsStr]) -> Result<Child> {
+pub(super) fn launch(key: &str, data: &Path, flags: &[&OsStr]) -> Result<Child> {
     let path = binary::path();
     let mut command = Command::from(binary::command(&path));
     command
@@ -36,7 +37,7 @@ pub(super) fn launch(key: &str, flags: &[&OsStr]) -> Result<Child> {
         .arg("--api-key")
         .arg(key)
         .arg("--data-dir")
-        .arg(data())
+        .arg(data)
         .arg("--cache-dir")
         .arg(cache())
         .args(flags)
