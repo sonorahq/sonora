@@ -13,7 +13,7 @@ pub use self::themes::{ThemeFamily, ThemeOffer, ThemeVariant};
 pub(crate) use self::themes::{is_own_link, read_link as read_theme_link};
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -480,9 +480,6 @@ struct Values {
     close_to_tray: bool,
     tray_icon: bool,
     stay_awake: bool,
-    /// Whether plays of Spotify tracks go to the linked scrobbling services. Spotify can scrobble
-    /// to Last.fm itself, and with both on every listen is counted twice.
-    scrobble_spotify: bool,
     language: String,
     #[serde(default = "system_font")]
     font: String,
@@ -496,6 +493,10 @@ struct Values {
     silenced_requirements: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     scrobbling: BTreeMap<String, Account>,
+    /// Providers, by slug, whose plays stay out of the linked scrobbling services. Some of them
+    /// scrobble to Last.fm on their own, and with both on every listen is counted twice.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    unscrobbled: BTreeSet<String>,
     appearance: Appearance,
 }
 
@@ -688,7 +689,6 @@ impl Default for Values {
             close_to_tray: true,
             tray_icon: true,
             stay_awake: true,
-            scrobble_spotify: true,
             language: i18n::AUTO.to_owned(),
             font: system_font(),
             startup: DEFAULT_STARTUP.to_owned(),
@@ -696,6 +696,7 @@ impl Default for Values {
             hidden_nav: Vec::new(),
             silenced_requirements: Vec::new(),
             scrobbling: BTreeMap::new(),
+            unscrobbled: BTreeSet::new(),
             appearance: Appearance::default(),
         }
     }
@@ -1244,9 +1245,10 @@ impl AppSettings {
         self.values.stay_awake
     }
 
-    /// Whether Spotify plays are submitted to the linked scrobbling services.
-    pub fn scrobble_spotify(&self) -> bool {
-        self.values.scrobble_spotify
+    /// Whether plays from the provider with this slug are submitted to the linked scrobbling
+    /// services. The provider itself hears about them either way.
+    pub fn scrobbles(&self, provider: &str) -> bool {
+        !self.values.unscrobbled.contains(provider)
     }
 
     /// Every linked scrobbling account, keyed by its service slug.
@@ -1864,8 +1866,11 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
-    pub fn set_scrobble_spotify(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        self.values.scrobble_spotify = enabled;
+    pub fn set_scrobbles(&mut self, provider: &str, enabled: bool, cx: &mut Context<Self>) {
+        match enabled {
+            true => self.values.unscrobbled.remove(provider),
+            false => self.values.unscrobbled.insert(provider.to_owned()),
+        };
         self.schedule_save(cx);
     }
 

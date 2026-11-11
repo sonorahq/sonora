@@ -359,16 +359,17 @@ impl Scrobbling {
         }
     }
 
-    /// Whether the current track is a Spotify play the user asked not to submit to the linked
-    /// services, because Spotify scrobbles it on its own. The provider itself still hears it.
+    /// Whether the current track came from the active provider and the user asked to keep that
+    /// provider's plays out of the linked services, usually because it scrobbles them on its own.
+    /// Local files always go through, and the provider itself still hears the play.
     fn muted(&self, cx: &App) -> bool {
-        let settings = self.settings.read(cx);
-        let spotify = self
-            .current
-            .as_deref()
-            .is_some_and(|id| !music::is_local_id(id))
-            && settings.provider() == "spotify";
-        spotify && !settings.scrobble_spotify()
+        let Some(id) = self.current.as_deref() else {
+            return false;
+        };
+        let Some(provider) = self.session.read(cx).provider_slug() else {
+            return false;
+        };
+        !music::is_local_id(id) && !self.settings.read(cx).scrobbles(provider)
     }
 
     /// Sends the provider the current track's state at the last position heard.
