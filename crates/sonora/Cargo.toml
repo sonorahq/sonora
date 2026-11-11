@@ -59,6 +59,7 @@ objc2-app-kit = { workspace = true, features = [
     "NSWindow",
 ] }
 objc2-foundation = { workspace = true, features = [
+    "NSBundle",
     "NSData",
     "NSGeometry",
     "NSString",
