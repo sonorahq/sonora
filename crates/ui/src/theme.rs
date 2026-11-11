@@ -31,9 +31,6 @@ const MAX_ACCENT_SATURATION: f32 = 0.85;
 /// one, which is the whole of what tells a white sleeve from a black one.
 const NEUTRAL_PIVOT: f32 = 0.5;
 const SYSTEM_FILLS: bool = cfg!(target_os = "windows");
-/// Whether the platform can blur the desktop behind a see-through window. Linux and FreeBSD
-/// compositors ignore the request, so the setting is not offered there at all.
-pub const WINDOW_BLUR: bool = !cfg!(any(target_os = "linux", target_os = "freebsd"));
 
 /// What a fill keeps of itself once the window is fully see-through. The page
 /// background has no floor — a clear window is the point — but everything drawn
@@ -55,11 +52,34 @@ const HEADER_FLOOR: f32 = 0.15;
 const SURFACE_WEIGHT: f32 = 0.68;
 const HEADER_WEIGHT: f32 = 0.5;
 
+/// Whether the platform blurs the desktop behind a see-through window. A Linux or FreeBSD
+/// compositor may or may not, and may change its mind while Sonora runs, so the root keeps this
+/// current from the window and the blur setting is offered only while it holds.
+#[derive(Clone, Copy)]
+pub struct WindowBlur(bool);
+
+impl Global for WindowBlur {}
+
+impl WindowBlur {
+    pub fn supported(cx: &App) -> bool {
+        cx.try_global::<Self>().is_some_and(|blur| blur.0)
+    }
+
+    /// Records what the window reports, touching the global only when the answer changed so its
+    /// observers run once per change.
+    pub fn update(window: &gpui::Window, cx: &mut App) {
+        let supported = window.is_background_blur_supported();
+        if !cx.has_global::<Self>() || Self::supported(cx) != supported {
+            cx.set_global(Self(supported));
+        }
+    }
+}
+
 /// The window background a look asks the platform for. Blur needs something to show through,
-/// so only a see-through window on a platform that can blur gets it, and only an opaque one
-/// can take the platform's own fill.
+/// so only a see-through window gets it, and only an opaque one can take the platform's own
+/// fill. A platform that cannot blur draws a blurred background as a plain see-through one.
 pub fn backdrop(blur_window: bool, transparent: bool) -> WindowBackgroundAppearance {
-    match WINDOW_BLUR && blur_window && transparent {
+    match blur_window && transparent {
         true => WindowBackgroundAppearance::Blurred,
         false => match SYSTEM_FILLS && !transparent {
             true => WindowBackgroundAppearance::Opaque,
