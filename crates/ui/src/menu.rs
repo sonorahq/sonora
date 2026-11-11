@@ -15,8 +15,9 @@ use crate::form::Submit;
 use crate::glass::{GLASS_BLUR, blurring, popover_fill};
 use crate::input::Input;
 use crate::label::Tails as _;
+use crate::linger::Linger;
 use crate::metrics::snapped;
-use crate::motion::{Fading as _, Rising as _};
+use crate::motion::{Fading as _, PRESS_SCALE, Rising as _, pressing};
 use crate::scrollbar::Scrollbar;
 use crate::scroller::middle_scroll;
 use crate::separator::Separator;
@@ -851,6 +852,7 @@ impl RenderOnce for Menu {
                 }
             })
             .collect();
+        let (row_window, row_cx) = (&mut *window, &mut *cx);
         let rows = items.into_iter().enumerate().map(move |(place, item)| {
             let MenuItem {
                 id,
@@ -900,8 +902,10 @@ impl RenderOnce for Menu {
             let has_artwork = artwork.is_some();
             let leading = leading.filter(|_| !has_artwork && icon.is_none());
             let detailed = detail.is_some();
+            let pressable = press.is_some() && !disabled;
+            let row_id = id.clone();
 
-            div()
+            let row = div()
                 .id(id)
                 .relative()
                 .flex()
@@ -1093,9 +1097,14 @@ impl RenderOnce for Menu {
                             deferred(panel).with_priority(priority + 1)
                         }),
                     }
-                })
-                .into_any_element()
+                });
+            // A row that can be picked shrinks under the pointer the way a button does.
+            match pressable {
+                true => pressing(row, &row_id, PRESS_SCALE, row_window, row_cx).into_any_element(),
+                false => row.into_any_element(),
+            }
         });
+        let rows: Vec<AnyElement> = rows.collect();
 
         let content = match scrollbar.as_ref() {
             Some(scrollbar) => {
@@ -1250,19 +1259,28 @@ impl RenderOnce for Menu {
         // so the panel cannot carry its own frost on the way in: it would arrive only once the
         // rise was over, which reads as a blink. The frost is a sibling underneath instead,
         // sized to the panel and fading in on the same curve.
-        let frosted = div()
-            .relative()
-            .when(frosting, |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .rounded(theme.radius)
-                        .backdrop_blur(GLASS_BLUR)
-                        .fading("menu-frost"),
-                )
-            })
-            .child(rising);
+        // A context menu opened somewhere else is another showing of the same element, so the
+        // one before it still fades out where it stood.
+        let turn = pressed.map_or(0, |at| {
+            u64::from(f32::from(at.x).to_bits()) << 32 | u64::from(f32::from(at.y).to_bits())
+        });
+        let frosted = Linger::new(
+            "menu-linger",
+            div()
+                .relative()
+                .when(frosting, |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .rounded(theme.radius)
+                            .backdrop_blur(GLASS_BLUR)
+                            .fading("menu-frost"),
+                    )
+                })
+                .child(rising),
+        )
+        .turn(turn);
         let surface = match should_defer {
             true => {
                 let anchored = anchored().anchor(corner);

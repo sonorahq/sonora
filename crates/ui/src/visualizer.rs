@@ -39,8 +39,8 @@ const WAVE_STEPS: usize = 8;
 pub enum VisualizerStyle {
     None,
     Bars,
-    Wave,
     #[default]
+    Wave,
     Both,
 }
 
@@ -64,7 +64,7 @@ impl VisualizerStyle {
         match id {
             "none" => Self::None,
             "bars" => Self::Bars,
-            "wave" => Self::Wave,
+            "both" => Self::Both,
             _ => Self::default(),
         }
     }

@@ -12,15 +12,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Open music links from the search field or send browser pages to Sonora with a bookmark.
 - Open YouTube handle links on their artist pages.
 - Preview music links in search suggestions and search by their titles or artist names.
+- Choose which Now playing views show the visualizer: the artwork, the lyrics or the queue.
 - Prioritize word-synced lyrics over the source order with a switch in Lyrics sources.
 - Turn on a Genre column in song lists and sort by it, for local files, Subsonic servers and Apple Music.
 
 ### Changed
 
+- The album cover moves faster when opening and closing the fullscreen player.
 - Nightly updates reuse released executables after a stable release, so they become available sooner.
+- Opening the fullscreen player flies the cover up from the player bar while the rest fades in.
+- The fullscreen cover and controls slide aside when lyrics or the queue open, which fade into place, and back when they close.
+- The fullscreen switch between the cover, lyrics and queue stays in the bottom right corner beside the leave button, so it no longer jumps out from under the pointer.
+- Leaving the fullscreen player fades it out over the page below while the cover flies back down into the player bar, its corners easing between the two shapes.
+- Buttons, cards and menu items shrink a little under a click and spring back on release.
+- Turning Play to Pause slides the label into place and swaps the icons, while the button keeps its width.
+- Menus and dialogs fade out as they close, the way they fade in.
+- The visualizer draws the wave alone unless another style is chosen.
+- The fullscreen visualizer rises from the bottom edge as it appears and sinks back as it goes.
+- The play button swaps its play and pause icons with a pop, and the next and previous icons slide on like a belt when clicked.
+- Play on a pinned or library card starts sooner, and its icon answers the click at once.
 
 ### Fixed
 
+- Closing lyrics or the queue during its entrance no longer flashes the panel at full opacity.
+- Dragging a card releases its pressed appearance, and play buttons keep their blur while cards or buttons are pressed.
+- Fullscreen controls hide reliably after the pointer leaves, and pressed controls release when the window loses focus.
 - Reduce redraw work when scrolling large Favorites collections.
 - Song durations stay aligned when hovering over an artist's favorite songs.
 - Reduce fullscreen visualizer redraws while keeping animation at up to 120 FPS.

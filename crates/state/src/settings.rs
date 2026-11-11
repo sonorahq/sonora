@@ -233,6 +233,48 @@ impl Default for RomanizationScripts {
     }
 }
 
+/// The views of the fullscreen player the visualizer is drawn in. Only the cover has it by
+/// default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VisualizerScreens {
+    cover: bool,
+    lyrics: bool,
+    queue: bool,
+}
+
+impl VisualizerScreens {
+    /// Whether the visualizer is drawn while the fullscreen player shows `panel`, which is the
+    /// cover alone when there is none. The members panel never shows there.
+    pub fn contains(self, panel: Option<SideTab>) -> bool {
+        match panel {
+            None => self.cover,
+            Some(SideTab::Lyrics) => self.lyrics,
+            Some(SideTab::Queue) => self.queue,
+            Some(SideTab::Members) => false,
+        }
+    }
+
+    fn set(&mut self, panel: Option<SideTab>, shown: bool) {
+        match panel {
+            None => self.cover = shown,
+            Some(SideTab::Lyrics) => self.lyrics = shown,
+            Some(SideTab::Queue) => self.queue = shown,
+            Some(SideTab::Members) => {}
+        }
+    }
+}
+
+impl Default for VisualizerScreens {
+    fn default() -> Self {
+        Self {
+            cover: true,
+            lyrics: false,
+            queue: false,
+        }
+    }
+}
+
 /// A window's saved position and size in logical pixels, plus whether it was maximized.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -506,6 +548,7 @@ struct Appearance {
     visualizer_style: String,
     /// Whether the visualizer draws the track at its own level rather than at the volume.
     visualizer_absolute: bool,
+    visualizer_screens: VisualizerScreens,
     player_bar_layout: String,
     player_bar_transparent: bool,
     icons: String,
@@ -810,6 +853,7 @@ impl Default for Appearance {
             visualizer: true,
             visualizer_style: ui::VisualizerStyle::default().id().to_owned(),
             visualizer_absolute: false,
+            visualizer_screens: VisualizerScreens::default(),
             player_bar_layout: PlayerBarLayout::default().id().to_owned(),
             player_bar_transparent: true,
             icons: icons::BASE.to_owned(),
@@ -1367,6 +1411,11 @@ impl AppSettings {
     /// Whether the visualizer ignores Sonora's volume and draws the track at its own level.
     pub fn visualizer_absolute(&self) -> bool {
         self.values.appearance.visualizer_absolute
+    }
+
+    /// The views of the fullscreen player the visualizer is drawn in.
+    pub fn visualizer_screens(&self) -> VisualizerScreens {
+        self.values.appearance.visualizer_screens
     }
 
     pub fn fullscreen_controls_autohide(&self) -> FullscreenControlsAutohide {
@@ -2219,6 +2268,18 @@ impl AppSettings {
 
     pub fn set_visualizer_absolute(&mut self, absolute: bool, cx: &mut Context<Self>) {
         self.values.appearance.visualizer_absolute = absolute;
+        self.schedule_save(cx);
+    }
+
+    /// Draws the visualizer, or stops drawing it, while the fullscreen player shows `panel`,
+    /// which is the cover alone when there is none.
+    pub fn set_visualizer_screen(
+        &mut self,
+        panel: Option<SideTab>,
+        shown: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.values.appearance.visualizer_screens.set(panel, shown);
         self.schedule_save(cx);
     }
 

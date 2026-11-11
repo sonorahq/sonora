@@ -5,25 +5,28 @@ use std::time::{Duration, Instant};
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyView, App, Bounds, ClickEvent, Context, Entity, FocusHandle, FontWeight, KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    Render, ScrollWheelEvent, SharedString, SpringState, Task, TextShadow,
+    AnyElement, AnyView, App, Bounds, ClickEvent, Context, Entity, FocusHandle, FontWeight,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, Render, ScrollWheelEvent, SharedString, SpringConfig, SpringState, Task,
+    TextShadow,
 };
-use gpui::{Window, canvas, deferred, div, phi, point, px, relative};
+use gpui::{Div, Window, anchored, canvas, deferred, div, phi, point, px, relative};
 use i18n::t;
 use input::{ToggleFullscreen, ToggleWindowFullscreen, WORKSPACE_CONTEXT};
 use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
 use ui::{
-    ActiveTheme as _, Artwork, Button, Entrance, ExplicitBadge, Fading as _, GLASS_BLUR,
-    GLASS_FILL, InlineLink, InlineLinks, Motion, Motioned as _, Popup, Rising as _, Room,
-    Scrollbar, Scrubber, ScrubberState, Springs, TabBar, Tails as _, Text, Visualizer, clock,
-    entering, snapped,
+    ActiveTheme as _, Artwork, Button, ExplicitBadge, Fading as _, Flight, GLASS_BLUR, GLASS_FILL,
+    InlineLink, InlineLinks, Motion, Motioned as _, Popup, Rising as _, Room, Scrollbar, Scrubber,
+    ScrubberState, Springs, Sprung, TabBar, Tails as _, Text, Visualizer, Zoom, clock, entering,
+    snapped,
 };
 
 use crate::chrome::{Aside, TitleBarOptions};
 use crate::shared::menus::ItemMenu;
-use crate::shared::transport::{NOTCH, fraction, like, moved, percent, transport, volume_icon};
+use crate::shared::transport::{
+    COVER_FLIGHT, CoverFade, NOTCH, fraction, like, moved, percent, transport, volume_icon,
+};
 use crate::shared::visualizer::VisualizerDrive;
 use crate::shared::{self, ambient};
 use crate::shells::Shell;
@@ -48,6 +51,14 @@ const META_GAP: f32 = 0.25;
 const DOCK: f32 = 1.15;
 const DOCK_FULL: f32 = 1.7;
 const SINK: f32 = 24.;
+/// The name the seek bar with the transport is seen under, so it slides to where a panel
+/// moves it.
+const DECK_FLIGHT: &str = "fullscreen-deck";
+/// The space between the pill and the leave button in the corner, and between the transport and
+/// the volume where the volume follows it.
+const CORNER_GAP: f32 = 8.;
+/// A closed panel fading out, a little quicker than one comes in.
+const PANEL_LEAVE: SpringConfig = ui::spring(0.24, 0.);
 const LEAVE_DROP: f32 = 2.;
 const PILL_GAP: f32 = 2.;
 const SEEK_MAX: f32 = 420.;
@@ -64,6 +75,10 @@ const VEIL: f32 = 0.34;
 /// and gets by on a pixel; a bar of the visualizer is a hard edge and needs a real radius
 /// before it stops reading through the text over it.
 const VEIL_BLUR: Pixels = px(12.);
+/// How far ahead of the spectrum that band runs as the two come and go: it is at full strength
+/// by the time this share of the spectrum shows. A band that only kept pace would let the bars
+/// read sharp through it for as long as either was partly there.
+const VEIL_LEAD: f32 = 10.;
 /// The blur of each shadow stacked under the title and the artist line. A tight one gives the
 /// shadow a core and a wider one softens its edge.
 const TEXT_SHADOW: [f32; 2] = [2., 8.];
@@ -94,9 +109,11 @@ pub struct FullscreenView {
     settings: Entity<AppSettings>,
     aside: Entity<Aside>,
     panel: Option<SideTab>,
-    /// The entrance the content plays after the pill shows another tab, the same one a settings
-    /// page plays. The pill itself never takes part.
-    switch: Option<Entrance>,
+    /// How much of the content the pill just switched to is still hidden, springing from 1 to 0
+    /// at the pace the cover travels, so a panel fades in while the cover slides aside. A spring
+    /// steps from the first frame the content draws, so a slow first layout cannot eat the
+    /// entrance. The pill itself never takes part.
+    switch: Option<Sprung>,
     seek: ScrubberState,
     pending: Option<f32>,
     over_seek: Option<f32>,
@@ -128,6 +145,17 @@ pub struct FullscreenView {
     focus: FocusHandle,
     visualizer: VisualizerDrive,
     root_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// How far the cover is scaled as it flies in from the player bar.
+    cover_zoom: Rc<Cell<Zoom>>,
+    /// Whether the player is the shell on show. While it fades out over the workspace its cover
+    /// flies back into the player bar.
+    on_show: bool,
+    /// The player's own top left corner, which a fading panel is placed against.
+    root_origin: Rc<Cell<Point<Pixels>>>,
+    /// Where the panel last drew, which is where it fades out once the pill closes it.
+    panel_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// How much of a panel the pill just closed is still showing, springing from 1 to 0.
+    leaving: Option<Sprung>,
     meta_bounds: Rc<Cell<Bounds<Pixels>>>,
     /// The height the controls take with nothing clamping them, measured a frame ago. The dock
     /// shrinks from it while it fades, so the column moves in step with the cover.
@@ -145,7 +173,6 @@ impl FullscreenView {
         cx.observe(&settings, |this, settings, cx| {
             if this.panel == Some(SideTab::Lyrics) && !settings.read(cx).lyrics_enabled() {
                 this.panel = None;
-                this.over_pill = false;
             }
             cx.notify();
         })
@@ -198,6 +225,11 @@ impl FullscreenView {
             focus: cx.focus_handle(),
             visualizer: VisualizerDrive::default(),
             root_bounds: Rc::new(Cell::new(Bounds::default())),
+            cover_zoom: Rc::default(),
+            on_show: false,
+            root_origin: Rc::default(),
+            panel_bounds: Rc::new(Cell::new(Bounds::default())),
+            leaving: None,
             meta_bounds: Rc::new(Cell::new(Bounds::default())),
             dock_natural: Rc::new(Cell::new(Pixels::ZERO)),
         }
@@ -210,6 +242,7 @@ impl FullscreenView {
     /// Starts the idle clock as the view opens and stops it as the view closes, so it never
     /// hides the cursor over the workspace. Either way the view next shows with its controls up.
     pub fn set_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.on_show = shown;
         self.flip(true);
         self.hidden = SpringState {
             position: 0.,
@@ -227,12 +260,9 @@ impl FullscreenView {
     /// Selects the fullscreen panel and restarts the controls' idle timer.
     fn show(&mut self, panel: Option<SideTab>, cx: &mut Context<Self>) {
         if panel != self.panel && !cx.reduce_motion() {
-            self.switch = Some(Entrance::start());
-        }
-        if panel.is_some() != self.panel.is_some() {
-            // The pill changes parents between the cover and panel layouts, so its old
-            // hover listener cannot report a leave after it is removed.
-            self.over_pill = false;
+            let from_rest = self.switching_from_rest();
+            self.switch = Some(Sprung::at(1.));
+            self.leaving = (panel.is_none() && from_rest).then(|| Sprung::at(1.));
         }
         self.panel = panel;
         self.settings
@@ -241,6 +271,11 @@ impl FullscreenView {
             self.aside.update(cx, |aside, cx| aside.show(tab, cx));
         }
         self.stir(cx);
+    }
+
+    /// Whether the panel on show had finished coming in, so it has a whole self to fade out.
+    fn switching_from_rest(&self) -> bool {
+        self.switch.is_none_or(|switch| switch.resting())
     }
 
     fn stir(&mut self, cx: &mut Context<Self>) {
@@ -269,7 +304,10 @@ impl FullscreenView {
         }));
     }
 
-    fn hover(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn hover(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if !window.is_window_hovered() || !window.is_window_active() {
+            return;
+        }
         let pad = cx.theme().metrics.pad;
         let seek = self.seek.hovered(event.position, pad);
         if moved(self.over_seek, seek) {
@@ -336,13 +374,13 @@ impl FullscreenView {
     /// event the pointer has to be present for, so the ones still set when it left the window are
     /// dropped here instead. Crossing the window edge repaints on its own, so this is never late.
     fn watch(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let inside = window.is_window_hovered() && !self.left;
+        let inside = window.is_window_hovered() && window.is_window_active() && !self.left;
         if inside == self.inside {
             return;
         }
         self.inside = inside;
         if !inside {
-            self.over_seek = None;
+            self.unpark();
             self.last_pos = None;
             self.stir(cx);
         }
@@ -399,15 +437,14 @@ impl FullscreenView {
     /// How much of the tab just shown is still hidden, from 1 as the switch starts to 0 once it
     /// ends. It asks for another frame while the switch runs.
     fn switching(&mut self, window: &mut Window, cx: &App) -> f32 {
-        let Some(switch) = self.switch else {
+        let Some(switch) = self.switch.as_mut() else {
             return 0.;
         };
-        if cx.reduce_motion() || !switch.running() {
+        let hidden = switch.follow(0., Springs::FLIGHT, SPRING_REST, window, cx);
+        if hidden <= 0. {
             self.switch = None;
-            return 0.;
         }
-        window.request_animation_frame();
-        switch.hidden()
+        hidden.clamp(0., 1.)
     }
 
     fn volume_open(&self) -> bool {
@@ -451,7 +488,13 @@ impl FullscreenView {
         presentation_scale: f32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let radius = cx.theme().radius * 2.;
+        // The cover leaves the player bar with that cover's tight corners, which round out to
+        // its own as it lands, and tighten again on the way back.
+        let (tight, round) = (Artwork::rounding(cx), cx.theme().radius * 2.);
+        let radius = match self.on_show {
+            true => self.cover_zoom.get().radius(tight, round),
+            false => self.cover_zoom.get().radius(round, tight),
+        };
         let pad = px(COVER_LAYER_PAD);
         let inset = (layout_side - raster_side) / 2. - pad;
         let (album, small, local_id, named) = match self.playback.read(cx).shown_track(cx) {
@@ -486,8 +529,11 @@ impl FullscreenView {
         let revision = self.revision;
         let waiting = !local && album.is_some() && cover_large.is_none();
 
-        div()
+        // As the player opens, its cover comes into view with the rest of it while it flies.
+        let fade = cx.try_global::<CoverFade>().map_or(1., |fade| fade.0);
+        let cover = div()
             .id("fullscreen-artwork")
+            .when(fade < 1., |this| this.opacity(fade))
             .relative()
             .size(layout_side)
             .flex_none()
@@ -534,7 +580,21 @@ impl FullscreenView {
                                 )
                             }),
                     ),
-            )
+            );
+        // The cover flies in from the player bar as fullscreen opens, and slides and grows to
+        // its new place when a panel comes or goes, above everything while it travels.
+        // The controls falling asleep move the cover on a spring of their own, so layout only
+        // sends it flying while a panel is coming or going. The layer keeps room for how far
+        // the resting cover grows past its layout.
+        Flight::new("fullscreen-cover", cover)
+            .transfer_spring(Springs::ARTWORK_FLIGHT)
+            .lands_from(COVER_FLIGHT)
+            // Once the player closes, its cover flies back down onto the player bar's.
+            .heads_to((!self.on_show).then_some(COVER_FLIGHT))
+            .reports(self.cover_zoom.clone())
+            .follows(self.switch.is_some())
+            .reach((raster_side - layout_side) / 2. + pad)
+            .above()
     }
 
     fn open_context_menu(
@@ -853,16 +913,11 @@ impl FullscreenView {
             .child(label("fullscreen-total", total, false))
     }
 
-    /// The pill, the seek bar and the transport row. Below `Room::Roomy` the row spans the
-    /// whole window, so the volume button steps one control in from the right edge to leave the
-    /// corner to the leave button.
+    /// The seek bar and the transport row, with the volume at the row's right end. Below
+    /// `Room::Wide` the row along the bottom would run into the corner, so it starts from the
+    /// left instead and the volume follows the transport rather than the row's end.
     fn controls(&self, room: Room, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = *cx.theme();
-        let inline = self.panel.is_none();
-        let clear = match room.fits(Room::Roomy) {
-            true => Pixels::ZERO,
-            false => theme.metrics.control_small,
-        };
+        let centred = room.fits(Room::Wide);
 
         div()
             .id("fullscreen-controls")
@@ -874,31 +929,57 @@ impl FullscreenView {
             .max_w(px(SEEK_MAX))
             .flex_none()
             .on_click(|_, _, cx| cx.stop_propagation())
-            .when(inline, |this| this.child(self.pill(cx)))
-            .child(self.seek(cx))
-            .child(
+            // The seek bar and the transport travel as one when a panel moves them between
+            // the bottom of the window and the column under the cover.
+            .child(travelling(
+                "fullscreen-deck",
+                DECK_FLIGHT,
+                self.switch.is_some(),
+                self.on_show,
+                // The volume slider rises out of the transport and carries a bubble of its
+                // own, which is the farthest anything here paints past the deck.
+                px(VOLUME_RISE) + Scrubber::bubble_reach(VOLUME_BUBBLE_LIFT, cx),
                 div()
-                    .id("fullscreen-transport")
-                    .relative()
-                    .w_full()
                     .flex()
-                    .justify_center()
-                    .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
-                        this.over_transport = *hovering;
-                        cx.notify();
-                    }))
-                    .child(transport(&self.playback, true, cx))
+                    .flex_col()
+                    .items_center()
+                    .gap_3()
+                    .w_full()
+                    .child(self.seek(cx))
                     .child(
                         div()
-                            .absolute()
-                            .right(clear)
-                            .top_0()
-                            .bottom_0()
+                            .id("fullscreen-transport")
+                            .relative()
+                            .w_full()
                             .flex()
                             .items_center()
-                            .child(self.sound(cx)),
+                            .map(|this| match centred {
+                                true => this.justify_center(),
+                                false => this.justify_start().gap(px(CORNER_GAP)),
+                            })
+                            .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
+                                this.over_transport = *hovering;
+                                cx.notify();
+                            }))
+                            .child(transport(&self.playback, true, cx))
+                            .map(|this| {
+                                let sound = self.sound(cx);
+                                match centred {
+                                    true => this.child(
+                                        div()
+                                            .absolute()
+                                            .right_0()
+                                            .top_0()
+                                            .bottom_0()
+                                            .flex()
+                                            .items_center()
+                                            .child(sound),
+                                    ),
+                                    false => this.child(sound),
+                                }
+                            }),
                     ),
-            )
+            ))
     }
 
     /// The transport controls under the cover or along the bottom. A dock that `collapses` gives
@@ -966,9 +1047,9 @@ impl FullscreenView {
         let frosted = ambient::shown(cx);
         let lyrics = self.settings.read(cx).lyrics_enabled();
         let gap = px(PILL_GAP);
-        let linger = cx.listener(|this: &mut Self, hovering: &bool, _, cx| {
+        let linger = cx.listener(|this: &mut Self, hovering: &bool, window, cx| {
             this.over_pill = *hovering;
-            if *hovering {
+            if *hovering && window.is_window_hovered() && window.is_window_active() && !this.left {
                 this.poke(cx);
             }
             cx.notify();
@@ -1182,24 +1263,6 @@ impl FullscreenView {
             })
     }
 
-    fn floating(&self, hide: f32, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .absolute()
-            .bottom_3()
-            .w_full()
-            .flex()
-            .justify_center()
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .block_mouse_except_scroll()
-                    .opacity(1. - hide)
-                    .top(px(SINK) * hide)
-                    .child(self.pill(cx)),
-            )
-    }
-
     fn menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let (track, position) = self.context_menu.clone()?;
 
@@ -1213,42 +1276,58 @@ impl FullscreenView {
         )
     }
 
-    /// The leave button in the bottom right corner, centred on a player bar's height at every
-    /// width, so the breakpoint that stacks the chrome player bar cannot move it, and nudged
-    /// down by `LEAVE_DROP` to sit level with the volume button's glyph. It sinks and
-    /// fades with the idle spring rather than with the controls, so a pointer move still brings
-    /// it back when the controls are set to stay hidden. The column occludes, so hovering it
-    /// never reaches whatever sits behind it.
-    fn leave(&self, idle: f32, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The bottom right corner: the pill that picks what shows beside the cover, and the leave
+    /// button, in one row that never moves with the layout, so a panel coming or going
+    /// leaves the pill under the pointer that switched it. The row is centred on a player bar's
+    /// height at every width, so the breakpoint that stacks the chrome player bar cannot move it,
+    /// and nudged down by `LEAVE_DROP` to sit level with the transport. The pill sinks and fades
+    /// with the controls. The leave button follows the idle spring instead, so a
+    /// pointer move still brings it back when the controls are set to stay hidden. The row
+    /// occludes, so hovering it never reaches whatever sits behind it.
+    fn corner(
+        &self,
+        hide: f32,
+        idle: f32,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = *cx.theme();
         let frosted = ambient::shown(cx);
+        let sunk = |element: Div, by: f32| element.relative().top(px(SINK) * by).opacity(1. - by);
 
         div()
-            .id("leave-fullscreen-hover")
+            .id("fullscreen-corner")
             .occlude()
             .absolute()
-            .bottom(px(SINK) * -idle - px(LEAVE_DROP))
+            .bottom(-px(LEAVE_DROP))
             .right_5()
             .h(snapped(theme.metrics.player_bar, window))
             .flex()
-            .flex_col()
-            .justify_center()
-            .opacity(1. - idle)
+            .items_center()
+            .gap(px(CORNER_GAP))
             .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
                 this.over_leave = *hovering;
                 cx.notify();
             }))
-            .child(
-                Button::new("leave-fullscreen")
-                    .ghost()
-                    .when(frosted, Button::frosted)
-                    .small()
-                    .icon("icons/minimize.svg")
-                    .tooltip_above("player-fullscreen-leave")
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(ToggleFullscreen), cx)
-                    }),
-            )
+            .when(hide < 1., |this| {
+                this.child(sunk(div().child(self.pill(cx)), hide))
+            })
+            .when(idle < 1., |this| {
+                this.child(sunk(
+                    div().child(
+                        Button::new("leave-fullscreen")
+                            .ghost()
+                            .when(frosted, Button::frosted)
+                            .small()
+                            .icon("icons/minimize.svg")
+                            .tooltip_above("player-fullscreen-leave")
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(ToggleFullscreen), cx)
+                            }),
+                    ),
+                    idle,
+                ))
+            })
     }
 }
 
@@ -1301,6 +1380,15 @@ impl Render for FullscreenView {
         self.watch(window, cx);
         let idle = self.hidden(window, cx);
         let switching = self.switching(window, cx);
+        let leaving = self.leaving.as_mut().map(|leaving| {
+            leaving
+                .follow(0., PANEL_LEAVE, SPRING_REST, window, cx)
+                .clamp(0., 1.)
+        });
+        if leaving.is_none_or(|left| left <= 0.) {
+            self.leaving = None;
+        }
+        let leaving = leaving.filter(|left| *left > 0.);
         let hide = match self.settings.read(cx).fullscreen_controls_autohide() {
             FullscreenControlsAutohide::Automatic => idle,
             FullscreenControlsAutohide::AlwaysShown => 0.,
@@ -1386,8 +1474,13 @@ impl Render for FullscreenView {
         };
 
         let style = self.settings.read(cx).visualizer_style();
-        let visualizer_on =
-            self.panel.is_none() && style.shown() && self.playback.read(cx).steered(cx).is_none();
+        let visualizer_on = self
+            .settings
+            .read(cx)
+            .visualizer_screens()
+            .contains(self.panel)
+            && style.shown()
+            && self.playback.read(cx).steered(cx).is_none();
         match visualizer_on
             .then(|| self.playback.read(cx).spectrum(cx))
             .flatten()
@@ -1395,6 +1488,9 @@ impl Render for FullscreenView {
             Some(spectrum) => self.visualizer.show(cx.entity_id(), spectrum, window),
             None => self.visualizer.hide(),
         }
+        // The spectrum fades in and out, and the band over it with it, so both are drawn for
+        // as long as any of the spectrum shows rather than for as long as it is wanted.
+        let visualizer_presence = self.visualizer.presence();
         let bottom = |bounds: Bounds<Pixels>| bounds.origin.y + bounds.size.height;
         // The peaks stop an inset short of the artist line, so the glow never reaches the text.
         let visualizer_max =
@@ -1409,6 +1505,71 @@ impl Render for FullscreenView {
         let visualizer_tint = match ambient::shown(cx) {
             true => theme.tint.map(|tint| theme.primary_of(tint)),
             false => None,
+        };
+        // Over a panel the visualizer covers the panel's text, so it is drawn between the panel
+        // and the cover column, which keeps the controls in that column above it. There it is
+        // anchored to the root's own place in the window, which no panel moves, so it stands
+        // where it stood behind. The canvas behind `root_bounds` has no insets of its own and
+        // starts inside the root's padding, so only its size is the root's and the corner
+        // comes from `root_origin`.
+        let root = Bounds::new(self.root_origin.get(), self.root_bounds.get().size);
+        let over =
+            self.panel.is_some() && visualizer_presence > 0. && root.size.height > Pixels::ZERO;
+        let mut spectrum: Vec<AnyElement> = Vec::new();
+        if visualizer_presence > 0. {
+            spectrum.push(
+                Visualizer::new(self.visualizer.levels(), visualizer_max)
+                    .opacity(visualizer_presence)
+                    .style_kind(style)
+                    .when_some(visualizer_tint, |this, tint| this.tint(tint))
+                    .when_some(corner, |this, radius| this.corner_radius(radius))
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .into_any_element(),
+            );
+        }
+        // Straight over the visualizer and under the controls: a backdrop blurs only what is
+        // painted before it, so the bars stop reading through the transport while the title
+        // and the artist line keep their own edges. The band fades with the controls, so a
+        // hidden set takes it along, and with the spectrum, so it lasts for as long as bars
+        // still show under the controls.
+        if visualizer_presence > 0. && shown && shared::effects() {
+            let band = viewport.height * VEIL;
+            spectrum.push(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .h(band)
+                    .opacity((1. - hide) * (visualizer_presence * VEIL_LEAD).min(1.))
+                    .child(veil(
+                        VeilEdge::Bottom,
+                        band,
+                        VEIL_BLUR,
+                        theme.background,
+                        corner,
+                        window,
+                    ))
+                    .into_any_element(),
+            );
+        }
+        let (behind, between) = match over {
+            true => (
+                Vec::new(),
+                Some(
+                    anchored().position(root.origin).snap_to_window().child(
+                        div()
+                            .relative()
+                            .w(root.size.width)
+                            .h(root.size.height)
+                            .children(spectrum),
+                    ),
+                ),
+            ),
+            false => (spectrum, None),
         };
 
         div()
@@ -1451,44 +1612,80 @@ impl Render for FullscreenView {
                     .absolute()
                     .size_full(),
             )
-            .when(visualizer_on, |this| {
-                this.child(
-                    Visualizer::new(self.visualizer.levels(), visualizer_max)
-                        .style_kind(style)
-                        .when_some(visualizer_tint, |this, tint| this.tint(tint))
-                        .when_some(corner, |this, radius| this.corner_radius(radius))
-                        .absolute()
-                        .left_0()
-                        .right_0()
-                        .bottom_0(),
+            .child({
+                let root_origin = self.root_origin.clone();
+                canvas(
+                    move |bounds, _, _| root_origin.set(bounds.origin),
+                    |_, _, _, _| {},
                 )
+                .absolute()
+                .top_0()
+                .left_0()
             })
-            // Straight over the visualizer and under everything else: a backdrop blurs only
-            // what is painted before it, so the bars stop reading through the transport while
-            // the title and the artist line keep their own edges. The band fades with the
-            // controls, so a hidden set takes it along.
-            .when(visualizer_on && shown && shared::effects(), |this| {
-                let band = viewport.height * VEIL;
-                this.child(
+            .children(behind)
+            .child({
+                let column = staged.then(|| {
                     div()
-                        .absolute()
-                        .left_0()
-                        .right_0()
-                        .bottom_0()
-                        .h(band)
-                        .opacity(1. - hide)
-                        .child(veil(
-                            VeilEdge::Bottom,
-                            band,
-                            VEIL_BLUR,
-                            theme.background,
-                            corner,
-                            window,
-                        )),
-                )
-            })
-            .child(
-                div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .gap_5()
+                        .min_w_0()
+                        .when_else(split, |this| this.flex_1().h_full(), |this| this.w_full())
+                        .map(|this| glide(this, shift, bleed, window))
+                        // A split column carries the pill in its dock, and its cover
+                        // holds still while the panel beside it enters.
+                        .when(!split, |this| entering(this, switching))
+                        .child(self.artwork(side, raster_side, cover_scale, cx))
+                        // The title and artist travel with the cover when a panel
+                        // comes or goes.
+                        .child(lifted(
+                            Flight::new("fullscreen-meta", self.meta(hide, lift, window, cx))
+                                .unscaled()
+                                .follows(self.switch.is_some()),
+                            // The column's own layer would clip the line while it
+                            // is still outside the column's new bounds.
+                            self.on_show,
+                        ))
+                        .when(split, |this| {
+                            this.child(self.dock(
+                                theme.metrics.player_bar * DOCK,
+                                hide,
+                                false,
+                                room,
+                                cx,
+                            ))
+                        })
+                        .into_any_element()
+                });
+                let panel = self.panel.is_some().then(|| {
+                    div()
+                        .id("fullscreen-panel")
+                        .relative()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w_0()
+                        .min_h_0()
+                        .h_full()
+                        .on_click(|_, _, cx| cx.stop_propagation())
+                        .child({
+                            let panel_bounds = self.panel_bounds.clone();
+                            canvas(
+                                move |bounds, _, _| panel_bounds.set(bounds),
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .size_full()
+                        })
+                        .child(entering(
+                            div().size_full().min_h_0().child(self.aside.clone()),
+                            switching,
+                        ))
+                        .into_any_element()
+                });
+                let row = div()
                     .relative()
                     .flex()
                     .flex_1()
@@ -1496,58 +1693,33 @@ impl Render for FullscreenView {
                     .w_full()
                     .items_center()
                     .justify_between()
-                    .gap_8()
-                    .when(staged, |this| {
-                        this.child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .items_center()
-                                .justify_center()
-                                .gap_5()
-                                .min_w_0()
-                                .when_else(
-                                    split,
-                                    |this| this.flex_1().h_full(),
-                                    |this| this.w_full(),
-                                )
-                                .map(|this| glide(this, shift, bleed, window))
-                                // A split column carries the pill in its dock, and its cover
-                                // holds still while the panel beside it enters.
-                                .when(!split, |this| entering(this, switching))
-                                .child(self.artwork(side, raster_side, cover_scale, cx))
-                                .child(self.meta(hide, lift, window, cx))
-                                .when(split, |this| {
-                                    this.child(self.dock(
-                                        theme.metrics.player_bar * DOCK,
-                                        hide,
-                                        false,
-                                        room,
-                                        cx,
-                                    ))
-                                }),
-                        )
-                    })
-                    .when(self.panel.is_some(), |this| {
-                        this.child(
-                            div()
-                                .id("fullscreen-panel")
-                                .relative()
-                                .flex()
-                                .flex_col()
-                                .flex_1()
-                                .min_w_0()
-                                .min_h_0()
-                                .h_full()
-                                .on_click(|_, _, cx| cx.stop_propagation())
-                                .child(entering(
-                                    div().size_full().min_h_0().child(self.aside.clone()),
-                                    switching,
-                                ))
-                                .when(shown, |this| this.child(self.floating(hide, cx))),
-                        )
-                    }),
-            )
+                    .gap_8();
+                // Children paint in order, so the reversed row lists the panel first and still
+                // stands the column on the left.
+                match over {
+                    false => row.children(column).children(panel),
+                    true => row
+                        .flex_row_reverse()
+                        .children(panel)
+                        .children(between)
+                        .children(column),
+                }
+            })
+            // A panel the pill closed fades out where it stood while the cover takes the middle.
+            .when_some(leaving.filter(|_| self.panel.is_none()), |this, left| {
+                let at = self.panel_bounds.get();
+                let origin = at.origin - self.root_origin.get();
+                this.child(
+                    div()
+                        .absolute()
+                        .left(origin.x)
+                        .top(origin.y)
+                        .w(at.size.width)
+                        .h(at.size.height)
+                        .opacity(left)
+                        .child(self.aside.clone()),
+                )
+            })
             .when(!split && self.panel.is_some(), |this| {
                 this.child(self.strip(hide, window, cx))
             })
@@ -1560,8 +1732,46 @@ impl Render for FullscreenView {
                     cx,
                 ))
             })
-            .when(idle < 1., |this| this.child(self.leave(idle, window, cx)))
+            .when(idle < 1. || hide < 1., |this| {
+                this.child(self.corner(hide, idle, window, cx))
+            })
             .children(self.menu(cx))
+    }
+}
+
+/// Wraps a control that a panel moves to another part of the layout, so it slides there from
+/// where the one it replaces just stood rather than jumping. It keeps its size as it goes and
+/// draws above the layers it crosses while the player is `on_show`. It flies only while
+/// `switching`, as a panel comes or goes. Any other move is the controls' own, falling asleep
+/// or waking, and follows layout at once. `reach` is how far its bubbles and pop-overs paint
+/// past it, which the flying layer keeps room for until the flight has fully landed.
+fn travelling(
+    id: &'static str,
+    name: &'static str,
+    switching: bool,
+    on_show: bool,
+    reach: Pixels,
+    element: impl IntoElement,
+) -> Flight {
+    lifted(
+        Flight::new(id, element)
+            .seen_as(name)
+            .lands_from(name)
+            .recent()
+            .follows(switching)
+            .unscaled()
+            .reach(reach),
+        on_show,
+    )
+}
+
+/// Draws a flying control above the window only while the player is `on_show`. A player that
+/// is closing fades out as one, and a control drawn above it would stay behind at full strength
+/// until its flight landed.
+fn lifted(flight: Flight, on_show: bool) -> Flight {
+    match on_show {
+        true => flight.above(),
+        false => flight,
     }
 }
 
