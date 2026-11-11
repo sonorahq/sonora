@@ -31,6 +31,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The fullscreen visualizer rises from the bottom edge as it appears and sinks back as it goes.
 - The play button swaps its play and pause icons with a pop, and the next and previous icons slide on like a belt when clicked.
 - Play on a pinned or library card starts sooner, and its icon answers the click at once.
+- Everyone in a Sonora Session now hears the same moment of a song to within a fraction of a second, and the end of a song is no longer cut short for some listeners when the session moves to the next one.
 
 ### Fixed
 
@@ -42,6 +43,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reduce fullscreen visualizer redraws while keeping animation at up to 120 FPS.
 
 - Mixed English and Japanese lyrics no longer show duplicate English romanizations or misplaced spaces inside parentheses.
+- With Spotify, lyrics and the progress bar no longer run ahead of the music.
 
 ## [0.48.1] - 2026-11-08
 

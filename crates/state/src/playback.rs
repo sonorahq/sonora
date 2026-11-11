@@ -549,6 +549,9 @@ pub struct Playback {
     /// How many seeks the listener asked for, which a Sonora Session watches to share them. Seeks
     /// made for the session itself, through `locally`, are not counted.
     seeks: u64,
+    /// How many tracks played out to their end, which a Sonora Session tells apart from the
+    /// listener moving on.
+    ends: u64,
 }
 
 impl EventEmitter<PlaybackEvent> for Playback {}
@@ -692,6 +695,7 @@ impl Playback {
             devices: None,
             local: false,
             seeks: 0,
+            ends: 0,
         };
         // Start the local engine at startup so files can play before the first scan.
         if let Some(factory) = playback.session.read(cx).local_playback() {
@@ -2418,6 +2422,11 @@ impl Playback {
         self.seeks
     }
 
+    /// How many tracks played out to their end since launch.
+    pub fn ends(&self) -> u64 {
+        self.ends
+    }
+
     pub fn state(&self) -> &PlaybackState {
         &self.state
     }
@@ -3036,6 +3045,7 @@ impl Playback {
             }
             BackendEvent::Ended { .. } => {
                 let ended = self.track.take();
+                self.ends += 1;
                 self.state = PlaybackState::Idle;
                 self.position = Duration::ZERO;
                 self.clock.reset(Duration::ZERO, false);

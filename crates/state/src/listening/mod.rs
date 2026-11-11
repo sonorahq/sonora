@@ -8,7 +8,7 @@ mod server;
 mod wire;
 
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{App, Context, Entity, Task};
 use music::Track;
@@ -27,9 +27,14 @@ pub const CODE_LENGTH: usize = 6;
 /// How many upcoming tracks are shared. The server keeps no more than this either.
 const UPCOMING: usize = 100;
 /// How far playback here may stray from the session's before it is moved back in step.
-const DRIFT: Duration = Duration::from_millis(2500);
-/// How far it may stray when the session pauses or resumes, which is when a seek goes unheard.
-const NUDGE: Duration = Duration::from_millis(400);
+const DRIFT: Duration = Duration::from_millis(250);
+/// How far it may stray when the session pauses or resumes, or a track here has just loaded,
+/// which is when a seek goes unheard or nearly so.
+const NUDGE: Duration = Duration::from_millis(80);
+/// How near its end the track here may be for the session's move to the next one to wait for
+/// it to play out here, rather than cut it short with a load. It is also how long that wait may
+/// last.
+const LATE: Duration = Duration::from_secs(5);
 /// How often playback here is compared with the session's.
 const CHECK: Duration = Duration::from_secs(2);
 /// How many readings of the server's clock are kept. The one that took the shortest round trip
@@ -97,6 +102,15 @@ pub struct Listening {
     baseline: Option<Mark>,
     /// `Playback::seeks` when playback was last shared or brought in step.
     seeks: u64,
+    /// `Playback::ends` then, so a track playing out is told apart from the listener moving on.
+    ends: u64,
+    /// Whether a track this app moved the session to is loading. The session hears it as paused
+    /// until it plays here, and then where it is heard from.
+    starting: bool,
+    /// Whether playback was loading when last looked at, so a load finishing is noticed.
+    loading: bool,
+    /// Since when the session's next track waits for the one here to play out.
+    deferred: Option<Instant>,
     /// The last state this app sent, and the last of its own the server echoed. States from
     /// others that arrive in between are older than one of ours and are passed over.
     sent: u64,
@@ -124,7 +138,7 @@ impl Listening {
         io: Io,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.observe(&playback, |this, _, cx| this.publish(cx))
+        cx.observe(&playback, |this, _, cx| this.on_playback(cx))
             .detach();
         cx.observe(&queue, |this, _, cx| this.publish(cx)).detach();
         cx.subscribe(&session, |this, _, event, cx| this.on_session(event, cx))
@@ -144,6 +158,10 @@ impl Listening {
             waiting: None,
             baseline: None,
             seeks: 0,
+            ends: 0,
+            starting: false,
+            loading: false,
+            deferred: None,
             sent: 0,
             echoed: 0,
             clock: VecDeque::new(),
@@ -434,6 +452,8 @@ impl Listening {
                 self.baseline = None;
                 self.shared = state.clone();
                 self.seeks = self.playback.read(cx).seeks();
+                self.ends = self.playback.read(cx).ends();
+                self.starting = false;
                 self.follow_provider(cx);
                 match state.filter(|state| state.track.is_some()) {
                     Some(state) => {
@@ -559,8 +579,24 @@ impl Listening {
         self.waiting = None;
         self.baseline = None;
         self.checking = None;
+        self.starting = false;
+        self.deferred = None;
         self.code_shown = false;
         cx.notify();
+    }
+
+    /// Follows playback here: a state waiting for its track to come up, a change to share, and a
+    /// track that just loaded, which is brought in step while a seek still costs nothing heard.
+    fn on_playback(&mut self, cx: &mut Context<Self>) {
+        let loading = self.playback.read(cx).is_loading();
+        let loaded = std::mem::replace(&mut self.loading, loading) && !loading;
+        if self.waiting.is_some() {
+            self.catch_up(cx);
+        }
+        self.publish(cx);
+        if loaded {
+            self.realign(NUDGE, cx);
+        }
     }
 
     /// Leaves the session when the listener signs out or moves to another provider than the
@@ -623,6 +659,11 @@ impl Listening {
         let Some(id) = track.id.clone() else {
             return;
         };
+        if state.playing && self.finishing(&id, cx) {
+            self.waiting = Some(state);
+            return;
+        }
+        self.deferred = None;
         let at = self.expected(&state);
         let queue = self.queue.clone();
         let current = queue.read(cx).current().and_then(|track| track.id.clone());
@@ -668,6 +709,29 @@ impl Listening {
         });
         self.baseline = Some(self.mark(cx));
         self.seeks = self.playback.read(cx).seeks();
+        self.ends = self.playback.read(cx).ends();
+        self.starting = false;
+    }
+
+    /// Whether the session has moved on to `id` while the track before it still plays out here,
+    /// so it is left to end on its own, the way it does gaplessly, rather than cut short by a
+    /// load. That waits no longer than `LATE`, in case the track here has stalled.
+    fn finishing(&mut self, id: &str, cx: &App) -> bool {
+        let queue = self.queue.read(cx);
+        let playback = self.playback.read(cx);
+        let next = queue
+            .chosen_upcoming()
+            .next()
+            .and_then(|track| track.id.as_deref());
+        let Some(total) = queue.current().map(|track| track.duration) else {
+            return false;
+        };
+        let near = !total.is_zero() && total.saturating_sub(playback.live_position()) < LATE;
+        if next != Some(id) || !near || !playback.wants_playing() || playback.is_loading() {
+            return false;
+        }
+        let since = *self.deferred.get_or_insert_with(Instant::now);
+        since.elapsed() < LATE
     }
 
     /// Tells the session what plays here when the listener changed it: another track, play or
@@ -676,22 +740,49 @@ impl Listening {
         if self.room.is_none() || self.asking || self.waiting.is_some() || !self.ready(cx) {
             return;
         }
-        let Some(link) = &self.link else {
+        if self.link.is_none() {
             return;
-        };
+        }
         let mark = self.mark(cx);
-        let seeks = self.playback.read(cx).seeks();
-        if self.baseline.as_ref() == Some(&mark) && seeks == self.seeks {
+        let playback = self.playback.read(cx);
+        let (seeks, ends, loading) = (playback.seeks(), playback.ends(), playback.is_loading());
+        let hosting = self.room.as_ref().is_some_and(Room::hosting);
+        // a track playing out moves every member on by itself, and the host says where that
+        // landed, so the members do not each pull the others to their own idea of it
+        let ended = ends != self.ends;
+        if ended && !hosting {
+            if !loading {
+                self.baseline = Some(mark);
+                self.seeks = seeks;
+                self.ends = ends;
+            }
+            return;
+        }
+        let started = self.starting && !loading;
+        let same = self.baseline.as_ref() == Some(&mark) && seeks == self.seeks;
+        // the next track is heard only once it loads, and that is the moment worth sharing
+        if (same && !ended && !started) || (ended && loading) {
             return;
         }
         let reason = match &self.baseline {
+            _ if started => "load",
+            _ if ended => "end",
             None => "first state",
             Some(baseline) if baseline.track != mark.track => "track",
             Some(baseline) if baseline.playing != mark.playing => "play or pause",
             Some(baseline) if baseline.upcoming != mark.upcoming => "queue",
             Some(_) => "seek",
         };
-        let state = self.snapshot(cx);
+        let mut state = self.snapshot(cx);
+        // nothing plays while the track loads here, so the others load it paused and play once
+        // this app says it does
+        self.starting = loading && state.playing;
+        state.playing &= !loading;
+        // the server stamps the state as it arrives, by when the track has moved on that far
+        let lead = match state.playing {
+            true => self.one_way(),
+            false => 0,
+        };
         self.sent += 1;
         log::debug!(
             "listening: sharing {:?} for its {reason}, playing {}, at {} ms",
@@ -699,16 +790,22 @@ impl Listening {
             state.playing,
             state.position
         );
-        link.send(Request::State {
-            state: Box::new(state.clone()),
-            seq: self.sent,
-        });
+        if let Some(link) = &self.link {
+            link.send(Request::State {
+                state: Box::new(Shared {
+                    position: state.position + lead,
+                    ..state.clone()
+                }),
+                seq: self.sent,
+            });
+        }
         self.shared = Some(Shared {
             at: self.server_now(),
             ..state
         });
         self.baseline = Some(mark);
         self.seeks = seeks;
+        self.ends = ends;
     }
 
     fn mark(&self, cx: &App) -> Mark {
@@ -741,20 +838,27 @@ impl Listening {
         }
     }
 
+    /// Compares playback here with the session's every `CHECK`. A state held back for the track
+    /// here to play out is tried again first, so a track that stalled and stopped notifying
+    /// cannot hold it past `LATE`.
     fn check_every(&self, cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(CHECK).await;
-                if this.update(cx, |this, cx| this.check(cx)).is_err() {
+                let alive = this.update(cx, |this, cx| match this.waiting.is_some() {
+                    true => this.catch_up(cx),
+                    false => this.realign(DRIFT, cx),
+                });
+                if alive.is_err() {
                     break;
                 }
             }
         })
     }
 
-    /// Moves playback back in step with the session when it strayed, as after a stall while the
-    /// track buffered here.
-    fn check(&mut self, cx: &mut Context<Self>) {
+    /// Moves playback back in step with the session when it strayed further than `tolerance`, as
+    /// after a stall while the track buffered here.
+    fn realign(&mut self, tolerance: Duration, cx: &mut Context<Self>) {
         if self.asking || self.waiting.is_some() || !self.ready(cx) {
             return;
         }
@@ -774,9 +878,13 @@ impl Listening {
         {
             return;
         }
+        // a session state from before its track played out says nothing of where it is now
+        if self.past_end(state) {
+            return;
+        }
         let at = self.expected(state);
         let drift = apart(playback.live_position(), at);
-        if drift <= DRIFT {
+        if drift <= tolerance {
             return;
         }
         log::info!("listening: {drift:?} out of step, seeking to {at:?}");
@@ -788,15 +896,34 @@ impl Listening {
 
     /// Where the session's track is now, going by when the server took `state`.
     fn expected(&self, state: &Shared) -> Duration {
-        let mut at = state.position;
-        if state.playing {
-            at += self.server_now().saturating_sub(state.at);
-        }
-        let at = Duration::from_millis(at);
+        let at = self.unclamped(state);
         match state.track.as_ref().map(|track| track.duration) {
             Some(total) if !total.is_zero() => at.min(total),
             _ => at,
         }
+    }
+
+    fn unclamped(&self, state: &Shared) -> Duration {
+        let mut at = state.position;
+        if state.playing {
+            at += self.server_now().saturating_sub(state.at);
+        }
+        Duration::from_millis(at)
+    }
+
+    /// Whether `state`'s track would have played out by now, so the session has moved past it.
+    fn past_end(&self, state: &Shared) -> bool {
+        state
+            .track
+            .as_ref()
+            .map(|track| track.duration)
+            .is_some_and(|total| !total.is_zero() && self.unclamped(state) >= total)
+    }
+
+    /// Half the round trip of the clock reading that is trusted: how long a message takes to
+    /// reach the server, in milliseconds.
+    fn one_way(&self) -> u64 {
+        self.clock.iter().map(|(trip, _)| *trip).min().unwrap_or(0) / 2
     }
 
     /// Notes a reading of the server's clock taken by a ping sent at `t`.
