@@ -18,6 +18,7 @@ use crate::chrome::{
 use crate::shared::confirm::Confirm;
 use crate::shared::menus::CardMenu;
 use crate::shared::playlist_editor::PlaylistEditor;
+use crate::shared::soloist::SoloistSetup;
 use crate::shared::tag_editor::TagEditor;
 use crate::shared::widevine::WidevinePrompt;
 use crate::shells::Shell;
@@ -36,6 +37,7 @@ pub(crate) struct Workspace {
     confirm: Entity<Confirm>,
     card_menu: Entity<CardMenu>,
     widevine: Entity<WidevinePrompt>,
+    soloist: Entity<SoloistSetup>,
     jam_join: Entity<JamJoin>,
     jam_code: Entity<JamCode>,
     session_join: Entity<SessionJoin>,
@@ -78,6 +80,7 @@ impl Workspace {
             confirm: Confirm::entity(cx),
             card_menu: CardMenu::entity(cx),
             widevine: cx.new(WidevinePrompt::new),
+            soloist: cx.new(SoloistSetup::new),
             jam_join: cx.new(JamJoin::new),
             jam_code: cx.new(JamCode::new),
             session_join: cx.new(SessionJoin::new),
@@ -391,6 +394,7 @@ impl Render for Workspace {
             .child(self.tag_editor.clone())
             .child(self.confirm.clone())
             .child(self.widevine.clone())
+            .child(self.soloist.clone())
             .child(self.jam_join.clone())
             .child(self.jam_code.clone())
             .child(self.session_join.clone())

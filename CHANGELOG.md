@@ -15,10 +15,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Choose which Now playing views show the visualizer: the artwork, the lyrics or the queue.
 - Prioritize word-synced lyrics over the source order with a switch in Lyrics sources.
 - Turn on a Genre column in song lists and sort by it, for local files, Subsonic servers and Apple Music.
+- Play Spotify through Soloist, Spotify's own player, including lossless. Set it up under Settings, Playback.
 
 ### Changed
 
 - The album cover moves faster when opening and closing the fullscreen player.
+- Accounts Spotify refuses to play on are offered the Soloist setup at launch and from the playback key error.
 - Nightly updates reuse released executables after a stable release, so they become available sooner.
 - Opening the fullscreen player flies the cover up from the player bar while the rest fades in.
 - The fullscreen cover and controls slide aside when lyrics or the queue open, which fade into place, and back when they close.
