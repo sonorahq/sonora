@@ -180,6 +180,11 @@ struct Worker {
     /// A Jam link asked about before the dealer connected, looked up once it has.
     held: Option<String>,
     now: Option<Arc<Snapshot>>,
+    /// The id of the run of tracks being reported, new whenever another collection starts, and
+    /// the id of the current track's play, new for every track. Spotify's apps name both, and
+    /// listeners of a Jam tell a new track from a seek by them.
+    run: String,
+    play: String,
     active_since: Option<SystemTime>,
     claimed_at: Option<Instant>,
     /// The id and sender of the last command handled, which the next state echoes back.
@@ -214,6 +219,8 @@ impl Worker {
             connected: false,
             held: None,
             now: None,
+            run: String::new(),
+            play: String::new(),
             active_since: None,
             claimed_at: None,
             last_command: (0, String::new()),
@@ -676,7 +683,26 @@ impl Worker {
 
     async fn publish(&mut self, now: Option<Arc<Snapshot>>) {
         let before = std::mem::replace(&mut self.now, now);
+        self.identify(before.as_deref());
         self.sync(before).await;
+    }
+
+    /// Gives what plays now new ids where it is not what played `before`: the track's play for
+    /// another track, and the run as well for another collection, or for another track when
+    /// there is no collection and each track is its own.
+    fn identify(&mut self, before: Option<&Snapshot>) {
+        let Some(now) = self.now.as_deref() else {
+            return;
+        };
+        let moved = before.is_none_or(|before| before.track != now.track);
+        let started = before.is_none_or(|before| before.context != now.context)
+            || (moved && now.context.is_none());
+        if started || self.run.is_empty() {
+            self.run = play_id();
+        }
+        if moved || started || self.play.is_empty() {
+            self.play = play_id();
+        }
     }
 
     /// Puts the state the device is in now, given what it reported `before`.
@@ -749,6 +775,22 @@ impl Worker {
     async fn put(&mut self, reason: PutStateReason) -> Option<Cluster> {
         let request = self.request_for(reason);
         self.last_put = Some(Instant::now());
+        let state = &request.device.player_state;
+        log::debug!(
+            "connect: putting {reason:?}, active {}, {} uid {:?} in {} at {:?}, run {}, play {}, {}ms, playing {}, paused {}, {} before, {} after",
+            request.is_active,
+            state.track.uri,
+            state.track.uid,
+            state.context_uri,
+            state.index.as_ref().map(|index| index.track),
+            state.session_id,
+            state.playback_id,
+            state.position_as_of_timestamp,
+            state.is_playing,
+            state.is_paused,
+            state.prev_tracks.len(),
+            state.next_tracks.len(),
+        );
         let answer = self
             .session
             .spclient()
@@ -839,6 +881,10 @@ impl Worker {
             .collect();
         state.context_url = format!("context://{uri}");
         state.context_uri = uri;
+        if !self.run.is_empty() {
+            state.session_id = self.run.clone();
+        }
+        state.playback_id = self.play.clone();
         // a device taking over finds the track by where it sits as well as by its uri
         state.index = MessageField::from_option(now.index.map(|track| ContextIndex {
             track: track as u32,
@@ -1772,6 +1818,11 @@ fn started_by_play(play: &PlayCommand) -> Start {
         preserve_queue: false,
         restart: true,
     }
+}
+
+/// A fresh id for a run of tracks or one track's play, in the 32 hex digits Spotify's apps use.
+fn play_id() -> String {
+    format!("{:032x}", fastrand::u128(..))
 }
 
 /// A volume from 0 to 1 on Spotify's 16-bit scale.
