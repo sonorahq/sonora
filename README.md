@@ -20,6 +20,7 @@
 \
 [![Discord](https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/a8N8Tx23rV)
 [![Matrix](https://img.shields.io/badge/Matrix-000000?style=for-the-badge&logo=matrix&logoColor=white)](https://matrix.to/#/#sonora:nolight.dev)
+[![Support us](https://img.shields.io/badge/Support_us-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/R5A72AGYNZ)
 
 ### A native, familiar music streaming client
 
