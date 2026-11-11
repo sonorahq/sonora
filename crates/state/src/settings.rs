@@ -13,7 +13,7 @@ pub use self::themes::{ThemeFamily, ThemeOffer, ThemeVariant};
 pub(crate) use self::themes::{is_own_link, read_link as read_theme_link};
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -493,6 +493,10 @@ struct Values {
     silenced_requirements: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     scrobbling: BTreeMap<String, Account>,
+    /// Providers, by slug, whose plays stay out of the linked scrobbling services. Some of them
+    /// scrobble to Last.fm on their own, and with both on every listen is counted twice.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    unscrobbled: BTreeSet<String>,
     appearance: Appearance,
 }
 
@@ -692,6 +696,7 @@ impl Default for Values {
             hidden_nav: Vec::new(),
             silenced_requirements: Vec::new(),
             scrobbling: BTreeMap::new(),
+            unscrobbled: BTreeSet::new(),
             appearance: Appearance::default(),
         }
     }
@@ -1238,6 +1243,12 @@ impl AppSettings {
     /// Whether music keeps the system awake and, in fullscreen, the display.
     pub fn stay_awake(&self) -> bool {
         self.values.stay_awake
+    }
+
+    /// Whether plays from the provider with this slug are submitted to the linked scrobbling
+    /// services. The provider itself hears about them either way.
+    pub fn scrobbles(&self, provider: &str) -> bool {
+        !self.values.unscrobbled.contains(provider)
     }
 
     /// Every linked scrobbling account, keyed by its service slug.
@@ -1852,6 +1863,14 @@ impl AppSettings {
 
     pub fn set_stay_awake(&mut self, stay_awake: bool, cx: &mut Context<Self>) {
         self.values.stay_awake = stay_awake;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_scrobbles(&mut self, provider: &str, enabled: bool, cx: &mut Context<Self>) {
+        match enabled {
+            true => self.values.unscrobbled.remove(provider),
+            false => self.values.unscrobbled.insert(provider.to_owned()),
+        };
         self.schedule_save(cx);
     }
 

@@ -18,6 +18,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Play Spotify through Soloist, Spotify's own player, including lossless. Set it up under Settings, Playback.
 - Blur the desktop behind a see-through window on Linux compositors that support it, such as KDE Plasma and niri.
 - Tidal tracks show their bit depth or bit rate in the signal path.
+- Keep plays from the signed-in provider out of Last.fm and the other linked services with a switch in Scrobbling, for accounts that already scrobble on their own.
 
 ### Changed
 
