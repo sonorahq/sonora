@@ -420,6 +420,7 @@ def main():
         if sys.platform != "darwin":
             print("icons: actool needs macOS, sonora.icon and Assets.car left as they were")
         elif write_icon_bundle(master, bundle) or not car.exists():
+            car.unlink(missing_ok=True)
             compile_icon_bundle(bundle, workdir, car)
             compiled = True
 
