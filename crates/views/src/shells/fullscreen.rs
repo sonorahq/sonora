@@ -48,6 +48,10 @@ const COVER_LAYER_PAD: f32 = 2.;
 const COLUMN_GAP: f32 = 1.25;
 const PAGE_PAD: f32 = 1.5;
 const META_GAP: f32 = 0.25;
+/// The page's side padding and the gap between the cover column and a panel from `Room::Wide`
+/// up, in rems, which set how wide the split column is.
+const PAGE_SIDE: f32 = 2.;
+const ROW_GAP: f32 = 2.;
 const DOCK: f32 = 1.15;
 const DOCK_FULL: f32 = 1.7;
 const SINK: f32 = 24.;
@@ -464,11 +468,14 @@ impl FullscreenView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // The cover leaves the player bar with that cover's tight corners, which round out to
-        // its own as it lands, and tighten again on the way back.
+        // its own as it lands, and tighten again on the way back. A panel coming or going only
+        // scales it between two sizes of its own, so it keeps its own corners the whole way.
         let (tight, round) = (Artwork::rounding(cx), cx.theme().radius * 2.);
-        let radius = match self.on_show {
-            true => self.cover_zoom.get().radius(tight, round),
-            false => self.cover_zoom.get().radius(round, tight),
+        let zoom = self.cover_zoom.get();
+        let radius = match (self.on_show, self.switch.is_some()) {
+            (true, true) => zoom.radius(round, round),
+            (true, false) => zoom.radius(tight, round),
+            (false, _) => zoom.radius(round, tight),
         };
         let pad = px(COVER_LAYER_PAD);
         let inset = (layout_side - raster_side) / 2. - pad;
@@ -920,13 +927,14 @@ impl FullscreenView {
     /// has no room for that row beside the corner, so the controls lie the way the stacked
     /// player bar does: the transport on a row of its own, and the seek bar along the bottom,
     /// level with the corner and ending short of it. With a panel open the strip above
-    /// carries the transport instead, and the corner takes the volume.
-    fn controls(&self, room: Room, cx: &mut Context<Self>) -> impl IntoElement {
+    /// carries the transport instead, and the corner takes the volume. Centred controls are at
+    /// most `deck` wide, so they keep one width whether they sit in the column or at the bottom.
+    fn controls(&self, room: Room, deck: Pixels, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         let centred = room.fits(Room::Wide);
-        let deck = div().flex().flex_col().items_center().gap_3().w_full();
-        let deck = match centred {
-            true => deck.child(self.seek(cx)).child(
+        let stack = div().flex().flex_col().items_center().gap_3().w_full();
+        let stack = match centred {
+            true => stack.child(self.seek(cx)).child(
                 self.transport_row("fullscreen-transport", true, cx)
                     .relative()
                     .w_full()
@@ -944,22 +952,23 @@ impl FullscreenView {
             ),
             false => {
                 let clear = self.corner_width.get() + px(CORNER_GAP) * 2.;
-                deck.when(self.panel.is_none(), |this| {
-                    this.child(
-                        self.transport_row("fullscreen-transport", true, cx)
+                stack
+                    .when(self.panel.is_none(), |this| {
+                        this.child(
+                            self.transport_row("fullscreen-transport", true, cx)
+                                .w_full()
+                                .justify_center(),
+                        )
+                    })
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
                             .w_full()
-                            .justify_center(),
+                            .h(theme.metrics.control_small)
+                            .pr(clear)
+                            .child(self.seek(cx)),
                     )
-                })
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .w_full()
-                        .h(theme.metrics.control_small)
-                        .pr(clear)
-                        .child(self.seek(cx)),
-                )
             }
         };
 
@@ -970,7 +979,7 @@ impl FullscreenView {
             .items_center()
             .gap_3()
             .w_full()
-            .when(centred, |this| this.max_w(px(SEEK_MAX)))
+            .when(centred, |this| this.max_w(deck))
             .flex_none()
             .on_click(|_, _, cx| cx.stop_propagation())
             // The seek bar and the transport travel as one when a panel moves them between
@@ -983,7 +992,7 @@ impl FullscreenView {
                 // The volume slider rises out of the transport and carries a bubble of its
                 // own, which is the farthest anything here paints past the deck.
                 px(VOLUME_RISE) + Scrubber::bubble_reach(VOLUME_BUBBLE_LIFT, cx),
-                deck,
+                stack,
             ))
     }
 
@@ -996,6 +1005,7 @@ impl FullscreenView {
         hide: f32,
         collapses: bool,
         room: Room,
+        deck: Pixels,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // The clamp runs from the controls' own height once it is known. From a taller cap the
@@ -1042,7 +1052,7 @@ impl FullscreenView {
                             .absolute()
                             .size_full(),
                         )
-                        .child(self.controls(room, cx)),
+                        .child(self.controls(room, deck, cx)),
                 )
             })
     }
@@ -1298,6 +1308,10 @@ impl Render for FullscreenView {
         let rem = window.rem_size();
         let line = |step: Text| phi().to_pixels(theme.text(step).into(), rem).round();
         let meta = line(Text::Title) + rem * META_GAP + line(Text::Body);
+        // The controls fill the split column, so beside no panel they stop at the column's width
+        // too and a panel coming or going never stretches them while they fly.
+        let column = (viewport.width - rem * (PAGE_SIDE * 2. + ROW_GAP)) / 2.;
+        let deck = px(SEEK_MAX).min(column).max(Pixels::ZERO);
         // The page ends as much nearer the window's bottom edge as the corner sits lower, so
         // the transport along the bottom stays level with the corner.
         let foot = rem * PAGE_PAD + px(DECK_LIFT) - PlayerBar::fullscreen_drop(window, cx);
@@ -1540,6 +1554,7 @@ impl Render for FullscreenView {
                                 hide,
                                 false,
                                 room,
+                                deck,
                                 cx,
                             ))
                         })
@@ -1615,6 +1630,7 @@ impl Render for FullscreenView {
                     hide,
                     !staged,
                     room,
+                    deck,
                     cx,
                 ))
             })
