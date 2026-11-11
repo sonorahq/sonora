@@ -85,6 +85,7 @@ column-index = #
 column-title = Název
 column-artist = Interpret
 column-album = Album
+column-genre = Žánr
 column-date-added = Datum přidání
 column-added-by = Přidáno uživatelem
 column-modified = Změněno

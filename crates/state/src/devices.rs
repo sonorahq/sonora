@@ -468,13 +468,15 @@ impl Devices {
         self.ticking = None;
     }
 
-    /// Lists the app on the device network, or takes it off, as the setting says.
-    fn apply(&mut self, cx: &mut Context<Self>) {
+    /// Lists the app on the device network, or takes it off, as the setting says. It stays off
+    /// while Soloist plays: Soloist is a device of its own on that network, and the two would
+    /// keep taking playback from each other.
+    pub(crate) fn apply(&mut self, cx: &mut Context<Self>) {
         let Some(link) = self.link.clone() else {
             return;
         };
         let settings = self.settings.read(cx);
-        let wanted = settings.spotify_connect();
+        let wanted = settings.spotify_connect() && !music::soloist::ready();
         let naming = match settings.spotify_connect_name() {
             ConnectName::Sonora => Naming::App,
             ConnectName::Both => Naming::AppOnComputer,
@@ -637,6 +639,36 @@ impl Devices {
         self.list(cx);
         self.tick(cx);
         self.redraw(cx);
+    }
+
+    /// The album, playlist or other collection the other device is playing from. `None` when
+    /// nothing plays or the song was queued by hand. The name comes from the song for an album and
+    /// from the library for a playlist, so it can be missing.
+    pub(crate) fn origin(&self, cx: &App) -> Option<Origin> {
+        let state = &self.elsewhere()?.state;
+        let playing = state.track.as_ref().filter(|row| !row.queued)?;
+        let (origin, name) = match state.context.as_ref()? {
+            Collection::Album(id) => (
+                Origin::album(id),
+                self.listed
+                    .get(&playing.id)
+                    .filter(|track| track.album_id.as_ref() == Some(id))
+                    .map(|track| track.album.as_str()),
+            ),
+            Collection::Playlist(id) => (
+                Origin::playlist(id),
+                self.library
+                    .read(cx)
+                    .playlist(id)
+                    .map(|playlist| playlist.name.as_str()),
+            ),
+            Collection::Saved => (Origin::saved(), None),
+            Collection::Radio(id) => (Origin::radio(id), None),
+        };
+        Some(match name {
+            Some(name) => origin.named(name),
+            None => origin,
+        })
     }
 
     /// Resolves the active song, history and upcoming tracks through one cache and task.

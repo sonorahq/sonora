@@ -221,7 +221,7 @@ impl Glide {
                 .beat
                 .replace(now)
                 .map(|beat| now.duration_since(beat).min(STALL))
-                .unwrap_or(Duration::from_secs_f32(1. / HERTZ));
+                .unwrap_or_else(|| Duration::from_secs_f32(1. / HERTZ));
             let target = held(drift.target, scroll);
             let springing = drift.springing;
             let settled = if springing {

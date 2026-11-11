@@ -437,7 +437,7 @@ impl MusicApi for LocalClient {
     async fn import_playlist(&self, path: &Path) -> Result<ImportedPlaylist> {
         let bytes =
             std::fs::read(path).with_context(|| format!("cannot read {}", path.display()))?;
-        let folder = path.parent().unwrap_or(Path::new(""));
+        let folder = path.parent().unwrap_or_else(|| Path::new(""));
         let (found, skipped) = self.find_files(&m3u::read(&bytes, folder));
         let name = path
             .file_stem()
@@ -461,7 +461,7 @@ impl MusicApi for LocalClient {
 
     async fn export_playlist(&self, playlist_id: &str, path: &Path) -> Result<()> {
         let tracks = self.listed(&self.store.tracks(playlist_id)?);
-        let folder = path.parent().unwrap_or(Path::new(""));
+        let folder = path.parent().unwrap_or_else(|| Path::new(""));
         std::fs::write(path, m3u::write(&tracks, folder))
             .with_context(|| format!("cannot write {}", path.display()))
     }

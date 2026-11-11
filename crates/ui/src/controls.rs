@@ -2,14 +2,15 @@ use std::sync::OnceLock;
 
 use gpui::prelude::*;
 use gpui::{
-    App, Div, Font, MouseButton, Pixels, SharedString, StyleRefinement, Window, WindowControlArea,
-    div, font, px, svg,
+    App, Div, ElementId, Font, MouseButton, Pixels, SharedString, StyleRefinement, Window,
+    WindowControlArea, div, font, px, svg,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use gpui::{CursorStyle, Decorations, ResizeEdge};
 
 use i18n::t;
 
+use crate::motion::{glow_fill, glowing, mix};
 use crate::theme::ActiveTheme as _;
 
 const SYSTEM_ACTS: bool = cfg!(target_os = "windows");
@@ -213,12 +214,24 @@ impl RenderOnce for WindowControls {
             })
             .children(wanted.into_iter().flatten().map(move |control| {
                 let danger = control == Control::Close;
+                let (fill, tint) = match danger {
+                    true => (theme.danger, theme.danger_foreground),
+                    false => (theme.secondary_active, theme.foreground),
+                };
+                // The fill and the glyph both follow one glow, so they fade out together.
+                let (button, level) = glowing(
+                    div().id(control.id()),
+                    &ElementId::from(control.id()),
+                    false,
+                    1.,
+                    window,
+                    cx,
+                );
+                let tint = mix(theme.muted_foreground, tint, level);
 
-                div()
-                    .id(control.id())
+                button
                     .role(gpui::accesskit::Role::Button)
                     .aria_label(control.name())
-                    .group(control.id())
                     .flex()
                     .flex_none()
                     .items_center()
@@ -230,12 +243,7 @@ impl RenderOnce for WindowControls {
                     )
                     .occlude()
                     .window_control_area(control.area())
-                    .hover(move |style| {
-                        style.bg(match danger {
-                            true => theme.danger,
-                            false => theme.secondary_active,
-                        })
-                    })
+                    .when_some(glow_fill(None, fill, level), |this, fill| this.bg(fill))
                     .when(is_windows, |this| {
                         this.active(move |style| {
                             style.bg(match danger {
@@ -252,13 +260,7 @@ impl RenderOnce for WindowControls {
                                 .line_height(CAPTION_GLYPH)
                                 .relative()
                                 .top(CAPTION_NUDGE)
-                                .text_color(theme.muted_foreground)
-                                .group_hover(control.id(), move |style| {
-                                    style.text_color(match danger {
-                                        true => theme.danger_foreground,
-                                        false => theme.foreground,
-                                    })
-                                })
+                                .text_color(tint)
                                 .child(control.caption_glyph()),
                         ),
                         None => this.child(
@@ -267,13 +269,7 @@ impl RenderOnce for WindowControls {
                                 .id("glyph")
                                 .size(GLYPH)
                                 .flex_none()
-                                .text_color(theme.muted_foreground)
-                                .group_hover(control.id(), move |style| {
-                                    style.text_color(match danger {
-                                        true => theme.danger_foreground,
-                                        false => theme.foreground,
-                                    })
-                                }),
+                                .text_color(tint),
                         ),
                     })
                     .when(!control.system(), |this| {

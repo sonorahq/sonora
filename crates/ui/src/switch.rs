@@ -1,10 +1,10 @@
 use gpui::prelude::*;
 use gpui::{
-    App, ClickEvent, Div, ElementId, Interactivity, SharedString, Stateful, StyleRefinement,
+    App, ClickEvent, Div, ElementId, Hsla, Interactivity, SharedString, Stateful, StyleRefinement,
     Window, div, px,
 };
 
-use crate::motion::{Motion, Motioned as _, Movement};
+use crate::motion::{Motion, Motioned as _, Movement, glow_fill, glowing};
 use crate::theme::ActiveTheme as _;
 
 const SCALE: f32 = 0.85;
@@ -114,7 +114,8 @@ impl RenderOnce for Switch {
             false => (theme.primary_foreground, theme.muted_foreground),
         };
 
-        let movement = window.use_keyed_state((id, "movement"), cx, |_, _| Movement::new(checked));
+        let movement =
+            window.use_keyed_state((id.clone(), "movement"), cx, |_, _| Movement::new(checked));
         let animates = movement.update(cx, |movement, _| movement.turning(checked));
         let knob = div().size(thumb).flex_none().rounded(thumb / 2.);
 
@@ -159,27 +160,30 @@ impl RenderOnce for Switch {
             switch = switch.on_click(handler);
         }
 
+        let (switch, level) = match disabled {
+            true => (switch, 0.),
+            false => glowing(switch, &id, false, 1., window, cx),
+        };
+        // The track under the pointer, on its way between its own colour and the hover.
+        let lit =
+            move |rest: Hsla, hover: Hsla| glow_fill(Some(rest), hover, level).unwrap_or(rest);
+
         match animates {
             true => switch
                 .motion(
                     ("track", usize::from(checked)),
                     Motion::Control,
                     move |track, t| {
-                        let hover = crate::motion::mix(hover_was, hover_is, t);
                         track
-                            .bg(crate::motion::mix(track_was, track_is, t))
+                            .bg(lit(
+                                crate::motion::mix(track_was, track_is, t),
+                                crate::motion::mix(hover_was, hover_is, t),
+                            ))
                             .border_color(crate::motion::mix(edge_was, edge_is, t))
-                            .when(!disabled, move |this| {
-                                this.hover(move |style| style.bg(hover))
-                            })
                     },
                 )
                 .into_any_element(),
-            false => switch
-                .when(!disabled, move |this| {
-                    this.hover(move |style| style.bg(hover_is))
-                })
-                .into_any_element(),
+            false => switch.bg(lit(background, hover_is)).into_any_element(),
         }
     }
 }

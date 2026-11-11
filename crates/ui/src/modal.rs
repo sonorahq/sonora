@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
@@ -8,6 +9,7 @@ use gpui::{
 };
 
 use crate::button::Button;
+use crate::linger::Linger;
 use crate::metrics::{Rounding, Text, snapped};
 use crate::motion::Rising as _;
 use crate::scrollbar::Scrollbar;
@@ -158,20 +160,27 @@ impl RenderOnce for Modal {
             .flex()
             .items_center()
             .justify_center()
+            // The scrim and the panel leave separately. The panel shrinks a little as it fades,
+            // and a scrim shrinking with it would bare the window's edges.
             .child(
-                Shield::new(id.clone())
-                    .absolute()
-                    .inset_0()
-                    .bg(theme.background.opacity(BACKDROP))
-                    .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                    .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                        cx.stop_propagation();
-                        if let Some(outside) = &outside {
-                            outside(&(), window, cx);
-                        }
-                    }),
+                Linger::new(
+                    ElementId::NamedChild(Arc::new(id.clone()), "scrim".into()),
+                    Shield::new(id.clone())
+                        .absolute()
+                        .inset_0()
+                        .bg(theme.background.opacity(BACKDROP))
+                        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            cx.stop_propagation();
+                            if let Some(outside) = &outside {
+                                outside(&(), window, cx);
+                            }
+                        }),
+                )
+                .fading(),
             )
             .child({
+                let leaving = ElementId::NamedChild(Arc::new(id.clone()), "leave".into());
                 let mut panel = base
                     .id((id, "panel"))
                     .role(gpui::accesskit::Role::Dialog)
@@ -283,7 +292,7 @@ impl RenderOnce for Modal {
                         )
                     });
                 panel.style().refine(&overrides);
-                panel.rising("modal-rise")
+                Linger::new(leaving, panel.rising("modal-rise"))
             });
 
         deferred(

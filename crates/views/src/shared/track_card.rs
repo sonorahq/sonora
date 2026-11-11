@@ -58,8 +58,7 @@ impl TrackCard {
         self
     }
 
-    /// Adds an X that appears on hover and pushes the duration aside only then. `tooltip` is the
-    /// Fluent key that names it.
+    /// Reserves room for an X shown on hover so durations stay aligned. `tooltip` is its Fluent key.
     pub(crate) fn remove(mut self, tooltip: &'static str, remove: RemoveHandler) -> Self {
         self.remove = Some((tooltip, remove));
         self
@@ -107,7 +106,7 @@ impl TrackCard {
             .aria_size_of_set(total)
             .when_some(artists, Card::bare_meta)
             .when_some(length, Card::trailing)
-            .when_some(remove, Card::collapsed_action)
+            .when_some(remove, Card::action)
             .when_some(self.context, |card, handler| {
                 card.menu(move |event, window, cx| handler(place, event, window, cx))
             })

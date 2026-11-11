@@ -28,16 +28,22 @@ alsa = "0.11"
 anyhow = "1.0"
 ardftsrc = "0.4.4"
 async-trait = "0.1"
-base64 = "0.22"
-blowfish = "0.9"
+base64 = "0.23"
+blowfish = "0.10"
 bytes = "1"
-cbc = "0.1"
+cbc = "0.2"
 cc = "1"
-clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "derive"] }
-clap_complete = "4.5"
+clap = { version = "4", default-features = false, features = [
+    "std",
+    "help",
+    "usage",
+    "error-context",
+    "derive",
+] }
+clap_complete = "4.6"
 flate2 = "1"
 cpal = "0.18"
-dirs = "6.0"
+dirs = "7"
 discord-rich-presence = "1.1"
 deunicode = "1.6"
 env_logger = "0.11"
@@ -45,161 +51,182 @@ fastrand = "2.5"
 futures = "0.3"
 gethostname = "1.1"
 fluent-bundle = "0.16"
-gpui = { git = "https://github.com/sonorahq/gpui", rev = "6f271bf242b34c174aca298dd40f796995075494" }
-gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "6f271bf242b34c174aca298dd40f796995075494", features = [
-  "font-kit",
-  "wayland",
-  "x11",
+gpui = { git = "https://github.com/sonorahq/gpui", rev = "8ddac49c8b5a079149b33b4581e03f74e05237e0" }
+gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "8ddac49c8b5a079149b33b4581e03f74e05237e0", features = [
+    "font-kit",
+    "wayland",
+    "x11",
 ] }
-http = "1.3"
+http = "1.5"
 winresource = "0.1"
-x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
+x11rb = { version = "0.14", features = ["allow-unsafe-code"] }
 windows = { version = "0.62", features = [
-  "Win32_Foundation",
-  "Win32_Graphics_Gdi",
-  "Win32_System_Com",
-  "Win32_System_LibraryLoader",
-  "Win32_System_Registry",
-  "Win32_UI_Controls",
-  "Win32_UI_HiDpi",
-  "Win32_UI_Shell",
-  "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 windows-sys = { version = "0.61", features = [
-  "Win32_Graphics_Dwm",
-  "Win32_Graphics_Gdi",
-  "Win32_System_Power",
-  "Win32_UI_Shell",
-  "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Power",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 webview2-com = "0.39"
 interprocess = "2.4"
 widestring = "1.2"
 image = { version = "0.25", default-features = false, features = [
-  "jpeg",
-  "png",
-  "webp",
+    "jpeg",
+    "png",
+    "webp",
 ] }
 jiff = { version = "0.2", default-features = false, features = [
-  "std",
-  "tz-system",
-  "tzdb-bundle-platform",
-  "tzdb-zoneinfo",
+    "std",
+    "tz-system",
+    "tzdb-bundle-platform",
+    "tzdb-zoneinfo",
 ] }
 kakasi = "0.1"
-ksni = { version = "0.3", default-features = false, features = ["async-io", "blocking"] }
-zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+ksni = { version = "0.3", default-features = false, features = [
+    "async-io",
+    "blocking",
+] }
+zbus = { version = "6", default-features = false, features = [
+    "proxy",
+    "tokio",
+] }
 libc = "0.2"
 lofty = "0.25"
 log = "0.4"
-md-5 = "0.10"
-moka = { version = "0.12.15", features = ["future", "sync"] }
-mpris-server = "0.10"
+md-5 = "0.11"
+moka = { version = "0.12", features = ["future", "sync"] }
+mpris-server = "0.11"
 notify = "8.2"
 oauth2 = "5.0"
 open = "5.4"
 block2 = "0.6"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std"] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+] }
 objc2-core-audio = "0.3"
 objc2-web-kit = { version = "0.3", default-features = false, features = [
-  "std",
-  "block2",
-  "objc2-app-kit",
-  "objc2-core-foundation",
-  "WKHTTPCookieStore",
-  "WKNavigation",
-  "WKUserContentController",
-  "WKUserScript",
-  "WKWebView",
-  "WKWebViewConfiguration",
-  "WKWebsiteDataStore",
+    "std",
+    "block2",
+    "objc2-app-kit",
+    "objc2-core-foundation",
+    "WKHTTPCookieStore",
+    "WKNavigation",
+    "WKUserContentController",
+    "WKUserScript",
+    "WKWebView",
+    "WKWebViewConfiguration",
+    "WKWebsiteDataStore",
 ] }
 objc2-app-kit = { version = "0.3", default-features = false, features = [
-  "std",
-  "NSAccessibility",
-  "NSApplication",
-  "NSMenu",
-  "NSMenuItem",
-  "NSResponder",
-  "NSRunningApplication",
-  "NSStatusItem",
-  "NSWorkspace",
+    "std",
+    "NSAccessibility",
+    "NSApplication",
+    "NSMenu",
+    "NSMenuItem",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSStatusItem",
+    "NSWorkspace",
 ] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = [
-  "std",
-  "CFString",
+    "std",
+    "CFString",
 ] }
 objc2-io-kit = { version = "0.3", default-features = false, features = [
-  "std",
-  "pwr_mgt",
+    "std",
+    "pwr_mgt",
 ] }
-ashpd = { version = "0.13", default-features = false, features = [
-  "async-io",
-  "inhibit",
-  "settings",
+ashpd = { version = "0.14", default-features = false, features = [
+    "async-io",
+    "inhibit",
+    "settings",
 ] }
 reqwest = { version = "0.13", default-features = false, features = [
-  "blocking",
-  "form",
-  "json",
-  "query",
-  "rustls-no-provider",
+    "blocking",
+    "form",
+    "json",
+    "query",
+    "rustls-no-provider",
 ] }
 qrcodegen = "1"
 raw-window-handle = "0.6"
-resvg = { version = "0.46", default-features = false }
+resvg = { version = "0.49", default-features = false }
 ring = "0.17"
 roxmltree = "0.21"
-rodio = { version = "0.22", default-features = false, features = ["playback", "experimental"] }
-rtrb = "0.3"
-rusqlite = { version = "0.32" }
+rodio = { version = "0.22", default-features = false, features = [
+    "playback",
+    "experimental",
+] }
+rtrb = "0.4"
+rusqlite = { version = "0.40" }
 # Pinned exactly: a young crate, and the decoder every HE-AAC stream goes through.
-rusty_aac = { version = "=1.1.1", default-features = false }
+rusty_aac = { version = "=1.1.2", default-features = false }
 rustfft = "6.4"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+] }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
-serde_norway = "0.9"
-sha2 = "0.10"
-smallvec = { version = "1.15", features = ["union"] }
-souvlaki = "0.8"
+serde-saphyr = { version = "2.1", default-features = false, features = [
+    "deserialize",
+] }
+sha2 = "0.11"
+smallvec = { version = "1.16", features = ["union"] }
+souvlaki = "0.9"
 sys-locale = "0.3"
-symphonia = { version = "0.5.5", default-features = false, features = ["aac", "mkv", "ogg", "isomp4"] }
+symphonia = { version = "0.5.5", default-features = false, features = [
+    "aac",
+    "mkv",
+    "ogg",
+    "isomp4",
+] }
 tempfile = "3.27"
-tray-icon = { version = "0.24", default-features = false }
+tray-icon = { version = "0.26", default-features = false }
 unic-langid = { version = "0.9", features = ["macros"] }
 unicode-bidi = "0.3"
-unicode-segmentation = "1.12"
+unicode-segmentation = "1.13"
 ytmusic = { git = "https://github.com/sonorahq/ytmusic-rs", rev = "db4ab87" }
 
 librespot-core = { version = "0.8.0", default-features = false, features = [
-  "rustls-tls-native-roots",
+    "rustls-tls-native-roots",
 ] }
 librespot-oauth = { version = "0.8.0", default-features = false, features = [
-  "rustls-tls-native-roots",
+    "rustls-tls-native-roots",
 ] }
 librespot-playback = { version = "0.8.0", default-features = false, features = [
-  "rustls-tls-native-roots",
+    "rustls-tls-native-roots",
 ] }
 librespot-protocol = "0.8.0"
 percent-encoding = "2.3"
 protobuf = "3"
 pulseaudio = "0.3.2"
-opensubsonic = "0.4.0"
-tokio = { version = "1.53", features = [
-  "rt-multi-thread",
-  "net",
-  "io-util",
-  "macros",
-  "sync",
-  "time",
+opensubsonic = "0.7"
+tokio = { version = "1.54", features = [
+    "rt-multi-thread",
+    "net",
+    "io-util",
+    "macros",
+    "process",
+    "sync",
+    "time",
 ] }
-tokio-tungstenite = { version = "0.28", default-features = false, features = [
-  "connect",
-  "rustls-tls-native-roots",
+tokio-tungstenite = { version = "0.30", default-features = false, features = [
+    "connect",
+    "rustls-tls-native-roots",
 ] }
-time = { version = "0.3.55", features = ["parsing"] }
 
 [patch.crates-io]
 librespot-audio = { git = "https://github.com/sonorahq/librespot", rev = "84f551d4afc7823ef12b6b02d09e34e2ddaccf99" }
@@ -209,6 +236,21 @@ librespot-oauth = { git = "https://github.com/sonorahq/librespot", rev = "84f551
 librespot-playback = { git = "https://github.com/sonorahq/librespot", rev = "84f551d4afc7823ef12b6b02d09e34e2ddaccf99" }
 librespot-protocol = { git = "https://github.com/sonorahq/librespot", rev = "84f551d4afc7823ef12b6b02d09e34e2ddaccf99" }
 rodio = { git = "https://github.com/RustAudio/rodio", rev = "880aaba54b00aead53651ed1ccbdb672d1375a95" }
+
+[workspace.lints.clippy]
+redundant_clone = "warn"
+needless_collect = "warn"
+dbg_macro = "warn"
+empty_drop = "warn"
+cloned_instead_of_copied = "warn"
+flat_map_option = "warn"
+inefficient_to_string = "warn"
+set_contains_or_insert = "warn"
+branches_sharing_code = "warn"
+collection_is_never_read = "warn"
+large_stack_frames = "warn"
+or_fun_call = "warn"
+large_types_passed_by_value = "warn"
 
 [profile.release]
 lto = "thin"

@@ -314,6 +314,7 @@ fn open_window(cx: &mut App) {
         devices: _,
         downloads: _,
         drm: _,
+        soloist: _,
         equalizer: _,
         library,
         links: _,

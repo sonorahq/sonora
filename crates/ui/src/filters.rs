@@ -293,7 +293,7 @@ impl RenderOnce for RangeScrubber {
         let state = Rc::new(RangeState {
             id: id.clone(),
             bounds: bounds.clone(),
-            active: active.clone(),
+            active,
         });
         let on_change = on_change.map(Rc::new);
 
@@ -315,7 +315,6 @@ impl RenderOnce for RangeScrubber {
         };
 
         let dragged = {
-            let state = state.clone();
             let on_change = on_change.clone();
             let mine = id.clone();
             let stops = stops.clone();

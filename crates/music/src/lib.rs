@@ -28,6 +28,7 @@ pub mod progress;
 mod redact;
 pub mod scrobble;
 mod sink;
+pub mod soloist;
 mod spectrum;
 pub mod spotify;
 mod stream;
@@ -39,16 +40,13 @@ pub mod vault;
 pub mod youtube;
 
 use std::collections::{HashMap, HashSet};
-use std::num::NonZero;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use time::format_description::well_known::Iso8601;
-use time::parsing::Parsed;
-use time::{Month, OffsetDateTime};
+use jiff::fmt::temporal::DateTimeParser;
 
 pub use audio::Meter;
 pub use equalizer::Equalizer;
@@ -490,7 +488,7 @@ pub struct Offer {
 
 /// What a stream or a file is encoded as: a lossless encoding with its bit depth, a lossy one
 /// with its bit rate in kilobits a second.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Encoding {
     /// FLAC at this bit depth and sample rate in hertz.
     Flac {
@@ -531,6 +529,9 @@ pub struct TrackSignal {
     pub rate: u32,
     pub channels: u16,
     pub normalisation: Normalisation,
+    /// Whether the engine plays it to the system's output by itself, as Soloist does. Nothing
+    /// of Sonora's own sound path then touches it: no equalizer, no resampler, no chosen device.
+    pub direct: bool,
 }
 
 /// What loudness normalisation does to a track.
@@ -539,8 +540,8 @@ pub enum Normalisation {
     Off,
     /// A fixed gain in decibels, zero when nothing says how loud the track is.
     Gain(f32),
-    /// librespot normalises inside its own player with a limiter, so the gain is not known
-    /// and changes with the music.
+    /// Spotify's players, librespot and Soloist, normalise inside themselves with a limiter, so
+    /// the gain is not known and changes with the music.
     Limited,
 }
 
@@ -761,6 +762,13 @@ impl Fraction {
 
 pub trait PlaybackFactory: Send + Sync {
     fn start(&self, config: PlaybackConfig) -> (Box<dyn Player>, Box<dyn PlaybackEvents>);
+
+    /// The stream levels the next engine serves, when they differ from the ones the provider
+    /// signed in with. A provider with a second way to play answers here, since which one is in
+    /// use can change while the account stays signed in.
+    fn qualities(&self) -> Option<&'static [Offer]> {
+        None
+    }
 }
 
 /// What a provider's library is made of. It decides which `MusicApi` methods fill the library
@@ -1051,6 +1059,11 @@ pub trait MusicProvider: Send + Sync {
     fn protected(&self) -> bool {
         false
     }
+    /// Whether this provider can play through Soloist, Spotify's own headless player, on this
+    /// computer. The app offers its setup while such a provider is the current one.
+    fn soloist(&self) -> bool {
+        false
+    }
     /// Whether the artwork urls this provider hands out can be given to another service. A path
     /// on disk means nothing elsewhere, and a self-hosted url carries the credentials that fetch
     /// it, so the default is no.
@@ -1088,21 +1101,22 @@ pub trait MusicProvider: Send + Sync {
 /// Leniently convert an ISO8601 timestamp to unix epoch seconds. Accepts only
 /// the date portion, date and time portions, or full date and time with offset.
 pub fn iso_8601_to_epoch(value: Option<&str>) -> Option<i64> {
-    let time_str = value?.as_bytes();
-    let defaults = Parsed::new()
-        .with_month(Month::January)
-        .and_then(|d| d.with_day(NonZero::<u8>::new(1)?))
-        .and_then(|d| d.with_hour_24(0))
-        .and_then(|d| d.with_minute(0))
-        .and_then(|d| d.with_second(0))
-        .and_then(|d| d.with_subsecond(0))
-        .and_then(|d| d.with_offset_hour(0))
-        .and_then(|d| d.with_offset_minute_signed(0))
-        .and_then(|d| d.with_offset_second_signed(0))?;
-    let timestamp = OffsetDateTime::parse_with_defaults(time_str, &Iso8601::PARSING, defaults)
-        .ok()?
-        .unix_timestamp();
-    Some(timestamp)
+    let value = value?;
+    let parser = DateTimeParser::new();
+    let timestamp = parser
+        .parse_timestamp(value)
+        .or_else(|_| {
+            parser
+                .parse_datetime(value)
+                .and_then(|datetime| jiff::tz::TimeZone::UTC.to_timestamp(datetime))
+        })
+        .or_else(|_| {
+            parser
+                .parse_date(value)
+                .and_then(|date| jiff::tz::TimeZone::UTC.to_timestamp(date.at(0, 0, 0, 0)))
+        })
+        .ok()?;
+    Some(timestamp.as_second())
 }
 
 /// Keeps playable songs credited to the artist in their supplied order, collapsing repeat
@@ -1184,8 +1198,6 @@ fn remaster_note(note: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use time::macros::datetime;
-
     use super::*;
 
     #[test]
@@ -1205,29 +1217,35 @@ mod tests {
         );
 
         // A specific date with/without time/offset
-        assert_eq!(
-            iso_8601_to_epoch(Some("2021-03-20")),
-            Some(datetime!(2021-03-20 00:00:00 UTC).unix_timestamp())
-        );
+        let date = jiff::civil::date(2021, 3, 20);
+        let midnight = jiff::tz::TimeZone::UTC
+            .to_timestamp(date.at(0, 0, 0, 0))
+            .unwrap()
+            .as_second();
+        let afternoon = jiff::tz::TimeZone::UTC
+            .to_timestamp(date.at(13, 45, 7, 0))
+            .unwrap()
+            .as_second();
+        assert_eq!(iso_8601_to_epoch(Some("2021-03-20")), Some(midnight));
         assert_eq!(
             iso_8601_to_epoch(Some("2021-03-20T13:45:07")),
-            Some(datetime!(2021-03-20 13:45:07 UTC).unix_timestamp())
+            Some(afternoon)
         );
         assert_eq!(
             iso_8601_to_epoch(Some("2021-03-20T13:45:07.123456")),
-            Some(datetime!(2021-03-20 13:45:07 UTC).unix_timestamp())
+            Some(afternoon)
         );
         assert_eq!(
             iso_8601_to_epoch(Some("2021-03-20T13:45:07Z")),
-            Some(datetime!(2021-03-20 13:45:07 UTC).unix_timestamp())
+            Some(afternoon)
         );
         assert_eq!(
             iso_8601_to_epoch(Some("2021-03-20T13:45:07+00:00")),
-            Some(datetime!(2021-03-20 13:45:07 UTC).unix_timestamp())
+            Some(afternoon)
         );
         assert_eq!(
             iso_8601_to_epoch(Some("2021-03-20T10:45:07-03:00")),
-            Some(datetime!(2021-03-20 13:45:07 UTC).unix_timestamp())
+            Some(afternoon)
         );
     }
 }

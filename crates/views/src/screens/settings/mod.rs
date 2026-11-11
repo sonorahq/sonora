@@ -13,7 +13,7 @@ use music::SignInPrompt;
 use router::{Destination, SettingsPage, SettingsTab, navigate};
 use state::{
     AppSettings, Drm, Equalizer, Io, Outputs, Playback, Scan, Scrobbling, Session, SessionState,
-    Sleep, Sonora,
+    Sleep, Soloist, Sonora,
 };
 use ui::{
     ActiveTheme as _, Card, Deck, Dismiss, Input, Lazy, Popovers, Scrollbar, ScrubberState,
@@ -79,6 +79,7 @@ enum Slot {
     Ambient,
     AmbientMotion,
     Visualizer,
+    VisualizerScreens,
     VisualizerAbsolute,
     PlayerBarLayout,
     PlayerBarTransparent,
@@ -92,6 +93,7 @@ enum Slot {
     FullscreenLyricsSize,
     LyricsSources,
     LyricsPriority,
+    WordSyncedFirst,
     LyricsForLocal,
     Normalisation,
     Gapless,
@@ -106,6 +108,7 @@ enum Slot {
     StreamFormat,
     StreamBitrate,
     Widevine,
+    Soloist,
     OutputDevice,
     OutputFailure,
     SampleRate,
@@ -223,6 +226,7 @@ pub struct SettingsView {
     /// tab is on screen, since tracks are kept and evicted as they play.
     _storage: Task<()>,
     drm: Entity<Drm>,
+    soloist: Entity<Soloist>,
     equalizer: Entity<Equalizer>,
     settings: Entity<AppSettings>,
     outputs: Entity<Outputs>,
@@ -306,7 +310,10 @@ impl SettingsView {
         let drm = Sonora::global(cx).drm.clone();
         let equalizer = Sonora::global(cx).equalizer.clone();
         let outputs = Sonora::global(cx).outputs.clone();
+        let soloist = Sonora::global(cx).soloist.clone();
         cx.observe(&drm, |this, _, cx| this.remeasure(cx)).detach();
+        cx.observe(&soloist, |this, _, cx| this.remeasure(cx))
+            .detach();
         cx.observe(&equalizer, |this, _, cx| this.remeasure(cx))
             .detach();
         cx.observe(&outputs, |this, _, cx| this.remeasure(cx))
@@ -338,6 +345,8 @@ impl SettingsView {
             .detach();
         let chrome = Chrome::entity(cx);
         cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
+        cx.observe_global::<ui::WindowBlur>(|this, cx| this.remeasure(cx))
+            .detach();
         let me = cx.entity_id();
         let focus = cx.focus_handle();
         let languages = SearchPopup::new("settings-language-search", me, focus.clone(), cx);
@@ -413,6 +422,7 @@ impl SettingsView {
             _storage: storage,
             playback,
             drm,
+            soloist,
             equalizer,
             settings,
             outputs,
@@ -538,7 +548,7 @@ impl SettingsView {
     fn groups(&self, page: SettingsPage, cx: &App) -> Vec<Group> {
         match page {
             SettingsPage::Providers => self.accounts_groups(),
-            SettingsPage::Appearance => self.appearance_groups(),
+            SettingsPage::Appearance => self.appearance_groups(cx),
             SettingsPage::PlayerBar => self.player_bar_groups(),
             SettingsPage::NowPlaying => self.now_playing_groups(cx),
             SettingsPage::Lyrics => self.lyrics_groups(cx),
@@ -685,10 +695,6 @@ impl SettingsView {
     /// The title and detail a search is matched against, without building the row. Kept next
     /// to the slots: a new row needs its pair here to be found. A slot with no pair is left out
     /// of searches.
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one arm per row keeps the keys beside the rows"
-    )]
     fn slot_meta(&self, slot: Slot, cx: &App) -> Option<(SharedString, SharedString)> {
         let meta = match slot {
             Slot::Folders => return None,
@@ -731,6 +737,10 @@ impl SettingsView {
             Slot::PlayerBarTransparent => (
                 t!("settings-player-bar-transparent"),
                 t!("settings-player-bar-transparent-detail"),
+            ),
+            Slot::VisualizerScreens => (
+                t!("settings-visualizer-screens"),
+                t!("settings-visualizer-screens-detail"),
             ),
             Slot::VisualizerAbsolute => (
                 t!("settings-visualizer-absolute"),
@@ -837,6 +847,7 @@ impl SettingsView {
             Slot::Sleep => (t!("settings-sleep"), t!("settings-sleep-detail")),
             Slot::StayAwake => (t!("settings-stay-awake"), t!("settings-stay-awake-detail")),
             Slot::Widevine => (t!("settings-widevine"), self.widevine_detail(cx)),
+            Slot::Soloist => (t!("settings-soloist"), t!("settings-soloist-detail")),
             Slot::OutputDevice => (
                 t!("settings-output-device"),
                 t!("settings-output-device-detail"),
@@ -864,6 +875,10 @@ impl SettingsView {
             Slot::LyricsPriority => (
                 t!("settings-lyrics-priority"),
                 t!("settings-lyrics-priority-detail"),
+            ),
+            Slot::WordSyncedFirst => (
+                t!("settings-lyrics-word-synced-first"),
+                t!("settings-lyrics-word-synced-first-detail"),
             ),
             Slot::Lyrics => (t!("settings-lyrics"), t!("settings-lyrics-detail")),
             Slot::Karaoke => (
@@ -962,6 +977,7 @@ impl SettingsView {
             Slot::Visualizer => div().into_any_element(),
             Slot::PlayerBarLayout => div().into_any_element(),
             Slot::PlayerBarTransparent => self.player_bar_transparent_row(cx),
+            Slot::VisualizerScreens => self.visualizer_screens_row(cx),
             Slot::VisualizerAbsolute => self.visualizer_absolute_row(cx),
             Slot::Opacity => self.opacity_row(cx),
             Slot::WindowBlur => self.blur_window_row(cx),
@@ -1004,15 +1020,17 @@ impl SettingsView {
             Slot::StreamBitrate => self.stream_bitrate_row(cx),
             Slot::Sleep => self.sleep_row(cx),
             Slot::StayAwake => self.stay_awake_row(cx),
-            Slot::OutputDevice => self.output_device_row(),
+            Slot::OutputDevice => self.output_device_row(cx),
             Slot::OutputFailure => self.output_failure_row(cx),
             Slot::SampleRate => self.sample_rate_row(cx),
             Slot::Buffer => self.buffer_row(cx),
             Slot::MatchRate => self.match_rate_row(cx),
             Slot::Widevine => self.widevine_row(cx),
+            Slot::Soloist => self.soloist_row(cx),
             Slot::Equalizer => self.equalizer_row(cx),
             Slot::LyricsSources => self.lyrics_sources_row(cx),
             Slot::LyricsPriority => self.lyrics_priority(cx),
+            Slot::WordSyncedFirst => self.word_synced_first_row(cx),
             Slot::Lyrics => self.lyrics_row(cx),
             Slot::Karaoke => self.karaoke_lyrics_row(cx),
             Slot::Romanized => self.romanized_lyrics_row(cx),

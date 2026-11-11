@@ -97,9 +97,8 @@ impl PlaylistSource {
     fn index_cell(&self, cell: &Cell<PlaylistField>, playlist: &Playlist, cx: &App) -> AnyElement {
         let origin = Origin::playlist(playlist.id.clone()).named(playlist.name.clone());
         let playing = self.playback.read(cx).playing_from(&origin, cx);
-        let played = origin.clone();
         let press = cells::toggle(&self.playback, playing, move |playback, cx| {
-            playback.play_origin(played.clone(), cx)
+            playback.play_origin(origin.clone(), cx)
         });
 
         cells::index(cell, playing, true, None, None, press, cx)

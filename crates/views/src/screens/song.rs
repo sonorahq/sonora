@@ -9,8 +9,8 @@ use music::{Credit, Track};
 use router::{Destination, Link as _};
 use state::{Playback, SongDetail, Sonora};
 use ui::{
-    ActiveTheme as _, Avatar, Button, Fact, InfoCard, Initials, Popup, Scrollbar, Scroller,
-    Skeleton, Tails as _, Text, clock,
+    ActiveTheme as _, Avatar, Button, Fact, Glowing as _, InfoCard, Initials, Popup, Scrollbar,
+    Scroller, Skeleton, Tails as _, Text, clock,
 };
 
 use crate::shared::about::{AboutArtist, about_modal};
@@ -316,9 +316,9 @@ impl SongView {
                                 .aria_label(name)
                                 .aria_description(role)
                                 .cursor_pointer()
-                                .hover(|style| style.bg(theme.secondary_hover))
                                 .rounded(theme.radius)
                                 .link(Destination::Artist(id.into()))
+                                .glowed(theme.secondary_hover)
                                 .into_any_element(),
                             None => row.into_any_element(),
                         }

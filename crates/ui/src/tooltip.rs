@@ -15,6 +15,9 @@ use crate::theme::ActiveTheme as _;
 
 const MARGIN: Pixels = px(8.);
 const OFFSET: Pixels = px(6.);
+/// How long the pointer rests on an element before a perched tooltip shows. Long enough that
+/// a pointer pausing on its way to a click raises none.
+const DELAY: Duration = Duration::from_millis(800);
 
 /// Where a tooltip sits relative to the element that owns it.
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -24,6 +27,8 @@ pub enum Perch {
     Below,
     /// Centred above the element, or below it when the window has no room above.
     Above,
+    /// Centred to the right of the element, or to its left when the window has no room there.
+    Trailing,
     /// Below and to the left of the pointer, shown the moment the pointer arrives and moved
     /// along with it.
     Follow,
@@ -52,7 +57,7 @@ pub trait Tipped: Sized {
 /// room there and on the other side otherwise, and keeps it inside the window margin.
 struct Beside {
     host: Bounds<Pixels>,
-    above: bool,
+    perch: Perch,
     child: AnyElement,
 }
 
@@ -94,7 +99,7 @@ impl Render for Tooltip {
                 .into_any_element(),
             false => Beside {
                 host: self.host,
-                above: self.perch == Perch::Above,
+                perch: self.perch,
                 child: bubble.into_any_element(),
             }
             .into_any_element(),
@@ -151,19 +156,33 @@ impl Element for Beside {
         let viewport = window.viewport_size();
         let margin = MARGIN + window.client_inset().unwrap_or_default();
 
-        let below = self.host.bottom() + OFFSET;
-        let above = self.host.top() - OFFSET - size.height;
-        let fits_below = below + size.height <= viewport.height - margin;
-        let fits_above = above >= margin;
-        let up = match self.above {
-            true => fits_above || !fits_below,
-            false => fits_above && !fits_below,
+        let (x, y) = match self.perch {
+            Perch::Trailing => {
+                let right = self.host.right() + OFFSET;
+                let left = self.host.left() - OFFSET - size.width;
+                let fits_right = right + size.width <= viewport.width - margin;
+                let x = match fits_right || left < margin {
+                    true => right,
+                    false => left,
+                };
+                (x, self.host.center().y - size.height / 2.)
+            }
+            perch => {
+                let below = self.host.bottom() + OFFSET;
+                let above = self.host.top() - OFFSET - size.height;
+                let fits_below = below + size.height <= viewport.height - margin;
+                let fits_above = above >= margin;
+                let up = match perch == Perch::Above {
+                    true => fits_above || !fits_below,
+                    false => fits_above && !fits_below,
+                };
+                let y = match up {
+                    true => above,
+                    false => below,
+                };
+                (self.host.center().x - size.width / 2., y)
+            }
         };
-        let y = match up {
-            true => above,
-            false => below,
-        };
-        let x = self.host.center().x - size.width / 2.;
         let origin = point(
             inside(x, size.width, viewport.width, margin).round(),
             inside(y, size.height, viewport.height, margin).round(),
@@ -207,10 +226,11 @@ where
                 })
                 .into()
             }),
-        Perch::Below | Perch::Above => {
+        Perch::Below | Perch::Above | Perch::Trailing => {
             let host = Rc::new(Cell::new(None));
             element
                 .child(recorder(host.clone()))
+                .tooltip_show_delay(DELAY)
                 .tooltip(move |window, cx| {
                     let text = text.clone();
                     let host = host.get().unwrap_or_else(|| {

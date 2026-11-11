@@ -990,6 +990,11 @@ impl Artwork {
         self
     }
 
+    /// The corner radius a cover takes when it is given none.
+    pub fn rounding(cx: &App) -> Pixels {
+        cx.theme().radius.min(ROUNDED)
+    }
+
     pub fn corner_radius(mut self, radius: Pixels) -> Self {
         self.radius = Some(radius);
         self
@@ -1056,7 +1061,7 @@ impl RenderOnce for Artwork {
         let rounded = match (circle, radius) {
             (true, _) => size / 2.,
             (false, Some(radius)) => radius,
-            (false, None) => cx.theme().radius.min(ROUNDED),
+            (false, None) => Self::rounding(cx),
         };
         let placeholder = {
             let fallback = fallback.clone();

@@ -78,6 +78,8 @@ pub struct ColumnSpec<F: 'static> {
     /// The order the first click sorts this column in; a date reads best newest first.
     pub first: Sort,
     pub rank: u8,
+    /// Whether the column stays out of the table until the listener turns it on.
+    pub optional: bool,
 }
 
 impl<F: Copy + 'static> ColumnSpec<F> {
@@ -96,6 +98,7 @@ impl<F: Copy + 'static> ColumnSpec<F> {
             sortable: true,
             first: Sort::Ascending,
             rank: rank::ESSENTIAL,
+            optional: false,
         }
     }
 
@@ -175,12 +178,20 @@ impl<F: 'static> ColumnSpec<F> {
 pub struct Layout {
     pub order: Vec<String>,
     pub hidden: Vec<String>,
+    /// The optional columns the listener turned on.
+    pub shown: Vec<String>,
     pub widths: HashMap<String, f32>,
 }
 
 impl Layout {
-    pub fn hides(&self, key: &str) -> bool {
-        self.hidden.iter().any(|hidden| hidden == key)
+    /// Whether the listener's choices keep `spec` out of the table. An optional column is out
+    /// until `shown` names it, and any other is in until `hidden` does.
+    pub fn hides<F>(&self, spec: &ColumnSpec<F>) -> bool {
+        let named = |keys: &[String]| keys.iter().any(|key| key == spec.key);
+        match spec.optional {
+            true => !named(&self.shown),
+            false => named(&self.hidden),
+        }
     }
 
     fn rank(&self, key: &str) -> usize {
@@ -198,12 +209,16 @@ impl Layout {
             .map(px)
     }
 
-    pub fn toggle(&mut self, key: &str) {
-        match self.hidden.iter().position(|hidden| hidden == key) {
+    pub fn toggle<F>(&mut self, spec: &ColumnSpec<F>) {
+        let keys = match spec.optional {
+            true => &mut self.shown,
+            false => &mut self.hidden,
+        };
+        match keys.iter().position(|key| key == spec.key) {
             Some(at) => {
-                self.hidden.remove(at);
+                keys.remove(at);
             }
-            None => self.hidden.push(key.to_owned()),
+            None => keys.push(spec.key.to_owned()),
         }
     }
 }
@@ -246,7 +261,7 @@ pub fn resolve<F: 'static>(
     let head = |ix: usize| heads.get(ix).copied().unwrap_or_default();
     let mut visible = ordered(specs, layout)
         .into_iter()
-        .filter(|(ix, spec)| !layout.hides(spec.key) && !blank.get(*ix).copied().unwrap_or(false))
+        .filter(|(ix, spec)| !layout.hides(spec) && !blank.get(*ix).copied().unwrap_or(false))
         .collect::<Vec<_>>();
     if visible.is_empty() {
         visible.extend(specs.iter().enumerate().take(1));
@@ -590,6 +605,7 @@ mod tests {
         Cover,
         Title,
         Artist,
+        Genre,
         Added,
         Length,
     }
@@ -605,6 +621,7 @@ mod tests {
             sortable: false,
             first: Sort::Ascending,
             rank: rank::ESSENTIAL,
+            optional: false,
         },
         ColumnSpec {
             field: Field::Cover,
@@ -616,6 +633,7 @@ mod tests {
             sortable: false,
             first: Sort::Ascending,
             rank: rank::ESSENTIAL,
+            optional: false,
         },
         ColumnSpec {
             field: Field::Title,
@@ -627,6 +645,7 @@ mod tests {
             sortable: true,
             first: Sort::Ascending,
             rank: rank::ESSENTIAL,
+            optional: false,
         },
         ColumnSpec {
             field: Field::Artist,
@@ -638,6 +657,19 @@ mod tests {
             sortable: true,
             first: Sort::Ascending,
             rank: rank::SPARE,
+            optional: false,
+        },
+        ColumnSpec {
+            field: Field::Genre,
+            key: "genre",
+            header: "",
+            align: TextAlign::Left,
+            width: Width::Fixed(px(132.)),
+            anchored: false,
+            sortable: true,
+            first: Sort::Ascending,
+            rank: rank::SPARE,
+            optional: true,
         },
         ColumnSpec {
             field: Field::Added,
@@ -649,6 +681,7 @@ mod tests {
             sortable: true,
             first: Sort::Ascending,
             rank: rank::NICE,
+            optional: false,
         },
         ColumnSpec {
             field: Field::Length,
@@ -660,6 +693,7 @@ mod tests {
             sortable: true,
             first: Sort::Ascending,
             rank: rank::USEFUL,
+            optional: false,
         },
     ];
 
@@ -694,6 +728,10 @@ mod tests {
 
     fn keys<F: 'static>(columns: &[Resolved<F>]) -> Vec<&'static str> {
         columns.iter().map(|column| column.spec.key).collect()
+    }
+
+    fn spec(key: &str) -> &'static ColumnSpec<Field> {
+        SPECS.iter().find(|spec| spec.key == key).expect("listed")
     }
 
     fn width<F: 'static>(columns: &[Resolved<F>], key: &str) -> Pixels {
@@ -764,6 +802,60 @@ mod tests {
         let columns = laid(px(1000.), &layout);
 
         assert_eq!(keys(&columns), ["index"]);
+    }
+
+    #[test]
+    fn optional_columns_stay_out_until_shown() {
+        let columns = laid(px(1200.), &Layout::default());
+        assert!(!keys(&columns).contains(&"genre"));
+
+        let layout = Layout {
+            shown: vec!["genre".to_owned()],
+            ..Layout::default()
+        };
+        let columns = laid(px(1200.), &layout);
+
+        assert_eq!(keys(&columns)[4], "genre");
+        assert!((total(&columns) - px(1198.)).abs() < px(0.5));
+    }
+
+    #[test]
+    fn hiding_by_name_leaves_a_shown_optional_column_in() {
+        let layout = Layout {
+            hidden: vec!["genre".to_owned()],
+            shown: vec!["genre".to_owned()],
+            ..Layout::default()
+        };
+
+        assert!(keys(&laid(px(1200.), &layout)).contains(&"genre"));
+    }
+
+    #[test]
+    fn toggling_an_optional_column_shows_then_hides_it() {
+        let mut layout = Layout::default();
+
+        layout.toggle(spec("genre"));
+        assert_eq!(layout.shown, ["genre"]);
+        assert!(layout.hidden.is_empty());
+        assert!(!layout.hides(spec("genre")));
+
+        layout.toggle(spec("genre"));
+        assert!(layout.shown.is_empty());
+        assert!(layout.hides(spec("genre")));
+    }
+
+    #[test]
+    fn toggling_a_regular_column_hides_then_shows_it() {
+        let mut layout = Layout::default();
+
+        layout.toggle(spec("artist"));
+        assert_eq!(layout.hidden, ["artist"]);
+        assert!(layout.shown.is_empty());
+        assert!(layout.hides(spec("artist")));
+
+        layout.toggle(spec("artist"));
+        assert!(layout.hidden.is_empty());
+        assert!(!layout.hides(spec("artist")));
     }
 
     #[test]

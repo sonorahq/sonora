@@ -148,7 +148,7 @@ fn hit(found: Found) -> Option<LyricsHit> {
 }
 
 fn filed(text: &str) -> Option<Vec<LyricsLine>> {
-    let file: LyricsFile = serde_norway::from_str(text)
+    let file: LyricsFile = serde_saphyr::from_str(text)
         .inspect_err(|error| log::warn!("lyrics: cannot read a lrclib lyricsfile: {error}"))
         .ok()?;
     let mut lines: Vec<LyricsLine> = file

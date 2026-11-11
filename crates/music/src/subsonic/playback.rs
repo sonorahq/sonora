@@ -11,9 +11,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use super::mp4::{Input, Prepared, Remote};
 use crate::aac::Aac;
 use crate::engine::{self, Fetch, Loudness};
-use crate::stream::{Plain, Reader, Stream};
+use crate::stream::{Plain, Stream};
 use crate::subsonic::client::{Details, SubsonicClient};
 use crate::vault::{Recording, Shelf};
 use crate::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Transcode};
@@ -23,6 +24,7 @@ use crate::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Transcode};
 pub struct Loaded {
     stream: Stream,
     details: Details,
+    prepared: Prepared,
 }
 
 pub struct Factory {
@@ -91,11 +93,12 @@ impl Subsonic {
                 log::warn!("playback: the kept facts of {id} do not read: {error}")
             })
             .ok()?;
-        let stream = Stream::pulling(kept.source, Some(kept.length), Plain)
+        let mut stream = Stream::pulling(kept.source, Some(kept.length), Plain)
             .primed()
             .await
             .inspect_err(|error| log::warn!("playback: the kept copy of {id} broke: {error:#}"))
             .ok()?;
+        let prepared = Prepared::load(&mut stream, None).await.ok()?;
         log::debug!("playback: {id} started from the vault");
         let details = facts.map_or_else(Details::default, |facts| Details {
             duration: facts.duration_ms.map(Duration::from_millis),
@@ -104,14 +107,18 @@ impl Subsonic {
                 peak: facts.peak,
             }),
         });
-        Some(Loaded { stream, details })
+        Some(Loaded {
+            stream,
+            details,
+            prepared,
+        })
     }
 }
 
 #[async_trait]
 impl Fetch for Subsonic {
     type Loaded = Loaded;
-    type Source = rodio::Decoder<Reader>;
+    type Source = rodio::Decoder<Input>;
 
     fn name(&self) -> &'static str {
         "subsonic"
@@ -133,6 +140,7 @@ impl Fetch for Subsonic {
             async {
                 let response = self.client.open_stream(id, self.transcode).await?;
                 let total = response.content_length();
+                let remote = Remote::new(&response);
                 let body = match &self.shelf {
                     Some(shelf) => {
                         let told = told.clone();
@@ -144,7 +152,13 @@ impl Fetch for Subsonic {
                     }
                     None => Recording::through(response),
                 };
-                Stream::pulling(body, total, Plain).primed().await
+                let mut stream = Stream::pulling(body, total, Plain).primed().await?;
+                let prepared = Prepared::load(
+                    &mut stream,
+                    remote.as_ref().map(|remote| (&self.client.http, remote)),
+                )
+                .await?;
+                anyhow::Ok((stream, prepared))
             },
             async {
                 let details = self.client.details(id).await;
@@ -152,9 +166,11 @@ impl Fetch for Subsonic {
                 details
             },
         );
+        let (stream, prepared) = stream?;
         Ok(Loaded {
-            stream: stream?,
+            stream,
             details,
+            prepared,
         })
     }
 
@@ -175,22 +191,19 @@ impl Fetch for Subsonic {
         Some(loaded.stream.arrived() as f32 / total as f32)
     }
 
-    /// Builds a decoder over a stream and places it at `at`. The bytes past the preroll are
-    /// still arriving, so this only reads the header.
-    ///
-    /// A converted track has no length until all of it has arrived, and Symphonia's Ogg reader
-    /// panics when it seeks a seekable source of unknown length. Until then the decoder only
-    /// reads forward, which reaches any position from the start.
+    /// Opens a track whose metadata was prepared on the cancellable load task.
     fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Self::Source> {
         let total = loaded.stream.total();
         let mut builder = rodio::Decoder::builder()
             .with_symphonia_decoder::<Aac>()
-            .with_data(loaded.stream.reader())
-            .with_seekable(total.is_some());
+            .with_data(loaded.prepared.reader(&loaded.stream));
         if let Some(total) = total {
             builder = builder.with_byte_len(total);
         }
-        let mut decoder = match builder.build() {
+        let mut decoder = match builder
+            .with_seekable(loaded.prepared.seekable(&loaded.stream))
+            .build()
+        {
             Ok(decoder) => decoder,
             Err(error) => {
                 log::warn!("playback: cannot decode the subsonic track {id}: {error}");

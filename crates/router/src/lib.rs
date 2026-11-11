@@ -14,6 +14,18 @@ pub enum LibraryTab {
     Artists,
 }
 
+impl LibraryTab {
+    /// The glyph of what the tab lists, the same one a pin of that kind falls back to.
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Songs => ui::PinKind::Song.icon(),
+            Self::Albums => ui::PinKind::Album.icon(),
+            Self::Playlists => ui::PinKind::Playlist.icon(),
+            Self::Artists => ui::PinKind::Artist.icon(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavEntry {
     Home,
