@@ -2446,6 +2446,36 @@ impl Library {
         );
     }
 
+    /// Moves the playlist's row `from` to `to` on the provider, and answers whether the move
+    /// started. The page reloads once it is done either way, so it shows the order the
+    /// provider kept rather than the one it asked for.
+    pub fn move_in_playlist(
+        &mut self,
+        playlist_id: String,
+        track_id: String,
+        (from, to): (usize, usize),
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let changed = playlist_id.clone();
+        self.mutate_playlist(
+            PlaylistMutation {
+                action: "move a track in a playlist",
+                done: None,
+                name: None,
+                target: None,
+                shelf: Shelf::of(&playlist_id),
+                invalidated: vec![playlist_id.clone()],
+            },
+            move |client| async move {
+                client
+                    .move_playlist_track(&playlist_id, &track_id, from, to)
+                    .await
+            },
+            move |_, (), cx| cx.emit(LibraryEvent::PlaylistChanged(changed)),
+            cx,
+        )
+    }
+
     pub fn delete_playlist(&mut self, id: String, cx: &mut Context<Self>) {
         let deleted = id.clone();
         self.mutate_playlist(
@@ -2860,13 +2890,16 @@ impl Library {
             .map(|ready| &mut ready.playlists)
     }
 
+    /// Runs one playlist change on the provider, and answers whether it started: another
+    /// change still running, or no account to make it with, turns it away with a toast.
     fn mutate_playlist<F, R, T, A>(
         &mut self,
         mutation_info: PlaylistMutation,
         mutation: F,
         on_done: A,
         cx: &mut Context<Self>,
-    ) where
+    ) -> bool
+    where
         F: FnOnce(Arc<dyn MusicApi>) -> R + Send + 'static,
         R: Future<Output = anyhow::Result<T>> + Send + 'static,
         T: Send + 'static,
@@ -2883,12 +2916,12 @@ impl Library {
         if self.playlist_task.is_some() {
             log::warn!("library: cannot {action} while another change is running");
             Toasts::show(Outcome::Failed, "toast-playlist-busy", cx);
-            return;
+            return false;
         }
         let Some(client) = self.session.read(cx).client_of(shelf) else {
             log::warn!("library: cannot {action} while signed out");
             Toasts::show(Outcome::Failed, "toast-playlist-signed-out", cx);
-            return;
+            return false;
         };
         let catalog = invalidated
             .first()
@@ -2931,6 +2964,7 @@ impl Library {
             })
             .ok();
         }));
+        true
     }
 
     fn insert_playlist(&mut self, playlist: Playlist, cx: &mut Context<Self>) {

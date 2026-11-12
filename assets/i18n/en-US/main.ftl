@@ -133,6 +133,8 @@ menu-remove-tracks-from-playlist = { $count ->
     [one] Remove { $count } track from playlist
    *[other] Remove { $count } tracks from playlist
 }
+menu-move-up = Move up
+menu-move-down = Move down
 menu-remove-from-history = Remove from history
 menu-remove-tracks-from-history = { $count ->
     [one] Remove { $count } track from history
@@ -1204,6 +1206,7 @@ toast-playlist-renamed = Playlist renamed
 toast-playlist-updated = Playlist updated
 toast-playlist-cover-changed = Playlist cover changed
 toast-playlist-cover-removed = Playlist cover removed
+toast-playlist-reorder-unsupported = This service doesn't let Sonora change a playlist's order
 toast-playlist-deleted = Playlist deleted
 toast-local-delete-failed = Some track files could not be deleted
 toast-playlist-added = Playlist added to your library

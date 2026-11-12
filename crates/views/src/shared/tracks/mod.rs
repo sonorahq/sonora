@@ -18,10 +18,12 @@ use gpui::{
 };
 use music::Track;
 use router::Destination;
-use state::{Detail, History, Library, Network, Origin, Playback, Progress, Shelf, Sonora};
+use state::{
+    Detail, History, Library, Network, Origin, Playback, Progress, Reorder, Shelf, Sonora,
+};
 use ui::{
-    ArrowRing, Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, Scrollbar, TableSource,
-    TableState,
+    ArrowRing, Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, RowMoves, Scrollbar,
+    TableSource, TableState,
 };
 
 use crate::shared::cells;
@@ -793,6 +795,19 @@ impl TableSource for TrackSource {
             }
             (None, None) => self.menu.for_table_tracks(&tracks, columns, cx),
         })
+    }
+
+    /// A playlist's rows move when its provider keeps the order, and are refused with a
+    /// message when the playlist is the listener's but the provider keeps none.
+    fn row_moves(&self, cx: &App) -> RowMoves {
+        let Some(detail) = &self.playlist else {
+            return RowMoves::Off;
+        };
+        match detail.read(cx).reorder(cx) {
+            Reorder::On => RowMoves::On,
+            Reorder::Unsupported => RowMoves::Refused,
+            Reorder::Off => RowMoves::Off,
+        }
     }
 
     fn context_menu_will_open(&self, _rows: &[usize], cx: &App) {

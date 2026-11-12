@@ -11,8 +11,8 @@ use i18n::t;
 use music::{Album, AlbumDetail, Playlist, ReleaseType, Track};
 use router::{Destination, navigate};
 use state::{
-    AppSettings, Collection, Detail, DownloadsChanged, LibraryEvent, Origin, Playback, Progress,
-    Sonora,
+    AppSettings, Collection, Detail, DownloadsChanged, LibraryEvent, Origin, Outcome, Playback,
+    Progress, Sonora, Toasts,
 };
 use ui::{
     ActiveTheme as _, ArrowRing, Button, InlineLink, InlineLinks, Menu, Picker, Popovers, Popup,
@@ -265,6 +265,14 @@ impl DetailView {
                 page::play_or_toggle(&this.table, &this.playback, *display, cx)
             }
             TableEvent::Removed => drop_picked(&this.table, cx),
+            TableEvent::Moved { from, to } => {
+                let (from, to) = (*from, *to);
+                this.detail
+                    .update(cx, |detail, cx| detail.move_track(from, to, cx));
+            }
+            TableEvent::MoveRefused => {
+                Toasts::show(Outcome::Info, "toast-playlist-reorder-unsupported", cx)
+            }
             _ => this.persist(cx),
         })
         .detach();
