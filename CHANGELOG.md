@@ -9,7 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Show your Subsonic server's own cover on the Discord status, uploaded for 24 hours to litterbox.catbox.moe. Turn it off under Settings, Discord.
+- Show your Subsonic server's own cover on the Discord status, uploaded for 3 hours to uguu.se. Turn it off under Settings, Discord.
 - Open music links from the search field or send browser pages to Sonora with a bookmark.
 - Open YouTube handle links on their artist pages.
 - Preview music links in search suggestions and search by their titles or artist names.
@@ -24,7 +24,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- When a track's own cover cannot be shown on the Discord status, Sonora looks it up on Deezer, then iTunes, then MusicBrainz, so an album one of them lacks, or a service your network blocks, no longer leaves the status without a cover. A differently named edition of the album is only used when nothing closer is found.
+- When a track's own cover cannot be shown on the Discord status, Sonora looks it up on Deezer, then iTunes, then MusicBrainz, so an album one of them lacks, or a service your network blocks, no longer leaves the status without a cover. A different edition of the album, with another cover, is never shown in its place.
 - Hover highlights fade out when the pointer leaves instead of cutting off.
 - The player bar keeps its playback buttons and seek bar centred as the window narrows: the volume slider shrinks first and folds into a button with a slider that rises on hover only when space runs out.
 - The left sidebar keeps its full width in narrower windows and folds to icons only when the page would get too cramped.

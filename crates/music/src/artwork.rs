@@ -17,9 +17,8 @@ const MUSICBRAINZ_RESULTS: &str = "5";
 /// The lowest score MusicBrainz may give a release group for its art to be trusted.
 const MUSICBRAINZ_SCORE: u32 = 90;
 const COVER_ART: &str = "https://coverartarchive.org/release-group";
-/// Litterbox, catbox's temporary host: anonymous uploads that expire on their own.
-const LITTERBOX: &str = "https://litterbox.catbox.moe/resources/internals/api.php";
-const UPLOAD_LIFETIME: &str = "24h";
+/// Uguu, a temporary host: anonymous uploads served as plain images, gone after three hours.
+const UGUU: &str = "https://uguu.se/upload";
 /// What an uploaded cover is shrunk to before it leaves the machine.
 const UPLOAD_LIMITS: CoverLimits = CoverLimits {
     side: 512,
@@ -50,7 +49,7 @@ pub struct ArtworkQuery {
     album: String,
     title: String,
     /// The album or title as the track names it, brackets and all, so an edition the track does
-    /// not name ranks below one it does.
+    /// not name is never taken for it.
     wanted: String,
 }
 
@@ -85,6 +84,19 @@ enum Source {
 
 impl Source {
     const ALL: [Self; 3] = [Self::Deezer, Self::Itunes, Self::MusicBrainz];
+}
+
+/// Uguu's answer to an upload.
+#[derive(Deserialize)]
+struct Uploaded {
+    success: bool,
+    #[serde(default)]
+    files: Vec<UploadedFile>,
+}
+
+#[derive(Deserialize)]
+struct UploadedFile {
+    url: String,
 }
 
 #[derive(Deserialize)]
@@ -319,8 +331,8 @@ impl ArtworkSearch {
         Ok(url.starts_with("https://").then(|| url.to_owned()))
     }
 
-    /// Fetches the picture at `source`, a provider's own cover url, and uploads it to Litterbox
-    /// for a day, answering the public url there. Only the re-encoded picture leaves the machine,
+    /// Fetches the picture at `source`, a provider's own cover url, and uploads it to Uguu for
+    /// three hours, answering the public url there. Only the re-encoded picture leaves the machine,
     /// never `source`, which for a self-hosted server carries the credentials that fetch it.
     pub async fn upload(&self, source: &str) -> Result<String> {
         // every error drops the url, so the credentials in it never reach a log
@@ -341,27 +353,16 @@ impl ArtworkSearch {
         let jpeg = square_jpeg(&picture, UPLOAD_LIMITS)?;
 
         let boundary = format!("sonora{:016x}", fastrand::u64(..));
-        let mut body = Vec::with_capacity(jpeg.len() + 512);
-        for (name, value) in [("reqtype", "fileupload"), ("time", UPLOAD_LIFETIME)] {
-            body.extend_from_slice(
-                format!(
-                    "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
-                )
-                .as_bytes(),
-            );
-        }
-        body.extend_from_slice(
-            format!(
-                "--{boundary}\r\nContent-Disposition: form-data; name=\"fileToUpload\"; filename=\"cover.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n"
-            )
-            .as_bytes(),
-        );
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"files[]\"; filename=\"cover.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n"
+        )
+        .into_bytes();
         body.extend_from_slice(&jpeg);
         body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
 
-        let answer = self
+        let answer: Uploaded = self
             .http
-            .post(LITTERBOX)
+            .post(UGUU)
             .header(reqwest::header::USER_AGENT, AGENT)
             .header(
                 reqwest::header::CONTENT_TYPE,
@@ -370,17 +371,19 @@ impl ArtworkSearch {
             .body(body)
             .send()
             .await
-            .context("cannot reach litterbox")?
+            .context("cannot reach uguu")?
             .error_for_status()
-            .context("cannot upload the cover to litterbox")?
-            .text()
+            .context("cannot upload the cover to uguu")?
+            .json()
             .await
-            .context("cannot read the litterbox answer")?;
-        let url = answer.trim();
-        if !url.starts_with("https://") {
-            anyhow::bail!("litterbox answered without a url: {url}");
-        }
-        Ok(url.to_owned())
+            .context("cannot read the uguu answer")?;
+        let url = answer
+            .files
+            .into_iter()
+            .next()
+            .map(|file| file.url)
+            .filter(|url| answer.success && url.starts_with("https://"));
+        url.context("uguu answered without a url")
     }
 
     /// One page of results for the artist and `name`. Deezer reports a refused search, such as
@@ -417,8 +420,7 @@ impl ArtworkSearch {
 /// The cover of the candidate whose name is closest to `wanted`, the album or title as the track
 /// names it. Names are compared without their brackets, and a candidate that matches exactly
 /// beats one that only adds words, such as "- EP". A candidate whose brackets name an edition
-/// `wanted` does not, such as "(blind)", ranks below every candidate that names none, since it
-/// may well wear a different cover; it is still taken when nothing closer turns up.
+/// `wanted` does not, such as "(blind)", is never taken, since it may wear another cover.
 fn closest(
     candidates: impl Iterator<Item = (String, Option<String>)>,
     wanted: &str,
@@ -426,29 +428,26 @@ fn closest(
     let words = compared(wanted);
     let words: Vec<&str> = words.split(' ').collect();
     let wanted = compared(&searchable(wanted));
-    let mut best: Option<(u8, String)> = None;
+    let mut near = None;
     for (name, cover) in candidates {
         let Some(cover) = cover.filter(|cover| cover.starts_with("https://")) else {
             continue;
         };
-        let core = compared(&searchable(&name));
-        let relation = match (core == wanted, extends(&core, &wanted)) {
-            (true, _) => 0,
-            (false, true) => 1,
-            (false, false) => continue,
-        };
-        let edition = bracketed(&name)
+        let other_edition = bracketed(&name)
             .iter()
             .any(|word| !words.contains(&word.as_str()));
-        let tier = u8::from(edition) * 2 + relation;
-        if tier == 0 {
+        if other_edition {
+            continue;
+        }
+        let core = compared(&searchable(&name));
+        if core == wanted {
             return Some(cover);
         }
-        if best.as_ref().is_none_or(|(rank, _)| tier < *rank) {
-            best = Some((tier, cover));
+        if near.is_none() && extends(&core, &wanted) {
+            near = Some(cover);
         }
     }
-    best.map(|(_, cover)| cover)
+    near
 }
 
 fn same_artist(found: &str, wanted: &str) -> bool {

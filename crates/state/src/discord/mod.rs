@@ -26,9 +26,9 @@ const MAX_TEXT_UTF16_UNITS: usize = 128;
 const MUSIC: &str = "Music";
 /// Where the Sonora button sends a friend who presses it.
 const SONORA_URL: &str = "https://sonorahq.org";
-/// How long an uploaded cover is shown before it is uploaded again. Litterbox keeps it for a
-/// day, so a status that runs longer never points at a picture that has gone.
-const UPLOAD_FRESH: Duration = Duration::from_secs(20 * 60 * 60);
+/// How long an uploaded cover is shown before it is uploaded again. Uguu keeps it for three
+/// hours, so a status that runs longer never points at a picture that has gone.
+const UPLOAD_FRESH: Duration = Duration::from_secs(150 * 60);
 
 struct Attached {
     _discord: Entity<Discord>,
