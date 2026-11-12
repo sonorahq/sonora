@@ -185,6 +185,7 @@ impl DetailView {
             let shown = detail.read(cx).id().map(str::to_owned);
             if this.shown != shown {
                 this.shown = shown;
+                this.moved = None;
                 this.rails.clear();
                 this.rail_tab = RailTab::Albums;
                 this.scrollbar
