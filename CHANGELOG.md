@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Show your Subsonic server's own cover on the Discord status when no public one is found, uploaded for 24 hours to litterbox.catbox.moe. Turn it on under Settings, Discord.
 - Open music links from the search field or send browser pages to Sonora with a bookmark.
 - Open YouTube handle links on their artist pages.
 - Preview music links in search suggestions and search by their titles or artist names.

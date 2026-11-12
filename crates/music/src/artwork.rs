@@ -3,6 +3,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
 use crate::Track;
+use crate::cover::{CoverLimits, square_jpeg};
 
 const ALBUMS: &str = "https://api.deezer.com/search/album";
 const TRACKS: &str = "https://api.deezer.com/search/track";
@@ -16,6 +17,14 @@ const MUSICBRAINZ_RESULTS: &str = "5";
 /// The lowest score MusicBrainz may give a release group for its art to be trusted.
 const MUSICBRAINZ_SCORE: u32 = 90;
 const COVER_ART: &str = "https://coverartarchive.org/release-group";
+/// Litterbox, catbox's temporary host: anonymous uploads that expire on their own.
+const LITTERBOX: &str = "https://litterbox.catbox.moe/resources/internals/api.php";
+const UPLOAD_LIFETIME: &str = "24h";
+/// What an uploaded cover is shrunk to before it leaves the machine.
+const UPLOAD_LIMITS: CoverLimits = CoverLimits {
+    side: 512,
+    bytes: 1024 * 1024,
+};
 /// MusicBrainz refuses a client that does not say who it is.
 const AGENT: &str = concat!(
     "sonora/",
@@ -304,6 +313,70 @@ impl ArtworkSearch {
             .context("cannot read the cover art archive")?;
         let url = response.url().as_str();
         Ok(url.starts_with("https://").then(|| url.to_owned()))
+    }
+
+    /// Fetches the picture at `source`, a provider's own cover url, and uploads it to Litterbox
+    /// for a day, answering the public url there. Only the re-encoded picture leaves the machine,
+    /// never `source`, which for a self-hosted server carries the credentials that fetch it.
+    pub async fn upload(&self, source: &str) -> Result<String> {
+        // every error drops the url, so the credentials in it never reach a log
+        let picture = self
+            .http
+            .get(source)
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .context("cannot reach the cover")?
+            .error_for_status()
+            .map_err(reqwest::Error::without_url)
+            .context("cannot fetch the cover")?
+            .bytes()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .context("cannot read the cover")?;
+        let jpeg = square_jpeg(&picture, UPLOAD_LIMITS)?;
+
+        let boundary = format!("sonora{:016x}", fastrand::u64(..));
+        let mut body = Vec::with_capacity(jpeg.len() + 512);
+        for (name, value) in [("reqtype", "fileupload"), ("time", UPLOAD_LIFETIME)] {
+            body.extend_from_slice(
+                format!(
+                    "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+                )
+                .as_bytes(),
+            );
+        }
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"fileToUpload\"; filename=\"cover.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(&jpeg);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+        let answer = self
+            .http
+            .post(LITTERBOX)
+            .header(reqwest::header::USER_AGENT, AGENT)
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(body)
+            .send()
+            .await
+            .context("cannot reach litterbox")?
+            .error_for_status()
+            .context("cannot upload the cover to litterbox")?
+            .text()
+            .await
+            .context("cannot read the litterbox answer")?;
+        let url = answer.trim();
+        if !url.starts_with("https://") {
+            anyhow::bail!("litterbox answered without a url: {url}");
+        }
+        Ok(url.to_owned())
     }
 
     /// One page of results for the artist and `name`. Deezer reports a refused search, such as

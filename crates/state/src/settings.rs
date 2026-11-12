@@ -429,6 +429,7 @@ struct Values {
     discord_sonora_button: bool,
     discord_provider_button: bool,
     artwork_for_local_files: bool,
+    discord_upload_covers: bool,
     lyrics_for_local_files: bool,
     /// The output device to play on, as a cpal device id, or `None` to follow the system's
     /// default. Kept while the device is gone, so playback returns to it, and cleared once it is
@@ -659,6 +660,7 @@ impl Default for Values {
             discord_sonora_button: true,
             discord_provider_button: true,
             artwork_for_local_files: true,
+            discord_upload_covers: false,
             lyrics_for_local_files: true,
             output_device: None,
             output_rate: None,
@@ -1107,6 +1109,12 @@ impl AppSettings {
     /// for its Discord status. Streamed tracks are looked up regardless.
     pub fn artwork_for_local_files(&self) -> bool {
         self.values.artwork_for_local_files
+    }
+
+    /// Whether a cover no public catalogue has may be fetched from the provider and uploaded to
+    /// a temporary public host, so the Discord status can show it. Off unless the user asks.
+    pub fn discord_upload_covers(&self) -> bool {
+        self.values.discord_upload_covers
     }
 
     pub fn lyrics_for_local_files(&self) -> bool {
@@ -1740,6 +1748,11 @@ impl AppSettings {
 
     pub fn set_artwork_for_local_files(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.values.artwork_for_local_files = enabled;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_discord_upload_covers(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.discord_upload_covers = enabled;
         self.schedule_save(cx);
     }
 
