@@ -660,7 +660,7 @@ impl Default for Values {
             discord_sonora_button: true,
             discord_provider_button: true,
             artwork_for_local_files: true,
-            discord_upload_covers: false,
+            discord_upload_covers: true,
             lyrics_for_local_files: true,
             output_device: None,
             output_rate: None,
@@ -1112,7 +1112,7 @@ impl AppSettings {
     }
 
     /// Whether a cover no public catalogue has may be fetched from the provider and uploaded to
-    /// a temporary public host, so the Discord status can show it. Off unless the user asks.
+    /// a temporary public host, so the Discord status can show it. On unless the user turns it off.
     pub fn discord_upload_covers(&self) -> bool {
         self.values.discord_upload_covers
     }
