@@ -11,8 +11,8 @@ use i18n::t;
 use music::{Album, AlbumDetail, Playlist, ReleaseType, Track};
 use router::{Destination, navigate};
 use state::{
-    AppSettings, Collection, Detail, DownloadsChanged, LibraryEvent, Origin, Playback, Progress,
-    Sonora,
+    AppSettings, Collection, Detail, DownloadsChanged, LibraryEvent, Origin, Outcome, Playback,
+    Progress, Sonora, Toasts,
 };
 use ui::{
     ActiveTheme as _, ArrowRing, Button, InlineLink, InlineLinks, Menu, Picker, Popovers, Popup,
@@ -107,6 +107,8 @@ pub(crate) struct DetailView {
     settings: Entity<AppSettings>,
     section: &'static str,
     sorted: Option<String>,
+    /// The row the listener last moved and the track on it, kept picked across rebuilds.
+    moved: Option<(usize, String)>,
     shown: Option<String>,
     context_menu: Option<Point<Pixels>>,
     toolbar: Entity<Toolbar>,
@@ -183,6 +185,7 @@ impl DetailView {
             let shown = detail.read(cx).id().map(str::to_owned);
             if this.shown != shown {
                 this.shown = shown;
+                this.moved = None;
                 this.rails.clear();
                 this.rail_tab = RailTab::Albums;
                 this.scrollbar
@@ -265,6 +268,10 @@ impl DetailView {
                 page::play_or_toggle(&this.table, &this.playback, *display, cx)
             }
             TableEvent::Removed => drop_picked(&this.table, cx),
+            TableEvent::Moved { from, to } => this.move_track(*from, *to, cx),
+            TableEvent::MoveRefused => {
+                Toasts::show(Outcome::Info, "toast-playlist-reorder-unsupported", cx)
+            }
             _ => this.persist(cx),
         })
         .detach();
@@ -282,6 +289,7 @@ impl DetailView {
             settings,
             section,
             sorted: None,
+            moved: None,
             shown: None,
             context_menu: None,
             toolbar,
@@ -312,10 +320,44 @@ impl DetailView {
         });
     }
 
+    /// Rebuilds the rows with nothing picked, except a row the listener just moved, which
+    /// stays picked while the pick and the track are still on it, so the next Alt+arrow moves
+    /// it on.
     fn rebuild(&mut self, cx: &mut Context<Self>) {
+        let tracks = self.detail.read(cx).tracks();
+        let picked = self.table.read(cx).delegate().selected();
+        let moved = self.moved.take().filter(|(row, id)| {
+            picked == Some(*row) && tracks.get(*row).and_then(|track| track.id.as_ref()) == Some(id)
+        });
         self.table.update(cx, |table, cx| {
-            table.delegate_mut().clear_selection();
+            let delegate = table.delegate_mut();
+            delegate.clear_selection();
+            if let Some((row, _)) = &moved {
+                delegate.select(*row);
+            }
             table.rebuild(cx);
+        });
+        self.moved = moved;
+    }
+
+    /// Moves a playlist row, and picks it at its new place once the move has started.
+    fn move_track(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        let started = self
+            .detail
+            .update(cx, |detail, cx| detail.move_track(from, to, cx));
+        if !started {
+            return;
+        }
+        let id = self
+            .detail
+            .read(cx)
+            .tracks()
+            .get(to)
+            .and_then(|track| track.id.clone());
+        self.moved = id.map(|id| (to, id));
+        self.table.update(cx, |table, cx| {
+            table.delegate_mut().select(to);
+            cx.notify();
         });
     }
 

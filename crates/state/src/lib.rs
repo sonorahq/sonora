@@ -48,7 +48,7 @@ mod window_shape;
 pub use artist::{ArtistDetail, ArtistDetailEvent};
 pub use control::Control;
 pub use cover::Cover;
-pub use detail::{Collection, Detail, Header};
+pub use detail::{Collection, Detail, Header, Reorder};
 pub use devices::Devices;
 pub use downloads::{
     Active, Downloads, DownloadsChanged, Pending, Progress, Remaining, Subject, downloaded,

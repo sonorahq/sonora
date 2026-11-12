@@ -16,12 +16,13 @@ use gpui::{
 use i18n::t;
 
 use crate::artwork::{PREFETCH_REACH, Prefetch};
+use crate::drag::{Edge, drop_gap, drop_marker};
 use crate::filters::FilterChange;
 use crate::glass::{bar_surface, blurring, popover_surface};
 use crate::menu::{Menu, MenuItem};
 use crate::metrics::{snapped, text_width};
 use crate::motion::Glowing as _;
-use crate::pin::{Pin, Pinnable};
+use crate::pin::{DraggedPin, Pin, Pinnable, Spot};
 use crate::popup::Popup;
 use crate::skeleton::Skeleton;
 use crate::theme::ActiveTheme as _;
@@ -33,7 +34,15 @@ use layout::{PADDING, Resolved, SORT_ROOM, TRAIL, reordered, resolve, shifted, s
 
 actions!(
     table,
-    [SelectNext, SelectPrevious, Deselect, Activate, Remove]
+    [
+        SelectNext,
+        SelectPrevious,
+        Deselect,
+        Activate,
+        Remove,
+        MoveRowUp,
+        MoveRowDown
+    ]
 );
 
 pub const TABLE_CONTEXT: &str = "Table";
@@ -51,6 +60,22 @@ const SKELETON_BAR: f32 = 0.3;
 const SKELETON_REACH: [f32; 5] = [0.6, 0.85, 0.45, 0.7, 0.55];
 
 pub const ROW_GROUP: &str = "table-row";
+/// The list a row dragged within its own table names, so a drop on another row can tell it
+/// from a pin dragged in from elsewhere.
+const ROWS: &str = "table-rows";
+
+/// Whether a table's rows can be dragged into a new order. Only a table in the source's own
+/// order offers it, since a move counts places in that order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowMoves {
+    /// The rows keep their order, and a drop on one does nothing.
+    Off,
+    /// The order is the listener's but cannot be changed here, so a drop on another row
+    /// emits [`TableEvent::MoveRefused`] for the view to explain why.
+    Refused,
+    /// A row dropped between two others emits [`TableEvent::Moved`].
+    On,
+}
 
 pub struct Cell<F> {
     pub field: F,
@@ -120,6 +145,11 @@ pub trait TableSource: 'static {
 
     fn pin(&self, _row: usize, _cx: &App) -> Option<Pin> {
         None
+    }
+
+    /// Whether the rows can be dragged into a new order. A row only drags when it has a pin.
+    fn row_moves(&self, _cx: &App) -> RowMoves {
+        RowMoves::Off
     }
 
     /// Text shown over the whole row the moment the pointer reaches it, following the pointer
@@ -307,6 +337,11 @@ impl<S: TableSource> TableDelegate<S> {
         }
         rows.sort_by_key(|row| self.display_of(*row).unwrap_or(usize::MAX));
         rows
+    }
+
+    /// Picks source row `row` alone, as a click on it would.
+    pub fn select(&mut self, row: usize) {
+        self.pick(row, false, false);
     }
 
     pub fn clear_selection(&mut self) {
@@ -594,6 +629,13 @@ pub enum TableEvent {
     Removed,
     LayoutChanged,
     SortChanged,
+    /// The source row `from` was dropped so it lands at `to`, counted after the move.
+    Moved {
+        from: usize,
+        to: usize,
+    },
+    /// A row was dropped on another while [`RowMoves::Refused`].
+    MoveRefused,
 }
 
 pub struct Toggle {
@@ -697,6 +739,8 @@ pub struct TableState<S: TableSource> {
     moving: Option<(usize, usize)>,
     sizing: Option<Sizing>,
     column_menu: Option<Point<Pixels>>,
+    /// The gap a dragged row would land in, counted in displayed rows.
+    drop_gap: Option<usize>,
 }
 
 impl<S: TableSource> EventEmitter<TableEvent> for TableState<S> {}
@@ -719,6 +763,74 @@ impl<S: TableSource> TableState<S> {
             moving: None,
             sizing: None,
             column_menu: None,
+            drop_gap: None,
+        }
+    }
+
+    /// What a drag between rows does now. A sorted, searched or filtered table shows rows out
+    /// of the source's order, so it moves nothing.
+    fn row_moves(&self, cx: &App) -> RowMoves {
+        let delegate = &self.delegate;
+        let natural =
+            delegate.sort.is_none() && delegate.query.is_empty() && !delegate.source.filtered(cx);
+        match natural {
+            true => delegate.source.row_moves(cx),
+            false => RowMoves::Off,
+        }
+    }
+
+    /// Marks the gap a row dragged over displayed row `target` would land in, leaving out the
+    /// two gaps beside the dragged row, where it would not move.
+    fn hover_gap(
+        &mut self,
+        event: &DragMoveEvent<DraggedPin>,
+        target: usize,
+        cx: &mut Context<Self>,
+    ) {
+        // Rows touch, so only the one under the pointer answers.
+        if !event.bounds.contains(&event.event.position) {
+            return;
+        }
+        let Some(held) = event.drag(cx).spot(ROWS) else {
+            return;
+        };
+        let gap = drop_gap(event.bounds, event.event.position, target)
+            .filter(|gap| *gap != held.index && *gap != held.index + 1);
+        if self.drop_gap != gap {
+            self.drop_gap = gap;
+            cx.notify();
+        }
+    }
+
+    /// Answers a pin dropped on displayed row `target`. Only a row of this table counts, known
+    /// by the pin it carries still being the one its row gives.
+    fn land(&mut self, dragged: &DraggedPin, target: usize, cx: &mut Context<Self>) {
+        let gap = self.drop_gap.take();
+        cx.notify();
+        let Some(held) = dragged.spot(ROWS) else {
+            return;
+        };
+        let ours = self
+            .delegate
+            .source
+            .pin(held.index, cx)
+            .is_some_and(|pin| pin.same(&dragged.pin));
+        if !ours {
+            return;
+        }
+        match (self.row_moves(cx), gap) {
+            (RowMoves::On, Some(gap)) => {
+                let from = held.index;
+                let to = match gap > from {
+                    true => gap - 1,
+                    false => gap,
+                };
+                if to != from && to < self.delegate.row_count() {
+                    cx.emit(TableEvent::Moved { from, to });
+                }
+            }
+            (RowMoves::Refused, _) if target != held.index => cx.emit(TableEvent::MoveRefused),
+            _ => {}
         }
     }
 
@@ -758,6 +870,83 @@ impl<S: TableSource> TableState<S> {
 
     fn remove(&mut self, _: &Remove, _: &mut Window, cx: &mut Context<Self>) {
         self.fire_remove(cx);
+    }
+
+    fn move_row_up(&mut self, _: &MoveRowUp, window: &mut Window, cx: &mut Context<Self>) {
+        self.shift_row(-1, window, cx);
+    }
+
+    fn move_row_down(&mut self, _: &MoveRowDown, window: &mut Window, cx: &mut Context<Self>) {
+        self.shift_row(1, window, cx);
+    }
+
+    /// Moves the one picked row a place up or down, the way a drag would, for the keyboard and
+    /// the context menu. Only the view knows whether the move started, so it moves the pick.
+    fn shift_row(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let moves = self.row_moves(cx);
+        if moves == RowMoves::Off || self.delegate.picked().len() != 1 {
+            return;
+        }
+        let Some(from) = self.delegate.selected else {
+            return;
+        };
+        if moves == RowMoves::Refused {
+            cx.emit(TableEvent::MoveRefused);
+            return;
+        }
+        let Some(to) = from
+            .checked_add_signed(delta)
+            .filter(|to| *to < self.delegate.row_count())
+        else {
+            return;
+        };
+        cx.emit(TableEvent::Moved { from, to });
+        self.reveal(to, window, cx);
+    }
+
+    /// Ends a row's context menu with Move up and Move down, for a single row of a table whose
+    /// rows move. A row whose key another row shares is left without them, since a menu kept
+    /// over a rebuild finds its row by key and could land on the other copy.
+    fn with_moves(&self, menu: Menu, rows: &[usize], cx: &mut Context<Self>) -> Menu {
+        let [row] = rows else {
+            return menu;
+        };
+        let row = *row;
+        if self.row_moves(cx) != RowMoves::On {
+            return menu;
+        }
+        let source = &self.delegate.source;
+        let key = source.row_key(row, cx);
+        let shared = key.is_some()
+            && (0..source.rows(cx)).any(|other| other != row && source.row_key(other, cx) == key);
+        if shared {
+            return menu;
+        }
+        let last = self.delegate.row_count().saturating_sub(1);
+        let table = cx.weak_entity();
+        let step = move |delta: isize| {
+            let table = table.clone();
+            move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
+                table
+                    .update(cx, |table, cx| {
+                        table.delegate.pick(row, false, false);
+                        table.shift_row(delta, window, cx);
+                    })
+                    .ok();
+            }
+        };
+        let up = MenuItem::new("move-row-up", t!("menu-move-up")).icon("icons/chevron-up.svg");
+        let down =
+            MenuItem::new("move-row-down", t!("menu-move-down")).icon("icons/chevron-down.svg");
+        menu.item(MenuItem::separator("move-row-section"))
+            .item(match row {
+                0 => up.disabled(),
+                _ => up.on_click(step(-1)),
+            })
+            .item(match row == last {
+                true => down.disabled(),
+                false => down.on_click(step(1)),
+            })
     }
 
     fn fire_activate(&mut self, cx: &mut Context<Self>) {
@@ -1253,6 +1442,10 @@ impl<S: TableSource> TableState<S> {
         // Focus stays on the table while the arrow keys walk its rows, so the row they reached
         // claims the focus a screen reader reports.
         let caret = self.delegate.selected;
+        let moves = self.row_moves(cx);
+        let gap = self
+            .drop_gap
+            .filter(|_| moves == RowMoves::On && cx.has_active_drag());
 
         let mut rows: Vec<AnyElement> = (first..last)
             .map(|display| {
@@ -1304,7 +1497,21 @@ impl<S: TableSource> TableState<S> {
                     .when(playing, |this| this.bg(theme.muted))
                     .when(selected, |this| this.bg(theme.table_active))
                     .when(!selected, |this| this.glow(theme.table_hover, window, cx))
-                    .when_some(self.delegate.source.pin(row, cx), Pinnable::pin)
+                    .when_some(self.delegate.source.pin(row, cx), |this, pin| match moves {
+                        RowMoves::Off => this.pin(pin),
+                        // Rows only move in the source's order, where a displayed row is its
+                        // source row.
+                        RowMoves::Refused | RowMoves::On => this
+                            .pin_from(pin, Spot::new(ROWS, row))
+                            .on_drag_move(cx.listener(
+                                move |this, event: &DragMoveEvent<DraggedPin>, _, cx| {
+                                    this.hover_gap(event, display, cx)
+                                },
+                            ))
+                            .on_drop(cx.listener(move |this, dragged: &DraggedPin, _, cx| {
+                                this.land(dragged, display, cx)
+                            })),
+                    })
                     .when_some(self.delegate.source.tip(row, cx), |this, text| {
                         this.tip_label(text, Perch::Follow)
                     })
@@ -1353,6 +1560,13 @@ impl<S: TableSource> TableState<S> {
                         }),
                     )
                     .children(cells)
+                    .map(|this| match gap {
+                        Some(gap) if gap == display => this.child(drop_marker(Edge::Above, cx)),
+                        Some(gap) if gap == display + 1 && tail => {
+                            this.child(drop_marker(Edge::Below, cx))
+                        }
+                        _ => this,
+                    })
                     .into_any_element()
             })
             .collect();
@@ -1491,6 +1705,7 @@ impl<S: TableSource> Render for TableState<S> {
             self.delegate
                 .source
                 .context_menu(&open.rows, &visible, cx)
+                .map(|menu| self.with_moves(menu, &open.rows, cx))
                 .map(|menu| {
                     Popup::new(open.at, menu).on_close(cx.listener(|this, _, _, cx| {
                         this.context_menu = None;
@@ -1512,6 +1727,17 @@ impl<S: TableSource> Render for TableState<S> {
             .on_action(cx.listener(Self::deselect))
             .on_action(cx.listener(Self::activate))
             .on_action(cx.listener(Self::remove))
+            .on_action(cx.listener(Self::move_row_up))
+            .on_action(cx.listener(Self::move_row_down))
+            // A row dragged out of the table no longer has a gap to land in.
+            .on_drag_move(
+                cx.listener(|this, event: &DragMoveEvent<DraggedPin>, _, cx| {
+                    if this.drop_gap.is_some() && !event.bounds.contains(&event.event.position) {
+                        this.drop_gap = None;
+                        cx.notify();
+                    }
+                }),
+            )
             .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, _, cx| {
                 if this.context_menu.is_some() {
                     return;

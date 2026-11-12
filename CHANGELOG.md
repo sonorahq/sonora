@@ -20,6 +20,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Tidal tracks show their bit depth or bit rate in the signal path.
 - Keep plays from the signed-in provider out of Last.fm and the other linked services with a switch in Scrobbling, for accounts that already scrobble on their own.
 - Sonora's app icon follows the dark, clear and tinted icon styles on macOS 26 and later.
+- Drag songs into a new order in your own playlists on local files, Spotify and Subsonic servers, or move one with Alt+Up and Alt+Down.
 
 ### Changed
 

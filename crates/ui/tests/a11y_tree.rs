@@ -39,8 +39,8 @@ use gpui::{
     div,
 };
 use ui::{
-    Button, Card, Checkbox, Glowing as _, Input, OptionCard, OtpInput, Radio, RangeScrubber,
-    RangeState, Scrubber, ScrubberState, Theme, Toast,
+    Button, Card, Checkbox, DraggedPin, Glowing as _, Input, OptionCard, OtpInput, Pin, PinKind,
+    Pinnable as _, Radio, RangeScrubber, RangeState, Scrubber, ScrubberState, Spot, Theme, Toast,
 };
 
 /// Formats what the frame builder would put in the tree for `element`.
@@ -697,5 +697,44 @@ async fn glowed_row_keeps_its_role_and_name(cx: &mut TestAppContext) {
     assert!(
         lines.iter().any(|line| line.contains("name=Some(\"Ada\")")),
         "a row that fades its hover loses its name: {lines:?}"
+    );
+}
+
+#[gpui::test]
+async fn movable_row_keeps_its_role_name_and_place(cx: &mut TestAppContext) {
+    let lines = open_probe(cx, |_, _| {
+        // the wiring a table row takes on when its rows can be dragged into a new order
+        let element = div()
+            .id(("row", 2_usize))
+            .role(Role::Row)
+            .aria_label("Ada")
+            .aria_position_in_set(3)
+            .aria_size_of_set(5)
+            .pin_from(Pin::new(PinKind::Song, "ada", "Ada"), Spot::new("rows", 2))
+            .on_drag_move(|_: &gpui::DragMoveEvent<DraggedPin>, _, _| {})
+            .on_drop(|_: &DraggedPin, _, _| {});
+        let mut node = Node::new(Role::Row);
+        element.write_a11y_info(&mut node);
+        format!(
+            "{} place={:?} of={:?}",
+            snapshot("movable-row", &element),
+            node.position_in_set(),
+            node.size_of_set()
+        )
+    });
+    let lines = rendered(&lines, "movable-row");
+    assert!(
+        lines.iter().any(|line| line.contains("role=Row")),
+        "a row that can be dragged into a new order drops out of the tree: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("name=Some(\"Ada\")")),
+        "a row that can be dragged into a new order loses its name: {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("place=Some(3) of=Some(5)")),
+        "a row that can be dragged into a new order loses its place in the list: {lines:?}"
     );
 }
