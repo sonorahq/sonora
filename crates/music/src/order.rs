@@ -59,12 +59,18 @@ pub fn placement(listed: &[usize], from: usize, to: usize) -> Result<Placement> 
     })
 }
 
-/// Checks that the listed row `from` is still `track_id`, so a listing that changed under the
-/// listener moves nothing rather than the wrong track.
-pub fn confirm(listed: &[Option<&str>], from: usize, track_id: &str) -> Result<()> {
-    match listed.get(from) {
-        Some(Some(id)) if *id == track_id => Ok(()),
-        _ => bail!("the playlist changed before the move"),
+/// Checks that the provider still lists exactly the tracks the listener saw, in the same
+/// order. A move counts places in what the listener saw, so a playlist that gained, lost or
+/// reordered a track elsewhere moves nothing rather than landing the track somewhere else.
+pub fn confirm(listed: &[Option<&str>], seen: &[String]) -> Result<()> {
+    let same = listed.len() == seen.len()
+        && listed
+            .iter()
+            .zip(seen)
+            .all(|(listed, seen)| *listed == Some(seen.as_str()));
+    match same {
+        true => Ok(()),
+        false => bail!("the playlist changed before the move"),
     }
 }
 
@@ -122,12 +128,24 @@ mod tests {
         assert!(placement(&[0, 1], 2, 0).is_err());
     }
 
+    fn seen(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| (*id).to_owned()).collect()
+    }
+
     #[test]
-    fn confirms_the_moved_track() {
-        let listed = [Some("a"), None, Some("c")];
-        assert!(confirm(&listed, 0, "a").is_ok());
-        assert!(confirm(&listed, 2, "a").is_err());
-        assert!(confirm(&listed, 1, "a").is_err());
-        assert!(confirm(&listed, 3, "a").is_err());
+    fn confirms_the_listing_the_listener_saw() {
+        let listed = [Some("a"), Some("b"), Some("c")];
+        assert!(confirm(&listed, &seen(&["a", "b", "c"])).is_ok());
+    }
+
+    #[test]
+    fn refuses_a_listing_that_changed_elsewhere() {
+        // a track added after the moved one would shift where the move lands
+        let grown = [Some("a"), Some("x"), Some("b"), Some("c")];
+        assert!(confirm(&grown, &seen(&["a", "b", "c"])).is_err());
+        let reordered = [Some("b"), Some("a"), Some("c")];
+        assert!(confirm(&reordered, &seen(&["a", "b", "c"])).is_err());
+        let unnamed = [Some("a"), None];
+        assert!(confirm(&unnamed, &seen(&["a", ""])).is_err());
     }
 }

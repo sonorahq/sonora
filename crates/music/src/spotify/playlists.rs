@@ -227,14 +227,15 @@ pub async fn remove_track(session: &Session, playlist_id: &str, track_id: &str) 
     Ok(())
 }
 
-/// Moves the listed track `from` to `to` with one move on the revision it was read at, so an
-/// edit made elsewhere in between fails rather than moving the wrong row. The listing leaves
+/// Moves the listed track `from` to `to` with one move on the revision it was read at, once
+/// that listing is confirmed to be the one the listener saw, so an edit made elsewhere before
+/// or after the read fails rather than moving the wrong row. The listing leaves
 /// out episodes and tracks with no metadata, as `tracks_from` does, so the move is counted
 /// among the listed tracks and placed among all the items.
 pub async fn move_track(
     session: &Session,
     playlist_id: &str,
-    track_id: &str,
+    seen: &[String],
     from: usize,
     to: usize,
 ) -> Result<()> {
@@ -256,7 +257,7 @@ pub async fn move_track(
         .map(|(index, _)| index)
         .collect();
 
-    let op = move_op(&content, &held, track_id, from, to)?;
+    let op = move_op(&content, &held, seen, from, to)?;
     let body = changes(content.revision.as_deref(), op);
     edit(session, playlist_id, &body)
         .await
@@ -591,7 +592,7 @@ fn remove_op(uri: &str, index: i32) -> Op {
 fn move_op(
     content: &SelectedListContent,
     held: &[usize],
-    track_id: &str,
+    seen: &[String],
     from: usize,
     to: usize,
 ) -> Result<Op> {
@@ -604,7 +605,7 @@ fn move_op(
                 .and_then(|item| item.uri().strip_prefix(TRACK_PREFIX))
         })
         .collect();
-    order::confirm(&listed, from, track_id)?;
+    order::confirm(&listed, seen)?;
     let placement = order::placement(held, from, to)?;
     let offset = content.contents.pos();
 
@@ -714,21 +715,23 @@ mod tests {
         );
         let held = [0, 2, 3];
 
-        let down = move_op(&content, &held, "a", 0, 2).expect("move");
+        let shown = ["a", "b", "c"].map(str::to_owned);
+        let down = move_op(&content, &held, &shown, 0, 2).expect("move");
         assert_eq!(down.kind(), Kind::MOV);
         assert_eq!(down.mov.from_index(), 0);
         assert_eq!(down.mov.length(), 1);
         assert_eq!(down.mov.to_index(), 4);
 
-        let up = move_op(&content, &held, "c", 2, 0).expect("move");
+        let up = move_op(&content, &held, &shown, 2, 0).expect("move");
         assert_eq!(up.mov.from_index(), 3);
         assert_eq!(up.mov.to_index(), 0);
     }
 
     #[test]
-    fn a_move_refuses_a_row_that_holds_another_track() {
+    fn a_move_refuses_a_listing_that_changed_elsewhere() {
         let content = listing(&["spotify:track:a", "spotify:track:b"], 0);
-        assert!(move_op(&content, &[0, 1], "a", 1, 0).is_err());
+        let shown = ["b", "a"].map(str::to_owned);
+        assert!(move_op(&content, &[0, 1], &shown, 1, 0).is_err());
     }
 
     #[test]

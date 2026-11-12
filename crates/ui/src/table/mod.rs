@@ -339,6 +339,11 @@ impl<S: TableSource> TableDelegate<S> {
         rows
     }
 
+    /// Picks source row `row` alone, as a click on it would.
+    pub fn select(&mut self, row: usize) {
+        self.pick(row, false, false);
+    }
+
     pub fn clear_selection(&mut self) {
         self.selected = None;
         self.anchor = None;
@@ -876,7 +881,7 @@ impl<S: TableSource> TableState<S> {
     }
 
     /// Moves the one picked row a place up or down, the way a drag would, for the keyboard and
-    /// the context menu. The pick follows the row to its new place.
+    /// the context menu. Only the view knows whether the move started, so it moves the pick.
     fn shift_row(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
         let moves = self.row_moves(cx);
         if moves == RowMoves::Off || self.delegate.picked().len() != 1 {
@@ -896,19 +901,25 @@ impl<S: TableSource> TableState<S> {
             return;
         };
         cx.emit(TableEvent::Moved { from, to });
-        self.delegate.pick(to, false, false);
         self.reveal(to, window, cx);
-        cx.notify();
     }
 
     /// Ends a row's context menu with Move up and Move down, for a single row of a table whose
-    /// rows move.
+    /// rows move. A row whose key another row shares is left without them, since a menu kept
+    /// over a rebuild finds its row by key and could land on the other copy.
     fn with_moves(&self, menu: Menu, rows: &[usize], cx: &mut Context<Self>) -> Menu {
         let [row] = rows else {
             return menu;
         };
         let row = *row;
         if self.row_moves(cx) != RowMoves::On {
+            return menu;
+        }
+        let source = &self.delegate.source;
+        let key = source.row_key(row, cx);
+        let shared = key.is_some()
+            && (0..source.rows(cx)).any(|other| other != row && source.row_key(other, cx) == key);
+        if shared {
             return menu;
         }
         let last = self.delegate.row_count().saturating_sub(1);

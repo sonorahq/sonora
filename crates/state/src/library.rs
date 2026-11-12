@@ -2447,12 +2447,13 @@ impl Library {
     }
 
     /// Moves the playlist's row `from` to `to` on the provider, and answers whether the move
-    /// started. The page reloads once it is done either way, so it shows the order the
+    /// started. `seen` is the id of every row the page showed, which the provider checks its
+    /// own listing against. The page reloads once it is done either way, so it shows the order the
     /// provider kept rather than the one it asked for.
     pub fn move_in_playlist(
         &mut self,
         playlist_id: String,
-        track_id: String,
+        seen: Vec<String>,
         (from, to): (usize, usize),
         cx: &mut Context<Self>,
     ) -> bool {
@@ -2468,7 +2469,7 @@ impl Library {
             },
             move |client| async move {
                 client
-                    .move_playlist_track(&playlist_id, &track_id, from, to)
+                    .move_playlist_track(&playlist_id, &seen, from, to)
                     .await
             },
             move |_, (), cx| cx.emit(LibraryEvent::PlaylistChanged(changed)),

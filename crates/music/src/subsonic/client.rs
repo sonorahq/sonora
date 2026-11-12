@@ -729,7 +729,7 @@ impl MusicApi for SubsonicClient {
     async fn move_playlist_track(
         &self,
         playlist_id: &str,
-        track_id: &str,
+        seen: &[String],
         from: usize,
         to: usize,
     ) -> Result<()> {
@@ -740,7 +740,7 @@ impl MusicApi for SubsonicClient {
             .map_err(bare)
             .context("cannot load the playlist")?;
         let held: Vec<&str> = detail.entry.iter().map(|song| song.id.as_str()).collect();
-        let songs = reordered(&held, track_id, from, to)?;
+        let songs = reordered(&held, seen, from, to)?;
         self.client
             .create_playlist(Some(playlist_id), None, &songs)
             .await
@@ -1303,11 +1303,16 @@ fn bare(error: opensubsonic::Error) -> opensubsonic::Error {
     }
 }
 
-/// The playlist's songs with the row `from` moved to `to`, once `from` is confirmed to still
-/// be `track_id`.
-fn reordered<'a>(held: &[&'a str], track_id: &str, from: usize, to: usize) -> Result<Vec<&'a str>> {
+/// The playlist's songs with the row `from` moved to `to`, once the server's listing is
+/// confirmed to be the one the listener saw.
+fn reordered<'a>(
+    held: &[&'a str],
+    seen: &[String],
+    from: usize,
+    to: usize,
+) -> Result<Vec<&'a str>> {
     let listed: Vec<Option<&str>> = held.iter().map(|id| Some(*id)).collect();
-    order::confirm(&listed, from, track_id)?;
+    order::confirm(&listed, seen)?;
     let mut songs = held.to_vec();
     if !order::move_item(&mut songs, from, to) {
         anyhow::bail!("the move is outside the playlist");
@@ -1319,18 +1324,30 @@ fn reordered<'a>(held: &[&'a str], track_id: &str, from: usize, to: usize) -> Re
 mod tests {
     use super::*;
 
+    fn seen(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| (*id).to_owned()).collect()
+    }
+
     #[test]
     fn sends_the_whole_order_with_the_track_moved() {
         let held = ["a", "b", "c", "a"];
-        assert_eq!(reordered(&held, "b", 1, 3).unwrap(), ["a", "c", "a", "b"]);
-        assert_eq!(reordered(&held, "a", 3, 0).unwrap(), ["a", "a", "b", "c"]);
+        let shown = seen(&held);
+        assert_eq!(
+            reordered(&held, &shown, 1, 3).unwrap(),
+            ["a", "c", "a", "b"]
+        );
+        assert_eq!(
+            reordered(&held, &shown, 3, 0).unwrap(),
+            ["a", "a", "b", "c"]
+        );
     }
 
     #[test]
     fn refuses_a_move_the_server_listing_disagrees_with() {
         let held = ["a", "b", "c"];
-        assert!(reordered(&held, "c", 1, 0).is_err());
-        assert!(reordered(&held, "a", 0, 0).is_err());
-        assert!(reordered(&held, "a", 0, 3).is_err());
+        // a song added elsewhere would be dropped by the replacing write, so nothing is sent
+        assert!(reordered(&["a", "d", "b", "c"], &seen(&held), 0, 2).is_err());
+        assert!(reordered(&held, &seen(&held), 0, 0).is_err());
+        assert!(reordered(&held, &seen(&held), 0, 3).is_err());
     }
 }

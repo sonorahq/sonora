@@ -276,13 +276,14 @@ pub trait MusicApi: Send + Sync {
     async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()>;
 
     /// Moves the playlist's row `from` to `to`, both counted in the tracks `playlist` answers
-    /// and `to` after the move. `track_id` is the track on that row, and a provider whose
-    /// listing no longer holds it there refuses rather than move another. Only a provider
-    /// whose capabilities list `playlist_order` answers.
+    /// and `to` after the move. `seen` is the id of every track the listener saw, in order,
+    /// and a provider whose listing is no longer exactly that refuses, rather than land the
+    /// track somewhere the listener did not drop it. Only a provider whose capabilities list
+    /// `playlist_order` answers.
     async fn move_playlist_track(
         &self,
         _playlist_id: &str,
-        _track_id: &str,
+        _seen: &[String],
         _from: usize,
         _to: usize,
     ) -> Result<()> {

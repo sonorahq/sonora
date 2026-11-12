@@ -344,24 +344,34 @@ impl Detail {
     }
 
     /// Moves the playlist's row `from` to `to`, counted after the move, at once on the page
-    /// and then on the provider. The page reloads once the provider answers, so a move it
-    /// refused falls back to the order it kept.
-    pub fn move_track(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
-        if self.reorder(cx) != Reorder::On || from >= self.tracks.len() || to >= self.tracks.len() {
-            return;
+    /// and then on the provider, and answers whether it started. The page reloads once the
+    /// provider answers, so a move it refused falls back to the order it kept. A page with a
+    /// row that has no id cannot name what it shows, so it moves nothing.
+    pub fn move_track(&mut self, from: usize, to: usize, cx: &mut Context<Self>) -> bool {
+        let len = self.tracks.len();
+        if self.reorder(cx) != Reorder::On || from >= len || to >= len || from == to {
+            return false;
         }
-        let (Some(playlist_id), Some(track_id)) = (
-            self.id.clone(),
-            self.tracks.get(from).and_then(|track| track.id.clone()),
-        ) else {
-            return;
+        let Some(playlist_id) = self.id.clone() else {
+            return false;
+        };
+        let Some(seen) = self
+            .tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Option<Vec<String>>>()
+        else {
+            return false;
         };
         let started = self.library.update(cx, |library, cx| {
-            library.move_in_playlist(playlist_id, track_id, (from, to), cx)
+            library.move_in_playlist(playlist_id, seen, (from, to), cx)
         });
-        if started && music::order::move_item(&mut self.tracks, from, to) {
-            cx.notify();
+        if !started {
+            return false;
         }
+        music::order::move_item(&mut self.tracks, from, to);
+        cx.notify();
+        true
     }
 
     pub fn remove_from_playlist(&mut self, track_id: String, cx: &mut Context<Self>) {

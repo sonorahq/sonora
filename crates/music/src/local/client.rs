@@ -89,14 +89,14 @@ impl LocalClient {
     /// The index of each of `ids` the library holds, which are the ones `listed` keeps.
     fn held(&self, ids: &[String]) -> Vec<usize> {
         let scanned = self.scanned.read().unwrap();
+        let known: HashSet<&str> = scanned
+            .tracks
+            .iter()
+            .filter_map(|track| track.id.as_deref())
+            .collect();
         ids.iter()
             .enumerate()
-            .filter(|(_, id)| {
-                scanned
-                    .tracks
-                    .iter()
-                    .any(|track| track.id.as_deref() == Some(id.as_str()))
-            })
+            .filter(|(_, id)| known.contains(id.as_str()))
             .map(|(index, _)| index)
             .collect()
     }
@@ -455,7 +455,7 @@ impl MusicApi for LocalClient {
     async fn move_playlist_track(
         &self,
         playlist_id: &str,
-        track_id: &str,
+        seen: &[String],
         from: usize,
         to: usize,
     ) -> Result<()> {
@@ -465,7 +465,7 @@ impl MusicApi for LocalClient {
             .iter()
             .map(|&index| Some(stored[index].as_str()))
             .collect();
-        order::confirm(&listed, from, track_id)?;
+        order::confirm(&listed, seen)?;
         let placement = order::placement(&held, from, to)?;
         order::move_item(&mut stored, placement.from, placement.to());
         self.store.reorder(playlist_id, &stored)
@@ -932,19 +932,15 @@ mod tests {
                 .collect()
         };
 
-        client
-            .move_playlist_track(&id, "local:0", 0, 2)
-            .await
-            .unwrap();
+        let shown = listed(&client).await;
+        client.move_playlist_track(&id, &shown, 0, 2).await.unwrap();
         assert_eq!(
             listed(&client).await,
             ["local:1", "local:2", "local:0", "local:3"]
         );
 
-        client
-            .move_playlist_track(&id, "local:3", 3, 0)
-            .await
-            .unwrap();
+        let shown = listed(&client).await;
+        client.move_playlist_track(&id, &shown, 3, 0).await.unwrap();
         assert_eq!(
             listed(&client).await,
             ["local:3", "local:1", "local:2", "local:0"]
@@ -955,13 +951,9 @@ mod tests {
             ["local:gone", "local:3", "local:1", "local:2", "local:0"]
         );
 
-        // a listing that moved under the listener moves nothing
-        assert!(
-            client
-                .move_playlist_track(&id, "local:3", 1, 0)
-                .await
-                .is_err()
-        );
+        // a listing that changed since the listener saw it moves nothing
+        let stale = ["local:1", "local:2", "local:0", "local:3"].map(str::to_owned);
+        assert!(client.move_playlist_track(&id, &stale, 1, 0).await.is_err());
         assert_eq!(
             listed(&client).await,
             ["local:3", "local:1", "local:2", "local:0"]
