@@ -49,6 +49,9 @@ pub struct ArtworkQuery {
     artist: String,
     album: String,
     title: String,
+    /// The album or title as the track names it, brackets and all, so an edition the track does
+    /// not name ranks below one it does.
+    wanted: String,
 }
 
 #[derive(Deserialize)]
@@ -139,9 +142,9 @@ impl ArtworkQuery {
             .map(searchable)
             .unwrap_or_default();
         let album = searchable(&track.album);
-        let title = match album.is_empty() {
-            true => searchable(&track.name),
-            false => String::new(),
+        let (title, wanted) = match album.is_empty() {
+            true => (searchable(&track.name), track.name.trim().to_owned()),
+            false => (String::new(), track.album.trim().to_owned()),
         };
         if artist.is_empty() || album.is_empty() && title.is_empty() {
             return None;
@@ -150,6 +153,7 @@ impl ArtworkQuery {
             artist,
             album,
             title,
+            wanted,
         })
     }
 }
@@ -195,7 +199,7 @@ impl ArtworkSearch {
                     .into_iter()
                     .filter(|album| same_artist(&album.artist.name, &query.artist))
                     .map(|album| (album.title, album.cover_xl));
-                Ok(closest(candidates, &query.album))
+                Ok(closest(candidates, &query.wanted))
             }
             true => {
                 let found: Vec<FoundTrack> = self.search(TRACKS, &query.title, query).await?;
@@ -203,7 +207,7 @@ impl ArtworkSearch {
                     .into_iter()
                     .filter(|track| same_artist(&track.artist.name, &query.artist))
                     .map(|track| (track.title, track.album.cover_xl));
-                Ok(closest(candidates, &query.title))
+                Ok(closest(candidates, &query.wanted))
             }
         }
     }
@@ -245,7 +249,7 @@ impl ArtworkSearch {
                     .map(|artwork| artwork.replace(ITUNES_THUMB, ITUNES_LARGE));
                 (title.unwrap_or_default(), cover)
             });
-        Ok(closest(candidates, name))
+        Ok(closest(candidates, &query.wanted))
     }
 
     /// The front cover the Cover Art Archive holds for the release group MusicBrainz matches to
@@ -292,7 +296,7 @@ impl ArtworkSearch {
                     Some(format!("{COVER_ART}/{}/front-500", group.id)),
                 )
             });
-        let Some(cover) = closest(candidates, &query.album) else {
+        let Some(cover) = closest(candidates, &query.wanted) else {
             return Ok(None);
         };
 
@@ -410,27 +414,41 @@ impl ArtworkSearch {
     }
 }
 
-/// The cover of the candidate whose name matches `wanted` exactly, or failing that the first one
-/// that only adds words to it, as an edition or a feature credit does.
+/// The cover of the candidate whose name is closest to `wanted`, the album or title as the track
+/// names it. Names are compared without their brackets, and a candidate that matches exactly
+/// beats one that only adds words, such as "- EP". A candidate whose brackets name an edition
+/// `wanted` does not, such as "(blind)", ranks below every candidate that names none, since it
+/// may well wear a different cover; it is still taken when nothing closer turns up.
 fn closest(
     candidates: impl Iterator<Item = (String, Option<String>)>,
     wanted: &str,
 ) -> Option<String> {
-    let wanted = compared(wanted);
-    let mut near = None;
+    let words = compared(wanted);
+    let words: Vec<&str> = words.split(' ').collect();
+    let wanted = compared(&searchable(wanted));
+    let mut best: Option<(u8, String)> = None;
     for (name, cover) in candidates {
         let Some(cover) = cover.filter(|cover| cover.starts_with("https://")) else {
             continue;
         };
-        let name = compared(&searchable(&name));
-        if name == wanted {
+        let core = compared(&searchable(&name));
+        let relation = match (core == wanted, extends(&core, &wanted)) {
+            (true, _) => 0,
+            (false, true) => 1,
+            (false, false) => continue,
+        };
+        let edition = bracketed(&name)
+            .iter()
+            .any(|word| !words.contains(&word.as_str()));
+        let tier = u8::from(edition) * 2 + relation;
+        if tier == 0 {
             return Some(cover);
         }
-        if near.is_none() && extends(&name, &wanted) {
-            near = Some(cover);
+        if best.as_ref().is_none_or(|(rank, _)| tier < *rank) {
+            best = Some((tier, cover));
         }
     }
-    near
+    best.map(|(_, cover)| cover)
 }
 
 fn same_artist(found: &str, wanted: &str) -> bool {
@@ -469,6 +487,28 @@ fn searchable(text: &str) -> String {
 /// `text` made safe inside a quoted Lucene term, which MusicBrainz searches are.
 fn quoted(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// The words inside the brackets of `text`, compared the way names are.
+fn bracketed(text: &str) -> Vec<String> {
+    let mut inside = String::new();
+    let mut depth = 0usize;
+    for character in text.chars() {
+        match character {
+            '(' | '[' => {
+                depth += 1;
+                inside.push(' ');
+            }
+            ')' | ']' => depth = depth.saturating_sub(1),
+            _ if depth > 0 => inside.push(character),
+            _ => {}
+        }
+    }
+    compared(&inside)
+        .split(' ')
+        .filter(|word| !word.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 /// `text` lowercased, with every run of punctuation and spaces turned into one space.

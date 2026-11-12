@@ -133,6 +133,9 @@ struct Discord {
     failed: Option<ArtworkQuery>,
     /// Covers uploaded from the provider's own art, by album, with when they went up.
     uploaded: HashMap<String, (String, Instant)>,
+    /// The album whose upload failed last, which falls back to the search until another was
+    /// uploaded.
+    upload_failed: Option<String>,
     /// The search or upload the last presence went without, taken by `look_up` once it is
     /// published.
     wanted: Option<Wanted>,
@@ -197,6 +200,7 @@ impl Discord {
             found: HashMap::new(),
             failed: None,
             uploaded: HashMap::new(),
+            upload_failed: None,
             wanted: None,
             asked: None,
             lookup: None,
@@ -259,10 +263,14 @@ impl Discord {
                     match uploaded {
                         Ok(url) => {
                             this.uploaded.insert(upload.key, (url, Instant::now()));
-                            this.publish(cx);
+                            this.upload_failed = None;
                         }
-                        Err(error) => log::warn!("discord: cannot upload the cover: {error:#}"),
+                        Err(error) => {
+                            log::warn!("discord: cannot upload the cover: {error:#}");
+                            this.upload_failed = Some(upload.key);
+                        }
                     }
+                    this.publish(cx);
                 })
                 .ok();
             }),
@@ -353,9 +361,10 @@ impl Discord {
     /// Cover art for the track. The provider's own art is used only when it is public, since
     /// Discord fetches the image through its own proxy, so a path on disk is unreachable and a
     /// self-hosted url would hand over the credentials that fetch it. Without it, and when
-    /// `lookup` allows, the cover is one found by name, and when no catalogue has it and
-    /// `upload` allows, the provider's own cover uploaded to a temporary public host. A search or
-    /// upload not yet made is left in `wanted` for `look_up`.
+    /// `lookup` allows, the cover is the provider's own one uploaded to a temporary public host
+    /// when `upload` allows, since nothing else is sure to be the same picture, and otherwise, or
+    /// when the upload failed, one found by name. A search or upload not yet made is left in
+    /// `wanted` for `look_up`.
     fn artwork(
         &mut self,
         track: &Track,
@@ -378,21 +387,25 @@ impl Discord {
         if own.is_some() || !lookup {
             return own;
         }
-        if let Some(query) = ArtworkQuery::for_track(track) {
-            match self.found.get(&query) {
-                Some(Some(cover)) => return Some(cover.clone()),
-                Some(None) => {}
-                None if self.failed.as_ref() == Some(&query) => {}
-                None => {
-                    self.wanted = Some(Wanted::Search(query));
-                    return None;
-                }
-            }
-        }
-        if !upload {
-            return None;
+        if upload && let Some(cover) = self.own_upload(track, cx) {
+            return cover;
         }
 
+        let query = ArtworkQuery::for_track(track)?;
+        match self.found.get(&query) {
+            Some(found) => found.clone(),
+            None if self.failed.as_ref() == Some(&query) => None,
+            None => {
+                self.wanted = Some(Wanted::Search(query));
+                None
+            }
+        }
+    }
+
+    /// The upload of the provider's own cover: `Some` with its url, or `Some(None)` while it is
+    /// still to be made, and `None` when there is nothing to upload or the upload failed, so the
+    /// search answers instead.
+    fn own_upload(&mut self, track: &Track, cx: &App) -> Option<Option<String>> {
         // the provider's own url, which never leaves the machine: only the picture is uploaded
         let source = track
             .album_id
@@ -405,10 +418,13 @@ impl Discord {
         if let Some((url, at)) = self.uploaded.get(&key)
             && at.elapsed() < UPLOAD_FRESH
         {
-            return Some(url.clone());
+            return Some(Some(url.clone()));
+        }
+        if self.upload_failed.as_ref() == Some(&key) {
+            return None;
         }
         self.wanted = Some(Wanted::Upload(Upload { key, source }));
-        None
+        Some(None)
     }
 }
 
