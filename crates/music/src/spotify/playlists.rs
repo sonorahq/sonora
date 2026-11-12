@@ -11,7 +11,7 @@ use librespot_core::spclient::CLIENT_TOKEN;
 use librespot_core::{Session, SpotifyId};
 use librespot_protocol::playlist4_external::{
     Add, ChangeInfo, CreateListReply, Delta, Item, ItemAttributes, ItemAttributesPartialState,
-    ListAttributeKind, ListAttributes, ListAttributesPartialState, ListChanges, Op, Rem,
+    ListAttributeKind, ListAttributes, ListAttributesPartialState, ListChanges, Mov, Op, Rem,
     SelectedListContent, SourceInfo, UpdateItemAttributes, UpdateListAttributes, op::Kind,
     source_info::Client,
 };
@@ -20,6 +20,7 @@ use serde::Deserialize;
 use tokio::task::JoinSet;
 
 use crate::cover::{self, CoverLimits};
+use crate::order;
 use crate::spotify::pace::{self, paced};
 use crate::spotify::{collection, profiles, wire};
 use crate::{Contributor, GenreItem, GenreSection, Playlist, PlaylistDetail, Track, escape};
@@ -223,6 +224,43 @@ pub async fn remove_track(session: &Session, playlist_id: &str, track_id: &str) 
     edit(session, playlist_id, &body)
         .await
         .context("cannot remove the track from the playlist")?;
+    Ok(())
+}
+
+/// Moves the listed track `from` to `to` with one move on the revision it was read at, so an
+/// edit made elsewhere in between fails rather than moving the wrong row. The listing leaves
+/// out episodes and tracks with no metadata, as `tracks_from` does, so the move is counted
+/// among the listed tracks and placed among all the items.
+pub async fn move_track(
+    session: &Session,
+    playlist_id: &str,
+    track_id: &str,
+    from: usize,
+    to: usize,
+) -> Result<()> {
+    let content = snapshot(session, playlist_id).await?;
+    let uris: Vec<String> = content
+        .contents
+        .items
+        .iter()
+        .map(|item| item.uri().to_owned())
+        .filter(|uri| uri.starts_with(TRACK_PREFIX))
+        .collect();
+    let known = collection::metadata(session, &uris).await?;
+    let held: Vec<usize> = content
+        .contents
+        .items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.uri().starts_with(TRACK_PREFIX) && known.contains_key(item.uri()))
+        .map(|(index, _)| index)
+        .collect();
+
+    let op = move_op(&content, &held, track_id, from, to)?;
+    let body = changes(content.revision.as_deref(), op);
+    edit(session, playlist_id, &body)
+        .await
+        .context("cannot move the track in the playlist")?;
     Ok(())
 }
 
@@ -547,6 +585,40 @@ fn remove_op(uri: &str, index: i32) -> Op {
     op
 }
 
+/// A move of the listed row `from` to `to`, where `held` gives each listed row's index among
+/// the items. Spotify counts `to_index` in the items before the move, as the place the moved
+/// item goes in front of.
+fn move_op(
+    content: &SelectedListContent,
+    held: &[usize],
+    track_id: &str,
+    from: usize,
+    to: usize,
+) -> Result<Op> {
+    let items = &content.contents.items;
+    let listed: Vec<Option<&str>> = held
+        .iter()
+        .map(|&index| {
+            items
+                .get(index)
+                .and_then(|item| item.uri().strip_prefix(TRACK_PREFIX))
+        })
+        .collect();
+    order::confirm(&listed, from, track_id)?;
+    let placement = order::placement(held, from, to)?;
+    let offset = content.contents.pos();
+
+    let mut mov = Mov::new();
+    mov.set_from_index(offset + placement.from as i32);
+    mov.set_length(1);
+    mov.set_to_index(offset + placement.before as i32);
+
+    let mut op = Op::new();
+    op.set_kind(Kind::MOV);
+    op.mov = MessageField::some(mov);
+    Ok(op)
+}
+
 fn rename_op(name: &str) -> Op {
     let mut values = ListAttributes::new();
     values.set_name(name.to_owned());
@@ -626,6 +698,37 @@ mod tests {
             contents.items.push(item(uri));
         }
         content
+    }
+
+    #[test]
+    fn a_move_counts_the_listed_rows_and_places_among_all_items() {
+        // the episode at 1 is not listed, so listed row 2 is item 3
+        let content = listing(
+            &[
+                "spotify:track:a",
+                "spotify:episode:e",
+                "spotify:track:b",
+                "spotify:track:c",
+            ],
+            0,
+        );
+        let held = [0, 2, 3];
+
+        let down = move_op(&content, &held, "a", 0, 2).expect("move");
+        assert_eq!(down.kind(), Kind::MOV);
+        assert_eq!(down.mov.from_index(), 0);
+        assert_eq!(down.mov.length(), 1);
+        assert_eq!(down.mov.to_index(), 4);
+
+        let up = move_op(&content, &held, "c", 2, 0).expect("move");
+        assert_eq!(up.mov.from_index(), 3);
+        assert_eq!(up.mov.to_index(), 0);
+    }
+
+    #[test]
+    fn a_move_refuses_a_row_that_holds_another_track() {
+        let content = listing(&["spotify:track:a", "spotify:track:b"], 0);
+        assert!(move_op(&content, &[0, 1], "a", 1, 0).is_err());
     }
 
     #[test]
