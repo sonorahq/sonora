@@ -309,23 +309,7 @@ impl Discord {
         let provider = track.id.as_deref().and_then(|id| session.provider_for(id));
         let named = provider.map(|provider| Source {
             badge: settings.discord_badge().then(|| provider.slug()),
-            listening: match settings.discord_name() {
-                DiscordName::Sonora => None,
-                DiscordName::Provider => Some(provider.listening_to().to_owned()),
-                DiscordName::Music => Some(MUSIC.to_owned()),
-                DiscordName::Title => fit_text(&track.name).or_else(|| Some(MUSIC.to_owned())),
-                DiscordName::Artist => fit_text(&track.artists).or_else(|| Some(MUSIC.to_owned())),
-                DiscordName::ArtistTitle => {
-                    let artists = track.artists.trim();
-                    let title = track.name.trim();
-                    fit_text(&match (artists.is_empty(), title.is_empty()) {
-                        (false, false) => format!("{artists} - {title}"),
-                        (false, true) => artists.to_owned(),
-                        (true, false) => title.to_owned(),
-                        (true, true) => MUSIC.to_owned(),
-                    })
-                }
-            },
+            listening: listening(settings.discord_name(), track, provider.listening_to()),
             name: provider.name(),
         });
         if settings.discord_without_details() {
@@ -661,6 +645,32 @@ fn buttons(
     (!buttons.is_empty()).then_some(buttons)
 }
 
+/// What the status calls itself for `name`, or `None` to leave Discord's own name, which is
+/// Sonora. `provider` is what the provider the track came from calls listening to it. A value
+/// the track leaves empty, such as an album artist the provider does not name, says Music
+/// rather than borrowing another field.
+fn listening(name: DiscordName, track: &Track, provider: &str) -> Option<String> {
+    let music = || Some(MUSIC.to_owned());
+    match name {
+        DiscordName::Sonora => None,
+        DiscordName::Provider => Some(provider.to_owned()),
+        DiscordName::Music => music(),
+        DiscordName::Title => fit_text(&track.name).or_else(music),
+        DiscordName::Artist => fit_text(&track.artists).or_else(music),
+        DiscordName::AlbumArtist => fit_text(&track.album_artist).or_else(music),
+        DiscordName::ArtistTitle => {
+            let artists = track.artists.trim();
+            let title = track.name.trim();
+            fit_text(&match (artists.is_empty(), title.is_empty()) {
+                (false, false) => format!("{artists} - {title}"),
+                (false, true) => artists.to_owned(),
+                (true, false) => title.to_owned(),
+                (true, true) => MUSIC.to_owned(),
+            })
+        }
+    }
+}
+
 /// What the status says when the track is deliberately left out of it.
 fn anonymous_details() -> String {
     let text = "Listening to music".to_string();
@@ -697,4 +707,44 @@ fn unix_time() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(artists: &str, album_artist: &str) -> Track {
+        Track {
+            name: "Blue Monday".to_owned(),
+            artists: artists.to_owned(),
+            album_artist: album_artist.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_album_artist_names_the_status() {
+        let track = track("New Order, Arthur Baker", "New Order");
+        let name = listening(DiscordName::AlbumArtist, &track, "Spotify");
+        assert_eq!(name.as_deref(), Some("New Order"));
+    }
+
+    #[test]
+    fn a_missing_album_artist_says_music_rather_than_the_track_artists() {
+        let track = track("New Order, Arthur Baker", "  ");
+        let name = listening(DiscordName::AlbumArtist, &track, "Spotify");
+        assert_eq!(name.as_deref(), Some(MUSIC));
+    }
+
+    #[test]
+    fn the_track_artists_still_name_the_status() {
+        let track = track("New Order, Arthur Baker", "New Order");
+        let name = listening(DiscordName::Artist, &track, "Spotify");
+        assert_eq!(name.as_deref(), Some("New Order, Arthur Baker"));
+        let both = listening(DiscordName::ArtistTitle, &track, "Spotify");
+        assert_eq!(
+            both.as_deref(),
+            Some("New Order, Arthur Baker - Blue Monday")
+        );
+    }
 }

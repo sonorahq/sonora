@@ -10,6 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Scrobble to your own ListenBrainz server or to multi-scrobbler by filling in the server address when you connect ListenBrainz.
+- Name your Discord status after the album artist under Settings, Discord, Status name.
 - Hover a cut-off track title in the player bar to read it in full.
 - YouTube Music artist pages list the artist's music videos after their popular songs, and song search finds music videos too.
 - Show a local file's own cover on the Discord status, uploaded for 3 hours to uguu.se like Subsonic covers. Turn it off under Settings, Discord.

@@ -251,6 +251,7 @@ fn track_from(track: PathTrack, album: &Album) -> Result<Track> {
         artists,
         artist_refs,
         album: album.name.clone(),
+        album_artist: album.artists.clone(),
         album_id: Some(album.id.clone()),
         cover: album.cover.clone(),
         duration: Duration::from_millis(track.duration.milliseconds),

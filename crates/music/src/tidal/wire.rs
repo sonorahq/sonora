@@ -149,6 +149,8 @@ pub fn track(wrapper: &Value) -> Option<Track> {
         artists,
         artist_refs,
         album: text(album, "title").unwrap_or_default().to_owned(),
+        // the album a Tidal track carries has no artists
+        album_artist: String::new(),
         album_id: album.get("id").and_then(self::id),
         cover: image(text(album, "cover"), COVER),
         duration: Duration::from_secs(number(value, "duration").unwrap_or(0)),

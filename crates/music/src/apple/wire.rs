@@ -1105,6 +1105,8 @@ fn song_as(value: &Resource, id: String, root: &str) -> Option<Track> {
         artists: text(&attributes.artist_name).unwrap_or_default(),
         artist_refs: artist_refs(value, attributes),
         album: text(&attributes.album_name).unwrap_or_default(),
+        // Apple lists a song's own artist only
+        album_artist: String::new(),
         album_id: value
             .relationships
             .albums

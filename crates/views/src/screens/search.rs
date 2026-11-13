@@ -66,7 +66,7 @@ enum HitMenu {
 impl HitMenu {
     fn of(hit: &Hit) -> Option<Self> {
         match hit {
-            Hit::Song(track) => Some(Self::Song(Box::new(track.clone()))),
+            Hit::Song(track) => Some(Self::Song(track.clone())),
             Hit::Album(album) => Some(Self::Album(album.clone())),
             Hit::Playlist(list) => Some(Self::Playlist(list.clone())),
             Hit::Artist(artist) if artist.id.is_some() => Some(Self::Artist(artist.clone())),
@@ -907,7 +907,7 @@ impl SearchView {
                             .font_features(tabular())
                             .child(clock(track.duration)),
                     )
-                    .press(pressed(Press::Song(Box::new(track.clone())), me))
+                    .press(pressed(Press::Song(track.clone()), me))
             }
             Hit::Artist(artist) => {
                 let card = Card::new(("artist", place), artist.name.clone())
@@ -997,7 +997,7 @@ impl SearchView {
                 Kind::Song,
                 track.name.clone(),
                 track.artist_refs.clone(),
-                Some(Press::Song(Box::new(track.clone()))),
+                Some(Press::Song(track.clone())),
             ),
             Hit::Artist(artist) => (
                 Kind::Artist,
