@@ -637,6 +637,8 @@ impl Brain {
                 if let Some(item) = item.filter(|item| !item.uri.is_empty()) {
                     self.learn_length(&item);
                     self.heard.uri = item.uri;
+                    // The matching position sync can arrive later than the new track name.
+                    self.heard.position = Duration::ZERO;
                     self.observe(true);
                 }
             }
