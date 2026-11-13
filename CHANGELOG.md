@@ -12,6 +12,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Scrobble to your own ListenBrainz server or to multi-scrobbler by filling in the server address when you connect ListenBrainz.
 - Hover a cut-off track title in the player bar to read it in full.
 
+### Fixed
+
+- Releases tagged with the label `[no label]` no longer show a copyright line crediting it.
+
 ## [0.49.1] - 2026-11-13
 
 ### Changed
