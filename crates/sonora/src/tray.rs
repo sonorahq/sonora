@@ -28,6 +28,8 @@ const COVER: u32 = 32;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
     Show,
+    /// Show the window when it is hidden or minimized and hide it when it is visible.
+    Window,
     Song,
     Toggle,
     Previous,
@@ -87,12 +89,16 @@ impl Global for Installed {}
 
 /// Sets up the tray icon and its menu. Returns whether Sonora may keep running once its window
 /// closes, which it only does when the desktop has a tray to bring it back from.
-pub fn install(show: impl Fn(&mut App) + 'static, cx: &mut App) -> bool {
+pub fn install(
+    show: impl Fn(&mut App) + 'static,
+    toggle: impl Fn(&mut App) + 'static,
+    cx: &mut App,
+) -> bool {
     let (sender, receiver) = mpsc::unbounded_channel();
     let Some(icon) = Icon::new(sender) else {
         return false;
     };
-    let tray = cx.new(|cx| Tray::new(icon, receiver, show, cx));
+    let tray = cx.new(|cx| Tray::new(icon, receiver, show, toggle, cx));
     cx.set_global(Installed { _tray: tray });
     Icon::hosted()
 }
@@ -114,6 +120,7 @@ impl Tray {
         mut icon: Icon,
         mut receiver: UnboundedReceiver<Event>,
         show: impl Fn(&mut App) + 'static,
+        toggle: impl Fn(&mut App) + 'static,
         cx: &mut Context<Self>,
     ) -> Self {
         let _events = cx.spawn(async move |this, cx| {
@@ -123,6 +130,7 @@ impl Tray {
                 }
                 cx.update(|cx| match event {
                     Event::Show => show(cx),
+                    Event::Window => toggle(cx),
                     Event::Song => {
                         show(cx);
                         open(cx);

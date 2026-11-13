@@ -187,7 +187,7 @@ fn main() -> ExitCode {
         }
         ui::Theme::init(look, &overrides, cx);
 
-        let lingers = tray::install(show_window, cx);
+        let lingers = tray::install(show_window, toggle_window, cx);
         if lingers {
             cx.set_quit_mode(QuitMode::Explicit);
         }
@@ -304,6 +304,39 @@ fn show_window(cx: &mut App) {
         }
     }
     cx.activate(true);
+}
+
+/// What a tray click does to the main window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowAction {
+    Show,
+    Hide,
+}
+
+/// Shows the window when it is hidden, minimized or closed, and hides it when it is visible.
+fn toggle_window(cx: &mut App) {
+    let visible = cx
+        .windows()
+        .first()
+        .and_then(|window| window.update(cx, |_, window, _| window.is_visible()).ok());
+    match window_action(visible) {
+        WindowAction::Show => show_window(cx),
+        WindowAction::Hide => {
+            if let Some(window) = cx.windows().first() {
+                window
+                    .update(cx, |_, window, _| window.minimize_window())
+                    .ok();
+            }
+        }
+    }
+}
+
+/// Picks the action from whether the window is visible, `None` when there is no window.
+fn window_action(visible: Option<bool>) -> WindowAction {
+    match visible {
+        Some(true) => WindowAction::Hide,
+        Some(false) | None => WindowAction::Show,
+    }
 }
 
 fn open_window(cx: &mut App) {
@@ -601,4 +634,20 @@ unsafe extern "system" fn work_area(
 #[cfg(not(target_os = "windows"))]
 fn platform_handle(_window: &gpui::Window) -> Option<*mut std::ffi::c_void> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_visible_window_is_hidden() {
+        assert_eq!(window_action(Some(true)), WindowAction::Hide);
+    }
+
+    #[test]
+    fn a_minimized_or_closed_window_is_shown() {
+        assert_eq!(window_action(Some(false)), WindowAction::Show);
+        assert_eq!(window_action(None), WindowAction::Show);
+    }
 }
