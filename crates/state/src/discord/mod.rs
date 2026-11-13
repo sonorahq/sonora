@@ -366,11 +366,11 @@ impl Discord {
 
     /// Cover art for the track. The provider's own art is used only when it is public, since
     /// Discord fetches the image through its own proxy, so a path on disk is unreachable and a
-    /// self-hosted url would hand over the credentials that fetch it. Without it, and when
-    /// `lookup` allows, the cover is the provider's own one uploaded to a temporary public host
-    /// when `upload` allows, since nothing else is sure to be the same picture, and otherwise, or
-    /// when the upload failed, one found by name. A search or upload not yet made is left in
-    /// `wanted` for `look_up`.
+    /// self-hosted url would hand over the credentials that fetch it. Without it, the cover is
+    /// the provider's own one or the local file's uploaded to a temporary public host when
+    /// `upload` allows, since nothing else is sure to be the same picture. Otherwise, or when the
+    /// upload failed, it is one found by name when `lookup` allows. A search or upload not yet
+    /// made is left in `wanted` for `look_up`.
     fn artwork(
         &mut self,
         track: &Track,
@@ -390,11 +390,14 @@ impl Discord {
                     .filter(|cover| cover.starts_with("https://"))
             })
             .flatten();
-        if own.is_some() || !lookup {
+        if own.is_some() {
             return own;
         }
         if upload && let Some(cover) = self.own_upload(track, cx) {
             return cover;
+        }
+        if !lookup {
+            return None;
         }
 
         let query = ArtworkQuery::for_track(track)?;
@@ -412,14 +415,18 @@ impl Discord {
     /// still to be made, and `None` when there is nothing to upload or the upload failed, so the
     /// search answers instead.
     fn own_upload(&mut self, track: &Track, cx: &App) -> Option<Option<String>> {
-        // the provider's own url, which never leaves the machine: only the picture is uploaded
+        // a provider url or a local file, neither of which leaves the machine, only the picture
         let source = track
             .album_id
             .as_deref()
             .and_then(|album| self.cover.read(cx).large_for(album))
             .map(str::to_owned)
             .or_else(|| track.cover.clone())
-            .filter(|source| source.starts_with("https://") || source.starts_with("http://"))?;
+            .filter(|source| {
+                ["https://", "http://", "file://"]
+                    .iter()
+                    .any(|scheme| source.starts_with(scheme))
+            })?;
         let key = track.album_id.clone().unwrap_or_else(|| source.clone());
         if let Some((url, at)) = self.uploaded.get(&key)
             && at.elapsed() < UPLOAD_FRESH
