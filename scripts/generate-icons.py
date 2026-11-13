@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import json
 import math
 import re
 import shutil
@@ -13,22 +14,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MASTER = ROOT / "assets" / "icon.svg"
 
-LINUX_SIZES = [16, 24, 32, 48, 64, 128, 256, 512]
-WINDOWS_SIZES = [16, 24, 32, 48, 64, 128, 256]
-TRAY_SIZES = [32, 64]
+LINUX_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512]
+WINDOWS_SIZES = [16, 20, 24, 32, 40, 48, 64, 80, 96, 128, 256]
+TRAY_SIZES = [18, 36]
 TRAY_STROKE = 3.2
 
 ICNS_TYPES = [
-    ("icp4", 16),
-    ("icp5", 32),
-    ("ic11", 32),
-    ("ic12", 64),
-    ("ic07", 128),
-    ("ic13", 256),
-    ("ic08", 256),
-    ("ic14", 512),
-    ("ic09", 512),
-    ("ic10", 1024),
+    ("icp4", 16, 1),
+    ("icp5", 32, 1),
+    ("ic11", 16, 2),
+    ("ic12", 32, 2),
+    ("ic07", 128, 1),
+    ("ic13", 128, 2),
+    ("ic08", 256, 1),
+    ("ic14", 256, 2),
+    ("ic09", 512, 1),
+    ("ic10", 512, 2),
 ]
 
 SQUIRCLE_FILL = 824 / 1024
@@ -38,8 +39,13 @@ WINDOWS_RADIUS = 0.1875
 
 OPTICAL_STROKE = [(16, 4.0), (24, 3.2), (32, 2.8), (48, 2.3)]
 
+ICON_CANVAS = 1024
+NAMED_COLORS = {"white": "#ffffff", "black": "#000000"}
+
 
 class Master:
+    """Reads the background and equalizer bars shared by the platform icons."""
+
     def __init__(self, path):
         if not path.exists():
             sys.exit(f"icons: {path} is missing")
@@ -83,6 +89,7 @@ class Master:
 
 
 def stroke_for(pixels, master):
+    """Thickens small glyphs using their displayed size, before any Retina scaling."""
     for limit, width in OPTICAL_STROKE:
         if pixels <= limit:
             return width * master.stroke / 2
@@ -90,6 +97,7 @@ def stroke_for(pixels, master):
 
 
 def squircle(side, radius, smoothing):
+    """Builds a square with smooth corners, keeping each corner within half its side."""
     budget = side / 2
     reach = (1 + smoothing) * radius
     if reach > budget:
@@ -148,6 +156,7 @@ def round_svg(master, pixels):
 
 
 def squircle_svg(master, pixels):
+    """Draws the macOS icon with its Dock margin at the requested logical size."""
     canvas = 1024.0
     side = canvas * SQUIRCLE_FILL
     inset = (canvas - side) / 2
@@ -200,7 +209,96 @@ def rounded_svg(master, pixels):
     )
 
 
+def layer_svg(master):
+    """Draws the bars alone on the Icon Composer canvas, leaving the background to icon.json."""
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{ICON_CANVAS}"'
+        f' height="{ICON_CANVAS}" viewBox="0 0 {master.span:g} {master.span:g}">\n'
+        f"{master.glyph(master.stroke)}\n"
+        f"</svg>\n"
+    )
+
+
+def srgb(color):
+    """Converts a master color to the opaque sRGB string icon.json expects."""
+    hex_color = NAMED_COLORS.get(color, color).lstrip("#")
+    if not re.fullmatch(r"[0-9a-fA-F]{6}", hex_color):
+        sys.exit(f"icons: unsupported color {color!r}")
+    channels = ",".join(
+        f"{int(hex_color[i:i + 2], 16) / 255:.5f}" for i in (0, 2, 4)
+    )
+    return f"srgb:{channels},1.00000"
+
+
+def write_icon_bundle(master, path):
+    """Writes the Icon Composer bundle macOS 26 derives its dark, clear and tinted icons from.
+
+    Returns whether anything changed, since actool never compiles the same Assets.car twice.
+    """
+    background = {"solid": srgb(master.background)}
+    # actool swaps any dark background for its own system-dark, so only the glyph varies.
+    manifest = {
+        "fill": background,
+        "groups": [
+            {
+                "layers": [
+                    {
+                        "image-name": "glyph.svg",
+                        "name": "glyph",
+                        # Clear and tinted both draw the "tinted" variant, lit by luminance.
+                        "fill-specializations": [
+                            {"appearance": appearance, "value": background}
+                            for appearance in ("dark", "tinted")
+                        ],
+                    }
+                ],
+                "shadow": {"kind": "neutral", "opacity": 0.5},
+                "translucency": {"enabled": True, "value": 0.5},
+            }
+        ],
+        "supported-platforms": {"squares": ["macOS"]},
+    }
+    files = {
+        path / "icon.json": json.dumps(manifest, indent=2) + "\n",
+        path / "Assets" / "glyph.svg": layer_svg(master),
+    }
+    if all(
+        file.exists() and file.read_text(encoding="utf-8") == text
+        for file, text in files.items()
+    ):
+        return False
+
+    shutil.rmtree(path, ignore_errors=True)
+    (path / "Assets").mkdir(parents=True)
+    for file, text in files.items():
+        file.write_text(text, encoding="utf-8")
+    return True
+
+
+def compile_icon_bundle(bundle, workdir, target):
+    """Compiles the bundle with actool, which needs macOS and Xcode 26 or later."""
+    out = workdir / "actool"
+    out.mkdir()
+    subprocess.run(
+        [
+            "xcrun", "actool", str(bundle),
+            "--compile", str(out),
+            "--app-icon", bundle.stem,
+            "--include-all-app-icons",
+            "--platform", "macosx",
+            "--minimum-deployment-target", "11.0",
+            "--output-partial-info-plist", str(out / "partial.plist"),
+            "--errors", "--warnings",
+            "--output-format", "human-readable-text",
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    shutil.copyfile(out / "Assets.car", target)
+
+
 def rasterize(svg_text, pixels, workdir, name):
+    """Renders directly from vector artwork onto a transparent pixel canvas."""
     source = workdir / f"{name}.svg"
     target = workdir / f"{name}.png"
     source.write_text(svg_text, encoding="utf-8")
@@ -220,6 +318,7 @@ def rasterize(svg_text, pixels, workdir, name):
 
 
 def write_ico(entries, path):
+    """Packs RGBA PNGs into a Windows icon family with 32-bit directory entries."""
     header = struct.pack("<HHH", 0, 1, len(entries))
     offset = len(header) + 16 * len(entries)
     directory = b""
@@ -242,6 +341,7 @@ def write_ico(entries, path):
 
 
 def write_icns(entries, path):
+    """Packs standard and Retina PNG representations into a macOS icon family."""
     body = b""
     for kind, blob in entries:
         body += kind.encode("ascii") + struct.pack(">I", len(blob) + 8) + blob
@@ -287,13 +387,11 @@ def main():
             target.write_bytes(blob)
 
         icns = []
-        rendered = {}
-        for kind, pixels in ICNS_TYPES:
-            if pixels not in rendered:
-                rendered[pixels] = rasterize(
-                    squircle_svg(master, pixels), pixels, workdir, f"m{pixels}"
-                )
-            icns.append((kind, rendered[pixels]))
+        for kind, points, scale in ICNS_TYPES:
+            blob = rasterize(
+                squircle_svg(master, points), points * scale, workdir, kind
+            )
+            icns.append((kind, blob))
         write_icns(icns, assets / "macos" / "sonora.icns")
 
         ico = [
@@ -312,13 +410,24 @@ def main():
         for pixels in TRAY_SIZES:
             blob = rasterize(template_svg(master), pixels, workdir, f"t{pixels}")
             (tray / f"template-{pixels}.png").write_bytes(blob)
-        (tray / "sonora.png").write_bytes(
-            rasterize(round_svg(master, 32), 32, workdir, "tray")
-        )
+        for obsolete in ["template-32.png", "template-64.png", "sonora.png"]:
+            (tray / obsolete).unlink(missing_ok=True)
+
+        # Last, so an actool failure leaves every other icon already written.
+        bundle = assets / "macos" / "sonora.icon"
+        car = assets / "macos" / "Assets.car"
+        compiled = False
+        if sys.platform != "darwin":
+            print("icons: actool needs macOS, sonora.icon and Assets.car left as they were")
+        elif write_icon_bundle(master, bundle) or not car.exists():
+            car.unlink(missing_ok=True)
+            compile_icon_bundle(bundle, workdir, car)
+            compiled = True
 
     print(
         f"icons: {len(LINUX_SIZES)} linux png, 1 linux svg, 1 icns, 1 ico,"
-        f" {len(TRAY_SIZES) + 1} tray png, 1 readme svg, 1 macos svg, 1 windows svg"
+        f" {len(TRAY_SIZES)} tray png, 1 readme svg, 1 macos svg, 1 windows svg"
+        f"{', 1 icon bundle, 1 car' if compiled else ''}"
     )
 
 

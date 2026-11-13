@@ -19,6 +19,7 @@ use ui::{
 use crate::chrome::Chrome;
 use crate::screens::settings::{self, Row};
 use crate::shared::confirm::{self, Confirm};
+use crate::shared::device_menu::DeviceMenu;
 use crate::shared::equalizer::{preset_key, sound_picker};
 
 use graph::{EqualizerGraph, EqualizerSpectrum};
@@ -71,6 +72,8 @@ pub(crate) struct EqualizerView {
     /// The device and the sound chosen in the row that adds a device rule, until it is added.
     rule_device: Option<RuleDevice>,
     rule_sound: Option<Sound>,
+    /// The add row's device menu, the same one the output picker opens.
+    device_menu: DeviceMenu,
     /// The name dialog's own focus, and what had focus before it opened, given back on close.
     focus: FocusHandle,
     restore: Option<FocusHandle>,
@@ -251,6 +254,7 @@ impl EqualizerView {
             naming: None,
             rule_device: None,
             rule_sound: None,
+            device_menu: DeviceMenu::new(cx),
             focus: cx.focus_handle(),
             restore: None,
             shown: None,
@@ -485,6 +489,7 @@ impl EqualizerView {
         ];
 
         TabBar::new("equalizer-mode")
+            .name(t!("equalizer-mode"))
             .flex_none()
             .items(modes)
             .into_any_element()
@@ -651,8 +656,6 @@ impl EqualizerView {
         };
 
         let slider = div()
-            // The slider reports its value but carries no name, so its box
-            // names it for the row it stands in.
             .id(match shelf {
                 Shelf::Bass => "equalizer-bass-slider",
                 Shelf::Treble => "equalizer-treble-slider",
@@ -662,6 +665,8 @@ impl EqualizerView {
             .w(theme.metrics.cover * TONE_SLIDER)
             .child(
                 Scrubber::new(state, ((gain - low) / (high - low)) as f32)
+                    .name(title.clone())
+                    .value(t!("equalizer-decibels-value", db = signed.clone()))
                     .colors(theme.muted, theme.muted, theme.foreground)
                     .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
                         let gain = tone_gain(*fraction);
@@ -721,13 +726,19 @@ impl EqualizerView {
                     .on_click(cx.listener(move |this, _, _, cx| this.set_preamp(choice, cx)))
             }),
         );
+        let level = t!("equalizer-decibels-value", db = figure(resolved, 1));
         let value = match auto {
             true => figure_cell(
-                t!("equalizer-decibels-value", db = figure(resolved, 1)),
+                "equalizer-preamp-value",
+                level.clone(),
+                level,
                 theme.metrics.cover * FIELD,
                 cx,
             ),
             false => div()
+                .id("equalizer-preamp-field")
+                .role(Role::Group)
+                .aria_label(t!("equalizer-preamp-level"))
                 .flex_none()
                 .w(theme.metrics.cover * FIELD)
                 .child(self.preamp.clone())
@@ -864,6 +875,7 @@ fn heading(
     div()
         .id(SharedString::from(key))
         .role(Role::Heading)
+        .aria_level(2)
         .aria_label(label.clone())
         .flex()
         .items_center()

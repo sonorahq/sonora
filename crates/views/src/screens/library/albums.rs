@@ -8,7 +8,7 @@ use i18n::t;
 use music::Album;
 use state::{Collection, Library, LibraryPart, Network, Origin, Playback, Shelf, Sonora};
 use ui::rank::{HANDY, NICE, SPARE, USEFUL};
-use ui::{Cell, ColumnSpec, Menu, Pin, TableSource, Width};
+use ui::{Cell, ColumnSpec, Menu, Pin, Sort, TableSource, Width};
 
 use crate::shared::cells::{self, DATE, NUMBER, TRAILING, YEAR};
 use crate::shared::menus::{ItemMenu, album_menu};
@@ -76,6 +76,7 @@ const ADDED_AT: ColumnSpec<AlbumField> = ColumnSpec {
     header: "column-date-added",
     width: Width::Fixed(DATE),
     rank: NICE,
+    first: Sort::Descending,
     ..COLUMN
 };
 
@@ -129,9 +130,8 @@ impl AlbumSource {
     fn index_cell(&self, cell: &Cell<AlbumField>, album: &Album, cx: &App) -> AnyElement {
         let origin = Origin::album(album.id.clone()).named(album.name.clone());
         let playing = self.playback.read(cx).playing_from(&origin, cx);
-        let played = origin.clone();
         let press = cells::toggle(&self.playback, playing, move |playback, cx| {
-            playback.play_origin(played.clone(), cx)
+            playback.play_origin(origin.clone(), cx)
         });
 
         cells::index(cell, playing, true, None, None, press, cx)

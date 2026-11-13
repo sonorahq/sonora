@@ -1,12 +1,13 @@
 use std::cell::RefCell;
+use std::panic::Location;
 use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Div, Entity, Hsla, MouseButton, Pixels, SharedString, Stateful, Task,
-    Window, div, px, svg,
+    AnyElement, App, Context, Div, ElementId, Entity, Hsla, MouseButton, Pixels, SharedString,
+    Stateful, Task, Window, div, px, svg,
 };
 use i18n::t;
 use music::{ArtistRef, Contributor};
@@ -306,18 +307,35 @@ fn line<F>(cell: &Cell<F>, color: Option<Hsla>) -> Div {
         .when_some(color, |this, color| this.text_color(color))
 }
 
+/// A line of plain text in `muted`, which screen readers reach by its value. The node is keyed
+/// to the call site, so each column that calls this from a line of its own gets its own node.
+#[track_caller]
 pub(crate) fn dim<F>(cell: &Cell<F>, value: impl Into<SharedString>, muted: Hsla) -> AnyElement {
-    line(cell, Some(muted))
-        .child(value.into())
-        .into_any_element()
+    said(line(cell, Some(muted)), Location::caller(), value.into())
 }
 
 /// A track length in tabular digits, so the column reads as a monospace strip.
+#[track_caller]
 pub(crate) fn length<F>(cell: &Cell<F>, value: Duration, muted: Hsla) -> AnyElement {
-    line(cell, Some(muted))
-        .font_features(tabular())
-        .child(clock(value))
-        .into_any_element()
+    said(
+        line(cell, Some(muted)).font_features(tabular()),
+        Location::caller(),
+        clock(value),
+    )
+}
+
+/// Puts `value` in `frame` and exposes it to screen readers as a label. Empty text stays out of
+/// the tree.
+fn said(frame: Div, id: impl Into<ElementId>, value: SharedString) -> AnyElement {
+    let frame = frame.child(value.clone());
+    match value.is_empty() {
+        true => frame.into_any_element(),
+        false => frame
+            .id(id)
+            .role(Role::Label)
+            .aria_value(value)
+            .into_any_element(),
+    }
 }
 
 pub(crate) fn stamp(seconds: Option<i64>) -> SharedString {
@@ -380,7 +398,10 @@ pub(crate) fn title<F>(
     let value = value.into();
     let text = div()
         .id(("track-title", cell.row))
-        .role(Role::Paragraph)
+        .role(match press.is_some() {
+            true => Role::Link,
+            false => Role::Paragraph,
+        })
         .aria_label(value.clone())
         .min_w_0()
         .truncate()
@@ -475,7 +496,11 @@ pub(crate) fn credited<F>(
         .items_center()
         .gap_2()
         .child(portrait(added, cell.row))
-        .child(div().min_w_0().truncate().child(value.into()))
+        .child(said(
+            div().min_w_0().truncate(),
+            ("credited", cell.row),
+            value.into(),
+        ))
         .into_any_element()
 }
 

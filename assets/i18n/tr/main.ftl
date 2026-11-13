@@ -37,7 +37,6 @@ nav-pinned = Sabitlenenler
 nav-unpin = Sabitlemeyi kaldır
 nav-pin-hint = Sabitlemek için buraya bırak
 library-liked-songs = Favoriler
-library-play-liked-songs = Çal
 library-no-songs = Henüz favori yok
 library-no-albums = Henüz kaydedilmiş albüm yok
 library-no-playlists = Henüz çalma listesi yok
@@ -86,6 +85,7 @@ column-index = #
 column-title = Başlık
 column-artist = Sanatçı
 column-album = Albüm
+column-genre = Tür
 column-date-added = Eklenme tarihi
 column-added-by = Ekleyen
 column-modified = Değiştirilme
@@ -97,16 +97,13 @@ column-year = Yıl
 column-tracks = Parçalar
 
 # track menu
-menu-add-to-playlist = Çalma listesine ekle
-menu-add-tracks-to-playlist = { $count } parçayı çalma listesine ekle
 menu-new-playlist = Yeni çalma listesi
+menu-import-playlist = Çalma listesini içe aktar…
 menu-edit-tags = Etiketleri düzenle
 menu-no-playlists = Çalma listesi yok
 menu-search-playlists = Çalma listesi ara
 menu-add-to-library = Favorilere ekle
-menu-add-tracks-to-library = { $count } parçayı favorilere ekle
 menu-remove-from-library = Favorilerden çıkar
-menu-remove-tracks-from-library = { $count } parçayı favorilerden çıkar
 menu-remove-from-playlist = Çalma listesinden çıkar
 menu-remove-tracks-from-playlist = { $count } parçayı çalma listesinden çıkar
 menu-remove-from-history = Geçmişten kaldır
@@ -114,13 +111,7 @@ menu-remove-tracks-from-history = { $count } parçayı geçmişten kaldır
 menu-delete-track-file = Parça dosyasını sil
 menu-delete-track-files = { $count } parça dosyasını sil
 menu-download = İndir
-menu-download-tracks = { $count ->
-   *[other] { $count } parçayı indir
-}
 menu-remove-download = İndirmeyi kaldır
-menu-remove-downloads = { $count ->
-   *[other] { $count } indirmeyi kaldır
-}
 menu-downloading = İndiriliyor. Durdurmak için tıkla
 menu-play-next = Sıradaki olarak çal
 menu-play-tracks-next = { $count } parçayı sıradaki olarak çal
@@ -140,18 +131,11 @@ menu-copy = Kopyala
 menu-paste = Yapıştır
 menu-select-all = Tümünü seç
 menu-remove-from-queue = Sıradan çıkar
-menu-rename-playlist = Çalma listesini yeniden adlandır
+menu-edit-playlist = Çalma listesini düzenle
 menu-delete-playlist = Çalma listesini sil
+menu-export-playlist = Çalma listesini dışa aktar…
 menu-add-playlist-to-library = Kitaplığa ekle
 menu-remove-playlist-from-library = Kitaplıktan çıkar
-menu-library-add = Kitaplığa ekle
-menu-library-add-tracks = { $count ->
-   *[other] { $count } parçayı kitaplığa ekle
-}
-menu-library-remove = Kitaplıktan çıkar
-menu-library-remove-tracks = { $count ->
-   *[other] { $count } parçayı kitaplıktan çıkar
-}
 menu-make-playlist-public = Herkese açık yap
 menu-make-playlist-private = Gizli yap
 menu-play-artist = Sanatçıyı çal
@@ -159,7 +143,12 @@ menu-play-artist = Sanatçıyı çal
 # playlist editor
 playlist-name-placeholder = Çalma listesi adı
 playlist-create-title = Çalma listesi oluştur
-playlist-rename-title = Çalma listesini yeniden adlandır
+playlist-edit-title = Çalma listesini düzenle
+playlist-cover-choose = Resim seç
+playlist-cover-remove = Kapağı kaldır
+playlist-cover-unopenable = Sonora bu dosyayı açamıyor
+playlist-cover-too-large = Bu resim 40 MB’tan büyük
+playlist-cover-not-a-picture = Bu dosya JPEG, PNG veya WebP resmi değil
 playlist-delete-title = Çalma listesini sil
 playlist-delete-confirm = “{ $name }” silinsin mi? Bu işlem geri alınamaz.
 playlist-again-title = Yeniden eklensin mi?
@@ -232,10 +221,7 @@ player-previous = Önceki parça
 player-next = Sonraki parça
 player-fullscreen = Tam ekran
 player-fullscreen-leave = Tam ekrandan çık
-player-devices = Cihazlar
 devices-this-computer = Bu bilgisayar
-devices-pause = Duraklat
-devices-resume = Sürdür
 devices-jam-join = Jam'e katıl…
 devices-jam-join-title = Jam'e katıl
 devices-jam-join-detail = Bir arkadaşının paylaştığı bağlantıyı yapıştır
@@ -243,15 +229,12 @@ devices-jam-paste = Yapıştır
 devices-jam-link-hint = Jam bağlantısı
 devices-jam-start = Jam başlat
 devices-jam-copy = Jam bağlantısını kopyala
-devices-jam-code = QR kodu
 devices-jam-code-menu = QR kodunu göster
 devices-jam-code-title = { $host } ile Jam'e katılmak için tara
 devices-jam-code-title-anonymous = Jam'e katılmak için tara
 devices-jam-code-close = Kapat
 devices-jam-leave = Jam'den ayrıl
 devices-jam-end = Jam'i bitir
-devices-jam-banner = { $host } ile Jam'de
-devices-jam-banner-anonymous = Jam'de
 devices-jam-more = +{ $count }
 devices-jam-host = Ev sahibi
 devices-jam-you = Sen
@@ -262,8 +245,6 @@ devices-jam-invite-detail = { $count ->
    *[other] Bu Jam'de zaten { $count } kişi var.
 }
 devices-jam-invite-join = Katıl
-devices-elsewhere-banner = { $device } üzerinde çalıyor
-devices-elsewhere-here = Burada çal
 fullscreen-artwork = Kapak
 
 # filters
@@ -344,8 +325,6 @@ login-choose-detail = { $provider } için oturum açma yolunu seç.
 
 # album and playlist pages
 detail-playlist = Çalma listesi
-detail-play-album = Albümü çal
-detail-play-playlist = Çalma listesini çal
 
 # play button
 play-pause = Duraklat
@@ -358,7 +337,6 @@ artist-monthly-listeners =
     { $count ->
        *[other] { $value } aylık dinleyici
     }
-artist-play = Şimdi çal
 artist-popular = Popüler
 artist-popular-eyebrow = Bu sanatçıyı keşfet
 artist-popular-empty = Bu sanatçıdan çalınacak bir şey henüz yok
@@ -403,6 +381,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Hızlı seçimler
 home-quick-picks-empty = Birkaç şarkı beğen, burada görünsünler
 home-recently-added = Son eklenenler
+home-recently-played = Son çalınanlar
 home-playlists = Çalma listeleri
 home-favorite-albums = Favori albümler
 home-artists = Sanatçılar
@@ -411,6 +390,9 @@ home-collection-albums = Koleksiyonundaki albümler
 # search page
 search-placeholder = Ne dinlemek istersin?
 search-browse = Tümüne göz at
+search-submit = Ara
+search-recent = Son aramalar
+search-forget = Geçmişten kaldır
 genre-empty = Burada henüz gösterilecek bir şey yok
 search-best-match = En iyi eşleşme
 search-no-matches = Eşleşme yok
@@ -430,7 +412,6 @@ kind-playlist = Çalma listesi
 
 # song page
 song-eyebrow = Şarkı
-song-play = Şarkıyı çal
 song-view-album = Albümü gör
 song-loading = Şarkı bilgileri yükleniyor…
 song-about = Bu şarkı hakkında
@@ -926,6 +907,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kanal
 }
+settings-lyrics = Şarkı sözlerini göster
+settings-lyrics-detail = Şarkı sözlerini her yerde gizlemek ve aramayı durdurmak için kapatın
 settings-panel-lyrics-size = Şarkı sözü boyutu (panel)
 settings-panel-lyrics-size-detail = Yan paneldeki şarkı sözü metninin, temel yazı boyutuna eklenen boyutu
 settings-fullscreen-lyrics-size = Şarkı sözü boyutu (tam ekran)
@@ -949,7 +932,6 @@ settings-romanized-lyrics = Latin harfli şarkı sözleri
 settings-romanized-lyrics-detail = Seçilen yazı sistemleri için yerel olarak üretilen okunuşu göster
 settings-romanization-writing-systems = Yazı sistemleri
 settings-lyrics-priority = Servis önceliği
-settings-lyrics-priority-detail = Aynı türdeki şarkı sözleri arasında Sonora daha üstteki kaynağı gösterir
 settings-lyrics-providers-detail = Şarkı sözü aranacak servisleri seç
 settings-lyrics-providers-selected = { $count ->
    *[other] { $count } seçili
@@ -1049,6 +1031,9 @@ saver-fps = { $fps } FPS
 
 toast-playlist-created = Çalma listesi oluşturuldu
 toast-playlist-renamed = Çalma listesi yeniden adlandırıldı
+toast-playlist-updated = Çalma listesi güncellendi
+toast-playlist-cover-changed = Çalma listesinin kapağı değişti
+toast-playlist-cover-removed = Çalma listesinin kapağı kaldırıldı
 toast-playlist-deleted = Çalma listesi silindi
 toast-local-delete-failed = Bazı parça dosyaları silinemedi
 toast-playlist-added = Çalma listesi kitaplığına eklendi
@@ -1060,6 +1045,14 @@ toast-track-removed-unnamed = Çalma listesinden çıkarıldı
 toast-playlist-failed = Bu değişiklik kaydedilemedi
 toast-playlist-busy = Başka bir değişiklik hâlâ sürüyor
 toast-playlist-signed-out = Çalma listelerini değiştirmek için oturum aç
+toast-playlist-imported = { $name } içe aktarıldı
+toast-playlist-imported-partly = { $name } içe aktarıldı, kitaplığında olmayan { $count ->
+        [one] bir şarkı
+       *[other] { $count } şarkı
+    } dışarıda bırakıldı
+toast-playlist-import-empty = { $name } içindeki şarkıların hiçbiri kitaplığında yok
+toast-playlist-exported = Çalma listesi dışa aktarıldı
+toast-file-dialog-failed = Dosya penceresi açılamadı
 toast-queued-track = { $name } sıraya eklendi
 toast-next-track = Sırada { $name } çalacak
 toast-last-track = { $name } en son çalacak
@@ -1228,17 +1221,6 @@ toast-offline-mode = Çevrimdışısın. Bu şarkıyı internetten çalmak için
 offline-title = Çevrimdışısın.
 offline-go-online = Çevrimiçi ol
 toast-download-failed = İndirilecek parçalar listelenemedi.
-toast-downloading = { $name } indiriliyor
-toast-downloading-songs = { $count ->
-   *[other] { $count } parça indiriliyor
-}
-toast-downloaded = { $name } indirildi
-toast-downloaded-songs = { $count ->
-   *[other] { $count } parça indirildi
-}
-toast-download-set-failed = { $name } içindeki bazı parçalar indirilemedi
-toast-download-song-failed = { $name } indirilemedi
-toast-download-songs-failed = Parçaların bazıları indirilemedi
 toast-percent = { $percent }%
 toast-download-cancelled = { $name } indirmesi iptal edildi
 toast-downloads-cancelled = { $count ->

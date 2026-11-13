@@ -8,6 +8,7 @@ use crate::button::Button;
 use crate::glass::{blurring, glass};
 use crate::scrollbar::{Scrollbar, activate_middle_scroll, cancel_middle_scroll};
 use crate::theme::ActiveTheme as _;
+use crate::veil::effects;
 
 /// How far a region has to be scrolled before the trip back is worth a button, in rows.
 const REACH: f32 = 3.;
@@ -23,6 +24,8 @@ pub struct Scroller {
     present_surface: bool,
     owns_scroll: bool,
     bottom_inset: Pixels,
+    /// How tall the band along the top is where content fades out as it scrolls away.
+    fade_top: Pixels,
 }
 
 impl Scroller {
@@ -36,6 +39,7 @@ impl Scroller {
             present_surface: true,
             owns_scroll: true,
             bottom_inset: Pixels::ZERO,
+            fade_top: Pixels::ZERO,
         }
     }
 
@@ -62,6 +66,14 @@ impl Scroller {
     /// listing keeps only its scrollbar clear; its list must provide its own trailing space.
     pub fn bottom_inset(mut self, inset: Pixels) -> Self {
         self.bottom_inset = inset.max(Pixels::ZERO);
+        self
+    }
+
+    /// Fades content out across a band of `height` along the top, so what scrolls up under a
+    /// control above the region melts away instead of being cut off at a hard line. The content
+    /// starts below the band, so nothing is faded while the region is at rest.
+    pub fn fade_top(mut self, height: Pixels) -> Self {
+        self.fade_top = height.max(Pixels::ZERO);
         self
     }
 }
@@ -94,6 +106,7 @@ impl RenderOnce for Scroller {
             present_surface,
             owns_scroll,
             bottom_inset,
+            fade_top,
         } = self;
 
         bar.update(cx, |bar, cx| bar.set_track_bottom(bottom_inset, cx));
@@ -130,6 +143,15 @@ impl RenderOnce for Scroller {
                 .to_pixels(Pixels::ZERO.into(), window.rem_size());
             surface = surface.pb(padding + bottom_inset);
         }
+        if fade_top > Pixels::ZERO {
+            let padding = surface
+                .style()
+                .padding
+                .top
+                .unwrap_or_default()
+                .to_pixels(Pixels::ZERO.into(), window.rem_size());
+            surface = surface.pt(padding + fade_top);
+        }
         if present_surface {
             surface = surface.layer_translate(presentation);
         }
@@ -138,7 +160,14 @@ impl RenderOnce for Scroller {
             .relative()
             .size_full()
             .min_h_0()
-            .child(surface)
+            .child(
+                div()
+                    .size_full()
+                    .when(fade_top > Pixels::ZERO && effects(), |this| {
+                        this.fade_edges(fade_top, Pixels::ZERO)
+                    })
+                    .child(surface),
+            )
             .child(bar)
     }
 }

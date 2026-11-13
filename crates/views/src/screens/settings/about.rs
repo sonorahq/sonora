@@ -6,7 +6,7 @@ use gpui::prelude::*;
 use gpui::{AnyElement, Context, FontWeight, SharedString, div, img};
 use i18n::t;
 use state::Channel;
-use ui::{ActiveTheme as _, Avatar, Switch, Text};
+use ui::{ActiveTheme as _, Avatar, Glowing as _, Switch, Text};
 
 use super::rows::{outward, segmented};
 use super::{Group, SettingsView, Slot, group_heading};
@@ -78,12 +78,7 @@ impl SettingsView {
     pub(super) fn version_row(&self) -> AnyElement {
         self.row(
             t!("settings-version"),
-            div()
-                .id("settings-version-value")
-                .role(gpui::accesskit::Role::Label)
-                .aria_label(state::VERSION)
-                .child(state::VERSION)
-                .into_any_element(),
+            ui::spoken("settings-version-value", state::version()).into_any_element(),
         )
     }
 
@@ -175,6 +170,7 @@ impl SettingsView {
                 div()
                     .id("settings-about-name")
                     .role(gpui::accesskit::Role::Heading)
+                    .aria_level(2)
                     .aria_label(t!("settings-about-name"))
                     .text_size(theme.text(Text::Title))
                     .font_weight(FontWeight::SEMIBOLD)
@@ -205,6 +201,7 @@ impl SettingsView {
                 group_heading(t!("settings-team"), Some("icons/user-round.svg"), cx)
                     .id("settings-team")
                     .role(gpui::accesskit::Role::Heading)
+                    .aria_level(2)
                     .aria_label(t!("settings-team")),
             )
             .children(MEMBERS.into_iter().enumerate().map(|(index, member)| {
@@ -223,7 +220,6 @@ impl SettingsView {
                     .px_3()
                     .rounded(theme.radius)
                     .cursor_pointer()
-                    .hover(|style| style.bg(theme.secondary_hover))
                     .on_click(move |_, _, cx| cx.open_url(member.profile))
                     .child(Avatar::new(Some(member.avatar)).size(theme.metrics.thumb))
                     .child(
@@ -241,6 +237,7 @@ impl SettingsView {
                             .text_color(theme.muted_foreground)
                             .child(member.role.label()),
                     )
+                    .glowed(theme.secondary_hover)
             }))
     }
 }

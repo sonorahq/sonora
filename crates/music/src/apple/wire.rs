@@ -30,6 +30,8 @@ use crate::{
 /// The size artwork is asked to render at, and the larger one for a page header.
 pub const ART: u32 = 600;
 pub const HERO: u32 = 1200;
+/// The widest an artist banner is asked for, since it spans the whole page.
+const BANNER: u64 = 2400;
 
 /// The artist views the page shows first, before every edition arrives from the artist's albums.
 /// Apple keeps live albums and compilations out of `full-albums`, so each needs its own view.
@@ -104,6 +106,8 @@ pub struct Search<'a> {
     pub albums: Relation<'a>,
     #[serde(deserialize_with = "loose")]
     pub playlists: Relation<'a>,
+    #[serde(deserialize_with = "loose")]
+    pub artists: Relation<'a>,
     #[serde(rename = "library-artists", deserialize_with = "loose")]
     pub library_artists: Relation<'a>,
 }
@@ -190,6 +194,10 @@ pub struct Attributes<'a> {
     pub play_params: Option<PlayParams<'a>>,
     #[serde(deserialize_with = "loose")]
     pub artwork: Artwork<'a>,
+    /// The wide pictures Apple keeps for an artist page, sent only when asked for with
+    /// `extend=editorialArtwork`.
+    #[serde(deserialize_with = "loose")]
+    pub editorial_artwork: Editorial<'a>,
     #[serde(deserialize_with = "loose")]
     pub editorial_notes: Notes<'a>,
     #[serde(deserialize_with = "loose")]
@@ -211,6 +219,20 @@ pub struct PlayParams<'a> {
 #[serde(default, bound(deserialize = "'de: 'a"))]
 pub struct Artwork<'a> {
     pub url: Leaf<'a>,
+    pub width: Leaf<'a>,
+    pub height: Leaf<'a>,
+}
+
+/// The editorial pictures of an artist, in the order a page banner prefers them.
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", bound(deserialize = "'de: 'a"))]
+pub struct Editorial<'a> {
+    #[serde(deserialize_with = "loose")]
+    pub banner_uber: Artwork<'a>,
+    #[serde(deserialize_with = "loose")]
+    pub super_hero_wide: Artwork<'a>,
+    #[serde(deserialize_with = "loose")]
+    pub centered_fullscreen_background: Artwork<'a>,
 }
 
 /// What Apple writes about an artist. Some answers send it as one string, kept in `text`, and
@@ -356,6 +378,7 @@ objects!(
     Attributes,
     PlayParams,
     Artwork,
+    Editorial,
     Title,
     Loudness,
     Measure,
@@ -688,7 +711,27 @@ fn number(field: &Leaf) -> u32 {
 /// generated cover carries a signature, so only the placeholders are touched.
 pub fn artwork(attributes: &Attributes, size: u32) -> Option<String> {
     let template = attributes.artwork.url.as_str()?;
-    Some(sized(template, size))
+    Some(sized(template, size, size))
+}
+
+/// The first editorial picture of an artist that Apple sent, at no more than `BANNER` across
+/// and its own aspect.
+pub fn banner(attributes: &Attributes) -> Option<String> {
+    let editorial = &attributes.editorial_artwork;
+    [
+        &editorial.banner_uber,
+        &editorial.super_hero_wide,
+        &editorial.centered_fullscreen_background,
+    ]
+    .into_iter()
+    .find_map(|art| {
+        let template = art.url.as_str()?;
+        let width = art.width.as_u64().filter(|width| *width > 0)?;
+        let height = art.height.as_u64()?;
+        let across = BANNER.min(width);
+        let down = height * across / width;
+        Some(sized(template, across as u32, down as u32))
+    })
 }
 
 /// An ISO-8601 stamp as seconds since the epoch. Apple writes them two ways, `2026-09-15` and
@@ -709,6 +752,7 @@ pub fn artist_refs(value: &Resource, attributes: &Attributes) -> Vec<ArtistRef> 
             Some(ArtistRef {
                 name: text(&artist.attributes.as_ref()?.name)?,
                 id: artist.id.as_str().map(str::to_owned),
+                channel: false,
             })
         })
         .collect();
@@ -716,23 +760,25 @@ pub fn artist_refs(value: &Resource, attributes: &Attributes) -> Vec<ArtistRef> 
         true => vec![ArtistRef {
             name: text(&attributes.artist_name).unwrap_or_default(),
             id: None,
+            channel: false,
         }],
         false => listed,
     }
 }
 
-/// One catalog song.
-pub fn song(value: &Resource) -> Option<Track> {
+/// One catalog song. `root` is the genre that parents every other one, which is left out of the
+/// song's genres.
+pub fn song(value: &Resource, root: &str) -> Option<Track> {
     let id = value.id.as_str()?;
-    song_as(value, id.to_owned())
+    song_as(value, id.to_owned(), root)
 }
 
 /// One row of a playlist: a library song on the listener's own playlists, a catalog song on
 /// everyone else's.
-pub fn playlist_track(row: &Resource) -> Option<Track> {
+pub fn playlist_track(row: &Resource, root: &str) -> Option<Track> {
     match row.kind.as_str() {
-        Some("library-songs") => library_song(row),
-        _ => song(row),
+        Some("library-songs") => library_song(row, root),
+        _ => song(row, root),
     }
 }
 
@@ -741,7 +787,7 @@ pub fn playlist_track(row: &Resource) -> Option<Track> {
 /// relationship was asked for and came back empty names an id Apple has pulled, which web
 /// playback refuses. It plays through the reporting id when Apple delivered the song again
 /// under a new one, and is listed unplayable when it did not.
-pub fn library_song(value: &Resource) -> Option<Track> {
+pub fn library_song(value: &Resource, root: &str) -> Option<Track> {
     let attributes = value.attributes.as_ref();
     let params = attributes.and_then(|attributes| attributes.play_params.as_ref());
     let id = params
@@ -752,15 +798,15 @@ pub fn library_song(value: &Resource) -> Option<Track> {
     // so the date is the library album's when that was included: the day the first song of
     // that album joined the library, which is also the order Apple itself sorts songs by.
     let mut track = match catalog(value) {
-        Some(found) => song_as(found, id)?,
-        None if value.relationships.catalog.data.is_none() => song_as(value, id)?,
+        Some(found) => song_as(found, id, root)?,
+        None if value.relationships.catalog.data.is_none() => song_as(value, id, root)?,
         None => match params
             .and_then(|params| params.reporting_id.as_str())
             .filter(|replacement| *replacement != id)
         {
-            Some(replacement) => song_as(value, replacement.to_owned())?,
+            Some(replacement) => song_as(value, replacement.to_owned(), root)?,
             None => {
-                let mut track = song_as(value, id)?;
+                let mut track = song_as(value, id, root)?;
                 track.playable = false;
                 track
             }
@@ -875,7 +921,7 @@ pub fn library_playlist(value: &Resource, owner: &str) -> Option<Playlist> {
         cover: artwork(attributes, ART),
         track_count: 0,
         modified_at: moment(attributes.last_modified_date.as_str())
-            .or(moment(attributes.date_added.as_str())),
+            .or_else(|| moment(attributes.date_added.as_str())),
     })
 }
 
@@ -895,18 +941,23 @@ pub fn saved_artist(value: &Resource) -> Option<SavedArtist> {
     })
 }
 
-/// A catalog artist page, with whatever its views brought along.
-pub fn artist(value: &Resource) -> Option<Artist> {
+/// A catalog artist page, with whatever its views brought along. `root` is the genre left out
+/// of its top songs.
+pub fn artist(value: &Resource, root: &str) -> Option<Artist> {
     let attributes = value.attributes.as_ref()?;
     let notes = &attributes.editorial_notes;
     Some(Artist {
         name: text(&attributes.name)?,
         cover_large: artwork(attributes, HERO),
+        banner: banner(attributes),
         biography: text(&notes.text)
             .or_else(|| text(&notes.standard))
             .or_else(|| text(&attributes.artist_bio)),
         monthly_listeners: None,
-        top_tracks: view(value, "top-songs").iter().filter_map(song).collect(),
+        top_tracks: view(value, "top-songs")
+            .iter()
+            .filter_map(|row| song(row, root))
+            .collect(),
         albums: newest_first(
             DISCOGRAPHY
                 .iter()
@@ -936,8 +987,8 @@ pub fn artist_profile(value: &Resource) -> Option<ArtistProfile> {
     })
 }
 
-/// One artist out of a similar-artists view: an id to open and a face for the rail's
-/// artists tab.
+/// One catalog artist with an id to open and a face, out of a similar-artists view or an
+/// artist search.
 pub fn similar_artist(value: &Resource) -> Option<SavedArtist> {
     let attributes = value.attributes.as_ref()?;
     Some(SavedArtist {
@@ -1041,8 +1092,9 @@ fn pin_target(value: &Resource, catalog: Option<&Resource>, owner: &str) -> Opti
 }
 
 /// One song listed under `id`, which a library row sets to the catalog id it plays through. The
-/// row still needs an id of its own, as every song has.
-fn song_as(value: &Resource, id: String) -> Option<Track> {
+/// row still needs an id of its own, as every song has. Apple files every song under `root` as
+/// well as its real genres, so that one is dropped.
+fn song_as(value: &Resource, id: String, root: &str) -> Option<Track> {
     value.id.as_str()?;
     let attributes = value.attributes.as_ref()?;
     Some(Track {
@@ -1053,6 +1105,8 @@ fn song_as(value: &Resource, id: String) -> Option<Track> {
         artists: text(&attributes.artist_name).unwrap_or_default(),
         artist_refs: artist_refs(value, attributes),
         album: text(&attributes.album_name).unwrap_or_default(),
+        // Apple lists a song's own artist only
+        album_artist: String::new(),
         album_id: value
             .relationships
             .albums
@@ -1073,6 +1127,7 @@ fn song_as(value: &Resource, id: String) -> Option<Track> {
             .genre_names
             .iter()
             .filter_map(Leaf::as_str)
+            .filter(|genre| *genre != root)
             .map(str::to_owned)
             .collect(),
         languages: Vec::new(),
@@ -1099,17 +1154,21 @@ fn loose<'de, D: Deserializer<'de>, T: Loose<'de>>(deserializer: D) -> Result<T,
     T::loose(deserializer)
 }
 
-/// An artwork template with its placeholders filled in one pass: both sides with `size`, the
-/// format with `jpg` and the crop with nothing.
-fn sized(template: &str, size: u32) -> String {
+/// An artwork template with its placeholders filled in one pass: the sides with `width` and
+/// `height`, the format with `jpg` and the crop with nothing.
+fn sized(template: &str, width: u32, height: u32) -> String {
     let mut filled = String::with_capacity(template.len() + 8);
     let mut rest = template;
     while let Some(at) = rest.find('{') {
         filled.push_str(&rest[..at]);
         rest = &rest[at..];
         match rest.get(..3) {
-            Some("{w}" | "{h}") => {
-                let _ = write!(filled, "{size}");
+            Some("{w}") => {
+                let _ = write!(filled, "{width}");
+                rest = &rest[3..];
+            }
+            Some("{h}") => {
+                let _ = write!(filled, "{height}");
                 rest = &rest[3..];
             }
             Some("{f}") => {
@@ -1162,14 +1221,14 @@ mod tests {
 
     #[test]
     fn reads_a_catalog_song() {
-        let track = song(&read(&catalog_song())).unwrap();
+        let track = song(&read(&catalog_song()), "Music").unwrap();
         assert_eq!(track.id.as_deref(), Some("1440857781"));
         assert_eq!(track.name, "Blue Monday");
         assert_eq!(track.album_id.as_deref(), Some("888"));
         assert_eq!(track.duration, Duration::from_millis(447_000));
         assert!(track.explicit);
         assert!(track.playable);
-        assert_eq!(track.tags, vec!["Alternative", "Music"]);
+        assert_eq!(track.tags, vec!["Alternative"]);
         assert_eq!(
             track.cover.as_deref(),
             Some("https://is1.mzstatic.com/a/600x600bb.jpg")
@@ -1186,7 +1245,7 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("playParams");
-        assert!(!song(&read(&row)).unwrap().playable);
+        assert!(!song(&read(&row), "Music").unwrap().playable);
     }
 
     #[test]
@@ -1201,7 +1260,7 @@ mod tests {
                 "playParams": { "catalogId": "1440857781", "isLibrary": true }
             }
         });
-        let track = library_song(&read(&row)).unwrap();
+        let track = library_song(&read(&row), "Music").unwrap();
         assert_eq!(track.id.as_deref(), Some("1440857781"));
         assert_eq!(track.added_at, Some(1_739_441_080));
     }
@@ -1213,7 +1272,7 @@ mod tests {
             "type": "library-songs",
             "attributes": { "name": "Home Recording" }
         });
-        assert!(library_song(&read(&row)).is_none());
+        assert!(library_song(&read(&row), "Music").is_none());
     }
 
     /// The library row carries the date, the catalog row everything else.
@@ -1294,7 +1353,7 @@ mod tests {
                 }] }
             }
         });
-        let artist = artist(&read(&row)).unwrap();
+        let artist = artist(&read(&row), "Music").unwrap();
         assert_eq!(artist.name, "Daft Punk");
         assert_eq!(artist.biography.as_deref(), Some("Robots."));
         assert_eq!(artist.top_tracks.len(), 1);

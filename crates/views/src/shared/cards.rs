@@ -23,12 +23,17 @@ pub(crate) fn album_card(
 ) -> Card {
     let cover = album.cover_large.clone().or_else(|| album.cover.clone());
     let origin = Origin::album(album.id.clone()).named(album.name.clone());
-    let playing = playback.read(cx).playing_from(&origin, cx) == Some(true);
+    let playing = playback.read(cx).engaged(&origin, cx);
     let pin = album.pin();
     let opened = SharedString::from(album.id.clone());
     let toggled = playback.clone();
+    let warmed = playback.clone();
 
     Card::new(id, SharedString::from(album.name.clone()))
+        .aria_description(spoken_caption([
+            year_label(album.year, Some(album.release_type)).unwrap_or_default(),
+            SharedString::from(album.artists.clone()),
+        ]))
         .cover(cover)
         .weight(FontWeight::SEMIBOLD)
         .underline()
@@ -41,9 +46,13 @@ pub(crate) fn album_card(
             album.artists.clone(),
             cx.theme(),
         ))
-        .play(playing, move |_, _, cx| {
-            toggled.update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
+        .play(playing, {
+            let origin = origin.clone();
+            move |_, _, cx| {
+                toggled.update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
+            }
         })
+        .warm(move |_, cx| warmed.update(cx, |playback, cx| playback.warm_origin(&origin, cx)))
         .press(move |_, _, cx| navigate(Destination::Album(opened.clone()), cx))
         .menu(CardMenu::opener(
             Item::Album(album.clone()),
@@ -59,19 +68,25 @@ pub(crate) fn playlist_card(
     cx: &App,
 ) -> Card {
     let origin = Origin::playlist(playlist.id.clone()).named(playlist.name.clone());
-    let playing = playback.read(cx).playing_from(&origin, cx) == Some(true);
+    let playing = playback.read(cx).engaged(&origin, cx);
     let pin = playlist.pin();
     let opened = SharedString::from(playlist.id.clone());
     let toggled = playback.clone();
+    let warmed = playback.clone();
 
     Card::new(id, SharedString::from(playlist.name.clone()))
+        .aria_description(SharedString::from(playlist.owner.clone()))
         .cover(playlist.cover.clone())
         .weight(FontWeight::SEMIBOLD)
         .underline()
         .meta(SharedString::from(playlist.owner.clone()))
-        .play(playing, move |_, _, cx| {
-            toggled.update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
+        .play(playing, {
+            let origin = origin.clone();
+            move |_, _, cx| {
+                toggled.update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
+            }
         })
+        .warm(move |_, cx| warmed.update(cx, |playback, cx| playback.warm_origin(&origin, cx)))
         .press(move |_, _, cx| navigate(Destination::Playlist(opened.clone()), cx))
         .menu(CardMenu::opener(
             Item::Playlist(playlist.clone()),
@@ -97,6 +112,7 @@ pub(crate) fn track_card(
     };
 
     Card::new(id, SharedString::from(track.name.clone()))
+        .aria_description(track_caption(None, track))
         .cover(track.cover.clone())
         .tint(tint)
         .hint()
@@ -143,9 +159,9 @@ pub(crate) fn item_card(
 ) -> Card {
     match item {
         GenreItem::Album(album) => album_card(id, album, playback, cx),
-        GenreItem::Playlist(playlist) => {
-            playlist_card(id, playlist, playback, cx).meta(playlist_meta(playlist))
-        }
+        GenreItem::Playlist(playlist) => playlist_card(id, playlist, playback, cx)
+            .aria_description(playlist_meta(playlist))
+            .meta(playlist_meta(playlist)),
         GenreItem::Artist(artist) => artist_card(id, artist, playback, cx),
         GenreItem::Genre(genre) => genre_card(id, genre),
         GenreItem::Track(track) => {
@@ -259,26 +275,37 @@ pub(crate) fn listed(
     let card = item_card(id, item, playback, cx).weight(FontWeight::NORMAL);
 
     match item {
-        GenreItem::Track(track) => card.bare_meta(tagged(
-            t!("kind-song"),
-            track_artists(SharedString::new_static("listed-artist"), track, &theme),
-            &theme,
-        )),
-        GenreItem::Album(album) => card.bare_meta(tagged(
-            i18n::lookup(release_key(album.release_type), None),
-            released(
-                SharedString::new_static("listed-artist"),
-                album.year,
-                None,
-                &album.artist_refs,
-                album.artists.clone(),
+        GenreItem::Track(track) => card
+            .aria_description(track_caption(Some(t!("kind-song")), track))
+            .bare_meta(tagged(
+                t!("kind-song"),
+                track_artists(SharedString::new_static("listed-artist"), track, &theme),
                 &theme,
-            ),
-            &theme,
-        )),
-        GenreItem::Playlist(playlist) => {
-            card.meta(tagged(t!("kind-playlist"), playlist_meta(playlist), &theme))
-        }
+            )),
+        GenreItem::Album(album) => card
+            .aria_description(spoken_caption([
+                i18n::lookup(release_key(album.release_type), None),
+                year_label(album.year, None).unwrap_or_default(),
+                SharedString::from(album.artists.clone()),
+            ]))
+            .bare_meta(tagged(
+                i18n::lookup(release_key(album.release_type), None),
+                released(
+                    SharedString::new_static("listed-artist"),
+                    album.year,
+                    None,
+                    &album.artist_refs,
+                    album.artists.clone(),
+                    &theme,
+                ),
+                &theme,
+            )),
+        GenreItem::Playlist(playlist) => card
+            .aria_description(spoken_caption([
+                t!("kind-playlist"),
+                playlist_meta(playlist),
+            ]))
+            .meta(tagged(t!("kind-playlist"), playlist_meta(playlist), &theme)),
         _ => card,
     }
 }
@@ -339,10 +366,7 @@ pub(crate) fn released(
 ) -> impl IntoElement {
     let small = theme.text(Text::Small);
     let muted = theme.muted_foreground;
-    let year = match year {
-        0 => kind.map(|kind| i18n::lookup(release_key(kind), None)),
-        year => Some(SharedString::from(year.to_string())),
-    };
+    let year = year_label(year, kind);
     let fallback = fallback.into();
     let credited: Vec<ArtistRef> = artists
         .iter()
@@ -369,13 +393,46 @@ pub(crate) fn released(
         .child(artists)
 }
 
+/// What a release's caption leads with: its year, or its kind when the year is unknown.
+fn year_label(year: i32, kind: Option<ReleaseType>) -> Option<SharedString> {
+    match year {
+        0 => kind.map(|kind| i18n::lookup(release_key(kind), None)),
+        year => Some(SharedString::from(year.to_string())),
+    }
+}
+
+/// The parts of a card's caption that are not empty, joined by bullets, for screen readers to
+/// read after the card's name.
+fn spoken_caption(parts: impl IntoIterator<Item = SharedString>) -> SharedString {
+    let parts: Vec<String> = parts
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .map(|part| part.to_string())
+        .collect();
+    SharedString::from(parts.join(&format!(" {BULLET} ")))
+}
+
+/// What a screen reader hears after a track card's name: an optional kind, the artists, and
+/// whether the track is explicit.
+fn track_caption(kind: Option<SharedString>, track: &Track) -> SharedString {
+    spoken_caption(
+        kind.into_iter()
+            .chain([SharedString::from(track.artists.clone())])
+            .chain(track.explicit.then(|| t!("song-explicit"))),
+    )
+}
+
 pub(crate) fn imported_playlist_card(
     id: impl Into<ElementId>,
     playlist: &Playlist,
     playback: &Entity<Playback>,
     cx: &App,
 ) -> Card {
-    playlist_card(id, playlist, playback, cx).meta(t!("count-tracks", count = playlist.track_count))
+    let count = t!("count-tracks", count = playlist.track_count);
+
+    playlist_card(id, playlist, playback, cx)
+        .aria_description(count.clone())
+        .meta(count)
 }
 
 pub(crate) fn artist_card(
@@ -385,20 +442,26 @@ pub(crate) fn artist_card(
     cx: &App,
 ) -> Card {
     let origin = Origin::artist(artist.id.clone()).named(artist.name.clone());
-    let playing = playback.read(cx).playing_from(&origin, cx) == Some(true);
+    let playing = playback.read(cx).engaged(&origin, cx);
     let pin = artist.pin();
     let opened = SharedString::from(artist.id.clone());
     let toggled = playback.clone();
+    let warmed = playback.clone();
 
     Card::new(id, SharedString::from(artist.name.clone()))
         .cover(artist.cover.clone())
+        .aria_description(i18n::lookup("artist-eyebrow", None))
         .circle()
         .weight(FontWeight::SEMIBOLD)
         .underline()
         .meta(i18n::lookup("artist-eyebrow", None))
-        .play(playing, move |_, _, cx| {
-            toggled.update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
+        .play(playing, {
+            let origin = origin.clone();
+            move |_, _, cx| {
+                toggled.update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
+            }
         })
+        .warm(move |_, cx| warmed.update(cx, |playback, cx| playback.warm_origin(&origin, cx)))
         .press(move |_, _, cx| navigate(Destination::Artist(opened.clone()), cx))
         .menu(CardMenu::opener(
             Item::Artist(artist.clone()),

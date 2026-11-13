@@ -5,6 +5,7 @@ mod audio;
 pub mod binimum;
 mod calendar;
 pub mod connect;
+pub mod cover;
 pub mod credentials;
 pub mod deezer;
 pub mod drm;
@@ -24,8 +25,10 @@ pub mod netease;
 pub mod output;
 pub mod potoken;
 pub mod progress;
+mod redact;
 pub mod scrobble;
 mod sink;
+pub mod soloist;
 mod spectrum;
 pub mod spotify;
 mod stream;
@@ -36,29 +39,27 @@ pub mod trouble;
 pub mod vault;
 pub mod youtube;
 
-use std::collections::HashMap;
-use std::num::NonZero;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use time::format_description::well_known::Iso8601;
-use time::parsing::Parsed;
-use time::{Month, OffsetDateTime};
+use jiff::fmt::temporal::DateTimeParser;
 
 pub use audio::Meter;
 pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
-    Contributor, Credit, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed, Lyrics, LyricsHit,
-    LyricsLane, LyricsLine, LyricsQuery, LyricsWord, PinOutcome, PinTarget, PinTargetKind,
-    Playlist, PlaylistDetail, ReleaseType, RomanizedText, SavedArtist, Track, TrackKey, TrackTags,
-    UserDetail, UserProfile, Voice, WritingSystem,
+    Contributor, CoverSize, Credit, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
+    ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsWord,
+    PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail, ReleaseType, RomanizedText,
+    SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
 };
 pub use output::{Server as SoundServer, missing_bridge};
-pub use spectrum::{Analyzer, Level, Spectrum, Watch};
+pub use redact::redact;
+pub use spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";
 pub const LOCAL_ALBUM_PREFIX: &str = "local-album:";
@@ -68,6 +69,9 @@ pub const LOCAL_PLAYLIST_PREFIX: &str = "local-playlist:";
 /// The most recommendations a provider hands one list of an album or artist page, so a
 /// rail never asks for or draws more than this many releases or artists.
 pub const SUGGESTIONS: usize = 10;
+
+/// The duration tolerance for recognizing the same recording across releases.
+const SAME_SONG: Duration = Duration::from_secs(5);
 
 pub fn is_local_id(id: &str) -> bool {
     id.starts_with(LOCAL_TRACK_PREFIX)
@@ -118,6 +122,12 @@ pub trait MusicApi: Send + Sync {
         None
     }
 
+    /// A cover url this provider handed out, at `size`. It is worked out from the url alone,
+    /// so `None` means the provider cannot tell and the caller loads the album instead.
+    fn cover_at(&self, _cover: &str, _size: CoverSize) -> Option<String> {
+        None
+    }
+
     fn share_url(&self, kind: MediaKind, id: &str) -> Option<String>;
     async fn profile(&self) -> Result<UserProfile>;
 
@@ -138,6 +148,12 @@ pub trait MusicApi: Send + Sync {
         _known: &[Track],
     ) -> Result<ArtistCatalogue> {
         Ok(ArtistCatalogue::default())
+    }
+
+    /// The artist's songs for playback, with popular tracks first when available.
+    /// Providers extend the overview's tracks with their ranked catalogue or release order.
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        Ok(self.artist(artist_id).await?.top_tracks)
     }
 
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile>;
@@ -238,6 +254,13 @@ pub trait MusicApi: Send + Sync {
         anyhow::bail!("this provider has no library apart from its favorites")
     }
     async fn set_playlist_public(&self, playlist_id: &str, public: bool) -> Result<()>;
+
+    /// Replaces a playlist's cover with `image`, the bytes of a picture in any format
+    /// [`cover::square_jpeg`] reads, or puts the provider's own cover back when it is `None`.
+    /// Only a provider whose capabilities list `playlist_covers` answers.
+    async fn set_playlist_cover(&self, _playlist_id: &str, _image: Option<&[u8]>) -> Result<()> {
+        anyhow::bail!("this provider cannot change a playlist's cover")
+    }
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()>;
 
     /// Adds tracks to the end of a playlist in order, and a track named twice goes in twice. A
@@ -250,6 +273,18 @@ pub trait MusicApi: Send + Sync {
         Ok(())
     }
     async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()>;
+
+    /// Reads the M3U or M3U8 playlist at `path` into a new playlist named after the file, for a
+    /// provider whose tracks are files. Entries naming a file outside the library are left out
+    /// and counted.
+    async fn import_playlist(&self, _path: &Path) -> Result<ImportedPlaylist> {
+        anyhow::bail!("this provider cannot import playlist files")
+    }
+
+    /// Writes a playlist to `path` as M3U8, for a provider whose tracks are files.
+    async fn export_playlist(&self, _playlist_id: &str, _path: &Path) -> Result<()> {
+        anyhow::bail!("this provider cannot export playlist files")
+    }
     async fn saved_albums(&self) -> Result<Vec<Album>>;
 
     /// Every album the provider has. Only a `Shape::Catalog` provider answers.
@@ -328,6 +363,13 @@ pub trait MusicApi: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// The artists the provider finds for `query`, best match first. A provider without an
+    /// artist search keeps the default of none, and search then names only the artists behind
+    /// the songs and albums it found.
+    async fn search_artists(&self, _query: &str) -> Result<Vec<SavedArtist>> {
+        Ok(Vec::new())
+    }
+
     async fn home(&self) -> Result<HomeFeed> {
         Ok(HomeFeed::default())
     }
@@ -349,6 +391,12 @@ pub trait MusicApi: Send + Sync {
 
     async fn genre(&self, _genre_id: &str) -> Result<GenreDetail> {
         Ok(GenreDetail::default())
+    }
+
+    /// A picture for a genre that `genres` listed without one, found with as few requests as
+    /// the provider allows. Defaults to none, for a provider whose genres come with covers.
+    async fn genre_cover(&self, _genre_id: &str) -> Result<Option<String>> {
+        Ok(None)
     }
 }
 
@@ -440,7 +488,7 @@ pub struct Offer {
 
 /// What a stream or a file is encoded as: a lossless encoding with its bit depth, a lossy one
 /// with its bit rate in kilobits a second.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Encoding {
     /// FLAC at this bit depth and sample rate in hertz.
     Flac {
@@ -481,6 +529,9 @@ pub struct TrackSignal {
     pub rate: u32,
     pub channels: u16,
     pub normalisation: Normalisation,
+    /// Whether the engine plays it to the system's output by itself, as Soloist does. Nothing
+    /// of Sonora's own sound path then touches it: no equalizer, no resampler, no chosen device.
+    pub direct: bool,
 }
 
 /// What loudness normalisation does to a track.
@@ -489,8 +540,8 @@ pub enum Normalisation {
     Off,
     /// A fixed gain in decibels, zero when nothing says how loud the track is.
     Gain(f32),
-    /// librespot normalises inside its own player with a limiter, so the gain is not known
-    /// and changes with the music.
+    /// Spotify's players, librespot and Soloist, normalise inside themselves with a limiter, so
+    /// the gain is not known and changes with the music.
     Limited,
 }
 
@@ -592,7 +643,12 @@ pub enum PlaybackEvent {
     },
     Refused,
     Gated,
-    OutputChanged,
+    /// The audio output was lost or changed, so the engine is gone. `heard` is the track being
+    /// heard and how far into it the output had played, when the engine knew. A restart resumes
+    /// there rather than where a clock that kept running during the switch would say.
+    OutputChanged {
+        heard: Option<(String, Duration)>,
+    },
     /// What the engine knows about the sound of track `id`, sent as it starts decoding it. A
     /// track queued behind the current one reports before it is heard.
     Signal {
@@ -670,6 +726,13 @@ pub trait Player: Send + Sync {
 
     /// Removes the download of a track.
     fn discard(&self, _track_id: &str) {}
+
+    /// Rewrites the downloads `track_ids` that are still sealed as plain files, for a player
+    /// that keeps plain downloads. The future answers once every one is done. A track already
+    /// plain, or not downloaded, costs a lookup.
+    fn unseal(&self, _track_ids: Vec<String>) -> futures::future::BoxFuture<'static, ()> {
+        Box::pin(async {})
+    }
 }
 
 #[async_trait]
@@ -706,6 +769,13 @@ impl Fraction {
 
 pub trait PlaybackFactory: Send + Sync {
     fn start(&self, config: PlaybackConfig) -> (Box<dyn Player>, Box<dyn PlaybackEvents>);
+
+    /// The stream levels the next engine serves, when they differ from the ones the provider
+    /// signed in with. A provider with a second way to play answers here, since which one is in
+    /// use can change while the account stays signed in.
+    fn qualities(&self) -> Option<&'static [Offer]> {
+        None
+    }
 }
 
 /// What a provider's library is made of. It decides which `MusicApi` methods fill the library
@@ -738,7 +808,8 @@ pub enum Catalog {
     /// files and a self-hosted server.
     Fixed,
     /// A set the listener picked out of a bigger catalog, which tracks and albums are put into
-    /// and taken out of through `set_in_library`, as on Apple Music.
+    /// and taken out of through `set_in_library`, as on Apple Music. A favorite is a mark on a
+    /// library item, so taking an item out of the library takes its favorite with it.
     Editable,
 }
 
@@ -762,11 +833,17 @@ pub struct Capabilities {
     pub pins: bool,
     /// The server converts tracks on request, as [`Transcode`] asks.
     pub transcode: bool,
+    /// The listener can give an owned playlist a cover of their own through
+    /// `set_playlist_cover`, and take it off again.
+    pub playlist_covers: bool,
     /// Played tracks can be kept in the [`vault`], so playing one again downloads nothing.
     pub keeps: bool,
     /// Tracks can be downloaded. Whether a download then plays with no network is up to the
     /// player, through [`Player::plays_offline`].
     pub downloads: bool,
+    /// Downloads are kept as plain audio files another player opens, in a folder the listener
+    /// can open. Only a service whose bytes carry no protection of their own does this.
+    pub plain_downloads: bool,
     /// The stream levels the service serves, best first. Empty when there is nothing to choose
     /// between, so the setting stays hidden.
     pub qualities: &'static [Offer],
@@ -779,15 +856,17 @@ pub struct Capabilities {
 impl Capabilities {
     /// What a full streaming service offers. Pins of the provider's own are not among them,
     /// since only Spotify and Apple Music keep any. Converting on request is not either, since
-    /// only Subsonic does it.
+    /// only Subsonic does it. Playlist covers are left for each provider to turn on.
     pub const ALL: Self = Self {
         follow_artists: true,
         radio: true,
         playcounts: true,
         pins: false,
         transcode: false,
+        playlist_covers: false,
         keeps: true,
         downloads: true,
+        plain_downloads: false,
         qualities: &[],
         download_gap: Duration::ZERO,
     };
@@ -799,8 +878,10 @@ impl Capabilities {
         playcounts: false,
         pins: false,
         transcode: false,
+        playlist_covers: false,
         keeps: false,
         downloads: false,
+        plain_downloads: false,
         qualities: &[],
         download_gap: Duration::ZERO,
     };
@@ -831,6 +912,8 @@ pub enum SignIn {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignInProblem {
     Premium,
+    /// Apple Music says the signed-in Apple ID has no active subscription.
+    Subscription,
     Region,
     Credentials,
     Network,
@@ -858,6 +941,7 @@ impl std::fmt::Display for SignInFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let reason = match self.0 {
             SignInProblem::Premium => "the account has no Spotify Premium",
+            SignInProblem::Subscription => "the account has no active Apple Music subscription",
             SignInProblem::Region => "the account is out of its home region",
             SignInProblem::Credentials => "the stored credentials are no longer valid",
             SignInProblem::Network => "the provider could not be reached",
@@ -987,6 +1071,11 @@ pub trait MusicProvider: Send + Sync {
     fn protected(&self) -> bool {
         false
     }
+    /// Whether this provider can play through Soloist, Spotify's own headless player, on this
+    /// computer. The app offers its setup while such a provider is the current one.
+    fn soloist(&self) -> bool {
+        false
+    }
     /// Whether the artwork urls this provider hands out can be given to another service. A path
     /// on disk means nothing elsewhere, and a self-hosted url carries the credentials that fetch
     /// it, so the default is no.
@@ -1024,27 +1113,103 @@ pub trait MusicProvider: Send + Sync {
 /// Leniently convert an ISO8601 timestamp to unix epoch seconds. Accepts only
 /// the date portion, date and time portions, or full date and time with offset.
 pub fn iso_8601_to_epoch(value: Option<&str>) -> Option<i64> {
-    let time_str = value?.as_bytes();
-    let defaults = Parsed::new()
-        .with_month(Month::January)
-        .and_then(|d| d.with_day(NonZero::<u8>::new(1)?))
-        .and_then(|d| d.with_hour_24(0))
-        .and_then(|d| d.with_minute(0))
-        .and_then(|d| d.with_second(0))
-        .and_then(|d| d.with_subsecond(0))
-        .and_then(|d| d.with_offset_hour(0))
-        .and_then(|d| d.with_offset_minute_signed(0))
-        .and_then(|d| d.with_offset_second_signed(0))?;
-    let timestamp = OffsetDateTime::parse_with_defaults(time_str, &Iso8601::PARSING, defaults)
-        .ok()?
-        .unix_timestamp();
-    Some(timestamp)
+    let value = value?;
+    let parser = DateTimeParser::new();
+    let timestamp = parser
+        .parse_timestamp(value)
+        .or_else(|_| {
+            parser
+                .parse_datetime(value)
+                .and_then(|datetime| jiff::tz::TimeZone::UTC.to_timestamp(datetime))
+        })
+        .or_else(|_| {
+            parser
+                .parse_date(value)
+                .and_then(|date| jiff::tz::TimeZone::UTC.to_timestamp(date.at(0, 0, 0, 0)))
+        })
+        .ok()?;
+    Some(timestamp.as_second())
+}
+
+/// Keeps playable songs credited to the artist in their supplied order, collapsing repeat
+/// ids and matching titles of similar duration across releases. Remaster labels do not
+/// distinguish songs.
+fn artist_songs(tracks: Vec<Track>, artist_id: &str) -> Vec<Track> {
+    let mut kept: HashMap<String, Vec<Duration>> = HashMap::new();
+    let mut ids = HashSet::new();
+    tracks
+        .into_iter()
+        .filter(|track| {
+            if !track.playable {
+                return false;
+            }
+            let named = track
+                .artist_refs
+                .iter()
+                .filter_map(|artist| artist.id.as_deref());
+            named.clone().next().is_none() || named.into_iter().any(|id| id == artist_id)
+        })
+        .filter(|track| {
+            if let Some(id) = &track.id
+                && !ids.insert(id.clone())
+            {
+                return false;
+            }
+            let lengths = kept.entry(song_title(&track.name)).or_default();
+            let repeat = lengths.iter().any(|length| {
+                !length.is_zero()
+                    && !track.duration.is_zero()
+                    && length.abs_diff(track.duration) <= SAME_SONG
+            });
+            if !repeat {
+                lengths.push(track.duration);
+            }
+            !repeat
+        })
+        .collect()
+}
+
+/// A track title reduced to what tells songs apart: lowercase, without a remaster note in
+/// brackets or after a dash, and with its spacing collapsed.
+fn song_title(name: &str) -> String {
+    let lower = name.to_lowercase();
+    let mut rest = match lower.rsplit_once(" - ") {
+        Some((head, tail)) if remaster_note(tail) => head,
+        _ => lower.as_str(),
+    };
+    let mut title = String::with_capacity(rest.len());
+    while let Some(open) = rest.find(['(', '[']) {
+        let close = match rest.as_bytes()[open] {
+            b'(' => ')',
+            _ => ']',
+        };
+        let Some(length) = rest[open..].find(close) else {
+            break;
+        };
+        let end = open + length + 1;
+        title.push_str(&rest[..open]);
+        if !remaster_note(&rest[open + 1..end - 1]) {
+            title.push_str(&rest[open..end]);
+        }
+        rest = &rest[end..];
+    }
+    title.push_str(rest);
+    title.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Recognizes remaster labels without discarding version names such as live or acoustic.
+fn remaster_note(note: &str) -> bool {
+    note.contains("remaster")
+        && note.split_whitespace().all(|word| {
+            matches!(
+                word,
+                "remaster" | "remastered" | "digitally" | "digital" | "version"
+            ) || word.chars().all(|character| character.is_ascii_digit())
+        })
 }
 
 #[cfg(test)]
 mod tests {
-    use time::macros::datetime;
-
     use super::*;
 
     #[test]
@@ -1064,29 +1229,35 @@ mod tests {
         );
 
         // A specific date with/without time/offset
-        assert_eq!(
-            iso_8601_to_epoch(Some("2021-03-20")),
-            Some(datetime!(2021-03-20 00:00:00 UTC).unix_timestamp())
-        );
+        let date = jiff::civil::date(2021, 3, 20);
+        let midnight = jiff::tz::TimeZone::UTC
+            .to_timestamp(date.at(0, 0, 0, 0))
+            .unwrap()
+            .as_second();
+        let afternoon = jiff::tz::TimeZone::UTC
+            .to_timestamp(date.at(13, 45, 7, 0))
+            .unwrap()
+            .as_second();
+        assert_eq!(iso_8601_to_epoch(Some("2021-03-20")), Some(midnight));
         assert_eq!(
             iso_8601_to_epoch(Some("2021-03-20T13:45:07")),
-            Some(datetime!(2021-03-20 13:45:07 UTC).unix_timestamp())
+            Some(afternoon)
         );
         assert_eq!(
             iso_8601_to_epoch(Some("2021-03-20T13:45:07.123456")),
-            Some(datetime!(2021-03-20 13:45:07 UTC).unix_timestamp())
+            Some(afternoon)
         );
         assert_eq!(
             iso_8601_to_epoch(Some("2021-03-20T13:45:07Z")),
-            Some(datetime!(2021-03-20 13:45:07 UTC).unix_timestamp())
+            Some(afternoon)
         );
         assert_eq!(
             iso_8601_to_epoch(Some("2021-03-20T13:45:07+00:00")),
-            Some(datetime!(2021-03-20 13:45:07 UTC).unix_timestamp())
+            Some(afternoon)
         );
         assert_eq!(
             iso_8601_to_epoch(Some("2021-03-20T10:45:07-03:00")),
-            Some(datetime!(2021-03-20 13:45:07 UTC).unix_timestamp())
+            Some(afternoon)
         );
     }
 }

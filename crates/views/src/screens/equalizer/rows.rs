@@ -1,12 +1,16 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Context, Entity, Focusable as _, Pixels, SharedString, Window, div};
+use gpui::{
+    AnyElement, App, Context, Div, ElementId, Entity, Focusable as _, Pixels, SharedString,
+    Stateful, Window, div,
+};
 use i18n::t;
 use music::equalizer::{
     Curve, FREQUENCY_RANGE, Filter, GAIN_RANGE, Invalid, Kind, MAX_FILTERS, OCTAVES_RANGE,
     PREAMP_RANGE, Preamp, Q_RANGE, Width, apo,
 };
 use state::{Outcome, Toast, Toasts};
-use ui::{ActiveTheme as _, Button, Input, MenuItem, Picker, Switch, Text, vacant};
+use ui::{ActiveTheme as _, Button, Glowing as _, Input, MenuItem, Picker, Switch, Text, vacant};
 
 use super::{EqualizerView, FILTERS_ICON, heading};
 
@@ -216,12 +220,14 @@ impl EqualizerView {
     /// One filter on one line: its switch, its kind, its frequency, gain and width, and a button
     /// that removes it. The row lights the filter's node on the graph while the pointer is over
     /// it, a press on it selects that node, and it stands marked while its node is selected.
-    /// Where the line has too little room, the three values move to a line of their own.
+    /// Where the line has too little room, the three values move to a line of their own. `count`
+    /// is how many filters the list holds, which screen readers announce with the row.
     fn filter_row(
         &self,
         index: usize,
         filter: Filter,
         selected: bool,
+        count: usize,
         wide: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -244,9 +250,16 @@ impl EqualizerView {
                         this.change(index, |filter| filter.with_kind(kind), cx)
                     }))
             }));
+        let number = index + 1;
         let gain = match filter.kind().has_gain() {
             true => fields.gain.clone().into_any_element(),
-            false => figure_cell(t!("equalizer-no-gain"), cover * GAIN, cx),
+            false => figure_cell(
+                ("equalizer-no-gain", index),
+                t!("equalizer-no-gain"),
+                t!("equalizer-no-gain-spoken"),
+                cover * GAIN,
+                cx,
+            ),
         };
         let remove = Button::new(("equalizer-remove", index))
             .small()
@@ -257,11 +270,29 @@ impl EqualizerView {
                 this.graph
                     .update(cx, |graph, cx| graph.remove_filter(index, cx))
             }));
-        let frequency = fields.frequency.clone();
-        let width = fields.width.clone();
+        let frequency = field_box(
+            ("equalizer-frequency-field", index),
+            t!("equalizer-filter-frequency", number = number),
+        )
+        .child(fields.frequency.clone());
+        let gain = field_box(
+            ("equalizer-gain-field", index),
+            t!("equalizer-filter-gain", number = number),
+        )
+        .child(gain);
+        let width = field_box(
+            ("equalizer-width-field", index),
+            t!("equalizer-filter-width", number = number),
+        )
+        .child(fields.width.clone());
 
         let row = div()
             .id(("equalizer-filter", index))
+            .role(Role::ListItem)
+            .aria_label(t!("equalizer-filter", number = number))
+            .aria_selected(selected)
+            .aria_position_in_set(number)
+            .aria_size_of_set(count)
             .flex()
             .items_center()
             .gap_2()
@@ -269,27 +300,25 @@ impl EqualizerView {
             .px_3()
             .rounded(theme.radius)
             .when(selected, |row| row.bg(theme.secondary_active))
-            .when(!selected, |row| {
-                row.hover(|style| style.bg(theme.secondary_hover))
-            })
-            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                let hovered = *hovered;
-                this.graph
-                    .update(cx, |graph, cx| graph.light(index, hovered, cx));
-            }))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.graph
                     .update(cx, |graph, cx| graph.select_index(index, cx));
             }));
-        match wide {
+        // The glow holds the row's hover listener, so the graph hears the pointer through it.
+        let heard = cx.listener(move |this, hovered: &bool, _, cx| {
+            let hovered = *hovered;
+            this.graph
+                .update(cx, |graph, cx| graph.light(index, hovered, cx));
+        });
+        let row = match wide {
             true => row
                 .h(theme.metrics.list_row)
                 .child(enabled)
                 .child(kind.w(cover * KIND))
                 .child(div().flex_1())
-                .child(cell(cover * FREQUENCY).child(frequency))
-                .child(cell(cover * GAIN).child(gain))
-                .child(cell(cover * WIDTH).child(width))
+                .child(frequency.flex_none().w(cover * FREQUENCY))
+                .child(gain.flex_none().w(cover * GAIN))
+                .child(width.flex_none().w(cover * WIDTH))
                 .child(remove),
             // two lines of one width: the switch, the kind and the remove button over the three
             // values, which share what the window leaves them
@@ -313,13 +342,19 @@ impl EqualizerView {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(div().flex_1().min_w_0().child(frequency))
-                            .child(div().flex_1().min_w_0().child(gain))
-                            .child(div().flex_1().min_w_0().child(width)),
+                            .child(frequency.flex_1().min_w_0())
+                            .child(gain.flex_1().min_w_0())
+                            .child(width.flex_1().min_w_0()),
                     ),
             ),
+        };
+        match selected {
+            true => row.on_hover(heard).into_any_element(),
+            false => row
+                .glowed(theme.secondary_hover)
+                .on_hover(heard)
+                .into_any_element(),
         }
-        .into_any_element()
     }
 
     /// The button that appends a flat filter, which does nothing once the curve is full.
@@ -346,14 +381,16 @@ impl EqualizerView {
         let filters = self.equalizer.read(cx).curve().filters().to_vec();
         let full = filters.len() >= MAX_FILTERS;
         let selected = self.graph.read(cx).selected_index();
+        let count = filters.len();
         let rows: Vec<_> = filters
             .into_iter()
             .enumerate()
             .map(|(index, filter)| {
-                self.filter_row(index, filter, selected == Some(index), wide, cx)
+                self.filter_row(index, filter, selected == Some(index), count, wide, cx)
             })
             .collect();
         let add = self.add_button(full, cx).into_any_element();
+        let empty = t!("equalizer-no-filters");
 
         div()
             .flex()
@@ -361,7 +398,10 @@ impl EqualizerView {
             .child(heading("equalizer-filters", FILTERS_ICON, Some(add), cx))
             .map(|group| match rows.is_empty() {
                 true => group.child(
-                    vacant(t!("equalizer-no-filters"), cx)
+                    vacant(empty.clone(), cx)
+                        .id("equalizer-no-filters")
+                        .role(Role::Label)
+                        .aria_value(empty)
                         .rounded(theme.radius)
                         .border_1()
                         .border_dashed()
@@ -369,6 +409,9 @@ impl EqualizerView {
                 ),
                 false => group.child(
                     div()
+                        .id("equalizer-filter-list")
+                        .role(Role::List)
+                        .aria_label(t!("equalizer-filters"))
                         .flex()
                         .flex_col()
                         .when(!wide, |list| list.gap_1())
@@ -482,10 +525,20 @@ fn kind_name(kind: Kind) -> SharedString {
 }
 
 /// `figure` muted against the end of a box as wide and tall as a number field, standing where a
-/// field would when there is nothing to type, so nothing beside it moves.
-pub(super) fn figure_cell(figure: SharedString, width: Pixels, cx: &App) -> AnyElement {
+/// field would when there is nothing to type, so nothing beside it moves. Screen readers read
+/// `spoken` in its place, since a figure such as a dash says nothing aloud.
+pub(super) fn figure_cell(
+    id: impl Into<ElementId>,
+    figure: SharedString,
+    spoken: SharedString,
+    width: Pixels,
+    cx: &App,
+) -> AnyElement {
     let theme = cx.theme();
     div()
+        .id(id)
+        .role(Role::Label)
+        .aria_value(spoken)
         .flex()
         .flex_none()
         .items_center()
@@ -499,7 +552,8 @@ pub(super) fn figure_cell(figure: SharedString, width: Pixels, cx: &App) -> AnyE
         .into_any_element()
 }
 
-/// A fixed-width part of a filter's row.
-fn cell(width: Pixels) -> gpui::Div {
-    div().flex_none().w(width)
+/// The box around one of a filter's number fields, named for screen readers after the filter and
+/// the value, since the field itself only names its unit.
+fn field_box(id: (&'static str, usize), name: SharedString) -> Stateful<Div> {
+    div().id(id).role(Role::Group).aria_label(name)
 }

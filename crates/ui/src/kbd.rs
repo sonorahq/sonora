@@ -1,5 +1,8 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{App, Div, FontWeight, Pixels, SharedString, StyleRefinement, Window, div, px};
+use gpui::{
+    App, Div, ElementId, FontWeight, Pixels, SharedString, StyleRefinement, Window, div, px,
+};
 
 use crate::metrics::{Text, tucked};
 use crate::theme::ActiveTheme as _;
@@ -21,6 +24,8 @@ const EDGE: Pixels = px(1.);
 pub struct Kbd {
     base: Div,
     keystroke: SharedString,
+    /// The id under which the shortcut reaches screen readers, which it does only once given one.
+    spoken: Option<ElementId>,
 }
 
 impl Kbd {
@@ -28,7 +33,15 @@ impl Kbd {
         Self {
             base: div(),
             keystroke: keystroke.into(),
+            spoken: None,
         }
+    }
+
+    /// Exposes the shortcut to screen readers as one line naming its keys, under the element id
+    /// `id`. Without it the key caps are drawn but never read.
+    pub fn spoken(mut self, id: impl Into<ElementId>) -> Self {
+        self.spoken = Some(id.into());
+        self
     }
 }
 
@@ -43,6 +56,7 @@ impl RenderOnce for Kbd {
         let Self {
             mut base,
             keystroke,
+            spoken,
         } = self;
         let theme = cx.theme();
         let overrides = std::mem::take(base.style());
@@ -83,7 +97,20 @@ impl RenderOnce for Kbd {
             .gap_0p5()
             .children(keys);
         kbd.style().refine(&overrides);
-        kbd
+        match spoken {
+            Some(id) => {
+                let spelled = keystroke
+                    .split('-')
+                    .map(|part| label(part).to_string())
+                    .collect::<Vec<_>>()
+                    .join("+");
+                kbd.id(id)
+                    .role(Role::Label)
+                    .aria_value(spelled)
+                    .into_any_element()
+            }
+            None => kbd.into_any_element(),
+        }
     }
 }
 

@@ -4,10 +4,11 @@
 
 use std::cell::RefCell;
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Context, Div, FontWeight, Hsla, Pixels, SharedString, Window, div, px, relative,
-    svg,
+    AnyElement, Context, Div, FontWeight, Hsla, Pixels, SharedString, Stateful, Window, div, px,
+    relative, svg,
 };
 use i18n::t;
 use music::{Encoding, Normalisation};
@@ -103,6 +104,13 @@ pub(in crate::screens::settings) fn preview(
         .map(|provider| provider.name())
         .or_else(|| session.provider_name());
 
+    // Soloist plays Spotify to the system itself, so the path ends with it rather than with
+    // Sonora's equalizer, resampler and device
+    let direct = match &track {
+        Some(track) => track.direct,
+        None => view.soloist_plays(cx),
+    };
+
     let mut steps = Vec::new();
     steps.push(Step {
         icon: slug.map_or("icons/music.svg", provider_logo),
@@ -127,7 +135,15 @@ pub(in crate::screens::settings) fn preview(
             detail: gain.map(|db| t!("settings-signal-gain", db = signed(db))),
         });
     }
-    if view.equalizer.read(cx).enabled() {
+    if direct {
+        steps.push(Step {
+            icon: "icons/headphones.svg",
+            tint: None,
+            label: t!("settings-signal-soloist"),
+            detail: None,
+        });
+    }
+    if view.equalizer.read(cx).enabled() && !direct {
         steps.push(Step {
             icon: "icons/sliders-horizontal.svg",
             tint: None,
@@ -144,7 +160,7 @@ pub(in crate::screens::settings) fn preview(
         });
     }
     let outputs = view.outputs.read(cx);
-    let device = outputs.current();
+    let device = outputs.current().filter(|_| !direct);
     steps.push(Step {
         icon: "icons/speaker.svg",
         tint: None,
@@ -157,23 +173,33 @@ pub(in crate::screens::settings) fn preview(
                     .map_or_else(|| device.name.clone(), |option| option.label.clone())
             })
             .map_or_else(|| t!("settings-output-device-system"), SharedString::from),
-        detail: outputs.rate(cx).map(rate),
+        detail: device.map(|device| rate(device.format.rate)),
     });
     let perfect = path
         .as_ref()
         .is_some_and(|path| path.track.is_some() && path.changes().is_empty());
 
     let count = steps.len();
-    let mut row = div().flex().items_center().gap_2().w_full();
+    let mut row = div()
+        .id("signal-path")
+        .role(Role::List)
+        .aria_label(t!("settings-signal-path"))
+        .flex()
+        // every step stands as tall as the tallest, the one with a figure under its name
+        .items_stretch()
+        .gap_2()
+        .w_full();
     for (index, step) in steps.into_iter().enumerate() {
-        row = row.child(node(step, cx));
+        row = row.child(node(step, (index, count), cx));
         if index + 1 < count {
             row = row.child(
-                svg()
-                    .path(icons::path("icons/chevron-right.svg"))
-                    .size(CHEVRON)
-                    .flex_none()
-                    .text_color(theme.muted_foreground.opacity(CHEVRON_STRENGTH)),
+                div().flex().flex_none().items_center().child(
+                    svg()
+                        .path(icons::path("icons/chevron-right.svg"))
+                        .size(CHEVRON)
+                        .flex_none()
+                        .text_color(theme.muted_foreground.opacity(CHEVRON_STRENGTH)),
+                ),
             );
         }
     }
@@ -202,23 +228,38 @@ pub(in crate::screens::settings) fn preview(
                                 .size(theme.text(Text::Tiny))
                                 .text_color(theme.primary),
                         )
-                        .child(t!("equalizer-status-bit-perfect")),
+                        .child(ui::spoken(
+                            "signal-bit-perfect",
+                            t!("equalizer-status-bit-perfect"),
+                        )),
                 )
             })
             .into_any_element(),
     )
 }
 
-/// One step as a small tile: the icon over what it is, with its figure under that.
-fn node(step: Step, cx: &gpui::App) -> Div {
+/// One step as a small tile: the icon over what it is, with its figure under that when it has
+/// one. The tiles share the row's width equally and what a tile holds sits in its middle, so a
+/// step with no figure does not leave a gap at its foot. Screen readers hear it as one item of
+/// the path, named by what it is and described by its figure.
+fn node(step: Step, (index, count): (usize, usize), cx: &gpui::App) -> Stateful<Div> {
     let theme = cx.theme();
 
     div()
-        .flex_auto()
+        .id(SharedString::from(format!("signal-step-{}", step.icon)))
+        .role(Role::ListItem)
+        .aria_label(step.label.clone())
+        .when_some(step.detail.clone(), |this, detail| {
+            this.aria_description(detail)
+        })
+        .aria_position_in_set(index + 1)
+        .aria_size_of_set(count)
+        .flex_1()
         .min_w_0()
         .flex()
         .flex_col()
         .items_center()
+        .justify_center()
         .gap_1()
         .py_3()
         .px_2()
@@ -241,15 +282,17 @@ fn node(step: Step, cx: &gpui::App) -> Div {
                 .font_weight(FontWeight::MEDIUM)
                 .child(step.label),
         )
-        .child(
-            div()
-                .max_w_full()
-                .truncate()
-                .text_size(theme.text(Text::Tiny))
-                .text_color(theme.muted_foreground)
-                .font_features(tabular())
-                .child(step.detail.unwrap_or_else(|| "\u{a0}".into())),
-        )
+        .when_some(step.detail, |tile, detail| {
+            tile.child(
+                div()
+                    .max_w_full()
+                    .truncate()
+                    .text_size(theme.text(Text::Tiny))
+                    .text_color(theme.muted_foreground)
+                    .font_features(tabular())
+                    .child(detail),
+            )
+        })
 }
 
 /// What the source step says of the track playing: its rate, then the bit rate a lossy stream

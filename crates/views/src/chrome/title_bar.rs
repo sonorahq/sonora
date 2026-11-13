@@ -12,6 +12,7 @@ use ui::WindowControls;
 use ui::{ActiveTheme as _, Button, Spin};
 
 use crate::chrome::SidebarRight;
+use crate::chrome::downloads::DownloadsButton;
 use input::Refresh;
 use router::Navigation;
 use state::{AppSettings, Sonora};
@@ -43,7 +44,6 @@ pub(crate) struct TitleBarOptions {
     pub navigation: bool,
     pub sidebar_open: bool,
     pub sidebar_right: Option<bool>,
-    pub offset: Pixels,
     pub border: bool,
     pub content: Option<AnyView>,
     /// Lets the fullscreen ambient background show through behind the controls.
@@ -56,7 +56,6 @@ impl Default for TitleBarOptions {
             navigation: false,
             sidebar_open: false,
             sidebar_right: None,
-            offset: Pixels::ZERO,
             border: true,
             content: None,
             transparent: false,
@@ -79,6 +78,7 @@ pub(crate) struct TitleBar {
     busy: Option<Busy>,
     /// The refresh icon's turn, which springs back to rest once `busy` is gone.
     spin: Spin,
+    downloads: Entity<DownloadsButton>,
 }
 
 impl EventEmitter<TitleBarEvent> for TitleBar {}
@@ -101,6 +101,7 @@ impl TitleBar {
             grabbed: false,
             busy: None,
             spin: Spin::default(),
+            downloads: cx.new(DownloadsButton::new),
         }
     }
 
@@ -210,6 +211,7 @@ impl TitleBar {
                         false => "icons/panel-right-open.svg",
                     })
                     .tooltip("nav-sidebar-right")
+                    .aria_expanded(open)
                     .on_click(
                         cx.listener(|_, _, _, cx| cx.emit(TitleBarEvent::ToggleSidebarRight)),
                     ),
@@ -235,6 +237,7 @@ impl TitleBar {
                     .small()
                     .icon(icon)
                     .tooltip("nav-sidebar")
+                    .aria_expanded(self.options.sidebar_open)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(TitleBarEvent::ToggleSidebar))),
             )
     }
@@ -245,10 +248,10 @@ impl Render for TitleBar {
         let theme = cx.theme();
         let height = ui::snapped(theme.metrics.title_bar, window);
         let navigation = self.options.navigation;
-        let offset = match navigation {
-            true => self.options.offset,
-            false => Pixels::ZERO,
-        };
+        let sidebar_right = self
+            .options
+            .sidebar_right
+            .filter(|_| SidebarRight::available(window));
         let content = self.options.content.clone();
         let window_fullscreen = window.is_fullscreen();
         let settings = self.settings.read(cx);
@@ -257,7 +260,9 @@ impl Render for TitleBar {
             matches!(window.window_decorations(), Decorations::Client { .. }) && !window_fullscreen;
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let controls = settings.window_controls() && !window_fullscreen;
-        let inset = traffic_lights_inset(settings, height);
+        // Fullscreen hides the traffic lights, so the toggle sits as far from the left edge as
+        // the right sidebar's toggle does from the right.
+        let inset = traffic_lights_inset(settings, height).filter(|_| !window_fullscreen);
         let decorated = cfg!(not(target_os = "macos")) && controls;
         let leading = decorated && settings.controls_on_left();
         #[cfg(not(target_os = "macos"))]
@@ -321,9 +326,13 @@ impl Render for TitleBar {
                         (false, Some(inset)) => this.pl(inset),
                         (false, None) => this.pl_3(),
                     })
-                    .pr_3()
+                    // The sidebar toggle sits as close to the history buttons as they sit to
+                    // each other.
+                    .map(|this| match navigation {
+                        true => this.pr_1(),
+                        false => this.pr_3(),
+                    })
                     .gap_1()
-                    .when(offset > Pixels::ZERO, |this| this.w(offset))
                     .when(leading, |this| {
                         this.child(window_controls(true, traffic_light))
                     })
@@ -337,17 +346,25 @@ impl Render for TitleBar {
                     .gap_1()
                     .items_center()
                     .when(navigation, |this| this.child(self.history(window, cx)))
+                    .child(div().flex_1())
+                    .when(navigation, |this| {
+                        this.child(
+                            div()
+                                .flex_none()
+                                .occlude()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .child(self.downloads.clone()),
+                        )
+                    })
                     .children(content)
-                    .pr_3(),
+                    .map(|this| match sidebar_right.is_some() {
+                        true => this.pr_1(),
+                        false => this.pr_3(),
+                    }),
             )
-            .when_some(
-                self.options
-                    .sidebar_right
-                    .filter(|_| SidebarRight::available(window)),
-                |this, open| {
-                    this.child(div().flex_none().pr_3().child(self.lyrics_toggle(open, cx)))
-                },
-            )
+            .when_some(sidebar_right, |this, open| {
+                this.child(div().flex_none().pr_3().child(self.lyrics_toggle(open, cx)))
+            })
             .when(decorated && !leading, |this| {
                 this.child(
                     div()

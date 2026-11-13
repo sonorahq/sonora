@@ -11,11 +11,15 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use futures::stream::{self, StreamExt as _};
+use md5::{Digest as _, Md5};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
+use crate::cover::{self, CoverLimits};
 use crate::engine::Loudness;
 use crate::tidal::auth::{self, Credentials, Lane};
 use crate::tidal::manifest::Manifest;
@@ -94,6 +98,14 @@ const SIMILAR_RELEASES: usize = 2;
 /// How many times a playlist write is run while it finds the playlist stale, and how much
 /// longer each wait between runs is, so a write that followed the last within moments finds
 /// Tidal caught up. Three runs wait three seconds at most.
+/// What Tidal's own apps upload as a picture: a square JPEG of at most 1280 pixels.
+const COVER_LIMITS: CoverLimits = CoverLimits {
+    side: 1280,
+    bytes: 4 * 1024 * 1024,
+};
+/// How many times an uploaded artwork is looked at while Tidal processes it.
+const ARTWORK_POLLS: u32 = 25;
+const ARTWORK_POLL: Duration = Duration::from_millis(800);
 const EDIT_ATTEMPTS: u32 = 3;
 const EDIT_SETTLE: Duration = Duration::from_secs(1);
 /// How many tracks one write adds to a playlist, so a long addition goes in a few pieces
@@ -102,6 +114,8 @@ const ADD_CHUNK: usize = 100;
 
 /// How many artist lookups run at once, for portraits and for an album's recommendations.
 const LOOKUPS: usize = 4;
+/// The page size for Tidal's ranked artist songs.
+const ARTIST_TRACKS: usize = 1000;
 /// How many tracks a station asks for.
 const RADIO: &str = "100";
 /// How many results a search asks for.
@@ -181,6 +195,8 @@ pub struct Playback {
     pub quality: String,
     pub duration: Option<Duration>,
     pub loudness: Option<Loudness>,
+    /// How the granted stream is encoded, when Tidal said enough to tell.
+    pub encoding: Option<Encoding>,
 }
 
 impl std::fmt::Display for Stale {
@@ -516,6 +532,97 @@ impl TidalClient {
                 done => return done,
             }
         }
+    }
+
+    /// Uploads a JPEG as an artwork and answers its id once Tidal has processed it. The file
+    /// goes to the storage link Tidal hands out, with no token, and Tidal checks it by its MD5.
+    async fn upload_artwork(&self, jpeg: Vec<u8>) -> Result<String> {
+        let digest = Md5::digest(&jpeg);
+        let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+        let created: Value = self
+            .call(
+                Method::POST,
+                &format!("{OPENAPI}/artworks"),
+                &[],
+                Payload::Json(&json!({
+                    "data": {
+                        "type": "artworks",
+                        "attributes": {
+                            "mediaType": "IMAGE",
+                            "sourceFile": { "md5Hash": hex, "size": jpeg.len() },
+                        },
+                    },
+                })),
+                None,
+            )
+            .await
+            .context("cannot create the artwork")?
+            .json()
+            .await
+            .context("cannot read the created artwork")?;
+        let id = created
+            .pointer("/data/id")
+            .and_then(Value::as_str)
+            .context("the created artwork has no id")?
+            .to_owned();
+        let link = created
+            .pointer("/data/attributes/sourceFile/uploadLink")
+            .context("the created artwork has no upload link")?;
+        let href = link["href"]
+            .as_str()
+            .context("the upload link has no address")?;
+        let method = link
+            .pointer("/meta/method")
+            .and_then(Value::as_str)
+            .and_then(|method| method.parse().ok())
+            .unwrap_or(Method::PUT);
+        let mut upload = self
+            .inner
+            .http
+            .request(method, href)
+            .header(reqwest::header::CONTENT_TYPE, "image/jpeg");
+        let signed = link.pointer("/meta/headers").and_then(Value::as_object);
+        if !signed.is_some_and(|headers| headers.contains_key("content-md5")) {
+            upload = upload.header("Content-MD5", STANDARD.encode(digest));
+        }
+        // The body sets its own length, and a second one would break the signature.
+        for (name, value) in signed.into_iter().flatten() {
+            if let Some(value) = value.as_str()
+                && !name.eq_ignore_ascii_case("content-length")
+            {
+                upload = upload.header(name.as_str(), value);
+            }
+        }
+        let sent = upload
+            .body(jpeg)
+            .send()
+            .await
+            .context("cannot upload the artwork")?;
+        let status = sent.status();
+        if !status.is_success() {
+            let body = sent.text().await.unwrap_or_default();
+            bail!("tidal's storage refused the artwork with {status}: {body}");
+        }
+
+        for _ in 0..ARTWORK_POLLS {
+            let artwork = self
+                .read(
+                    OPENAPI,
+                    &format!("/artworks/{}", escape::component(&id)),
+                    &[],
+                )
+                .await?;
+            let state = artwork
+                .pointer("/data/attributes/sourceFile/status/technicalFileStatus")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            match state {
+                "OK" => return Ok(id),
+                "ERROR" | "DELETED" => bail!("tidal could not process the artwork: {state}"),
+                _ => tokio::time::sleep(ARTWORK_POLL).await,
+            }
+        }
+        bail!("tidal took too long to process the artwork")
     }
 
     /// Takes every copy of a track out of a playlist, naming each by the id of its row rather
@@ -938,11 +1045,13 @@ impl TidalClient {
             .and_then(|track| wire::number(&track, "duration"))
             .filter(|seconds| *seconds > 0)
             .map(Duration::from_secs);
+        let encoding = encoding(&answer, manifest.codec());
         Ok(Playback {
             manifest,
             quality,
             duration,
             loudness,
+            encoding,
         })
     }
 }
@@ -1020,7 +1129,8 @@ impl MusicApi for TidalClient {
         let detail = detail.context("cannot load the artist")?;
         Ok(Artist {
             name: wire::text(&detail, "name").unwrap_or_default().to_owned(),
-            cover_large: wire::image(wire::text(&detail, "picture"), wire::PORTRAIT_LARGE),
+            cover_large: wire::portrait(&detail, wire::PORTRAIT_LARGE),
+            banner: None,
             biography,
             monthly_listeners: None,
             top_tracks: top.map(|page| wire::track_list(&page)).unwrap_or_default(),
@@ -1045,6 +1155,15 @@ impl MusicApi for TidalClient {
         })
     }
 
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        let path = format!("/artists/{}/toptracks", escape::component(artist_id));
+        let tracks = self
+            .all(&path, &[], ARTIST_TRACKS, wire::track_list)
+            .await
+            .context("cannot load the artist's tracks")?;
+        Ok(crate::artist_songs(tracks, artist_id))
+    }
+
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
         let detail_path = format!("/artists/{}", escape::component(artist_id));
         let (detail, biography) =
@@ -1052,7 +1171,7 @@ impl MusicApi for TidalClient {
         let detail = detail.context("cannot load the artist")?;
         Ok(ArtistProfile {
             name: wire::text(&detail, "name").unwrap_or_default().to_owned(),
-            cover_large: wire::image(wire::text(&detail, "picture"), wire::PORTRAIT_LARGE),
+            cover_large: wire::portrait(&detail, wire::PORTRAIT_LARGE),
             biography,
         })
     }
@@ -1079,7 +1198,7 @@ impl MusicApi for TidalClient {
                     .get(&format!("/artists/{}", escape::component(&id)), &[])
                     .await
                     .ok()?;
-                let cover = wire::image(wire::text(&detail, "picture"), wire::PORTRAIT)?;
+                let cover = wire::portrait(&detail, wire::PORTRAIT)?;
                 Some((id, cover))
             })
             .buffer_unordered(LOOKUPS)
@@ -1228,6 +1347,32 @@ impl MusicApi for TidalClient {
         )
         .await
         .context("cannot change the playlist's visibility")?;
+        Ok(())
+    }
+
+    /// Points the playlist's cover art at a freshly uploaded artwork, or at none, which Tidal
+    /// takes as going back to its own cover.
+    async fn set_playlist_cover(&self, playlist_id: &str, image: Option<&[u8]>) -> Result<()> {
+        let data = match image {
+            Some(image) => {
+                let jpeg = cover::square_jpeg(image, COVER_LIMITS)?;
+                let artwork = self.upload_artwork(jpeg).await?;
+                json!([{ "type": "artworks", "id": artwork }])
+            }
+            None => json!([]),
+        };
+        self.call(
+            Method::PATCH,
+            &format!(
+                "{OPENAPI}/playlists/{}/relationships/coverArt",
+                escape::component(playlist_id)
+            ),
+            &[],
+            Payload::Json(&json!({ "data": data })),
+            None,
+        )
+        .await
+        .context("cannot change the playlist's cover")?;
         Ok(())
     }
 
@@ -1467,6 +1612,11 @@ impl MusicApi for TidalClient {
         Ok(wire::distinct(wire::release_list(&found)))
     }
 
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        let found = self.search_kind(query, "ARTISTS", "artists").await?;
+        Ok(wire::artist_list(&found))
+    }
+
     async fn search_playlists(&self, query: &str) -> Result<Vec<Playlist>> {
         let found = self.search_kind(query, "PLAYLISTS", "playlists").await?;
         let user_id = self.user_id().await;
@@ -1622,4 +1772,59 @@ pub(crate) fn http() -> Result<reqwest::Client> {
         .read_timeout(STALL)
         .build()
         .context("cannot build the tidal http client")
+}
+
+/// How a stream Tidal granted is encoded, from its codec and what the playback answer says of
+/// it: FLAC at the bit depth and rate it names, AAC at the bit rate of its quality level.
+fn encoding(answer: &Value, codec: &str) -> Option<Encoding> {
+    let codec = codec.to_ascii_lowercase();
+    if codec.starts_with("flac") {
+        return Some(Encoding::Flac {
+            depth: wire::count(answer, "bitDepth")?,
+            rate: wire::count(answer, "sampleRate")?,
+        });
+    }
+    if codec.starts_with("mp4a") {
+        let kbps = match wire::text(answer, "audioQuality")? {
+            "HIGH" => 320,
+            "LOW" => 96,
+            _ => return None,
+        };
+        return Some(Encoding::Aac { kbps });
+    }
+    Some(Encoding::Other)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{Encoding, encoding};
+
+    #[test]
+    fn flac_reports_the_depth_and_rate_tidal_names() {
+        let answer =
+            json!({"audioQuality": "HI_RES_LOSSLESS", "bitDepth": 24, "sampleRate": 96_000});
+        assert_eq!(
+            encoding(&answer, "flac"),
+            Some(Encoding::Flac {
+                depth: 24,
+                rate: 96_000
+            })
+        );
+        assert_eq!(encoding(&json!({"bitDepth": 16}), "FLAC"), None);
+    }
+
+    #[test]
+    fn aac_reports_the_bit_rate_of_its_level() {
+        let at = |level: &str| encoding(&json!({"audioQuality": level}), "mp4a.40.2");
+        assert_eq!(at("HIGH"), Some(Encoding::Aac { kbps: 320 }));
+        assert_eq!(at("LOW"), Some(Encoding::Aac { kbps: 96 }));
+        assert_eq!(at("LOSSLESS"), None);
+    }
+
+    #[test]
+    fn a_codec_with_no_name_here_is_other() {
+        assert_eq!(encoding(&json!({}), "eac3"), Some(Encoding::Other));
+    }
 }

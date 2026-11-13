@@ -1,6 +1,7 @@
 //! The Theme section of Appearance: one card per theme on a rail that scrolls sideways, each
 //! card a soft, flat miniature of the Sonora window painted in that theme.
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, Context, Div, Pixels, SharedString, div, linear_color_stop, linear_gradient, px,
@@ -14,10 +15,9 @@ use ui::{
 };
 
 use super::SettingsView;
-use crate::shared::theme_miniature::{CARD, THUMB, sliced};
+use super::rows::Announced as _;
+use crate::shared::theme_miniature::{CARD, SLICES, THUMB, sliced};
 
-/// How many variants of a family its card shows side by side at most.
-const SLICES: usize = 4;
 /// The popover key of the variant menu, which one card at a time owns.
 const VARIANTS: &str = "theme-variants";
 /// The side of a variant's swatch in the menu.
@@ -50,26 +50,31 @@ impl SettingsView {
             )
         };
         let built_in = ThemeKind::ALL.iter().any(|kind| kind.id() == selected);
+        let missing = !built_in && chosen_family.is_none();
+        let count = ThemeKind::ALL.len() + families.len() + usize::from(missing);
 
         let mut cards = ThemeKind::ALL
             .into_iter()
             .map(Entry::Kind)
             .chain(families.into_iter().map(Entry::Family))
-            .map(|entry| {
+            .enumerate()
+            .map(|(place, entry)| {
                 let chosen = match &entry {
                     Entry::Kind(kind) => kind.id() == selected,
                     Entry::Family(family) => chosen_family.as_ref() == Some(&family.id),
                 };
-                self.theme_card(entry, chosen, adaptive, cx)
+                self.theme_card(entry, chosen, adaptive, (place, count), cx)
             })
             .collect::<Vec<_>>();
 
-        if !built_in && chosen_family.is_none() {
+        if missing {
+            let name = t!("theme-unavailable", name = selected);
             cards.push(
                 OptionCard::new("unavailable-theme")
+                    .choice(name.clone(), true, count - 1, count)
                     .w(CARD)
                     .thumb_height(THUMB)
-                    .label(t!("theme-unavailable", name = selected.clone()))
+                    .label(name)
                     .selected(true)
                     .disabled(true)
                     .into_any_element(),
@@ -79,6 +84,8 @@ impl SettingsView {
         let settings = self.settings.clone();
         cards.push(
             OptionCard::new("open-theme-folder")
+                .role(Role::Button)
+                .aria_label(t!("settings-theme-folder"))
                 .w(CARD)
                 .thumb_height(THUMB)
                 .dashed()
@@ -115,13 +122,15 @@ impl SettingsView {
             .into_any_element()
     }
 
-    /// One card: its miniature and its name. A family of several variants names the variant a
-    /// click picks after its own name, and that line opens the menu of all of them.
+    /// One card, placed by its index and the rail's length: its miniature and its name. A
+    /// family of several variants names the variant a click picks after its own name, and that
+    /// line opens the menu of all of them.
     fn theme_card(
         &self,
         entry: Entry,
         chosen: bool,
         adaptive: bool,
+        (place, count): (usize, usize),
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let look = self.look(cx);
@@ -134,6 +143,7 @@ impl SettingsView {
                     kind => vec![Theme::for_kind(kind)],
                 };
                 OptionCard::new(kind.id())
+                    .choice(kind.label(), chosen, place, count)
                     .w(CARD)
                     .thumb_height(THUMB)
                     .thumb(sliced(&palettes, radius, 1.))
@@ -174,13 +184,17 @@ impl SettingsView {
 
                 let card =
                     OptionCard::new(SharedString::from(format!("theme-family:{}", family.id)))
+                        .choice(SharedString::from(label.clone()), chosen, place, count)
                         .w(CARD)
                         .thumb_height(THUMB)
                         .thumb(sliced(&palettes, radius, 1.))
                         .label(label)
                         .selected(chosen)
                         .disabled(adaptive)
-                        .when(adaptive, |card| card.tooltip("settings-theme-unavailable"))
+                        .when(adaptive, |card| {
+                            card.tooltip("settings-theme-unavailable")
+                                .aria_description(t!("settings-theme-unavailable"))
+                        })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             let overrides = this.settings.update(cx, |settings, cx| {
                                 settings.set_theme_family(&id, cx);

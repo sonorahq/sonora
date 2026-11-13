@@ -139,6 +139,8 @@ impl FilterStage {
         if let Some((seq, snapshot)) = self.reader.poll(self.seen) {
             self.seen = seq;
             self.take(&snapshot);
+        } else if !self.active && !self.preamp.waiting() {
+            return;
         }
         for (index, slot) in self.slots.iter_mut().enumerate() {
             if slot.advance(self.rate, self.steps) {

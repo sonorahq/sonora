@@ -77,6 +77,14 @@ pub struct Cue {
     generation: Arc<AtomicU32>,
     /// Samples that have reached the output since the last clear.
     played: Arc<AtomicU64>,
+    /// Samples queued for the output since the last clear, played or not.
+    appended: Arc<AtomicU64>,
+    /// Samples written that the resampler has yet to queue.
+    held: Arc<AtomicU64>,
+    /// Samples the output draws a second, across every channel, as the last chunk queued them.
+    pace: Arc<AtomicU32>,
+    /// Where, in `played`, the audio of the last armed write starts being heard.
+    boundary: Arc<AtomicU64>,
     written: UnboundedSender<()>,
 }
 
@@ -87,6 +95,10 @@ impl Cue {
             state: Arc::default(),
             generation: Arc::default(),
             played: Arc::default(),
+            appended: Arc::default(),
+            held: Arc::default(),
+            pace: Arc::default(),
+            boundary: Arc::default(),
             written,
         };
         (cue, receiver)
@@ -99,6 +111,31 @@ impl Cue {
         self.generation.fetch_add(1, Ordering::Relaxed);
         self.state.store(Admit::Cleared as u8, Ordering::Relaxed);
         self.played.store(0, Ordering::Relaxed);
+        self.appended.store(0, Ordering::Relaxed);
+        self.held.store(0, Ordering::Relaxed);
+        self.boundary.store(0, Ordering::Relaxed);
+    }
+
+    /// How long what is written and not yet heard takes to play: how far a decoder that reports
+    /// its own position runs ahead of the sound.
+    pub fn queued(&self) -> Duration {
+        let ahead = self.appended.load(Ordering::Relaxed) + self.held.load(Ordering::Relaxed);
+        self.lasting(ahead.saturating_sub(self.played()))
+    }
+
+    /// How long until the audio of the last armed write is heard, which is nothing after a
+    /// clear and the rest of the track before it after a gapless join.
+    pub fn until_heard(&self) -> Duration {
+        let boundary = self.boundary.load(Ordering::Relaxed);
+        self.lasting(boundary.saturating_sub(self.played()))
+    }
+
+    /// How long `samples` at the output's pace play for.
+    fn lasting(&self, samples: u64) -> Duration {
+        match self.pace.load(Ordering::Relaxed) {
+            0 => Duration::ZERO,
+            pace => Duration::from_secs_f64(samples as f64 / f64::from(pace)),
+        }
     }
 
     /// Lets writes through again and has the next one reported.
@@ -136,6 +173,9 @@ impl Cue {
                     )
                     .is_ok();
                 if armed {
+                    let ahead =
+                        self.appended.load(Ordering::Relaxed) + self.held.load(Ordering::Relaxed);
+                    self.boundary.store(ahead, Ordering::Relaxed);
                     self.written.send(()).ok();
                 }
                 armed
@@ -334,12 +374,12 @@ impl Paced {
         if self.output.failed() {
             return Err(self.disconnected());
         }
-        self.output.sink().play();
+        self.output.play();
         Ok(())
     }
 
     pub fn pause(&self) {
-        self.output.sink().pause();
+        self.output.pause();
     }
 
     pub fn set_volume(&self, gain: f32) {
@@ -388,9 +428,12 @@ impl Paced {
         if let Err(error) = written {
             log::error!("sink: cannot resample a packet: {error}");
             resampler.reset();
+            self.note_held();
             return Ok(0);
         }
-        Ok(self.queue_ready(piece))
+        let queued = self.queue_ready(piece);
+        self.note_held();
+        Ok(queued)
     }
 
     /// Whether the queue holds all it should, so the next packet can wait.
@@ -413,9 +456,18 @@ impl Paced {
         if let Err(error) = resampler.finalize() {
             log::error!("sink: cannot flush the resampler: {error}");
             resampler.reset();
+            self.note_held();
             return 0;
         }
-        self.queue_ready(TAIL_FRAMES)
+        let queued = self.queue_ready(TAIL_FRAMES);
+        self.note_held();
+        queued
+    }
+
+    /// Tells the cue how much the resampler holds back, which is written but not yet queued.
+    fn note_held(&self) {
+        let held = self.resampler.samples_outstanding() as u64;
+        self.cue.held.store(held, Ordering::Relaxed);
     }
 
     /// Samples already written that the resampler has yet to queue, at the device's rate. Added
@@ -427,6 +479,13 @@ impl Paced {
     /// The rate the device runs at. A packet at any other rate is resampled before it is heard.
     pub fn rate(&self) -> u32 {
         self.output.rate()
+    }
+
+    /// Has a direct output run at the rate a track made at `rate` Hz plays best at, as the track
+    /// starts being heard, when following each track's rate is on. Every packet is resampled to
+    /// the device's rate either way, so a device that refuses, or a shared one, changes nothing.
+    pub fn follow_rate(&self, rate: u32) {
+        output::follow_track_rate(rate);
     }
 
     /// Waits until there is room for another packet.
@@ -465,6 +524,12 @@ impl Paced {
                 continue;
             };
             queued += packet.samples.len();
+            self.cue
+                .appended
+                .fetch_add(packet.samples.len() as u64, Ordering::Relaxed);
+            self.cue
+                .pace
+                .store(u32::from(channels) * rate, Ordering::Relaxed);
             let format = self.output.format();
             let chunk = Chunk::new(packet, format, &self.cue, &self.live, &self.spares);
             self.output.sink().append(chunk);

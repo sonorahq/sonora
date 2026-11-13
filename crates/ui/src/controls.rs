@@ -2,12 +2,15 @@ use std::sync::OnceLock;
 
 use gpui::prelude::*;
 use gpui::{
-    App, Div, Font, MouseButton, Pixels, StyleRefinement, Window, WindowControlArea, div, font, px,
-    svg,
+    App, Div, ElementId, Font, MouseButton, Pixels, SharedString, StyleRefinement, Window,
+    WindowControlArea, div, font, px, svg,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use gpui::{CursorStyle, Decorations, ResizeEdge};
 
+use i18n::t;
+
+use crate::motion::{glow_fill, glowing, mix};
 use crate::theme::ActiveTheme as _;
 
 const SYSTEM_ACTS: bool = cfg!(target_os = "windows");
@@ -55,6 +58,16 @@ impl Control {
             Self::Minimize => "window-minimize",
             Self::Maximize | Self::Restore => "window-maximize",
             Self::Close => "window-close",
+        }
+    }
+
+    /// What a screen reader calls the control.
+    fn name(self) -> SharedString {
+        match self {
+            Self::Minimize => t!("app-minimize"),
+            Self::Maximize => t!("window-maximize"),
+            Self::Restore => t!("window-restore"),
+            Self::Close => t!("app-close-window"),
         }
     }
 
@@ -201,13 +214,24 @@ impl RenderOnce for WindowControls {
             })
             .children(wanted.into_iter().flatten().map(move |control| {
                 let danger = control == Control::Close;
+                let (fill, tint) = match danger {
+                    true => (theme.danger, theme.danger_foreground),
+                    false => (theme.secondary_active, theme.foreground),
+                };
+                // The fill and the glyph both follow one glow, so they fade out together.
+                let (button, level) = glowing(
+                    div().id(control.id()),
+                    &ElementId::from(control.id()),
+                    false,
+                    1.,
+                    window,
+                    cx,
+                );
+                let tint = mix(theme.muted_foreground, tint, level);
 
-                div()
-                    .id(control.id())
-                    // No Fluent keys name these yet, so the node carries the
-                    // role without a label until catalogued strings land.
+                button
                     .role(gpui::accesskit::Role::Button)
-                    .group(control.id())
+                    .aria_label(control.name())
                     .flex()
                     .flex_none()
                     .items_center()
@@ -219,12 +243,7 @@ impl RenderOnce for WindowControls {
                     )
                     .occlude()
                     .window_control_area(control.area())
-                    .hover(move |style| {
-                        style.bg(match danger {
-                            true => theme.danger,
-                            false => theme.secondary_active,
-                        })
-                    })
+                    .when_some(glow_fill(None, fill, level), |this, fill| this.bg(fill))
                     .when(is_windows, |this| {
                         this.active(move |style| {
                             style.bg(match danger {
@@ -241,13 +260,7 @@ impl RenderOnce for WindowControls {
                                 .line_height(CAPTION_GLYPH)
                                 .relative()
                                 .top(CAPTION_NUDGE)
-                                .text_color(theme.muted_foreground)
-                                .group_hover(control.id(), move |style| {
-                                    style.text_color(match danger {
-                                        true => theme.danger_foreground,
-                                        false => theme.foreground,
-                                    })
-                                })
+                                .text_color(tint)
                                 .child(control.caption_glyph()),
                         ),
                         None => this.child(
@@ -256,13 +269,7 @@ impl RenderOnce for WindowControls {
                                 .id("glyph")
                                 .size(GLYPH)
                                 .flex_none()
-                                .text_color(theme.muted_foreground)
-                                .group_hover(control.id(), move |style| {
-                                    style.text_color(match danger {
-                                        true => theme.danger_foreground,
-                                        false => theme.foreground,
-                                    })
-                                }),
+                                .text_color(tint),
                         ),
                     })
                     .when(!control.system(), |this| {
@@ -275,6 +282,14 @@ impl RenderOnce for WindowControls {
                                     Control::Close => window.remove_window(),
                                 }
                             })
+                    })
+                    // The system handles a press on its own maximize, which a screen reader cannot
+                    // reach, so the click action zooms the window itself. Zooming never restores,
+                    // so Restore gets no click action.
+                    .when(control == Control::Maximize && control.system(), |this| {
+                        this.on_a11y_action(gpui::accesskit::Action::Click, |_, window, _| {
+                            window.zoom_window()
+                        })
                     })
             }));
         controls.style().refine(&overrides);

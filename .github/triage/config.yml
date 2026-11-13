@@ -10,7 +10,7 @@
 labels:
   bug: something that used to work, or clearly should, does not
   enhancement: a request for behaviour Sonora does not have yet
-  documentation: the README, contributing guide or privacy notice reads wrong
+  documentation: the README or privacy notice reads wrong
   question: the reporter wants to know how something works rather than reporting a defect
   playback: audio output, stutter, gaps, seeking, volume, the equalizer, device switching
   player: the player bar, the queue, transport controls, fullscreen, media keys, rich presence
@@ -65,6 +65,8 @@ required:
   - a Sonora version
   - how Sonora was installed
   - the operating system, and on Linux whether the session is Wayland or X11
+  - which provider the reporter was using, for anything that touches playback, sign-in,
+    the library or search
   - what the reporter was doing when it went wrong, when neither the report nor a log says
   - a log excerpt from sonora.log covering the failure, for a crash, a hang, a sign-in
     problem or anything audio related

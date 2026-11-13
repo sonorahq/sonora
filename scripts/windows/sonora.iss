@@ -4,6 +4,7 @@
 #define AppVersion GetEnv("SONORA_VERSION")
 #define SourceExe GetEnv("SONORA_EXE")
 #define OutputDir GetEnv("SONORA_DIST")
+#define BuildMetadata GetEnv("SONORA_BUILD_METADATA")
 ; x64compatible for the x64 build, arm64 for the ARM one
 #define Arch GetEnv("SONORA_ARCH")
 ; Sonora-Setup for the x64 build, Sonora-Setup-arm64 for the ARM one
@@ -35,8 +36,14 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Files]
 Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "{#AppExeName}"; Flags: ignoreversion
+#if BuildMetadata != ""
+Source: "{#BuildMetadata}"; DestDir: "{app}"; DestName: "sonora-build.json"; Flags: ignoreversion
+#endif
 Source: "..\..\COPYING"; DestDir: "{app}"; DestName: "LICENSE"; Flags: ignoreversion
 Source: "..\..\THIRD-PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
+
+[InstallDelete]
+Type: files; Name: "{app}\sonora-build.json"
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"
@@ -50,7 +57,7 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: deskto
 Root: HKA; Subkey: "Software\Sonora"; Flags: uninsdeletekeyifempty
 Root: HKA; Subkey: "Software\Sonora\Capabilities"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Sonora\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "{#AppName}"; Flags: uninsdeletevalue
-Root: HKA; Subkey: "Software\Sonora\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "A native music streaming client, built with Rust and GPUI"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Sonora\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "A native, familiar music streaming client"; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Sonora\Capabilities"; ValueType: string; ValueName: "ApplicationIcon"; ValueData: "{app}\{#AppExeName},0"; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "{#AppName}"; ValueData: "Software\Sonora\Capabilities"; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\Applications\{#AppExeName}"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#AppName}"; Flags: uninsdeletekey

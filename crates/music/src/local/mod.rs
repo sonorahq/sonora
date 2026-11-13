@@ -2,6 +2,7 @@ mod client;
 mod id3;
 mod index;
 mod lyrics;
+mod m3u;
 mod playback;
 mod scan;
 mod store;
@@ -70,8 +71,10 @@ impl LocalProvider {
                 playcounts: false,
                 pins: false,
                 transcode: false,
+                playlist_covers: true,
                 keeps: false,
                 downloads: false,
+                plain_downloads: false,
                 qualities: &[],
                 download_gap: Duration::ZERO,
             },
@@ -98,7 +101,11 @@ impl MusicProvider for LocalProvider {
     }
 
     fn track_from_path(&self, path: &Path) -> Option<Track> {
-        wire::track_from_file(path, None, None, &self.cache_dir).map(|tagged| tagged.track)
+        let mut track = wire::track_from_file(path, None, None, &self.cache_dir)?.track;
+        if track.cover.is_none() {
+            track.cover = wire::art_beside(path);
+        }
+        Some(track)
     }
 
     fn listening_to(&self) -> &'static str {

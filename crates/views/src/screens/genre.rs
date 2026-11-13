@@ -176,6 +176,7 @@ impl Render for GenreView {
                                     div()
                                         .id("genre-title")
                                         .role(Role::Heading)
+                                        .aria_level(1)
                                         .aria_label(name.clone())
                                         .text_size(theme.text(Text::Display))
                                         .font_weight(FontWeight::BOLD)

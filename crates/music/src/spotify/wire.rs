@@ -8,6 +8,10 @@ use crate::models;
 
 pub const UNKNOWN: &str = "Unknown";
 const IMAGE_CDN: &str = "https://i.scdn.co/image/";
+const ALBUM_COVER: &str = "ab67616d0000";
+/// The size codes that follow `ALBUM_COVER` in an album cover id.
+const LARGE: &str = "b273";
+const ORIGINAL: &str = "82c1";
 const BLEND: &str = "blend";
 const BY_SIZE: [&str; 4] = ["xlarge", "large", "default", "small"];
 
@@ -21,6 +25,25 @@ pub fn image_url(file_id: &[u8]) -> Option<String> {
         hex
     });
     Some(format!("{IMAGE_CDN}{hex}"))
+}
+
+/// An album cover from `image_url` at another size. Album cover ids are `ab67616d0000`, a
+/// two-byte size code and a hash shared by every size, and `82c1` asks the CDN for the original
+/// upload, up to 2000 pixels where the listed sizes stop at 640.
+pub fn cover_at(url: &str, size: models::CoverSize) -> Option<String> {
+    let id = url.strip_prefix(IMAGE_CDN)?;
+    let (album, rest) = id.split_at_checked(ALBUM_COVER.len())?;
+    if album != ALBUM_COVER || rest.len() != 28 {
+        return None;
+    }
+    let code = match size {
+        models::CoverSize::Large => LARGE,
+        models::CoverSize::Full => ORIGINAL,
+    };
+    Some(format!(
+        "{IMAGE_CDN}{ALBUM_COVER}{code}{}",
+        &rest[code.len()..]
+    ))
 }
 
 /// An image's width in pixels, taken from its size class when the metadata leaves the width

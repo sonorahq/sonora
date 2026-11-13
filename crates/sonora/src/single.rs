@@ -1,15 +1,33 @@
-use std::io::{self, ErrorKind, Read, Write};
+use std::io::{self, BufRead as _, BufReader, ErrorKind, Read, Write};
 use std::thread;
 use std::time::Duration;
 
+use cli::commands::{Request, Watch};
+use cli::wire::{self, Failure, Reply};
 use interprocess::local_socket::traits::{ListenerExt as _, Stream as _};
 use interprocess::local_socket::{ListenerOptions, Name, Stream};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::oneshot;
 
 const SOCKET: &str = match cfg!(debug_assertions) {
     true => "sonora-dev.sock",
     false => "sonora.sock",
 };
+/// How long the running Sonora waits for a connection to say what it wants, so a stalled peer
+/// never holds a thread for good.
+const PATIENCE: Duration = Duration::from_secs(5);
+/// How long a command line waits for its answer. A provider switch signs in and a playlist to
+/// queue is fetched before the answer, which can take a while on a slow network.
+const ANSWER: Duration = Duration::from_secs(60);
+
+/// A command from the command line and where its answer goes.
+pub enum Asked {
+    /// A command answered once.
+    Once(Request, oneshot::Sender<Reply>),
+    /// `sonora watch`, answered again on every change until the command line hangs up and the
+    /// receiver goes with it.
+    Watch(Watch, UnboundedSender<Reply>),
+}
 
 pub enum Instance {
     First,
@@ -18,8 +36,13 @@ pub enum Instance {
 }
 
 /// `args` is every non-flag command-line argument of this launch: a lone `spotify:`/web link, or
-/// one or more file paths from an "Open With" selection.
-pub fn claim(args: &[String], sender: UnboundedSender<Vec<String>>) -> Instance {
+/// one or more file paths from an "Open With" selection. Later launches hand their items to
+/// `sender` and their commands to `commands`.
+pub fn claim(
+    args: &[String],
+    sender: UnboundedSender<Vec<String>>,
+    commands: UnboundedSender<Asked>,
+) -> Instance {
     let name = match name() {
         Ok(name) => name,
         Err(error) => {
@@ -62,26 +85,99 @@ pub fn claim(args: &[String], sender: UnboundedSender<Vec<String>>) -> Instance 
 
     thread::spawn(move || {
         for connection in listener.incoming() {
-            let Ok(mut connection) = connection else {
-                continue;
-            };
-            let mut payload = String::new();
-            if connection.read_to_string(&mut payload).is_err() {
-                continue;
-            }
-            let items: Vec<String> = payload
-                .split('\n')
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-                .map(str::to_owned)
-                .collect();
-            if sender.send(items).is_err() {
+            if sender.is_closed() {
                 break;
             }
+            let Ok(connection) = connection else {
+                continue;
+            };
+            let (sender, commands) = (sender.clone(), commands.clone());
+            thread::spawn(move || serve(connection, &sender, &commands));
         }
     });
 
     Instance::First
+}
+
+/// The running Sonora's instance socket, for a command line that talks to it. One whose answer
+/// `streams` waits for each reply as long as it takes, since a watch is quiet until something
+/// changes.
+pub fn connect(streams: bool) -> io::Result<Stream> {
+    let stream = Stream::connect(name()?)?;
+    stream.set_recv_timeout(match streams {
+        true => None,
+        false => Some(ANSWER),
+    })?;
+    Ok(stream)
+}
+
+/// Answers one connection. A line of JSON is a command and gets a reply; anything else is
+/// the items of a launch handed over, read until the other end closes.
+fn serve(
+    connection: Stream,
+    sender: &UnboundedSender<Vec<String>>,
+    commands: &UnboundedSender<Asked>,
+) {
+    if let Err(error) = connection.set_recv_timeout(Some(PATIENCE)) {
+        log::warn!("single: cannot bound the read: {error:#}");
+    }
+    let mut reader = BufReader::new(&connection);
+    let command = match reader.fill_buf() {
+        Ok(buffer) => buffer.first() == Some(&b'{'),
+        Err(_) => return,
+    };
+    if command {
+        let reply = match wire::receive::<Request>(&mut reader) {
+            Ok(Request::Watch(watch)) => return follow(&connection, watch, commands),
+            Ok(request) => {
+                let (reply, answered) = oneshot::channel();
+                if commands.send(Asked::Once(request, reply)).is_err() {
+                    return;
+                }
+                match answered.blocking_recv() {
+                    Ok(reply) => reply,
+                    Err(_) => return,
+                }
+            }
+            Err(wire::Error::Version(_)) => Reply::Failed(Failure::Version(wire::VERSION)),
+            Err(error) => {
+                log::warn!("single: cannot read a command: {error}");
+                Reply::Failed(Failure::Malformed)
+            }
+        };
+        if let Err(error) = wire::send(&mut &connection, &reply) {
+            log::warn!("single: cannot answer a command: {error}");
+        }
+        return;
+    }
+
+    let mut payload = String::new();
+    if reader.read_to_string(&mut payload).is_err() {
+        return;
+    }
+    let items: Vec<String> = payload
+        .split('\n')
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect();
+    sender.send(items).ok();
+}
+
+/// Keeps a `sonora watch` connection open, writing each reply the app sends until the command
+/// line hangs up. A write that fails ends it, which drops the receiver, so the app stops
+/// sending to it.
+fn follow(connection: &Stream, watch: Watch, commands: &UnboundedSender<Asked>) {
+    let (sink, mut replies) = mpsc::unbounded_channel();
+    if commands.send(Asked::Watch(watch, sink)).is_err() {
+        return;
+    }
+    while let Some(reply) = replies.blocking_recv() {
+        if let Err(error) = wire::send(&mut &*connection, &reply) {
+            log::debug!("single: a watch ended: {error}");
+            return;
+        }
+    }
 }
 
 fn hand_over(name: Name<'_>, args: &[String]) -> bool {

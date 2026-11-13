@@ -87,6 +87,7 @@ impl UserView {
         let listed = profile.playlists();
         let layout = CardGrid::layout(self.width);
 
+        let total = listed.len();
         let cards = match loading {
             true => (0..PENDING)
                 .map(|place| {
@@ -99,9 +100,12 @@ impl UserView {
                 .iter()
                 .enumerate()
                 .map(|(place, playlist)| {
-                    cards::playlist_card(("user-playlist", place), playlist, &self.playback, cx)
+                    let id = SharedString::from(format!("user-playlist-{}", playlist.id));
+                    cards::playlist_card(id, playlist, &self.playback, cx)
                         .tile(layout.card)
                         .flat()
+                        .aria_position_in_set(place + 1)
+                        .aria_size_of_set(total)
                         .into_any_element()
                 })
                 .collect::<Vec<_>>(),
@@ -117,6 +121,7 @@ impl UserView {
                 heading(label.clone(), cx)
                     .id("user-playlists-heading")
                     .role(Role::Heading)
+                    .aria_level(2)
                     .aria_label(label)
             })
             .when(empty, |this| {

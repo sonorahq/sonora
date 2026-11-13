@@ -9,11 +9,10 @@ use gpui::{
 use i18n::t;
 
 use crate::snapped;
-use crate::theme::ActiveTheme as _;
+use crate::theme::{ActiveTheme as _, legible};
 
 const GAP: f32 = 3.;
 const OPACITY: f32 = 0.32;
-const FLOOR: f32 = 0.03;
 const STROKE: f32 = 2.;
 const CHANNELS: [f32; 2] = [0.62, 1.];
 const GLOW: f32 = 10.;
@@ -29,7 +28,6 @@ const RIDE: f32 = 0.4;
 const FILL: f32 = 0.22;
 const FILL_BASE: f32 = 0.05;
 const LINE_BLUR: f32 = 0.7;
-const CONTRAST: f32 = 0.34;
 /// How many straight edges stand in for a quarter circle when a shape is cut to a rounded corner.
 const ARC_STEPS: usize = 12;
 /// How many straight edges stand in for each span of the wave when it is flattened for cutting.
@@ -40,8 +38,8 @@ const WAVE_STEPS: usize = 8;
 pub enum VisualizerStyle {
     None,
     Bars,
-    Wave,
     #[default]
+    Wave,
     Both,
 }
 
@@ -65,7 +63,7 @@ impl VisualizerStyle {
         match id {
             "none" => Self::None,
             "bars" => Self::Bars,
-            "wave" => Self::Wave,
+            "both" => Self::Both,
             _ => Self::default(),
         }
     }
@@ -235,7 +233,10 @@ fn bars(
                 let start = bounds.origin.x + (width + gap) * index as f32;
                 let left = snapped(start, window);
                 let right = snapped(start + width, window);
-                let top = snapped(floor - max * level.clamp(FLOOR, 1.) / (1. + ride), window);
+                let top = snapped(floor - max * level.clamp(0., 1.) / (1. + ride), window);
+                if top >= floor {
+                    continue;
+                }
                 let bar = Bounds::from_corners(point(left, top), point(right, floor));
                 let cornered = corner.is_some_and(|radius| {
                     left < bounds.origin.x + radius
@@ -308,7 +309,7 @@ fn wave(
         // A band owns a column, not a fence post: its point goes at the middle of the bar the
         // same band draws.
         let step = bounds.size.width / bands.len() as f32;
-        let crest = |band: f32| floor - inset - span * band.clamp(FLOOR, 1.);
+        let crest = |band: f32| floor - inset - span * band.clamp(0., 1.);
         let mut points = Vec::with_capacity(bands.len() + 2);
         points.push(point(bounds.origin.x, crest(bands[0])));
         points.extend(bands.iter().enumerate().map(|(index, band)| {
@@ -553,19 +554,4 @@ fn polygon(points: &[Point<Pixels>], color: impl Into<Background>, window: &mut 
         Ok(path) => window.paint_path(path, color),
         Err(error) => log::warn!("visualizer: cannot build a bar: {error}"),
     }
-}
-
-/// Keeps `tint` readable on `behind` by pushing its lightness away from the surface's.
-fn legible(tint: Hsla, behind: Hsla) -> Hsla {
-    let distance = (tint.l - behind.l).abs();
-    if distance >= CONTRAST {
-        return tint;
-    }
-    let lighter = behind.l + CONTRAST;
-    let darker = behind.l - CONTRAST;
-    let l = match lighter <= 1. {
-        true => lighter,
-        false => darker.max(0.),
-    };
-    Hsla { l, ..tint }
 }

@@ -6,10 +6,10 @@ use gpui::{AnyElement, App, Context, Div, MouseUpEvent, SharedString, Window, di
 use i18n::t;
 use music::drm::Origin;
 use music::{Codec, Encoding, Offer, Quality, Transcode};
-use state::{CdmState, Sleep};
+use state::{CdmState, Sleep, SoloistState};
 use ui::{ActiveTheme as _, Button, MenuItem, OptionCard, Picker, Scrubber, Switch, Text};
 
-use super::rows::{grid, segmented};
+use super::rows::{Announced as _, grid, segmented};
 use super::{Group, SettingsView, Slot};
 use crate::shared::confirm::{Confirm, Kind};
 
@@ -59,6 +59,12 @@ impl SettingsView {
                 Group::new("settings-group-protected", "icons/lock.svg").rows([Slot::Widevine]),
             );
         }
+        if self.soloist.read(cx).shown(cx) {
+            groups.push(
+                Group::new("settings-group-soloist", "icons/headphones.svg").rows([Slot::Soloist]),
+            );
+        }
+        groups.extend(self.sessions_groups(cx));
         groups.extend(self.connect_groups(cx));
         groups
     }
@@ -99,18 +105,23 @@ impl SettingsView {
         )
     }
 
+    /// The switch that keeps played tracks on disk. Soloist streams every track and keeps its
+    /// own cache, so the switch is out of use while it plays.
     pub(super) fn keep_tracks_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let on = self.playback.read(cx).keep_tracks();
+        let unavailable = self.soloist_plays(cx);
 
-        self.row(
+        self.soloist_row_for(
             t!("settings-keep-tracks"),
             Switch::new("keep-tracks", on)
                 .name(t!("settings-keep-tracks"))
+                .disabled(unavailable)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.playback
                         .update(cx, |playback, cx| playback.set_keep_tracks(!on, cx));
                 }))
                 .into_any_element(),
+            unavailable,
         )
     }
 
@@ -129,12 +140,14 @@ impl SettingsView {
             .items_center()
             .gap_3()
             .child(
-                div()
-                    .flex_none()
-                    .w(theme.metrics.cover * SLEEP_LABEL)
-                    .whitespace_nowrap()
-                    .text_right()
-                    .child(t!("settings-cache-size-value", count = current)),
+                ui::spoken(
+                    "settings-cache-size-value",
+                    t!("settings-cache-size-value", count = current),
+                )
+                .flex_none()
+                .w(theme.metrics.cover * SLEEP_LABEL)
+                .whitespace_nowrap()
+                .text_right(),
             )
             .child(
                 div()
@@ -144,6 +157,8 @@ impl SettingsView {
                     .w(theme.metrics.cover * SLEEP_WIDTH)
                     .child(
                         Scrubber::new(&self.cache, fraction)
+                            .name(t!("settings-cache-size"))
+                            .value(t!("settings-cache-size-value", count = current))
                             .colors(
                                 theme.progress_bar,
                                 theme.muted_foreground.opacity(0.3),
@@ -182,10 +197,9 @@ impl SettingsView {
 
         self.row(
             i18n::lookup(quality_key(current), None),
-            div()
+            ui::spoken("settings-stream-quality-encoding", encoding)
                 .text_color(theme.muted_foreground)
                 .text_size(theme.text(Text::Label))
-                .child(encoding)
                 .into_any_element(),
         )
     }
@@ -204,6 +218,13 @@ impl SettingsView {
             .children(ladder.into_iter().enumerate().map(|(rank, offer)| {
                 let quality = offer.quality;
                 OptionCard::new(quality.id())
+                    .choice(
+                        i18n::lookup(quality_key(quality), None),
+                        quality == current,
+                        rank,
+                        steps,
+                    )
+                    .aria_description(encoding_label(&offer))
                     .thumb(signal(rank, steps, cx))
                     .label(i18n::lookup(quality_key(quality), None))
                     .detail(encoding_label(&offer))
@@ -318,7 +339,7 @@ impl SettingsView {
             .items_center()
             .gap_3()
             .child(
-                div()
+                ui::spoken("settings-sleep-value", sleep_label(current))
                     .flex_none()
                     .w(theme.metrics.cover * SLEEP_LABEL)
                     .whitespace_nowrap()
@@ -326,8 +347,7 @@ impl SettingsView {
                     .text_color(match current {
                         Some(_) => theme.foreground,
                         None => theme.muted_foreground,
-                    })
-                    .child(sleep_label(current)),
+                    }),
             )
             .child(
                 div()
@@ -337,6 +357,8 @@ impl SettingsView {
                     .w(theme.metrics.cover * SLEEP_WIDTH)
                     .child(
                         Scrubber::new(&self.sleep, sleep_slot(current) as f32 / SLEEP_LAST as f32)
+                            .name(t!("settings-sleep"))
+                            .value(sleep_label(current))
                             .colors(
                                 theme.progress_bar,
                                 theme.muted_foreground.opacity(0.3),
@@ -384,7 +406,10 @@ impl SettingsView {
             .gap_2()
             .text_color(theme.muted_foreground)
             .text_size(theme.text(Text::Label))
-            .child(i18n::lookup(note, None))
+            .child(ui::spoken(
+                "settings-widevine-note",
+                i18n::lookup(note, None),
+            ))
             .when(offerable, |row| {
                 row.child(
                     Button::new("fetch-widevine")
@@ -420,12 +445,105 @@ impl SettingsView {
             .when(offerable, |row| {
                 row.child(
                     div()
+                        .id("settings-widevine-detail")
+                        .role(Role::Paragraph)
+                        .aria_label(detail.clone())
                         .pb_5()
                         .text_color(theme.muted_foreground)
                         .text_size(theme.text(Text::Label))
                         .child(detail),
                 )
             })
+            .into_any_element()
+    }
+}
+
+impl SettingsView {
+    /// The Soloist row, which only appears while the current provider can play through
+    /// Soloist on this computer. Not set up, it offers the setup. Set up, it names the build and
+    /// carries the switch that turns Soloist on and off without undoing the setup. Remove is
+    /// offered whenever the program is on disk, a setup left halfway included. The explanation
+    /// wraps below the row either way, since it is where the listener learns what Soloist
+    /// changes before they turn it on and after.
+    pub(super) fn soloist_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
+        let state = self.soloist.read(cx).state().clone();
+        let removable = self.soloist.read(cx).installed()
+            && matches!(state, SoloistState::Off | SoloistState::Ready(_));
+        let note = match &state {
+            SoloistState::Looking => t!("settings-soloist-looking"),
+            SoloistState::Off => t!("settings-soloist-off"),
+            SoloistState::Setup(_) => t!("settings-soloist-setting-up"),
+            SoloistState::Ready(build) => {
+                t!("settings-soloist-ready", version = build.version.as_str())
+            }
+        };
+        let on = self.soloist.read(cx).in_use();
+        let detail = match on {
+            true => t!("settings-soloist-on-detail"),
+            false => t!("settings-soloist-detail"),
+        };
+
+        let action = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_2()
+            .text_color(theme.muted_foreground)
+            .text_size(theme.text(Text::Label))
+            .child(ui::spoken("settings-soloist-note", note))
+            .when(state == SoloistState::Off, |row| {
+                row.child(
+                    Button::new("setup-soloist")
+                        .label(t!("settings-soloist-setup"))
+                        .small()
+                        .outline()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.soloist.update(cx, |soloist, cx| soloist.begin(cx));
+                        })),
+                )
+            })
+            .when(removable, |row| {
+                row.child(
+                    Button::new("remove-soloist")
+                        .label(t!("settings-soloist-remove"))
+                        .small()
+                        .ghost()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            let soloist = this.soloist.clone();
+                            Confirm::ask(
+                                Kind::Soloist,
+                                move |cx| soloist.update(cx, |soloist, cx| soloist.remove(cx)),
+                                cx,
+                            );
+                        })),
+                )
+            })
+            .when(matches!(state, SoloistState::Ready(_)), |row| {
+                row.child(
+                    Switch::new("use-soloist", on)
+                        .name(t!("settings-soloist"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.soloist
+                                .update(cx, |soloist, cx| soloist.set_used(!on, cx));
+                        })),
+                )
+            });
+
+        div()
+            .flex()
+            .flex_col()
+            .child(self.row(t!("settings-soloist"), action.into_any_element()))
+            .child(
+                div()
+                    .id("settings-soloist-detail")
+                    .role(Role::Paragraph)
+                    .aria_label(detail.clone())
+                    .pb_5()
+                    .text_color(theme.muted_foreground)
+                    .text_size(theme.text(Text::Label))
+                    .child(detail),
+            )
             .into_any_element()
     }
 }

@@ -1,5 +1,5 @@
 use gpui::prelude::*;
-use gpui::{App, Div, ElementId, Stateful, StyleRefinement, Window, div, px};
+use gpui::{App, Div, ElementId, SharedString, Stateful, StyleRefinement, Window, div, px};
 
 use crate::motion::{Motion, Motioned as _, Movement, mix};
 use crate::theme::ActiveTheme as _;
@@ -16,6 +16,10 @@ pub struct Radio {
     id: ElementId,
     base: Stateful<Div>,
     selected: bool,
+    /// What a screen reader calls the option the mark stands for.
+    name: Option<SharedString>,
+    /// Whether the mark is a node of its own in the accessibility tree.
+    announced: bool,
 }
 
 impl Radio {
@@ -26,7 +30,23 @@ impl Radio {
             base: div().id(id.clone()),
             id,
             selected,
+            name: None,
+            announced: true,
         }
+    }
+
+    /// Names the option for screen readers. The mark holds no text, so without a name it is
+    /// announced as nothing but its state.
+    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Leaves the mark out of the accessibility tree, for a row that already reports the choice
+    /// and its name itself. Without it the reader hears a second, nameless radio button.
+    pub fn silent(mut self) -> Self {
+        self.announced = false;
+        self
     }
 }
 
@@ -42,6 +62,8 @@ impl RenderOnce for Radio {
             id,
             mut base,
             selected,
+            name,
+            announced,
         } = self;
         let theme = *cx.theme();
         let side = px((theme.metrics.control_small / px(1.) * SCALE).round());
@@ -104,9 +126,12 @@ impl RenderOnce for Radio {
         let mut radio = base
             // The mark takes no clicks itself, so the row around it stays the
             // pointer target and this node only names the state for the reader.
-            // Callers label it from the row, since the mark holds no text.
-            .role(gpui::accesskit::Role::RadioButton)
-            .aria_toggled(gpui::accesskit::Toggled::from(selected))
+            // Callers name it with `name`, since the mark holds no text.
+            .when(announced, |this| {
+                this.role(gpui::accesskit::Role::RadioButton)
+                    .aria_toggled(gpui::accesskit::Toggled::from(selected))
+                    .when_some(name, |this, name| this.aria_label(name))
+            })
             .flex()
             .flex_none()
             .items_center()

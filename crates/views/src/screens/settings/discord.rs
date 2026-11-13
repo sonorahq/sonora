@@ -24,6 +24,7 @@ impl SettingsView {
                         Slot::DiscordName,
                         Slot::DiscordShowPaused,
                         Slot::DiscordBadge,
+                        Slot::DiscordUploadCovers,
                         Slot::DiscordAnonymous,
                     ])
                     .rows(connect.then_some(Slot::DiscordHideOnConnect)),
@@ -126,6 +127,22 @@ impl SettingsView {
         )
     }
 
+    pub(super) fn discord_upload_covers_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).discord_upload_covers();
+
+        self.row(
+            t!("settings-discord-upload-covers"),
+            Switch::new("discord-upload-covers", on)
+                .name(t!("settings-discord-upload-covers"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_discord_upload_covers(!on, cx)
+                    });
+                }))
+                .into_any_element(),
+        )
+    }
+
     pub(super) fn discord_anonymous_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let on = self.settings.read(cx).discord_without_details();
 
@@ -164,30 +181,33 @@ impl SettingsView {
         let sonora = settings.discord_sonora_button();
         let provider = settings.discord_provider_button();
 
-        let buttons = TabBar::new("discord-buttons").flex_none().items([
-            Button::new("discord-button-provider")
-                .label(t!("settings-discord-name-provider"))
-                .small()
-                .ghost()
-                .selected(provider)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.settings.update(cx, |settings, cx| {
-                        settings.set_discord_provider_button(!provider, cx)
-                    });
-                    cx.notify();
-                })),
-            Button::new("discord-button-sonora")
-                .label(t!("settings-discord-name-sonora"))
-                .small()
-                .ghost()
-                .selected(sonora)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.settings.update(cx, |settings, cx| {
-                        settings.set_discord_sonora_button(!sonora, cx)
-                    });
-                    cx.notify();
-                })),
-        ]);
+        let buttons = TabBar::new("discord-buttons")
+            .name(t!("settings-discord-buttons"))
+            .flex_none()
+            .items([
+                Button::new("discord-button-provider")
+                    .label(t!("settings-discord-name-provider"))
+                    .small()
+                    .ghost()
+                    .selected(provider)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.settings.update(cx, |settings, cx| {
+                            settings.set_discord_provider_button(!provider, cx)
+                        });
+                        cx.notify();
+                    })),
+                Button::new("discord-button-sonora")
+                    .label(t!("settings-discord-name-sonora"))
+                    .small()
+                    .ghost()
+                    .selected(sonora)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.settings.update(cx, |settings, cx| {
+                            settings.set_discord_sonora_button(!sonora, cx)
+                        });
+                        cx.notify();
+                    })),
+            ]);
 
         self.row(t!("settings-discord-buttons"), buttons.into_any_element())
     }

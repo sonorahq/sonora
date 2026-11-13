@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui::prelude::*;
-use gpui::{AnyElement, App, ClickEvent, Div, MouseButton, StyleRefinement, Window, div};
+use gpui::{
+    AnyElement, App, ClickEvent, Div, MouseButton, SharedString, StyleRefinement, Window, div,
+};
 
 use crate::button::Button;
 use crate::menu::{Menu, Trigger};
@@ -60,6 +62,8 @@ pub struct Popover {
     button: Option<Button>,
     /// A trigger the caller draws instead of a button, which the popover makes clickable.
     face: Option<AnyElement>,
+    /// What a screen reader calls the `face` trigger, which draws no text the reader can reach.
+    name: Option<SharedString>,
     menu: Option<Menu>,
     selected: bool,
     commands: bool,
@@ -74,6 +78,7 @@ impl Popover {
             group,
             button: None,
             face: None,
+            name: None,
             menu: None,
             selected: false,
             commands: false,
@@ -90,6 +95,12 @@ impl Popover {
     /// toggles the popover and goes no further.
     pub fn face(mut self, face: impl IntoElement) -> Self {
         self.face = Some(face.into_any_element());
+        self
+    }
+
+    /// Names the `face` trigger for screen readers. A button trigger names itself and ignores it.
+    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
         self
     }
 
@@ -133,6 +144,7 @@ impl RenderOnce for Popover {
             group,
             button,
             face,
+            name,
             menu,
             selected,
             commands,
@@ -159,6 +171,7 @@ impl RenderOnce for Popover {
                         .id(key)
                         .role(gpui::accesskit::Role::Button)
                         .aria_expanded(open)
+                        .when_some(name, |this, name| this.aria_label(name))
                         .max_w_full()
                         .cursor_pointer()
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -170,6 +183,7 @@ impl RenderOnce for Popover {
                 head(trigger.clone()).child(
                     button
                         .selected(selected || open)
+                        .expanded(open)
                         .on_click(move |event, window, cx| toggle(event, window, cx)),
                 ),
             ),

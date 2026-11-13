@@ -5,7 +5,7 @@ use gpui::prelude::*;
 use gpui::{App, FontWeight, SharedString, Window, div, px};
 use i18n::t;
 use music::AccountChoice;
-use ui::{ActiveTheme as _, Button, Initials, Modal, Text};
+use ui::{ActiveTheme as _, Button, Glowing as _, Initials, Modal, Text};
 
 const AVATAR: gpui::Pixels = px(32.);
 
@@ -70,6 +70,9 @@ impl RenderOnce for AccountPicker {
                             .id(SharedString::from(format!("account-{id}")))
                             .role(Role::Button)
                             .aria_label(SharedString::from(account.name.clone()))
+                            .when_some(account.detail.clone(), |this, detail| {
+                                this.aria_description(SharedString::from(detail))
+                            })
                             .aria_position_in_set(place + 1)
                             .aria_size_of_set(total)
                             .flex()
@@ -81,7 +84,6 @@ impl RenderOnce for AccountPicker {
                             .border_1()
                             .border_color(theme.border)
                             .cursor_pointer()
-                            .hover(|this| this.bg(theme.secondary_hover))
                             .child(Initials::new(account.name.clone(), AVATAR))
                             .child(
                                 div()
@@ -109,6 +111,7 @@ impl RenderOnce for AccountPicker {
                                     pick(&id, window, cx);
                                 }
                             })
+                            .glowed(theme.secondary_hover)
                     })
             }))
             .action(

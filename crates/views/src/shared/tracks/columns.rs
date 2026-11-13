@@ -1,6 +1,6 @@
 use gpui::{Pixels, TextAlign, px};
 use ui::rank::{ESSENTIAL, HANDY, NICE, SPARE, USEFUL};
-use ui::{ColumnSpec, Width};
+use ui::{ColumnSpec, Sort, Width};
 
 use crate::shared::cells::{DATE, NUMBER};
 
@@ -11,6 +11,7 @@ pub(crate) enum TrackField {
     Title,
     Artists,
     Album,
+    Genre,
     AddedAt,
     AddedBy,
     PlayedAt,
@@ -21,6 +22,7 @@ pub(crate) enum TrackField {
 const LENGTH: Pixels = px(84.);
 const CREDITED: Pixels = px(144.);
 const CONTRIBUTOR: Pixels = px(168.);
+const FILED: Pixels = px(132.);
 const ALBUM_LENGTH: Pixels = px(120.);
 const ALBUM_PLAYS: Pixels = px(108.);
 
@@ -57,12 +59,25 @@ const ALBUM: ColumnSpec<TrackField> = ColumnSpec {
     ..COLUMN
 };
 
+/// The genres a track is filed under, shown once the listener turns the column on. It ranks with
+/// the album and sits after it, so a narrow table drops the genres first.
+const GENRE: ColumnSpec<TrackField> = ColumnSpec {
+    field: TrackField::Genre,
+    key: "genre",
+    header: "column-genre",
+    width: Width::Fixed(FILED),
+    rank: SPARE,
+    optional: true,
+    ..COLUMN
+};
+
 const ADDED_AT: ColumnSpec<TrackField> = ColumnSpec {
     field: TrackField::AddedAt,
     key: "added-at",
     header: "column-date-added",
     width: Width::Fixed(DATE),
     rank: NICE,
+    first: Sort::Descending,
     ..COLUMN
 };
 
@@ -128,17 +143,28 @@ const ALBUM_DURATION: ColumnSpec<TrackField> = ColumnSpec {
     ..DURATION
 };
 
-pub(crate) const LIBRARY_COLUMNS: &[ColumnSpec<TrackField>] =
-    &[INDEX, COVER, TITLE, ARTISTS, ALBUM, ADDED_AT, DURATION];
+pub(crate) const LIBRARY_COLUMNS: &[ColumnSpec<TrackField>] = &[
+    INDEX, COVER, TITLE, ARTISTS, ALBUM, GENRE, ADDED_AT, DURATION,
+];
 
-pub(crate) const PLAYLIST_COLUMNS_SHARED: &[ColumnSpec<TrackField>] =
-    &[INDEX, COVER, TITLE, ARTISTS, ALBUM, CREDITED_AT, DURATION];
+pub(crate) const PLAYLIST_COLUMNS_SHARED: &[ColumnSpec<TrackField>] = &[
+    INDEX,
+    COVER,
+    TITLE,
+    ARTISTS,
+    ALBUM,
+    GENRE,
+    CREDITED_AT,
+    DURATION,
+];
 
-pub(crate) const PLAYLIST_COLUMNS_BLEND: &[ColumnSpec<TrackField>] =
-    &[INDEX, COVER, TITLE, ARTISTS, ALBUM, ADDED_BY, DURATION];
+pub(crate) const PLAYLIST_COLUMNS_BLEND: &[ColumnSpec<TrackField>] = &[
+    INDEX, COVER, TITLE, ARTISTS, ALBUM, GENRE, ADDED_BY, DURATION,
+];
 
-pub(crate) const HISTORY_COLUMNS: &[ColumnSpec<TrackField>] =
-    &[INDEX, COVER, TITLE, ARTISTS, ALBUM, PLAYED_AT, DURATION];
+pub(crate) const HISTORY_COLUMNS: &[ColumnSpec<TrackField>] = &[
+    INDEX, COVER, TITLE, ARTISTS, ALBUM, GENRE, PLAYED_AT, DURATION,
+];
 
 pub(crate) const ARTIST_COLUMNS: &[ColumnSpec<TrackField>] = &[
     INDEX,

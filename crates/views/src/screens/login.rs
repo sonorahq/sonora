@@ -7,8 +7,8 @@ use gpui::{
     div, px, svg,
 };
 use i18n::t;
-use music::{AccountChoice, SignIn, SignInPrompt};
-use state::{Session, SessionState, Sonora, Usage};
+use music::{AccountChoice, SignIn, SignInProblem, SignInPrompt};
+use state::{Failure, Session, SessionState, Sonora, Usage};
 use ui::ActiveTheme as _;
 use ui::{Button, Checkbox, Input, Modal, TabBar, Text};
 
@@ -22,6 +22,7 @@ struct Column {
     web_sign_in: bool,
     disabled: bool,
     cancel: bool,
+    failure: Option<Failure>,
 }
 
 enum LoginAction {
@@ -51,7 +52,18 @@ pub struct LoginView {
 
 impl LoginView {
     pub fn new(session: Entity<Session>, cx: &mut Context<Self>) -> Self {
-        cx.observe(&session, |_, _, cx| cx.notify()).detach();
+        cx.observe(&session, |this, session, cx| {
+            if matches!(session.read(cx).state(), SessionState::Failed(_))
+                && let Some(index) = session
+                    .read(cx)
+                    .providers()
+                    .position(|info| info.error.is_some())
+            {
+                this.tab = index;
+            }
+            cx.notify();
+        })
+        .detach();
         let usage = Sonora::global(cx).usage.clone();
         cx.observe(&usage, |_, _, cx| cx.notify()).detach();
         Self {
@@ -266,11 +278,11 @@ impl LoginView {
             web_sign_in,
             disabled,
             cancel,
+            failure,
         } = column;
-        let options: Vec<&SignIn> = options
+        let options = options
             .iter()
-            .filter(|option| !matches!(option, SignIn::Anonymous))
-            .collect();
+            .filter(|option| !matches!(option, SignIn::Anonymous));
 
         div()
             .flex()
@@ -285,12 +297,20 @@ impl LoginView {
                     .flex_none()
                     .text_color(theme.foreground),
             )
-            .child(
+            .child({
+                let name = SharedString::from(name.to_string());
                 div()
+                    .id("login-provider-name")
+                    .role(Role::Heading)
+                    .aria_level(2)
+                    .aria_label(name.clone())
                     .text_size(theme.text(Text::Large))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(SharedString::from(name.to_string())),
-            )
+                    .child(name)
+            })
+            .when_some(failure, |this, failure| {
+                this.child(crate::shared::trouble::trouble(failure, true, cx))
+            })
             .child(
                 div()
                     .flex()
@@ -331,10 +351,9 @@ impl LoginView {
             .items_center()
             .gap_2()
             .child(
-                div()
+                ui::spoken("login-device-code", t!("login-device-code", url = &url))
                     .text_size(theme.text(Text::Small))
-                    .text_color(theme.muted_foreground)
-                    .child(t!("login-device-code", url = &url)),
+                    .text_color(theme.muted_foreground),
             )
             .child(device_code(code, cx))
     }
@@ -430,6 +449,7 @@ impl Render for LoginView {
             }
             _ => false,
         };
+        let count = providers.len();
         let tabs = providers
             .iter()
             .enumerate()
@@ -439,6 +459,8 @@ impl Render for LoginView {
                     .small()
                     .ghost()
                     .selected(index == self.tab)
+                    .aria_position_in_set(index + 1)
+                    .aria_size_of_set(count)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.acted(cx);
                         this.tab = index;
@@ -446,19 +468,24 @@ impl Render for LoginView {
                     }))
             })
             .collect::<Vec<_>>();
-        let column = providers.into_iter().nth(self.tab).map(|info| Column {
+        let selected = providers.into_iter().nth(self.tab);
+        let mut failure = selected.as_ref().and_then(|info| info.error.clone());
+        let subscription = failure
+            .as_ref()
+            .is_some_and(|failure| failure.problem == Some(SignInProblem::Subscription));
+        let inline_failure = match subscription {
+            true => failure.take(),
+            false => None,
+        };
+        let column = selected.map(|info| Column {
             slug: info.slug,
             name: info.name,
             options: info.options,
             web_sign_in: info.web_sign_in,
             disabled: pending,
             cancel: waiting && info.pending,
+            failure: inline_failure,
         });
-
-        let failure = match &state {
-            SessionState::Failed(failure) => Some(failure.clone()),
-            _ => None,
-        };
 
         let status = match &state {
             SessionState::SignedOut => t!("login-signed-out"),
@@ -495,15 +522,15 @@ impl Render for LoginView {
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<Pixels> = None;
 
-        div()
-            .relative()
+        let content = div()
             .flex()
             .flex_col()
             .items_center()
             .justify_center()
             .gap_6()
-            .size_full()
-            .when_some(radius, |this, radius| this.rounded_b(radius))
+            .w_full()
+            .min_h_full()
+            .p(theme.metrics.pad)
             .child(
                 div()
                     .flex()
@@ -514,6 +541,7 @@ impl Render for LoginView {
                         div()
                             .id("login-title")
                             .role(Role::Heading)
+                            .aria_level(1)
                             .aria_label("Sonora")
                             .child("Sonora")
                             .text_size(theme.text(Text::Display))
@@ -536,14 +564,20 @@ impl Render for LoginView {
                     div()
                         .id("login-failure")
                         .role(Role::Alert)
-                        .child(crate::shared::trouble::trouble(failure, true)),
+                        .aria_label(t!("login-failed-title"))
+                        .child(crate::shared::trouble::trouble(failure, true, cx)),
                 )
             })
             .when_some(code, |this, (code, url)| {
                 this.child(self.code_prompt(code, url, cx).into_any_element())
             })
             .when_some(url, |this, url| this.child(self.url_prompt(url)))
-            .child(TabBar::new("login-providers").flex_none().items(tabs))
+            .child(
+                TabBar::new("login-providers")
+                    .name(t!("login-providers"))
+                    .flex_none()
+                    .items(tabs),
+            )
             .when_some(column, |this, column| this.child(self.column(column, cx)))
             .when_some(guest, |this, slug| {
                 this.child(
@@ -554,17 +588,22 @@ impl Render for LoginView {
                         .gap_2()
                         .w(COLUMN)
                         .child(self.guest_mode(slug, pending, cx))
-                        .child(
-                            div()
-                                .text_center()
-                                .text_size(theme.text(Text::Small))
-                                .text_color(theme.muted_foreground)
-                                .child(t!("login-guest-detail")),
-                        )
                         .when(asking, |this| this.child(self.consent(cx))),
                 )
             })
-            .when(orphan, |this| this.child(self.consent(cx)))
+            .when(orphan, |this| this.child(self.consent(cx)));
+
+        div()
+            .relative()
+            .size_full()
+            .when_some(radius, |this, radius| this.rounded_b(radius))
+            .child(
+                div()
+                    .id("login-scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .child(content),
+            )
             .when_some(manual_secret, |this, (slug, provider)| {
                 this.child(self.secret_prompt(slug, provider, cx).into_any_element())
             })

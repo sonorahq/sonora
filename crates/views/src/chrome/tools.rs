@@ -93,18 +93,22 @@ pub(crate) fn filters(
                             .gap_2()
                             .child(eyebrow(axis.label.clone(), cx))
                             .child(
-                                div()
-                                    .text_size(theme.text(Text::Small))
-                                    .text_color(theme.muted_foreground)
-                                    .child(format!(
+                                ui::spoken(
+                                    gpui::SharedString::from(format!("{key}-range")),
+                                    format!(
                                         "{} - {}",
                                         unit.say(axis.value.0),
                                         unit.say(axis.value.1)
-                                    )),
+                                    ),
+                                )
+                                .text_size(theme.text(Text::Small))
+                                .text_color(theme.muted_foreground),
                             ),
                     )
                     .child(
                         RangeScrubber::new(&state, axis.share())
+                            .name(axis.label.clone())
+                            .values(unit.say(axis.value.0), unit.say(axis.value.1))
                             .stops(axis.stops())
                             .colors(theme.progress_bar, theme.muted, theme.foreground)
                             .on_change(move |share: &(f32, f32), _, cx| {

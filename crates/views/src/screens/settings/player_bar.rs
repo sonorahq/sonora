@@ -4,7 +4,7 @@ use i18n::t;
 use state::PlayerBarLayout;
 use ui::{ActiveTheme as _, OptionCard, Switch};
 
-use super::rows::grid;
+use super::rows::{Announced as _, grid};
 use super::{Group, Row, SettingsView, Slot};
 
 impl SettingsView {
@@ -24,18 +24,29 @@ impl SettingsView {
         let transparent = self.settings.read(cx).player_bar_translucent();
         let height = cx.theme().metrics.list_row * 1.6;
         grid(PlayerBarLayout::ALL.len() as u16, window, cx)
-            .children(PlayerBarLayout::ALL.map(|layout| {
-                OptionCard::new(layout.id())
-                    .thumb_height(height)
-                    .thumb(sketch(layout, transparent, height, cx))
-                    .label(i18n::lookup(layout.key(), None))
-                    .selected(layout == chosen)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.settings.update(cx, |settings, cx| {
-                            settings.set_player_bar_layout(layout, cx);
-                        });
-                    }))
-            }))
+            .children(
+                PlayerBarLayout::ALL
+                    .into_iter()
+                    .enumerate()
+                    .map(|(place, layout)| {
+                        OptionCard::new(layout.id())
+                            .choice(
+                                i18n::lookup(layout.key(), None),
+                                layout == chosen,
+                                place,
+                                PlayerBarLayout::ALL.len(),
+                            )
+                            .thumb_height(height)
+                            .thumb(sketch(layout, transparent, height, cx))
+                            .label(i18n::lookup(layout.key(), None))
+                            .selected(layout == chosen)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.settings.update(cx, |settings, cx| {
+                                    settings.set_player_bar_layout(layout, cx);
+                                });
+                            }))
+                    }),
+            )
             .into_any_element()
     }
 

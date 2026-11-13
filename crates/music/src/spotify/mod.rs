@@ -69,6 +69,7 @@ impl SpotifyProvider {
             authenticated: true,
             capabilities: Capabilities {
                 pins: true,
+                playlist_covers: true,
                 download_gap: playback::DOWNLOAD_GAP,
                 qualities: playback::QUALITIES,
                 ..Capabilities::ALL
@@ -93,6 +94,10 @@ impl MusicProvider for SpotifyProvider {
 
     fn public_art(&self) -> bool {
         true
+    }
+
+    fn soloist(&self) -> bool {
+        crate::soloist::supported()
     }
 
     fn link(&self, link: &str) -> Option<crate::link::Linked> {
@@ -120,7 +125,7 @@ impl MusicProvider for SpotifyProvider {
         let session = auth::session(&self.config)
             .inspect_err(|error| log::warn!("spotify: cannot open an offline session: {error:#}"))
             .ok()?;
-        Some(Arc::new(Factory::new(session)))
+        Some(Arc::new(Factory::offline(session)))
     }
 
     async fn restore(&self) -> Result<Option<ProviderSession>> {
@@ -145,7 +150,12 @@ impl MusicProvider for SpotifyProvider {
         self.session(LibrespotClient::new(session)).await
     }
 
+    /// Forgets the account and the Soloist pairing with it, since that pairing is this
+    /// account's sign-in too.
     fn sign_out(&self) {
         auth::forget(&self.config);
+        if let Err(error) = crate::soloist::forget() {
+            log::warn!("spotify: cannot remove the soloist setup: {error:#}");
+        }
     }
 }

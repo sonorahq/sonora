@@ -133,6 +133,13 @@ fn track_from(uri: &str, track: &TrackMessage) -> Track {
             .and_then(|album| non_empty(album.name.as_deref()))
             .unwrap_or_default()
             .to_owned(),
+        album_artist: track
+            .album
+            .iter()
+            .flat_map(|album| &album.artist)
+            .filter_map(|artist| non_empty(artist.name.as_deref()))
+            .collect::<Vec<_>>()
+            .join(", "),
         album_id: track.album.as_ref().and_then(|album| base62(album.gid())),
         cover: track.album.as_ref().and_then(cover_url),
         duration: Duration::from_millis(track.duration.unwrap_or_default().max(0) as u64),
@@ -178,6 +185,7 @@ pub(crate) fn artists_from(artists: &[ArtistMessage]) -> (String, Vec<ArtistRef>
             Some(ArtistRef {
                 name,
                 id: base62(artist.gid()),
+                channel: false,
             })
         })
         .collect();

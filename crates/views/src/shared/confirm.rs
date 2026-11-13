@@ -15,6 +15,7 @@ pub(crate) enum Kind {
     Playlists(usize),
     DeleteTrackFiles(usize),
     Widevine,
+    Soloist,
     /// Every download, of every provider.
     Downloads,
     /// An equalizer profile, by its stored name.
@@ -28,6 +29,7 @@ impl Kind {
             Self::History(_) => t!("confirm-remove-history-title"),
             Self::DeleteTrackFiles(_) => t!("confirm-delete-track-files-title"),
             Self::Widevine => t!("confirm-uninstall-widevine-title"),
+            Self::Soloist => t!("confirm-remove-soloist-title"),
             Self::Downloads => t!("confirm-remove-downloads-title"),
             Self::EqualizerProfile(_) => t!("equalizer-delete"),
             _ => t!("confirm-remove-library-title"),
@@ -44,6 +46,7 @@ impl Kind {
             Self::Playlists(count) => t!("confirm-remove-playlists", count = count),
             Self::DeleteTrackFiles(count) => t!("confirm-delete-track-files", count = count),
             Self::Widevine => t!("confirm-uninstall-widevine"),
+            Self::Soloist => t!("confirm-remove-soloist"),
             Self::Downloads => t!("confirm-remove-downloads"),
             Self::EqualizerProfile(ref name) => {
                 let name = equalizer_profile_label(name);
@@ -55,6 +58,7 @@ impl Kind {
     fn action(&self) -> gpui::SharedString {
         match self {
             Self::Widevine => t!("settings-widevine-uninstall"),
+            Self::Soloist => t!("settings-soloist-remove"),
             Self::Downloads => t!("settings-downloads-remove"),
             _ => t!("common-delete"),
         }

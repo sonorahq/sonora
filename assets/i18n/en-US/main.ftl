@@ -16,6 +16,13 @@ common-previous = Previous
 common-next = Next
 common-dismiss = Dismiss
 common-clear = Clear
+option-variants = Variants of { $name }
+table-sorted-ascending = Sorted ascending
+table-sorted-descending = Sorted descending
+range-from = From
+range-to = To
+rail-back = Scroll back
+rail-forward = Scroll forward
 number-group = { "," }
 
 # navigation
@@ -37,7 +44,6 @@ nav-pinned = Pinned
 nav-unpin = Unpin
 nav-pin-hint = Drop here to pin
 library-liked-songs = Favorites
-library-play-liked-songs = Play
 library-no-songs = No favorites yet
 library-no-albums = No saved albums yet
 library-no-playlists = No playlists yet
@@ -59,6 +65,15 @@ library-local-unconfigured = Configure your local library
 
 # app menu
 app-refresh = Refresh
+downloads-active = Downloading
+downloads-left = { $count ->
+    [one] { $count } song left
+   *[other] { $count } songs left
+}
+downloads-eta = About { $minutes } min left
+downloads-songs = Songs
+downloads-cancel = Cancel download
+downloads-cancel-all = Cancel all downloads
 app-sign-out = Sign Out
 app-quit = Quit
 app-settings = Settings…
@@ -74,6 +89,8 @@ app-window = Window
 app-close-window = Close Window
 app-minimize = Minimize
 app-zoom = Zoom
+window-maximize = Maximize
+window-restore = Restore
 
 # tray menu
 tray-show = Show Sonora
@@ -86,6 +103,7 @@ column-index = #
 column-title = Title
 column-artist = Artist
 column-album = Album
+column-genre = Genre
 column-date-added = Date added
 column-added-by = Added by
 column-modified = Modified
@@ -103,19 +121,13 @@ menu-add-tracks-to-playlist = { $count ->
    *[other] Add { $count } tracks to playlist
 }
 menu-new-playlist = New playlist
+menu-import-playlist = Import playlist…
 menu-edit-tags = Edit tags
 menu-no-playlists = No playlists
 menu-search-playlists = Search a playlist
+menu-save-library = Library
 menu-add-to-library = Add to Favorites
-menu-add-tracks-to-library = { $count ->
-    [one] Add { $count } track to Favorites
-   *[other] Add { $count } tracks to Favorites
-}
 menu-remove-from-library = Remove from Favorites
-menu-remove-tracks-from-library = { $count ->
-    [one] Remove { $count } track from Favorites
-   *[other] Remove { $count } tracks from Favorites
-}
 menu-remove-from-playlist = Remove from playlist
 menu-remove-tracks-from-playlist = { $count ->
     [one] Remove { $count } track from playlist
@@ -129,15 +141,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Delete track file
 menu-delete-track-files = Delete { $count } track files
 menu-download = Download
-menu-download-tracks = { $count ->
-    [one] Download { $count } track
-   *[other] Download { $count } tracks
-}
 menu-remove-download = Remove download
-menu-remove-downloads = { $count ->
-    [one] Remove { $count } download
-   *[other] Remove { $count } downloads
-}
 menu-downloading = Downloading. Click to stop
 menu-play-next = Play next
 menu-play-tracks-next = { $count ->
@@ -157,6 +161,7 @@ menu-play-tracks-last = { $count ->
 menu-song-radio = Go to song radio
 menu-go-to-album = Go to album
 menu-go-to-artist = Go to artist
+menu-go-to-playlist = Go to playlist
 menu-view-details = View details
 menu-copy-link = Copy link
 menu-cut = Cut
@@ -164,20 +169,11 @@ menu-copy = Copy
 menu-paste = Paste
 menu-select-all = Select all
 menu-remove-from-queue = Remove from queue
-menu-rename-playlist = Rename playlist
+menu-edit-playlist = Edit playlist
 menu-delete-playlist = Delete playlist
+menu-export-playlist = Export playlist…
 menu-add-playlist-to-library = Add to Library
 menu-remove-playlist-from-library = Remove from Library
-menu-library-add = Add to Library
-menu-library-add-tracks = { $count ->
-    [one] Add { $count } track to Library
-   *[other] Add { $count } tracks to Library
-}
-menu-library-remove = Remove from Library
-menu-library-remove-tracks = { $count ->
-    [one] Remove { $count } track from Library
-   *[other] Remove { $count } tracks from Library
-}
 menu-make-playlist-public = Make public
 menu-make-playlist-private = Make private
 menu-play-artist = Play artist
@@ -185,7 +181,12 @@ menu-play-artist = Play artist
 # playlist editor
 playlist-name-placeholder = Playlist name
 playlist-create-title = Create playlist
-playlist-rename-title = Rename playlist
+playlist-edit-title = Edit playlist
+playlist-cover-choose = Choose picture
+playlist-cover-remove = Remove cover
+playlist-cover-unopenable = Sonora can't open this file
+playlist-cover-too-large = This picture is larger than 40 MB
+playlist-cover-not-a-picture = This file is not a JPEG, PNG or WebP picture
 playlist-delete-title = Delete playlist
 playlist-delete-confirm = Delete “{ $name }”? This cannot be undone.
 playlist-again-title = Add it again?
@@ -252,10 +253,7 @@ player-previous = Previous track
 player-next = Next track
 player-fullscreen = Now playing
 player-fullscreen-leave = Leave Now playing
-player-devices = Devices
 devices-this-computer = This computer
-devices-pause = Pause
-devices-resume = Resume
 devices-jam-join = Join a Jam…
 devices-jam-join-title = Join a Jam
 devices-jam-join-detail = Paste the link a friend shared with you
@@ -263,19 +261,21 @@ devices-jam-paste = Paste
 devices-jam-link-hint = Jam link
 devices-jam-start = Start a Jam
 devices-jam-copy = Copy Jam link
-devices-jam-code = QR code
 devices-jam-code-menu = Show QR code
 devices-jam-code-title = Scan to join { $host }'s Jam
 devices-jam-code-title-anonymous = Scan to join the Jam
 devices-jam-code-close = Close
 devices-jam-leave = Leave Jam
 devices-jam-end = End Jam
-devices-jam-banner = In { $host }'s Jam
-devices-jam-banner-anonymous = In a Jam
 devices-jam-more = +{ $count }
 devices-jam-host = Host
 devices-jam-you = You
 devices-jam-remove = Remove
+devices-jam-people = { $count ->
+    [one] { $count } person in this Jam
+   *[other] { $count } people in this Jam
+    }
+devices-jam-remove-member = Remove { $name }
 devices-jam-invite-title = Join { $host }'s Jam?
 devices-jam-invite-title-anonymous = Join this Jam?
 devices-jam-invite-detail = { $count ->
@@ -283,9 +283,30 @@ devices-jam-invite-detail = { $count ->
    *[other] { $count } people are already in this Jam.
 }
 devices-jam-invite-join = Join
-devices-elsewhere-banner = Playing on { $device }
-devices-elsewhere-here = Play here
+player-sessions = Sessions
+devices-spotify-jams = Spotify Jams
+members-title = Members
+members-empty = Start or join a Session to see who is listening with you
+devices-session-start = Start a Session
+devices-session-join = Join a Session…
+devices-session-join-title = Join a Session
+devices-session-join-detail = Enter the code a friend shared with you
+devices-session-join-confirm = Join
+devices-session-code = Session code
+devices-session-code-menu = Show Session code
+devices-session-code-title = Your Session code
+devices-session-code-detail = Anyone signed in to { $provider } can join with this code
+devices-session-code-close = Done
+devices-session-copy = Copy code
+devices-session-leave = Leave Session
+devices-session-end = End Session
+devices-session-reconnecting = Reconnecting…
+devices-session-people = { $count ->
+    [one] { $count } person in this Session
+   *[other] { $count } people in this Session
+    }
 fullscreen-artwork = Artwork
+fullscreen-panels = Now playing views
 
 # filters
 filter-history = Filter listening history
@@ -325,6 +346,8 @@ login-problem-network = Sonora could not reach the music service. Check your int
 login-problem-cancelled = The sign-in was not approved in the browser, or ran out of time. Start again to finish.
 login-problem-refused = Spotify turned down the sign-in. Wait a moment and try again.
 login-problem-premium = Sonora streams through Spotify Premium, and this account does not have it. Sign in with a Premium account to continue.
+login-problem-subscription = No active subscription on this Apple ID.
+login-subscription-check = Check Apple Music
 login-sign-in = Sign in with { $provider }
 login-connect-cookies = Paste cookies manually
 login-cookie-open = Open { $provider }
@@ -362,11 +385,10 @@ login-account-title = Choose an account
 login-account-detail = This session is signed in to more than one Google account. Pick the one Sonora should use.
 login-choose-title = Sign in to { $provider }
 login-choose-detail = Choose how to sign in to { $provider }.
+login-providers = Music services
 
 # album and playlist pages
 detail-playlist = Playlist
-detail-play-album = Play album
-detail-play-playlist = Play playlist
 
 # play button
 play-pause = Pause
@@ -379,12 +401,16 @@ artist-monthly-listeners = { $count ->
     [one] { $value } monthly listener
    *[other] { $value } monthly listeners
 }
-artist-play = Play now
 artist-popular = Popular
 artist-popular-eyebrow = Explore this artist
 artist-popular-empty = Nothing to play from this artist yet
 artist-popular-more = Show all
 artist-popular-less = Show less
+artist-favorite-songs = Your favorite songs
+artist-favorite-songs-count = { $count ->
+    [one] { $count } song in your Favorites
+   *[other] { $count } songs in your Favorites
+}
 artist-releases = Releases
 artist-releases-more = Show all
 artist-releases-less = Show less
@@ -423,6 +449,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Quick picks
 home-quick-picks-empty = Like a few songs and they will show up here
 home-recently-added = Recently added
+home-recently-played = Recently played
 home-playlists = Playlists
 home-favorite-albums = Favorite albums
 home-artists = Artists
@@ -431,6 +458,10 @@ home-collection-albums = Albums from your collection
 # search page
 search-placeholder = What do you want to listen to?
 search-browse = Browse all
+search-submit = Search
+search-open-link = Open link in Sonora
+search-recent = Recent searches
+search-forget = Remove from history
 genre-empty = Nothing to show here yet
 search-best-match = Best match
 search-no-matches = No matches
@@ -451,7 +482,6 @@ kind-playlist = Playlist
 
 # song page
 song-eyebrow = Song
-song-play = Play song
 song-view-album = View album
 song-loading = Loading song information…
 song-about = About this song
@@ -476,6 +506,7 @@ artist-about = About the artist
 artist-about-fallback = Explore the artist's popular songs and releases.
 artist-about-open = Go to artist
 song-copyright = © { $notice }
+track-row-name = { $title } by { $artists }
 
 # song languages
 language-ar = Arabic
@@ -573,6 +604,7 @@ settings-group-playing = Playing
 settings-group-cache = Played tracks
 settings-group-downloads = Downloads
 settings-group-protected = Protected playback
+settings-group-soloist = Spotify player
 settings-group-output = Output
 settings-group-status = Status
 settings-group-startup = Startup
@@ -618,6 +650,9 @@ settings-visualizer-style-none = Off
 settings-visualizer-style-bars = Bars
 settings-visualizer-style-wave = Wave
 settings-visualizer-style-both = Bars and wave
+settings-visualizer-screens = Show in
+settings-visualizer-screens-detail = The Now playing views the spectrum is drawn in
+settings-visualizer-screens-pick = Choose views
 settings-visualizer-absolute = Ignore volume
 settings-visualizer-absolute-detail = Draw the spectrum at the track's own level, however loud Sonora plays it
 settings-preview-title = Song title
@@ -644,6 +679,8 @@ settings-blur-window-detail = Draw the window over a blurred desktop. Needs an o
 settings-font = Font size
 settings-font-detail = Base text size, everything else scales with it
 settings-font-value = { $size } px
+settings-font-smaller = Smaller text
+settings-font-larger = Larger text
 settings-startup = Start on
 settings-startup-detail = The screen Sonora opens on launch
 settings-startup-no-guest = Unavailable in Guest mode
@@ -695,6 +732,7 @@ settings-discord-name-provider = Provider
 settings-discord-name-music = Music
 settings-discord-name-title = Title
 settings-discord-name-artist = Artist
+settings-discord-name-album-artist = Album artist
 settings-discord-name-artist-title = Artist - Title
 settings-discord-show-paused = Show when paused
 settings-discord-show-paused-detail = Keep the status on your Discord profile while the track is paused
@@ -707,6 +745,8 @@ settings-discord-hide-on-connect-detail = Leave the status to Spotify's own whil
 settings-discord-buttons = Buttons
 settings-discord-buttons-detail = Links under the status for your friends to open, one to the track on its service and one to Sonora
 settings-discord-buttons-pick = Choose buttons
+# what screen readers call the preview of the Discord status
+settings-discord-preview = Discord status preview
 settings-discord-preview-listening = Listening to { $name }
 settings-discord-preview-music = Music
 settings-discord-preview-elapsed = { $time } elapsed
@@ -733,6 +773,8 @@ settings-downloads-used = Space used
 settings-downloads-used-detail = What the songs you downloaded take on this computer
 settings-offline-mode = Offline mode
 settings-offline-mode-detail = Show and play only what you downloaded
+settings-downloads-open = Open downloads
+settings-downloads-open-detail = Show the folder your downloads are saved in as audio files any player opens
 settings-downloads-remove = Remove all
 settings-size-gb = { $size } GB
 settings-size-mb = { $size } MB
@@ -768,14 +810,22 @@ settings-output-device-direct = Direct to hardware
 settings-sample-rate = Sample rate
 settings-sample-rate-detail = What the device runs at. Sonora converts every track to it
 settings-sample-rate-value = { $khz } kHz
+settings-sample-rate-lower = Lower sample rate
+settings-sample-rate-higher = Higher sample rate
 settings-sample-rate-change = Change
 settings-buffer = Buffer size
 settings-buffer-detail = How much audio Sonora hands the device at a time
+settings-buffer-smaller = Smaller buffer
+settings-buffer-larger = Larger buffer
+settings-match-rate = Match sample rate
+settings-match-rate-detail = Plays each track at its own sample rate
+settings-match-rate-direct-only = Needs a device under Direct to hardware
 settings-output-idle = Not playing
 settings-output-device-loading = Loading devices…
 settings-output-failed = Device not supported
 settings-output-failed-detail = Error: { $error }
 settings-signal-source = Source
+settings-signal-soloist = Soloist
 settings-signal-normalized = Loudness
 settings-signal-gain = { $db } dB
 settings-signal-resampled = Resampling
@@ -783,6 +833,7 @@ settings-signal-khz = { $khz } kHz
 settings-signal-kbps = { $kbps } kbps
 settings-signal-bits = { $depth }-bit
 settings-signal-source-detail = { $rate } · { $quality }
+settings-signal-path = Signal path
 settings-sleep = Sleep timer
 settings-sleep-detail = Lets the music stop on its own after a set time, so it can play you to sleep
 settings-stay-awake = Stay awake while playing
@@ -806,6 +857,49 @@ settings-widevine-fetch = Download
 settings-widevine-uninstall = Uninstall
 confirm-uninstall-widevine-title = Uninstall the Widevine module?
 confirm-uninstall-widevine = Sonora deletes the copy it downloaded from Google. Apple Music tracks stop playing until it is downloaded again.
+settings-soloist = Use Soloist
+settings-soloist-detail = Soloist is the player Spotify publishes itself. It plays on accounts the built-in player is refused on, and in lossless. It needs Spotify Premium and an API key of your own.
+settings-soloist-on-detail = Spotify plays through Soloist, which sends sound straight to the system output. The equalizer, the visualizer and the output settings only reach local files, and Sonora leaves the Spotify Connect device list to Soloist.
+settings-soloist-looking = Looking…
+settings-soloist-off = Not set up
+settings-soloist-setting-up = Setting up…
+settings-soloist-ready = Version { $version }
+settings-soloist-unavailable = Unavailable with Soloist
+settings-soloist-local-only = Applies to local files only while Soloist plays Spotify
+settings-soloist-setup = Set up
+settings-soloist-remove = Remove
+confirm-remove-soloist-title = Remove Soloist?
+confirm-remove-soloist = Sonora deletes the Soloist program, your API key and its sign-in. Spotify goes back to the built-in player.
+soloist-setup-title = Set up Soloist
+soloist-offered = Spotify refuses to play on this account through the built-in player. Soloist plays on it.
+soloist-step-download = Download
+soloist-step-key = API key
+soloist-step-pair = Pair
+soloist-terms = Sonora downloads Soloist from Spotify. Using it means accepting Spotify's terms of use.
+soloist-terms-open = Read the terms
+soloist-download = Download
+soloist-later = Not now
+soloist-downloading = Downloading from Spotify…
+soloist-key-step-open = Open the Soloist page of Spotify's developer dashboard
+soloist-key-step-generate = Accept the terms there and generate an API key
+soloist-key-step-paste = Paste the key below
+soloist-key-open = Open the dashboard
+soloist-key-hint = API key
+soloist-continue = Continue
+soloist-pair-step-open = Open Spotify on a phone or computer on this network
+soloist-pair-step-play = Start any song there
+soloist-pair-step-pick = Open the device list and pick { $device }
+soloist-pair-waiting = Waiting for Spotify…
+soloist-pair-firewall = Not showing up? A firewall has to let in UDP 5353 and TCP { $port } on this computer.
+soloist-back = Back
+soloist-problem-download = Soloist could not be downloaded
+soloist-problem-key = Spotify did not take this key
+soloist-problem-key-detail = Check that it was copied whole and has not been revoked, then try again.
+soloist-problem-account = Paired with another account
+soloist-problem-account-detail = That Spotify app is signed in as { $name }, not as the account Sonora uses. Pick the device from an app on your own account.
+soloist-problem-waited = Nobody picked the device
+soloist-problem-waited-detail = Pairing waits ten minutes. Try again with a Spotify app at hand.
+soloist-problem-pairing = Pairing failed
 confirm-remove-downloads-title = Remove all downloads?
 confirm-remove-downloads = Every song you downloaded is deleted from this computer, from every service. They stream again until you download them once more.
 widevine-prompt-title = Widevine module
@@ -918,6 +1012,19 @@ equalizer-rule-playing = Playing now
 equalizer-rule-disconnected = Not connected
 equalizer-rule-replaces = Replaces its rule
 equalizer-rule-choose-device = Choose a device
+equalizer-mode = Mode
+equalizer-preamp-level = Preamp level
+equalizer-no-gain-spoken = No gain
+equalizer-filter-frequency = Filter { $number } frequency
+equalizer-filter-gain = Filter { $number } gain
+equalizer-filter-width = Filter { $number } width
+equalizer-graph = Frequency response
+equalizer-graph-detail = { $count ->
+    [0] No filters
+    [one] 1 filter
+   *[other] { $count } filters
+    }, preamp at { $db } dB
+equalizer-rule-device = Device
 equalizer-rule-choose-sound = Choose a sound
 equalizer-rule-add = Add rule
 equalizer-rule-remove = Remove rule
@@ -945,6 +1052,7 @@ equalizer-status-more = +{ $count }
 equalizer-status-equalized = EQ
 equalizer-status-volume = Volume
 equalizer-status-normalized = Normalized
+equalizer-status-direct = Played by Soloist, past Sonora
 equalizer-status-rate = { $from } → { $to } kHz
 equalizer-status-bits = { $from } → { $to } bit
 equalizer-status-float = Float → { $to } bit
@@ -957,6 +1065,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } ch
 }
+settings-lyrics = Show lyrics
+settings-lyrics-detail = Turn off to hide lyrics everywhere and stop looking them up
 settings-panel-lyrics-size = Text size in the panel
 settings-panel-lyrics-size-detail = Size of the lyrics text in the side panel, on top of the base font size
 settings-fullscreen-lyrics-size = Text size in Now playing
@@ -966,6 +1076,8 @@ settings-lyrics-for-local-files = Look up lyrics for local files
 settings-lyrics-for-local-files-detail = Use metadata from local files to fetch lyrics from the internet
 settings-artwork-for-local-files = Artwork for local files
 settings-artwork-for-local-files-detail = Use metadata from local files to find a cover on Deezer for your Discord status
+settings-discord-upload-covers = Upload covers
+settings-discord-upload-covers-detail = Upload the cover from your server or your local files to uguu.se for 3 hours so your status shows that exact picture, rather than one found online
 settings-karaoke-lyrics = Karaoke
 settings-karaoke-lyrics-detail = Highlight lyrics word by word when timing is available
 settings-blur-lyrics = Blur inactive lines
@@ -980,8 +1092,10 @@ settings-romanized-lyrics = Romanized lyrics
 settings-romanized-lyrics-detail = Show locally generated pronunciation for selected writing systems
 settings-romanization-writing-systems = Writing systems
 settings-lyrics-priority = Provider priority
-settings-lyrics-priority-detail = Among lyrics of the same kind, Sonora shows the source higher up
-settings-lyrics-providers-detail = Choose which services to search for lyrics
+settings-lyrics-priority-detail = Sonora shows synced lyrics from the highest source that has them
+settings-lyrics-word-synced-first = Prioritize word-synced lyrics
+settings-lyrics-word-synced-first-detail = Show lyrics timed word by word first, even from a source lower in the list
+settings-lyrics-providers-detail =Choose which services to search for lyrics
 settings-lyrics-providers-selected = { $count ->
     [one] { $count } selected
    *[other] { $count } selected
@@ -1007,6 +1121,12 @@ settings-group-text = Text
 settings-group-motion = Motion
 settings-group-streaming = Streaming
 settings-group-spotify-connect = Spotify Connect
+settings-group-sessions = Sessions
+settings-sessions-button = Show the Sessions button
+settings-sessions-official = Use the official Sonora Sessions server
+settings-sessions-server = Server address
+settings-sessions-server-hint = wss://sessions.example.com
+settings-sessions-save = Save
 settings-adaptive-menu = Adaptive context menu
 settings-adaptive-menu-detail = Leaves out entries the row already shows, such as the album or the artist
 settings-accounts = Streaming services
@@ -1019,9 +1139,11 @@ settings-lastfm = Last.fm
 settings-lastfm-detail = Sonora scrobbles through your own Last.fm API account. Create one, then paste the key and the secret here.
 settings-librefm = Libre.fm
 settings-listenbrainz = ListenBrainz
-settings-listenbrainz-detail = Paste a user token from your ListenBrainz settings page.
+settings-listenbrainz-detail = Paste a user token from your ListenBrainz settings page. Leave the server address empty unless you run your own ListenBrainz or a tool such as multi-scrobbler.
 settings-maloja = Maloja
 settings-maloja-detail = Point Sonora at your Maloja server and paste one of its API keys.
+settings-scrobble-provider = Scrobble { $provider } plays
+settings-scrobble-provider-detail = Turn this off if { $provider } already scrobbles to Last.fm, so each listen is not counted twice
 settings-scrobble-off = Not connected
 settings-scrobble-on = Connected
 settings-scrobble-waiting = Waiting for your browser…
@@ -1036,6 +1158,7 @@ settings-scrobble-key = API key
 settings-scrobble-secret = API secret
 settings-scrobble-token = User token
 settings-scrobble-server = Server address
+settings-scrobble-server-optional = Server address (optional)
 settings-local-folder = Music folders
 settings-local-folder-empty = Not configured
 settings-choose-folder = Choose folder…
@@ -1084,6 +1207,9 @@ saver-fps = { $fps } FPS
 
 toast-playlist-created = Playlist created
 toast-playlist-renamed = Playlist renamed
+toast-playlist-updated = Playlist updated
+toast-playlist-cover-changed = Playlist cover changed
+toast-playlist-cover-removed = Playlist cover removed
 toast-playlist-deleted = Playlist deleted
 toast-local-delete-failed = Some track files could not be deleted
 toast-playlist-added = Playlist added to your library
@@ -1091,10 +1217,19 @@ toast-playlist-removed = Playlist removed from your library
 toast-playlist-visibility = Playlist visibility changed
 toast-track-added = Added to { $name }
 toast-track-removed = Removed from { $name }
+toast-track-moved = Moved to { $name }
 toast-track-removed-unnamed = Removed from the playlist
 toast-playlist-failed = That change could not be saved
 toast-playlist-busy = Another change is still running
 toast-playlist-signed-out = Sign in to change playlists
+toast-playlist-imported = Imported { $name }
+toast-playlist-imported-partly = Imported { $name }, leaving out { $count ->
+        [one] one song
+       *[other] { $count } songs
+    } not in your library
+toast-playlist-import-empty = None of the songs in { $name } are in your library
+toast-playlist-exported = Playlist exported
+toast-file-dialog-failed = Could not open the file dialog
 toast-queued-track = { $name } added to the queue
 toast-next-track = { $name } plays next
 toast-last-track = { $name } plays last
@@ -1125,8 +1260,14 @@ toast-open-some-failed = Some files could not be opened
 toast-keys-error = Playback key error
 toast-keys-refused = Spotify may not work here
 toast-why = Why?
+toast-soloist-setup = Set up Soloist
+toast-soloist-refused = Soloist can no longer sign in
+toast-soloist-ready = Spotify now plays through Soloist
+toast-soloist-remove-failed = Soloist could not be removed
 toast-sign-in-to-play = { $name } only streams to a signed-in listener
 toast-restore-failed = { $name } could not sign back in, so Sonora carried on without it
+toast-session-invalidated = Your { $name } session was invalidated
+toast-sign-in = Sign in
 toast-track-unplayable = { $name } could not be played
 toast-playback-stopped = Playback stopped after several tracks in a row could not be played
 toast-widevine-failed = Playback failed
@@ -1185,6 +1326,7 @@ lyrics-follow = Follow the song again
 lyrics-source = Lyrics from { $source }
 lyrics-source-local = Lyrics from the local file
 lyrics-writers = Written by { $writers }
+lyrics-instrumental-break = Instrumental break
 
 update-available = Sonora { $version } is out
 update-detail = You are on { $running }. Read what changed, or update now.
@@ -1241,6 +1383,8 @@ toast-tags-saved = Saved the tags for { $name }
 toast-tags-failed = The tags could not be saved
 toast-output-select-failed = Unable to select { $name }
 toast-output-default-failed = Unable to select the system default device
+toast-output-direct-failed = Unable to play directly on the device
+toast-output-rate-failed = Unable to switch the device's sample rate
 
 nav-pin = Pin
 toast-library-pin-failed = Could not update the pin.
@@ -1250,6 +1394,23 @@ toast-jam-failed = The Jam could not be started or joined.
 toast-jam-ended = Jam ended
 toast-jam-left = You left the Jam
 toast-jam-leave-failed = The Jam could not be ended or left.
+toast-session-needs-provider = Sign in to a streaming service to start a Session.
+toast-session-not-found = No Session goes by that code.
+toast-session-provider = This Session plays from { $name }. Sign in to { $name } to join it.
+toast-session-full = That Session is full.
+toast-session-rate-limited = Too many wrong codes. Try again in a few minutes.
+toast-session-too-many = Your network already hosts as many Sessions as it may. End one to start another.
+toast-session-unreachable = Could not reach Sonora Session. Try again later.
+toast-session-failed = The Session could not be started or joined.
+toast-session-lost = Lost the connection to the Session
+toast-session-ended = Session ended
+toast-session-left = You left the Session
+toast-session-kicked = The host removed you from the Session
+toast-session-code-copied = Code copied
+toast-sessions-server-saved = Sessions server saved
+toast-sessions-server-empty = Type the address of your server first
+toast-sessions-server-malformed = That does not read as a server address
+toast-sessions-server-silent = No Sonora Sessions server answers at this address, so it was not saved
 nav-nothing-pinned = Nothing here
 nav-pins-alphabetical = Alphabetical
 nav-pins-kind = By type
@@ -1267,20 +1428,12 @@ toast-offline-mode = You are offline. Go online to stream this song.
 offline-title = You are offline.
 offline-go-online = Go online
 toast-download-failed = Could not list the tracks to download.
-toast-downloading = Downloading { $name }
-toast-downloading-songs = { $count ->
-    [one] Downloading { $count } track
-   *[other] Downloading { $count } tracks
-}
-toast-downloaded = Downloaded { $name }
-toast-downloaded-songs = { $count ->
-    [one] Downloaded { $count } track
-   *[other] Downloaded { $count } tracks
-}
-toast-download-set-failed = Some tracks of { $name } could not be downloaded
-toast-download-song-failed = { $name } could not be downloaded
-toast-download-songs-failed = Some of the tracks could not be downloaded
 toast-percent = { $percent }%
+toast-download-started = Started downloading { $name }
+toast-downloads-started = { $count ->
+    [one] Started downloading { $count } song
+   *[other] Started downloading { $count } songs
+}
 toast-download-cancelled = Cancelled downloading { $name }
 toast-downloads-cancelled = { $count ->
     [one] Cancelled downloading { $count } track

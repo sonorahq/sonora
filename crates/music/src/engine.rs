@@ -17,8 +17,8 @@
 //! Loudness normalisation lives here too. A provider only reports how loud a track is, and the
 //! engine decides what gain that earns.
 
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, channel};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, anyhow, ensure};
@@ -127,6 +127,13 @@ pub trait Fetch: Send + Sync + 'static {
         false
     }
 
+    /// What to call the file of a plain download of track `id`, such as its artist and title.
+    /// `None` names it after a hash of the id. Only a provider whose shelf keeps plain files
+    /// is asked.
+    async fn label(&self, _id: &str) -> Option<String> {
+        None
+    }
+
     /// Resolves once the whole track has arrived, or its download has ended some other way.
     /// The engine reports it so the next track can be fetched without taking bandwidth from
     /// this one. The default answers at once, which suits a track that is already on disk.
@@ -212,6 +219,12 @@ enum Command {
         id: String,
         progress: Fraction,
         done: oneshot::Sender<Result<()>>,
+    },
+    /// Rewrite these downloads as plain files where they are still sealed, and say when that is
+    /// done.
+    Unseal {
+        ids: Vec<String>,
+        done: oneshot::Sender<()>,
     },
 }
 
@@ -327,6 +340,21 @@ impl Player for Handle {
             .is_some_and(|shelf| shelf.holds(track_id))
     }
 
+    fn unseal(&self, track_ids: Vec<String>) -> BoxFuture<'static, ()> {
+        let (done, answer) = oneshot::channel();
+        if self.shelf.as_ref().is_some_and(Shelf::keeps_plain) {
+            self.commands
+                .send(Command::Unseal {
+                    ids: track_ids,
+                    done,
+                })
+                .ok();
+        }
+        Box::pin(async move {
+            answer.await.ok();
+        })
+    }
+
     fn plays_offline(&self, track_id: &str) -> bool {
         self.offline
             && self
@@ -351,11 +379,56 @@ impl PlaybackEvents for Events {
     }
 }
 
+/// Owns the next track's load and cancels it when it is replaced or the engine ends.
+struct Preload {
+    id: String,
+    request: u64,
+    segue: bool,
+    task: tokio::task::AbortHandle,
+}
+
+impl Preload {
+    /// Reuses a pending load of the same track and remembers a later request to queue it.
+    /// The sequence must be shared by every preload in an engine.
+    fn request(
+        slot: &mut Option<Self>,
+        sequence: &mut u64,
+        id: String,
+        segue: bool,
+        start: impl FnOnce(u64) -> tokio::task::AbortHandle,
+    ) {
+        if let Some(pending) = slot.as_mut().filter(|pending| pending.id == id) {
+            pending.segue |= segue;
+            return;
+        }
+        *slot = None;
+        *sequence += 1;
+        *slot = Some(Self {
+            id,
+            request: *sequence,
+            segue,
+            task: start(*sequence),
+        });
+    }
+
+    /// Accepts only the active request's completion, even if an older request used the same id.
+    fn finish(slot: &mut Option<Self>, request: u64) -> Option<bool> {
+        let pending = slot.take_if(|pending| pending.request == request)?;
+        Some(pending.segue)
+    }
+}
+
+impl Drop for Preload {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
 /// What the fetch of one track came back with, and whether anything still wants it.
 struct Fetched<F: Fetch> {
     epoch: u64,
     id: String,
-    segue: bool,
+    preload: Option<u64>,
     result: Result<F::Loaded>,
 }
 
@@ -406,6 +479,8 @@ async fn engine_loop<F: Fetch>(
 ) {
     let (cue, mut written) = Cue::new();
     let (changed, mut gone) = unbounded_channel();
+    let heard = Heard::default();
+    let heard_audio = heard.clone();
     let chain = Chain {
         volume: Volume::new(config.gain),
         equalizer: config.equalizer.clone(),
@@ -434,6 +509,7 @@ async fn engine_loop<F: Fetch>(
                 audio_events,
                 interval,
                 normalisation,
+                heard_audio,
             )
         });
     if let Err(error) = spawned {
@@ -447,6 +523,8 @@ async fn engine_loop<F: Fetch>(
     let mut awaited: Option<u64> = None;
     let mut inflight: Option<tokio::task::AbortHandle> = None;
     let mut ahead: Option<(String, F::Loaded)> = None;
+    let mut preloading: Option<Preload> = None;
+    let mut preload_sequence = 0u64;
     // the track the audio thread is decoding, as far as the engine knows: set by a load, then
     // moved on by the audio thread's own word when a track runs out
     let mut current: Option<String> = None;
@@ -489,6 +567,7 @@ async fn engine_loop<F: Fetch>(
                         segued = None;
                         waiting = None;
                         epoch += 1;
+                        preloading = None;
                         if let Some(handle) = inflight.take() {
                             handle.abort();
                         }
@@ -528,12 +607,13 @@ async fn engine_loop<F: Fetch>(
                                     at: position,
                                     playing: wanted,
                                 }).ok();
+                                announce_paused(&events, wanted, &mut announcing);
                                 queue_segue(&jobs, &mut waiting);
                             }
                             None => {
                                 ahead = None;
                                 awaited = Some(epoch);
-                                inflight = Some(spawn(&fetch, id, epoch, false, &fetched));
+                                inflight = Some(spawn(&fetch, id, epoch, None, &fetched));
                             }
                         }
                     }
@@ -549,6 +629,7 @@ async fn engine_loop<F: Fetch>(
                             // Fetched already, as the next track is once the current one is
                             // all in. A segue only has to line it up.
                             Some(loaded) => {
+                                preloading = None;
                                 if !segue || segued.as_deref() == Some(id.as_str()) {
                                     continue;
                                 }
@@ -561,7 +642,9 @@ async fn engine_loop<F: Fetch>(
                                 }
                             }
                             None => {
-                                spawn(&fetch, id, epoch, segue, &fetched);
+                                Preload::request(&mut preloading, &mut preload_sequence, id.clone(), segue, |request| {
+                                    spawn(&fetch, id, epoch, Some(request), &fetched)
+                                });
                             }
                         }
                     }
@@ -602,18 +685,35 @@ async fn engine_loop<F: Fetch>(
                             done.send(download(&*fetch, &id, &progress).await).ok();
                         });
                     }
+                    Command::Unseal { ids, done } => {
+                        let fetch = fetch.clone();
+                        tokio::spawn(async move {
+                            unseal(&*fetch, ids).await;
+                            done.send(()).ok();
+                        });
+                    }
                 }
             }
             arrival = arrivals.recv() => {
-                let Some(Fetched { epoch: at, id, segue, result }) = arrival else { break };
+                let Some(Fetched { epoch: at, id, preload, result }) = arrival else { break };
                 if at != epoch {
                     continue;
                 }
+                let current_load = preload.is_none() && awaited == Some(at) && current.as_deref() == Some(id.as_str());
+                let segue = match current_load {
+                    true => false,
+                    false => {
+                        let Some(requested_segue) = preload.and_then(|request| Preload::finish(&mut preloading, request)) else {
+                            continue;
+                        };
+                        requested_segue
+                    }
+                };
                 let loaded = match result {
                     Ok(loaded) => loaded,
                     Err(error) => {
                         log::warn!("playback: cannot load {id}: {error:#}");
-                        if awaited == Some(at) {
+                        if current_load {
                             awaited = None;
                             inflight = None;
                             announcing = None;
@@ -626,7 +726,7 @@ async fn engine_loop<F: Fetch>(
                         continue;
                     }
                 };
-                if awaited == Some(at) && current.as_deref() == Some(id.as_str()) {
+                if current_load {
                     awaited = None;
                     inflight = None;
                     announce_length(&events, &id, fetch.length(&loaded));
@@ -637,6 +737,7 @@ async fn engine_loop<F: Fetch>(
                         at: hold,
                         playing: wanted,
                     }).ok();
+                    announce_paused(&events, wanted, &mut announcing);
                     queue_segue(&jobs, &mut waiting);
                     continue;
                 }
@@ -670,7 +771,7 @@ async fn engine_loop<F: Fetch>(
                 // without telling the state to rebuild it, and playback would stay silent.
                 let Some(join) = join else {
                     if gone.try_recv().is_ok() {
-                        events.send(PlaybackEvent::OutputChanged).ok();
+                        events.send(PlaybackEvent::OutputChanged { heard: heard.position(&cue) }).ok();
                         return;
                     }
                     break;
@@ -689,7 +790,7 @@ async fn engine_loop<F: Fetch>(
             }
             lost = gone.recv() => {
                 if lost.is_some() {
-                    events.send(PlaybackEvent::OutputChanged).ok();
+                    events.send(PlaybackEvent::OutputChanged { heard: heard.position(&cue) }).ok();
                 }
                 return;
             }
@@ -721,6 +822,22 @@ fn moved(event: PlaybackEvent, to: Duration) -> PlaybackEvent {
         PlaybackEvent::Paused { id, .. } => PlaybackEvent::Paused { id, at: to },
         PlaybackEvent::Seeked { id, .. } => PlaybackEvent::Seeked { id, at: to },
         held => held,
+    }
+}
+
+/// Sends a paused load's announcement as soon as the decoder has the track. The audio thread
+/// writes nothing while paused, so waiting for the first write would leave the app in `Loading`
+/// until play is pressed.
+fn announce_paused(
+    events: &UnboundedSender<PlaybackEvent>,
+    wanted: bool,
+    announcing: &mut Option<PlaybackEvent>,
+) {
+    if wanted {
+        return;
+    }
+    if let Some(event) = announcing.take() {
+        events.send(event).ok();
     }
 }
 
@@ -787,11 +904,12 @@ fn queue_segue<F: Fetch>(
     }
 }
 
+/// Runs a cancellable provider load and tags its completion with its epoch and preload request.
 fn spawn<F: Fetch>(
     fetch: &Arc<F>,
     id: String,
     epoch: u64,
-    segue: bool,
+    preload: Option<u64>,
     fetched: &UnboundedSender<Fetched<F>>,
 ) -> tokio::task::AbortHandle {
     let fetch = fetch.clone();
@@ -802,7 +920,7 @@ fn spawn<F: Fetch>(
             .send(Fetched {
                 epoch,
                 id,
-                segue,
+                preload,
                 result,
             })
             .ok();
@@ -863,6 +981,7 @@ impl<F: Fetch> Playing<F> {
                 true => Normalisation::Gain(20. * gain.log10()),
                 false => Normalisation::Off,
             },
+            direct: false,
         };
         events
             .send(PlaybackEvent::Signal {
@@ -912,6 +1031,7 @@ impl<F: Fetch> Playing<F> {
 
 /// The track being heard, which is not always the one being decoded: at the end of a track the
 /// decoder has moved on, or stopped, while the queue still holds the last seconds of it.
+#[derive(Clone)]
 struct Mark {
     id: String,
     channels: u16,
@@ -926,6 +1046,30 @@ impl Mark {
         let mine = cue.played().saturating_sub(self.offset);
         let frames = mine / u64::from(self.channels).max(1);
         self.base + Duration::from_secs_f64(frames as f64 / f64::from(self.rate).max(1.0))
+    }
+}
+
+/// The mark of the track being heard, shared between the audio thread, which moves it, and the
+/// engine loop, which reads it when the output is lost to say where playback stood.
+#[derive(Clone, Default)]
+struct Heard(Arc<Mutex<Option<Mark>>>);
+
+impl Heard {
+    fn set(&self, mark: Option<Mark>) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = mark;
+    }
+
+    fn get(&self) -> Option<Mark> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The track being heard and how far into it, from what the output has drawn.
+    fn position(&self, cue: &Cue) -> Option<(String, Duration)> {
+        let mark = self.get()?;
+        Some((mark.id.clone(), mark.at(cue)))
     }
 }
 
@@ -952,6 +1096,7 @@ fn audio_loop<F: Fetch>(
     events: UnboundedSender<PlaybackEvent>,
     interval: Duration,
     normalise: bool,
+    heard: Heard,
 ) {
     let mut paced = match Paced::open(cue.clone(), chain, changed.clone()) {
         Ok(paced) => paced,
@@ -970,7 +1115,6 @@ fn audio_loop<F: Fetch>(
     let mut current: Option<Playing<F>> = None;
     let mut written = 0u64;
     let mut joining: Option<Join<F>> = None;
-    let mut heard: Option<Mark> = None;
     let mut queued: Option<(String, F::Loaded)> = None;
     let mut playing = false;
     let mut reported_at = Instant::now();
@@ -1004,9 +1148,12 @@ fn audio_loop<F: Fetch>(
                 })
                 .ok();
             events.send(PlaybackEvent::Ended { id: Some(ended) }).ok();
-            heard = current.as_ref().map(|held| held.mark(paced.rate()));
+            heard.set(current.as_ref().map(|held| held.mark(paced.rate())));
             match next {
                 Some((id, duration)) => {
+                    if let Some(following) = &current {
+                        paced.follow_rate(following.rate);
+                    }
                     announce_length(&events, &id, duration);
                     events
                         .send(PlaybackEvent::Playing {
@@ -1021,9 +1168,9 @@ fn audio_loop<F: Fetch>(
 
         // reported from the sound, so it keeps moving while the last seconds play out
         if playing
-            && let Some(mark) = &heard
             && reported_at.elapsed() >= interval
             && !cue.cleared()
+            && let Some(mark) = heard.get()
         {
             reported_at = Instant::now();
             events
@@ -1046,7 +1193,10 @@ fn audio_loop<F: Fetch>(
                     joining = None;
                     written = 0;
                     current = Playing::open(fetch.as_ref(), &id, loaded, at, 0, normalise, &events);
-                    heard = current.as_ref().map(|held| held.mark(paced.rate()));
+                    heard.set(current.as_ref().map(|held| held.mark(paced.rate())));
+                    if let Some(held) = &current {
+                        paced.follow_rate(held.rate);
+                    }
                     playing = start && current.is_some();
                     match playing {
                         true if paced.play().is_err() => return,
@@ -1068,7 +1218,7 @@ fn audio_loop<F: Fetch>(
                     current = None;
                     queued = None;
                     joining = None;
-                    heard = None;
+                    heard.set(None);
                     written = 0;
                     playing = false;
                     paced.pause();
@@ -1078,7 +1228,7 @@ fn audio_loop<F: Fetch>(
                     if playing && paced.play().is_err() {
                         return;
                     }
-                    if let Some(mark) = &heard {
+                    if let Some(mark) = heard.get() {
                         events
                             .send(PlaybackEvent::Playing {
                                 id: Some(mark.id.clone()),
@@ -1090,7 +1240,7 @@ fn audio_loop<F: Fetch>(
                 Job::Pause => {
                     playing = false;
                     paced.pause();
-                    if let Some(mark) = &heard {
+                    if let Some(mark) = heard.get() {
                         events
                             .send(PlaybackEvent::Paused {
                                 id: Some(mark.id.clone()),
@@ -1126,7 +1276,7 @@ fn audio_loop<F: Fetch>(
                         continue;
                     }
                     written = 0;
-                    heard = current.as_ref().map(|held| held.mark(paced.rate()));
+                    heard.set(current.as_ref().map(|held| held.mark(paced.rate())));
                     cue.arm();
                 }
                 Job::Seek(position) => {
@@ -1168,7 +1318,7 @@ fn audio_loop<F: Fetch>(
                     }
                     joining = None;
                     written = 0;
-                    heard = current.as_ref().map(|held| held.mark(paced.rate()));
+                    heard.set(current.as_ref().map(|held| held.mark(paced.rate())));
                     cue.arm();
                 }
                 Job::Gain(level) => paced.set_volume(level),
@@ -1260,7 +1410,11 @@ async fn download<F: Fetch>(fetch: &F, id: &str, progress: &Fraction) -> Result<
     if shelf.holds(id) {
         return Ok(());
     }
-    shelf.want(id);
+    let label = match shelf.keeps_plain() {
+        true => fetch.label(id).await,
+        false => None,
+    };
+    shelf.want(id, label);
     let fetched = async {
         let loaded = fetch.load(id).await?;
         let arrived = fetch.downloaded(&loaded);
@@ -1286,9 +1440,118 @@ async fn download<F: Fetch>(fetch: &F, id: &str, progress: &Fraction) -> Result<
     Ok(())
 }
 
+/// Rewrites downloads `ids` that are still sealed as plain files, one at a time on a blocking
+/// thread. A track that fails is logged and left as it was.
+async fn unseal<F: Fetch>(fetch: &F, ids: Vec<String>) {
+    let Some(shelf) = fetch.shelf() else {
+        return;
+    };
+    shelf.settle().await;
+    for id in ids {
+        if !shelf.sealed_download(&id) {
+            continue;
+        }
+        let label = fetch.label(&id).await;
+        let worker = shelf.clone();
+        let rewritten = tokio::task::spawn_blocking(move || worker.unseal(&id, label))
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(|rewritten| rewritten);
+        if let Err(error) = rewritten {
+            log::warn!(
+                "playback: cannot rewrite a {} download: {error:#}",
+                fetch.name()
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Keeps a resource alive until a pending provider load is cancelled.
+    fn pending_load() -> (tokio::task::AbortHandle, tokio::sync::oneshot::Receiver<()>) {
+        let (held, dropped) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _held = held;
+            std::future::pending::<()>().await;
+        });
+        (task.abort_handle(), dropped)
+    }
+
+    #[tokio::test]
+    async fn superseded_preloads_release_their_pending_resources() {
+        let (first, dropped) = pending_load();
+        let mut slot = None;
+        let mut sequence = 0;
+        Preload::request(&mut slot, &mut sequence, "one".to_owned(), false, |_| first);
+        let (next, next_dropped) = pending_load();
+        Preload::request(&mut slot, &mut sequence, "two".to_owned(), false, |_| next);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), dropped)
+                .await
+                .unwrap()
+                .is_err()
+        );
+        drop(slot);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), next_dropped)
+                .await
+                .unwrap()
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_segue_request_reuses_the_pending_preload() {
+        let (task, dropped) = pending_load();
+        let mut slot = None;
+        let mut sequence = 0;
+        Preload::request(&mut slot, &mut sequence, "one".to_owned(), false, |_| task);
+        Preload::request(&mut slot, &mut sequence, "one".to_owned(), true, |_| {
+            panic!("load restarted")
+        });
+        assert!(slot.as_ref().unwrap().segue);
+        drop(slot);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), dropped)
+                .await
+                .unwrap()
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_same_track_completions_preserve_the_replacement_preload() {
+        let mut slot = None;
+        let mut sequence = 0;
+        let (first, _) = pending_load();
+        Preload::request(&mut slot, &mut sequence, "a".to_owned(), false, |_| first);
+        let stale = slot.as_ref().unwrap().request;
+        let (second, _) = pending_load();
+        Preload::request(&mut slot, &mut sequence, "b".to_owned(), false, |_| second);
+        let (replacement, mut dropped) = pending_load();
+        Preload::request(&mut slot, &mut sequence, "a".to_owned(), true, |_| {
+            replacement
+        });
+        let active = slot.as_ref().unwrap().request;
+        assert_ne!(active, stale);
+        assert_eq!(Preload::finish(&mut slot, stale), None);
+        assert_eq!(slot.as_ref().unwrap().request, active);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut dropped)
+                .await
+                .is_err()
+        );
+        assert_eq!(Preload::finish(&mut slot, active), Some(true));
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), dropped)
+                .await
+                .unwrap()
+                .is_err()
+        );
+    }
 
     fn measured(lufs: f32, peak: Option<f32>) -> Option<Loudness> {
         Some(Loudness { lufs, peak })

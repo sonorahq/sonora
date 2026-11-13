@@ -5,7 +5,7 @@ use router::{NavEntry, Screen};
 use ui::{MenuItem, OptionCard, Pace, Picker, Rounding, Saver, Stillness, Switch};
 
 use super::appearance::corner;
-use super::rows::{grid, segmented};
+use super::rows::{Announced as _, grid, segmented};
 use super::{Group, LANGUAGES, SettingsView, Slot};
 use crate::shared::popups::matches_query;
 
@@ -134,7 +134,7 @@ impl SettingsView {
             .menu(self.languages.menu("languages-menu", Picker::WIDE))
             .items(entries.into_iter().enumerate().map(|(place, (id, label))| {
                 MenuItem::new(id, label)
-                    .selected(place == cursor)
+                    .highlighted(place == cursor)
                     .checked(chosen == id)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.settings
@@ -236,19 +236,25 @@ impl SettingsView {
             .filter(|rounding| cfg!(not(target_os = "macos")) || *rounding != Rounding::Square)
             .collect::<Vec<_>>();
 
-        let cards =
-            grid(offered.len() as u16, window, cx).children(offered.into_iter().map(|rounding| {
-                OptionCard::new(SharedString::from(format!("window-{}", rounding.id())))
-                    .thumb(corner(rounding, cx))
-                    .label(rounding.label())
-                    .selected(current == rounding)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.settings.update(cx, |settings, cx| {
-                            settings.set_window_rounding(rounding, cx)
-                        });
-                        cx.notify();
-                    }))
-            }));
+        let cards = grid(offered.len() as u16, window, cx).children(
+            offered
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(place, rounding)| {
+                    OptionCard::new(SharedString::from(format!("window-{}", rounding.id())))
+                        .choice(rounding.label(), current == rounding, place, offered.len())
+                        .thumb(corner(rounding, cx))
+                        .label(rounding.label())
+                        .selected(current == rounding)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.settings.update(cx, |settings, cx| {
+                                settings.set_window_rounding(rounding, cx)
+                            });
+                            cx.notify();
+                        }))
+                }),
+        );
 
         self.stacked(t!("settings-window-rounding"), cards)
     }

@@ -6,11 +6,11 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{AnyElement, Context, Div, Pixels, Window, div};
-use music::{LyricsLine, LyricsWord, RomanizedText, Voice, WritingSystem};
+use music::{LyricsLine, LyricsWord, RomanizedText, WritingSystem};
 use state::RomanizationScripts;
 use ui::{ActiveTheme as _, Theme};
 
-use crate::chrome::{VerseLook, verse, verse_sizes};
+use crate::chrome::{VerseLook, verse, verse_gap, verse_sizes};
 use crate::screens::settings::{Layout, SettingsView};
 
 /// How tall the preview stands for its width.
@@ -64,8 +64,16 @@ pub(in crate::screens::settings) fn preview(
     window: &mut Window,
     cx: &mut Context<SettingsView>,
 ) -> Option<AnyElement> {
-    let theme = *cx.theme();
     let height = (Layout::of(window, cx).width * ASPECT).round();
+    let field = view.settings.read(cx).ambient().then(|| {
+        let cover = view.previews.playing_or_picked(cx).large_cover(cx);
+        view.previews.ambient(cover, cx)
+    });
+    // over the field the lines wear what fullscreen would, not the theme around them
+    let theme = match &field {
+        Some(field) => field.read(cx).theme(cx),
+        None => *cx.theme(),
+    };
 
     let settings = view.settings.read(cx);
     let look = Look {
@@ -76,18 +84,15 @@ pub(in crate::screens::settings) fn preview(
             .then(|| settings.romanization_scripts()),
     };
     let sizes = verse_sizes(false, settings.fullscreen_lyrics_scale(), &theme);
-    let field = settings.ambient().then(|| {
-        let cover = view.previews.playing_or_picked(cx).large_cover(cx);
-        view.previews.ambient(cover, cx)
-    });
-
+    let on = settings.lyrics_enabled();
     let sheet = div()
         .relative()
         .w_full()
         .h(height)
         .bg(theme.background)
         .children(field)
-        .child(lines(look, sizes, height, theme));
+        .child(lines(look, sizes, height, &theme))
+        .when(!on, |sheet| sheet.opacity(super::DIMMED));
 
     Some(super::framed(sheet, cx).into_any_element())
 }
@@ -95,9 +100,10 @@ pub(in crate::screens::settings) fn preview(
 /// The sample lines around the one being sung, drawn the way the sheet draws them at the verse
 /// and lane sizes in `sizes`, over the whole of a parent `height` tall. The one being sung starts
 /// at `ANCHOR` of the height whatever the sizes, so a large text size never pushes it out of view.
-fn lines(look: Look, sizes: (Pixels, Pixels), height: Pixels, theme: Theme) -> Div {
+fn lines(look: Look, sizes: (Pixels, Pixels), height: Pixels, theme: &Theme) -> Div {
     let lines = sample();
     let (size, lane) = sizes;
+    let gap = verse_gap(size);
     let position = lines[SUNG_LINE].start + SUNG.mul_f32(STILL);
     let verse_at = |index: usize| {
         let sung = index == SUNG_LINE;
@@ -133,11 +139,11 @@ fn lines(look: Look, sizes: (Pixels, Pixels), height: Pixels, theme: Theme) -> D
                 .left_0()
                 .right_0()
                 .bottom(height - anchor)
-                .pb_4()
+                .pb(gap)
                 .px(theme.metrics.inset)
                 .flex()
                 .flex_col()
-                .gap_4()
+                .gap(gap)
                 .children((SUNG_LINE - AROUND..SUNG_LINE).map(verse_at)),
         )
         .child(
@@ -149,7 +155,7 @@ fn lines(look: Look, sizes: (Pixels, Pixels), height: Pixels, theme: Theme) -> D
                 .px(theme.metrics.inset)
                 .flex()
                 .flex_col()
-                .gap_4()
+                .gap(gap)
                 .children((SUNG_LINE..lines.len()).map(verse_at)),
         )
 }
@@ -172,8 +178,7 @@ fn sample() -> Vec<LyricsLine> {
                 words: Some(timed(&text, start)),
                 text,
                 romanized,
-                secondary: Vec::new(),
-                voice: Voice::Lead,
+                ..Default::default()
             }
         })
         .collect()

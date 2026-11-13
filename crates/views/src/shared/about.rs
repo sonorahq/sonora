@@ -9,7 +9,9 @@ use gpui::{
 };
 use i18n::t;
 use router::{Destination, navigate};
-use ui::{ActiveTheme as _, Artwork, Button, Modal, Scrollbar, Scroller, eyebrow, heading};
+use ui::{
+    ActiveTheme as _, Artwork, Button, Glowing as _, Modal, Scrollbar, Scroller, eyebrow, heading,
+};
 
 use crate::shared::effects;
 
@@ -61,18 +63,22 @@ impl AboutArtist {
 }
 
 impl RenderOnce for AboutArtist {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = *cx.theme();
         let pressable = self.on_open.is_some();
         let name = self.name.clone();
+        let about = blurb(self.biography);
 
         div()
             .id(self.id)
             // The card opens the artist only when it has somewhere to open, so it
-            // reads as a button only then.
-            .when(pressable, |this| {
-                this.role(Role::Button).aria_label(name.clone())
+            // reads as a button only then and as a named group otherwise.
+            .role(match pressable {
+                true => Role::Button,
+                false => Role::Group,
             })
+            .aria_label(name)
+            .aria_description(about.clone())
             .flex()
             .items_center()
             .gap_5()
@@ -82,7 +88,7 @@ impl RenderOnce for AboutArtist {
             .border_color(theme.border)
             .when_some(self.on_open, |this, open| {
                 this.cursor_pointer()
-                    .hover(|style| style.bg(theme.secondary))
+                    .glow(theme.secondary, window, cx)
                     .on_click(move |event, window, cx| open(event, window, cx))
             })
             .child(Artwork::new(self.cover).size(PORTRAIT).circle())
@@ -102,7 +108,7 @@ impl RenderOnce for AboutArtist {
                             .line_clamp(LINES)
                             .text_ellipsis()
                             .text_color(theme.muted_foreground)
-                            .child(blurb(self.biography)),
+                            .child(about),
                     ),
             )
     }
@@ -139,19 +145,28 @@ pub(crate) fn about_modal(
                                 .child(bio_text(&biography)),
                         )
                         .child(
-                            div().absolute().inset_0().child(
-                                Scroller::new("artist-about-bio", bar)
-                                    .when(overflows, |this| this.pb(tail))
-                                    .when(overflows && effects(), |this| {
-                                        this.fade_edges(px(0.), FADE)
-                                    })
-                                    .child(bio_text(&biography)),
-                            ),
+                            div()
+                                .id("artist-about-bio-text")
+                                .role(Role::Paragraph)
+                                .aria_label(rich(&biography).0)
+                                .absolute()
+                                .inset_0()
+                                .child(
+                                    Scroller::new("artist-about-bio", bar)
+                                        .when(overflows, |this| this.pb(tail))
+                                        .when(overflows && effects(), |this| {
+                                            this.fade_edges(px(0.), FADE)
+                                        })
+                                        .child(bio_text(&biography)),
+                                ),
                         ),
                 )
             }
             None => modal.child(
                 div()
+                    .id("artist-about-bio-text")
+                    .role(Role::Paragraph)
+                    .aria_label(t!("artist-about-fallback"))
                     .text_color(theme.muted_foreground)
                     .child(t!("artist-about-fallback")),
             ),

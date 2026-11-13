@@ -152,6 +152,9 @@ pub struct AppleClient {
     user_token: Arc<str>,
     bearer: Arc<str>,
     storefront: Arc<str>,
+    /// The name of the genre that parents every other one, in the storefront's language. Apple
+    /// lists it on every song, so tracks are read without it. Empty when Apple did not name it.
+    root_genre: Arc<str>,
     /// The station last built, and the track it was seeded from. Asking twice for the radio of
     /// the same track carries on through that station instead of rolling a new one, which is
     /// what makes a queue that keeps being extended feel like one station rather than several.
@@ -259,6 +262,7 @@ impl AppleClient {
             user_token: user_token.into(),
             bearer: bearer.into(),
             storefront: "us".into(),
+            root_genre: Arc::default(),
             station: Arc::default(),
             listings: Arc::default(),
             pinned: Arc::default(),
@@ -280,10 +284,33 @@ impl AppleClient {
             .and_then(|row| row.id.as_str())
             .context("apple named no storefront for this account")?;
         log::info!("apple: signed in, storefront {storefront}");
-        Ok(Self {
+        let mut client = Self {
             storefront: storefront.into(),
             ..client
-        })
+        };
+        client.root_genre = client.read_root_genre().await;
+        Ok(client)
+    }
+
+    /// Asks the storefront for the name of its root genre. A failure is logged and leaves the
+    /// name empty, so songs keep the root among their genres rather than the sign-in failing.
+    async fn read_root_genre(&self) -> Arc<str> {
+        let named = self
+            .walk(&self.catalog("/genres"), PAGE, &[], |row| {
+                let attributes = row.attributes.as_ref()?;
+                match attributes.parent_id.is_present() {
+                    true => None,
+                    false => wire::text(&attributes.name),
+                }
+            })
+            .await;
+        match named {
+            Ok(names) => names.into_iter().next().unwrap_or_default().into(),
+            Err(error) => {
+                log::warn!("apple: cannot read the root genre: {error:#}");
+                Arc::default()
+            }
+        }
     }
 
     /// The client the playback path fetches with, so it shares this one's connections.
@@ -297,6 +324,20 @@ impl AppleClient {
 
     pub fn storefront(&self) -> &str {
         &self.storefront
+    }
+
+    pub(super) fn root_genre(&self) -> &str {
+        &self.root_genre
+    }
+
+    /// Whether Apple says the account has an active Apple Music subscription, which a Family
+    /// Sharing member's own Apple ID has too. `None` when the answer does not say either way.
+    pub(crate) async fn subscribed(&self) -> Result<Option<bool>> {
+        let body = self.get("/me/account", &[("meta", "subscription")]).await?;
+        let answered: Value = serde_json::from_str(&body).unwrap_or_default();
+        Ok(answered
+            .pointer("/meta/subscription/active")
+            .and_then(Value::as_bool))
     }
 
     pub(crate) fn catalog(&self, path: &str) -> String {
@@ -599,7 +640,7 @@ impl AppleClient {
         path: &'static str,
         page: usize,
         query: &'static [(&'static str, &'static str)],
-        read: fn(&Resource<'_>) -> Option<T>,
+        read: impl Fn(&Resource<'_>) -> Option<T> + Send + Sync + 'static,
     ) -> Pages<T> {
         let (sink, pages) = tokio::sync::mpsc::channel(FAN);
         let client = self.clone();
@@ -918,7 +959,8 @@ impl AppleClient {
             answered => answered?,
         };
         let outline = wire::outline(&body);
-        let tracks = outline.read(&wire::playlist_track);
+        let tracks =
+            outline.read(&|row: &Resource<'_>| wire::playlist_track(row, &self.root_genre));
         let next = outline
             .next
             .as_str()
@@ -991,7 +1033,7 @@ impl AppleClient {
             .results
             .tracks
             .iter()
-            .filter_map(wire::song)
+            .filter_map(|row| wire::song(row, &self.root_genre))
             .collect();
         Ok((station, tracks))
     }
@@ -1008,7 +1050,11 @@ impl AppleClient {
             )
             .await?;
         let answered: wire::Answer = wire::answer(&body);
-        Ok(answered.data.iter().filter_map(wire::song).collect())
+        Ok(answered
+            .data
+            .iter()
+            .filter_map(|row| wire::song(row, &self.root_genre))
+            .collect())
     }
 
     /// The station this client is part way through, if it was seeded by `track_id`.
@@ -1051,7 +1097,7 @@ impl AppleClient {
                 .flat_map(wire::Relation::rows)
                 .filter_map(|row| match kind {
                     "playlists" => wire::playlist(row).map(GenreItem::Playlist),
-                    "songs" => wire::song(row).map(GenreItem::Track),
+                    "songs" => wire::song(row, &self.root_genre).map(GenreItem::Track),
                     _ => wire::album(row).map(GenreItem::Album),
                 })
                 .collect();
@@ -1129,7 +1175,7 @@ impl MusicApi for AppleClient {
             .songs
             .rows()
             .iter()
-            .filter_map(wire::song)
+            .filter_map(|row| wire::song(row, &self.root_genre))
             .collect())
     }
 
@@ -1153,6 +1199,24 @@ impl MusicApi for AppleClient {
             .rows()
             .iter()
             .filter_map(wire::album)
+            .collect())
+    }
+
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        let limit = HITS.to_string();
+        let body = self
+            .get(
+                &self.catalog("/search"),
+                &[("term", query), ("types", "artists"), ("limit", &limit)],
+            )
+            .await?;
+        let answered: wire::Answer<wire::Search> = wire::answer(&body);
+        Ok(answered
+            .results
+            .artists
+            .rows()
+            .iter()
+            .filter_map(wire::similar_artist)
             .collect())
     }
 
@@ -1187,7 +1251,8 @@ impl MusicApi for AppleClient {
             .data
             .first()
             .with_context(|| format!("apple music has no song {track_id}"))?;
-        wire::song(found).with_context(|| format!("cannot read the apple song {track_id}"))
+        wire::song(found, &self.root_genre)
+            .with_context(|| format!("cannot read the apple song {track_id}"))
     }
 
     async fn track_playcount(&self, _track_id: &str) -> Result<Option<u64>> {
@@ -1288,18 +1353,27 @@ impl MusicApi for AppleClient {
             )
             .await?;
         let answered: wire::Answer = wire::answer(&body);
-        Ok(answered.data.iter().filter_map(wire::song).collect())
+        Ok(answered
+            .data
+            .iter()
+            .filter_map(|row| wire::song(row, &self.root_genre))
+            .collect())
     }
 
     /// The songs the listener has added. Only the ones with a catalog id are listed: an upload
     /// has no catalog encode behind it, and this path plays catalog tracks.
     async fn all_tracks(&self) -> Result<Vec<Track>> {
-        self.walk(SONGS, PAGE, SONGS_QUERY, wire::library_song)
-            .await
+        self.walk(SONGS, PAGE, SONGS_QUERY, |row| {
+            wire::library_song(row, &self.root_genre)
+        })
+        .await
     }
 
     async fn all_tracks_paged(&self) -> Result<Pages<Track>> {
-        Ok(self.paged(SONGS, PAGE, SONGS_QUERY, wire::library_song))
+        let root = self.root_genre.clone();
+        Ok(self.paged(SONGS, PAGE, SONGS_QUERY, move |row| {
+            wire::library_song(row, &root)
+        }))
     }
 
     async fn all_albums(&self) -> Result<Vec<Album>> {
@@ -1328,7 +1402,7 @@ impl MusicApi for AppleClient {
     async fn saved_tracks(&self) -> Result<Vec<Track>> {
         let songs = self
             .walk(SONGS, PAGE, SONGS_QUERY, |row| {
-                Some((library_id(row)?, wire::library_song(row)?))
+                Some((library_id(row)?, wire::library_song(row, &self.root_genre)?))
             })
             .await?;
         self.rated("songs", RATED_SONGS, songs).await
@@ -1504,8 +1578,8 @@ impl MusicApi for AppleClient {
             .rows()
             .iter()
             .filter_map(|row| match row.kind.as_str() {
-                Some("library-songs") => wire::library_song(row),
-                _ => wire::song(row),
+                Some("library-songs") => wire::library_song(row, &self.root_genre),
+                _ => wire::song(row, &self.root_genre),
             })
             .collect();
         let album = match Self::is_mine(album_id) {
@@ -1542,7 +1616,7 @@ impl MusicApi for AppleClient {
                     ),
                     ("include[songs]", "artists,albums"),
                     ALBUM_ARTISTS,
-                    ("extend", "artistBio"),
+                    ("extend", "artistBio,editorialArtwork"),
                 ],
             )
             .await?;
@@ -1550,12 +1624,16 @@ impl MusicApi for AppleClient {
         answered
             .data
             .first()
-            .and_then(wire::artist)
+            .and_then(|row| wire::artist(row, &self.root_genre))
             .with_context(|| format!("cannot read the apple artist {id}"))
     }
 
     async fn artist_catalogue(&self, artist_id: &str, _known: &[Track]) -> Result<ArtistCatalogue> {
         recommend::artist_catalogue(self, artist_id).await
+    }
+
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        recommend::artist_tracks(self, artist_id).await
     }
 
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
@@ -1665,7 +1743,9 @@ impl MusicApi for AppleClient {
                 None,
             )
             .await
-            .map(|bodies| bodies.read(&wire::playlist_track));
+            .map(|bodies| {
+                bodies.read(&|row: &Resource<'_>| wire::playlist_track(row, &self.root_genre))
+            });
         match walked {
             Err(error) if error.is::<Missing>() => Ok(Vec::new()),
             walked => walked,
@@ -1861,7 +1941,8 @@ impl MusicApi for AppleClient {
             sections = self.charts(None).await.unwrap_or_default();
         }
         // Apple's own recently played group is a cached ranking that lags real plays, so the live
-        // list leads Quick picks and the group only stands in when that list cannot be read.
+        // list fills the Recently played shelf and leads Quick picks, and the group only stands
+        // in when that list cannot be read.
         let (containers, songs, added) = futures::join!(
             self.recent_items(),
             <Self as MusicApi>::recently_played(self),
@@ -1869,7 +1950,7 @@ impl MusicApi for AppleClient {
         );
         match added {
             Ok(items) if !items.is_empty() => sections.insert(
-                0,
+                past_mixes(&sections),
                 GenreSection {
                     title: "home-recently-added".to_owned(),
                     items,
@@ -1886,6 +1967,15 @@ impl MusicApi for AppleClient {
                 recents
             }
         };
+        if !containers.is_empty() {
+            sections.insert(
+                0,
+                GenreSection {
+                    title: "home-recently-played".to_owned(),
+                    items: containers.clone(),
+                },
+            );
+        }
         let songs = songs.unwrap_or_else(|error| {
             log::warn!("apple: cannot load recently played songs: {error:#}");
             Vec::new()
@@ -1935,6 +2025,19 @@ impl MusicApi for AppleClient {
             name,
             sections: self.charts(Some(genre_id)).await?,
         })
+    }
+
+    /// The cover of the genre's top album, which Apple's genre list leaves out.
+    async fn genre_cover(&self, genre_id: &str) -> Result<Option<String>> {
+        let query = [("types", "albums"), ("limit", "1"), ("genre", genre_id)];
+        let body = self.get(&self.catalog("/charts"), &query).await?;
+        let answered: wire::Answer<wire::Charts> = wire::answer(&body);
+        Ok(answered
+            .results
+            .albums
+            .iter()
+            .flat_map(wire::Relation::rows)
+            .find_map(|row| wire::album(row)?.cover))
     }
 
     /// The station a track seeds, as a queue's worth of tracks.
@@ -2072,8 +2175,23 @@ fn recent_mix(containers: Vec<GenreItem>, songs: Vec<Track>) -> Vec<GenreItem> {
     mixed
 }
 
-/// Whether a recommendation group is the account's recently played one, which Quick picks
-/// replace. Its title is in the storefront's language, so only its kind is checked.
+/// The index right below the last shelf holding one of Apple's personal mixes, the colored
+/// playlists made for the listener, or 0 when no shelf holds one. Personal mix ids start with
+/// `pl.pm-`.
+fn past_mixes(sections: &[GenreSection]) -> usize {
+    sections
+        .iter()
+        .rposition(|section| {
+            section.items.iter().any(|item| {
+                matches!(item, GenreItem::Playlist(playlist) if playlist.id.starts_with("pl.pm-"))
+            })
+        })
+        .map_or(0, |at| at + 1)
+}
+
+/// Whether a recommendation group is the account's recently played one, which the live
+/// Recently played shelf replaces. Its title is in the storefront's language, so only its kind
+/// is checked.
 fn is_recents(group: &Resource) -> bool {
     group
         .attributes

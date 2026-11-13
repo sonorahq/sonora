@@ -13,9 +13,9 @@ use crate::spotify::{
     albums, artists, collection, collection2, pathfinder, playlists, profiles, radio, search, wire,
 };
 use crate::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Genre, GenreDetail,
-    GenreItem, GenreSection, HomeFeed, Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist, Track,
-    UserDetail, UserProfile,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, CoverSize, Genre,
+    GenreDetail, GenreItem, GenreSection, HomeFeed, Playlist, PlaylistDetail, SUGGESTIONS,
+    SavedArtist, Track, UserDetail, UserProfile,
 };
 
 const MADE_FOR_YOU: &str = "0JQ5DAt0tbjZptfcdMSKl3";
@@ -46,6 +46,10 @@ impl MusicApi for LibrespotClient {
         Some(self.connect.clone())
     }
 
+    fn cover_at(&self, cover: &str, size: CoverSize) -> Option<String> {
+        wire::cover_at(cover, size)
+    }
+
     fn share_url(&self, kind: MediaKind, id: &str) -> Option<String> {
         let kind = match kind {
             MediaKind::Track => "track",
@@ -73,6 +77,10 @@ impl MusicApi for LibrespotClient {
 
     async fn artist_catalogue(&self, artist_id: &str, known: &[Track]) -> Result<ArtistCatalogue> {
         artists::catalogue(&self.session, artist_id, known.to_vec()).await
+    }
+
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        artists::tracks(&self.session, artist_id).await
     }
 
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
@@ -182,6 +190,10 @@ impl MusicApi for LibrespotClient {
         pathfinder::search_albums(&self.session, query).await
     }
 
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        pathfinder::search_artists(&self.session, query).await
+    }
+
     async fn search_playlists(&self, query: &str) -> Result<Vec<Playlist>> {
         pathfinder::search_playlists(&self.session, query).await
     }
@@ -240,6 +252,10 @@ impl MusicApi for LibrespotClient {
 
     async fn set_playlist_public(&self, playlist_id: &str, public: bool) -> Result<()> {
         playlists::set_public(&self.session, playlist_id, public).await
+    }
+
+    async fn set_playlist_cover(&self, playlist_id: &str, image: Option<&[u8]>) -> Result<()> {
+        playlists::set_cover(&self.session, playlist_id, image).await
     }
 
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {

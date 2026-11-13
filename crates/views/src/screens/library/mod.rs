@@ -2,7 +2,9 @@ mod albums;
 mod artists;
 mod playlists;
 
+use std::cell::Cell;
 use std::rc::Rc;
+use std::time::Duration;
 
 use crate::chrome::tools::{self, Sliders};
 use crate::chrome::{Chrome, Searchable, Toolbar, Tooled};
@@ -13,8 +15,8 @@ use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Entity, FontWeight, MouseButton, Pixels, Point, Render, ScrollHandle,
-    SharedString, WeakEntity, Window, div, point, px, relative,
+    AnyElement, App, Context, ElementId, Entity, FontWeight, MouseButton, Pixels, Point, Render,
+    ScrollHandle, SharedString, WeakEntity, Window, div, point, px, relative,
 };
 use i18n::t;
 use music::{Shape, Track};
@@ -139,10 +141,10 @@ impl Section {
     fn glyph(self, shape: Shape) -> &'static str {
         match (self, shape) {
             (Section::Songs, Shape::Saved) => "icons/heart.svg",
-            (Section::Songs, Shape::Catalog(_)) => "icons/music.svg",
-            (Section::Albums, _) => "icons/disc-3.svg",
-            (Section::Playlists, _) => "icons/list-music.svg",
-            (Section::Artists, _) => "icons/user-round.svg",
+            (Section::Songs, Shape::Catalog(_)) => LibraryTab::Songs.icon(),
+            (Section::Albums, _) => LibraryTab::Albums.icon(),
+            (Section::Playlists, _) => LibraryTab::Playlists.icon(),
+            (Section::Artists, _) => LibraryTab::Artists.icon(),
         }
     }
 
@@ -189,6 +191,8 @@ pub struct LibraryView {
     settings: Entity<AppSettings>,
     playback: Entity<Playback>,
     playback_status: PlaybackStatus,
+    /// The listed duration is reused until the song table rebuilds its rows.
+    duration: Cell<Option<(u64, Duration)>>,
     section: Section,
     views: [Mode; 4],
     width: Pixels,
@@ -416,6 +420,7 @@ impl LibraryView {
             settings,
             playback,
             playback_status: current_playback,
+            duration: Cell::new(None),
             section: Section::Songs,
             views,
             width,
@@ -518,7 +523,11 @@ impl LibraryView {
             ),
         };
         let shape = self.library.read(cx).shape(self.shelf);
-        Some(Vacancy::new(caption).icon(self.section.glyph(shape)))
+        Some(
+            Vacancy::new(caption)
+                .spoken("library-scanning")
+                .icon(self.section.glyph(shape)),
+        )
     }
 
     fn note(&self, cx: &App) -> Option<Vacancy> {
@@ -533,7 +542,9 @@ impl LibraryView {
             let table = self.table(self.section);
             return match (table.row_count(cx), table.filtering(cx)) {
                 (0, false) => Some(trouble::offline()),
-                (0, true) => Some(Vacancy::new(t!("library-no-matches"))),
+                (0, true) => {
+                    Some(Vacancy::new(t!("library-no-matches")).spoken("library-no-matches"))
+                }
                 _ => None,
             };
         }
@@ -555,7 +566,7 @@ impl LibraryView {
         let shape = library.shape(self.shelf);
 
         Some(match (table.filtering(cx), problem) {
-            (true, _) => Vacancy::new(t!("library-no-matches")),
+            (true, _) => Vacancy::new(t!("library-no-matches")).spoken("library-no-matches"),
             (false, Some(reason)) => self.lost(
                 "library-part-lost",
                 t!("library-part-not-loaded"),
@@ -564,6 +575,7 @@ impl LibraryView {
             ),
             (false, None) => {
                 Vacancy::new(i18n::lookup(self.section.vacancy(self.shelf, shape), None))
+                    .spoken("library-vacancy")
                     .icon(self.section.glyph(shape))
             }
         })
@@ -627,20 +639,28 @@ impl LibraryView {
                 .expected(self.shelf, Section::Songs.part())
                 .map_or(listed, |expected| expected.max(listed)),
         };
-        let duration: std::time::Duration = (0..listed)
-            .filter_map(|display| delegate.source().peek(delegate.row(display), cx))
-            .map(|track| track.duration)
-            .sum();
+        let revision = delegate.revision();
+        let duration = match self.duration.get() {
+            Some((cached, duration)) if cached == revision => duration,
+            _ => {
+                let duration = (0..listed)
+                    .filter_map(|display| delegate.source().peek(delegate.row(display), cx))
+                    .map(|track| track.duration)
+                    .sum();
+                self.duration.set(Some((revision, duration)));
+                duration
+            }
+        };
         let mut strip = HeroMetaStrip::new().text(t!("count-songs", count = count));
         if !duration.is_zero() {
             strip = strip.text(runtime(duration));
         }
         let (title, icon, eyebrow) = match (self.shape(cx), self.shelf) {
             (Shape::Catalog(_), Shelf::Local) => {
-                (t!("nav-songs"), "icons/disc-3.svg", t!("nav-local"))
+                (t!("nav-songs"), LibraryTab::Songs.icon(), t!("nav-local"))
             }
             (Shape::Catalog(_), Shelf::Streaming) => {
-                (t!("nav-songs"), "icons/disc-3.svg", t!("nav-library"))
+                (t!("nav-songs"), LibraryTab::Songs.icon(), t!("nav-library"))
             }
             (Shape::Saved, _) => (
                 t!("library-liked-songs"),
@@ -661,7 +681,6 @@ impl LibraryView {
                     .gap_2()
                     .child(HeroPlayButton::listed(
                         "play-library",
-                        t!("library-play-liked-songs"),
                         self.tracks(),
                         self.playback.clone(),
                     ))
@@ -1031,9 +1050,16 @@ impl LibraryView {
         let pin = track.pin();
         let context = track.clone();
         let view = self.me.clone();
+        let total = listing.read(cx).delegate().row_count();
+        let id: ElementId = match &track.id {
+            Some(id) => SharedString::from(format!("library-track-{id}")).into(),
+            None => ("library-track", display).into(),
+        };
 
         Some(
-            Card::new(("library-track", display), SharedString::from(track.name))
+            Card::new(id, SharedString::from(track.name))
+                .aria_position_in_set(display + 1)
+                .aria_size_of_set(total)
                 .tile(card)
                 .cover(track.cover)
                 .when_some(pin, Pinnable::pin)
@@ -1086,15 +1112,19 @@ impl LibraryView {
         cx: &App,
     ) -> Option<AnyElement> {
         let playlist = self.playlists.read(cx).delegate().source().at(row, cx)?;
+        let total = self.playlists.read(cx).delegate().row_count();
         let build = match self.shelf.local() {
             true => cards::imported_playlist_card,
             false => cards::playlist_card,
         };
+        let id = SharedString::from(format!("library-playlist-{}", playlist.id));
 
         Some(
-            build(("library-playlist", display), &playlist, &self.playback, cx)
+            build(id, &playlist, &self.playback, cx)
                 .tile(card)
                 .flat()
+                .aria_position_in_set(display + 1)
+                .aria_size_of_set(total)
                 .into_any_element(),
         )
     }
@@ -1107,11 +1137,15 @@ impl LibraryView {
         cx: &App,
     ) -> Option<AnyElement> {
         let artist = self.artists.read(cx).delegate().source().at(row, cx)?;
+        let total = self.artists.read(cx).delegate().row_count();
+        let id = SharedString::from(format!("library-artist-{}", artist.id));
 
         Some(
-            cards::artist_card(("library-artist", display), &artist, &self.playback, cx)
+            cards::artist_card(id, &artist, &self.playback, cx)
                 .tile(card)
                 .flat()
+                .aria_position_in_set(display + 1)
+                .aria_size_of_set(total)
                 .into_any_element(),
         )
     }
@@ -1143,9 +1177,12 @@ impl Render for LibraryView {
                     .source()
                     .menu()
                     .for_track(&track, cx),
-                LibraryMenu::Background => new_playlist_menu(cx.listener(|this, _, window, cx| {
-                    this.create_playlist(window, cx);
-                })),
+                LibraryMenu::Background => new_playlist_menu(
+                    self.shelf,
+                    cx.listener(|this, _, window, cx| {
+                        this.create_playlist(window, cx);
+                    }),
+                ),
             };
             Popup::new(position, menu).on_close(cx.listener(|this, _, _, cx| {
                 this.context_menu = None;
@@ -1274,8 +1311,19 @@ impl Tooled for LibraryView {
                 .into_any_element()
         });
 
+        let import = (self.section == Section::Playlists && self.shelf.local()).then(|| {
+            Button::new("import-playlist")
+                .icon("icons/file-music.svg")
+                .tooltip("menu-import-playlist")
+                .small()
+                .ghost()
+                .on_click(|_, _, cx| local::import_playlist(cx))
+                .into_any_element()
+        });
+
         let mut tools = Vec::new();
         tools.extend(create);
+        tools.extend(import);
         let switchable = !self.section.listing();
         tools.extend(switchable.then(|| {
             tools::views(&self.popovers, self.mode(), move |mode, cx| {
@@ -1372,6 +1420,7 @@ fn head(display: usize, label: SharedString, cx: &App) -> AnyElement {
     heading(label.clone(), cx)
         .id(("library-group", display))
         .role(Role::Heading)
+        .aria_level(2)
         .aria_label(label)
         .w_full()
         .pt_2()

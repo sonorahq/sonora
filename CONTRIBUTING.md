@@ -24,7 +24,7 @@ open a pull request.
 
 ## Pull requests
 
-Open them against `dev`. Commits follow [Conventional Commits](https://www.conventionalcommits.org/)
+Open them against `main`. Commits follow [Conventional Commits](https://www.conventionalcommits.org/)
 with no body, and any major user-facing changes should be mentioned under `## [Unreleased]` in
 `CHANGELOG.md`. Keep each entry to one short line about what users can now do, without
 implementation details.

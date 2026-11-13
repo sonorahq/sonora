@@ -1,14 +1,30 @@
 use std::time::Duration;
 
+use gpui::accesskit::Toggled;
 use gpui::prelude::*;
-use gpui::{App, Entity, SharedString, div};
+use gpui::{App, Entity, Global, SharedString, div};
 use i18n::t;
 use state::{Elsewhere, Playback, Repeat, Sonora};
-use ui::{ActiveTheme as _, Button};
+use ui::{ActiveTheme as _, Button, Side};
 
 use crate::shared::ambient;
 
 pub(crate) const NOTCH: f32 = 0.05;
+/// The name the playing cover is seen under, so the fullscreen player's cover flies in from the
+/// player bar's.
+pub(crate) const COVER_FLIGHT: &str = "playing-cover";
+
+/// Whether the playing cover is in the air between the player bar and the fullscreen player,
+/// so the player bar leaves its own undrawn until the flight lands.
+pub(crate) struct CoverAway(pub(crate) bool);
+
+impl Global for CoverAway {}
+
+/// How much of the opening fullscreen player shows yet, from 0 to 1, which its cover fades in
+/// by while it flies above the fade the rest of the player is under.
+pub(crate) struct CoverFade(pub(crate) f32);
+
+impl Global for CoverFade {}
 const STEP: f32 = 0.004;
 
 /// The other device playback is on, which the player shows instead of this app's own.
@@ -96,12 +112,13 @@ pub(crate) fn toggle(playback: &Entity<Playback>, big: bool, frosted: bool, cx: 
     let idle = held.track().is_none() && steered.is_none();
     let playback = playback.clone();
 
-    let (id, icon, tooltip) = match playing {
-        true => ("pause", "icons/pause.svg", "play-pause"),
-        false => ("play", "icons/play.svg", "play-resume"),
+    let (icon, tooltip) = match playing {
+        true => ("icons/pause.svg", "play-pause"),
+        false => ("icons/play.svg", "play-resume"),
     };
 
-    Button::new(id)
+    // One id for both states, so the button keeps its press and swaps one icon for the other.
+    Button::new("play-pause")
         .ghost()
         .when(frosted, Button::frosted)
         .when(!big, Button::small)
@@ -124,6 +141,7 @@ fn shuffle(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
         .small()
         .icon("icons/shuffle.svg")
         .indicator(on)
+        .aria_toggled(Toggled::from(on))
         .tooltip_above("player-shuffle")
         .tint(match on {
             true => theme.primary,
@@ -147,6 +165,7 @@ fn repeat(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
             Repeat::One => "icons/repeat-one.svg",
             _ => "icons/repeat.svg",
         })
+        .blending()
         .indicator(repeat != Repeat::Off)
         .tooltip_above(match repeat {
             Repeat::Off => "player-repeat",
@@ -172,6 +191,7 @@ fn previous(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
         .when(frosted, Button::frosted)
         .small()
         .icon("icons/skip-back.svg")
+        .belt(Side::Left)
         .tooltip_above("player-previous")
         .disabled(!enabled)
         .on_click(move |_, _, cx| {
@@ -189,6 +209,7 @@ fn next(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
         .when(frosted, Button::frosted)
         .small()
         .icon("icons/skip-forward.svg")
+        .belt(Side::Right)
         .tooltip_above("player-next")
         .disabled(!enabled)
         .on_click(move |_, _, cx| {

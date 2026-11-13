@@ -287,11 +287,16 @@ impl RenderOnce for TabBar {
                         cx.stop_propagation();
                     })
             })
-            .children(
-                items
-                    .into_iter()
-                    .map(|item| item.flex_shrink_0().rounded(radius)),
-            );
+            .children({
+                let count = items.len();
+                items.into_iter().enumerate().map(move |(index, item)| {
+                    item.tab()
+                        .aria_position_in_set(index + 1)
+                        .aria_size_of_set(count)
+                        .flex_shrink_0()
+                        .rounded(radius)
+                })
+            });
         // A glass bar has no flat fill to paint a fade with: a wash of its own thin fill hides
         // nothing. It fades the tabs themselves instead, and leaves the blur behind them whole.
         let row = match (glassy, rails.as_ref()) {

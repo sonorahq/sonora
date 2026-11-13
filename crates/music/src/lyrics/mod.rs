@@ -24,18 +24,24 @@ const WORDED: u32 = 400;
 const DRIFTED: u32 = 50;
 const TRUNCATED: u32 = 500;
 const TRUSTED: u32 = 25;
+/// The grade of a full synced sheet, and of one timed word by word when those rank apart.
+const SYNCED_GRADE: u8 = 2;
+const WORDED_GRADE: u8 = 3;
 
 pub fn rank(query: &LyricsQuery, hits: Vec<LyricsHit>) -> Vec<LyricsHit> {
-    rank_with_priority(query, hits, &[])
+    rank_with_priority(query, hits, &[], false)
 }
 
-/// Ranks hits best first and removes duplicates. Word-by-word beats line-synced, which beats
-/// plain or cut-short lyrics. Within one of those kinds the source earlier in `priority` wins,
-/// and the match score settles the rest. Sources missing from `priority` come after the rest.
+/// Ranks hits best first and removes duplicates. Synced lyrics beat plain ones, which beat
+/// cut-short ones, and with `worded_first` lyrics timed word by word beat every other kind.
+/// Within one of those kinds the source earlier in `priority` wins, and the match score, which
+/// favours word-by-word timing, settles the rest. Sources missing from `priority` come after
+/// the rest.
 pub fn rank_with_priority(
     query: &LyricsQuery,
     hits: Vec<LyricsHit>,
     priority: &[String],
+    worded_first: bool,
 ) -> Vec<LyricsHit> {
     let position = |source: &str| {
         priority
@@ -48,7 +54,7 @@ pub fn rank_with_priority(
         .filter(|hit| eligible(query, hit))
         .map(|hit| {
             (
-                grade(query, &hit.lyrics),
+                grade(query, &hit.lyrics, worded_first),
                 position(hit.source),
                 score(query, &hit),
                 hit,
@@ -156,18 +162,28 @@ pub fn score(query: &LyricsQuery, hit: &LyricsHit) -> i64 {
     score
 }
 
-/// What kind of lyrics a sheet is, for ranking: 3 word-by-word, 2 line-synced, 1 plain. A sheet
-/// that ends well before the track does counts as 0 whatever its timing.
-fn grade(query: &LyricsQuery, lyrics: &Lyrics) -> u8 {
-    match (
-        truncated(lyrics, query.duration),
-        lyrics.worded(),
-        lyrics.synced(),
-    ) {
-        (true, _, _) => 0,
-        (false, true, _) => 3,
-        (false, false, true) => 2,
-        (false, false, false) => 1,
+/// Whether a sheet is the best kind a source can offer: synced and running the length of the
+/// track, and with `worded_first` timed word by word too. Once the preferred source has one, no
+/// later answer outranks it.
+pub fn best_kind(query: &LyricsQuery, lyrics: &Lyrics, worded_first: bool) -> bool {
+    let best = match worded_first {
+        true => WORDED_GRADE,
+        false => SYNCED_GRADE,
+    };
+    grade(query, lyrics, worded_first) == best
+}
+
+/// What kind of lyrics a sheet is, for ranking: plain below synced, and with `worded_first`
+/// synced below timed word by word. A sheet that ends well before the track does counts as the
+/// lowest kind whatever its timing.
+fn grade(query: &LyricsQuery, lyrics: &Lyrics, worded_first: bool) -> u8 {
+    if truncated(lyrics, query.duration) {
+        return 0;
+    }
+    match (lyrics.synced(), worded_first && lyrics.worded()) {
+        (_, true) => WORDED_GRADE,
+        (true, false) => SYNCED_GRADE,
+        (false, false) => 1,
     }
 }
 

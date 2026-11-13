@@ -18,11 +18,13 @@ impl PinKind {
         matches!(self, Self::Artist)
     }
 
+    /// The glyph that stands for the kind wherever it has no cover of its own: a pin's
+    /// fallback, a library page's hero and empty state, the sidebar's menus.
     pub fn icon(self) -> &'static str {
         match self {
             Self::Album => "icons/disc-3.svg",
             Self::Artist => "icons/user.svg",
-            Self::Playlist => "icons/list.svg",
+            Self::Playlist => "icons/list-music.svg",
             Self::Song => "icons/music.svg",
         }
     }
@@ -44,6 +46,9 @@ pub struct Pin {
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover: Option<String>,
+    /// An opaque tag for where a dragged row was picked up, which ui never reads. Never stored.
+    #[serde(skip)]
+    pub origin: Option<String>,
 }
 
 impl Pin {
@@ -53,11 +58,17 @@ impl Pin {
             id: id.into(),
             title: title.into(),
             cover: None,
+            origin: None,
         }
     }
 
     pub fn cover(mut self, cover: Option<String>) -> Self {
         self.cover = cover;
+        self
+    }
+
+    pub fn origin(mut self, origin: Option<String>) -> Self {
+        self.origin = origin;
         self
     }
 
@@ -119,11 +130,22 @@ impl DraggedPin {
 }
 
 impl Render for DraggedPin {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        // Only a row that names where it came from can be moved, so only it shows the choice.
+        let badge = self
+            .pin
+            .origin
+            .as_ref()
+            .map(|_| match window.modifiers().shift {
+                true => "icons/arrow-right-left.svg",
+                false => "icons/copy.svg",
+            });
+
         Ghost::new(self.position, self.pin.label())
             .art(self.pin.cover.clone())
             .fallback(self.pin.kind.icon())
             .when(self.pin.kind.round(), Ghost::circle)
+            .when_some(badge, Ghost::badge)
     }
 }
 

@@ -28,7 +28,7 @@ use async_trait::async_trait;
 use crate::apple::playback::Factory;
 use crate::{
     Capabilities, Catalog, InputSource, MusicApi as _, MusicProvider, PromptSink, ProviderSession,
-    Shape, SignIn, SignInPrompt, WebSignIn,
+    Shape, SignIn, SignInFailure, SignInProblem, SignInPrompt, WebSignIn,
 };
 
 pub use client::AppleClient;
@@ -61,6 +61,7 @@ impl AppleProvider {
         let client = AppleClient::connect(&token)
             .await
             .context("cannot reach apple music with that account")?;
+        entitled(&client).await?;
         let profile = client.profile().await?;
         auth::store(&token)?;
         Ok(session(client, profile))
@@ -72,6 +73,7 @@ impl AppleProvider {
         };
         match AppleClient::connect(&token).await {
             Ok(client) => {
+                entitled(&client).await?;
                 let profile = client.profile().await?;
                 Ok(Some(session(client, profile)))
             }
@@ -80,6 +82,28 @@ impl AppleProvider {
                 log::warn!("apple: the stored account is no longer usable: {error:#}");
                 Ok(None)
             }
+        }
+    }
+}
+
+/// Refuses an account Apple says has no active subscription, since every library read and
+/// every play would fail for it. A check that cannot be made lets the account through.
+async fn entitled(client: &AppleClient) -> Result<()> {
+    match client.subscribed().await {
+        Ok(Some(false)) => {
+            log::warn!(
+                "apple: the account has no active subscription in storefront {}",
+                client.storefront()
+            );
+            Err(anyhow::Error::new(SignInFailure(
+                SignInProblem::Subscription,
+            )))
+        }
+        Ok(_) => Ok(()),
+        Err(error) if crate::trouble::offline(&format!("{error:#}")) => Err(error),
+        Err(error) => {
+            log::debug!("apple: cannot read the subscription status: {error:#}");
+            Ok(())
         }
     }
 }

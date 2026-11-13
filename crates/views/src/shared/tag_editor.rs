@@ -1,3 +1,4 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{App, Context, Div, Entity, FocusHandle, Global, Render, SharedString, Window, div};
 use i18n::t;
@@ -278,18 +279,20 @@ impl TagEditor {
     }
 
     fn bar(&self, cx: &Context<Self>) -> TabBar {
-        TabBar::new("tag-editor-sheets").items(Sheet::ALL.map(|sheet| {
-            Button::new(sheet.key())
-                .label(i18n::lookup(sheet.key(), None))
-                .small()
-                .ghost()
-                .selected(self.sheet == sheet)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.sheet = sheet;
-                    Modal::rewind("tag-editor", cx);
-                    cx.notify();
-                }))
-        }))
+        TabBar::new("tag-editor-sheets")
+            .name(t!("tags-edit-title"))
+            .items(Sheet::ALL.map(|sheet| {
+                Button::new(sheet.key())
+                    .label(i18n::lookup(sheet.key(), None))
+                    .small()
+                    .ghost()
+                    .selected(self.sheet == sheet)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.sheet = sheet;
+                        Modal::rewind("tag-editor", cx);
+                        cx.notify();
+                    }))
+            }))
     }
 
     fn rows(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -412,16 +415,20 @@ impl Render for TagEditor {
                 Modal::new("tag-editor", t!("tags-edit-title"))
                     .w(theme.metrics.cover * 3.2)
                     .h(theme.metrics.cover * 3.6)
-                    .detail(SharedString::from(track.name.clone()))
+                    .detail(SharedString::from(track.name))
                     .when(ready, |modal| {
                         modal.child(self.sheets(cx)).child(self.rows(cx))
                     })
                     .when_some(trouble, |modal, trouble| {
+                        let trouble = SharedString::from(trouble);
                         modal.child(
                             div()
+                                .id("tag-editor-trouble")
+                                .role(Role::Alert)
+                                .aria_label(trouble.clone())
                                 .text_size(theme.text(Text::Small))
                                 .text_color(theme.danger)
-                                .child(SharedString::from(trouble)),
+                                .child(trouble),
                         )
                     })
                     .action(

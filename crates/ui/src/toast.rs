@@ -214,7 +214,15 @@ impl RenderOnce for Toast {
         // The card reads as one status named for its message, since the text
         // runs inside carry no nodes of their own.
         let name = message.clone();
-        let about = detail.clone();
+        // the percentage drawn beside a progress ring is read after the detail
+        let percent = progress
+            .map(|done| i18n::t!("toast-percent", percent = (done * 100.).floor() as usize));
+        let about = match (detail.clone(), percent) {
+            (Some(detail), Some(percent)) => {
+                Some(SharedString::from(format!("{detail}, {percent}")))
+            }
+            (detail, percent) => detail.or(percent),
+        };
 
         let leading = match (progress, loading, icon) {
             (Some(done), _, _) => Some(
