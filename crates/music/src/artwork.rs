@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{Context as _, Result};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -19,6 +21,9 @@ const MUSICBRAINZ_SCORE: u32 = 90;
 const COVER_ART: &str = "https://coverartarchive.org/release-group";
 /// Uguu, a temporary host: anonymous uploads served as plain images, gone after three hours.
 const UGUU: &str = "https://uguu.se/upload";
+/// How long the fetch of a provider's cover, or its upload, may take before it counts as failed
+/// and the search answers instead.
+const UPLOAD_TIMEOUT: Duration = Duration::from_secs(20);
 /// What an uploaded cover is shrunk to before it leaves the machine.
 const UPLOAD_LIMITS: CoverLimits = CoverLimits {
     side: 512,
@@ -185,6 +190,8 @@ impl ArtworkSearch {
             let found = match source {
                 Source::Deezer => self.deezer(query).await,
                 Source::Itunes => self.itunes(query).await,
+                // MusicBrainz knows albums only, so a query by title never asks it
+                Source::MusicBrainz if query.album.is_empty() => continue,
                 Source::MusicBrainz => self.musicbrainz(query).await,
             };
             match found {
@@ -211,7 +218,7 @@ impl ArtworkSearch {
                     .into_iter()
                     .filter(|album| same_artist(&album.artist.name, &query.artist))
                     .map(|album| (album.title, album.cover_xl));
-                Ok(closest(candidates, &query.wanted))
+                Ok(closest(candidates, &query.wanted, true))
             }
             true => {
                 let found: Vec<FoundTrack> = self.search(TRACKS, &query.title, query).await?;
@@ -219,7 +226,7 @@ impl ArtworkSearch {
                     .into_iter()
                     .filter(|track| same_artist(&track.artist.name, &query.artist))
                     .map(|track| (track.title, track.album.cover_xl));
-                Ok(closest(candidates, &query.wanted))
+                Ok(closest(candidates, &query.wanted, false))
             }
         }
     }
@@ -261,15 +268,12 @@ impl ArtworkSearch {
                     .map(|artwork| artwork.replace(ITUNES_THUMB, ITUNES_LARGE));
                 (title.unwrap_or_default(), cover)
             });
-        Ok(closest(candidates, &query.wanted))
+        Ok(closest(candidates, &query.wanted, !query.album.is_empty()))
     }
 
     /// The front cover the Cover Art Archive holds for the release group MusicBrainz matches to
-    /// `query`. MusicBrainz knows albums only, so a query by title finds nothing here.
+    /// the album of `query`.
     async fn musicbrainz(&self, query: &ArtworkQuery) -> Result<Option<String>> {
-        if query.album.is_empty() {
-            return Ok(None);
-        }
         let terms = format!(
             "releasegroup:\"{}\" AND artist:\"{}\"",
             quoted(&query.album),
@@ -308,7 +312,7 @@ impl ArtworkSearch {
                     Some(format!("{COVER_ART}/{}/front-500", group.id)),
                 )
             });
-        let Some(cover) = closest(candidates, &query.wanted) else {
+        let Some(cover) = closest(candidates, &query.wanted, true) else {
             return Ok(None);
         };
 
@@ -339,6 +343,7 @@ impl ArtworkSearch {
         let picture = self
             .http
             .get(source)
+            .timeout(UPLOAD_TIMEOUT)
             .send()
             .await
             .map_err(reqwest::Error::without_url)
@@ -363,6 +368,7 @@ impl ArtworkSearch {
         let answer: Uploaded = self
             .http
             .post(UGUU)
+            .timeout(UPLOAD_TIMEOUT)
             .header(reqwest::header::USER_AGENT, AGENT)
             .header(
                 reqwest::header::CONTENT_TYPE,
@@ -420,22 +426,31 @@ impl ArtworkSearch {
 /// The cover of the candidate whose name is closest to `wanted`, the album or title as the track
 /// names it. Names are compared without their brackets, and a candidate that matches exactly
 /// beats one that only adds words, such as "- EP". A candidate whose brackets name an edition
-/// `wanted` does not, such as "(blind)", is never taken, since it may wear another cover.
+/// `wanted` does not, such as "(blind)", is never taken, since it may wear another cover. When
+/// `album` is set the same holds the other way, so "Album" never stands in for "Album (Deluxe)".
 fn closest(
     candidates: impl Iterator<Item = (String, Option<String>)>,
     wanted: &str,
+    album: bool,
 ) -> Option<String> {
     let words = compared(wanted);
     let words: Vec<&str> = words.split(' ').collect();
+    let edition = match album {
+        true => bracketed(wanted),
+        false => Vec::new(),
+    };
     let wanted = compared(&searchable(wanted));
     let mut near = None;
     for (name, cover) in candidates {
         let Some(cover) = cover.filter(|cover| cover.starts_with("https://")) else {
             continue;
         };
+        let named = compared(&name);
+        let named: Vec<&str> = named.split(' ').collect();
         let other_edition = bracketed(&name)
             .iter()
-            .any(|word| !words.contains(&word.as_str()));
+            .any(|word| !words.contains(&word.as_str()))
+            || edition.iter().any(|word| !named.contains(&word.as_str()));
         if other_edition {
             continue;
         }

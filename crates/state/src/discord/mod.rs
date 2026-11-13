@@ -129,17 +129,18 @@ struct Discord {
     artwork: ArtworkSearch,
     /// Covers found by name, and the queries that found nothing, so neither is asked twice.
     found: HashMap<ArtworkQuery, Option<String>>,
-    /// The query whose search failed last, which counts as a miss until another was asked.
+    /// The query whose search failed last, which counts as a miss until another search starts.
     failed: Option<ArtworkQuery>,
     /// Covers uploaded from the provider's own art, by album, with when they went up.
     uploaded: HashMap<String, (String, Instant)>,
-    /// The album whose upload failed last, which falls back to the search until another was
-    /// uploaded.
+    /// The album whose upload failed last, which falls back to the search until another upload
+    /// starts.
     upload_failed: Option<String>,
     /// The search or upload the last presence went without, taken by `look_up` once it is
     /// published.
     wanted: Option<Wanted>,
-    /// The search or upload last started. A failed one is not retried until another was asked.
+    /// The search or upload still running, so a presence published meanwhile does not start it
+    /// twice.
     asked: Option<Wanted>,
     lookup: Option<Task<()>>,
     _worker: Task<()>,
@@ -231,6 +232,10 @@ impl Discord {
             return;
         }
         self.asked = Some(wanted.clone());
+        match &wanted {
+            Wanted::Search(_) => self.failed = None,
+            Wanted::Upload(_) => self.upload_failed = None,
+        }
 
         let search = self.artwork.clone();
         let io = self.io.clone();
@@ -241,6 +246,7 @@ impl Discord {
 
                 this.update(cx, |this, cx| {
                     this.lookup = None;
+                    this.asked = None;
                     match found {
                         Ok(cover) => {
                             this.found.insert(query, cover);
@@ -260,10 +266,10 @@ impl Discord {
 
                 this.update(cx, |this, cx| {
                     this.lookup = None;
+                    this.asked = None;
                     match uploaded {
                         Ok(url) => {
                             this.uploaded.insert(upload.key, (url, Instant::now()));
-                            this.upload_failed = None;
                         }
                         Err(error) => {
                             log::warn!("discord: cannot upload the cover: {error:#}");
