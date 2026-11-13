@@ -3029,6 +3029,10 @@ impl Playback {
             self.follow_soloist_track(id, at, cx);
             return;
         }
+        if let BackendEvent::StartupTrack { id, at } = event {
+            self.follow_soloist_track(id, at, cx);
+            return;
+        }
         if local != self.local_active() {
             return;
         }
@@ -3060,7 +3064,8 @@ impl Playback {
             BackendEvent::OutputChanged { .. }
             | BackendEvent::Signal { .. }
             | BackendEvent::QueueChanged { .. }
-            | BackendEvent::QueuedTrack { .. } => {}
+            | BackendEvent::QueuedTrack { .. }
+            | BackendEvent::StartupTrack { .. } => {}
             BackendEvent::Unavailable { .. }
             | BackendEvent::Throttled { .. }
             | BackendEvent::Refused
