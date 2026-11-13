@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-11-13
+
 ### Added
 
 - Show your Subsonic server's own cover on the Discord status, uploaded for 3 hours to uguu.se. Turn it off under Settings, Discord.
@@ -53,10 +55,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reduce redraw work when scrolling large Favorites collections.
 - Song durations stay aligned when hovering over an artist's favorite songs.
 - Reduce fullscreen visualizer redraws while keeping animation at up to 120 FPS.
-
 - Mixed English and Japanese lyrics no longer show duplicate English romanizations or misplaced spaces inside parentheses.
 - With Spotify, lyrics and the progress bar no longer run ahead of the music.
 - The icon on the Your Library and History covers stays visible when the adaptive theme takes a dark colour from the playing cover.
+- Lyrics in the sidebar keep their place after a long stay in the fullscreen player.
 
 ## [0.48.1] - 2026-11-08
 
@@ -2630,7 +2632,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.48.1...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.49.0...HEAD
+[0.49.0]: https://github.com/sonorahq/sonora/compare/v0.48.1...v0.49.0
 [0.48.1]: https://github.com/sonorahq/sonora/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/sonorahq/sonora/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/sonorahq/sonora/compare/v0.46.0...v0.47.0
