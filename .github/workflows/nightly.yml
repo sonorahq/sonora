@@ -48,7 +48,7 @@ jobs:
             echo "::notice::main is still at ${GITHUB_SHA:0:7}, which the current nightly was built from"
             exit 0
           fi
-          # A release refreshes nightly and then updates flake.nix, which does not affect the binary.
+          # A change to flake.nix alone does not affect the binary.
           if [ "$EVENT" = schedule ] && [ -n "$built" ]; then
             changed="$(gh api "repos/$GITHUB_REPOSITORY/compare/$built...$GITHUB_SHA" \
               --jq '[.files[].filename | select(. != "flake.nix")] | length' || echo unknown)"
