@@ -198,7 +198,7 @@ tray-icon = { version = "0.26", default-features = false }
 unic-langid = { version = "0.9", features = ["macros"] }
 unicode-bidi = "0.3"
 unicode-segmentation = "1.13"
-ytmusic = { git = "https://github.com/sonorahq/ytmusic-rs", rev = "db4ab87" }
+ytmusic = { git = "https://github.com/sonorahq/ytmusic-rs", rev = "99f7d14" }
 
 librespot-core = { version = "0.8.0", default-features = false, features = [
     "rustls-tls-native-roots",

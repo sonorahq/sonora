@@ -452,6 +452,7 @@ fn artists_of(value: &Value) -> (String, Vec<ArtistRef>) {
             Some(ArtistRef {
                 name: text(artist, "name")?.to_owned(),
                 id: artist.get("id").and_then(id),
+                channel: false,
             })
         })
         .collect();

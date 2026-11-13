@@ -352,6 +352,7 @@ fn item(item: Item) -> Option<GenreItem> {
                     Some(ArtistRef {
                         name: artist.profile?.name,
                         id: trimmed(&artist.uri, ARTIST_PREFIX),
+                        channel: false,
                     })
                 })
                 .collect();

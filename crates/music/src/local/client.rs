@@ -785,6 +785,7 @@ mod tests {
             artist_refs: vec![ArtistRef {
                 name: artists.to_owned(),
                 id: None,
+                channel: false,
             }],
             album: album.to_owned(),
             album_id: None,

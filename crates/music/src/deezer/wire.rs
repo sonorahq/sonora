@@ -146,12 +146,14 @@ fn artists_of(value: &Value) -> (String, Vec<ArtistRef>) {
             (Some((names, artist_id)), 1) => vec![ArtistRef {
                 name: names[0].clone(),
                 id: Some(artist_id),
+                channel: false,
             }],
             _ => names
                 .iter()
                 .map(|name| ArtistRef {
                     name: name.clone(),
                     id: None,
+                    channel: false,
                 })
                 .collect(),
         };
@@ -165,6 +167,7 @@ fn artists_of(value: &Value) -> (String, Vec<ArtistRef>) {
             vec![ArtistRef {
                 name: name.to_owned(),
                 id: artist.get("id").and_then(id),
+                channel: false,
             }],
         );
     }
@@ -174,6 +177,7 @@ fn artists_of(value: &Value) -> (String, Vec<ArtistRef>) {
         false => vec![ArtistRef {
             name: name.to_owned(),
             id: value.get("ART_ID").and_then(id),
+            channel: false,
         }],
     };
     (name.to_owned(), refs)

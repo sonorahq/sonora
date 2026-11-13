@@ -677,7 +677,8 @@ fn playlists_of(playlists: &[Playlist], catalog: &[Playlist], query: &Query) -> 
 
 /// The artists that fit `query`. The ones the provider's artist search found rank by their whole
 /// place in its answer, as found songs do. Artists drawn from songs get only part of their song's
-/// place, so they come after the found ones unless their name fits the query better.
+/// place, so they come after the found ones unless their name fits the query better. A plain video
+/// channel credited on a track or album is never offered as an artist.
 fn artists(
     library: &[Track],
     catalog: &Catalog,
@@ -729,11 +730,12 @@ fn artists(
         let artist = ArtistRef {
             name: found.name.clone(),
             id: Some(found.id.clone()),
+            channel: false,
         };
         record(&artist, found.cover.as_ref(), score, 0, 0);
     }
     for (track, rank) in sources(library, &catalog.tracks) {
-        for artist in &track.artist_refs {
+        for artist in track.artist_refs.iter().filter(|artist| !artist.channel) {
             let Some(score) = favored(named(&artist.name, query), rank).max(inherited(rank)) else {
                 continue;
             };
@@ -742,7 +744,7 @@ fn artists(
         }
     }
     for album in albums {
-        for artist in &album.artist_refs {
+        for artist in album.artist_refs.iter().filter(|artist| !artist.channel) {
             let Some(score) = favored(named(&artist.name, query), None) else {
                 continue;
             };
@@ -894,6 +896,7 @@ mod tests {
                 .map(|name| ArtistRef {
                     name: name.to_owned(),
                     id: None,
+                    channel: false,
                 })
                 .collect(),
             album: album.to_owned(),

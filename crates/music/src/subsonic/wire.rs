@@ -161,6 +161,7 @@ pub(crate) fn artists_of(
             .map(|item| ArtistRef {
                 name: item.name.clone(),
                 id: Some(item.id.clone()),
+                channel: false,
             })
             .collect();
         return match display {
@@ -182,6 +183,7 @@ pub(crate) fn artists_of(
         (false, id) => vec![ArtistRef {
             name: name.clone(),
             id,
+            channel: false,
         }],
     };
     (name, refs)

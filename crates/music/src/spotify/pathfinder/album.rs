@@ -276,6 +276,7 @@ fn artists(artists: &Artists) -> (String, Vec<ArtistRef>) {
             Some(ArtistRef {
                 name,
                 id: artist.uri.strip_prefix(ARTIST_PREFIX).map(str::to_owned),
+                channel: false,
             })
         })
         .collect();

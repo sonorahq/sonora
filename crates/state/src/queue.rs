@@ -1613,10 +1613,12 @@ mod tests {
             ArtistRef {
                 name: "One".to_owned(),
                 id: Some("a1".to_owned()),
+                channel: false,
             },
             ArtistRef {
                 name: "Two".to_owned(),
                 id: None,
+                channel: false,
             },
         ];
         source.album = "Album".to_owned();

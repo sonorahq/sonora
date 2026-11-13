@@ -222,6 +222,7 @@ impl MusicApi for YouTubeClient {
             artists: vec![ytmusic::ArtistRef {
                 name: author,
                 id: channel,
+                channel: false,
             }],
             album: None,
             duration: Some(std::time::Duration::from_secs(seconds)),
