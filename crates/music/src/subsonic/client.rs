@@ -1286,3 +1286,25 @@ fn bare(error: opensubsonic::Error) -> opensubsonic::Error {
         other => other,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_provider_with_no_station_playlist_answers_none() {
+        let signature = Signature {
+            token: "token".to_owned(),
+            salt: "salt".to_owned(),
+        };
+        let client = SubsonicClient::new(
+            "http://localhost:4533".to_owned(),
+            "user".to_owned(),
+            "password".to_owned(),
+            &signature,
+        )
+        .unwrap();
+
+        assert_eq!(client.radio_playlist("track").await.unwrap(), None);
+    }
+}

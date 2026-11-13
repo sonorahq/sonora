@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Save the station behind a Tidal or Spotify track radio to your library with Save station in the queue.
 - Scrobble to your own ListenBrainz server or to multi-scrobbler by filling in the server address when you connect ListenBrainz.
 - Hover a cut-off track title in the player bar to read it in full.
 

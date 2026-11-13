@@ -10,7 +10,7 @@ use music::connect::{self, Command, Repeat};
 use music::vault::Vault;
 use music::{
     Analyzer, Meter, MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent, PlaybackEvents,
-    PlaybackFactory, Player, Quality, Spectrum, Track, TrackSignal, Transcode,
+    PlaybackFactory, Player, Playlist, Quality, Spectrum, Track, TrackSignal, Transcode,
 };
 use ui::{Pin, PinKind};
 
@@ -409,6 +409,23 @@ struct Station {
     next: String,
 }
 
+/// The playlist a radio queue's provider keeps as the station, looked up for `origin`. `playlist`
+/// is `None` while the lookup runs and when the provider has no station playlist.
+struct Kept {
+    origin: Origin,
+    playlist: Option<Playlist>,
+}
+
+/// The station playlist to offer for a queue playing from `current`, or `None` when the lookup
+/// was for another collection or found no station.
+fn offered<'a>(kept: Option<&'a Kept>, current: Option<&Origin>) -> Option<&'a Playlist> {
+    let kept = kept?;
+    match current == Some(&kept.origin) {
+        true => kept.playlist.as_ref(),
+        false => None,
+    }
+}
+
 /// A file handed in from the OS that could not be read as a track.
 struct Unread {
     name: String,
@@ -484,6 +501,10 @@ pub struct Playback {
     station: Option<Station>,
     /// The fetch of the station's next stretch; done once it lands, so one runs at a time.
     topping: Option<Task<()>>,
+    /// The playlist behind the radio queue, once looked up, for saving the station.
+    kept: Option<Kept>,
+    /// The lookup of `kept`'s playlist.
+    keeping: Option<Task<()>>,
     /// Continuations in a row that brought no track the queue had not already heard.
     dry: u8,
     /// The streaming engine's event pump; dropping it stops listening.
@@ -622,6 +643,7 @@ impl Playback {
         cx.observe(&queue, |this, _, cx| {
             this.continue_station(cx);
             this.suggest_similar(false, cx);
+            this.find_station_playlist(cx);
         })
         .detach();
 
@@ -671,6 +693,8 @@ impl Playback {
             seeded: None,
             station: None,
             topping: None,
+            kept: None,
+            keeping: None,
             dry: 0,
             task: None,
             local_task: None,
@@ -1731,6 +1755,60 @@ impl Playback {
     /// something at the end of the queue that will be skipped for being unavailable.
     fn seed(&self, cx: &Context<Self>) -> Option<Track> {
         self.queue.read(cx).current().cloned()
+    }
+
+    /// The playlist behind the radio queue that is playing, which saving the station adds to the
+    /// library. `None` while it is being looked up, when the provider keeps no station playlist
+    /// and when the queue is not a radio.
+    pub fn station_playlist(&self, cx: &App) -> Option<&Playlist> {
+        offered(self.kept.as_ref(), self.origin(cx))
+    }
+
+    /// Asks the provider for the playlist behind a radio queue, once for each radio the queue
+    /// plays from, and keeps the answer for `station_playlist`. A provider with no station,
+    /// or a lookup that fails, leaves nothing to save.
+    fn find_station_playlist(&mut self, cx: &mut Context<Self>) {
+        let origin = self
+            .origin(cx)
+            .filter(|origin| origin.whence == Whence::Radio);
+        let Some(origin) = origin.cloned() else {
+            self.kept = None;
+            self.keeping = None;
+            return;
+        };
+        if self.kept.as_ref().is_some_and(|kept| kept.origin == origin) {
+            return;
+        }
+        self.keeping = None;
+        self.kept = Some(Kept {
+            origin: origin.clone(),
+            playlist: None,
+        });
+        let Some(client) = self.client_for(&origin.id, cx) else {
+            return;
+        };
+
+        let seed = origin.id.clone();
+        self.keeping = Some(Io::global(cx).load(
+            async move {
+                let Some(id) = client.radio_playlist(&seed).await? else {
+                    return anyhow::Ok(None);
+                };
+                Ok(Some(client.playlist(&id).await?.playlist))
+            },
+            move |this, found, cx| {
+                this.keeping = None;
+                let playlist = found.unwrap_or_else(|error| {
+                    log::warn!("playback: no station playlist for the radio: {error:#}");
+                    None
+                });
+                if this.kept.as_ref().is_some_and(|kept| kept.origin == origin) {
+                    this.kept = Some(Kept { origin, playlist });
+                    cx.notify();
+                }
+            },
+            cx,
+        ));
     }
 
     /// Fetches the station's next stretch once fewer than `RADIO_LOOKAHEAD` tracks are left to
@@ -3160,6 +3238,8 @@ impl Playback {
             self.suggest = None;
             self.seeded = None;
             self.leave_station();
+            self.kept = None;
+            self.keeping = None;
             self.preloaded = None;
             self.skipped = None;
             self.blocked_until = None;
@@ -3425,7 +3505,38 @@ fn retire(engine: Option<Box<dyn Player>>) {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{LiveClock, gain};
+    use music::Playlist;
+
+    use super::{Kept, LiveClock, Origin, gain, offered};
+
+    fn kept(origin: Origin, playlist: Option<Playlist>) -> Kept {
+        Kept { origin, playlist }
+    }
+
+    #[test]
+    fn offers_the_station_playlist_of_the_radio_that_is_playing() {
+        let playlist = Playlist {
+            id: "mix:a".to_owned(),
+            ..Playlist::default()
+        };
+        let found = kept(Origin::radio("seed"), Some(playlist.clone()));
+
+        assert_eq!(
+            offered(Some(&found), Some(&Origin::radio("seed"))),
+            Some(&playlist)
+        );
+        assert_eq!(offered(Some(&found), Some(&Origin::radio("other"))), None);
+        assert_eq!(offered(Some(&found), Some(&Origin::album("seed"))), None);
+        assert_eq!(offered(Some(&found), None), None);
+    }
+
+    #[test]
+    fn offers_nothing_where_the_provider_has_no_station() {
+        let none = kept(Origin::radio("seed"), None);
+
+        assert_eq!(offered(Some(&none), Some(&Origin::radio("seed"))), None);
+        assert_eq!(offered(None, Some(&Origin::radio("seed"))), None);
+    }
 
     #[test]
     fn never_amplifies_past_unity() {

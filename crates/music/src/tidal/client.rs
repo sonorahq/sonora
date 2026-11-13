@@ -1597,6 +1597,14 @@ impl MusicApi for TidalClient {
         Ok((tracks, None))
     }
 
+    /// The mix Tidal keeps for the track, as the playlist id `add_playlist_to_library` takes.
+    async fn radio_playlist(&self, track_id: &str) -> Result<Option<String>> {
+        let mix = self
+            .get(&format!("/tracks/{}/mix", escape::component(track_id)), &[])
+            .await?;
+        Ok(mix_playlist_id(&mix))
+    }
+
     /// Leaves out what cannot play, which in a search is mostly Atmos copies listed beside the
     /// stereo track they duplicate.
     async fn search(&self, query: &str) -> Result<Vec<Track>> {
@@ -1795,11 +1803,26 @@ fn encoding(answer: &Value, codec: &str) -> Option<Encoding> {
     Some(Encoding::Other)
 }
 
+/// The playlist id of the mix an answer from `/tracks/{id}/mix` names, with the prefix that
+/// marks a mix among playlists.
+fn mix_playlist_id(answer: &Value) -> Option<String> {
+    wire::text(answer, "id").map(|mix_id| format!("{}{mix_id}", wire::MIX))
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{Encoding, encoding};
+    use super::{Encoding, encoding, mix_playlist_id};
+
+    #[test]
+    fn a_track_mix_is_named_as_a_mix_playlist() {
+        assert_eq!(
+            mix_playlist_id(&json!({"id": "0a1b2c"})),
+            Some("mix:0a1b2c".to_owned())
+        );
+        assert_eq!(mix_playlist_id(&json!({})), None);
+    }
 
     #[test]
     fn flac_reports_the_depth_and_rate_tidal_names() {

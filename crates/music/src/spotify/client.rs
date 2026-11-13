@@ -23,12 +23,17 @@ const MADE_FOR_YOU: &str = "0JQ5DAt0tbjZptfcdMSKl3";
 pub struct LibrespotClient {
     session: Session,
     connect: Arc<Connect>,
+    stations: radio::Stations,
 }
 
 impl LibrespotClient {
     pub fn new(session: Session) -> Self {
         let connect = Arc::new(crate::spotify::connect::open(session.clone()));
-        Self { session, connect }
+        Self {
+            session,
+            connect,
+            stations: radio::Stations::default(),
+        }
     }
 
     pub fn session(&self) -> &Session {
@@ -179,7 +184,14 @@ impl MusicApi for LibrespotClient {
         track_id: &str,
         _from: Option<&str>,
     ) -> Result<(Vec<Track>, Option<String>)> {
-        Ok((radio::track_radio(&self.session, track_id).await?, None))
+        let tracks = radio::track_radio(&self.session, track_id, &self.stations).await?;
+        Ok((tracks, None))
+    }
+
+    /// The playlist the last radio fetched for the track was read from, which that fetch
+    /// already named, so nothing is requested.
+    async fn radio_playlist(&self, track_id: &str) -> Result<Option<String>> {
+        Ok(self.stations.playlist(track_id))
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>> {

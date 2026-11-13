@@ -13,7 +13,7 @@ use gpui::{
     div, ease_in_out, px, relative, size, svg, uniform_list,
 };
 use i18n::t;
-use music::{Contributor, Shape, Track, Voice};
+use music::{Contributor, Playlist, Shape, Track, Voice};
 use router::{Destination, LibraryTab, Link as _};
 use state::{
     AppSettings, Lyrics, LyricsState, Network, Playback, PlaybackState, Queue, QueuePosition,
@@ -903,6 +903,22 @@ impl Aside {
                                 )
                             },
                         )
+                        .when_some(self.station_to_save(cx), |this, station| {
+                            this.child(
+                                Button::new("save-station")
+                                    .ghost()
+                                    .small()
+                                    .label(t!("queue-save-station"))
+                                    .tint(theme.muted_foreground)
+                                    .on_click(move |_, _, cx| {
+                                        let station = station.clone();
+                                        let library = Sonora::global(cx).library.clone();
+                                        library.update(cx, |library, cx| {
+                                            library.add_playlist_to_library(station, cx)
+                                        });
+                                    }),
+                            )
+                        })
                         .child(
                             Button::new("reset-queue")
                                 .ghost()
@@ -927,6 +943,17 @@ impl Aside {
                         ),
                 )
             })
+    }
+
+    /// The playlist behind the radio queue when the provider keeps one and the library does not
+    /// hold it yet, so there is a station to save.
+    fn station_to_save(&self, cx: &App) -> Option<Playlist> {
+        let station = self.playback.read(cx).station_playlist(cx)?;
+        let saved = Sonora::global(cx).library.read(cx).playlist(&station.id);
+        match saved {
+            Some(_) => None,
+            None => Some(station.clone()),
+        }
     }
 
     fn follow(&self, cx: &mut Context<Self>) -> Option<Div> {
