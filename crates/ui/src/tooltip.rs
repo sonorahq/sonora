@@ -6,8 +6,8 @@ use std::time::Duration;
 use gpui::prelude::*;
 use gpui::{
     Anchor, AnyElement, App, Bounds, Context, DispatchPhase, Display, ElementId, GlobalElementId,
-    InspectorElementId, LayoutId, MouseMoveEvent, Pixels, Position, SharedString, Style, Window,
-    anchored, canvas, div, point, px,
+    InspectorElementId, LayoutId, MouseMoveEvent, Pixels, Position, SharedString, Style,
+    TextLayout, Window, anchored, canvas, div, point, px,
 };
 
 use crate::metrics::Text;
@@ -42,6 +42,8 @@ pub struct Tooltip {
     perch: Perch,
     /// The owning element in window coordinates. A following tooltip ignores it.
     host: Bounds<Pixels>,
+    /// Draws nothing, for a clipped tooltip whose text showed in full when the pointer arrived.
+    hidden: bool,
 }
 
 /// Attaches a tooltip to an element with the show delay its perch calls for. A tooltip perched
@@ -51,6 +53,9 @@ pub trait Tipped: Sized {
     fn tip(self, key: impl Into<SharedString>, perch: Perch) -> Self;
     /// Shows `text` on hover as it is, without a Fluent lookup.
     fn tip_label(self, text: impl Into<SharedString>, perch: Perch) -> Self;
+    /// Shows `text` on hover as it is, but only when `layout` drew it cut short, such as a title
+    /// that ends in an ellipsis. `layout` is the handle of the `StyledText` that renders `text`.
+    fn tip_clipped(self, text: impl Into<SharedString>, layout: TextLayout, perch: Perch) -> Self;
 }
 
 /// Places a tooltip bubble centred against its host, on the preferred side when the window has
@@ -63,16 +68,23 @@ struct Beside {
 
 impl<E: StatefulInteractiveElement + ParentElement> Tipped for E {
     fn tip(self, key: impl Into<SharedString>, perch: Perch) -> Self {
-        attach(self, key.into(), false, perch)
+        attach(self, key.into(), false, None, perch)
     }
 
     fn tip_label(self, text: impl Into<SharedString>, perch: Perch) -> Self {
-        attach(self, text.into(), true, perch)
+        attach(self, text.into(), true, None, perch)
+    }
+
+    fn tip_clipped(self, text: impl Into<SharedString>, layout: TextLayout, perch: Perch) -> Self {
+        attach(self, text.into(), true, Some(layout), perch)
     }
 }
 
 impl Render for Tooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.hidden {
+            return div().into_any_element();
+        }
         let theme = *cx.theme();
         let follow = self.perch == Perch::Follow;
         let bubble = div()
@@ -208,21 +220,25 @@ impl Element for Beside {
 }
 
 /// Wires a tooltip into `element`. A perched tooltip also lays a recorder over the element so
-/// the tooltip knows where the element stood, and a following one drops the hover delay.
-fn attach<E>(element: E, text: SharedString, raw: bool, perch: Perch) -> E
+/// the tooltip knows where the element stood, and a following one drops the hover delay. With
+/// `clip`, the tooltip stays empty unless that layout drew a shorter text than `text`.
+fn attach<E>(element: E, text: SharedString, raw: bool, clip: Option<TextLayout>, perch: Perch) -> E
 where
     E: StatefulInteractiveElement + ParentElement,
 {
+    let hidden = move |text: &str| clip.as_ref().is_some_and(|layout| layout.text() == text);
     match perch {
         Perch::Follow => element
             .tooltip_show_delay(Duration::ZERO)
             .tooltip(move |_, cx| {
                 let text = text.clone();
+                let hidden = hidden(&text);
                 cx.new(|_| Tooltip {
                     text,
                     raw,
                     perch,
                     host: Bounds::default(),
+                    hidden,
                 })
                 .into()
             }),
@@ -233,6 +249,7 @@ where
                 .tooltip_show_delay(DELAY)
                 .tooltip(move |window, cx| {
                     let text = text.clone();
+                    let hidden = hidden(&text);
                     let host = host.get().unwrap_or_else(|| {
                         Bounds::new(window.mouse_position(), Default::default())
                     });
@@ -241,6 +258,7 @@ where
                         raw,
                         perch,
                         host,
+                        hidden,
                     })
                     .into()
                 })
