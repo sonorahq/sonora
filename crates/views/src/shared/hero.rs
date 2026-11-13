@@ -37,16 +37,13 @@ pub(crate) fn copyright_notice(text: &str) -> SharedString {
 /// The notices an album page prints under its tracks: the provider's copyright lines, or the
 /// label behind ℗ when the provider names only that. Empty when it names neither.
 pub(crate) fn copyright_notices(album: &Album) -> Vec<SharedString> {
-    if !album.copyrights.is_empty() {
-        return album
-            .copyrights
-            .iter()
-            .map(|line| copyright_notice(line))
-            .collect();
+    let lines = album.copyright_lines();
+    if !lines.is_empty() {
+        return lines.into_iter().map(copyright_notice).collect();
     }
-    match album.label.trim() {
-        "" => Vec::new(),
-        label => vec![t!("album-label", label = label)],
+    match album.label_name() {
+        None => Vec::new(),
+        Some(label) => vec![t!("album-label", label = label)],
     }
 }
 
