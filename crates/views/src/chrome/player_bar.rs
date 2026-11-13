@@ -2,19 +2,20 @@ use router::{Destination, Link, navigate};
 use std::time::Duration;
 use ui::ActiveTheme as _;
 use ui::Tails as _;
+use ui::Tipped as _;
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, Context, Entity, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Point, Render, SharedString,
+    Point, Render, SharedString, StyledText,
 };
 use gpui::{Window, div, px};
 use i18n::t;
 use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
 use state::{AppSettings, Playback, PlayerBarLayout, Queue, SideTab, Sonora};
 use ui::{
-    Artwork, Button, ExplicitBadge, Flight, InlineLink, InlineLinks, Pinnable, Popup, Room,
+    Artwork, Button, ExplicitBadge, Flight, InlineLink, InlineLinks, Perch, Pinnable, Popup, Room,
     Scrollbar, Scrubber, ScrubberState, clock, tabular,
 };
 
@@ -385,29 +386,33 @@ impl PlayerBar {
         let track = shown.as_ref();
         let explicit = track.is_some_and(|track| track.explicit);
         let title = match track {
-            Some(track) => div()
-                .id("now-playing-track")
-                .when_some(track.pin(), Pinnable::pin)
-                .map(|this| match track.album_id.clone() {
-                    Some(album_id) => this
-                        .aria_label(SharedString::from(track.name.clone()))
-                        .hover(|style| style.underline())
-                        .link(Destination::Album(album_id.into())),
-                    None => this
-                        .role(Role::Label)
-                        .aria_value(SharedString::from(track.name.clone())),
-                })
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                        window.prevent_default();
-                        this.open_playing_menu(event.position, cx);
-                    }),
-                )
-                .child(SharedString::from(track.name.clone()))
-                .min_w_0()
-                .truncate()
-                .tails(),
+            Some(track) => {
+                let name = SharedString::from(track.name.clone());
+                let text = StyledText::new(name.clone());
+                let layout = text.layout().clone();
+                div()
+                    .id("now-playing-track")
+                    .when_some(track.pin(), Pinnable::pin)
+                    .map(|this| match track.album_id.clone() {
+                        Some(album_id) => this
+                            .aria_label(name.clone())
+                            .hover(|style| style.underline())
+                            .link(Destination::Album(album_id.into())),
+                        None => this.role(Role::Label).aria_value(name.clone()),
+                    })
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                            window.prevent_default();
+                            this.open_playing_menu(event.position, cx);
+                        }),
+                    )
+                    .child(text)
+                    .tip_clipped(name, layout, Perch::Above)
+                    .min_w_0()
+                    .truncate()
+                    .tails()
+            }
             None => div()
                 .id("now-playing-album")
                 .role(Role::Status)
