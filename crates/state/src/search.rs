@@ -63,7 +63,7 @@ pub struct PlaylistHit {
 
 #[derive(Clone)]
 pub enum Hit {
-    Song(Track),
+    Song(Box<Track>),
     Artist(ArtistHit),
     Album(AlbumHit),
     Playlist(PlaylistHit),
@@ -460,7 +460,7 @@ impl Search {
 /// Loads the linked item's metadata without changing the active provider or playback.
 async fn linked_hit(client: &dyn MusicApi, linked: Linked) -> Result<Hit> {
     match linked {
-        Linked::Track(id) => Ok(Hit::Song(client.track(&id).await?)),
+        Linked::Track(id) => Ok(Hit::Song(Box::new(client.track(&id).await?))),
         Linked::Artist(id) => {
             let artist = client.artist(&id).await?;
             Ok(Hit::Artist(ArtistHit {
@@ -559,7 +559,7 @@ fn songs(library: &[Track], catalog: &[Track], query: &Query) -> Vec<Scored> {
         scored.push(Scored {
             score,
             popularity: track.popularity,
-            hit: Hit::Song(track.clone()),
+            hit: Hit::Song(Box::new(track.clone())),
         });
     }
 
