@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Subsonic downloads are now ordinary audio files named after the artist and title, which any other player opens. Downloads you already have are converted the next time you sign in, and Open downloads under Settings, Storage shows the folder.
+
 ## [0.49.0] - 2026-11-13
 
 ### Added

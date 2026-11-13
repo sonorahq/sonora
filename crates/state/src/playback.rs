@@ -2658,6 +2658,12 @@ impl Playback {
         &self.vault
     }
 
+    /// Rewrites the downloads `ids` that are still sealed as plain files, for a provider that
+    /// keeps plain downloads. `None` while there is no streaming engine.
+    pub fn unseal(&self, ids: Vec<String>) -> Option<BoxFuture<'static, ()>> {
+        self.engine.as_deref().map(|engine| engine.unseal(ids))
+    }
+
     /// Turns caching played tracks on or off. Turning it off also removes every cached track,
     /// and downloads stay. Spotify keeps its own files and follows at its next sign-in.
     pub fn set_keep_tracks(&mut self, on: bool, cx: &mut Context<Self>) {
