@@ -12,7 +12,9 @@ pub fn track(song: Child, cover: Option<String>) -> Track {
         None,
         None,
         song.album_artists.as_ref(),
-        song.display_album_artist,
+        // a blank display name would hide the listed album artists
+        song.display_album_artist
+            .filter(|name| !name.trim().is_empty()),
     );
     let (artists, artist_refs) = artists_of(
         song.artist,
@@ -222,6 +224,11 @@ mod tests {
         assert_eq!(shown.album_artist, "New Order");
         let listed = serde_json::json!({ "albumArtists": [{ "id": "a", "name": "New Order" }] });
         assert_eq!(track(song(listed), None).album_artist, "New Order");
+        let blank = serde_json::json!({
+            "displayAlbumArtist": " ",
+            "albumArtists": [{ "id": "a", "name": "New Order" }],
+        });
+        assert_eq!(track(song(blank), None).album_artist, "New Order");
     }
 
     #[test]
