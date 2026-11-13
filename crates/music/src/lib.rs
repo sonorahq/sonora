@@ -689,11 +689,6 @@ pub enum PlaybackEvent {
         id: String,
         at: Duration,
     },
-    /// Soloist found a Spotify track playing on another device as it started.
-    StartupTrack {
-        id: String,
-        at: Duration,
-    },
 }
 
 impl PlaybackEvent {

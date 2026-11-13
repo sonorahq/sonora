@@ -291,8 +291,6 @@ struct Brain {
     link: Option<Link>,
     /// Whether the daemon is signed in, before which it takes no command.
     signed_in: bool,
-    /// Whether the first authenticated playback snapshot still may transfer another device.
-    startup: bool,
     /// Sonora's volume, from 0 to 100.
     volume: u8,
     /// Whether the daemon's volume is held at zero while an opening seek lands, so the start of
@@ -328,7 +326,6 @@ impl Brain {
             events,
             link: None,
             signed_in: false,
-            startup: true,
             volume,
             muted: false,
             track: None,
@@ -646,11 +643,9 @@ impl Brain {
                     self.advance();
                 }
             }
-            Event::PlaybackState(playback) => {
-                let startup = std::mem::replace(&mut self.startup, false);
-                self.hear(playback, startup);
+            Event::PlaybackState(playback) | Event::PlaybackChanged(playback) => {
+                self.hear(playback);
             }
-            Event::PlaybackChanged(playback) => self.hear(playback, false),
             Event::TrackChanged { item } => {
                 if let Some(item) = item.filter(|item| !item.uri.is_empty()) {
                     self.learn_length(&item);
@@ -731,8 +726,7 @@ impl Brain {
     }
 
     /// Takes in a playback report and acts on what changed.
-    fn hear(&mut self, playback: Playback, startup: bool) {
-        let remote = !playback.is_active;
+    fn hear(&mut self, playback: Playback) {
         if let Some(item) = playback.item.filter(|item| !item.uri.is_empty()) {
             self.learn_length(&item);
             self.heard.uri = item.uri;
@@ -750,25 +744,10 @@ impl Brain {
         if let Some(position) = playback.position {
             self.heard.position = position.at();
         }
-        if startup && remote && self.track.is_none() && self.heard.status == Status::Playing {
-            return self.adopt_startup();
-        }
         self.observe(false);
         if placed {
             self.follow_position();
         }
-    }
-
-    /// Hands an already-playing Spotify track to state on Soloist's first snapshot.
-    fn adopt_startup(&mut self) {
-        let Some(id) = track_id(&self.heard.uri) else {
-            return;
-        };
-        self.adopted = Some((self.heard.uri.clone(), Instant::now()));
-        self.report(PlaybackEvent::StartupTrack {
-            id,
-            at: self.heard.position,
-        });
     }
 
     /// Keeps the length the daemon gives for a track, and reports it the first time it is the

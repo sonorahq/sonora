@@ -67,8 +67,6 @@ pub(super) struct Playback {
     pub volume: Option<u8>,
     #[serde(default)]
     pub options: Option<Options>,
-    #[serde(default)]
-    pub is_active: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
