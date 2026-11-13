@@ -43,10 +43,12 @@ impl PlaybackFactory for Factory {
             Subsonic {
                 client: self.client.clone(),
                 transcode: config.transcode,
-                shelf: config
-                    .vault
-                    .as_ref()
-                    .map(|vault| vault.shelf("subsonic").within(self.client.identity())),
+                shelf: config.vault.as_ref().map(|vault| {
+                    vault
+                        .shelf("subsonic")
+                        .within(self.client.identity())
+                        .plain()
+                }),
             },
             config,
         )
@@ -106,6 +108,7 @@ impl Subsonic {
                 lufs,
                 peak: facts.peak,
             }),
+            label: None,
         });
         Some(Loaded {
             stream,
@@ -145,7 +148,7 @@ impl Fetch for Subsonic {
                     Some(shelf) => {
                         let told = told.clone();
                         let facts = move || {
-                            let facts = told.get().copied().map(Facts::from);
+                            let facts = told.get().cloned().map(Facts::from);
                             serde_json::to_vec(&facts).ok()
                         };
                         shelf.keep(id, &self.variant(), facts, response)
@@ -162,7 +165,7 @@ impl Fetch for Subsonic {
             },
             async {
                 let details = self.client.details(id).await;
-                told.set(details).ok();
+                told.set(details.clone()).ok();
                 details
             },
         );
@@ -172,6 +175,10 @@ impl Fetch for Subsonic {
             details,
             prepared,
         })
+    }
+
+    async fn label(&self, id: &str) -> Option<String> {
+        self.client.details(id).await.label
     }
 
     fn length(&self, loaded: &Loaded) -> Option<Duration> {
