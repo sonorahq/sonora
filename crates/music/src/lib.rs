@@ -353,6 +353,13 @@ pub trait MusicApi: Send + Sync {
         from: Option<&str>,
     ) -> Result<(Vec<Track>, Option<String>)>;
 
+    /// The id of the playlist the provider keeps as the station seeded by `track_id`, which
+    /// `add_playlist_to_library` can save. A provider whose station is not a playlist keeps the
+    /// default of none, and nothing is offered to save.
+    async fn radio_playlist(&self, _track_id: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+
     async fn search(&self, query: &str) -> Result<Vec<Track>>;
 
     async fn search_albums(&self, _query: &str) -> Result<Vec<Album>> {
