@@ -758,27 +758,11 @@ jobs:
       - name: checksums
         run: cd dist && shasum -a 256 * > SHA256SUMS
 
-      - name: record the assets for the flake
+      - name: record the version for the flake
         env:
           NIGHTLY: ${{ inputs.nightly }}
         run: |
-          set -euo pipefail
-          sri() { echo "sha256-$(openssl dgst -sha256 -binary "dist/$1" | base64 -w0)"; }
-          jq -n \
-            --arg version "$NIGHTLY" \
-            --arg x86_64_linux "$(sri sonora-nightly-x86_64-unknown-linux-gnu)" \
-            --arg aarch64_linux "$(sri sonora-nightly-aarch64-unknown-linux-gnu)" \
-            --arg aarch64_darwin "$(sri sonora-nightly-macos.dmg)" \
-            '{
-              version: $version,
-              tag: "nightly",
-              assets: {
-                "x86_64-linux": { target: "x86_64-unknown-linux-gnu", hash: $x86_64_linux },
-                "aarch64-linux": { target: "aarch64-unknown-linux-gnu", hash: $aarch64_linux },
-                "aarch64-darwin": { target: "macos", hash: $aarch64_darwin }
-              }
-            }' > nix/nightly.json
-          cat nix/nightly.json
+          jq -n --arg version "$NIGHTLY" '{version: $version}' > nix/nightly.json
 
       - name: move the nightly tag
         env:
@@ -824,14 +808,29 @@ jobs:
               --notes-file notes.md
           fi
 
-  # Fills sonora.cachix.org with the tag's Nix build, which the flake's default package names once
-  # flake.nix points at this release.
-  nix:
+  # Caches the tag's Nix build and only then moves the `stable` branch, the flake ref of the
+  # stable channel, to it.
+  nix-stable:
+    needs: release
     if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')
+    permissions:
+      contents: write
     uses: ./.github/workflows/nix.yml
     with:
-      package: sonora-src
-    secrets: inherit
+      ref: ${{ github.ref_name }}
+      branch: stable
+    secrets:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+  # Caches the Nix build of the nightly tag, the flake ref of the nightly channel.
+  nix-nightly:
+    needs: nightly
+    if: ${{ inputs.nightly }}
+    uses: ./.github/workflows/nix.yml
+    with:
+      ref: nightly
+    secrets:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
   announce:
     needs: release

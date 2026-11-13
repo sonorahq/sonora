@@ -111,20 +111,16 @@ chmod +x sonora-*.AppImage
 
 ### Nix
 
-Add either of those inputs:
+Pick a channel with the input's ref and install `inputs.sonora.packages.${system}.default`:
 
 ```nix
-inputs.sonora.url = "github:sonorahq/sonora";
+inputs.sonora.url = "github:sonorahq/sonora/stable";   # the latest release
+inputs.sonora.url = "github:sonorahq/sonora/nightly";  # the nightly
+inputs.sonora.url = "github:sonorahq/sonora";          # main
 ```
 
-```text
-inputs.sonora.packages.${system}.default     (the latest release)
-inputs.sonora.packages.${system}.sonora      (same as default)
-inputs.sonora.packages.${system}.sonora-src  (the checked-out source)
-```
-
-Every release is built for x86_64-linux and aarch64-linux and pushed to a binary cache, so Nix downloads Sonora
-instead of compiling it once the cache is trusted:
+Every channel is built for x86_64-linux and aarch64-linux and pushed to a binary cache, and `stable` only moves to a
+release once its build is there. Trust the cache and Nix downloads Sonora instead of compiling it:
 
 ```nix
 nix.settings = {
