@@ -79,8 +79,8 @@ impl ConnectName {
 }
 
 /// What the Discord status calls itself. `Provider` asks the provider the track came from, so
-/// local files say Local Music rather than the provider's own name. `ArtistTitle` shows as
-/// "Artist - Title".
+/// local files say Local Music rather than the provider's own name. `AlbumArtist` is who the
+/// album is credited to, and `ArtistTitle` shows as "Artist - Title".
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DiscordName {
@@ -90,16 +90,18 @@ pub enum DiscordName {
     Music,
     Title,
     Artist,
+    AlbumArtist,
     ArtistTitle,
 }
 
 impl DiscordName {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Sonora,
         Self::Provider,
         Self::Music,
         Self::Title,
         Self::Artist,
+        Self::AlbumArtist,
         Self::ArtistTitle,
     ];
 
@@ -110,6 +112,7 @@ impl DiscordName {
             Self::Music => "music",
             Self::Title => "title",
             Self::Artist => "artist",
+            Self::AlbumArtist => "album-artist",
             Self::ArtistTitle => "artist-title",
         }
     }
@@ -121,6 +124,7 @@ impl DiscordName {
             Self::Music => "settings-discord-name-music",
             Self::Title => "settings-discord-name-title",
             Self::Artist => "settings-discord-name-artist",
+            Self::AlbumArtist => "settings-discord-name-album-artist",
             Self::ArtistTitle => "settings-discord-name-artist-title",
         }
     }

@@ -48,6 +48,8 @@ pub struct Stub {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) credited: Vec<ArtistRef>,
     pub(crate) album: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub(crate) album_artist: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) album_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -190,6 +192,7 @@ fn stub(track: &Track) -> Option<Stub> {
         artists: track.artists.clone(),
         credited: track.artist_refs.clone(),
         album: track.album.clone(),
+        album_artist: track.album_artist.clone(),
         album_id: track.album_id.clone(),
         cover: track.cover.clone(),
         seconds: track.duration.as_secs_f32(),
@@ -207,6 +210,7 @@ fn hydrate(stub: Stub) -> Track {
         artists: stub.artists,
         artist_refs: stub.credited,
         album: stub.album,
+        album_artist: stub.album_artist,
         album_id: stub.album_id,
         cover: stub.cover,
         duration: Duration::from_secs_f32(stub.seconds.max(0.)),

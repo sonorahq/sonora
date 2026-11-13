@@ -732,6 +732,7 @@ settings-discord-name-provider = Provider
 settings-discord-name-music = Music
 settings-discord-name-title = Title
 settings-discord-name-artist = Artist
+settings-discord-name-album-artist = Album artist
 settings-discord-name-artist-title = Artist - Title
 settings-discord-show-paused = Show when paused
 settings-discord-show-paused-detail = Keep the status on your Discord profile while the track is paused
