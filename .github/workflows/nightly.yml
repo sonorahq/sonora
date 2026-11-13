@@ -48,7 +48,7 @@ jobs:
             echo "::notice::main is still at ${GITHUB_SHA:0:7}, which the current nightly was built from"
             exit 0
           fi
-          # A release refreshes nightly and then updates flake.nix, which does not affect the binary.
+          # A change to flake.nix alone does not affect the binary.
           if [ "$EVENT" = schedule ] && [ -n "$built" ]; then
             changed="$(gh api "repos/$GITHUB_REPOSITORY/compare/$built...$GITHUB_SHA" \
               --jq '[.files[].filename | select(. != "flake.nix")] | length' || echo unknown)"
@@ -88,6 +88,9 @@ jobs:
     with:
       nightly: ${{ needs.gate.outputs.number }}
       reuse: ${{ needs.gate.outputs.reuse }}
+    # Only nix.yml reads a secret when release.yml runs for a nightly. The other secrets it names
+    # belong to jobs that run for tags alone.
+    secrets: inherit
 
   # sonora-nightly-bin is rendered from aur/sonora-nightly-bin/PKGBUILD every night, so the AUR
   # repository only ever holds what this job pushed. It needs AUR_SSH_KEY, a private key whose

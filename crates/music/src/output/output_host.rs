@@ -17,26 +17,48 @@ use pulseaudio::protocol::{SampleFormat, SinkInfo};
 
 use super::{DeviceOption, Format, Port, Sample, Sink, output_alsa};
 
-/// The PulseAudio host every caller shares while its connection to the server holds. A dropped
-/// PulseAudio host never closes its connection, so a host made per call leaves one open each time.
-static SERVER_HOST: Mutex<Option<Arc<cpal::Host>>> = Mutex::new(None);
+/// The PulseAudio host every caller shares while its connection to the server holds.
+static SERVER_HOST: Mutex<Option<ServerHost>> = Mutex::new(None);
 
 /// The connection the server's sinks are read over, shared and made again once lost like the host.
 static SERVER_CLIENT: Mutex<Option<pulseaudio::Client>> = Mutex::new(None);
+
+/// A shared host and the last device-list error, so a persistent failure is logged only once.
+struct ServerHost {
+    host: Arc<cpal::Host>,
+    listing_error: Option<cpal::Error>,
+}
 
 /// The host Sonora plays through. A PulseAudio host is made once and shared, and made again once
 /// its connection to the server is lost, while an ALSA host is made afresh, so a server that
 /// starts later is still found.
 pub(super) fn host() -> Arc<cpal::Host> {
     let mut shared = SERVER_HOST.lock().unwrap_or_else(PoisonError::into_inner);
-    // a host whose connection is gone fails every call at once, without asking the server
-    if let Some(host) = shared.as_ref()
-        && host.output_devices().is_ok()
-    {
-        return host.clone();
+    if let Some(cached) = shared.as_mut() {
+        match cached.host.output_devices() {
+            Ok(_) => {
+                cached.listing_error = None;
+                return cached.host.clone();
+            }
+            Err(error) => {
+                if cached.listing_error.as_ref() != Some(&error) {
+                    log::warn!("output: cannot list audio devices: {error}");
+                    cached.listing_error = Some(error.clone());
+                }
+                if !matches!(
+                    error.kind(),
+                    cpal::ErrorKind::HostUnavailable | cpal::ErrorKind::StreamInvalidated
+                ) {
+                    return cached.host.clone();
+                }
+            }
+        }
     }
     let host = Arc::new(cpal::default_host());
-    *shared = is_server(&host).then(|| host.clone());
+    *shared = is_server(&host).then(|| ServerHost {
+        host: host.clone(),
+        listing_error: None,
+    });
     host
 }
 

@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::{Account, Link, Play, Secret, Service};
+use super::{Account, Link, Play, Secret, Service, host, root};
 
 /// Where the native API lives under a Maloja server's root.
 const API: &str = "/apis/mlj_1";
@@ -121,23 +121,4 @@ async fn name(url: &str) -> Option<String> {
         .await
         .ok()?;
     info.name.filter(|name| !name.is_empty())
-}
-
-/// The server url without its trailing slash, with a scheme added when the user left it out.
-fn root(url: &str) -> String {
-    let url = url.trim().trim_end_matches('/');
-    match url.is_empty() || url.contains("://") {
-        true => url.to_owned(),
-        false => format!("https://{url}"),
-    }
-}
-
-fn host(url: &str) -> String {
-    url.split_once("://")
-        .map(|(_, rest)| rest)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or(url)
-        .to_owned()
 }

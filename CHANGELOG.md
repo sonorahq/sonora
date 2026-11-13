@@ -9,6 +9,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Scrobble to your own ListenBrainz server or to multi-scrobbler by filling in the server address when you connect ListenBrainz.
+- Hover a cut-off track title in the player bar to read it in full.
+
+## [0.49.1] - 2026-11-13
+
+### Changed
+
+- Subsonic downloads are now ordinary audio files named after the artist and title, which any other player opens. Downloads you already have are converted the next time you sign in, and Open downloads under Settings, Storage shows the folder.
+- Nix users pick the stable or nightly channel with `github:sonorahq/sonora/stable` or `github:sonorahq/sonora/nightly`, and both download ready-built from the sonora.cachix.org binary cache on x86_64 and aarch64 Linux. The flake no longer has `sonora-bin` or `sonora-src`.
+
+## [0.49.0] - 2026-11-13
+
+### Added
+
+- Show your Subsonic server's own cover on the Discord status, uploaded for 3 hours to uguu.se. Turn it off under Settings, Discord.
 - Open music links from the search field or send browser pages to Sonora with a bookmark.
 - Open YouTube handle links on their artist pages.
 - Preview music links in search suggestions and search by their titles or artist names.
@@ -23,6 +38,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- When a track's own cover cannot be shown on the Discord status, Sonora looks it up on Deezer, then iTunes, then MusicBrainz, so an album one of them lacks, or a service your network blocks, no longer leaves the status without a cover. A different edition of the album, with another cover, is never shown in its place.
 - Hover highlights fade out when the pointer leaves instead of cutting off.
 - The player bar keeps its playback buttons and seek bar centred as the window narrows: the volume slider shrinks first and folds into a button with a slider that rises on hover only when space runs out.
 - The left sidebar keeps its full width in narrower windows and folds to icons only when the page would get too cramped.
@@ -52,9 +68,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reduce redraw work when scrolling large Favorites collections.
 - Song durations stay aligned when hovering over an artist's favorite songs.
 - Reduce fullscreen visualizer redraws while keeping animation at up to 120 FPS.
-
 - Mixed English and Japanese lyrics no longer show duplicate English romanizations or misplaced spaces inside parentheses.
 - With Spotify, lyrics and the progress bar no longer run ahead of the music.
+- The icon on the Your Library and History covers stays visible when the adaptive theme takes a dark colour from the playing cover.
+- Lyrics in the sidebar keep their place after a long stay in the fullscreen player.
 
 ## [0.48.1] - 2026-11-08
 
@@ -2628,7 +2645,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.48.1...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.49.1...HEAD
+[0.49.1]: https://github.com/sonorahq/sonora/compare/v0.49.0...v0.49.1
+[0.49.0]: https://github.com/sonorahq/sonora/compare/v0.48.1...v0.49.0
 [0.48.1]: https://github.com/sonorahq/sonora/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/sonorahq/sonora/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/sonorahq/sonora/compare/v0.46.0...v0.47.0

@@ -127,6 +127,13 @@ pub trait Fetch: Send + Sync + 'static {
         false
     }
 
+    /// What to call the file of a plain download of track `id`, such as its artist and title.
+    /// `None` names it after a hash of the id. Only a provider whose shelf keeps plain files
+    /// is asked.
+    async fn label(&self, _id: &str) -> Option<String> {
+        None
+    }
+
     /// Resolves once the whole track has arrived, or its download has ended some other way.
     /// The engine reports it so the next track can be fetched without taking bandwidth from
     /// this one. The default answers at once, which suits a track that is already on disk.
@@ -212,6 +219,12 @@ enum Command {
         id: String,
         progress: Fraction,
         done: oneshot::Sender<Result<()>>,
+    },
+    /// Rewrite these downloads as plain files where they are still sealed, and say when that is
+    /// done.
+    Unseal {
+        ids: Vec<String>,
+        done: oneshot::Sender<()>,
     },
 }
 
@@ -325,6 +338,21 @@ impl Player for Handle {
         self.shelf
             .as_ref()
             .is_some_and(|shelf| shelf.holds(track_id))
+    }
+
+    fn unseal(&self, track_ids: Vec<String>) -> BoxFuture<'static, ()> {
+        let (done, answer) = oneshot::channel();
+        if self.shelf.as_ref().is_some_and(Shelf::keeps_plain) {
+            self.commands
+                .send(Command::Unseal {
+                    ids: track_ids,
+                    done,
+                })
+                .ok();
+        }
+        Box::pin(async move {
+            answer.await.ok();
+        })
     }
 
     fn plays_offline(&self, track_id: &str) -> bool {
@@ -655,6 +683,13 @@ async fn engine_loop<F: Fetch>(
                         let fetch = fetch.clone();
                         tokio::spawn(async move {
                             done.send(download(&*fetch, &id, &progress).await).ok();
+                        });
+                    }
+                    Command::Unseal { ids, done } => {
+                        let fetch = fetch.clone();
+                        tokio::spawn(async move {
+                            unseal(&*fetch, ids).await;
+                            done.send(()).ok();
                         });
                     }
                 }
@@ -1375,7 +1410,11 @@ async fn download<F: Fetch>(fetch: &F, id: &str, progress: &Fraction) -> Result<
     if shelf.holds(id) {
         return Ok(());
     }
-    shelf.want(id);
+    let label = match shelf.keeps_plain() {
+        true => fetch.label(id).await,
+        false => None,
+    };
+    shelf.want(id, label);
     let fetched = async {
         let loaded = fetch.load(id).await?;
         let arrived = fetch.downloaded(&loaded);
@@ -1399,6 +1438,32 @@ async fn download<F: Fetch>(fetch: &F, id: &str, progress: &Fraction) -> Result<
     fetched?;
     ensure!(shelf.holds(id), "the download of {id} did not finish");
     Ok(())
+}
+
+/// Rewrites downloads `ids` that are still sealed as plain files, one at a time on a blocking
+/// thread. A track that fails is logged and left as it was.
+async fn unseal<F: Fetch>(fetch: &F, ids: Vec<String>) {
+    let Some(shelf) = fetch.shelf() else {
+        return;
+    };
+    shelf.settle().await;
+    for id in ids {
+        if !shelf.sealed_download(&id) {
+            continue;
+        }
+        let label = fetch.label(&id).await;
+        let worker = shelf.clone();
+        let rewritten = tokio::task::spawn_blocking(move || worker.unseal(&id, label))
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(|rewritten| rewritten);
+        if let Err(error) = rewritten {
+            log::warn!(
+                "playback: cannot rewrite a {} download: {error:#}",
+                fetch.name()
+            );
+        }
+    }
 }
 
 #[cfg(test)]

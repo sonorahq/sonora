@@ -74,12 +74,14 @@ pub struct SubsonicClient {
 }
 
 /// What the server records about a track that playback wants before the decoder can tell.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Details {
     pub duration: Option<Duration>,
     /// The track's ReplayGain, which OpenSubsonic servers such as Navidrome report and plain
     /// Subsonic servers do not.
     pub loudness: Option<Loudness>,
+    /// The artist and title, which a plain download's file is named after.
+    pub label: Option<String>,
 }
 
 impl SubsonicClient {
@@ -1247,7 +1249,15 @@ impl SubsonicClient {
                 peak.map(|peak| peak as f32),
             ))
         });
-        Details { duration, loudness }
+        let label = match song.artist.as_deref().map(str::trim) {
+            Some(artist) if !artist.is_empty() => format!("{artist} - {}", song.title.trim()),
+            _ => song.title.trim().to_owned(),
+        };
+        Details {
+            duration,
+            loudness,
+            label: Some(label),
+        }
     }
 }
 

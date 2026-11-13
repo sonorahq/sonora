@@ -111,17 +111,22 @@ chmod +x sonora-*.AppImage
 
 ### Nix
 
-Add either of those inputs:
+Pick a channel with the input's ref and install `inputs.sonora.packages.${system}.default`:
 
 ```nix
-inputs.sonora.url = "github:sonorahq/sonora";
+inputs.sonora.url = "github:sonorahq/sonora/stable";   # the latest release
+inputs.sonora.url = "github:sonorahq/sonora/nightly";  # the nightly
+inputs.sonora.url = "github:sonorahq/sonora";          # main
 ```
 
-```text
-inputs.sonora.packages.${system}.default     (prebuilt where available, else from source)
-inputs.sonora.packages.${system}.sonora      (same as default)
-inputs.sonora.packages.${system}.sonora-bin  (prebuilt, x86_64-linux, aarch64-linux, aarch64-darwin)
-inputs.sonora.packages.${system}.sonora-src  (always built from source)
+Every channel is built for x86_64-linux and aarch64-linux and pushed to a binary cache, and `stable` only moves to a
+release once its build is there. Trust the cache and Nix downloads Sonora instead of compiling it:
+
+```nix
+nix.settings = {
+  extra-substituters = [ "https://sonora.cachix.org" ];
+  extra-trusted-public-keys = [ "sonora.cachix.org-1:qbPeDsvZPbwUWHpQS5Oe0bjz5oHAVscHem+MCzwrc9Q=" ];
+};
 ```
 
 Building from source on macOS needs Xcode added to the Nix store, because the shaders compile with Apple's Metal compiler.
@@ -161,21 +166,21 @@ Discord is the primary one, but we do have a Matrix bridge.
 
 | Language | Translated | Coverage |
 | --- | --- | --- |
-| English (`en-US`) | 1278/1278 | 100% |
-| Deutsch (`de`) | 1106/1278 | 87% |
-| Español (`es`) | 1106/1278 | 87% |
-| Français (`fr`) | 1107/1278 | 87% |
-| Italiano (`it`) | 1106/1278 | 87% |
-| Bahasa Indonesia (`id`) | 1106/1278 | 87% |
-| 日本語 (`ja`) | 1106/1278 | 87% |
-| Русский (`ru`) | 1207/1278 | 94% |
-| Українська (`uk`) | 1108/1278 | 87% |
-| Polski (`pl`) | 1108/1278 | 87% |
-| Čeština (`cs`) | 1106/1278 | 87% |
-| Português (Brasil) (`pt-BR`) | 1106/1278 | 87% |
-| 简体中文 (`zh-CN`) | 1106/1278 | 87% |
-| Türkçe (`tr`) | 1106/1278 | 87% |
-| Shqip (`sq`) | 1106/1278 | 87% |
+| English (`en-US`) | 1282/1282 | 100% |
+| Deutsch (`de`) | 1108/1282 | 86% |
+| Español (`es`) | 1106/1282 | 86% |
+| Français (`fr`) | 1107/1282 | 86% |
+| Italiano (`it`) | 1106/1282 | 86% |
+| Bahasa Indonesia (`id`) | 1106/1282 | 86% |
+| 日本語 (`ja`) | 1106/1282 | 86% |
+| Русский (`ru`) | 1207/1282 | 94% |
+| Українська (`uk`) | 1108/1282 | 86% |
+| Polski (`pl`) | 1108/1282 | 86% |
+| Čeština (`cs`) | 1106/1282 | 86% |
+| Português (Brasil) (`pt-BR`) | 1106/1282 | 86% |
+| 简体中文 (`zh-CN`) | 1106/1282 | 86% |
+| Türkçe (`tr`) | 1106/1282 | 86% |
+| Shqip (`sq`) | 1106/1282 | 86% |
 
 <!-- i18n:end -->
 
