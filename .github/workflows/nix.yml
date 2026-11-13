@@ -1,26 +1,50 @@
 name: nix
 
-# Builds a flake package for x86_64 and aarch64 Linux and pushes it to sonora.cachix.org.
-# release.yml runs it on every stable tag with `sonora-src`, the tag's own tree, which is the same
-# derivation `default` names once flake.nix points at that release. Dispatch it on main with
-# `default` when that pointer has moved and the cache missed. macOS is left out because its source
-# build needs Xcode in the Nix store.
+# Builds the flake's package for x86_64 and aarch64 Linux and pushes it to sonora.cachix.org. A push
+# to main caches main. release.yml runs it for every stable tag, moving the `stable` branch to the
+# tag once both builds are cached, and for every nightly tag. So a channel only ever points at a
+# commit the cache already holds. macOS is left out because its source build needs Xcode in the
+# Nix store.
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - .cargo/**
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+      - assets/**
+      - COPYING
+      - THIRD-PARTY.md
+      - flake.nix
+      - flake.lock
+      - rust-toolchain.toml
   workflow_call:
     inputs:
-      package:
+      ref:
         type: string
-        default: sonora-src
+        required: true
+      branch:
+        description: Branch to move to `ref` once every build is cached
+        type: string
+        default: ""
+    secrets:
+      CACHIX_AUTH_TOKEN:
+        required: true
   workflow_dispatch:
     inputs:
-      package:
-        description: Flake package to build and push
+      ref:
+        description: Commit, branch or tag to build
         type: string
-        default: default
+        default: main
+      branch:
+        description: Branch to move to `ref` once every build is cached
+        type: string
+        default: ""
 
 concurrency:
-  group: nix-${{ github.ref }}-${{ inputs.package }}
+  group: nix-${{ inputs.ref || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -32,7 +56,7 @@ jobs:
     if: github.repository == 'sonorahq/sonora'
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
           - system: x86_64-linux
@@ -41,6 +65,8 @@ jobs:
             os: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - uses: cachix/install-nix-action@v31
 
@@ -50,6 +76,22 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: build
-        run: >-
-          nix build --print-build-logs --no-link --print-out-paths
-          .#packages.${{ matrix.system }}.${{ inputs.package }}
+        run: nix build --print-build-logs --no-link --print-out-paths .#packages.${{ matrix.system }}.default
+
+  # A plain push, so a branch that would not fast-forward fails here instead of being rewound.
+  promote:
+    needs: build
+    if: inputs.branch != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: move ${{ inputs.branch }}
+        env:
+          BRANCH: ${{ inputs.branch }}
+        run: git push origin "HEAD:refs/heads/$BRANCH"

@@ -9,7 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- The Nix flake downloads each release for x86_64 and aarch64 Linux from the sonora.cachix.org binary cache instead of the GitHub binary, and no longer has a `sonora-bin` package.
+- Nix users pick the stable or nightly channel with `github:sonorahq/sonora/stable` or `github:sonorahq/sonora/nightly`, and both download ready-built from the sonora.cachix.org binary cache on x86_64 and aarch64 Linux. The flake no longer has `sonora-bin` or `sonora-src`.
 
 - Subsonic downloads are now ordinary audio files named after the artist and title, which any other player opens. Downloads you already have are converted the next time you sign in, and Open downloads under Settings, Storage shows the folder.
 

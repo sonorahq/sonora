@@ -88,6 +88,9 @@ jobs:
     with:
       nightly: ${{ needs.gate.outputs.number }}
       reuse: ${{ needs.gate.outputs.reuse }}
+    # Only nix.yml reads a secret when release.yml runs for a nightly. The other secrets it names
+    # belong to jobs that run for tags alone.
+    secrets: inherit
 
   # sonora-nightly-bin is rendered from aur/sonora-nightly-bin/PKGBUILD every night, so the AUR
   # repository only ever holds what this job pushed. It needs AUR_SSH_KEY, a private key whose
