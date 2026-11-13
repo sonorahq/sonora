@@ -12,6 +12,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Scrobble to your own ListenBrainz server or to multi-scrobbler by filling in the server address when you connect ListenBrainz.
 - Hover a cut-off track title in the player bar to read it in full.
 
+### Fixed
+
+- Tidal artists with no portrait show the album cover Tidal draws them with, instead of an empty picture.
+
 ## [0.49.1] - 2026-11-13
 
 ### Changed
@@ -61,7 +65,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Tidal artists with no portrait show the album cover Tidal draws them with, instead of an empty picture.
 - Closing lyrics or the queue during its entrance no longer flashes the panel at full opacity.
 - Dragging a card releases its pressed appearance, and play buttons keep their blur while cards or buttons are pressed.
 - Fullscreen controls hide reliably after the pointer leaves, and pressed controls release when the window loses focus.
