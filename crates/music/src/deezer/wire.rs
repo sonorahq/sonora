@@ -229,6 +229,8 @@ pub fn track(value: &Value) -> Option<Track> {
             .or_else(|| text(value, &["ALB_TITLE"]))
             .unwrap_or_default()
             .to_owned(),
+        // a Deezer track names its own artists, never the album's
+        album_artist: String::new(),
         album_id: album
             .get("id")
             .and_then(id)

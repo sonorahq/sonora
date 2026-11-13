@@ -647,6 +647,7 @@ pub fn track_from_file(
             artists: artist,
             artist_refs: track_artist_refs,
             album: album_name,
+            album_artist: album_artist.clone().unwrap_or_default(),
             album_id,
             cover,
             duration,

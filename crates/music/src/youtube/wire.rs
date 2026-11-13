@@ -34,6 +34,8 @@ pub fn track(source: ytmusic::Track, index: u32) -> Track {
             .as_ref()
             .map(|album| album.name.clone())
             .unwrap_or_default(),
+        // YouTube Music names a song's own artists only
+        album_artist: String::new(),
         album_id: source.album.and_then(|album| album.id),
         cover: cover(&source.thumbnails),
         duration: source.duration.unwrap_or(Duration::ZERO),

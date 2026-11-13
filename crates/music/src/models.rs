@@ -77,6 +77,9 @@ pub struct Track {
     pub artists: String,
     pub artist_refs: Vec<ArtistRef>,
     pub album: String,
+    /// Who the album is credited to, as the provider names it. Empty when the provider does not
+    /// say, rather than the track's own artists.
+    pub album_artist: String,
     pub album_id: Option<String>,
     pub cover: Option<String>,
     pub duration: Duration,

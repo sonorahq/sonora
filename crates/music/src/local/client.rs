@@ -787,6 +787,7 @@ mod tests {
                 id: None,
             }],
             album: album.to_owned(),
+            album_artist: String::new(),
             album_id: None,
             cover: None,
             duration: Duration::from_secs(180),
