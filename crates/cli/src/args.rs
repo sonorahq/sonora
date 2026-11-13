@@ -55,13 +55,17 @@ impl Refusal {
 
 #[derive(Subcommand)]
 enum Sub {
-    /// Resume playback, or play files, links or the best hit of a search now.
+    /// Resume playback, or play files, links, the best hit of a search or the best local match
+    /// now.
+    #[command(args_conflicts_with_subcommands = true)]
     Play {
         /// Files, or links of the current provider, to play now; the queue carries on after.
         #[arg(value_hint = ValueHint::AnyPath, value_parser = queued)]
         items: Vec<Item>,
         #[command(flatten)]
         searched: Searched,
+        #[command(subcommand)]
+        source: Option<Source>,
     },
     /// Pause playback.
     Pause,
@@ -123,6 +127,11 @@ enum Sub {
         #[command(flatten)]
         searched: Searched,
     },
+    /// Queue the matches of a search of the local library, after the tracks queued by hand.
+    Queue {
+        #[command(subcommand)]
+        source: Source,
+    },
     /// Search the current provider. Each hit ends in the link `add` and `play-next` take.
     Search {
         /// Words to look for; quote them when they hold characters the shell reads, such as
@@ -161,6 +170,46 @@ enum SessionSub {
     Join { code: Option<String> },
     /// Leave the session, which ends it for everyone when Sonora hosts it.
     Leave,
+}
+
+/// Where `play` and `queue` take their matches from, in place of files, links or a provider.
+#[derive(Subcommand)]
+enum Source {
+    /// Matches from the local library, which needs no provider to be signed in.
+    Local(LocalSearch),
+}
+
+/// A search of the local library: `-s` the words to match and `-t` the kind of match.
+#[derive(clap::Args)]
+struct LocalSearch {
+    /// Words to look for in the titles, artists and albums of the local library; quote them
+    /// when they hold characters the shell reads, such as `'`, `?` or `&`.
+    #[arg(
+        short = 's',
+        long = "search",
+        value_name = "QUERY",
+        required = true,
+        num_args = 1..
+    )]
+    search: Vec<String>,
+    /// The kind of match: `song`, `album` or `artist`.
+    #[arg(
+        short = 't',
+        long = "type",
+        value_name = "TYPE",
+        default_value = "song"
+    )]
+    kind: LocalKindArg,
+}
+
+impl LocalSearch {
+    /// The local matches this search asks for, as the item `play` and `queue` take.
+    fn item(self) -> Item {
+        Item::Local {
+            text: self.search.join(" "),
+            kind: self.kind.into(),
+        }
+    }
 }
 
 /// A search to take the best hit of, in place of files or links.
@@ -213,6 +262,15 @@ enum KindArg {
     Album,
     Artist,
     Playlist,
+}
+
+/// The kinds `play local` and `queue local` match. A playlist is not one of them, since the
+/// local library has no playlists to play through here.
+#[derive(Clone, Copy, ValueEnum)]
+enum LocalKindArg {
+    Song,
+    Album,
+    Artist,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -284,10 +342,21 @@ fn into_command(args: Args, line: &mut Command) -> Result<CommandType, clap::Err
     };
     let play = Request::Playback;
     let request = match command {
-        Sub::Play { items, searched } => match searched.or(items) {
+        Sub::Play {
+            items,
+            searched,
+            source: None,
+        } => match searched.or(items) {
             items if items.is_empty() => play(PlaybackCommand::Play),
             items => Request::Queue(QueueCommand::Play(items)),
         },
+        Sub::Play {
+            source: Some(Source::Local(local)),
+            ..
+        } => Request::Queue(QueueCommand::Play(vec![local.item()])),
+        Sub::Queue {
+            source: Source::Local(local),
+        } => Request::Queue(QueueCommand::Add(vec![local.item()])),
         Sub::Pause => play(PlaybackCommand::Pause),
         Sub::Toggle => play(PlaybackCommand::Toggle),
         Sub::Next => play(PlaybackCommand::Next),
@@ -337,6 +406,16 @@ impl From<KindArg> for Kind {
             KindArg::Album => Self::Album,
             KindArg::Artist => Self::Artist,
             KindArg::Playlist => Self::Playlist,
+        }
+    }
+}
+
+impl From<LocalKindArg> for Kind {
+    fn from(kind: LocalKindArg) -> Self {
+        match kind {
+            LocalKindArg::Song => Self::Song,
+            LocalKindArg::Album => Self::Album,
+            LocalKindArg::Artist => Self::Artist,
         }
     }
 }
@@ -446,4 +525,109 @@ fn queued(text: &str) -> Result<Item, String> {
 /// that names no file here and is no address.
 fn is_typo(item: &str) -> bool {
     !item.contains(['/', '\\', ':', '.']) && !Path::new(item).exists()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(words: &[&str]) -> Result<CommandType, Refusal> {
+        parse(words.iter().map(OsString::from).collect(), "test")
+    }
+
+    /// The request a line makes, or `None` when it is not one sent to the running Sonora.
+    fn request(words: &[&str]) -> Option<Request> {
+        match line(words) {
+            Ok(CommandType::Remote(request, _)) => Some(request),
+            _ => None,
+        }
+    }
+
+    /// The kind of mistake a line is refused for, or `None` when it is accepted.
+    fn refused(words: &[&str]) -> Option<ErrorKind> {
+        line(words).err().map(|refusal| refusal.0.kind())
+    }
+
+    fn local(text: &str, kind: Kind) -> Item {
+        Item::Local {
+            text: text.to_owned(),
+            kind,
+        }
+    }
+
+    #[test]
+    fn play_local_takes_songs_by_default() {
+        assert_eq!(
+            request(&["sonora", "play", "local", "-s", "one", "more", "time"]),
+            Some(Request::Queue(QueueCommand::Play(vec![local(
+                "one more time",
+                Kind::Song
+            )])))
+        );
+    }
+
+    #[test]
+    fn play_local_parses_each_type() {
+        for (word, kind) in [
+            ("song", Kind::Song),
+            ("album", Kind::Album),
+            ("artist", Kind::Artist),
+        ] {
+            assert_eq!(
+                request(&["sonora", "play", "local", "-t", word, "-s", "name"]),
+                Some(Request::Queue(QueueCommand::Play(vec![local(
+                    "name", kind
+                )]))),
+                "type {word}"
+            );
+        }
+    }
+
+    #[test]
+    fn queue_local_adds_to_the_end_of_the_queue() {
+        assert_eq!(
+            request(&[
+                "sonora", "queue", "local", "--type", "album", "--search", "dark", "side"
+            ]),
+            Some(Request::Queue(QueueCommand::Add(vec![local(
+                "dark side",
+                Kind::Album
+            )])))
+        );
+    }
+
+    #[test]
+    fn unknown_local_type_is_refused() {
+        assert_eq!(
+            refused(&["sonora", "play", "local", "-t", "playlist", "-s", "name"]),
+            Some(ErrorKind::InvalidValue)
+        );
+        assert_eq!(
+            refused(&["sonora", "queue", "local", "-t", "track", "-s", "name"]),
+            Some(ErrorKind::InvalidValue)
+        );
+    }
+
+    #[test]
+    fn local_search_needs_words() {
+        assert_eq!(
+            refused(&["sonora", "play", "local"]),
+            Some(ErrorKind::MissingRequiredArgument)
+        );
+        assert_eq!(
+            refused(&["sonora", "queue", "local", "-t", "album"]),
+            Some(ErrorKind::MissingRequiredArgument)
+        );
+    }
+
+    #[test]
+    fn provider_search_keeps_its_meaning() {
+        assert_eq!(
+            request(&["sonora", "play", "-t", "album", "-s", "name"]),
+            Some(Request::Queue(QueueCommand::Play(vec![Item::Search {
+                text: "name".to_owned(),
+                kind: Kind::Album,
+            }])))
+        );
+    }
 }

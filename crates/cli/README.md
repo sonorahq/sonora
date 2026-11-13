@@ -18,6 +18,7 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora play` / `pause` / `toggle` | Resume, pause, or switch between the two |
 | `sonora play <file\|link>...` | Play now; the rest of the queue carries on after |
 | `sonora play -s <query> [-t TYPE]` | Find the best hit of a search and play it now |
+| `sonora play local -s <query> [-t TYPE]` | Play the best match in the local library now, with no provider searched |
 | `sonora next` / `prev` | Skip to the next track, or go back to the previous one |
 | `sonora seek <0-100\|TIME\|±STEP>` | Jump to a percent of the current track, a time such as `1:30`, or a step such as `+10` |
 | `sonora current` | Print what plays now as JSON, or `null` when nothing is loaded |
@@ -28,6 +29,7 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora add <file\|link>...` | Queue after the tracks queued by hand |
 | `sonora play-next <file\|link>...` | Queue right after the current track |
 | `sonora add -s <query> [-t TYPE]` | Queue the best hit of a search, the one `search` lists first |
+| `sonora queue local -s <query> [-t TYPE]` | Queue every match in the local library, with no provider searched |
 | `sonora search <query> [-t TYPE] [-n N]` | Search the current provider |
 | `sonora providers` | List the providers and which one is current |
 | `sonora provider [slug]` | Print the current provider, or switch to one that has an account |
@@ -35,6 +37,8 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora -v` | Print the version |
 
 `TYPE` is `song`, `album`, `artist` or `playlist`; `-s` takes a song unless told otherwise. `sonora <command> --help` describes each one.
+
+`play local` and `queue local` take `TYPE` as `song`, `album` or `artist`. They search the local library with the same ranking the search page uses, and never ask a provider. `play local` plays the top match. `queue local` queues every match, up to 20, in rank order. An artist queues all of their local songs. With no match, the command prints `nothing found for '<query>'`, exits with 1 and leaves playback as it is.
 
 Playback commands go to the device that has playback, so while Sonora steers another device over
 Spotify Connect, that device is the one that pauses or skips.
