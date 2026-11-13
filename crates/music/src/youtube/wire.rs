@@ -21,6 +21,7 @@ pub fn track(source: ytmusic::Track, index: u32) -> Track {
         .map(|artist| ArtistRef {
             name: artist.name,
             id: artist.id,
+            channel: artist.channel,
         })
         .collect();
     Track {
@@ -67,6 +68,7 @@ pub fn album(source: ytmusic::Album) -> Album {
             .map(|artist| ArtistRef {
                 name: artist.name,
                 id: artist.id,
+                channel: artist.channel,
             })
             .collect(),
         cover: cover(&source.thumbnails),

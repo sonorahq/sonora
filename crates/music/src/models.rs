@@ -56,6 +56,10 @@ pub struct ArtistRef {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// True when the credit is a plain video channel and not an artist page, as for fan uploads
+    /// on YouTube. Search does not offer such a channel as an artist.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub channel: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

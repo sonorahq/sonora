@@ -10252,7 +10252,7 @@ dependencies = [
 [[package]]
 name = "ytmusic"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/ytmusic-rs?rev=db4ab87#db4ab872cabd1648a2fb32626471427f2deb07ea"
+source = "git+https://github.com/sonorahq/ytmusic-rs?rev=99f7d14#99f7d141a7b35050ae69322822b72126a807b906"
 dependencies = [
  "anyhow",
  "async-trait",

@@ -178,6 +178,7 @@ pub(crate) fn artists_from(artists: &[ArtistMessage]) -> (String, Vec<ArtistRef>
             Some(ArtistRef {
                 name,
                 id: base62(artist.gid()),
+                channel: false,
             })
         })
         .collect();
