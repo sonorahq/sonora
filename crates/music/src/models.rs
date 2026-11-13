@@ -185,6 +185,34 @@ impl Album {
         }
         self
     }
+
+    /// The record label to show, trimmed. `None` when the provider names no label or the
+    /// placeholder MusicBrainz tags a release with when it has none (`[no label]`).
+    pub fn label_name(&self) -> Option<&str> {
+        let label = self.label.trim();
+        match label.is_empty() || is_no_label(label) {
+            true => None,
+            false => Some(label),
+        }
+    }
+
+    /// The copyright lines to show: the provider's own, minus any that credit the `[no label]`
+    /// placeholder. Empty when the provider gives none.
+    pub fn copyright_lines(&self) -> Vec<&str> {
+        self.copyrights
+            .iter()
+            .map(String::as_str)
+            .filter(|line| !line.to_lowercase().contains(NO_LABEL))
+            .collect()
+    }
+}
+
+/// The label MusicBrainz tags a release with when it has none.
+const NO_LABEL: &str = "[no label]";
+
+/// Whether `label` is the `[no label]` placeholder, in any letter case.
+fn is_no_label(label: &str) -> bool {
+    label.eq_ignore_ascii_case(NO_LABEL)
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -600,6 +628,44 @@ pub enum PinOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn labelled(label: &str, copyrights: &[&str]) -> Album {
+        Album {
+            label: label.to_owned(),
+            copyrights: copyrights.iter().map(|line| (*line).to_owned()).collect(),
+            ..Album::default()
+        }
+    }
+
+    #[test]
+    fn no_label_placeholder_shows_no_label_or_copyright() {
+        let album = labelled("[no label]", &["℗ 2020 [No Label]"]);
+        assert_eq!(album.label_name(), None);
+        assert!(album.copyright_lines().is_empty());
+        assert_eq!(labelled(" [NO LABEL] ", &[]).label_name(), None);
+    }
+
+    #[test]
+    fn real_label_and_copyrights_are_kept() {
+        let album = labelled(" Warp ", &["℗ 2020 Warp Records", "© 2020 Warp"]);
+        assert_eq!(album.label_name(), Some("Warp"));
+        assert_eq!(
+            album.copyright_lines(),
+            ["℗ 2020 Warp Records", "© 2020 Warp"]
+        );
+    }
+
+    #[test]
+    fn missing_label_is_unchanged() {
+        let album = labelled("", &[]);
+        assert_eq!(album.label_name(), None);
+        assert!(album.copyright_lines().is_empty());
+        assert_eq!(labelled("  ", &["© 2020 Someone"]).label_name(), None);
+        assert_eq!(
+            labelled("", &["© 2020 Someone"]).copyright_lines(),
+            ["© 2020 Someone"]
+        );
+    }
 
     #[test]
     fn musicbrainz_types_name_the_release() {

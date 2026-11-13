@@ -15,6 +15,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - Tidal artists with no portrait show the album cover Tidal draws them with, instead of an empty picture.
+- Releases tagged with the label `[no label]` no longer show a copyright line crediting it.
 
 ## [0.49.1] - 2026-11-13
 

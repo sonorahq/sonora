@@ -186,8 +186,7 @@ impl SongView {
             false => release_date_label(&release),
         };
         let label = album
-            .map(|detail| detail.album.label.clone())
-            .filter(|value| !value.is_empty())
+            .and_then(|detail| detail.album.label_name().map(str::to_owned))
             .map(SharedString::from)
             .unwrap_or_else(|| t!("common-not-provided"));
         let number = match (track.disc_number, track.track_number) {
@@ -619,11 +618,13 @@ impl Render for SongView {
                                 this.child(div().pt_5().child(profile))
                             })
                             .when_some(
-                                self.detail
-                                    .read(cx)
-                                    .album()
-                                    .and_then(|album| album.album.copyrights.first())
-                                    .cloned(),
+                                self.detail.read(cx).album().and_then(|album| {
+                                    album
+                                        .album
+                                        .copyright_lines()
+                                        .first()
+                                        .map(|&line| line.to_owned())
+                                }),
                                 |this, copyright| {
                                     this.child(
                                         ui::spoken("song-copyright", copyright_notice(&copyright))
