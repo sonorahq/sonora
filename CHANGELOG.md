@@ -7,11 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.49.1] - 2026-11-13
+
 ### Changed
 
-- Nix users pick the stable or nightly channel with `github:sonorahq/sonora/stable` or `github:sonorahq/sonora/nightly`, and both download ready-built from the sonora.cachix.org binary cache on x86_64 and aarch64 Linux. The flake no longer has `sonora-bin` or `sonora-src`.
-
 - Subsonic downloads are now ordinary audio files named after the artist and title, which any other player opens. Downloads you already have are converted the next time you sign in, and Open downloads under Settings, Storage shows the folder.
+- Nix users pick the stable or nightly channel with `github:sonorahq/sonora/stable` or `github:sonorahq/sonora/nightly`, and both download ready-built from the sonora.cachix.org binary cache on x86_64 and aarch64 Linux. The flake no longer has `sonora-bin` or `sonora-src`.
 
 ## [0.49.0] - 2026-11-13
 
@@ -2638,7 +2639,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.49.0...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.49.1...HEAD
+[0.49.1]: https://github.com/sonorahq/sonora/compare/v0.49.0...v0.49.1
 [0.49.0]: https://github.com/sonorahq/sonora/compare/v0.48.1...v0.49.0
 [0.48.1]: https://github.com/sonorahq/sonora/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/sonorahq/sonora/compare/v0.47.0...v0.48.0
