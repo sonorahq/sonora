@@ -56,6 +56,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Mixed English and Japanese lyrics no longer show duplicate English romanizations or misplaced spaces inside parentheses.
 - With Spotify, lyrics and the progress bar no longer run ahead of the music.
+- The icon on the Your Library and History covers stays visible when the adaptive theme takes a dark colour from the playing cover.
 
 ## [0.48.1] - 2026-11-08
 

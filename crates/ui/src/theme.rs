@@ -30,6 +30,8 @@ const MAX_ACCENT_SATURATION: f32 = 0.85;
 /// Art lighter than this wears a dark control and art darker than it a light
 /// one, which is the whole of what tells a white sleeve from a black one.
 const NEUTRAL_PIVOT: f32 = 0.5;
+/// The least lightness gap `legible` leaves between a tint and the surface under it.
+const LEGIBLE_DISTANCE: f32 = 0.34;
 const SYSTEM_FILLS: bool = cfg!(target_os = "windows");
 
 /// What a fill keeps of itself once the window is fully see-through. The page
@@ -86,6 +88,22 @@ pub fn backdrop(blur_window: bool, transparent: bool) -> WindowBackgroundAppeara
             false => WindowBackgroundAppearance::Transparent,
         },
     }
+}
+
+/// Keeps `tint` readable on `behind` by pushing its lightness away from the surface's. A tint
+/// that already stands far enough apart comes back unchanged.
+pub fn legible(tint: Hsla, behind: Hsla) -> Hsla {
+    let distance = (tint.l - behind.l).abs();
+    if distance >= LEGIBLE_DISTANCE {
+        return tint;
+    }
+    let lighter = behind.l + LEGIBLE_DISTANCE;
+    let darker = behind.l - LEGIBLE_DISTANCE;
+    let l = match lighter <= 1. {
+        true => lighter,
+        false => darker.max(0.),
+    };
+    Hsla { l, ..tint }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
