@@ -615,7 +615,7 @@ fn run(api: &'static Api, host: &'static Host) {
     // XWayland otherwise, so the sign-in window never depends on an XWayland being present. A
     // GDK_BACKEND in the environment outranks this list, which is fine: either name works.
     unsafe { (api.gdk_set_allowed_backends)(c"wayland,x11".as_ptr()) };
-    // A value the user exported wins over the renderer workaround.
+    // A value the user exported wins over the workaround.
     // SAFETY: nothing else in the process reads this variable, and no other thread is in GTK yet.
     if let Some(why) = shared_memory_only(api)
         && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
@@ -742,8 +742,10 @@ unsafe fn read(api: &'static Api, list: *mut Node) -> Vec<Cookie> {
     cookies
 }
 
-/// Avoids NVIDIA compositor errors and the runaway allocations reported with WebKitGTK 2.54.
-/// Use shared-memory rendering until a fixed WebKitGTK release is known.
+/// Why WebKit's DMA-BUF renderer must stay off, or none when it may run. The NVIDIA driver
+/// allocates buffers the compositor rejects with a protocol error that takes the process down,
+/// and WebKit upstream declined to detect it (bug 262607). WebKitGTK 2.54 and newer grows the
+/// web process without bound on any GPU. Shared memory is slower and only paints a sign-in page.
 fn shared_memory_only(api: &Api) -> Option<&'static str> {
     if nvidia() {
         return Some("nvidia driver loaded");
