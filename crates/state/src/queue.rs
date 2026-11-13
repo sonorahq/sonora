@@ -1248,6 +1248,15 @@ impl Queue {
         self.select(QueuePosition::Past(index), cx)
     }
 
+    /// Selects the first upcoming occurrence of `id`.
+    pub(crate) fn select_id(&mut self, id: &str, cx: &mut Context<Self>) -> Option<Track> {
+        let index = self
+            .upcoming
+            .iter()
+            .position(|entry| entry.id() == Some(id))?;
+        self.select(QueuePosition::Upcoming(index), cx)
+    }
+
     /// Selects a song in play order. Replaying history queues the interrupted songs first;
     /// selecting the collection preserves manual additions, while selecting a suggestion skips them.
     pub fn select(&mut self, position: QueuePosition, cx: &mut Context<Self>) -> Option<Track> {

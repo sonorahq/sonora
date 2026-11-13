@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
-use futures::future::BoxFuture;
+use futures::future::{BoxFuture, join_all};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use music::connect::{self, Command, Repeat};
 use music::vault::Vault;
@@ -499,6 +499,10 @@ pub struct Playback {
     /// The collection last fetched for a play button, before or after its press.
     warm: Option<Warm>,
     enqueue: Option<Task<()>>,
+    /// Reads tracks another Spotify app put on Soloist's queue.
+    soloist_queue: Option<Task<()>>,
+    /// Reads a queued track Soloist moved to before Sonora knew its metadata.
+    soloist_track: Option<Task<()>>,
     suggest: Option<Task<()>>,
     /// The track the engine was asked to fetch ahead, so it is asked once.
     preloaded: Option<Preloaded>,
@@ -679,6 +683,8 @@ impl Playback {
             sought: None,
             warm: None,
             enqueue: None,
+            soloist_queue: None,
+            soloist_track: None,
             suggest: None,
             preloaded: None,
             skipped: None,
@@ -1140,6 +1146,72 @@ impl Playback {
     /// Appends a track, or starts playing it when nothing is queued.
     pub fn enqueue(&mut self, track: Track, cx: &mut Context<Self>) {
         self.enqueue_tracks(vec![track], None, QueuePlacement::End, cx);
+    }
+
+    /// Adds tracks queued through Soloist in another Spotify app to Sonora's queue.
+    fn sync_soloist_queue(&mut self, ids: Vec<String>, cx: &mut Context<Self>) {
+        let Some(client) = self.session.read(cx).client() else {
+            return;
+        };
+        let known: HashSet<_> = self
+            .queue
+            .read(cx)
+            .tracks()
+            .filter_map(|track| track.id.clone())
+            .collect();
+        let ids: Vec<_> = ids.into_iter().filter(|id| !known.contains(id)).collect();
+        if ids.is_empty() {
+            return;
+        }
+        self.soloist_queue = Some(Io::global(cx).load(
+            async move {
+                join_all(ids.iter().map(|id| client.track(id)))
+                    .await
+                    .into_iter()
+                    .collect::<Result<Vec<_>>>()
+            },
+            move |this, found, cx| {
+                this.soloist_queue = None;
+                match found {
+                    Ok(tracks) => this.queue.update(cx, |queue, cx| {
+                        queue.insert(tracks, None, QueuePlacement::End, cx)
+                    }),
+                    Err(error) => log::warn!("soloist: cannot read the remote queue: {error:#}"),
+                }
+            },
+            cx,
+        ));
+    }
+
+    /// Follows a track selected from Soloist's queue rather than advancing Sonora's own queue.
+    fn follow_soloist_track(&mut self, id: String, at: Duration, cx: &mut Context<Self>) {
+        if let Some(track) = self.queue.update(cx, |queue, cx| queue.select_id(&id, cx)) {
+            return self.load_from(&track, at, Start::Pick, cx);
+        }
+        let Some(client) = self.session.read(cx).client() else {
+            return;
+        };
+        let wanted = id.clone();
+        self.soloist_track = Some(Io::global(cx).load(
+            async move { client.track(&wanted).await },
+            move |this, found, cx| {
+                this.soloist_track = None;
+                match found {
+                    Ok(track) if track.id.as_deref() == Some(&id) => {
+                        let selected = this.queue.update(cx, |queue, cx| {
+                            queue.insert([track], None, QueuePlacement::End, cx);
+                            queue.select_id(&id, cx)
+                        });
+                        if let Some(track) = selected {
+                            this.load_from(&track, at, Start::Pick, cx);
+                        }
+                    }
+                    Ok(_) => log::warn!("soloist: the remote queue returned the wrong track"),
+                    Err(error) => log::warn!("soloist: cannot read the selected track: {error:#}"),
+                }
+            },
+            cx,
+        ));
     }
 
     pub fn play_next(&mut self, track: Track, cx: &mut Context<Self>) {
@@ -2949,6 +3021,14 @@ impl Playback {
             self.learn_signal(id, track, cx);
             return;
         }
+        if let BackendEvent::QueueChanged { ids } = event {
+            self.sync_soloist_queue(ids, cx);
+            return;
+        }
+        if let BackendEvent::QueuedTrack { id, at } = event {
+            self.follow_soloist_track(id, at, cx);
+            return;
+        }
         if local != self.local_active() {
             return;
         }
@@ -2977,7 +3057,10 @@ impl Playback {
         }
         match event {
             // rebuilt or kept before the filters above
-            BackendEvent::OutputChanged { .. } | BackendEvent::Signal { .. } => {}
+            BackendEvent::OutputChanged { .. }
+            | BackendEvent::Signal { .. }
+            | BackendEvent::QueueChanged { .. }
+            | BackendEvent::QueuedTrack { .. } => {}
             BackendEvent::Unavailable { .. }
             | BackendEvent::Throttled { .. }
             | BackendEvent::Refused
@@ -3157,6 +3240,8 @@ impl Playback {
             self.sought = None;
             self.warm = None;
             self.enqueue = None;
+            self.soloist_queue = None;
+            self.soloist_track = None;
             self.suggest = None;
             self.seeded = None;
             self.leave_station();

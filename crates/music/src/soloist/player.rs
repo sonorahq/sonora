@@ -644,13 +644,21 @@ impl Brain {
                 self.heard.position = position.at();
                 self.follow_position();
             }
-            Event::QueueChanged { upcoming } => {
-                self.queue = upcoming
+            Event::QueueChanged { previous, upcoming } => {
+                let ids: Vec<_> = upcoming
+                    .iter()
+                    .filter(|entry| entry.queued())
+                    .filter_map(|entry| entry.item.as_ref())
+                    .filter_map(|item| track_id(&item.uri))
+                    .collect();
+                self.queue = previous
                     .into_iter()
+                    .chain(upcoming)
                     .filter(|entry| entry.queued())
                     .filter_map(|entry| entry.item)
                     .map(|item| item.uri)
                     .collect();
+                self.report(PlaybackEvent::QueueChanged { ids });
             }
             Event::VolumeChanged { volume } => self.hold_volume(volume),
             Event::OptionsChanged { options } => {
@@ -804,6 +812,7 @@ impl Brain {
         if !same {
             return match self.fed.as_ref() == Some(&self.heard.uri) {
                 true => self.hand_over(),
+                false if self.queue.contains(&self.heard.uri) => self.follow_queued(),
                 false => {
                     // past the one track it was given the daemon went on by itself
                     log::debug!("soloist: the daemon moved on to another track");
@@ -893,6 +902,24 @@ impl Brain {
         log::debug!("soloist: the daemon went on to the queued track");
         self.adopted = Some((next, Instant::now()));
         self.report(PlaybackEvent::Ended { id: Some(track.id) });
+    }
+
+    /// Lets state take over a track another Spotify app queued on Soloist.
+    fn follow_queued(&mut self) {
+        let Some(track) = self.track.take() else {
+            return;
+        };
+        let Some(id) = track_id(&self.heard.uri) else {
+            self.track = Some(track);
+            return self.finish();
+        };
+        self.next = None;
+        self.unmute();
+        self.adopted = Some((self.heard.uri.clone(), Instant::now()));
+        self.report(PlaybackEvent::QueuedTrack {
+            id,
+            at: self.heard.position,
+        });
     }
 
     /// Ends the wanted track and stops whatever the daemon went on to.
@@ -1319,6 +1346,13 @@ fn percent(gain: f32) -> u8 {
 
 fn millis(position: Duration) -> u64 {
     u64::try_from(position.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Reads a Spotify track id from a daemon queue URI.
+fn track_id(uri: &str) -> Option<String> {
+    uri.strip_prefix(TRACK_PREFIX)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
 }
 
 /// The encoding of the offer the daemon is asked for at a level.

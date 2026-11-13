@@ -27,6 +27,8 @@ pub(super) enum Event {
     },
     QueueChanged {
         #[serde(default)]
+        previous: Vec<Queued>,
+        #[serde(default)]
         upcoming: Vec<Queued>,
     },
     VolumeChanged {
