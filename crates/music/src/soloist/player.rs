@@ -76,6 +76,8 @@ const FEED_LEAD: Duration = Duration::from_secs(8);
 /// How long a track the daemon went on to by itself may play before Sonora has to have asked
 /// for it. Past that it is stopped, as at the end of Sonora's queue.
 const ADOPT_PATIENCE: Duration = Duration::from_secs(2);
+/// How long to wait for the queue snapshot that identifies an externally queued track.
+const QUEUE_PATIENCE: Duration = Duration::from_secs(1);
 /// How long the daemon gets to acknowledge the command that starts a track before its reports
 /// are trusted without one.
 const ACK_PATIENCE: Duration = Duration::from_secs(3);
@@ -304,6 +306,8 @@ struct Brain {
     /// The tracks on the daemon's queue as it last listed them. The account's own queued
     /// tracks are among them, and those are not Sonora's to move or skip.
     queue: Vec<String>,
+    /// A changed track waiting for a queue snapshot to say whether Spotify queued it.
+    unexpected: Option<(String, Instant)>,
     /// The queued track the daemon went on to, and when, until Sonora asks for it.
     adopted: Option<(String, Instant)>,
     /// When progress was last reported.
@@ -330,6 +334,7 @@ impl Brain {
             next: None,
             fed: None,
             queue: Vec::new(),
+            unexpected: None,
             adopted: None,
             reported: Instant::now(),
             refusals: 0,
@@ -575,6 +580,15 @@ impl Brain {
             self.adopted = None;
             self.send("pause", json!({}));
         }
+        if self
+            .unexpected
+            .as_ref()
+            .is_some_and(|(_, since)| now.duration_since(*since) > QUEUE_PATIENCE)
+        {
+            log::debug!("soloist: the queue did not confirm the changed track");
+            self.unexpected = None;
+            self.finish();
+        }
         let Some(track) = self.track.as_mut() else {
             return;
         };
@@ -661,6 +675,7 @@ impl Brain {
                     .map(|item| item.uri)
                     .collect();
                 self.report(PlaybackEvent::QueueChanged { ids });
+                self.reconcile_queue();
             }
             Event::VolumeChanged { volume } => self.hold_volume(volume),
             Event::OptionsChanged { options } => {
@@ -815,11 +830,7 @@ impl Brain {
             return match self.fed.as_ref() == Some(&self.heard.uri) {
                 true => self.hand_over(),
                 false if self.queue.contains(&self.heard.uri) => self.follow_queued(),
-                false => {
-                    // past the one track it was given the daemon went on by itself
-                    log::debug!("soloist: the daemon moved on to another track");
-                    self.finish()
-                }
+                false => self.wait_for_queue(),
             };
         }
         match self.heard.status {
@@ -916,6 +927,7 @@ impl Brain {
             return self.finish();
         };
         self.next = None;
+        self.unexpected = None;
         self.unmute();
         self.adopted = Some((self.heard.uri.clone(), Instant::now()));
         self.report(PlaybackEvent::QueuedTrack {
@@ -924,11 +936,38 @@ impl Brain {
         });
     }
 
+    /// Waits for the queue snapshot that follows a changed track before rejecting it.
+    fn wait_for_queue(&mut self) {
+        if self
+            .unexpected
+            .as_ref()
+            .is_some_and(|(uri, _)| uri == &self.heard.uri)
+        {
+            return;
+        }
+        self.unexpected = Some((self.heard.uri.clone(), Instant::now()));
+        self.send("get_queue", json!({}));
+    }
+
+    /// Adopts a track the queue confirms or stops an unconfirmed interruption.
+    fn reconcile_queue(&mut self) {
+        let Some((uri, _)) = self.unexpected.take() else {
+            return;
+        };
+        if uri == self.heard.uri && self.queue.contains(&uri) {
+            self.follow_queued();
+        } else {
+            log::debug!("soloist: the daemon moved on to another track");
+            self.finish();
+        }
+    }
+
     /// Ends the wanted track and stops whatever the daemon went on to.
     fn finish(&mut self) {
         let Some(track) = self.track.take() else {
             return;
         };
+        self.unexpected = None;
         self.next = None;
         self.unmute();
         if self.heard.status == Status::Playing {
