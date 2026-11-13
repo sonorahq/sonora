@@ -125,6 +125,7 @@ enum Slot {
     DiscordName,
     DiscordShowPaused,
     DiscordBadge,
+    DiscordUploadCovers,
     DiscordAnonymous,
     DiscordHideOnConnect,
     DiscordButtons,
@@ -921,6 +922,10 @@ impl SettingsView {
                 t!("settings-discord-badge"),
                 t!("settings-discord-badge-detail"),
             ),
+            Slot::DiscordUploadCovers => (
+                t!("settings-discord-upload-covers"),
+                t!("settings-discord-upload-covers-detail"),
+            ),
             Slot::ArtworkForLocal => (
                 t!("settings-artwork-for-local-files"),
                 t!("settings-artwork-for-local-files-detail"),
@@ -1042,6 +1047,7 @@ impl SettingsView {
             Slot::DiscordName => self.discord_name_row(cx),
             Slot::DiscordShowPaused => self.discord_show_paused_row(cx),
             Slot::DiscordBadge => self.discord_badge_row(cx),
+            Slot::DiscordUploadCovers => self.discord_upload_covers_row(cx),
             Slot::ArtworkForLocal => self.artwork_for_local_files_row(cx),
             Slot::DiscordAnonymous => self.discord_anonymous_row(cx),
             Slot::DiscordHideOnConnect => self.discord_hide_on_connect_row(cx),
