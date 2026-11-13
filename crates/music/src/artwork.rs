@@ -21,6 +21,8 @@ const MUSICBRAINZ_SCORE: u32 = 90;
 const COVER_ART: &str = "https://coverartarchive.org/release-group";
 /// Uguu, a temporary host: anonymous uploads served as plain images, gone after three hours.
 const UGUU: &str = "https://uguu.se/upload";
+/// The scheme the local provider gives its covers, folder art and pictures extracted from tags.
+const FILE_URL: &str = "file://";
 /// How long the fetch of a provider's cover, or its upload, may take before it counts as failed
 /// and the search answers instead.
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(20);
@@ -335,26 +337,21 @@ impl ArtworkSearch {
         Ok(url.starts_with("https://").then(|| url.to_owned()))
     }
 
-    /// Fetches the picture at `source`, a provider's own cover url, and uploads it to Uguu for
-    /// three hours, answering the public url there. Only the re-encoded picture leaves the machine,
-    /// never `source`, which for a self-hosted server carries the credentials that fetch it.
+    /// Reads the picture at `source`, a provider's own cover url or a local file's `file://` one,
+    /// and uploads it to Uguu for three hours, answering the public url there. Only the
+    /// re-encoded picture leaves the machine, never `source`, which for a self-hosted server
+    /// carries the credentials that fetch it.
     pub async fn upload(&self, source: &str) -> Result<String> {
-        // every error drops the url, so the credentials in it never reach a log
-        let picture = self
-            .http
-            .get(source)
-            .timeout(UPLOAD_TIMEOUT)
-            .send()
-            .await
-            .map_err(reqwest::Error::without_url)
-            .context("cannot reach the cover")?
-            .error_for_status()
-            .map_err(reqwest::Error::without_url)
-            .context("cannot fetch the cover")?
-            .bytes()
-            .await
-            .map_err(reqwest::Error::without_url)
-            .context("cannot read the cover")?;
+        let picture = match source.strip_prefix(FILE_URL) {
+            Some(path) => {
+                let path = path.to_owned();
+                tokio::task::spawn_blocking(move || std::fs::read(path))
+                    .await
+                    .context("cannot read the cover file")?
+                    .context("cannot read the cover file")?
+            }
+            None => self.fetch(source).await?,
+        };
         let jpeg = square_jpeg(&picture, UPLOAD_LIMITS)?;
 
         let boundary = format!("sonora{:016x}", fastrand::u64(..));
@@ -390,6 +387,27 @@ impl ArtworkSearch {
             .map(|file| file.url)
             .filter(|url| answer.success && url.starts_with("https://"));
         url.context("uguu answered without a url")
+    }
+
+    /// The bytes behind a provider's cover url. Every error drops the url, so the credentials in
+    /// it never reach a log.
+    async fn fetch(&self, source: &str) -> Result<Vec<u8>> {
+        let picture = self
+            .http
+            .get(source)
+            .timeout(UPLOAD_TIMEOUT)
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .context("cannot reach the cover")?
+            .error_for_status()
+            .map_err(reqwest::Error::without_url)
+            .context("cannot fetch the cover")?
+            .bytes()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .context("cannot read the cover")?;
+        Ok(picture.to_vec())
     }
 
     /// One page of results for the artist and `name`. Deezer reports a refused search, such as
