@@ -113,6 +113,7 @@ async fn overview_artist(session: &Session, overview: pathfinder::Overview) -> R
             .map(|biography| plain_text(&biography))
             .filter(|biography| !biography.is_empty()),
         monthly_listeners: overview.monthly_listeners,
+        followers: None,
         top_tracks,
         albums: overview.albums,
     })
@@ -342,6 +343,7 @@ fn artist_from(artist: &ArtistMessage, top_tracks: Vec<Track>, albums: Vec<Album
         banner: None,
         biography: profile.biography,
         monthly_listeners: None,
+        followers: None,
         top_tracks,
         albums,
     }
