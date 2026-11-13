@@ -19,7 +19,7 @@ use ui::Listing as _;
 use ui::{
     Artwork, Button, Card, Deck, MIN_CONTENT, Modal, Mode, Pending, Picker, Pin, PinKind, Popovers,
     Popup, Scrollbar, Scroller, TableDelegate, TableEvent, TableState, Text, effects, scrolled,
-    snapped, table,
+    snapped, spoken, table,
 };
 
 use crate::chrome::tools;
@@ -349,6 +349,10 @@ impl ArtistView {
                 let value = cells::count(count);
                 t!("artist-monthly-listeners", count = count, value = &value)
             });
+        let followers = artist.and_then(|artist| artist.followers).map(|count| {
+            let value = cells::count(count);
+            t!("artist-followers", count = count, value = &value)
+        });
         let overflow = self.saved_artist(cx).map(|artist| {
             Picker::icon("artist-overflow", &self.popovers, "icons/ellipsis.svg")
                 .tooltip("common-more")
@@ -390,8 +394,8 @@ impl ArtistView {
             .pending(artist.is_none() && self.detail.read(cx).is_loading())
             .pin(pin)
             .cover(cover)
-            .when_some(listeners, |hero, listeners| {
-                hero.meta(HeroMetaStrip::new().text(listeners))
+            .when(listeners.is_some() || followers.is_some(), |hero| {
+                hero.meta(artist_meta(listeners, followers))
             })
             .actions(actions)
             .circle()
@@ -1366,6 +1370,20 @@ impl Render for ArtistView {
             .children(self.about_dialog(cx))
             .children(self.favorites_dialog(window, cx))
             .into_any_element()
+    }
+}
+
+/// The facts under the artist's name: the listener count, then the follower count. The follower
+/// count takes its own id, so it keeps the same id whether or not a listener count is shown.
+fn artist_meta(listeners: Option<SharedString>, followers: Option<SharedString>) -> HeroMetaStrip {
+    let strip = HeroMetaStrip::new();
+    let strip = match listeners {
+        Some(listeners) => strip.text(listeners),
+        None => strip,
+    };
+    match followers {
+        Some(followers) => strip.item(spoken("artist-followers", followers)),
+        None => strip,
     }
 }
 

@@ -1127,15 +1127,12 @@ impl MusicApi for TidalClient {
             self.biography(artist_id),
         );
         let detail = detail.context("cannot load the artist")?;
-        Ok(Artist {
-            name: wire::text(&detail, "name").unwrap_or_default().to_owned(),
-            cover_large: wire::image(wire::text(&detail, "picture"), wire::PORTRAIT_LARGE),
-            banner: None,
+        Ok(artist_page(
+            &detail,
             biography,
-            monthly_listeners: None,
-            top_tracks: top.map(|page| wire::track_list(&page)).unwrap_or_default(),
-            albums: wire::distinct(albums.unwrap_or_default()),
-        })
+            top.ok(),
+            albums.unwrap_or_default(),
+        ))
     }
 
     /// The releases the overview leaves out, which are the EPs and singles beside the albums
@@ -1748,6 +1745,27 @@ fn signed_out(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| cause.is::<SignInFailure>())
 }
 
+/// The artist page from Tidal's artist detail, with the biography, top tracks and releases read
+/// beside it. `followersAmount` is the count Tidal's web player shows as "fans". Zero counts as
+/// no count, so an artist Tidal gives no figure for shows none rather than "0 followers".
+fn artist_page(
+    detail: &Value,
+    biography: Option<String>,
+    top: Option<Value>,
+    releases: Vec<wire::Release>,
+) -> Artist {
+    Artist {
+        name: wire::text(detail, "name").unwrap_or_default().to_owned(),
+        cover_large: wire::image(wire::text(detail, "picture"), wire::PORTRAIT_LARGE),
+        banner: None,
+        biography,
+        monthly_listeners: None,
+        followers: wire::number(detail, "followersAmount").filter(|count| *count > 0),
+        top_tracks: top.map(|page| wire::track_list(&page)).unwrap_or_default(),
+        albums: wire::distinct(releases),
+    }
+}
+
 /// Where an artist's releases are listed.
 fn releases_path(artist_id: &str) -> String {
     format!("/artists/{}/albums", escape::component(artist_id))
@@ -1799,7 +1817,7 @@ fn encoding(answer: &Value, codec: &str) -> Option<Encoding> {
 mod tests {
     use serde_json::json;
 
-    use super::{Encoding, encoding};
+    use super::{Encoding, artist_page, encoding};
 
     #[test]
     fn flac_reports_the_depth_and_rate_tidal_names() {
@@ -1826,5 +1844,47 @@ mod tests {
     #[test]
     fn a_codec_with_no_name_here_is_other() {
         assert_eq!(encoding(&json!({}), "eac3"), Some(Encoding::Other));
+    }
+
+    /// An artist detail with the fields Sonora reads, shaped as the issue describes Tidal's
+    /// response. Written by hand from that description, not recorded from a live account.
+    fn artist_detail(followers: Option<serde_json::Value>) -> serde_json::Value {
+        let mut detail = json!({
+            "id": 1_234,
+            "name": "Artist",
+            "picture": "7c2f1a9e-0000-4000-8000-000000000000"
+        });
+        if let Some(followers) = followers {
+            detail["followersAmount"] = followers;
+        }
+        detail
+    }
+
+    #[test]
+    fn followers_amount_fills_the_follower_count() {
+        let artist = artist_page(
+            &artist_detail(Some(json!(2_345_678))),
+            None,
+            None,
+            Vec::new(),
+        );
+
+        assert_eq!(artist.name, "Artist");
+        assert_eq!(artist.followers, Some(2_345_678));
+        assert_eq!(artist.monthly_listeners, None);
+    }
+
+    #[test]
+    fn a_missing_followers_amount_leaves_the_count_empty() {
+        let artist = artist_page(&artist_detail(None), None, None, Vec::new());
+
+        assert_eq!(artist.followers, None);
+    }
+
+    #[test]
+    fn a_zero_followers_amount_leaves_the_count_empty() {
+        let artist = artist_page(&artist_detail(Some(json!(0))), None, None, Vec::new());
+
+        assert_eq!(artist.followers, None);
     }
 }

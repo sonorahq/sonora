@@ -331,6 +331,9 @@ pub struct Artist {
     pub banner: Option<String>,
     pub biography: Option<String>,
     pub monthly_listeners: Option<u64>,
+    /// How many accounts follow the artist, when the provider counts followers apart from
+    /// listeners. Left empty rather than zero when the provider does not say.
+    pub followers: Option<u64>,
     pub top_tracks: Vec<Track>,
     pub albums: Vec<Album>,
 }

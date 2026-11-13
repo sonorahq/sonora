@@ -10,6 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Scrobble to your own ListenBrainz server or to multi-scrobbler by filling in the server address when you connect ListenBrainz.
+- See how many followers an artist has on Tidal, shown beside the listener count on the artist page.
 
 ## [0.49.1] - 2026-11-13
 

@@ -862,36 +862,7 @@ impl MusicApi for DeezerClient {
             self.public(&albums_path),
         );
         let detail = detail.context("cannot load the artist")?;
-        let own = ArtistRef {
-            name: wire::text(&detail, &["name"])
-                .unwrap_or_default()
-                .to_owned(),
-            id: Some(artist_id.to_owned()),
-        };
-        Ok(Artist {
-            name: own.name.clone(),
-            cover_large: detail
-                .get("picture_xl")
-                .or_else(|| detail.get("picture_big"))
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-            banner: None,
-            biography: None,
-            monthly_listeners: wire::number(&detail, &["nb_fan"]),
-            top_tracks: top.map(|page| wire::track_list(&page)).unwrap_or_default(),
-            albums: albums
-                .map(|page| {
-                    page.get("data")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default()
-                        .iter()
-                        .filter_map(wire::album)
-                        .map(|album| album.credit(&own))
-                        .collect()
-                })
-                .unwrap_or_default(),
-        })
+        Ok(artist_page(artist_id, &detail, top.ok(), albums.ok()))
     }
 
     /// Keeps Deezer's top hundred first, then ranks the artist's releases by song rank.
@@ -1506,4 +1477,78 @@ fn formats_from(quality: Quality) -> &'static [&'static str] {
         Quality::Normal | Quality::Low => 2,
     };
     &FORMATS[first..]
+}
+
+/// The artist page from Deezer's detail, top tracks and albums. A top list or album list that
+/// failed to load leaves that part empty rather than failing the page. Deezer's `nb_fan` is
+/// its fan count, which fills the listener count here.
+fn artist_page(
+    artist_id: &str,
+    detail: &Value,
+    top: Option<Value>,
+    albums: Option<Value>,
+) -> Artist {
+    let own = ArtistRef {
+        name: wire::text(detail, &["name"]).unwrap_or_default().to_owned(),
+        id: Some(artist_id.to_owned()),
+    };
+    Artist {
+        name: own.name.clone(),
+        cover_large: detail
+            .get("picture_xl")
+            .or_else(|| detail.get("picture_big"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        banner: None,
+        biography: None,
+        monthly_listeners: wire::number(detail, &["nb_fan"]),
+        followers: None,
+        top_tracks: top.map(|page| wire::track_list(&page)).unwrap_or_default(),
+        albums: albums
+            .map(|page| {
+                page.get("data")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(wire::album)
+                    .map(|album| album.credit(&own))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::artist_page;
+
+    #[test]
+    fn nb_fan_fills_the_listener_count_and_leaves_followers_empty() {
+        let detail = json!({
+            "id": 27,
+            "name": "Artist",
+            "nb_fan": 1_234_567,
+            "picture_xl": "https://cdn.example/artist.jpg"
+        });
+        let artist = artist_page("27", &detail, None, None);
+
+        assert_eq!(artist.name, "Artist");
+        assert_eq!(artist.monthly_listeners, Some(1_234_567));
+        assert_eq!(artist.followers, None);
+        assert_eq!(
+            artist.cover_large.as_deref(),
+            Some("https://cdn.example/artist.jpg")
+        );
+    }
+
+    #[test]
+    fn a_detail_without_nb_fan_has_no_listener_count() {
+        let artist = artist_page("27", &json!({"name": "Artist"}), None, None);
+
+        assert_eq!(artist.monthly_listeners, None);
+        assert_eq!(artist.followers, None);
+    }
 }

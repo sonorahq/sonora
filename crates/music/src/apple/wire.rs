@@ -952,6 +952,7 @@ pub fn artist(value: &Resource, root: &str) -> Option<Artist> {
             .or_else(|| text(&notes.standard))
             .or_else(|| text(&attributes.artist_bio)),
         monthly_listeners: None,
+        followers: None,
         top_tracks: view(value, "top-songs")
             .iter()
             .filter_map(|row| song(row, root))
