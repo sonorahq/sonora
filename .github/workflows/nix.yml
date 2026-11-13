@@ -1,0 +1,55 @@
+name: nix
+
+# Builds a flake package for x86_64 and aarch64 Linux and pushes it to sonora.cachix.org.
+# release.yml runs it on every stable tag with `sonora-src`, the tag's own tree, which is the same
+# derivation `default` names once flake.nix points at that release. Dispatch it on main with
+# `default` when that pointer has moved and the cache missed. macOS is left out because its source
+# build needs Xcode in the Nix store.
+
+on:
+  workflow_call:
+    inputs:
+      package:
+        type: string
+        default: sonora-src
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Flake package to build and push
+        type: string
+        default: default
+
+concurrency:
+  group: nix-${{ github.ref }}-${{ inputs.package }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: nix ${{ matrix.system }}
+    if: github.repository == 'sonorahq/sonora'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            os: ubuntu-24.04
+          - system: aarch64-linux
+            os: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+
+      - uses: cachix/cachix-action@v16
+        with:
+          name: sonora
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: build
+        run: >-
+          nix build --print-build-logs --no-link --print-out-paths
+          .#packages.${{ matrix.system }}.${{ inputs.package }}

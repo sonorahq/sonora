@@ -118,10 +118,19 @@ inputs.sonora.url = "github:sonorahq/sonora";
 ```
 
 ```text
-inputs.sonora.packages.${system}.default     (prebuilt where available, else from source)
+inputs.sonora.packages.${system}.default     (the latest release)
 inputs.sonora.packages.${system}.sonora      (same as default)
-inputs.sonora.packages.${system}.sonora-bin  (prebuilt, x86_64-linux, aarch64-linux, aarch64-darwin)
-inputs.sonora.packages.${system}.sonora-src  (always built from source)
+inputs.sonora.packages.${system}.sonora-src  (the checked-out source)
+```
+
+Every release is built for x86_64-linux and aarch64-linux and pushed to a binary cache, so Nix downloads Sonora
+instead of compiling it once the cache is trusted:
+
+```nix
+nix.settings = {
+  extra-substituters = [ "https://sonora.cachix.org" ];
+  extra-trusted-public-keys = [ "sonora.cachix.org-1:qbPeDsvZPbwUWHpQS5Oe0bjz5oHAVscHem+MCzwrc9Q=" ];
+};
 ```
 
 Building from source on macOS needs Xcode added to the Nix store, because the shaders compile with Apple's Metal compiler.

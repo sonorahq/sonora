@@ -1,6 +1,15 @@
 {
   description = "A native, familiar music streaming client";
 
+  # The release workflow builds every stable tag for Linux and pushes it here, so the default
+  # package downloads instead of compiling.
+  nixConfig = {
+    extra-substituters = [ "https://sonora.cachix.org" ];
+    extra-trusted-public-keys = [
+      "sonora.cachix.org-1:qbPeDsvZPbwUWHpQS5Oe0bjz5oHAVscHem+MCzwrc9Q="
+    ];
+  };
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     rust-overlay = {
@@ -32,27 +41,37 @@
           fn pkgs
         );
 
+      # The stable release the default package builds. `hash` is the NAR hash of the unpacked
+      # GitHub source archive of `v<version>`.
       release = {
         version = "0.49.0";
-        assets = {
-          x86_64-linux = {
-            target = "x86_64-unknown-linux-gnu";
-            hash = "sha256-/+mhHr5WocrH9d5sCon5adE4xuV52szJAVhqmSraKt0=";
-          };
-          aarch64-linux = {
-            target = "aarch64-unknown-linux-gnu";
-            hash = "sha256-v+7KoiTvXR9PadCbfkZwtoIM4eYony6eg9rNsctIxHw=";
-          };
-          aarch64-darwin = {
-            target = "macos";
-            hash = "sha256-9xLOGUxlT7aIyiOWNwh2cbHIqNuKgHDQPu/8uxHH9+E=";
-          };
-        };
+        hash = "sha256-6FRFpdCr71jHZlroaOpdNteLKgx13GgZj2KaD04xLRA=";
       };
 
-      # The nightly prerelease, in the same shape as `release` plus its tag. Only the commit the
-      # nightly workflow tags `nightly` carries this file, so `github:sonorahq/sonora/nightly` is
-      # the one flake ref that installs it.
+      # Copies only what cargo reads out of a source tree. The result depends on file contents
+      # alone, so the release archive and a checkout of its tag give one store path and share one
+      # cached build, and a commit that touches only docs or CI keeps it too.
+      cargoSource =
+        root:
+        builtins.path {
+          name = "source";
+          path = root;
+          filter =
+            path: _:
+            builtins.elem (lib.head (lib.splitString "/" (lib.removePrefix "${toString root}/" path))) [
+              ".cargo"
+              "Cargo.toml"
+              "Cargo.lock"
+              "crates"
+              "assets"
+              "COPYING"
+              "THIRD-PARTY.md"
+            ];
+        };
+
+      # The nightly prerelease: its version, its tag and a map from Nix system to release target
+      # and hash. Only the commit the nightly workflow tags `nightly` carries this file, so
+      # `github:sonorahq/sonora/nightly` is the one flake ref that installs it.
       nightly = lib.optionalAttrs (builtins.pathExists ./nix/nightly.json) (
         lib.importJSON ./nix/nightly.json
       );
@@ -117,9 +136,9 @@
               rustc = toolchain;
             };
 
-          # Points the Linux binary at its runtime libraries and environment. Both packages run
-          # it, since webkitgtk and the GPU and audio stacks are opened with dlopen and never
-          # show up as link-time dependencies.
+          # Points the Linux binary at its runtime libraries and environment. Every source build and
+          # the nightly binary run it, since webkitgtk and the GPU and audio stacks are opened with
+          # dlopen and never show up as link-time dependencies.
           linuxFixup = lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
             patchelf \
               --set-interpreter "${pkgs.stdenv.cc.bintools.dynamicLinker}" \
@@ -131,126 +150,140 @@
               --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : ${gstPluginPath}
           '';
 
-          sonora-src = rustPlatform.buildRustPackage (final: {
-            pname = "sonora";
-            inherit ((lib.importTOML (final.src + /Cargo.toml)).workspace.package) version;
+          # Compiles Sonora from a tree `cargoSource` produced.
+          buildSonora =
+            src:
+            rustPlatform.buildRustPackage (final: {
+              pname = "sonora";
+              inherit ((lib.importTOML "${final.src}/Cargo.toml").workspace.package) version;
 
-            src = ./.;
-            cargoLock = {
-              lockFile = final.src + /Cargo.lock;
-              allowBuiltinFetchGit = true;
-            };
-            cargoBuildFlags = [
-              "--package"
-              "sonora"
-            ];
-            doCheck = false;
-            dontCargoUseSystemLibs = true;
+              inherit src;
+              cargoLock = {
+                lockFile = "${final.src}/Cargo.lock";
+                allowBuiltinFetchGit = true;
+              };
+              cargoBuildFlags = [
+                "--package"
+                "sonora"
+              ];
+              doCheck = false;
+              dontCargoUseSystemLibs = true;
 
-            nativeBuildInputs =
-              with pkgs;
-              lib.flatten [
-                cmake
-                pkg-config
-                (lib.optionals stdenv.hostPlatform.isLinux [
-                  makeWrapper
-                  mold
-                ])
-                (lib.optionals stdenv.hostPlatform.isDarwin [
-                  (
-                    let
-                      pkgs' = import nixpkgs {
-                        inherit (stdenv.hostPlatform) system;
-                        config.allowUnfree = true;
-                      };
-                    in
-                    runCommandLocal "metal-shader-compiler" { } ''
-                      mkdir -p "$out/bin"
-                      ln -s ${pkgs'.darwin.xcode}/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metal "$out/bin/metal"
-                      ln -s ${pkgs'.darwin.xcode}/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metallib "$out/bin/metallib"
+              nativeBuildInputs =
+                with pkgs;
+                lib.flatten [
+                  cmake
+                  pkg-config
+                  (lib.optionals stdenv.hostPlatform.isLinux [
+                    makeWrapper
+                    mold
+                  ])
+                  (lib.optionals stdenv.hostPlatform.isDarwin [
+                    (
+                      let
+                        pkgs' = import nixpkgs {
+                          inherit (stdenv.hostPlatform) system;
+                          config.allowUnfree = true;
+                        };
+                      in
+                      runCommandLocal "metal-shader-compiler" { } ''
+                        mkdir -p "$out/bin"
+                        ln -s ${pkgs'.darwin.xcode}/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metal "$out/bin/metal"
+                        ln -s ${pkgs'.darwin.xcode}/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metallib "$out/bin/metallib"
+                      ''
+                    )
+                  ])
+                ];
+              buildInputs =
+                with pkgs;
+                lib.flatten [
+                  sqlite
+                  (lib.optionals stdenv.hostPlatform.isLinux [
+                    dbus
+                    fontconfig
+                    libxcb
+                    libxkbcommon
+                    libx11
+                    pipewire
+                    stdenv.cc.cc.lib
+                    (alsa-lib-with-plugins.override {
+                      plugins = [
+                        alsa-plugins
+                        pipewire
+                      ];
+                    })
+                  ])
+                  (lib.optionals stdenv.hostPlatform.isDarwin [
+                    apple-sdk_15
+                    (darwinMinVersionHook "10.15")
+                  ])
+                ];
+
+              installPhase = ''
+                runHook preInstall
+
+                install -Dm755 "target/${pkgs.stdenv.hostPlatform.rust.cargoShortTarget}/$cargoBuildType/sonora" "$out/bin/sonora"
+                ${
+                  if pkgs.stdenv.hostPlatform.isDarwin then
                     ''
-                  )
-                ])
-              ];
-            buildInputs =
-              with pkgs;
-              lib.flatten [
-                sqlite
-                (lib.optionals stdenv.hostPlatform.isLinux [
-                  dbus
-                  fontconfig
-                  libxcb
-                  libxkbcommon
-                  libx11
-                  pipewire
-                  stdenv.cc.cc.lib
-                  (alsa-lib-with-plugins.override {
-                    plugins = [
-                      alsa-plugins
-                      pipewire
-                    ];
-                  })
-                ])
-                (lib.optionals stdenv.hostPlatform.isDarwin [
-                  apple-sdk_15
-                  (darwinMinVersionHook "10.15")
-                ])
-              ];
+                      install -Dm755 "target/${pkgs.stdenv.hostPlatform.rust.cargoShortTarget}/$cargoBuildType/sonora" "$out/Applications/Sonora.app/Contents/MacOS/sonora"
+                      install -Dm444 "$src/assets/macos/sonora.icns" \
+                        "$out/Applications/Sonora.app/Contents/Resources/sonora.icns"
+                      install -Dm444 "$src/assets/macos/Assets.car" \
+                        "$out/Applications/Sonora.app/Contents/Resources/Assets.car"
 
-            installPhase = ''
-              runHook preInstall
+                      sed \
+                        "s/@VERSION@/$version/g" \
+                        "$src/assets/macos/Info.plist" \
+                        > "$out/Applications/Sonora.app/Contents/Info.plist"
 
-              install -Dm755 "target/${pkgs.stdenv.hostPlatform.rust.cargoShortTarget}/$cargoBuildType/sonora" "$out/bin/sonora"
-              ${
-                if pkgs.stdenv.hostPlatform.isDarwin then
-                  ''
-                    install -Dm755 "target/${pkgs.stdenv.hostPlatform.rust.cargoShortTarget}/$cargoBuildType/sonora" "$out/Applications/Sonora.app/Contents/MacOS/sonora"
-                    install -Dm444 "$src/assets/macos/sonora.icns" \
-                      "$out/Applications/Sonora.app/Contents/Resources/sonora.icns"
-                    install -Dm444 "$src/assets/macos/Assets.car" \
-                      "$out/Applications/Sonora.app/Contents/Resources/Assets.car"
+                      LICENSE_DIR="$out/Applications/Sonora.app/Contents/Resources"
+                    ''
+                  else
+                    ''
+                      install -Dm444 "$src/assets/linux/sonora.desktop" \
+                        "$out/share/applications/sonora.desktop"
+                      install -Dm444 "$src/assets/linux/sonora.svg" \
+                        "$out/share/icons/hicolor/scalable/apps/sonora.svg"
+                      for icon in "$src"/assets/linux/icons/hicolor/*/apps/sonora.png; do
+                        size="$(basename "$(dirname "$(dirname "$icon")")")"
+                        install -Dm444 "$icon" \
+                          "$out/share/icons/hicolor/$size/apps/sonora.png"
+                      done
 
-                    sed \
-                      "s/@VERSION@/$version/g" \
-                      "$src/assets/macos/Info.plist" \
-                      > "$out/Applications/Sonora.app/Contents/Info.plist"
+                      LICENSE_DIR="$out/share/licenses/sonora"
+                    ''
+                }
+                install -Dm444 "$src/COPYING" "$LICENSE_DIR/LICENSE"
+                install -Dm444 "$src/THIRD-PARTY.md" "$LICENSE_DIR/THIRD-PARTY.md"
+                install -Dm444 "$src/assets/fonts/LICENSE.txt" \
+                  "$LICENSE_DIR/sonora/LICENSE.Inter"
+                for licence in "$src/assets/icons"/*/LICENSE; do
+                  pack="$(basename "$(dirname "$licence")")"
+                  install -Dm444 "$licence" \
+                    "$LICENSE_DIR/icons/LICENSE.$pack"
+                done
+                install -Dm444 "$src/assets/icons/LICENSE" \
+                  "$LICENSE_DIR/icons/LICENSE"
 
-                    LICENSE_DIR="$out/Applications/Sonora.app/Contents/Resources"
-                  ''
-                else
-                  ''
-                    install -Dm444 "$src/assets/linux/sonora.desktop" \
-                      "$out/share/applications/sonora.desktop"
-                    install -Dm444 "$src/assets/linux/sonora.svg" \
-                      "$out/share/icons/hicolor/scalable/apps/sonora.svg"
-                    for icon in "$src"/assets/linux/icons/hicolor/*/apps/sonora.png; do
-                      size="$(basename "$(dirname "$(dirname "$icon")")")"
-                      install -Dm444 "$icon" \
-                        "$out/share/icons/hicolor/$size/apps/sonora.png"
-                    done
+                runHook postInstall
+              '';
 
-                    LICENSE_DIR="$out/share/licenses/sonora"
-                  ''
+              postFixup = linuxFixup;
+
+              inherit meta;
+            });
+
+          sonora-src = buildSonora (cargoSource ./.);
+
+          sonora-release = buildSonora (
+            cargoSource (
+              builtins.fetchTarball {
+                url = "https://github.com/sonorahq/sonora/archive/v${release.version}.tar.gz";
+                sha256 = release.hash;
               }
-              install -Dm444 "$src/COPYING" "$LICENSE_DIR/LICENSE"
-              install -Dm444 "$src/THIRD-PARTY.md" "$LICENSE_DIR/THIRD-PARTY.md"
-              install -Dm444 "$src/assets/fonts/LICENSE.txt" \
-                "$LICENSE_DIR/sonora/LICENSE.Inter"
-              for licence in "$src/assets/icons"/*/LICENSE; do
-                pack="$(basename "$(dirname "$licence")")"
-                install -Dm444 "$licence" \
-                  "$LICENSE_DIR/icons/LICENSE.$pack"
-              done
-              install -Dm444 "$src/assets/icons/LICENSE" \
-                "$LICENSE_DIR/icons/LICENSE"
-
-              runHook postInstall
-            '';
-
-            postFixup = linuxFixup;
-
-            inherit meta;
-          });
+            )
+          );
 
           meta = {
             description = "A native, familiar music streaming client";
@@ -350,29 +383,18 @@
               postFixup = linuxFixup;
             };
 
-          sonora-bin = prebuilt {
-            pname = "sonora-bin";
-            inherit (release) version assets;
-            tag = "v${release.version}";
-          };
-
           sonora-nightly = prebuilt {
             pname = "sonora-nightly";
             inherit (nightly) version tag assets;
           };
         in
-        # `default` and `sonora` resolve to the release binary wherever one is published and to
-        # the source build elsewhere. `sonora-src` and `sonora-bin` always mean one or the other.
-        # At the `nightly` tag both resolve to the nightly binary instead.
+        # `default` and `sonora` build the stable release, which sonora.cachix.org serves on Linux.
+        # `sonora-src` builds the checked-out tree. At the `nightly` tag `default` and `sonora`
+        # resolve to the nightly binary instead.
         {
           inherit sonora-src;
-          sonora = sonora-src;
-          default = sonora-src;
-        }
-        // lib.optionalAttrs (builtins.hasAttr system release.assets) {
-          inherit sonora-bin;
-          sonora = sonora-bin;
-          default = sonora-bin;
+          sonora = sonora-release;
+          default = sonora-release;
         }
         // lib.optionalAttrs (nightly ? assets && builtins.hasAttr system nightly.assets) {
           inherit sonora-nightly;

@@ -824,6 +824,15 @@ jobs:
               --notes-file notes.md
           fi
 
+  # Fills sonora.cachix.org with the tag's Nix build, which the flake's default package names once
+  # flake.nix points at this release.
+  nix:
+    if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')
+    uses: ./.github/workflows/nix.yml
+    with:
+      package: sonora-src
+    secrets: inherit
+
   announce:
     needs: release
     if: startsWith(github.ref, 'refs/tags/')
