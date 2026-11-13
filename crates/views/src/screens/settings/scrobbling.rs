@@ -196,7 +196,11 @@ impl SettingsView {
                     value: account.session,
                     masked: true,
                 },
-                None,
+                Some(Field {
+                    hint: "settings-scrobble-server-optional",
+                    value: account.server,
+                    masked: false,
+                }),
             ),
             Link::Server => (
                 Field {
@@ -242,7 +246,10 @@ impl SettingsView {
                 key: first,
                 secret: second,
             },
-            Link::Token => Secret::Token(first),
+            Link::Token => Secret::Token {
+                token: first,
+                server: second,
+            },
             Link::Server => Secret::Server {
                 url: first,
                 key: second,
@@ -285,9 +292,7 @@ impl SettingsView {
                 .flex_col()
                 .gap_2()
                 .child(self.scrobble_first.clone())
-                .when(link != Link::Token, |this| {
-                    this.child(self.scrobble_second.clone())
-                }),
+                .child(self.scrobble_second.clone()),
         )
         .when_some(signup, |this, url| {
             this.action(

@@ -67,7 +67,8 @@ pub enum Link {
     Browser,
     /// An API key and secret the user created, then the same browser approval. Last.fm.
     Keys,
-    /// A token copied from the service's settings page. ListenBrainz.
+    /// A token copied from the service's settings page, and an optional server address for a
+    /// self-hosted instance or a stand-in that speaks the same API. ListenBrainz.
     Token,
     /// A server url and one of that server's API keys. Maloja.
     Server,
@@ -79,7 +80,7 @@ pub enum Link {
 pub enum Secret {
     None,
     Keys { key: String, secret: String },
-    Token(String),
+    Token { token: String, server: String },
     Server { url: String, key: String },
 }
 
@@ -152,4 +153,25 @@ pub trait Service: Send + Sync {
 fn http() -> &'static reqwest::Client {
     static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
     HTTP.get_or_init(reqwest::Client::new)
+}
+
+/// The server url without its trailing slash, with `https://` added when the user left the
+/// scheme out. An empty url stays empty.
+fn root(url: &str) -> String {
+    let url = url.trim().trim_end_matches('/');
+    match url.is_empty() || url.contains("://") {
+        true => url.to_owned(),
+        false => format!("https://{url}"),
+    }
+}
+
+/// The host and port of a server url, which names an account when the server reports no name.
+fn host(url: &str) -> String {
+    url.split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(url)
+        .split('/')
+        .next()
+        .unwrap_or(url)
+        .to_owned()
 }
