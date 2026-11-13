@@ -297,7 +297,7 @@ jobs:
           channel=stable
           if [ -n "$NIGHTLY" ]; then channel=nightly; fi
           jq -n --arg version "$version" --arg channel "$channel" \
-            '{version: $version, channel: $channel}' > Sonora.app/Contents/MacOS/sonora-build.json
+            '{version: $version, channel: $channel}' > Sonora.app/Contents/Resources/sonora-build.json
 
       - name: sign the bundle
         shell: bash
