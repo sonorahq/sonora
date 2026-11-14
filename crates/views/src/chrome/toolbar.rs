@@ -112,6 +112,12 @@ impl Toolbar {
         cx.notify();
     }
 
+    /// Whether the toolbar has a filter field, which it gets once a searchable view is bound.
+    /// Without one, `focus` does nothing.
+    pub fn has_filter(&self) -> bool {
+        self.apply.is_some()
+    }
+
     pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.apply.is_none() {
             return;
