@@ -98,8 +98,8 @@ pub use input::{
 };
 pub use kbd::Kbd;
 pub use label::{
-    Tails, eyebrow, faint, heading, spoken, spoken_eyebrow, spoken_heading, spoken_vacant, upper,
-    vacant,
+    Tails, eyebrow, eyebrow_with, faint, heading, spoken, spoken_eyebrow, spoken_heading,
+    spoken_vacant, vacant,
 };
 pub use layout::{ALWAYS, MIN_CONTENT, ROOMY, Room, SNUG, VAST, WIDE};
 pub use lazy::Lazy;
