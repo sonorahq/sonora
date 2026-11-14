@@ -15,6 +15,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Hover a cut-off track title in the player bar to read it in full.
 - YouTube Music artist pages list the artist's music videos after their popular songs, and song search finds music videos too.
 - Show a local file's own cover on the Discord status, uploaded for 3 hours to uguu.se like Subsonic covers. Turn it off under Settings, Discord.
+- Show the time left in the song instead of its length in the player bar, under Settings, Player bar.
 
 ### Fixed
 

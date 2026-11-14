@@ -1,5 +1,4 @@
 use router::{Destination, Link, navigate};
-use std::time::Duration;
 use ui::ActiveTheme as _;
 use ui::Tails as _;
 use ui::Tipped as _;
@@ -56,6 +55,8 @@ const TITLE_ROOM: f32 = 1.4;
 const STACK_GAP: f32 = 0.5;
 const CLOCK_SHORT: f32 = 3.4;
 const CLOCK_LONG: f32 = 5.4;
+/// The extra room both clocks take, in ems, while the right one leads with a minus sign.
+const CLOCK_SIGN: f32 = 0.6;
 
 /// How the bar draws its volume control.
 #[derive(Clone, Copy)]
@@ -620,19 +621,23 @@ impl Render for PlayerBar {
         let seekable = playback.shown_track(cx).is_some();
         let (elapsed, total) = playback.shown_time(cx);
         let progress = self.pending.unwrap_or_else(|| fraction(elapsed, total));
+        let time_left = self.settings.read(cx).player_bar_time_left();
         let clock_width = clock_text
-            * match total.as_secs() >= 3600 {
+            * (match total.as_secs() >= 3600 {
                 true => CLOCK_LONG,
                 false => CLOCK_SHORT,
-            };
+            } + match time_left {
+                true => CLOCK_SIGN,
+                false => 0.,
+            });
 
         let seek_bubble = self
             .over_seek
             .or(self.pending)
             .map(|at| (at, clock(total.mul_f32(at))));
 
-        let clock_label = |id: &'static str, value: Duration, align_end: bool| {
-            ui::spoken(id, clock(value))
+        let clock_label = |id: &'static str, text: SharedString, align_end: bool| {
+            ui::spoken(id, text)
                 .w(clock_width)
                 .flex_none()
                 .whitespace_nowrap()
@@ -650,7 +655,7 @@ impl Render for PlayerBar {
             .items_center()
             .gap_2()
             .w_full()
-            .child(clock_label("player-elapsed", elapsed, true))
+            .child(clock_label("player-elapsed", clock(elapsed), true))
             .child(
                 div().flex_1().min_w_0().child(
                     Scrubber::new(&self.seek, progress)
@@ -668,7 +673,18 @@ impl Render for PlayerBar {
                         ),
                 ),
             )
-            .child(clock_label("player-duration", total, false))
+            .child(match time_left {
+                true => {
+                    let left = clock(total.saturating_sub(elapsed));
+                    clock_label(
+                        "player-time-left",
+                        t!("player-time-left", time = &left),
+                        false,
+                    )
+                    .aria_value(t!("player-time-left-spoken", time = &left))
+                }
+                false => clock_label("player-duration", clock(total), false),
+            })
             .into_any_element();
 
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
