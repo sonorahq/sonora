@@ -992,6 +992,29 @@ impl Queue {
         self.changed(cx);
     }
 
+    /// Replaces the persisted Spotify queue with Soloist's current remote queue window.
+    pub(crate) fn replace_soloist_remote(
+        &mut self,
+        current: Option<(Track, bool)>,
+        previous: Vec<(Track, bool)>,
+        upcoming: Vec<(Track, bool)>,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = |(track, queued): (Track, bool)| {
+            let kind = match queued {
+                true => QueueKind::Queued,
+                false => QueueKind::Context,
+            };
+            Entry::new(track, None, kind)
+        };
+        self.past = previous.into_iter().map(&entry).collect();
+        self.current = current.map(&entry);
+        self.upcoming = upcoming.into_iter().map(&entry).collect();
+        self.source.clear();
+        self.suggested += 1;
+        self.changed(cx);
+    }
+
     /// The upcoming tracks the listener or a collection put there, without the suggestions.
     pub(crate) fn chosen_upcoming(&self) -> impl Iterator<Item = &Track> {
         self.upcoming

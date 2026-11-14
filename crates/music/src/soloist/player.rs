@@ -39,6 +39,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use super::daemon::{RUNNING, follow, launch, stop};
 use super::wire::{self, Event, Playback, Status};
 use super::{QUALITIES, binary, data, key, paired_account, prefs, recheck};
+use crate::connect::QueuedTrack;
 use crate::{
     Encoding, Normalisation, PlaybackConfig, PlaybackEvent, PlaybackEvents, Quality, TrackSignal,
 };
@@ -660,20 +661,18 @@ impl Brain {
                 self.follow_position();
             }
             Event::QueueChanged { previous, upcoming } => {
-                let ids: Vec<_> = upcoming
+                self.queue = previous
                     .iter()
+                    .chain(&upcoming)
                     .filter(|entry| entry.queued())
                     .filter_map(|entry| entry.item.as_ref())
-                    .filter_map(|item| track_id(&item.uri))
+                    .map(|item| item.uri.clone())
                     .collect();
-                self.queue = previous
-                    .into_iter()
-                    .chain(upcoming)
-                    .filter(|entry| entry.queued())
-                    .filter_map(|entry| entry.item)
-                    .map(|item| item.uri)
-                    .collect();
-                self.report(PlaybackEvent::QueueChanged { ids });
+                self.report(PlaybackEvent::QueueChanged {
+                    current: track_id(&self.heard.uri).map(|id| QueuedTrack::new(id, false)),
+                    previous: queued_tracks(previous),
+                    upcoming: queued_tracks(upcoming),
+                });
                 self.reconcile_queue();
             }
             Event::VolumeChanged { volume } => self.hold_volume(volume),
@@ -1409,6 +1408,18 @@ fn track_id(uri: &str) -> Option<String> {
     uri.strip_prefix(TRACK_PREFIX)
         .filter(|id| !id.is_empty())
         .map(str::to_owned)
+}
+
+/// Keeps the remote queue order and whether each entry was queued by hand.
+fn queued_tracks(entries: Vec<wire::Queued>) -> Vec<QueuedTrack> {
+    entries
+        .into_iter()
+        .filter_map(|entry| {
+            let queued = entry.queued();
+            let id = entry.item.and_then(|item| track_id(&item.uri))?;
+            Some(QueuedTrack::new(id, queued))
+        })
+        .collect()
 }
 
 /// The encoding of the offer the daemon is asked for at a level.

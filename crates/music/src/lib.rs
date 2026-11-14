@@ -680,9 +680,11 @@ pub enum PlaybackEvent {
         id: String,
         track: TrackSignal,
     },
-    /// The manually queued Spotify tracks Soloist currently holds, in play order.
+    /// The queue window Soloist currently holds, in play order around the current track.
     QueueChanged {
-        ids: Vec<String>,
+        current: Option<connect::QueuedTrack>,
+        previous: Vec<connect::QueuedTrack>,
+        upcoming: Vec<connect::QueuedTrack>,
     },
     /// Soloist moved to a track another Spotify app queued.
     QueuedTrack {
