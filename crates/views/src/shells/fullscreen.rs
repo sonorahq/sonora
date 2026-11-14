@@ -10,7 +10,7 @@ use gpui::{
     Pixels, Point, Render, ScrollWheelEvent, SharedString, SpringConfig, SpringState, Task,
     TextShadow,
 };
-use gpui::{Div, Window, anchored, canvas, div, phi, point, px};
+use gpui::{Div, Window, anchored, canvas, deferred, div, phi, point, px};
 use i18n::t;
 use input::{ToggleFullscreen, ToggleWindowFullscreen, WORKSPACE_CONTEXT};
 use router::{Destination, navigate};
@@ -23,7 +23,9 @@ use ui::{
 
 use crate::chrome::{Aside, PlayerBar, TitleBarOptions};
 use crate::shared::menus::ItemMenu;
-use crate::shared::transport::{COVER_FLIGHT, CoverFade, fraction, like, moved, transport};
+use crate::shared::transport::{
+    COVER_FLIGHT, CoverFade, ShellSwap, fraction, like, moved, transport,
+};
 use crate::shared::visualizer::VisualizerDrive;
 use crate::shared::volume::{
     RisingVolume, VOLUME_BUBBLE_LIFT, VOLUME_RISE, VolumeHost, rising_volume,
@@ -1148,8 +1150,10 @@ impl FullscreenView {
     /// height, lowered by as much as the chrome player bar lowers its own fullscreen button in
     /// the layout it has at this width, so that button and the leave button share one spot. The pill sinks and fades
     /// with the controls. The leave button follows the idle spring instead, so a
-    /// pointer move still brings it back when the controls are set to stay hidden. The row
-    /// occludes, so hovering it never reaches whatever sits behind it.
+    /// pointer move still brings it back when the controls are set to stay hidden. While the
+    /// player opens the leave button paints above its fade and zoom, and while it closes the
+    /// player bar's button paints there instead. The row occludes, so hovering it never
+    /// reaches whatever sits behind it.
     fn corner(
         &self,
         hide: f32,
@@ -1163,6 +1167,7 @@ impl FullscreenView {
         let drop = PlayerBar::fullscreen_drop(window, cx);
         let narrow = !Room::of(window.viewport_size().width).fits(Room::Wide);
         let width = self.corner_width.clone();
+        let swap = cx.try_global::<ShellSwap>().copied().unwrap_or_default();
 
         div()
             .id("fullscreen-corner")
@@ -1199,20 +1204,21 @@ impl FullscreenView {
                 this.child(sunk(div().child(self.pill(cx)), hide))
             })
             .when(idle < 1., |this| {
-                this.child(sunk(
-                    div().child(
-                        Button::new("leave-fullscreen")
-                            .ghost()
-                            .when(frosted, Button::frosted)
-                            .small()
-                            .icon("icons/minimize.svg")
-                            .tooltip_above("player-fullscreen-leave")
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(ToggleFullscreen), cx)
-                            }),
-                    ),
-                    idle,
-                ))
+                let leave = Button::new("leave-fullscreen")
+                    .ghost()
+                    .when(frosted, Button::frosted)
+                    .small()
+                    .icon("icons/minimize.svg")
+                    .tooltip_above("player-fullscreen-leave")
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(ToggleFullscreen), cx)
+                    });
+                let leave = match swap {
+                    ShellSwap::Opening => deferred(leave).into_any_element(),
+                    ShellSwap::Closing => leave.invisible().into_any_element(),
+                    ShellSwap::Settled => leave.into_any_element(),
+                };
+                this.child(sunk(div().child(leave), idle))
             })
     }
 }

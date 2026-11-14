@@ -24,6 +24,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Tidal artists with no portrait show the album cover Tidal draws them with, instead of an empty picture.
 - Releases tagged with the label `[no label]` no longer show a copyright line crediting it.
 
+### Changed
+
+- The fullscreen button now swaps in place when the fullscreen player opens or closes, instead of fading and zooming with it.
+
 ## [0.49.1] - 2026-11-13
 
 ### Changed
