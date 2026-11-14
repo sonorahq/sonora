@@ -22,6 +22,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The snap shows Sonora's tray icon instead of a generic placeholder.
 - The Flatpak shows your Discord status in Vesktop and in Discord installed from Flathub.
 - On Linux with WebKitGTK 2.54 or newer, signing in to Apple Music no longer fills all your memory and crashes Sonora before the sign-in page loads.
 - Tidal artists with no portrait show the album cover Tidal draws them with, instead of an empty picture.
