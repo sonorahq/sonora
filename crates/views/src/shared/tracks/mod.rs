@@ -715,6 +715,10 @@ impl TableSource for TrackSource {
         Some(track.pin()?.origin(self.origin_tag(track, tracks, cx)))
     }
 
+    fn pin_field(&self) -> Option<TrackField> {
+        Some(TrackField::Title)
+    }
+
     fn cell(&self, cell: Cell<TrackField>, cx: &mut App) -> AnyElement {
         let muted = cx.theme().muted_foreground;
 

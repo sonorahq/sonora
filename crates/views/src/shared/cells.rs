@@ -14,8 +14,8 @@ use music::{ArtistRef, Contributor};
 use router::{Destination, Link as _, navigate};
 use state::Playback;
 use ui::{
-    ActiveTheme as _, Artwork, Avatar, Cell, ExplicitBadge, InlineLink, InlineLinks, ROW_GROUP,
-    Theme, clock, tabular,
+    ActiveTheme as _, Artwork, Avatar, Cell, ExplicitBadge, InlineLink, InlineLinks, Pinnable,
+    ROW_GROUP, Theme, clock, tabular,
 };
 
 use crate::chrome::Chrome;
@@ -416,6 +416,7 @@ pub(crate) fn title<F>(
         });
 
     line(cell, color)
+        .id(("title-cell", cell.row))
         .flex()
         .items_center()
         .gap_1p5()
@@ -432,6 +433,7 @@ pub(crate) fn title<F>(
         })
         .when_some(status, |this, status| this.child(status))
         .when_some(is_liked, |this, is_liked| this.child(is_liked))
+        .when_some(cell.pin.clone(), Pinnable::pin)
         .into_any_element()
 }
 
