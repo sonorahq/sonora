@@ -20,9 +20,9 @@ use state::{
 };
 use ui::ActiveTheme as _;
 use ui::{
-    Activate, Button, Card, Deck, Deselect, Dismiss, Dropdown, Pinnable, Popup, Room, Scrollbar,
-    Scroller, SelectLeft, SelectNext, SelectPrevious, SelectRight, Separator, Submit, Text, Theme,
-    VAST, clock, eyebrow, scrolled, snapped, tabular, vacant,
+    Activate, Button, Card, Cascade, Deck, Deselect, Dismiss, Dropdown, Pinnable, Popup, Room,
+    Scrollbar, Scroller, SelectLeft, SelectNext, SelectPrevious, SelectRight, Separator, Submit,
+    Text, Theme, Unfold, VAST, clock, eyebrow, scrolled, snapped, tabular, vacant,
 };
 
 use crate::shared::cards;
@@ -122,6 +122,10 @@ pub(crate) struct SearchView {
     pick: Option<usize>,
     /// The `key` of the row `pick` is on, so the pick stays with it as the suggestions reorder.
     picked: Option<String>,
+    /// The panel's rows surfacing one after another as the suggestions come in.
+    cascade: Cascade,
+    /// The panel's box, stretching to fit as rows come and go.
+    unfold: Unfold,
     /// Whether the arrow keys are on the best match, the stop between the field and the lists.
     on_best: bool,
     genres: Entity<Genres>,
@@ -225,6 +229,8 @@ impl SearchView {
             hush: false,
             pick: None,
             picked: None,
+            cascade: Cascade::default(),
+            unfold: Unfold::default(),
             on_best: false,
             genres,
             playback,
@@ -493,7 +499,7 @@ impl SearchView {
 
     /// The panel's rows, with placeholder rows while the first suggestions load. The heading only
     /// names the list for screen readers.
-    fn panel_rows(&self, cx: &Context<Self>) -> AnyElement {
+    fn panel_rows(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
         let offers = self.offers(cx);
         let me = cx.entity().downgrade();
         let heading = match self.typed.trim().is_empty() {
@@ -508,7 +514,11 @@ impl SearchView {
             })
         });
 
-        div()
+        // New rows surface one after another and the panel stretches to fit them, the way the
+        // quick search fills.
+        self.cascade
+            .show(offers.iter().map(|offer| SharedString::from(offer.key())));
+        let list = div()
             .id("search-offers")
             .role(Role::ListBox)
             .aria_label(heading)
@@ -522,13 +532,11 @@ impl SearchView {
                 this.close_panel(cx);
             }))
             .children(waiting.into_iter().flatten())
-            .children(
-                offers
-                    .iter()
-                    .enumerate()
-                    .map(|(at, offer)| self.offer_row(offer, at, offers.len(), &me, cx)),
-            )
-            .into_any_element()
+            .children(offers.iter().enumerate().map(|(at, offer)| {
+                let level = self.cascade.level(&offer.key(), window, cx);
+                Cascade::surface(self.offer_row(offer, at, offers.len(), &me, cx), level)
+            }));
+        self.unfold.wrap(list, false, window, cx).into_any_element()
     }
 
     /// The search field with its panel and the button that runs the full search. Once the page
@@ -536,6 +544,11 @@ impl SearchView {
     /// suggestions get the whole width.
     fn field(&self, gutter: Pixels, window: &Window, cx: &Context<Self>) -> AnyElement {
         let open = self.panel_open(window, cx);
+        // A closed panel forgets its rows and height, so the next one unfolds from nothing.
+        if !open {
+            self.cascade.clear();
+            self.unfold.reset();
+        }
         let me = cx.entity().downgrade();
         let input = div()
             .flex_1()
@@ -572,7 +585,7 @@ impl SearchView {
                 .on_close(move |_, cx| {
                     me.update(cx, |this, cx| this.close_panel(cx)).ok();
                 })
-                .when(open, |this| this.child(self.panel_rows(cx)))
+                .when(open, |this| this.child(self.panel_rows(window, cx)))
         };
 
         let width = cells::content_width(window, cx.theme().metrics.inset * 2., cx);
@@ -1499,7 +1512,7 @@ fn meta(hit: &Hit, compact: bool) -> SharedString {
     }
 }
 
-fn tag(kind: Kind) -> SharedString {
+pub(crate) fn tag(kind: Kind) -> SharedString {
     let noun = noun(kind);
     t!("search-tag", kind = &noun)
 }
@@ -1511,7 +1524,7 @@ fn held(saved: usize) -> SharedString {
     }
 }
 
-fn noun(kind: Kind) -> SharedString {
+pub(crate) fn noun(kind: Kind) -> SharedString {
     match kind {
         Kind::Song => t!("kind-song"),
         Kind::Artist => t!("kind-artist"),

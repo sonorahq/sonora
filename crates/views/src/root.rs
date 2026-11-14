@@ -233,10 +233,12 @@ impl Root {
         let queries = cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
         let suggestions =
             cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
+        // The quick search asks on its own, so typing in it leaves the search screen as it was.
+        let quick = cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
         let genres = cx.new(|cx| Genres::new(session.clone(), io.clone(), cx));
         let search = cx.new(|cx| {
             SearchView::new(
-                queries.clone(),
+                queries,
                 suggestions,
                 genres.clone(),
                 playback.clone(),
@@ -262,7 +264,7 @@ impl Root {
             Workspace::new(
                 playback.clone(),
                 queue.clone(),
-                queries.clone(),
+                quick,
                 library_view.clone().into(),
                 cx,
             )
@@ -282,6 +284,7 @@ impl Root {
                 .update(cx, |workspace, cx| workspace.toggle_sidebar_right(cx)),
         })
         .detach();
+
         // Re-read the system preference when the window becomes active instead of keeping a
         // long-lived portal listener alive. This picks up changes after the user returns from
         // the desktop accessibility settings.
