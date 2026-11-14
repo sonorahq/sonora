@@ -26,6 +26,8 @@ actions!(
         ToggleFullscreen,
         ToggleQueue,
         ToggleLyrics,
+        TogglePowerbar,
+        PowerbarDetails,
         ShowMembers,
         CloseWindow,
         MinimizeWindow,
@@ -44,6 +46,7 @@ actions!(
 
 pub const WORKSPACE_CONTEXT: &str = "Workspace";
 pub const SEARCH_CONTEXT: &str = "Search";
+pub const POWERBAR_CONTEXT: &str = "Powerbar";
 
 /// Every key binding, in precedence order: GPUI prefers the deepest matching context and,
 /// within one, the binding registered last, so the macOS set at the end overrides the shared one.
@@ -108,6 +111,13 @@ fn shared() -> Vec<KeyBinding> {
         KeyBinding::new("shift-ctrl-f", OpenSearch, None),
         KeyBinding::new("ctrl-,", OpenSettings, None),
         KeyBinding::new("cmd-,", OpenSettings, None),
+        KeyBinding::new("ctrl-k", TogglePowerbar, None),
+        KeyBinding::new("cmd-k", TogglePowerbar, None),
+        KeyBinding::new("down", SelectNext, Some(POWERBAR_CONTEXT)),
+        KeyBinding::new("up", SelectPrevious, Some(POWERBAR_CONTEXT)),
+        KeyBinding::new("enter", Submit, Some(POWERBAR_CONTEXT)),
+        KeyBinding::new("ctrl-enter", PowerbarDetails, Some(POWERBAR_CONTEXT)),
+        KeyBinding::new("cmd-enter", PowerbarDetails, Some(POWERBAR_CONTEXT)),
         KeyBinding::new("cmd-=", IncreaseFontSize, None),
         KeyBinding::new("ctrl-=", IncreaseFontSize, None),
         KeyBinding::new("cmd-+", IncreaseFontSize, None),
