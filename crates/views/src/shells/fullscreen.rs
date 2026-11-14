@@ -272,8 +272,12 @@ impl FullscreenView {
     /// Selects the fullscreen panel and restarts the controls' idle timer.
     fn show(&mut self, panel: Option<SideTab>, cx: &mut Context<Self>) {
         if panel != self.panel && !cx.reduce_motion() {
+            let visible = self
+                .switch
+                .as_ref()
+                .map_or(1., |switch| 1. - switch.position().clamp(0., 1.));
             self.switch = Some(Sprung::at(1.));
-            self.leaving = panel.is_none().then(|| Sprung::at(1.));
+            self.leaving = panel.is_none().then(|| Sprung::at(visible));
         }
         self.panel = panel;
         // The transport may move between the dock and the strip, and the row it leaves never
