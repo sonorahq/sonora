@@ -8,14 +8,33 @@ use super::rows::{Announced as _, grid};
 use super::{Group, Row, SettingsView, Slot};
 
 impl SettingsView {
-    /// The player bar's own section in Appearance: layout cards followed by its material.
+    /// The Player bar page: layout cards, the bar's material and its clock.
     pub(super) fn player_bar_groups(&self) -> Vec<Group> {
         vec![
             Group::new("settings-player-bar-layout", "icons/layout-grid.svg")
                 .cards(Slot::PlayerBarLayout),
             Group::new("settings-player-bar-surface", "icons/blend.svg")
                 .rows([Slot::PlayerBarTransparent]),
+            Group::new("settings-player-bar-time", "icons/rotate-ccw-clock.svg")
+                .rows([Slot::PlayerBarTimeLeft]),
         ]
+    }
+
+    pub(super) fn player_bar_time_left_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).player_bar_time_left();
+        Row::new(
+            t!("settings-player-bar-time-left"),
+            Switch::new("player-bar-time-left", on)
+                .name(t!("settings-player-bar-time-left"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_player_bar_time_left(!on, cx);
+                    });
+                }))
+                .into_any_element(),
+        )
+        .detail(t!("settings-player-bar-time-left-detail"))
+        .into_any_element()
     }
 
     /// Miniature layouts share the saved choice with the actual workspace player bar.

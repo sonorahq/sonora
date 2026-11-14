@@ -560,6 +560,9 @@ struct Appearance {
     visualizer_screens: VisualizerScreens,
     player_bar_layout: String,
     player_bar_transparent: bool,
+    /// Whether the player bar's right clock counts down what is left of the track instead of
+    /// showing its length.
+    player_bar_time_left: bool,
     icons: String,
     rounding: String,
     /// Whether the app paints its frosted treatments. The key kept its old name, which stood
@@ -867,6 +870,7 @@ impl Default for Appearance {
             visualizer_screens: VisualizerScreens::default(),
             player_bar_layout: PlayerBarLayout::default().id().to_owned(),
             player_bar_transparent: true,
+            player_bar_time_left: false,
             icons: icons::BASE.to_owned(),
             rounding: Rounding::Rounded.id().to_owned(),
             blur: true,
@@ -1402,6 +1406,11 @@ impl AppSettings {
     /// UI as well, since without the blur the bar's text would sit on the bare page.
     pub fn player_bar_translucent(&self) -> bool {
         self.player_bar_transparent() && self.blur()
+    }
+
+    /// Whether the player bar shows the time left in the track where it would show its length.
+    pub fn player_bar_time_left(&self) -> bool {
+        self.values.appearance.player_bar_time_left
     }
 
     /// Whether fullscreen paints the ambient background sampled from the cover.
@@ -2284,6 +2293,11 @@ impl AppSettings {
     /// Lets the page scroll under the player bar, or restores the solid bar below the page.
     pub fn set_player_bar_transparent(&mut self, transparent: bool, cx: &mut Context<Self>) {
         self.values.appearance.player_bar_transparent = transparent;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_player_bar_time_left(&mut self, time_left: bool, cx: &mut Context<Self>) {
+        self.values.appearance.player_bar_time_left = time_left;
         self.schedule_save(cx);
     }
 

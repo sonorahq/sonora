@@ -83,6 +83,7 @@ enum Slot {
     VisualizerAbsolute,
     PlayerBarLayout,
     PlayerBarTransparent,
+    PlayerBarTimeLeft,
     FullscreenControlsAutohide,
     OsFullscreen,
     Lyrics,
@@ -740,6 +741,10 @@ impl SettingsView {
                 t!("settings-player-bar-transparent"),
                 t!("settings-player-bar-transparent-detail"),
             ),
+            Slot::PlayerBarTimeLeft => (
+                t!("settings-player-bar-time-left"),
+                t!("settings-player-bar-time-left-detail"),
+            ),
             Slot::VisualizerScreens => (
                 t!("settings-visualizer-screens"),
                 t!("settings-visualizer-screens-detail"),
@@ -984,6 +989,7 @@ impl SettingsView {
             Slot::Visualizer => div().into_any_element(),
             Slot::PlayerBarLayout => div().into_any_element(),
             Slot::PlayerBarTransparent => self.player_bar_transparent_row(cx),
+            Slot::PlayerBarTimeLeft => self.player_bar_time_left_row(cx),
             Slot::VisualizerScreens => self.visualizer_screens_row(cx),
             Slot::VisualizerAbsolute => self.visualizer_absolute_row(cx),
             Slot::Opacity => self.opacity_row(cx),
