@@ -20,7 +20,7 @@ use super::rows::drill;
 use super::{Group, SettingsView, Slot};
 use crate::shared::device_code::device_code;
 use crate::shared::local;
-use crate::shared::popups::{AccountPicker, CookiePrompt};
+use crate::shared::popups::{AccountPicker, CookiePrompt, CredentialsPrompt};
 use crate::shared::text;
 
 /// The icon beside a provider's sign-in error.
@@ -666,9 +666,7 @@ impl SettingsView {
 
     pub(super) fn clear_credentials(&mut self, cx: &mut Context<Self>) {
         self.credentials_for = None;
-        self.server.update(cx, |input, cx| input.set_text("", cx));
-        self.username.update(cx, |input, cx| input.set_text("", cx));
-        self.password.update(cx, |input, cx| input.set_text("", cx));
+        self.credentials.clear(cx);
     }
 
     pub(super) fn abandon_credentials(&mut self, cx: &mut Context<Self>) {
@@ -680,12 +678,9 @@ impl SettingsView {
         let Some(slug) = self.credentials_for else {
             return;
         };
-        let server = self.server.read(cx).text().to_string();
-        let username = self.username.read(cx).text().to_string();
-        let password = self.password.read(cx).text().to_string();
-        if server.trim().is_empty() || username.trim().is_empty() || password.is_empty() {
+        let Some((server, username, password)) = self.credentials.filled(cx) else {
             return;
-        }
+        };
         self.clear_credentials(cx);
         self.session.update(cx, |session, cx| {
             session.sign_in(
@@ -701,25 +696,9 @@ impl SettingsView {
     }
 
     pub(super) fn credentials_prompt(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        Modal::new("settings-server-prompt", t!("login-server-title"))
-            .w(px(560.))
-            .detail(t!("login-server-detail"))
-            .child(self.server.clone())
-            .child(self.username.clone())
-            .child(self.password.clone())
-            .action(
-                Button::new("settings-cancel-server")
-                    .ghost()
-                    .label(t!("common-cancel"))
-                    .on_click(cx.listener(|this, _, _, cx| this.abandon_credentials(cx))),
-            )
-            .action(
-                Button::new("settings-submit-server")
-                    .label(t!("login-server-submit"))
-                    .primary()
-                    .on_click(cx.listener(|this, _, _, cx| this.submit_credentials(cx))),
-            )
-            .on_dismiss(cx.listener(|this, _, _, cx| this.abandon_credentials(cx)))
+        CredentialsPrompt::new(&self.credentials)
+            .on_submit(cx.listener(|this, _, _, cx| this.submit_credentials(cx)))
+            .on_cancel(cx.listener(|this, _, _, cx| this.abandon_credentials(cx)))
     }
 
     pub(super) fn start_manual(

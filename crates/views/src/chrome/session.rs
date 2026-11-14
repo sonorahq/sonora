@@ -8,7 +8,9 @@ use gpui::{App, ClipboardItem, Context, Entity, FocusHandle, Render, SharedStrin
 use i18n::t;
 use music::connect::JamMember;
 use state::{Listening, Outcome, Room, SESSION_CODE_LENGTH, Session, Sonora, Toasts};
-use ui::{ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Modal, OtpInput, OtpSlots, Submit};
+use ui::{
+    ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Field, Form, Modal, OtpInput, OtpSlots, Submit,
+};
 
 /// How many digits a code shows in each group, with a dash between the groups.
 const GROUP: usize = 3;
@@ -101,7 +103,11 @@ impl Render for SessionJoin {
                 Modal::new("session-join", t!("devices-session-join-title"))
                     .w(cx.theme().metrics.cover * WIDTH)
                     .detail(t!("devices-session-join-detail"))
-                    .child(div().flex().justify_center().child(self.code.clone()))
+                    .child(
+                        div().flex().justify_center().child(
+                            Form::new("session-code-form").field(Field::new(&self.code, cx)),
+                        ),
+                    )
                     .action(
                         Button::new("cancel-session-join")
                             .ghost()

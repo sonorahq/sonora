@@ -914,7 +914,7 @@ impl Root {
             self.screens.settings_open = open;
             self.screens
                 .settings
-                .update(cx, |view, _| view.set_open(open));
+                .update(cx, |view, cx| view.set_open(open, cx));
         }
         if let Destination::Settings(page) = destination {
             let page = *page;

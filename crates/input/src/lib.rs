@@ -1,10 +1,18 @@
+use std::collections::BTreeMap;
+
 use gpui::{KeyBinding, actions};
 use ui::{
     Activate, Backspace, BackspaceToStart, BackspaceWord, Copy, Cut, Delete, DeleteToEnd,
     DeleteWord, Deselect, Dismiss, End, FORM_CONTEXT, Home, INPUT_CONTEXT, Left, MENU_CONTEXT,
-    Paste, Remove, Right, SelectAll, SelectEnd, SelectHome, SelectLeft, SelectNext, SelectPrevious,
-    SelectRight, SelectWordLeft, SelectWordRight, ShowCharacterPalette, Space, Submit,
-    TABLE_CONTEXT, WordLeft, WordRight,
+    NextField, Paste, PreviousField, Remove, Right, SelectAll, SelectEnd, SelectHome, SelectLeft,
+    SelectNext, SelectPrevious, SelectRight, SelectWordLeft, SelectWordRight, ShowCharacterPalette,
+    Space, Submit, TABLE_CONTEXT, WordLeft, WordRight,
+};
+
+mod shortcuts;
+
+pub use shortcuts::{
+    Section, Shortcut, assign, clear, keystroke_of, reset, shortcut, shortcuts, shown,
 };
 
 actions!(
@@ -50,15 +58,19 @@ pub const POWERBAR_CONTEXT: &str = "Powerbar";
 
 /// Every key binding, in precedence order: GPUI prefers the deepest matching context and,
 /// within one, the binding registered last, so the macOS set at the end overrides the shared one.
-pub fn bindings() -> Vec<KeyBinding> {
+/// `overrides` holds the keys the user chose for shortcuts under Settings, Keybinds, by
+/// shortcut id. A shortcut missing from it keeps its defaults, and an empty list unbinds it.
+pub fn bindings(overrides: &BTreeMap<String, Vec<String>>) -> Vec<KeyBinding> {
     let mut bindings = shared();
+    bindings.extend(shortcuts::bindings(overrides));
     if cfg!(target_os = "macos") {
         bindings.extend(macos());
     }
     bindings
 }
 
-/// The bindings every platform gets; both `cmd-` and `ctrl-` are registered for each shortcut.
+/// The fixed bindings every platform gets: quitting, equalizer undo, lists, menus, search, forms
+/// and text editing. Both `cmd-` and `ctrl-` are registered for each shortcut.
 fn shared() -> Vec<KeyBinding> {
     let editing = Some(INPUT_CONTEXT);
     let away_from_text = format!("{WORKSPACE_CONTEXT} && !{INPUT_CONTEXT}");
@@ -99,38 +111,13 @@ fn shared() -> Vec<KeyBinding> {
         KeyBinding::new("tab", SelectNext, menu),
         KeyBinding::new("shift-tab", SelectPrevious, menu),
         KeyBinding::new("enter", Submit, menu),
-        KeyBinding::new("alt-left", NavigateBack, None),
-        KeyBinding::new("alt-right", NavigateForward, None),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("ctrl-q", Quit, None),
-        KeyBinding::new("cmd-r", Refresh, None),
-        KeyBinding::new("ctrl-r", Refresh, None),
-        KeyBinding::new("cmd-f", OpenFilter, None),
-        KeyBinding::new("ctrl-f", OpenFilter, None),
-        KeyBinding::new("shift-cmd-f", OpenSearch, None),
-        KeyBinding::new("shift-ctrl-f", OpenSearch, None),
-        KeyBinding::new("ctrl-,", OpenSettings, None),
-        KeyBinding::new("cmd-,", OpenSettings, None),
-        KeyBinding::new("ctrl-k", TogglePowerbar, None),
-        KeyBinding::new("cmd-k", TogglePowerbar, None),
         KeyBinding::new("down", SelectNext, Some(POWERBAR_CONTEXT)),
         KeyBinding::new("up", SelectPrevious, Some(POWERBAR_CONTEXT)),
         KeyBinding::new("enter", Submit, Some(POWERBAR_CONTEXT)),
         KeyBinding::new("ctrl-enter", PowerbarDetails, Some(POWERBAR_CONTEXT)),
         KeyBinding::new("cmd-enter", PowerbarDetails, Some(POWERBAR_CONTEXT)),
-        KeyBinding::new("cmd-=", IncreaseFontSize, None),
-        KeyBinding::new("ctrl-=", IncreaseFontSize, None),
-        KeyBinding::new("cmd-+", IncreaseFontSize, None),
-        KeyBinding::new("ctrl-+", IncreaseFontSize, None),
-        KeyBinding::new("cmd--", DecreaseFontSize, None),
-        KeyBinding::new("ctrl--", DecreaseFontSize, None),
-        KeyBinding::new("cmd-0", ResetFontSize, None),
-        KeyBinding::new("ctrl-0", ResetFontSize, None),
-        KeyBinding::new("space", TogglePlayback, Some(&away_from_text)),
-        KeyBinding::new("ctrl-left", SongPrevious, Some(&away_from_text)),
-        KeyBinding::new("ctrl-right", SongNext, Some(&away_from_text)),
-        KeyBinding::new("f", ToggleFullscreen, Some(&away_from_text)),
-        KeyBinding::new("f11", ToggleWindowFullscreen, None),
         KeyBinding::new("cmd-z", Undo, Some(&away_from_text)),
         KeyBinding::new("ctrl-z", Undo, Some(&away_from_text)),
         KeyBinding::new("shift-cmd-z", Redo, Some(&away_from_text)),
@@ -170,23 +157,22 @@ fn shared() -> Vec<KeyBinding> {
         KeyBinding::new("escape", Dismiss, editing),
         KeyBinding::new("enter", Submit, form),
         KeyBinding::new("escape", Dismiss, form),
+        KeyBinding::new("tab", NextField, form),
+        KeyBinding::new("shift-tab", PreviousField, form),
     ]
 }
 
 /// What a Mac user expects on top of the shared set: the standard window and application
-/// shortcuts, `cmd-[`/`cmd-]` history, and the Cocoa text-field conventions, `alt` for words,
-/// `cmd` for the line and the Emacs control keys.
+/// shortcuts, and the Cocoa text-field conventions, `alt` for words, `cmd` for the line and the
+/// Emacs control keys.
 fn macos() -> Vec<KeyBinding> {
     let editing = Some(INPUT_CONTEXT);
 
     vec![
         KeyBinding::new("cmd-w", CloseWindow, None),
         KeyBinding::new("cmd-m", MinimizeWindow, None),
-        KeyBinding::new("ctrl-cmd-f", ToggleWindowFullscreen, None),
         KeyBinding::new("cmd-h", Hide, None),
         KeyBinding::new("alt-cmd-h", HideOthers, None),
-        KeyBinding::new("cmd-[", NavigateBack, None),
-        KeyBinding::new("cmd-]", NavigateForward, None),
         KeyBinding::new("alt-left", WordLeft, editing),
         KeyBinding::new("alt-right", WordRight, editing),
         KeyBinding::new("shift-alt-left", SelectWordLeft, editing),

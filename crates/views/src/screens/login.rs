@@ -1,5 +1,5 @@
 use crate::shared::device_code::device_code;
-use crate::shared::popups::{AccountPicker, CookiePrompt};
+use crate::shared::popups::{AccountPicker, CookiePrompt, Credentials, CredentialsPrompt};
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
@@ -10,7 +10,7 @@ use i18n::t;
 use music::{AccountChoice, SignIn, SignInProblem, SignInPrompt};
 use state::{Failure, Session, SessionState, Sonora, Usage};
 use ui::ActiveTheme as _;
-use ui::{Button, Checkbox, Input, Modal, TabBar, Text};
+use ui::{Button, Checkbox, Input, TabBar, Text};
 
 const COLUMN: Pixels = px(280.);
 const LOGO: Pixels = px(48.);
@@ -42,9 +42,7 @@ pub struct LoginView {
     session: Entity<Session>,
     usage: Entity<Usage>,
     secret: Entity<Input>,
-    server: Entity<Input>,
-    username: Entity<Input>,
-    password: Entity<Input>,
+    credentials: Credentials,
     credentials_for: Option<&'static str>,
     manual_secret: Option<(&'static str, &'static str)>,
     tab: usize,
@@ -70,9 +68,7 @@ impl LoginView {
             session,
             usage,
             secret: cx.new(|cx| Input::new("login-cookie-hint", cx)),
-            server: cx.new(|cx| Input::new("login-server-hint", cx)),
-            username: cx.new(|cx| Input::new("login-username-hint", cx)),
-            password: cx.new(|cx| Input::new("login-password-hint", cx).masked()),
+            credentials: Credentials::new(cx),
             credentials_for: None,
             manual_secret: None,
             tab: 0,
@@ -111,9 +107,7 @@ impl LoginView {
 
     fn clear_credentials(&mut self, cx: &mut Context<Self>) {
         self.credentials_for = None;
-        self.server.update(cx, |input, cx| input.set_text("", cx));
-        self.username.update(cx, |input, cx| input.set_text("", cx));
-        self.password.update(cx, |input, cx| input.set_text("", cx));
+        self.credentials.clear(cx);
     }
 
     fn clear_secret(&mut self, cx: &mut Context<Self>) {
@@ -131,12 +125,9 @@ impl LoginView {
         let Some(slug) = self.credentials_for else {
             return;
         };
-        let server = self.server.read(cx).text().to_string();
-        let username = self.username.read(cx).text().to_string();
-        let password = self.password.read(cx).text().to_string();
-        if server.trim().is_empty() || username.trim().is_empty() || password.is_empty() {
+        let Some((server, username, password)) = self.credentials.filled(cx) else {
             return;
-        }
+        };
         self.clear_credentials(cx);
         self.start(
             slug,
@@ -385,25 +376,9 @@ impl LoginView {
     }
 
     fn credentials_prompt(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        Modal::new("server-prompt", t!("login-server-title"))
-            .w(px(560.))
-            .detail(t!("login-server-detail"))
-            .child(self.server.clone())
-            .child(self.username.clone())
-            .child(self.password.clone())
-            .action(
-                Button::new("cancel-server")
-                    .ghost()
-                    .label(t!("common-cancel"))
-                    .on_click(cx.listener(|this, _, _, cx| this.abandon_credentials(cx))),
-            )
-            .action(
-                Button::new("submit-server")
-                    .label(t!("login-server-submit"))
-                    .primary()
-                    .on_click(cx.listener(|this, _, _, cx| this.submit_credentials(cx))),
-            )
-            .on_dismiss(cx.listener(|this, _, _, cx| this.abandon_credentials(cx)))
+        CredentialsPrompt::new(&self.credentials)
+            .on_submit(cx.listener(|this, _, _, cx| this.submit_credentials(cx)))
+            .on_cancel(cx.listener(|this, _, _, cx| this.abandon_credentials(cx)))
     }
 
     fn secret_prompt(

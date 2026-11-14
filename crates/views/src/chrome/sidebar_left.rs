@@ -58,7 +58,7 @@ pub(crate) const NAV: [(Option<NavEntry>, &str, Destination); 6] = [
     (
         None,
         "icons/settings.svg",
-        Destination::Settings(SettingsPage::General),
+        Destination::Settings(SettingsPage::Providers),
     ),
 ];
 
