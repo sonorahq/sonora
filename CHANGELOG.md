@@ -10,7 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Use Sonora in European Portuguese. A system set to Portuguese from Portugal picks it on its own.
-- Press Ctrl+K (⌘K on macOS) anywhere to search. Enter plays a song right away, and Ctrl+Enter opens its page.
+- Press Ctrl+K (⌘K on macOS) anywhere to search. Enter plays a song right away, Ctrl+Enter opens its page, and the artist and album under a result open theirs.
 - Scrobble to your own ListenBrainz server or to multi-scrobbler by filling in the server address when you connect ListenBrainz.
 - Name your Discord status after the album artist under Settings, Discord, Status name.
 - Hover a cut-off track title in the player bar to read it in full.
@@ -21,6 +21,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Rebind keyboard shortcuts under Settings, Keybinds, and give shuffle, repeat, the queue and lyrics shortcuts of their own.
 - Move between the fields of a dialog with Tab and Shift+Tab.
 - Use Sonora in Korean.
+- Open a music folder in your file manager from Settings, Music folders.
+- Library pages that list both local and streaming music mark local files with a file icon beside their names.
 
 ### Fixed
 
@@ -31,12 +33,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The fullscreen player's ambient background no longer leaves a light line along the right and bottom edges of the window.
 - The ambient background in fullscreen uses far less GPU, so laptops with integrated graphics stay cooler.
 - The Nix package runs Soloist on NixOS without nix-ld.
+- Apple Music search no longer runs into "Too Many Requests" while you type.
+- A page that cannot load says so in a plain sentence instead of the raw error, and a busy service asks you to wait a minute.
 
 ### Changed
 
 - The fullscreen button now swaps in place when the fullscreen player opens or closes, instead of fading and zooming with it.
 - Your accounts now open Settings, General, and the separate Providers tab is gone.
 - Ctrl+F (⌘F on macOS) now opens search and / filters the page you are on, and shortcuts list Ctrl before Shift.
+- Hovered rows share one fill in tables, cards and the sidebar, the softer one the sidebar used.
+- The song title and artist in the player bar sit closer together.
+- Section labels across the app, such as the settings group headings and Pinned in the sidebar, are no longer set in capitals.
+- Local files sit beside your streaming library in Songs, Albums, Artists and Playlists, and the separate Local Music section is gone. Filter a page to Local only or Streaming only.
+- Songs, Albums, Artists and Playlists are rows of their own in the sidebar under a Library heading, and the icon-only sidebar shows them as icons too.
+- Import an M3U playlist from the Create playlist dialog, which replaces the import button in the Playlists toolbar.
+- History and Settings moved from the sidebar to the account menu at the top right, which also switches between your connected services and opens Manage accounts. Add them back to the sidebar under Settings, General, Sidebar entries.
 
 ## [0.49.1] - 2026-11-13
 

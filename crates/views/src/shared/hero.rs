@@ -10,8 +10,8 @@ use i18n::t;
 use music::{Album, Track};
 use state::{Origin, Playback};
 use ui::{
-    ActiveTheme as _, Artwork, Button, ExplicitBadge, LEADING, MenuItem, Perch, Pin, Pinnable as _,
-    Skeleton, TableState, Tails as _, Text, Tipped as _, spoken, upper,
+    ActiveTheme as _, Artwork, Badge, Button, LEADING, MenuItem, Perch, Pin, Pinnable as _,
+    Skeleton, TableState, Tails as _, Text, Tipped as _, spoken,
 };
 
 use crate::shared::tracks::{self, TrackSource};
@@ -573,7 +573,7 @@ impl RenderOnce for PageHero {
                                         .role(Role::Image)
                                         .aria_label(t!("song-explicit"))
                                         .flex_none()
-                                        .child(ExplicitBadge::new()),
+                                        .child(Badge::explicit()),
                                 )
                             }),
                     )
@@ -583,8 +583,7 @@ impl RenderOnce for PageHero {
     }
 }
 
-/// The kind of page above the hero title, drawn in capitals. Screen readers get the label as
-/// written, since a reader may spell out text in capitals letter by letter.
+/// The kind of page above the hero title, which screen readers reach as a label.
 fn eyebrow_label(label: SharedString, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
 
@@ -595,7 +594,7 @@ fn eyebrow_label(label: SharedString, cx: &App) -> Stateful<Div> {
         .text_size(theme.text(Text::Small))
         .text_color(theme.muted_foreground)
         .font_weight(FontWeight::SEMIBOLD)
-        .child(upper(label))
+        .child(label)
 }
 
 /// A row as tall as one line of text at `size`, so the skeleton bar inside it takes the room of

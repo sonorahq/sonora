@@ -573,7 +573,6 @@ settings-font-detail = 基準の文字サイズ。他のすべてがこれに合
 settings-font-value = { $size } px
 settings-startup = 起動時に表示
 settings-startup-detail = 起動時に Sonora が開く画面
-settings-startup-no-guest = ゲストモードでは利用できません
 settings-entries = サイドバー項目
 settings-entries-detail = サイドバーに表示するセクション
 settings-entries-pick = 項目を選ぶ

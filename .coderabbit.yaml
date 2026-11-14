@@ -1,0 +1,4 @@
+# CodeRabbit cancels its review when a pull request merges before it finishes, and GitHub
+# shows that cancelled check as a failure. Reviews still arrive as comments.
+reviews:
+  commit_status: false

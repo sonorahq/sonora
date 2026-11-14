@@ -29,6 +29,7 @@ use crate::shared::trouble;
 use crate::chrome::tools::{self, Sliders};
 use crate::chrome::{Chrome, Searchable, Toolbar, Tooled};
 use crate::shared::album_grid::CardGrid;
+use crate::shared::blend::Joined;
 use crate::shared::cards;
 use crate::shared::confirm::Confirm;
 use crate::shared::hero::{
@@ -73,8 +74,8 @@ impl RailTab {
 struct DetailTracks(Entity<Detail>);
 
 impl Tracks for DetailTracks {
-    fn tracks<'a>(&self, cx: &'a App) -> &'a [Track] {
-        self.0.read(cx).tracks()
+    fn tracks<'a>(&self, cx: &'a App) -> Joined<'a, Track> {
+        self.0.read(cx).tracks().into()
     }
 
     fn is_loading(&self, cx: &App) -> bool {

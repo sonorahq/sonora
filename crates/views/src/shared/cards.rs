@@ -422,6 +422,14 @@ fn track_caption(kind: Option<SharedString>, track: &Track) -> SharedString {
     )
 }
 
+/// Badges `card` as a local file when `local`, for a library page that mixes both shelves.
+pub(crate) fn marked_local(card: Card, local: bool) -> Card {
+    match local {
+        true => card.mark(crate::shared::blend::LOCAL_MARK, t!("song-local")),
+        false => card,
+    }
+}
+
 pub(crate) fn imported_playlist_card(
     id: impl Into<ElementId>,
     playlist: &Playlist,

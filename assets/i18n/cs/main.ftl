@@ -633,7 +633,6 @@ settings-font-detail = Základní velikost textu, vše ostatní se podle ní mě
 settings-font-value = { $size } px
 settings-startup = Zobrazit při startu
 settings-startup-detail = Obrazovka, kterou Sonora otevře po spuštění
-settings-startup-no-guest = Nedostupné v režimu hosta
 settings-entries = Položky postranního panelu
 settings-entries-detail = Sekce uvedené v postranním panelu
 settings-entries-pick = Vyber položky

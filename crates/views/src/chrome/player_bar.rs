@@ -14,7 +14,7 @@ use i18n::t;
 use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
 use state::{AppSettings, Playback, PlayerBarLayout, Queue, SideTab, Sonora};
 use ui::{
-    Artwork, Button, ExplicitBadge, Flight, InlineLink, InlineLinks, Perch, Pinnable, Popup, Room,
+    Artwork, Badge, Button, Flight, InlineLink, InlineLinks, Perch, Pinnable, Popup, Room,
     Scrollbar, Scrubber, ScrubberState, clock, tabular,
 };
 
@@ -438,7 +438,7 @@ impl PlayerBar {
             .items_center()
             .gap_1()
             .when(explicit, |this| {
-                this.child(div().flex_none().child(ExplicitBadge::new()))
+                this.child(div().flex_none().child(Badge::explicit()))
             })
             .child(like(track, &self.playback, cx));
         let headline = match centered {
@@ -469,11 +469,14 @@ impl PlayerBar {
                         ),
                 )
             }
+            // The row is one line of the title tall, so the heart beside it reaches past it rather
+            // than pushing the artist line down.
             false => div()
                 .w_full()
                 .flex()
                 .min_w_0()
                 .items_center()
+                .h(theme.text(ui::Text::Body) * ui::LEADING)
                 .gap_1()
                 .child(title)
                 .child(actions),
@@ -481,9 +484,9 @@ impl PlayerBar {
         div()
             .flex()
             .flex_col()
-            .when(centered, |this| {
-                this.items_center().line_height(gpui::relative(ui::LEADING))
-            })
+            .line_height(gpui::relative(ui::LEADING))
+            .gap(theme.metrics.pad / 2.)
+            .when(centered, |this| this.items_center())
             .justify_center()
             .flex_1()
             .min_w_0()

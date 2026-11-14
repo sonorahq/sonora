@@ -4,15 +4,13 @@
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, FontWeight, Render, SharedString, Window, div,
-};
+use gpui::{AnyElement, App, Context, Entity, FocusHandle, Render, SharedString, Window, div};
 use i18n::t;
 use music::soloist::{DASHBOARD, DEVICE, TERMS};
 use state::{Soloist, SoloistProblem, SoloistState, SoloistStep, Sonora};
 use ui::{
     ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Field, Form, Input, Modal, Notice, Spinner,
-    Submit, Text, spoken,
+    Submit, Text,
 };
 
 use crate::shared::steps::{progress, steps};
@@ -190,7 +188,6 @@ impl SoloistSetup {
                     ])
                     .into_any_element(),
                 );
-                body.push(device(cx));
                 // said only once pairing has waited a while, when a firewall is the likely cause
                 if let Some(port) = self.soloist.read(cx).blocked_port() {
                     // as text, so no locale groups the digits of a port number
@@ -335,28 +332,5 @@ fn waiting(id: &'static str, text: SharedString, cx: &App) -> AnyElement {
         .text_color(theme.muted_foreground)
         .child(Spinner::new(SharedString::from(format!("{id}-spinner"))))
         .child(text)
-        .into_any_element()
-}
-
-/// The name to look for on the device list, set large in a panel of its own, with the wait
-/// under it.
-fn device(cx: &App) -> AnyElement {
-    let theme = *cx.theme();
-    div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap_2()
-        .p(theme.metrics.pad * 1.5)
-        .rounded(theme.radius)
-        .border_1()
-        .border_color(theme.border)
-        .bg(theme.secondary)
-        .child(
-            spoken("soloist-device", DEVICE)
-                .text_size(theme.text(Text::Title))
-                .font_weight(FontWeight::BOLD),
-        )
-        .child(waiting("soloist-pairing", t!("soloist-pair-waiting"), cx))
         .into_any_element()
 }

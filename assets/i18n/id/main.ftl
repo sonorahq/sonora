@@ -609,7 +609,6 @@ settings-font-detail = Ukuran teks dasar, elemen antarmuka lainnya akan menyesua
 settings-font-value = { $size } px
 settings-startup = Buka saat memulai
 settings-startup-detail = Layar yang pertama dibuka saat Sonora dijalankan
-settings-startup-no-guest = Tidak tersedia di Mode Tamu
 settings-entries = Menu bilah sisi
 settings-entries-detail = Bagian-bagian yang ditampilkan di bilah sisi
 settings-entries-pick = Pilih menu
