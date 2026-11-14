@@ -116,6 +116,8 @@ pub struct Button {
     backgroundless: bool,
     hoverless: bool,
     frosted: bool,
+    /// Whether the button keeps its size when pressed.
+    steady: bool,
     turn: f32,
     /// Whether a swapped icon fades into the one it replaces in place, with no pop.
     blend: bool,
@@ -159,6 +161,7 @@ impl Button {
             backgroundless: false,
             hoverless: false,
             frosted: false,
+            steady: false,
             turn: 0.,
             blend: false,
             belt: None,
@@ -343,6 +346,13 @@ impl Button {
         self
     }
 
+    /// Keeps the button at its size when pressed, for a trigger whose menu opens on the press
+    /// and would otherwise rise over a button still springing back.
+    pub fn steady(mut self) -> Self {
+        self.steady = true;
+        self
+    }
+
     /// Blurs whatever the hover and press fills float over. Only for buttons
     /// that sit on real content, like the fullscreen transport over the ambient
     /// background. Anywhere else the backdrop is flat paint and the blur buys
@@ -458,6 +468,7 @@ impl RenderOnce for Button {
             backgroundless,
             hoverless,
             frosted,
+            steady,
             turn,
             blend,
             belt,
@@ -976,7 +987,7 @@ impl RenderOnce for Button {
                 })
             });
 
-        let mut button = match interactive {
+        let mut button = match interactive && !steady {
             true => pressing(button, &id, PRESS_SCALE, window, cx),
             false => button,
         };
