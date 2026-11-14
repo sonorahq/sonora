@@ -24,6 +24,10 @@ actions!(
         TogglePlayback,
         SongPrevious,
         SongNext,
+        VolumeUp,
+        VolumeDown,
+        SeekBack,
+        SeekForward,
         ToggleShuffle,
         ToggleRepeat,
         NavigateBack,
@@ -58,11 +62,14 @@ pub const POWERBAR_CONTEXT: &str = "Powerbar";
 
 /// Every key binding, in precedence order: GPUI prefers the deepest matching context and,
 /// within one, the binding registered last, so the macOS set at the end overrides the shared one.
+/// The shortcuts come before the shared set so that a key the page takes for a list, such as
+/// Up and Down, keeps the list's binding when both match. Once the list lets the key go, GPUI
+/// tries the next binding, which is how the arrow keys reach the volume and seek shortcuts.
 /// `overrides` holds the keys the user chose for shortcuts under Settings, Keybinds, by
 /// shortcut id. A shortcut missing from it keeps its defaults, and an empty list unbinds it.
 pub fn bindings(overrides: &BTreeMap<String, Vec<String>>) -> Vec<KeyBinding> {
-    let mut bindings = shared();
-    bindings.extend(shortcuts::bindings(overrides));
+    let mut bindings = shortcuts::bindings(overrides);
+    bindings.extend(shared());
     if cfg!(target_os = "macos") {
         bindings.extend(macos());
     }

@@ -93,6 +93,11 @@ const THROTTLE_CAP: Duration = Duration::from_secs(30);
 /// How many refusals in a row a track is retried through before it is held paused until play.
 const THROTTLE_LIMIT: u8 = 6;
 const RESUME_STEP: Duration = Duration::from_secs(5);
+/// How far one volume notch moves the level, as a share of full volume. The volume wheel and the
+/// volume keys both take it, so the two agree.
+pub const VOLUME_STEP: f32 = 0.05;
+/// How far the seek keys move through the track.
+const SEEK_STEP: Duration = Duration::from_secs(5);
 /// How long a pause may last before play reloads the track instead of resuming the engine. What
 /// an engine holds goes stale while paused, and resuming it plays out the queued audio and then
 /// reports the track as ended. Apple's license asks for renewal 13 minutes after it is issued,
@@ -2519,6 +2524,27 @@ impl Playback {
         self.set_volume(level, cx);
     }
 
+    /// Turns the volume by `steps` notches of `VOLUME_STEP` from the level shown, which is the
+    /// other device's level while one is steered.
+    pub fn nudge_volume(&mut self, steps: i8, cx: &mut Context<Self>) {
+        let level = volume_after(self.shown_volume(cx), steps);
+        self.set_volume(level, cx);
+    }
+
+    /// Moves `SEEK_STEP` forward or back through the shown track, stopping at its start and end.
+    /// Seeks the other device while one is steered, and does nothing without a track.
+    pub fn skip(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let (shown, total) = self.shown_time(cx);
+        if total.is_zero() {
+            return;
+        }
+        let at = match self.steered(cx) {
+            Some(_) => shown,
+            None => self.live_position(),
+        };
+        self.seek(seek_target(at, total, forward), cx);
+    }
+
     /// Sends the gain for the current level to both engines.
     fn apply_gain(&self) {
         let level = gain(self.level);
@@ -3421,11 +3447,25 @@ fn retire(engine: Option<Box<dyn Player>>) {
         log::warn!("playback: cannot retire the old engine off the main thread: {error}");
     }
 }
+/// The level `steps` notches of `VOLUME_STEP` from `level`, kept between silence and full volume.
+fn volume_after(level: f32, steps: i8) -> f32 {
+    (level + f32::from(steps) * VOLUME_STEP).clamp(0., 1.)
+}
+
+/// The position `SEEK_STEP` from `at` in the given direction, kept between the start of the track
+/// and its end.
+fn seek_target(at: Duration, total: Duration, forward: bool) -> Duration {
+    match forward {
+        true => at.saturating_add(SEEK_STEP).min(total),
+        false => at.saturating_sub(SEEK_STEP),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{LiveClock, gain};
+    use super::{LiveClock, VOLUME_STEP, gain, seek_target, volume_after};
 
     #[test]
     fn never_amplifies_past_unity() {
@@ -3493,5 +3533,42 @@ mod tests {
             assert!(sample >= previous);
             previous = sample;
         }
+    }
+
+    #[test]
+    fn volume_keys_move_by_the_wheel_step() {
+        assert!((volume_after(0.5, 1) - (0.5 + VOLUME_STEP)).abs() < 1e-6);
+        assert!((volume_after(0.5, -1) - (0.5 - VOLUME_STEP)).abs() < 1e-6);
+        assert!((volume_after(0.5, 1) - 0.55).abs() < 1e-6);
+    }
+
+    #[test]
+    fn volume_keys_stop_at_silence_and_full_volume() {
+        assert_eq!(volume_after(0.98, 1), 1.);
+        assert_eq!(volume_after(0.02, -1), 0.);
+        assert_eq!(volume_after(1., 1), 1.);
+    }
+
+    #[test]
+    fn seek_keys_move_five_seconds_each_way() {
+        let total = Duration::from_secs(100);
+        assert_eq!(
+            seek_target(Duration::from_secs(10), total, true),
+            Duration::from_secs(15)
+        );
+        assert_eq!(
+            seek_target(Duration::from_secs(10), total, false),
+            Duration::from_secs(5)
+        );
+    }
+
+    #[test]
+    fn seek_keys_stop_at_the_start_and_end_of_the_track() {
+        let total = Duration::from_secs(100);
+        assert_eq!(
+            seek_target(Duration::from_secs(2), total, false),
+            Duration::ZERO
+        );
+        assert_eq!(seek_target(Duration::from_secs(98), total, true), total);
     }
 }

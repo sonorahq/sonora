@@ -5,13 +5,14 @@
 use std::collections::BTreeMap;
 
 use gpui::{Action, KeyBinding, Keystroke};
-use ui::INPUT_CONTEXT;
+use ui::{FORM_CONTEXT, INPUT_CONTEXT, MENU_CONTEXT, TABLE_CONTEXT};
 
 use crate::{
     DecreaseFontSize, IncreaseFontSize, NavigateBack, NavigateForward, OpenFilter, OpenSearch,
-    OpenSettings, Refresh, ResetFontSize, SongNext, SongPrevious, ToggleFullscreen, ToggleLyrics,
-    TogglePlayback, TogglePowerbar, ToggleQueue, ToggleRepeat, ToggleShuffle,
-    ToggleWindowFullscreen, WORKSPACE_CONTEXT,
+    OpenSettings, POWERBAR_CONTEXT, Refresh, ResetFontSize, SEARCH_CONTEXT, SeekBack, SeekForward,
+    SongNext, SongPrevious, ToggleFullscreen, ToggleLyrics, TogglePlayback, TogglePowerbar,
+    ToggleQueue, ToggleRepeat, ToggleShuffle, ToggleWindowFullscreen, VolumeDown, VolumeUp,
+    WORKSPACE_CONTEXT,
 };
 
 /// The modifiers that make a keystroke a command rather than typing. A key pressed without any
@@ -58,6 +59,9 @@ enum Scope {
     Anywhere,
     /// Anywhere in the workspace except a text field, for keys a field would take as typing.
     AwayFromText,
+    /// Only where no text field, list, menu, form, search or powerbar has the keys, so the page
+    /// keeps its own use of arrow keys. Keys a list takes for moving through rows stay with it.
+    Browsing,
 }
 
 /// One action the user can bind to keys of their own.
@@ -106,6 +110,7 @@ impl Shortcut {
             .any(|part| COMMAND_MODIFIERS.contains(&part));
         match (self.scope, plain) {
             (Scope::Anywhere, false) => None,
+            (Scope::Browsing, _) => Some(browsing_context()),
             _ => Some(format!("{WORKSPACE_CONTEXT} && !{INPUT_CONTEXT}")),
         }
     }
@@ -137,6 +142,42 @@ const SHORTCUTS: &[Shortcut] = &[
         scope: Scope::AwayFromText,
         bind: bind::<SongNext>,
         defaults: &["ctrl-right"],
+        mac: &[],
+    },
+    Shortcut {
+        id: "volume-up",
+        key: "keybind-volume-up",
+        section: Section::Playback,
+        scope: Scope::Browsing,
+        bind: bind::<VolumeUp>,
+        defaults: &["up"],
+        mac: &[],
+    },
+    Shortcut {
+        id: "volume-down",
+        key: "keybind-volume-down",
+        section: Section::Playback,
+        scope: Scope::Browsing,
+        bind: bind::<VolumeDown>,
+        defaults: &["down"],
+        mac: &[],
+    },
+    Shortcut {
+        id: "seek-back",
+        key: "keybind-seek-back",
+        section: Section::Playback,
+        scope: Scope::Browsing,
+        bind: bind::<SeekBack>,
+        defaults: &["left"],
+        mac: &[],
+    },
+    Shortcut {
+        id: "seek-forward",
+        key: "keybind-seek-forward",
+        section: Section::Playback,
+        scope: Scope::Browsing,
+        bind: bind::<SeekForward>,
+        defaults: &["right"],
         mac: &[],
     },
     Shortcut {
@@ -423,4 +464,119 @@ fn parse(key: &str) -> Option<Keystroke> {
 /// Binds `keystroke` to a fresh `A` in `context`.
 fn bind<A: Action + Default>(keystroke: &str, context: Option<&str>) -> KeyBinding {
     KeyBinding::new(keystroke, A::default(), context)
+}
+
+/// The context of a [`Scope::Browsing`] shortcut: the workspace with no text field, list, menu,
+/// form, search or powerbar in the focus path.
+fn browsing_context() -> String {
+    format!(
+        "{WORKSPACE_CONTEXT} && !{INPUT_CONTEXT} && !{MENU_CONTEXT} && !{FORM_CONTEXT} && !{TABLE_CONTEXT} && !{SEARCH_CONTEXT} && !{POWERBAR_CONTEXT}"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use gpui::KeyContext;
+
+    use super::*;
+
+    /// The binding the default keymap gives action `A`.
+    fn binding_of<A: Action>() -> KeyBinding {
+        crate::bindings(&BTreeMap::new())
+            .into_iter()
+            .find(|binding| binding.action().as_any().is::<A>())
+            .expect("the action has a default binding")
+    }
+
+    /// A context stack with one entry per name, as the focus path of a window gives it.
+    fn stack(names: &[&str]) -> Vec<KeyContext> {
+        names
+            .iter()
+            .map(|name| KeyContext::parse(name).expect("a valid context name"))
+            .collect()
+    }
+
+    #[test]
+    fn arrow_keys_default_to_volume_and_seek() {
+        assert_eq!(
+            shortcut("volume-up").map(Shortcut::defaults),
+            Some(vec!["up"])
+        );
+        assert_eq!(
+            shortcut("volume-down").map(Shortcut::defaults),
+            Some(vec!["down"])
+        );
+        assert_eq!(
+            shortcut("seek-back").map(Shortcut::defaults),
+            Some(vec!["left"])
+        );
+        assert_eq!(
+            shortcut("seek-forward").map(Shortcut::defaults),
+            Some(vec!["right"])
+        );
+    }
+
+    #[test]
+    fn arrow_shortcuts_are_listed_under_playback() {
+        for id in ["volume-up", "volume-down", "seek-back", "seek-forward"] {
+            assert_eq!(
+                shortcut(id).map(|shortcut| shortcut.section),
+                Some(Section::Playback)
+            );
+        }
+    }
+
+    #[test]
+    fn arrow_keys_do_nothing_while_a_text_field_has_focus() {
+        let predicates = [
+            binding_of::<VolumeUp>(),
+            binding_of::<VolumeDown>(),
+            binding_of::<SeekBack>(),
+            binding_of::<SeekForward>(),
+        ];
+        for binding in &predicates {
+            let predicate = binding.predicate().expect("bound in a context");
+            assert!(!predicate.eval(&stack(&["Workspace", INPUT_CONTEXT])));
+            assert!(!predicate.eval(&stack(&["Workspace", "Page", INPUT_CONTEXT])));
+        }
+    }
+
+    #[test]
+    fn arrow_keys_work_on_the_bare_workspace() {
+        let predicates = [
+            binding_of::<VolumeUp>(),
+            binding_of::<VolumeDown>(),
+            binding_of::<SeekBack>(),
+            binding_of::<SeekForward>(),
+        ];
+        for binding in &predicates {
+            let predicate = binding.predicate().expect("bound in a context");
+            assert!(predicate.eval(&stack(&["Workspace"])));
+        }
+    }
+
+    #[test]
+    fn arrow_keys_yield_to_lists_menus_forms_search_and_the_powerbar() {
+        let predicates = [
+            binding_of::<VolumeUp>(),
+            binding_of::<VolumeDown>(),
+            binding_of::<SeekBack>(),
+            binding_of::<SeekForward>(),
+        ];
+        let owners = [
+            TABLE_CONTEXT,
+            MENU_CONTEXT,
+            FORM_CONTEXT,
+            SEARCH_CONTEXT,
+            POWERBAR_CONTEXT,
+        ];
+        for binding in &predicates {
+            let predicate = binding.predicate().expect("bound in a context");
+            for owner in owners {
+                assert!(!predicate.eval(&stack(&["Workspace", owner])));
+            }
+        }
+    }
 }

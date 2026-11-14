@@ -19,6 +19,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `sonora queue` prints what played, what plays and what follows, and `sonora queue --json` gives the same queue to a script, without changing playback.
 - Rebind keyboard shortcuts under Settings, Keybinds, and give shuffle, repeat, the queue and lyrics shortcuts of their own.
 - Move between the fields of a dialog with Tab and Shift+Tab.
+- Up and Down change the volume, and Left and Right skip back or forward 5 seconds, unless a list, menu or text field is using the arrow keys.
 
 ### Fixed
 

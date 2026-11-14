@@ -71,7 +71,7 @@ pub use network::{Network, Reconnected};
 pub use outputs::Outputs;
 pub use overload::OutputLevel;
 pub use pins::{PinSort, Pins};
-pub use playback::{Origin, Playback, PlaybackState, Sleep, Unreachable, Whence};
+pub use playback::{Origin, Playback, PlaybackState, Sleep, Unreachable, VOLUME_STEP, Whence};
 pub use profile::Profile;
 pub use queue::{
     Queue, QueueKind, QueuePlacement, QueuePosition, QueueSections, QueueSlot, QueueView, Resume,
