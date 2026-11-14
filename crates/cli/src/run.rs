@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use crate::args;
 use crate::commands::{Format, Kind, Local, Repeat, Request};
-use crate::wire::{self, Failure, QueueEntryKind, Reply, Value};
+use crate::wire::{self, Failure, LyricsStatus, QueueEntryKind, Reply, Value};
 
 /// The running Sonora refused the command, or the exchange broke.
 const FAILED: u8 = 1;
@@ -141,6 +141,7 @@ fn show(value: &Value) -> String {
             }),
         ),
         Value::Queue(queue) => show_queue(queue),
+        Value::Lyrics(lyrics) => show_lyrics(lyrics),
         Value::Session(None) => String::new(),
         Value::Session(Some(session)) => format!(
             "{} on {}{}\n{}",
@@ -199,6 +200,42 @@ fn show_queue(queue: &wire::QueueSnapshot) -> String {
     lines.join("\n")
 }
 
+/// The lyrics for a person: a word on why there are none, else one line each with the time it
+/// starts at when synced and its romanization under it when there is one.
+fn show_lyrics(lyrics: &wire::LyricsSnapshot) -> String {
+    let said = match lyrics.state {
+        LyricsStatus::Idle => "No lyrics are loaded.",
+        LyricsStatus::Disabled => "Lyrics are turned off.",
+        LyricsStatus::Loading => "Loading the lyrics.",
+        LyricsStatus::Instrumental => "Instrumental.",
+        LyricsStatus::Missing => "No lyrics found.",
+        LyricsStatus::Failed => "The lyrics could not be loaded.",
+        LyricsStatus::Ready => "",
+    };
+    if !said.is_empty() {
+        return said.to_owned();
+    }
+    let mut lines = Vec::new();
+    for line in &lyrics.lines {
+        lines.push(match line.start_ms {
+            Some(start) => format!("[{}] {}", clock(start / 1000), line.text),
+            None => line.text.clone(),
+        });
+        lines.extend(
+            line.romanized
+                .iter()
+                .map(|romanized| format!("  {romanized}")),
+        );
+    }
+    if lyrics.truncated {
+        lines.push(format!(
+            "(only the first {} lines are shown)",
+            wire::LYRICS_LIMIT
+        ));
+    }
+    lines.join("\n")
+}
+
 /// A queried value for a script, as one line of JSON without the envelope around it.
 fn json(value: &Value) -> String {
     let printed = match value {
@@ -211,6 +248,7 @@ fn json(value: &Value) -> String {
         Value::Hits(hits) => serde_json::to_string(hits),
         Value::Session(session) => serde_json::to_string(session),
         Value::Queue(queue) => serde_json::to_string(queue),
+        Value::Lyrics(lyrics) => serde_json::to_string(lyrics),
     };
     printed.unwrap_or_default()
 }
@@ -325,5 +363,51 @@ mod tests {
         let printed = json(&value);
         assert!(printed.contains("\"cover\":\"cover\""), "{printed}");
         assert!(printed.contains("\"duration\":125"), "{printed}");
+    }
+
+    fn line(start_ms: Option<u64>, text: &str, romanized: Option<&str>) -> wire::LyricsLine {
+        wire::LyricsLine {
+            start_ms,
+            text: text.to_owned(),
+            romanized: romanized.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn lyrics_that_are_not_there_say_why_in_a_word() {
+        let said = |state| show(&Value::Lyrics(wire::LyricsSnapshot::without(state)));
+        assert_eq!(said(LyricsStatus::Missing), "No lyrics found.");
+        assert_eq!(said(LyricsStatus::Loading), "Loading the lyrics.");
+        assert_eq!(said(LyricsStatus::Instrumental), "Instrumental.");
+        assert_eq!(said(LyricsStatus::Disabled), "Lyrics are turned off.");
+    }
+
+    #[test]
+    fn synced_lyrics_print_their_times_and_romanization() {
+        let lines = vec![
+            line(Some(62_500), "こんにちは", Some("konnichiwa")),
+            line(Some(65_000), "", None),
+        ];
+        let value = Value::Lyrics(wire::LyricsSnapshot::without(LyricsStatus::Ready).bounded(
+            true,
+            lines,
+            Some(0),
+        ));
+        assert_eq!(show(&value), "[1:02] こんにちは\n  konnichiwa\n[1:05] ");
+        let printed = json(&value);
+        assert!(printed.contains("\"start_ms\":62500"), "{printed}");
+        assert!(
+            printed.contains("\"next\":{\"start_ms\":65000"),
+            "{printed}"
+        );
+    }
+
+    #[test]
+    fn plain_lyrics_print_as_they_are() {
+        let lines = vec![line(None, "one", None), line(None, "two", None)];
+        let value = Value::Lyrics(
+            wire::LyricsSnapshot::without(LyricsStatus::Ready).bounded(false, lines, None),
+        );
+        assert_eq!(show(&value), "one\ntwo");
     }
 }

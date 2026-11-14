@@ -46,6 +46,9 @@ pub enum Request {
     Watch(Watch),
     /// Commands serving Sonora Session, listening together with other Sonora apps
     Session(SessionCommand),
+    /// The lyrics of the current track, as already held, without looking any up. Stands for
+    /// `sonora lyrics`
+    Lyrics,
 }
 
 impl Request {

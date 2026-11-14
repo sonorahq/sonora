@@ -91,6 +91,8 @@ enum Sub {
     },
     /// Print the queue: what played, what plays and what follows, without changing it.
     Queue,
+    /// Print the lyrics of the current track, without looking any up.
+    Lyrics,
     /// Print the volume, or set it: `50`, `+5`, `-5`.
     Volume {
         /// A level from 0 to 100, or a step from the current one.
@@ -297,6 +299,7 @@ fn into_command(args: Args, line: &mut Command) -> Result<CommandType, clap::Err
         Sub::Seek { point } => play(point),
         Sub::Current => play(PlaybackCommand::CurrentTrack),
         Sub::Queue => Request::Queue(QueueCommand::Snapshot),
+        Sub::Lyrics => Request::Lyrics,
         Sub::Watch { position } => Request::Watch(Watch { position }),
         Sub::Volume { level } => play(PlaybackCommand::Volume(level)),
         Sub::Shuffle { switch } => play(PlaybackCommand::Shuffle(switch.map(Switch::from))),
@@ -483,5 +486,20 @@ mod tests {
         };
         assert_eq!(request, Request::Queue(QueueCommand::Snapshot));
         assert_eq!(format, Format::Json);
+    }
+
+    #[test]
+    fn lyrics_reads_as_a_read_only_request_in_both_formats() {
+        for (args, expected) in [
+            (&["lyrics"][..], Format::Text),
+            (&["lyrics", "--json"], Format::Json),
+        ] {
+            let CommandType::Remote(request, format) = parsed(args) else {
+                panic!("`sonora lyrics` should ask the running Sonora");
+            };
+            assert_eq!(request, Request::Lyrics);
+            assert_eq!(format, expected);
+            assert!(!request.streams());
+        }
     }
 }
