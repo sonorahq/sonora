@@ -778,6 +778,9 @@ impl Brain {
             }
             return;
         };
+        if follows_remote(track.parked, &track.uri, &self.heard) {
+            return self.wait_for_queue();
+        }
         if !track.sent || !track.accepted {
             return;
         }
@@ -828,7 +831,7 @@ impl Brain {
         if !same {
             return match self.fed.as_ref() == Some(&self.heard.uri) {
                 true => self.hand_over(),
-                false if self.queue.contains(&self.heard.uri) => self.follow_queued(),
+                false if self.queue.contains(&self.heard.uri) => self.follow_remote(),
                 false => self.wait_for_queue(),
             };
         }
@@ -916,11 +919,12 @@ impl Brain {
         self.report(PlaybackEvent::Ended { id: Some(track.id) });
     }
 
-    /// Lets state take over a track another Spotify app queued on Soloist.
-    fn follow_queued(&mut self) {
+    /// Lets state take over a track another Spotify app started on Soloist.
+    fn follow_remote(&mut self) {
         let Some(track) = self.track.take() else {
             return;
         };
+        log::debug!("soloist: following remote track {}", self.heard.uri);
         let Some(id) = track_id(&self.heard.uri) else {
             self.track = Some(track);
             return self.finish();
@@ -948,13 +952,17 @@ impl Brain {
         self.send("get_queue", json!({}));
     }
 
-    /// Adopts a track the queue confirms or stops an unconfirmed interruption.
+    /// Adopts the track still playing once Soloist has sent its queue snapshot.
     fn reconcile_queue(&mut self) {
         let Some((uri, _)) = self.unexpected.take() else {
             return;
         };
-        if uri == self.heard.uri && self.queue.contains(&uri) {
-            self.follow_queued();
+        log::debug!(
+            "soloist: reconciling remote track {uri} with status {:?}",
+            self.heard.status
+        );
+        if uri == self.heard.uri && active(self.heard.status) {
+            self.follow_remote();
         } else {
             log::debug!("soloist: the daemon moved on to another track");
             self.finish();
@@ -1388,6 +1396,14 @@ fn millis(position: Duration) -> u64 {
     u64::try_from(position.as_millis()).unwrap_or(u64::MAX)
 }
 
+fn active(status: Status) -> bool {
+    matches!(status, Status::Playing | Status::Buffering)
+}
+
+fn follows_remote(parked: bool, wanted: &str, heard: &Heard) -> bool {
+    parked && wanted != heard.uri && active(heard.status)
+}
+
 /// Reads a Spotify track id from a daemon queue URI.
 fn track_id(uri: &str) -> Option<String> {
     uri.strip_prefix(TRACK_PREFIX)
@@ -1402,4 +1418,28 @@ fn offered(quality: Quality) -> Option<Encoding> {
         .iter()
         .find(|offer| offer.quality == level)
         .map(|offer| offer.encoding)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_statuses_follow_a_remote_track() {
+        assert!(active(Status::Playing));
+        assert!(active(Status::Buffering));
+        assert!(!active(Status::Paused));
+    }
+
+    #[test]
+    fn a_parked_restore_follows_an_active_remote_track() {
+        let heard = Heard {
+            uri: "spotify:track:remote".into(),
+            status: Status::Playing,
+            ..Default::default()
+        };
+        assert!(follows_remote(true, "spotify:track:restored", &heard));
+        assert!(!follows_remote(false, "spotify:track:restored", &heard));
+        assert!(!follows_remote(true, "spotify:track:remote", &heard));
+    }
 }
