@@ -930,7 +930,6 @@ soloist-continue = 계속
 soloist-pair-step-open = 동일한 네트워크에 연결된 휴대폰이나 컴퓨터에서 Spotify를 엽니다.
 soloist-pair-step-play = 아무 곡이나 재생을 시작합니다.
 soloist-pair-step-pick = 기기 목록을 열고 { $device }을(를) 선택합니다.
-soloist-pair-waiting = Spotify 연결 대기 중…
 soloist-pair-firewall = 기기가 표시되지 않나요? 이 컴퓨터의 방화벽에서 UDP 5353 및 TCP { $port } 포트를 허용해야 합니다.
 soloist-back = 뒤로
 soloist-problem-download = Soloist를 다운로드할 수 없습니다.
