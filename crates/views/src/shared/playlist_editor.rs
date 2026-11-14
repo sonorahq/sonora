@@ -269,6 +269,19 @@ impl Render for PlaylistEditor {
             Edit::Delete(_) => t!("playlist-delete-title"),
             Edit::Again { .. } => t!("playlist-again-title"),
         };
+        // A blank new playlist can come from an M3U file instead, which the local shelf reads.
+        let import =
+            matches!(&edit, Edit::Create { addition, .. } if addition.is_empty()).then(|| {
+                Button::new("import-playlist")
+                    .ghost()
+                    .small()
+                    .icon("icons/file-music.svg")
+                    .label(t!("menu-import-playlist"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.close(window, cx);
+                        crate::shared::local::import_playlist(cx);
+                    }))
+            });
         let detail = match &edit {
             Edit::Delete(playlist) => Some(t!("playlist-delete-confirm", name = &playlist.name)),
             Edit::Again { playlist, .. } => {
@@ -294,6 +307,7 @@ impl Render for PlaylistEditor {
                 Modal::new("playlist-editor", title)
                     .w(theme.metrics.cover * 2.8)
                     .when_some(detail, Modal::detail)
+                    .when_some(import, Modal::trailing)
                     .map(|modal| match &edit {
                         Edit::Details(playlist) => modal.child(self.details(playlist, cx)),
                         _ if asking => modal,
