@@ -105,9 +105,34 @@ pub(crate) fn path() -> PathBuf {
     store().join(program())
 }
 
-/// A command for `program` that opens no console window on Windows.
+/// A command for `program` that opens no console window on Windows and, in the Nix package,
+/// goes through the store's loader.
 pub(crate) fn command(program: &Path) -> Command {
-    windowless(Command::new(program))
+    windowless(loaded(program))
+}
+
+/// Starts `program` through the loader and library path the Nix package bakes in, since a NixOS
+/// without nix-ld has nothing at the loader path the binary names. Every other build starts it
+/// directly. The program then sees the loader as `/proc/self/exe`, which only costs it the crash
+/// handler it never starts anyway.
+#[cfg(target_os = "linux")]
+fn loaded(program: &Path) -> Command {
+    const LOADER: Option<&str> = option_env!("SONORA_SOLOIST_LOADER");
+    const LIBRARIES: Option<&str> = option_env!("SONORA_SOLOIST_LIBRARIES");
+    let Some(loader) = LOADER else {
+        return Command::new(program);
+    };
+    let mut command = Command::new(loader);
+    if let Some(libraries) = LIBRARIES {
+        command.arg("--library-path").arg(libraries);
+    }
+    command.arg("--argv0").arg(program).arg(program);
+    command
+}
+
+#[cfg(not(target_os = "linux"))]
+fn loaded(program: &Path) -> Command {
+    Command::new(program)
 }
 
 #[cfg(windows)]
@@ -251,8 +276,9 @@ fn probe(path: &Path) -> Result<Build> {
     }
     ensure!(
         output.status.success(),
-        "soloist exited with {} when asked for its version",
-        output.status
+        "soloist exited with {} when asked for its version{}",
+        output.status,
+        complaint(&output.stderr)
     );
     let build = read(&String::from_utf8_lossy(&output.stdout));
     ensure!(!build.expired(), "the soloist build is too old to run");
@@ -276,6 +302,17 @@ fn read(output: &str) -> Build {
         .filter(|epoch| (1_500_000_000..4_100_000_000).contains(epoch))
         .map(|epoch| UNIX_EPOCH + Duration::from_secs(epoch));
     Build { version, built }
+}
+
+/// The first line the program printed to stderr, ready to follow an error, or nothing when it
+/// printed none. When the loader cannot start the program, that line names the missing library.
+fn complaint(stderr: &[u8]) -> String {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| format!(": {line}"))
+        .unwrap_or_default()
 }
 
 /// The program's file name, `soloist` or `soloist.exe`.

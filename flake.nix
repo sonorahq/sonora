@@ -115,6 +115,17 @@
             ];
           };
 
+          # What Soloist loads besides glibc: libatomic when it starts, and PipeWire or PulseAudio
+          # once it opens a sound device.
+          soloistLibraries = lib.makeLibraryPath (
+            with pkgs;
+            [
+              stdenv.cc.cc.lib
+              pipewire
+              libpulseaudio
+            ]
+          );
+
           # The source build uses the toolchain the devShell and CI pin, not whatever rustc
           # nixpkgs carries that day.
           rustPlatform =
@@ -148,10 +159,17 @@
             version = nightly.version or (lib.importTOML "${final.src}/Cargo.toml").workspace.package.version;
 
             src = cargoSource ./.;
-            env = lib.optionalAttrs (nightly ? version) {
-              SONORA_VERSION = nightly.version;
-              SONORA_CHANNEL = "nightly";
-            };
+            # Soloist is Spotify's prebuilt binary and asks for a loader at /lib64, which NixOS has
+            # only with nix-ld. The app starts it through the store's loader with these instead.
+            env =
+              lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+                SONORA_SOLOIST_LOADER = pkgs.stdenv.cc.bintools.dynamicLinker;
+                SONORA_SOLOIST_LIBRARIES = soloistLibraries;
+              }
+              // lib.optionalAttrs (nightly ? version) {
+                SONORA_VERSION = nightly.version;
+                SONORA_CHANNEL = "nightly";
+              };
             cargoLock = {
               lockFile = "${final.src}/Cargo.lock";
               allowBuiltinFetchGit = true;
