@@ -9,7 +9,7 @@ use ui::{ActiveTheme as _, Button, Side};
 
 use crate::shared::ambient;
 
-pub(crate) const NOTCH: f32 = 0.05;
+pub(crate) const NOTCH: f32 = state::VOLUME_STEP;
 /// The name the playing cover is seen under, so the fullscreen player's cover flies in from the
 /// player bar's.
 pub(crate) const COVER_FLIGHT: &str = "playing-cover";
