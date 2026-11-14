@@ -8,7 +8,9 @@ use gpui::{Context, Entity, Render, SharedString, Window, div};
 use i18n::t;
 use music::connect::JamMember;
 use state::{Devices, Listening, Sonora};
-use ui::{ActiveTheme as _, Button, Glowing as _, Text, eyebrow, snapped, vacant};
+use ui::{
+    ActiveTheme as _, Button, Glowing as _, Perch, Text, Tipped as _, eyebrow, snapped, vacant,
+};
 
 use crate::chrome::{jam, session};
 
@@ -65,6 +67,27 @@ impl Members {
             },
             jam.members.clone(),
         ))
+    }
+
+    /// The listener's own delay in a Sonora Session: the ping that stands beside their name, and
+    /// the line that explains it and says how far playback here is from the session's. Nothing
+    /// in a Jam, which measures neither, or while the link is made again and the last reading
+    /// says nothing of it.
+    fn lag(&self, cx: &gpui::App) -> Option<(SharedString, SharedString)> {
+        let listening = self.listening.read(cx);
+        if listening.reconnecting() {
+            return None;
+        }
+        let ping = listening.ping()?.as_millis() as u64;
+        let detail = match listening.drift() {
+            Some(drift) => t!(
+                "members-lag-drift",
+                ping = ping,
+                drift = drift.as_millis() as u64
+            ),
+            None => t!("members-lag-ping", ping = ping),
+        };
+        Some((t!("members-lag", ping = ping), detail))
     }
 
     /// The buttons under the faces: the session's code to copy and the way out, or the Jam's.
@@ -172,6 +195,7 @@ impl Render for Members {
             Gathering::Session { hosting: true, .. } | Gathering::Jam { owner: true, .. }
         );
         let session = matches!(gathering, Gathering::Session { .. });
+        let lag = self.lag(cx).filter(|_| session);
         let actions = self.actions(gathering);
 
         let devices = self.devices.clone();
@@ -199,6 +223,23 @@ impl Render for Members {
                 .rounded(theme.radius)
                 .child(jam::face(member, theme.metrics.control_small))
                 .child(div().flex_1().min_w_0().truncate().child(shown))
+                .when_some(
+                    lag.clone().filter(|_| member.you),
+                    |this, (ping, detail)| {
+                        this.child(
+                            div()
+                                .id("member-lag")
+                                .role(Role::Label)
+                                .aria_value(detail.clone())
+                                .relative()
+                                .flex_none()
+                                .text_size(theme.text(Text::Small))
+                                .text_color(theme.muted_foreground)
+                                .child(ping)
+                                .tip_label(detail, Perch::Below),
+                        )
+                    },
+                )
                 .when(member.host, |this| {
                     this.child(jam::badge(
                         ("member-host", index),

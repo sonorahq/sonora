@@ -117,6 +117,9 @@ pub struct Listening {
     echoed: u64,
     /// Round trips and clock offsets of the latest pings, in milliseconds.
     clock: VecDeque<(u64, i64)>,
+    /// How far playback here stood from the session's when the two were last compared, or
+    /// `None` while they cannot be: another track here, one loading, or the session moved on.
+    drift: Option<Duration>,
     /// Compares playback here with the session's every few seconds while in one.
     checking: Option<Task<()>>,
     code_shown: bool,
@@ -165,6 +168,7 @@ impl Listening {
             sent: 0,
             echoed: 0,
             clock: VecDeque::new(),
+            drift: None,
             checking: None,
             code_shown: false,
             join_shown: false,
@@ -193,6 +197,20 @@ impl Listening {
     /// Whether the connection dropped and is being made again.
     pub fn reconnecting(&self) -> bool {
         self.room.is_some() && (self.retry.is_some() || self.asking)
+    }
+
+    /// How long the latest ping took to reach the session server and come back, or `None`
+    /// outside a session and before the first one is answered.
+    pub fn ping(&self) -> Option<Duration> {
+        self.room.as_ref()?;
+        let (trip, _) = self.clock.back()?;
+        Some(Duration::from_millis(*trip))
+    }
+
+    /// How far playback here was from the session's when last compared, which is every few
+    /// seconds. `None` while there is nothing to compare, as when a track is loading here.
+    pub fn drift(&self) -> Option<Duration> {
+        self.drift.filter(|_| self.room.is_some())
     }
 
     /// Starts a session on the current provider. Its code shows once the server hands it out.
@@ -578,6 +596,7 @@ impl Listening {
         self.shared = None;
         self.waiting = None;
         self.baseline = None;
+        self.drift = None;
         self.checking = None;
         self.starting = false;
         self.deferred = None;
@@ -857,17 +876,33 @@ impl Listening {
     }
 
     /// Moves playback back in step with the session when it strayed further than `tolerance`, as
-    /// after a stall while the track buffered here.
+    /// after a stall while the track buffered here. How far it strayed is kept for showing.
     fn realign(&mut self, tolerance: Duration, cx: &mut Context<Self>) {
-        if self.asking || self.waiting.is_some() || !self.ready(cx) {
-            return;
+        let astray = self.astray(cx);
+        let drift = astray.map(|(drift, _)| drift);
+        if self.drift != drift {
+            self.drift = drift;
+            cx.notify();
         }
-        let Some(state) = &self.shared else {
+        let Some((drift, at)) = astray.filter(|(drift, _)| *drift > tolerance) else {
             return;
         };
-        let Some(id) = state.track.as_ref().and_then(|track| track.id.as_deref()) else {
-            return;
-        };
+        log::info!("listening: {drift:?} out of step, seeking to {at:?}");
+        self.playback.update(cx, |playback, cx| {
+            playback.locally(cx, |playback, cx| playback.seek(at, cx))
+        });
+        self.seeks = self.playback.read(cx).seeks();
+    }
+
+    /// How far playback here is from the session's, and where the session's track is now. `None`
+    /// while the two cannot be compared: no state heard yet, another track here, one loading, or
+    /// play and pause not yet the same.
+    fn astray(&self, cx: &App) -> Option<(Duration, Duration)> {
+        if self.asking || self.waiting.is_some() || !self.ready(cx) {
+            return None;
+        }
+        let state = self.shared.as_ref()?;
+        let id = state.track.as_ref()?.id.as_deref()?;
         let current = self
             .queue
             .read(cx)
@@ -876,22 +911,14 @@ impl Listening {
         let playback = self.playback.read(cx);
         if current != Some(id) || playback.is_loading() || playback.wants_playing() != state.playing
         {
-            return;
+            return None;
         }
         // a session state from before its track played out says nothing of where it is now
         if self.past_end(state) {
-            return;
+            return None;
         }
         let at = self.expected(state);
-        let drift = apart(playback.live_position(), at);
-        if drift <= tolerance {
-            return;
-        }
-        log::info!("listening: {drift:?} out of step, seeking to {at:?}");
-        self.playback.update(cx, |playback, cx| {
-            playback.locally(cx, |playback, cx| playback.seek(at, cx))
-        });
-        self.seeks = self.playback.read(cx).seeks();
+        Some((apart(playback.live_position(), at), at))
     }
 
     /// Where the session's track is now, going by when the server took `state`.
