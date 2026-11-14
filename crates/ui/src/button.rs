@@ -11,9 +11,7 @@ use gpui::{
 
 use crate::glass::{GLASS_BLUR, blurring, frost};
 use crate::metrics::{Text, text_width};
-use crate::motion::{
-    Glow, LIT_HOVER, PRESS_SCALE, Springs, Sprung, glow_fill, pressing, solid_fill,
-};
+use crate::motion::{Glow, PRESS_SCALE, Springs, Sprung, glow_fill, pressing, solid_fill};
 use crate::panel::Side;
 use crate::theme::ActiveTheme as _;
 use crate::tooltip::{Perch, Tipped as _};
@@ -290,8 +288,8 @@ impl Button {
     }
 
     /// Fills the button with `color` while `lit`, for a row that marks where the app is. Under
-    /// the pointer alone the button takes `LIT_HOVER` of that fill. Either comes on at once and
-    /// fades out the way a hover does. It changes nothing for screen readers.
+    /// the pointer alone it takes the theme's `table_hover`, the hover every row shares. Either
+    /// comes on at once and fades out the way a hover does. It changes nothing for screen readers.
     pub fn lit(mut self, lit: bool, color: Hsla) -> Self {
         self.lit = Some((lit, color));
         self
@@ -629,7 +627,11 @@ impl RenderOnce for Button {
                 false => style,
             });
         }
-        let glow_color = lit.map(|(_, color)| color).or(hover_fill);
+        let glow_color = match lit {
+            Some((true, color)) => Some(color),
+            Some((false, _)) => Some(theme.table_hover),
+            None => hover_fill,
+        };
         let tracked = interactive && !hoverless && glow_color.is_some();
         let pressed = state_style(active, pressed, frosting);
         let overrides = std::mem::take(base.style());
@@ -661,15 +663,9 @@ impl RenderOnce for Button {
             if !tracked {
                 shape.glow.hover(false);
             }
-            // A lit button marks where the app is, so the pointer alone lights it only part of
-            // the way.
-            let hover = match lit {
-                Some(_) => LIT_HOVER,
-                None => 1.,
-            };
             let glow = shape
                 .glow
-                .peaked(lit.is_some_and(|(on, _)| on), hover, window, cx);
+                .peaked(lit.is_some_and(|(on, _)| on), 1., window, cx);
             if natural.is_none() {
                 shape.width = None;
             }
