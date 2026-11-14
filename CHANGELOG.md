@@ -27,6 +27,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Tidal artists with no portrait show the album cover Tidal draws them with, instead of an empty picture.
 - Releases tagged with the label `[no label]` no longer show a copyright line crediting it.
 - The fullscreen player's ambient background no longer leaves a light line along the right and bottom edges of the window.
+- The ambient background in fullscreen uses far less GPU, so laptops with integrated graphics stay cooler.
 
 ### Changed
 
