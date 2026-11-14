@@ -21,6 +21,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Move between the fields of a dialog with Tab and Shift+Tab.
 - Use Sonora in Korean.
 
+### Changed
+
+- Ctrl+F opens Search on pages without a filter, and still focuses the filter on pages that have one.
+
 ### Fixed
 
 - The Flatpak shows your Discord status in Vesktop and in Discord installed from Flathub.

@@ -98,6 +98,13 @@ enum Focus {
     Fullscreen,
 }
 
+/// Where Ctrl+F goes: the filter of the page on show, or the Search page when it has none.
+#[derive(Debug, PartialEq, Eq)]
+enum Find {
+    Filter,
+    Search,
+}
+
 pub struct Root {
     session: Entity<Session>,
     playback: Entity<Playback>,
@@ -499,6 +506,25 @@ impl Root {
         navigate(Destination::Search, cx);
         self.pending = Some(Focus::Search);
         cx.notify();
+    }
+
+    /// Ctrl+F: focuses the filter of the page on show when it has one, and otherwise opens the
+    /// Search page with its input focused.
+    fn find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match find_target(self.page_has_filter(cx)) {
+            Find::Filter => self.open_filter(window, cx),
+            Find::Search => self.open_search(cx),
+        }
+    }
+
+    /// Whether `open_filter` has a field to focus on the page on show.
+    fn page_has_filter(&self, cx: &mut Context<Self>) -> bool {
+        if router::trail(cx).read(cx).current().in_settings() {
+            return true;
+        }
+        self.toolbar
+            .as_ref()
+            .is_some_and(|toolbar| toolbar.read(cx).has_filter())
     }
 
     /// Focuses the filter of the page on show. In settings that is the settings search.
@@ -1359,7 +1385,7 @@ impl Render for Root {
             .on_action(cx.listener(|_, _: &NavigateBack, _, cx| back(cx)))
             .on_action(cx.listener(|_, _: &NavigateForward, _, cx| forward(cx)))
             .on_action(cx.listener(|this, _: &OpenFilter, window, cx| this.open_filter(window, cx)))
-            .on_action(cx.listener(|this, _: &OpenSearch, _, cx| this.open_search(cx)))
+            .on_action(cx.listener(|this, _: &OpenSearch, window, cx| this.find(window, cx)))
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.open_settings(cx)))
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.refresh(cx)))
             .on_action(cx.listener(|this, _: &ToggleFullscreen, _, cx| this.toggle_fullscreen(cx)))
@@ -1405,5 +1431,28 @@ impl Render for Root {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let root = root.child(WindowFrame::new());
         root
+    }
+}
+
+/// Picks the target of Ctrl+F for a page, given whether the page has a filter field.
+fn find_target(has_filter: bool) -> Find {
+    match has_filter {
+        true => Find::Filter,
+        false => Find::Search,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ctrl_f_focuses_the_filter_of_a_page_that_has_one() {
+        assert_eq!(find_target(true), Find::Filter);
+    }
+
+    #[test]
+    fn ctrl_f_opens_search_on_a_page_without_a_filter() {
+        assert_eq!(find_target(false), Find::Search);
     }
 }

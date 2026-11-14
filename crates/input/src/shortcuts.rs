@@ -424,3 +424,23 @@ fn parse(key: &str) -> Option<Keystroke> {
 fn bind<A: Action + Default>(keystroke: &str, context: Option<&str>) -> KeyBinding {
     KeyBinding::new(keystroke, A::default(), context)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_search_keeps_ctrl_f_and_cmd_f() {
+        let search = shortcut("open-search").expect("open-search is a shortcut");
+        assert_eq!(search.defaults(), ["cmd-f", "ctrl-f"]);
+    }
+
+    #[test]
+    fn ctrl_shift_f_stays_unbound() {
+        let bound = shortcuts()
+            .flat_map(|shortcut| shortcut.defaults())
+            .chain(shortcuts().flat_map(|shortcut| shortcut.mac.iter().copied()))
+            .any(|key| key == "ctrl-shift-f" || key == "shift-ctrl-f");
+        assert!(!bound);
+    }
+}
