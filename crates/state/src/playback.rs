@@ -1305,9 +1305,7 @@ impl Playback {
                 log::debug!("playback: Soloist cannot order a shared queue");
                 return None;
             }
-            let Some(engine) = self.engine.as_deref() else {
-                return None;
-            };
+            let engine = self.engine.as_deref()?;
             let sent = tracks.iter().all(|track| {
                 track
                     .id
@@ -3542,15 +3540,14 @@ fn throttle_wait(throttles: u8) -> Duration {
         .min(THROTTLE_CAP)
 }
 
+type ResolvedSoloistTrack = (Track, connect::QueuedTrack);
+
 /// Splits a resolved Soloist queue snapshot without changing the daemon's reported order.
 fn split_soloist_window(
     entries: Vec<connect::QueuedTrack>,
     tracks: Vec<Track>,
     previous_len: usize,
-) -> (
-    Vec<(Track, connect::QueuedTrack)>,
-    Vec<(Track, connect::QueuedTrack)>,
-) {
+) -> (Vec<ResolvedSoloistTrack>, Vec<ResolvedSoloistTrack>) {
     let mut window: Vec<_> = entries
         .into_iter()
         .zip(tracks)

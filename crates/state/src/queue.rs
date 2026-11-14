@@ -1005,9 +1005,11 @@ impl Queue {
                 true => QueueKind::Queued,
                 false => QueueKind::Context,
             };
-            let uid = (!queued.uid.is_empty())
-                .then_some(queued.uid)
-                .unwrap_or_else(queue_uid);
+            let uid = if queued.uid.is_empty() {
+                queue_uid()
+            } else {
+                queued.uid
+            };
             Entry::with_uid(uid, track, None, kind)
         };
         self.past = previous.into_iter().map(&entry).collect();

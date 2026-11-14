@@ -1442,9 +1442,7 @@ fn queued_tracks(entries: Vec<wire::Queued>) -> Vec<QueuedTrack> {
             let item = entry.item?;
             let id = track_id(&item.uri)?;
             Some(QueuedTrack {
-                uid: (!uid.is_empty())
-                    .then_some(uid)
-                    .unwrap_or_else(|| item.uri.clone()),
+                uid: if uid.is_empty() { item.uri } else { uid },
                 id,
                 queued,
                 added_by: None,
