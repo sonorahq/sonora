@@ -131,7 +131,7 @@ impl Language {
             Self::Italian => include_str!("../../../assets/i18n/it/main.ftl"),
             Self::Indonesian => include_str!("../../../assets/i18n/id/main.ftl"),
             Self::Japanese => include_str!("../../../assets/i18n/ja/main.ftl"),
-            Self::Korean => include_str!("../../../assets/i18n/ko/main.ftl"),	    
+            Self::Korean => include_str!("../../../assets/i18n/ko/main.ftl"),
             Self::Russian => include_str!("../../../assets/i18n/ru/main.ftl"),
             Self::Ukrainian => include_str!("../../../assets/i18n/uk/main.ftl"),
             Self::Polish => include_str!("../../../assets/i18n/pl/main.ftl"),
