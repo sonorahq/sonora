@@ -18,7 +18,7 @@ use input::{
 use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
 use ui::{
-    ActiveTheme as _, Artwork, Button, ExplicitBadge, Flight, InlineLink, InlineLinks, Motion,
+    ActiveTheme as _, Artwork, Badge, Button, Flight, InlineLink, InlineLinks, Motion,
     Motioned as _, Popup, Room, Scrollbar, Scrubber, ScrubberState, Springs, Sprung, TabBar,
     Tails as _, Text, Visualizer, Zoom, clock, entering, snapped,
 };
@@ -1258,7 +1258,7 @@ fn album_name(track: &music::Track) -> SharedString {
 /// The explicit mark beside a title. `named` puts it in the accessibility tree, so the invisible
 /// copy that only balances the title row can stay out of it.
 fn explicit_badge(id: &'static str, named: bool) -> impl IntoElement {
-    let badge = div().flex_none().child(ExplicitBadge::new());
+    let badge = div().flex_none().child(Badge::explicit());
     match named {
         true => badge
             .id(id)

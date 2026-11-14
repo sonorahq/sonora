@@ -21,6 +21,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Move between the fields of a dialog with Tab and Shift+Tab.
 - Use Sonora in Korean.
 - Open a music folder in your file manager from Settings, Music folders.
+- Library pages that list both local and streaming music mark local files with a file icon beside their names.
 
 ### Fixed
 

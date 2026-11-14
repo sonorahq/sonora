@@ -8,7 +8,7 @@ use gpui::{
     svg,
 };
 
-use crate::ExplicitBadge;
+use crate::Badge;
 use crate::artwork::cover_palette;
 use crate::artwork::{Artwork, Avatar, ROUNDED};
 use crate::button::Button;
@@ -60,6 +60,8 @@ pub struct Card {
     circle: bool,
     tint: Option<Hsla>,
     explicit: bool,
+    /// A badge after the title and the words it is read as, as `(icon, label)`.
+    mark: Option<(SharedString, SharedString)>,
     fill: bool,
     hovered: Option<StyleRefinement>,
     /// Whether the card is lit, and the fill it is lit with.
@@ -105,6 +107,7 @@ impl Card {
             circle: false,
             tint: None,
             explicit: false,
+            mark: None,
             fill: true,
             hovered: None,
             lit: None,
@@ -268,6 +271,13 @@ impl Card {
         self
     }
 
+    /// Sets a badge showing `icon` after the title, after the explicit one, which screen readers
+    /// hear as `label`.
+    pub fn mark(mut self, icon: impl Into<SharedString>, label: impl Into<SharedString>) -> Self {
+        self.mark = Some((icon.into(), label.into()));
+        self
+    }
+
     pub fn trailing(mut self, trailing: impl IntoElement) -> Self {
         self.trailing = Some(trailing.into_any_element());
         self
@@ -364,6 +374,7 @@ impl RenderOnce for Card {
             circle,
             tint,
             explicit,
+            mark,
             fill,
             hovered,
             lit,
@@ -567,6 +578,7 @@ impl RenderOnce for Card {
         let about = [
             description.or_else(|| eyebrow.clone()),
             explicit.then(|| i18n::lookup("song-explicit", None)),
+            mark.as_ref().map(|(_, label)| label.clone()),
         ]
         .into_iter()
         .flatten()
@@ -593,7 +605,7 @@ impl RenderOnce for Card {
             .text_color(tint.unwrap_or(theme.foreground))
             .when_some(size, |this, size| this.text_size(theme.text(size)))
             .child(title);
-        let heading = match explicit {
+        let heading = match explicit || mark.is_some() {
             false => title.into_any_element(),
             true => div()
                 .flex()
@@ -601,7 +613,12 @@ impl RenderOnce for Card {
                 .gap(px(3.))
                 .min_w_0()
                 .child(title)
-                .child(div().flex_none().child(ExplicitBadge::new()))
+                .when(explicit, |this| {
+                    this.child(div().flex_none().child(Badge::explicit()))
+                })
+                .when_some(mark, |this, (icon, _)| {
+                    this.child(div().flex_none().child(Badge::icon(icon)))
+                })
                 .into_any_element(),
         };
         let caption = meta.map(|meta| match bare {
