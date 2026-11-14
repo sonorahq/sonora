@@ -216,7 +216,7 @@ impl DetailView {
                     this.viewer_for = None;
                     this.viewer_cover = None;
                     this.cover_viewer
-                        .update(cx, |viewer, cx| viewer.force_close(cx));
+                        .update(cx, |viewer, cx| viewer.force_close(None, cx));
                 }
             }
             _ => {}
@@ -292,6 +292,10 @@ impl DetailView {
         })
         .detach();
 
+        let cover_viewer = cx.new(CoverViewer::new);
+        // The hero cover hides while the viewer shows it, until the cover lands back on it.
+        cx.observe(&cover_viewer, |_, _, cx| cx.notify()).detach();
+
         let me = cx.entity();
         let toolbar = Toolbar::searchable(&me, cx);
 
@@ -307,7 +311,7 @@ impl DetailView {
             sorted: None,
             shown: None,
             context_menu: None,
-            cover_viewer: cx.new(CoverViewer::new),
+            cover_viewer,
             viewer_for: None,
             viewer_cover: None,
             toolbar,
@@ -521,6 +525,7 @@ impl DetailView {
             .pending(header.is_none() && self.detail.read(cx).is_loading())
             .pin(pin)
             .cover(cover)
+            .cover_away(self.cover_viewer.read(cx).is_open())
             .when_some(view_cover, |hero, on_cover| hero.on_cover_click(on_cover))
             .eyebrow(eyebrow)
             .meta(strip)
@@ -870,8 +875,6 @@ impl DetailView {
 
 impl Render for DetailView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // The viewer belongs to the detail it opened on: navigation or a provider switch
-        // replaces that detail, and the old album's art must not linger over the new page.
         // The viewer belongs to the detail and cover it opened on: navigation or a provider
         // switch (a new signed cover url) replaces them, and stale art must not linger.
         let stale = {
@@ -883,7 +886,7 @@ impl Render for DetailView {
         };
         if stale {
             self.cover_viewer
-                .update(cx, |viewer, cx| viewer.close(window, cx));
+                .update(cx, |viewer, cx| viewer.force_close(Some(window), cx));
         }
         if let Some(failure) = self.failure(cx) {
             return div()

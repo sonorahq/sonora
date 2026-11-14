@@ -70,6 +70,7 @@ MAP = {
     "monitor": ("computer", "monitor-linear", "computer-line"),
     "monitor-speaker": (None, "devices-linear", "device-line"),
     "moon": ("half-moon", "moon-linear", "moon-line"),
+    "minus": ("minus", None, "subtract-line"),
     "music": ("music-double-note", "music-note-linear", "music-2-line"),
     "music-2": ("music-note", "music-note-2-linear", "music-line"),
     "octagon-x": ("xmark-circle", "close-circle-linear", "close-circle-line"),
