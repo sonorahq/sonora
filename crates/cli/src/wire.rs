@@ -128,10 +128,13 @@ impl LyricsSnapshot {
         mut lines: Vec<LyricsLine>,
         active: Option<usize>,
     ) -> Self {
-        if synced {
-            self.current = active.and_then(|at| lines.get(at)).cloned();
-            self.next = lines.get(active.map_or(0, |at| at + 1)).cloned();
-        }
+        (self.current, self.next) = match synced {
+            true => (
+                active.and_then(|at| lines.get(at)).cloned(),
+                lines.get(active.map_or(0, |at| at + 1)).cloned(),
+            ),
+            false => (None, None),
+        };
         self.synced = synced;
         self.truncated = lines.len() > LYRICS_LIMIT;
         lines.truncate(LYRICS_LIMIT);
@@ -538,6 +541,15 @@ mod tests {
         assert!(!lyrics.synced);
         assert_eq!((lyrics.current, lyrics.next), (None, None));
         assert_eq!(lyrics.lines.len(), 2);
+    }
+
+    #[test]
+    fn bounding_plain_lines_clears_a_synced_current_and_next() {
+        let lines = vec![line(None, "one")];
+        let lyrics = snapshot(synced(3), Some(1)).bounded(false, lines, None);
+        assert!(!lyrics.synced);
+        assert_eq!((lyrics.current, lyrics.next), (None, None));
+        assert_eq!(lyrics.lines.len(), 1);
     }
 
     #[test]
