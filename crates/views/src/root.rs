@@ -26,7 +26,7 @@ use crate::screens::search::SearchView;
 use crate::screens::settings::SettingsHeader;
 use crate::shared::ambient::{self, Ambient};
 use crate::shared::tracks::{LIBRARY_COLUMNS, album_columns};
-use crate::shared::transport::{CoverAway, CoverFade};
+use crate::shared::transport::{CoverAway, CoverFade, ShellSwap};
 use crate::shells::Shell;
 use crate::shells::workspace::Workspace;
 use crate::{
@@ -763,6 +763,12 @@ impl Root {
                 .update(cx, |workspace, cx| workspace.finish_transition(cx));
             self.show(destination, cx);
             if moving && !cx.reduce_motion() {
+                // Set here rather than in render, so the cached player bar hears of it before
+                // the first frame of the move draws.
+                cx.set_global(match next {
+                    RootView::Fullscreen => ShellSwap::Opening,
+                    RootView::Workspace => ShellSwap::Closing,
+                });
                 match next {
                     RootView::Fullscreen => self.shell_zoom = Some(Sprung::at(1.)),
                     RootView::Workspace => {
@@ -1223,6 +1229,16 @@ impl Render for Root {
         let fade = 1. - zooming;
         if cx.try_global::<CoverFade>().is_none_or(|was| was.0 != fade) {
             cx.set_global(CoverFade(fade));
+        }
+        // The fullscreen button swaps in place for the whole move, the workspace's entrance
+        // included, since that scrim would otherwise dim the player bar's button once it is back.
+        let swap = match self.view {
+            RootView::Fullscreen if zooming > 0. => ShellSwap::Opening,
+            RootView::Workspace if left.is_some() || hidden > 0. => ShellSwap::Closing,
+            _ => ShellSwap::Settled,
+        };
+        if cx.try_global::<ShellSwap>().is_none_or(|was| *was != swap) {
+            cx.set_global(swap);
         }
         let viewport = window.viewport_size();
         let reach = f32::from(viewport.width.max(viewport.height));

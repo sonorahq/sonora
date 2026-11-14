@@ -10,7 +10,7 @@ use gpui::{
     AnyElement, Context, Entity, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Point, Render, SharedString, StyledText,
 };
-use gpui::{Window, div, px};
+use gpui::{Window, deferred, div, px};
 use i18n::t;
 use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
 use state::{AppSettings, Playback, PlayerBarLayout, Queue, SideTab, Sonora};
@@ -24,7 +24,7 @@ use crate::chrome::{Chrome, SidebarRight};
 use crate::shared::menus::ItemMenu;
 use crate::shared::pins::Pinned as _;
 use crate::shared::transport::{
-    COVER_FLIGHT, CoverAway, fraction, like, moved, percent, transport, volume_icon,
+    COVER_FLIGHT, CoverAway, ShellSwap, fraction, like, moved, percent, transport, volume_icon,
 };
 use crate::shared::volume::{RisingVolume, VolumeHost, rising_volume, turn_volume};
 
@@ -102,6 +102,7 @@ impl PlayerBar {
         cx.observe(&queue, |_, _, cx| cx.notify()).detach();
         cx.observe(&library, |_, _, cx| cx.notify()).detach();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+        cx.observe_global::<ShellSwap>(|_, cx| cx.notify()).detach();
 
         let me = cx.entity_id();
         let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(me));
@@ -294,13 +295,21 @@ impl PlayerBar {
             .into_any_element()
     }
 
-    fn fullscreen_button(&self) -> Button {
-        Button::new("toggle-fullscreen")
+    /// The button that opens the fullscreen player. It takes over from the player's leave
+    /// button the moment the player starts closing and paints above its fade, and it paints
+    /// nothing while the player opens over it.
+    fn fullscreen_button(&self, cx: &gpui::App) -> AnyElement {
+        let button = Button::new("toggle-fullscreen")
             .ghost()
             .small()
             .icon("icons/maximize.svg")
             .tooltip_above("player-fullscreen")
-            .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleFullscreen), cx))
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleFullscreen), cx));
+        match cx.try_global::<ShellSwap>().copied().unwrap_or_default() {
+            ShellSwap::Closing => deferred(button).into_any_element(),
+            ShellSwap::Opening => button.invisible().into_any_element(),
+            ShellSwap::Settled => button.into_any_element(),
+        }
     }
 
     fn now_playing(
@@ -729,7 +738,7 @@ impl Render for PlayerBar {
                         .child(div().flex_1().min_w_0().child(seek))
                         .child(buttons)
                         .child(self.sound(Volume::Slider(Self::volume_width(window)), cx))
-                        .child(self.fullscreen_button()),
+                        .child(self.fullscreen_button(cx)),
                 ),
             (false, PlayerBarLayout::Centered) => base
                 .items_center()
@@ -769,7 +778,7 @@ impl Render for PlayerBar {
                         .gap_2()
                         .child(buttons)
                         .child(self.sound(Volume::Slider(px(VOLUME_WIDTH)), cx))
-                        .child(self.fullscreen_button()),
+                        .child(self.fullscreen_button(cx)),
                 ),
             (false, PlayerBarLayout::Compact) => base
                 .items_center()
@@ -782,7 +791,7 @@ impl Render for PlayerBar {
                 .child(div().flex_1().min_w_0().child(seek))
                 .child(buttons)
                 .child(self.sound(Volume::Slider(px(VOLUME_WIDTH)), cx))
-                .child(self.fullscreen_button()),
+                .child(self.fullscreen_button(cx)),
             // The two sides share what the middle leaves them evenly, so the transport and the
             // seek bar stay centred. `classic` works out how wide the middle is and how the
             // volume draws.
@@ -812,7 +821,7 @@ impl Render for PlayerBar {
                             .gap_2()
                             .child(buttons)
                             .child(self.sound(volume, cx))
-                            .child(self.fullscreen_button()),
+                            .child(self.fullscreen_button(cx)),
                     )
             }
         };
