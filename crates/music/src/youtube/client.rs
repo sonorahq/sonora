@@ -451,13 +451,16 @@ fn collect_thumbnails(node: &serde_json::Value) -> Vec<ytmusic::Thumbnail> {
 }
 
 /// A playlist of the library as Sonora lists it: one the user made is theirs by name, and the
-/// saved-episodes list YouTube keeps for podcasts is left out.
+/// saved-episodes list YouTube keeps for podcasts is left out. A playlist made before the
+/// account had a channel comes back with no author and no delete action, while a playlist
+/// saved from someone else always names its author, so a missing author marks it as owned.
 pub(crate) fn library_playlist(source: ytmusic::Playlist, account: &str) -> Option<Playlist> {
     if source.id == EPISODES {
         return None;
     }
     let mut playlist = wire::playlist(source, false, false);
-    if playlist.owned && playlist.owner.is_empty() {
+    if playlist.owner.is_empty() {
+        playlist.owned = true;
         playlist.owner = account.to_owned();
     }
 

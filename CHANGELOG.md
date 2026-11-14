@@ -33,6 +33,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - Local libraries no longer list macOS AppleDouble metadata files as songs.
+- YouTube Music playlists made before the account had a channel show up in Add to playlist and can be edited.
 - Text pasted on several lines, into a field or the Jam link, shows on one line instead of leaving the field blank.
 - On Windows, playback no longer crackles while you open apps or browser tabs.
 - Sonora no longer downloads every genre page at launch to find their pictures, so it uses far less memory with YouTube Music.
