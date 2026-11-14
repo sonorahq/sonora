@@ -724,7 +724,6 @@ settings-font-smaller = 글자 작게
 settings-font-larger = 글자 크게
 settings-startup = 시작 화면
 settings-startup-detail = Sonora 실행 시 처음 열리는 화면
-settings-startup-no-guest = 게스트 모드에서는 사용할 수 없음
 settings-entries = 사이드바 항목
 settings-entries-detail = 사이드바에 표시되는 섹션 목록
 settings-entries-pick = 항목 선택

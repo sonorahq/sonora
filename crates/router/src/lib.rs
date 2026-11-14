@@ -16,7 +16,7 @@ pub enum LibraryTab {
 
 impl LibraryTab {
     /// The glyph of what the tab lists, the same one a pin of that kind falls back to.
-    pub fn icon(self) -> &'static str {
+    pub const fn icon(self) -> &'static str {
         match self {
             Self::Songs => ui::PinKind::Song.icon(),
             Self::Albums => ui::PinKind::Album.icon(),
@@ -26,23 +26,29 @@ impl LibraryTab {
     }
 }
 
+/// A row the sidebar can hide from Settings. The four library pages are rows of their own,
+/// each opening its page of the merged streaming and local library.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavEntry {
     Home,
     Search,
-    Library,
+    Songs,
+    Albums,
+    Artists,
+    Playlists,
     History,
-    Local,
     Pins,
 }
 
 impl NavEntry {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::Home,
         Self::Search,
-        Self::Library,
+        Self::Songs,
+        Self::Albums,
+        Self::Artists,
+        Self::Playlists,
         Self::History,
-        Self::Local,
         Self::Pins,
     ];
 
@@ -50,9 +56,11 @@ impl NavEntry {
         match self {
             Self::Home => "home",
             Self::Search => "search",
-            Self::Library => "library",
+            Self::Songs => "songs",
+            Self::Albums => "albums",
+            Self::Artists => "artists",
+            Self::Playlists => "playlists",
             Self::History => "history",
-            Self::Local => "local",
             Self::Pins => "sidebar-pins",
         }
     }
@@ -61,12 +69,15 @@ impl NavEntry {
         match self {
             Self::Home => "nav-home",
             Self::Search => "nav-search",
-            Self::Library => "nav-library",
+            Self::Songs => "nav-songs",
+            Self::Albums => "nav-albums",
+            Self::Artists => "nav-artists",
+            Self::Playlists => "nav-playlists",
             Self::History => "nav-history",
-            Self::Local => "nav-local",
             Self::Pins => "nav-pinned",
         }
     }
+
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,18 +89,16 @@ pub enum Screen {
     Albums,
     Playlists,
     Artists,
-    Imported,
 }
 
 impl Screen {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 7] = [
         Self::Home,
         Self::Search,
         Self::Songs,
         Self::Albums,
         Self::Artists,
         Self::Playlists,
-        Self::Imported,
         Self::History,
     ];
 
@@ -102,7 +111,6 @@ impl Screen {
             Self::Albums => "albums",
             Self::Playlists => "playlists",
             Self::Artists => "artists",
-            Self::Imported => "imported",
         }
     }
 
@@ -115,25 +123,14 @@ impl Screen {
             Self::Albums => "nav-albums",
             Self::Playlists => "nav-playlists",
             Self::Artists => "nav-artists",
-            Self::Imported => "nav-local",
         }
     }
 
+    /// The screen a stored id names. The local music screen joined Songs, so its old id opens there.
     pub fn from_id(id: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|screen| screen.id() == id)
-    }
-
-    /// Whether the screen shows account library data, and so stays empty in guest mode.
-    pub fn needs_account(self) -> bool {
-        match self {
-            Self::Home => false,
-            Self::Search => false,
-            Self::History => false,
-            Self::Songs => true,
-            Self::Albums => true,
-            Self::Playlists => true,
-            Self::Artists => true,
-            Self::Imported => false,
+        match id {
+            "imported" => Some(Self::Songs),
+            id => Self::ALL.into_iter().find(|screen| screen.id() == id),
         }
     }
 
@@ -146,7 +143,6 @@ impl Screen {
             Self::Albums => Destination::Library(LibraryTab::Albums),
             Self::Playlists => Destination::Library(LibraryTab::Playlists),
             Self::Artists => Destination::Library(LibraryTab::Artists),
-            Self::Imported => Destination::Local(LibraryTab::Songs),
         }
     }
 }
@@ -355,7 +351,6 @@ pub enum Destination {
     Home,
     History,
     Library(LibraryTab),
-    Local(LibraryTab),
     Album(SharedString),
     Song(SharedString),
     Playlist(SharedString),
@@ -382,13 +377,10 @@ impl From<&ui::Pin> for Destination {
 }
 
 impl Destination {
+    /// Whether the sidebar row leading to `self` is lit while `other` is open. Every settings page
+    /// lights the one Settings row, and every other row is lit only on its own page.
     pub fn same_section(&self, other: &Destination) -> bool {
-        match (self, other) {
-            (Destination::Library(_), Destination::Library(_))
-            | (Destination::Local(_), Destination::Local(_)) => true,
-            _ if self.in_settings() && other.in_settings() => true,
-            _ => self == other,
-        }
+        (self.in_settings() && other.in_settings()) || self == other
     }
 
     /// Whether this destination is a settings page, the equalizer included.

@@ -61,21 +61,17 @@ impl SettingsView {
     pub(super) fn startup_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let chosen = Screen::from_id(self.settings.read(cx).startup()).unwrap_or(Screen::Home);
         let current = i18n::lookup(chosen.key(), None);
-        let guest = !self.session.read(cx).authenticated();
 
         let picker = Picker::new(STARTUP, &self.popovers, current)
             .width(Picker::NARROW)
             .items(Screen::ALL.map(|screen| {
-                let item = MenuItem::new(screen.id(), i18n::lookup(screen.key(), None))
-                    .selected(screen == chosen);
-                match guest && screen.needs_account() {
-                    true => item.disabled().tooltip("settings-startup-no-guest"),
-                    false => item.on_click(cx.listener(move |this, _, _, cx| {
+                MenuItem::new(screen.id(), i18n::lookup(screen.key(), None))
+                    .selected(screen == chosen)
+                    .on_click(cx.listener(move |this, _, _, cx| {
                         this.settings
                             .update(cx, |settings, cx| settings.set_startup(screen.id(), cx));
                         cx.notify();
-                    })),
-                }
+                    }))
             }));
 
         self.row(

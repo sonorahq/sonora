@@ -10,6 +10,7 @@ use gpui::{
 };
 
 use crate::chrome::Chrome;
+use crate::shared::blend::Joined;
 use crate::shared::cells;
 use i18n::t;
 use music::{SavedArtist, Track};
@@ -102,9 +103,9 @@ struct ArtistTracks {
 }
 
 impl Tracks for ArtistTracks {
-    fn tracks<'a>(&self, cx: &'a App) -> &'a [Track] {
+    fn tracks<'a>(&self, cx: &'a App) -> Joined<'a, Track> {
         let tracks = self.detail.read(cx).tracks();
-        &tracks[..self.shown.get().min(tracks.len())]
+        tracks[..self.shown.get().min(tracks.len())].into()
     }
 
     fn is_loading(&self, cx: &App) -> bool {
@@ -212,7 +213,10 @@ impl ArtistView {
             if router::trail(cx).read(cx).current()
                 == router::Destination::Artist(id.clone().into())
             {
-                router::replace(router::Destination::Local(router::LibraryTab::Artists), cx);
+                router::replace(
+                    router::Destination::Library(router::LibraryTab::Artists),
+                    cx,
+                );
             }
         })
         .detach();

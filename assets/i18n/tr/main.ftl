@@ -598,7 +598,6 @@ settings-font-detail = Temel metin boyutu, diğer her şey buna göre ölçeklen
 settings-font-value = { $size } px
 settings-startup = Açılışta göster
 settings-startup-detail = Sonora'nın açılışta gösterdiği ekran
-settings-startup-no-guest = Konuk modunda kullanılamaz
 settings-entries = Kenar çubuğu girdileri
 settings-entries-detail = Kenar çubuğunda listelenen bölümler
 settings-entries-pick = Girdileri seç

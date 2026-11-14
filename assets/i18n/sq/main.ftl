@@ -609,7 +609,6 @@ settings-font-detail = Madhësia bazë e tekstit; gjithçka tjetër shkallëzohe
 settings-font-value = { $size } px
 settings-startup = Shfaq në nisje
 settings-startup-detail = Ekrani që hap Sonora në nisje
-settings-startup-no-guest = Nuk disponohet në modalitetin mysafir
 settings-entries = Zërat e shiritit anësor
 settings-entries-detail = Seksionet e listuara në shiritin anësor
 settings-entries-pick = Zgjidh zërat

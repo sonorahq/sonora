@@ -3,6 +3,7 @@ pub(crate) mod adaptive;
 pub(crate) mod album_grid;
 pub(crate) mod ambient;
 pub(crate) mod animation;
+pub(crate) mod blend;
 pub(crate) mod cards;
 pub(crate) mod cells;
 pub(crate) mod confirm;

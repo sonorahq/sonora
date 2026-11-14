@@ -42,6 +42,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Hovered rows share one fill in tables, cards and the sidebar, the softer one the sidebar used.
 - The song title and artist in the player bar sit closer together.
 - Section labels across the app, such as the settings group headings and Pinned in the sidebar, are no longer set in capitals.
+- Local files sit beside your streaming library in Songs, Albums, Artists and Playlists, and the separate Local Music section is gone. Filter a page to Local only or Streaming only.
+- Songs, Albums, Artists and Playlists are rows of their own in the sidebar under a Library heading, and the icon-only sidebar shows them as icons too.
 
 ## [0.49.1] - 2026-11-13
 

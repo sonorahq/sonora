@@ -46,13 +46,17 @@ pub fn register(lingers: bool, cx: &mut App) {
             }
             at if !at.refreshes() => {}
             at => {
-                let shelf = match at {
-                    Destination::Local(_) => Shelf::Local,
-                    Destination::Album(id) | Destination::Playlist(id) => Shelf::of(&id),
-                    _ => Shelf::Streaming,
-                };
                 let library = Sonora::global(cx).library.clone();
-                library.update(cx, |library, cx| library.refresh(shelf, cx));
+                library.update(cx, |library, cx| match at {
+                    Destination::Album(id) | Destination::Playlist(id) => {
+                        library.refresh(Shelf::of(&id), cx)
+                    }
+                    Destination::Library(_) => {
+                        library.refresh(Shelf::Streaming, cx);
+                        library.refresh(Shelf::Local, cx);
+                    }
+                    _ => library.refresh(Shelf::Streaming, cx),
+                });
             }
         },
     );
