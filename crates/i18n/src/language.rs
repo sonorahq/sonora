@@ -18,13 +18,14 @@ pub enum Language {
     Polish,
     Czech,
     PortugueseBrazilian,
+    PortugueseEuropean,
     ChineseSimplified,
     Turkish,
     Albanian,
 }
 
 impl Language {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::English,
         Self::German,
         Self::Spanish,
@@ -38,6 +39,7 @@ impl Language {
         Self::Polish,
         Self::Czech,
         Self::PortugueseBrazilian,
+        Self::PortugueseEuropean,
         Self::ChineseSimplified,
         Self::Turkish,
         Self::Albanian,
@@ -58,6 +60,7 @@ impl Language {
             Self::Polish => "pl",
             Self::Czech => "cs",
             Self::PortugueseBrazilian => "pt-BR",
+            Self::PortugueseEuropean => "pt-PT",
             Self::ChineseSimplified => "zh-CN",
             Self::Turkish => "tr",
             Self::Albanian => "sq",
@@ -79,6 +82,7 @@ impl Language {
             Self::Polish => "Polski",
             Self::Czech => "Čeština",
             Self::PortugueseBrazilian => "Português (Brasil)",
+            Self::PortugueseEuropean => "Português (Portugal)",
             Self::ChineseSimplified => "简体中文",
             Self::Turkish => "Türkçe",
             Self::Albanian => "Shqip",
@@ -90,14 +94,23 @@ impl Language {
     }
 
     pub fn detect() -> Self {
-        let Some(locale) = sys_locale::get_locale() else {
-            return Self::English;
-        };
-        let primary = base(&locale);
+        sys_locale::get_locale().map_or(Self::English, |locale| Self::closest(&locale))
+    }
+
+    /// The shipped language nearest to a system locale such as `pt-PT` or `pt_PT.UTF-8`. A
+    /// language shipped for more than one region is matched on the region first. A region
+    /// nothing ships for falls back to the first variant of that language in `ALL`.
+    fn closest(locale: &str) -> Self {
+        let wanted = parts(locale);
 
         Self::ALL
             .into_iter()
-            .find(|language| base(language.id()) == primary)
+            .find(|language| parts(language.id()) == wanted)
+            .or_else(|| {
+                Self::ALL
+                    .into_iter()
+                    .find(|language| parts(language.id()).0 == wanted.0)
+            })
             .unwrap_or(Self::English)
     }
 
@@ -116,6 +129,7 @@ impl Language {
             Self::Polish => langid!("pl"),
             Self::Czech => langid!("cs"),
             Self::PortugueseBrazilian => langid!("pt-BR"),
+            Self::PortugueseEuropean => langid!("pt-PT"),
             Self::ChineseSimplified => langid!("zh-CN"),
             Self::Turkish => langid!("tr"),
             Self::Albanian => langid!("sq"),
@@ -137,6 +151,7 @@ impl Language {
             Self::Polish => include_str!("../../../assets/i18n/pl/main.ftl"),
             Self::Czech => include_str!("../../../assets/i18n/cs/main.ftl"),
             Self::PortugueseBrazilian => include_str!("../../../assets/i18n/pt-BR/main.ftl"),
+            Self::PortugueseEuropean => include_str!("../../../assets/i18n/pt-PT/main.ftl"),
             Self::ChineseSimplified => include_str!("../../../assets/i18n/zh-CN/main.ftl"),
             Self::Turkish => include_str!("../../../assets/i18n/tr/main.ftl"),
             Self::Albanian => include_str!("../../../assets/i18n/sq/main.ftl"),
@@ -148,9 +163,46 @@ pub fn resolve(id: &str) -> Language {
     Language::from_id(id).unwrap_or_else(Language::detect)
 }
 
-fn base(tag: &str) -> String {
-    tag.split(['-', '_'])
-        .next()
-        .unwrap_or_default()
-        .to_lowercase()
+/// The language and the region of a locale tag, lowercased and uppercased. The encoding and
+/// modifier a POSIX locale carries are dropped, and so is a script such as `Hans`.
+fn parts(tag: &str) -> (String, Option<String>) {
+    let tag = tag.split(['.', '@']).next().unwrap_or_default();
+    let mut subtags = tag.split(['-', '_']);
+    let language = subtags.next().unwrap_or_default().to_lowercase();
+    let region = subtags
+        .find(|subtag| {
+            subtag.len() == 2 && subtag.chars().all(|letter| letter.is_ascii_alphabetic())
+        })
+        .map(str::to_uppercase);
+    (language, region)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_region_picks_its_own_variant() {
+        assert_eq!(Language::closest("pt-PT"), Language::PortugueseEuropean);
+        assert_eq!(
+            Language::closest("pt_PT.UTF-8"),
+            Language::PortugueseEuropean
+        );
+        assert_eq!(Language::closest("pt-BR"), Language::PortugueseBrazilian);
+        assert_eq!(Language::closest("zh-Hans-CN"), Language::ChineseSimplified);
+    }
+
+    #[test]
+    fn an_unshipped_region_falls_back_to_the_language() {
+        assert_eq!(Language::closest("pt"), Language::PortugueseBrazilian);
+        assert_eq!(Language::closest("pt-AO"), Language::PortugueseBrazilian);
+        assert_eq!(Language::closest("de-AT"), Language::German);
+        assert_eq!(Language::closest("en-GB"), Language::English);
+    }
+
+    #[test]
+    fn an_unknown_language_falls_back_to_english() {
+        assert_eq!(Language::closest("nl-NL"), Language::English);
+        assert_eq!(Language::closest(""), Language::English);
+    }
 }

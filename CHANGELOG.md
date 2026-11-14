@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Use Sonora in European Portuguese. A system set to Portuguese from Portugal picks it on its own.
 - Open an album's cover from its page to see the original artwork full size, zoom in with the wheel or the buttons and drag it around.
 - Press Ctrl+K (⌘K on macOS) anywhere to search. Enter plays a song right away, Ctrl+Enter opens its page, and the artist and album under a result open theirs.
 - Scrobble to your own ListenBrainz server or to multi-scrobbler by filling in the server address when you connect ListenBrainz.
