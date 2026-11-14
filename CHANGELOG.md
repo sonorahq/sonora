@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Use Sonora in European Portuguese. A system set to Portuguese from Portugal picks it on its own.
 - Press Ctrl+K (⌘K on macOS) anywhere to search. Enter plays a song right away, and Ctrl+Enter opens its page.
 - Scrobble to your own ListenBrainz server or to multi-scrobbler by filling in the server address when you connect ListenBrainz.
 - Name your Discord status after the album artist under Settings, Discord, Status name.
