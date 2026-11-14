@@ -1123,8 +1123,7 @@ impl RenderOnce for Menu {
                 scrollbar.read(cx).sync();
                 let gliding = scrollbar.clone();
 
-                middle_scroll(div(), scrollbar)
-                    .id("menu-scroll-content")
+                middle_scroll(div().id("menu-scroll-content"), scrollbar)
                     .flex()
                     .flex_1()
                     .w_full()

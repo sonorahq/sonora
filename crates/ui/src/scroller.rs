@@ -1,7 +1,9 @@
+use std::cell::Cell;
+
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Div, ElementId, Entity, Interactivity, MouseButton, MouseMoveEvent, Pixels,
-    ScrollWheelEvent, StyleRefinement, Window, div, px,
+    AnyElement, App, Div, DragMoveEvent, ElementId, Empty, Entity, Interactivity, MouseButton,
+    MouseMoveEvent, Pixels, ScrollWheelEvent, Stateful, StyleRefinement, Window, div, px,
 };
 
 use crate::button::Button;
@@ -14,6 +16,13 @@ use crate::veil::effects;
 const REACH: f32 = 3.;
 /// How far a perched control floats off the bottom of its region.
 const PERCH: Pixels = px(12.);
+
+/// The state of a left-button drag that scrolls the surface under the pointer.
+struct DragScroll {
+    bar: Entity<Scrollbar>,
+    origin: Cell<Pixels>,
+    offset: Cell<Pixels>,
+}
 
 #[derive(IntoElement)]
 pub struct Scroller {
@@ -116,8 +125,7 @@ impl RenderOnce for Scroller {
         let presentation = bar.read(cx).presentation();
         let gliding = bar.clone();
 
-        let mut surface = middle_scroll(base, &bar)
-            .id(id)
+        let mut surface = middle_scroll(base.id(id), &bar)
             .size_full()
             .when(owns_scroll, |surface| {
                 surface
@@ -172,13 +180,36 @@ impl RenderOnce for Scroller {
     }
 }
 
-/// Adds browser-style middle-button auto-scrolling to a scrollable surface. A middle click
-/// turns the mode on until the next press of any button. A middle press that is held and
-/// dragged scrolls only while held, and `Root` ends it on the release. A middle press that a
-/// child handles itself, such as a text field pasting on Linux, does not start it. A middle
-/// press never moves focus or shows a pressed style on the children it passes through.
-pub fn middle_scroll(surface: Div, bar: &Entity<Scrollbar>) -> Div {
+/// Adds pointer drag scrolling and browser-style middle-button auto-scrolling to a scrollable
+/// surface. Drag scrolling attaches only while Touch Support is on; a middle click turns
+/// auto-scrolling on until the next press of any button, and `Root` ends a held middle drag on
+/// release. A middle press that a child handles itself, such as a text field pasting on Linux,
+/// does not start it. A middle press never moves focus or shows a pressed style on the children
+/// it passes through.
+pub fn middle_scroll(surface: Stateful<Div>, bar: &Entity<Scrollbar>) -> Stateful<Div> {
+    let drag = bar.clone();
     surface
+        .on_drag(
+            DragScroll {
+                bar: drag,
+                origin: Cell::new(Pixels::ZERO),
+                offset: Cell::new(Pixels::ZERO),
+            },
+            |drag, _, window, cx| {
+                drag.origin.set(window.mouse_position().y);
+                drag.offset.set(drag.bar.read(cx).offset());
+                cx.new(|_| Empty)
+            },
+        )
+        .on_drag_move(move |event: &DragMoveEvent<DragScroll>, _, cx| {
+            let drag = event.drag(cx);
+            let delta = event.event.position.y - drag.origin.get();
+            let offset = drag.offset.get() - delta;
+            let bar = drag.bar.clone();
+            bar.update(cx, |bar, cx| {
+                bar.drag_to(offset, cx);
+            });
+        })
         .capture_any_mouse_down(|event, window, cx| {
             if event.button == MouseButton::Middle {
                 window.prevent_default();
