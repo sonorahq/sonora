@@ -502,6 +502,13 @@ struct Values {
     /// scrobble to Last.fm on their own, and with both on every listen is counted twice.
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     unscrobbled: BTreeSet<String>,
+    /// The keys the user chose for shortcuts under Settings, Keybinds, by shortcut id. A shortcut
+    /// missing here keeps its defaults, and an empty list leaves it without a key.
+    #[serde(
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "read_keybinds"
+    )]
+    keybinds: BTreeMap<String, Vec<String>>,
     appearance: Appearance,
 }
 
@@ -706,6 +713,7 @@ impl Default for Values {
             silenced_requirements: Vec::new(),
             scrobbling: BTreeMap::new(),
             unscrobbled: BTreeSet::new(),
+            keybinds: BTreeMap::new(),
             appearance: Appearance::default(),
         }
     }
@@ -1864,6 +1872,22 @@ impl AppSettings {
 
     pub fn set_adaptive_menu(&mut self, adaptive_menu: bool, cx: &mut Context<Self>) {
         self.values.adaptive_menu = adaptive_menu;
+        self.schedule_save(cx);
+    }
+
+    /// The keys the user chose for shortcuts, by shortcut id.
+    pub fn keybinds(&self) -> &BTreeMap<String, Vec<String>> {
+        &self.values.keybinds
+    }
+
+    /// Replaces the keys the user chose for shortcuts. The app binds them once observers hear
+    /// of the change.
+    pub fn set_keybinds(
+        &mut self,
+        keybinds: BTreeMap<String, Vec<String>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.values.keybinds = keybinds;
         self.schedule_save(cx);
     }
 
@@ -3120,6 +3144,35 @@ fn place(pinned: &mut Vec<Held>, slug: &str, pin: Pin, gap: Option<usize>, slugs
 
 /// The saved order with unknown and repeated names dropped and every source it lacks appended
 /// in the default order.
+/// Reads the `keybinds` map leniently: a shortcut saved as one string counts as a list of one, and
+/// any other value is dropped with a warning, so a hand edit never makes the file unreadable.
+fn read_keybinds<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Vec<String>>, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let Some(entries) = value.as_object() else {
+        log::warn!("settings: keybinds {value} is not an object, keeping the default shortcuts");
+        return Ok(BTreeMap::new());
+    };
+    Ok(entries
+        .iter()
+        .filter_map(|(id, keys)| {
+            let parsed = match keys {
+                serde_json::Value::String(key) => Some(vec![key.clone()]),
+                serde_json::Value::Array(list) => list
+                    .iter()
+                    .map(|key| key.as_str().map(str::to_owned))
+                    .collect::<Option<Vec<_>>>(),
+                _ => None,
+            };
+            if parsed.is_none() {
+                log::warn!("settings: keybind {id} is {keys}, keeping its default keys");
+            }
+            parsed.map(|parsed| (id.clone(), parsed))
+        })
+        .collect())
+}
+
 fn lyrics_priority(saved: &[String]) -> Vec<String> {
     let mut order: Vec<String> = Vec::new();
     for name in saved.iter().map(String::as_str).chain(LYRICS_SOURCES) {

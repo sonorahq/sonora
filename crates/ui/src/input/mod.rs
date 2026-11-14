@@ -390,6 +390,15 @@ impl Input {
         self
     }
 
+    /// Changes the keystroke drawn at the field's end, for a shortcut the user rebinds. `None`
+    /// draws none.
+    pub fn set_shortcut(&mut self, keystroke: Option<SharedString>, cx: &mut Context<Self>) {
+        if self.shortcut != keystroke {
+            self.shortcut = keystroke;
+            cx.notify();
+        }
+    }
+
     pub fn text(&self) -> &str {
         &self.content
     }

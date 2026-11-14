@@ -1,8 +1,8 @@
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Context, div};
+use gpui::{AnyElement, App, Context};
 use i18n::t;
 use state::{ConnectName, Sonora};
-use ui::{MenuItem, Picker, Switch};
+use ui::{Field, Form, MenuItem, Picker, Switch};
 
 use super::{Group, SettingsView, Slot};
 
@@ -75,12 +75,12 @@ impl SettingsView {
         )
     }
 
-    pub(super) fn spotify_connect_custom_row(&self) -> AnyElement {
+    pub(super) fn spotify_connect_custom_row(&self, cx: &App) -> AnyElement {
         self.row(
             t!("settings-spotify-connect-custom"),
-            div()
+            Form::new("settings-spotify-connect-form")
                 .w(Picker::WIDE)
-                .child(self.connect_name.clone())
+                .field(Field::new(&self.connect_name, cx))
                 .into_any_element(),
         )
     }

@@ -13,7 +13,7 @@ use ui::{ActiveTheme as _, Copy, Cut, Look, Paste, SelectAll, Theme};
 const FONT_STEP: f32 = 1.;
 
 pub fn register(lingers: bool, cx: &mut App) {
-    cx.bind_keys(input::bindings());
+    bind_keys(cx);
 
     cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
     cx.on_action(|_: &Hide, cx: &mut App| cx.hide());
@@ -102,6 +102,27 @@ pub fn register(lingers: bool, cx: &mut App) {
     });
 
     cx.set_menus(menus());
+}
+
+/// Binds every key, with the shortcuts the user chose in settings, and binds them again whenever
+/// those choices change, from settings or from a hand edit of `settings.json`. The observer
+/// clears every binding first, so it rebuilds the fixed ones too.
+fn bind_keys(cx: &mut App) {
+    let settings = Sonora::global(cx).settings.clone();
+    let mut bound = settings.read(cx).keybinds().clone();
+    cx.bind_keys(input::bindings(&bound));
+    cx.observe(&settings, move |settings, cx| {
+        let chosen = settings.read(cx).keybinds();
+        if *chosen == bound {
+            return;
+        }
+        bound = chosen.clone();
+        cx.clear_key_bindings();
+        cx.bind_keys(input::bindings(&bound));
+        // the macOS menu bar reads its key equivalents when the menus are set
+        cx.set_menus(menus());
+    })
+    .detach();
 }
 
 /// The menu bar. Only macOS draws one, so only macOS gets the Edit and Window menus and the

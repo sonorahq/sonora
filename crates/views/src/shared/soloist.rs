@@ -11,8 +11,8 @@ use i18n::t;
 use music::soloist::{DASHBOARD, DEVICE, TERMS};
 use state::{Soloist, SoloistProblem, SoloistState, SoloistStep, Sonora};
 use ui::{
-    ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Input, Modal, Notice, Spinner, Submit, Text,
-    spoken,
+    ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Field, Form, Input, Modal, Notice, Spinner,
+    Submit, Text, spoken,
 };
 
 use crate::shared::steps::{progress, steps};
@@ -175,7 +175,11 @@ impl SoloistSetup {
                         )
                         .into_any_element(),
                 );
-                body.push(self.key.clone().into_any_element());
+                body.push(
+                    Form::new("soloist-key-form")
+                        .field(Field::new(&self.key, cx))
+                        .into_any_element(),
+                );
             }
             SoloistStep::Pairing => {
                 body.push(

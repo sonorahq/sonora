@@ -151,7 +151,7 @@ impl Screen {
     }
 }
 
-/// One page of settings. The first twelve are sections of the six tabs, each tab showing its sections
+/// One page of settings. The first thirteen are sections of the six tabs, each tab showing its sections
 /// one after another on one scrolling page, and the last two are drill-ins that open from a row
 /// on their parent page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,13 +168,14 @@ pub enum SettingsPage {
     Discord,
     Scrobbling,
     About,
+    Keybinds,
     LyricsSources,
     MusicFolders,
 }
 
 impl SettingsPage {
     /// Every page, the sections first and the drill-ins after them.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Providers,
         Self::General,
         Self::Appearance,
@@ -187,6 +188,7 @@ impl SettingsPage {
         Self::Discord,
         Self::Scrobbling,
         Self::About,
+        Self::Keybinds,
         Self::LyricsSources,
         Self::MusicFolders,
     ];
@@ -205,6 +207,7 @@ impl SettingsPage {
             Self::Discord => "discord",
             Self::Scrobbling => "scrobbling",
             Self::About => "about",
+            Self::Keybinds => "keybinds",
             Self::LyricsSources => "lyrics-sources",
             Self::MusicFolders => "music-folders",
         }
@@ -225,6 +228,7 @@ impl SettingsPage {
             Self::Discord => "settings-page-discord",
             Self::Scrobbling => "settings-page-scrobbling",
             Self::About => "settings-page-about",
+            Self::Keybinds => "settings-page-keybinds",
             Self::LyricsSources => "settings-page-lyrics-sources",
             Self::MusicFolders => "settings-page-music-folders",
         }
@@ -246,12 +250,14 @@ impl SettingsPage {
     /// The tab the page shows in. A drill-in belongs to its parent's tab.
     pub fn tab(self) -> SettingsTab {
         match self {
-            Self::General | Self::About => SettingsTab::General,
-            Self::Providers | Self::MusicFolders => SettingsTab::Providers,
+            Self::Providers | Self::MusicFolders | Self::General | Self::About => {
+                SettingsTab::General
+            }
             Self::Appearance | Self::PlayerBar | Self::NowPlaying => SettingsTab::Appearance,
             Self::Lyrics | Self::LyricsSources => SettingsTab::Lyrics,
             Self::Playback | Self::Sound | Self::Storage => SettingsTab::Playback,
             Self::Discord | Self::Scrobbling => SettingsTab::Integrations,
+            Self::Keybinds => SettingsTab::Keybinds,
         }
     }
 }
@@ -261,32 +267,32 @@ impl SettingsPage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SettingsTab {
     General,
-    Providers,
     Appearance,
     Lyrics,
     Playback,
     Integrations,
+    Keybinds,
 }
 
 impl SettingsTab {
     /// Every tab, in the order the header shows them.
     pub const ALL: [Self; 6] = [
         Self::General,
-        Self::Providers,
         Self::Appearance,
         Self::Lyrics,
         Self::Playback,
         Self::Integrations,
+        Self::Keybinds,
     ];
 
     pub fn id(self) -> &'static str {
         match self {
             Self::General => "general",
-            Self::Providers => "providers",
             Self::Appearance => "appearance",
             Self::Lyrics => "lyrics",
             Self::Playback => "playback",
             Self::Integrations => "integrations",
+            Self::Keybinds => "keybinds",
         }
     }
 
@@ -294,11 +300,11 @@ impl SettingsTab {
     pub fn key(self) -> &'static str {
         match self {
             Self::General => "settings-page-general",
-            Self::Providers => "settings-page-providers",
             Self::Appearance => "settings-page-appearance",
             Self::Lyrics => "settings-page-lyrics",
             Self::Playback => "settings-page-playback",
             Self::Integrations => "settings-tab-integrations",
+            Self::Keybinds => "settings-page-keybinds",
         }
     }
 
@@ -306,19 +312,22 @@ impl SettingsTab {
     pub fn icon(self) -> &'static str {
         match self {
             Self::General => "icons/settings.svg",
-            Self::Providers => "icons/user-round.svg",
             Self::Appearance => "icons/palette.svg",
             Self::Lyrics => "icons/mic-vocal.svg",
             Self::Playback => "icons/play.svg",
             Self::Integrations => "icons/link.svg",
+            Self::Keybinds => "icons/keyboard.svg",
         }
     }
 
     /// The pages the tab shows, top to bottom. The first is the one the tab opens on.
     pub fn sections(self) -> &'static [SettingsPage] {
         match self {
-            Self::General => &[SettingsPage::General, SettingsPage::About],
-            Self::Providers => &[SettingsPage::Providers],
+            Self::General => &[
+                SettingsPage::Providers,
+                SettingsPage::General,
+                SettingsPage::About,
+            ],
             Self::Appearance => &[
                 SettingsPage::Appearance,
                 SettingsPage::PlayerBar,
@@ -331,6 +340,7 @@ impl SettingsTab {
                 SettingsPage::Storage,
             ],
             Self::Integrations => &[SettingsPage::Discord, SettingsPage::Scrobbling],
+            Self::Keybinds => &[SettingsPage::Keybinds],
         }
     }
 

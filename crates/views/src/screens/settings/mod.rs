@@ -6,7 +6,7 @@ use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Div, ElementId, Entity, FocusHandle, Pixels, Render, ScrollHandle,
-    SharedString, Task, Window, canvas, div, px, svg,
+    SharedString, Subscription, Task, Window, canvas, div, px, svg,
 };
 use i18n::{Language, t};
 use music::SignInPrompt;
@@ -21,7 +21,7 @@ use ui::{
 };
 
 use crate::chrome::{Chrome, OutputPicker};
-use crate::shared::popups::SearchPopup;
+use crate::shared::popups::{Credentials, SearchPopup};
 use crate::shared::text;
 
 mod about;
@@ -31,6 +31,7 @@ mod connect;
 mod discord;
 mod general;
 mod header;
+mod keybinds;
 mod layout;
 mod lyrics;
 mod now_playing;
@@ -56,6 +57,8 @@ const TITLE_WEIGHT: u32 = 2;
 /// The picker keys the page's render watches, shared with the rows that open them.
 const LANGUAGES: &str = "languages";
 const TYPEFACES: &str = "typefaces";
+/// The shortcut that puts the caret in the search field, whose key the field shows.
+const OPEN_FILTER: &str = "open-filter";
 /// How often the storage section measures the cache and the downloads again while its tab shows.
 const STORAGE_POLL: Duration = Duration::from_secs(2);
 
@@ -134,6 +137,9 @@ enum Slot {
     ArtworkForLocal,
     Scrobble(usize),
     ScrobbleProvider,
+    /// The shortcut at this place in `input::shortcuts`.
+    Keybind(usize),
+    KeybindsReset,
     Startup,
     Entries,
     Language,
@@ -262,9 +268,8 @@ pub struct SettingsView {
     theme_variants: Option<String>,
     /// The user's theme family waiting for the user to confirm its deletion.
     deleting_theme: Option<String>,
-    server: Entity<Input>,
-    username: Entity<Input>,
-    password: Entity<Input>,
+    /// The fields of a sign-in to a server of the user's own.
+    credentials: Credentials,
     credentials_for: Option<&'static str>,
     secret: Entity<Input>,
     manual_secret: Option<(&'static str, &'static str)>,
@@ -300,6 +305,10 @@ pub struct SettingsView {
     font_task: Option<Task<()>>,
     /// What the pages' previews keep between frames.
     previews: preview::Previews,
+    /// The shortcut, by id, whose new key the page is waiting for.
+    recording: Option<&'static str>,
+    /// Catches every key pressed while a shortcut records, before it does anything else.
+    recorder: Option<Subscription>,
 }
 
 impl SettingsView {
@@ -325,8 +334,11 @@ impl SettingsView {
             .detach();
         cx.observe(&scrobbling, |this, _, cx| this.remeasure(cx))
             .detach();
-        cx.observe(&settings, |this, _, cx| this.remeasure(cx))
-            .detach();
+        cx.observe(&settings, |this, _, cx| {
+            this.show_filter_shortcut(cx);
+            this.remeasure(cx);
+        })
+        .detach();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         playback.update(cx, |playback, cx| playback.measure_storage(cx));
         let storage = cx.spawn(async move |this, cx| {
@@ -368,9 +380,11 @@ impl SettingsView {
             Input::new("settings-search", cx)
                 .icon("icons/search.svg")
                 .blurred()
-                .shortcut("secondary-f")
                 .clearable()
         });
+        let filter =
+            input::shown(OPEN_FILTER, settings.read(cx).keybinds()).map(SharedString::from);
+        search.update(cx, |input, cx| input.set_shortcut(filter, cx));
         cx.observe(&search, |this, input, cx| {
             let query = input.read(cx).text().trim().to_owned();
             // A search swaps the page for hits from every page, so wherever the page was
@@ -430,7 +444,7 @@ impl SettingsView {
             settings,
             outputs,
             output_picker,
-            page: SettingsPage::General,
+            page: SettingsTab::General.lead(),
             search,
             query: String::new(),
             reveal: None,
@@ -446,9 +460,7 @@ impl SettingsView {
             popovers,
             theme_variants: None,
             deleting_theme: None,
-            server: cx.new(|cx| Input::new("login-server-hint", cx)),
-            username: cx.new(|cx| Input::new("login-username-hint", cx)),
-            password: cx.new(|cx| Input::new("login-password-hint", cx).masked()),
+            credentials: Credentials::new(cx),
             credentials_for: None,
             secret: cx.new(|cx| Input::new("login-cookie-hint", cx)),
             manual_secret: None,
@@ -470,6 +482,8 @@ impl SettingsView {
             loading_fonts: false,
             font_task: None,
             previews,
+            recording: None,
+            recorder: None,
         }
     }
 
@@ -494,6 +508,9 @@ impl SettingsView {
                     .then_some(Reveal::Section(page)),
             };
         }
+        if self.page != page {
+            self.stop_recording(cx);
+        }
         self.page = page;
         self.popovers.close();
         self.previews.shown(page.tab());
@@ -507,10 +524,13 @@ impl SettingsView {
 
     /// Tells the previews whether settings are open, so a new opening picks a new track and a
     /// closing stops what they keep running.
-    pub(crate) fn set_open(&mut self, open: bool) {
+    pub(crate) fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
         match open {
             true => self.previews.opened(),
-            false => self.previews.closed(),
+            false => {
+                self.previews.closed();
+                self.stop_recording(cx);
+            }
         }
     }
 
@@ -562,9 +582,18 @@ impl SettingsView {
             SettingsPage::Scrobbling => self.scrobbling_groups(cx),
             SettingsPage::General => self.general_groups(cx),
             SettingsPage::About => self.about_groups(),
+            SettingsPage::Keybinds => self.keybinds_groups(),
             SettingsPage::LyricsSources => self.lyrics_sources_groups(),
             SettingsPage::MusicFolders => self.music_folders_groups(),
         }
+    }
+
+    /// Draws the key that opens the search in its field, which the user may have rebound.
+    fn show_filter_shortcut(&self, cx: &mut Context<Self>) {
+        let filter =
+            input::shown(OPEN_FILTER, self.settings.read(cx).keybinds()).map(SharedString::from);
+        self.search
+            .update(cx, |input, cx| input.set_shortcut(filter, cx));
     }
 
     /// Invalidates cached block heights after data or settings change their layout.
@@ -954,6 +983,8 @@ impl SettingsView {
             ),
             Slot::Scrobble(index) => self.scrobble_meta(index, cx)?,
             Slot::ScrobbleProvider => self.scrobble_provider_meta(cx)?,
+            Slot::Keybind(index) => self.keybind_meta(index, cx)?,
+            Slot::KeybindsReset => (t!("keybinds-reset-all"), SharedString::default()),
             Slot::Version => (t!("settings-version"), t!("settings-version-detail")),
             Slot::Updates => (
                 t!("settings-check-updates"),
@@ -1051,7 +1082,7 @@ impl SettingsView {
             Slot::LyricsForLocal => self.lyrics_for_local_files_row(cx),
             Slot::SpotifyConnect => self.spotify_connect_row(cx),
             Slot::SpotifyConnectName => self.spotify_connect_name_row(cx),
-            Slot::SpotifyConnectCustom => self.spotify_connect_custom_row(),
+            Slot::SpotifyConnectCustom => self.spotify_connect_custom_row(cx),
             Slot::SessionsButton => self.sessions_button_row(cx),
             Slot::SessionsOfficial => self.sessions_official_row(cx),
             Slot::SessionsServer => self.sessions_server_row(cx),
@@ -1069,6 +1100,8 @@ impl SettingsView {
                 false => div().into_any_element(),
             },
             Slot::ScrobbleProvider => self.scrobble_provider_row(cx),
+            Slot::Keybind(index) => self.keybind_row(index, cx),
+            Slot::KeybindsReset => self.keybinds_reset_row(cx),
             Slot::Version => self.version_row(),
             Slot::Updates => self.updates_row(cx),
             Slot::Channel => self.channel_row(cx),

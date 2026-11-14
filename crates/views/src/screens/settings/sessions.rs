@@ -2,7 +2,7 @@ use gpui::prelude::*;
 use gpui::{AnyElement, App, Context, div};
 use i18n::t;
 use state::Sonora;
-use ui::{Button, Picker, Switch};
+use ui::{Button, Field, Form, Picker, Switch};
 
 use super::{Group, SettingsView, Slot};
 
@@ -63,7 +63,13 @@ impl SettingsView {
     /// narrows and the label stays whole.
     pub(super) fn sessions_server_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let saving = Sonora::global(cx).listening.read(cx).saving();
-        let field = self.sessions_server.clone();
+        let save = Button::new("sessions-server-save")
+            .flex_none()
+            .secondary()
+            .small()
+            .label(t!("settings-sessions-save"))
+            .disabled(saving)
+            .on_click(cx.listener(|this, _, _, cx| this.save_sessions_server(cx)));
 
         self.yielding_row(
             t!("settings-sessions-server"),
@@ -71,32 +77,29 @@ impl SettingsView {
                 .flex_1()
                 .min_w_0()
                 .flex()
-                .items_center()
                 .justify_end()
-                .gap_2()
                 .child(
-                    div()
+                    Form::new("settings-sessions-server-form")
                         .flex_1()
                         .min_w_0()
                         .max_w(Picker::WIDE)
-                        .child(self.sessions_server.clone()),
-                )
-                .child(
-                    Button::new("sessions-server-save")
-                        .flex_none()
-                        .secondary()
-                        .small()
-                        .label(t!("settings-sessions-save"))
-                        .disabled(saving)
-                        .on_click(move |_, _, cx| {
-                            let typed = field.read(cx).text().to_owned();
-                            Sonora::global(cx)
-                                .listening
-                                .clone()
-                                .update(cx, |listening, cx| listening.save_server(&typed, cx));
-                        }),
+                        .field(Field::new(&self.sessions_server, cx).end(save))
+                        .on_submit(cx.listener(move |this, _, _, cx| {
+                            if !saving {
+                                this.save_sessions_server(cx);
+                            }
+                        })),
                 )
                 .into_any_element(),
         )
+    }
+
+    /// Checks that the server typed in the field answers and keeps it once it does.
+    fn save_sessions_server(&mut self, cx: &mut Context<Self>) {
+        let typed = self.sessions_server.read(cx).text().to_owned();
+        Sonora::global(cx)
+            .listening
+            .clone()
+            .update(cx, |listening, cx| listening.save_server(&typed, cx));
     }
 }

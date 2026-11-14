@@ -39,8 +39,8 @@ use gpui::{
     div,
 };
 use ui::{
-    Button, Card, Checkbox, Glowing as _, Input, OptionCard, OtpInput, Radio, RangeScrubber,
-    RangeState, Scrubber, ScrubberState, Theme, Toast,
+    Button, Card, Checkbox, Field, Form, Glowing as _, Input, OptionCard, OtpInput, Radio,
+    RangeScrubber, RangeState, Scrubber, ScrubberState, Theme, Toast,
 };
 
 /// Formats what the frame builder would put in the tree for `element`.
@@ -310,6 +310,49 @@ async fn toast_announces_status_with_message(cx: &mut TestAppContext) {
     assert!(
         lines.iter().any(|line| line.contains("Playlist saved")),
         "toast exposes no accessible name for its message, screen readers announce nothing: {lines:?}"
+    );
+}
+
+#[gpui::test]
+async fn form_reads_as_a_named_form(cx: &mut TestAppContext) {
+    let lines = open_probe(cx, |window, cx| {
+        let field = cx.new(|cx| Input::new("common-search", cx));
+        let element = Form::new("sign-in")
+            .name("Sign in")
+            .field(Field::new(&field, cx))
+            .render(window, cx)
+            .into_element();
+        snapshot("form", &element)
+    });
+    let lines = rendered(&lines, "form");
+    assert!(
+        lines.iter().any(|line| line.contains("role=Form")),
+        "form exposes no Role::Form, screen readers cannot tell its fields belong together: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("Sign in")),
+        "form exposes no accessible name: {lines:?}"
+    );
+}
+
+#[gpui::test]
+async fn labelled_field_reads_as_a_group_named_for_its_label(cx: &mut TestAppContext) {
+    let lines = open_probe(cx, |window, cx| {
+        let control = cx.new(|cx| Input::new("common-search", cx));
+        let element = Field::new(&control, cx)
+            .label("Server address")
+            .render(window, cx)
+            .into_element();
+        snapshot("field", &element)
+    });
+    let lines = rendered(&lines, "field");
+    assert!(
+        lines.iter().any(|line| line.contains("role=Group")),
+        "labelled field exposes no Role::Group, its label never reaches screen readers: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("Server address")),
+        "labelled field is not named for its label: {lines:?}"
     );
 }
 
