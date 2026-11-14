@@ -272,9 +272,8 @@ impl FullscreenView {
     /// Selects the fullscreen panel and restarts the controls' idle timer.
     fn show(&mut self, panel: Option<SideTab>, cx: &mut Context<Self>) {
         if panel != self.panel && !cx.reduce_motion() {
-            let from_rest = self.switching_from_rest();
             self.switch = Some(Sprung::at(1.));
-            self.leaving = (panel.is_none() && from_rest).then(|| Sprung::at(1.));
+            self.leaving = panel.is_none().then(|| Sprung::at(1.));
         }
         self.panel = panel;
         // The transport may move between the dock and the strip, and the row it leaves never
@@ -298,11 +297,6 @@ impl FullscreenView {
             false => Some(tab),
         };
         self.show(panel, cx);
-    }
-
-    /// Whether the panel on show had finished coming in, so it has a whole self to fade out.
-    fn switching_from_rest(&self) -> bool {
-        self.switch.is_none_or(|switch| switch.resting())
     }
 
     fn stir(&mut self, cx: &mut Context<Self>) {
@@ -947,7 +941,13 @@ impl FullscreenView {
     /// level with the corner and ending short of it. With a panel open the strip above
     /// carries the transport instead, and the corner takes the volume. Centred controls are at
     /// most `deck` wide, so they keep one width whether they sit in the column or at the bottom.
-    fn controls(&self, room: Room, deck: Pixels, cx: &mut Context<Self>) -> impl IntoElement {
+    fn controls(
+        &self,
+        room: Room,
+        deck: Pixels,
+        hide: f32,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = *cx.theme();
         let centred = room.fits(Room::Wide);
         let stack = div().flex().flex_col().items_center().gap_3().w_full();
@@ -1010,7 +1010,7 @@ impl FullscreenView {
                 // The volume slider rises out of the transport and carries a bubble of its
                 // own, which is the farthest anything here paints past the deck.
                 px(VOLUME_RISE) + Scrubber::bubble_reach(VOLUME_BUBBLE_LIFT, cx),
-                stack,
+                stack.opacity(1. - hide),
             ))
     }
 
@@ -1049,7 +1049,6 @@ impl FullscreenView {
                 }),
                 false => this.when(hide >= 1., |this| this.min_h(cap)),
             })
-            .when(hide > 0., |this| this.opacity(1. - hide))
             .map(|this| match DOCK_BLUR * hide {
                 blur if blur > DOCK_BLUR_LEAST && hide < 1. && shared::effects() => this.blur(blur),
                 _ => this,
@@ -1070,7 +1069,7 @@ impl FullscreenView {
                             .absolute()
                             .size_full(),
                         )
-                        .child(self.controls(room, deck, cx)),
+                        .child(self.controls(room, deck, hide, cx)),
                 )
             })
     }
