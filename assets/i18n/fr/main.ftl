@@ -613,7 +613,6 @@ settings-font-detail = Taille de base du texte, tout le reste s'y adapte
 settings-font-value = { $size } px
 settings-startup = Afficher au démarrage
 settings-startup-detail = L'écran sur lequel Sonora s'ouvre
-settings-startup-no-guest = Indisponible en mode invité
 settings-entries = Entrées de la barre latérale
 settings-entries-detail = Les sections affichées dans la barre latérale
 settings-entries-pick = Choisir les entrées

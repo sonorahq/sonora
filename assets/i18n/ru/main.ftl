@@ -23,6 +23,7 @@ nav-history = История
 nav-home = Главная
 nav-search = Поиск
 nav-library = Моя медиатека
+sidebar-library = Медиатека
 nav-settings = Настройки
 nav-songs = Треки
 nav-albums = Альбомы
@@ -314,6 +315,8 @@ filter-playable = Только доступные
 filter-favorites = Только избранное
 filter-downloaded = Скачанное
 filter-owned = Ваши
+filter-local-only = Только локальные
+filter-streaming-only = Только стриминг
 
 # view
 view-list = Список
@@ -668,7 +671,6 @@ settings-font-detail = Базовый размер текста, остальн�
 settings-font-value = { $size } px
 settings-startup = Показывать при запуске
 settings-startup-detail = Экран, который Sonora открывает при старте
-settings-startup-no-guest = Недоступно в гостевом режиме
 settings-entries = Разделы боковой панели
 settings-entries-detail = Разделы, которые видны в боковой панели
 settings-entries-pick = Выбрать разделы

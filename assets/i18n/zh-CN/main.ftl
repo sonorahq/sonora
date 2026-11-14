@@ -609,7 +609,6 @@ settings-font-detail = 基础文字大小，其他所有内容随之缩放
 settings-font-value = { $size } px
 settings-startup = 欢迎页
 settings-startup-detail = Sonora 启动时打开的页面
-settings-startup-no-guest = 访客模式下不可用
 settings-entries = 侧边栏项
 settings-entries-detail = 侧边栏中显示的项
 settings-entries-pick = 选择项

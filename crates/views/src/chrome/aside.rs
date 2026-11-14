@@ -1914,8 +1914,7 @@ impl Aside {
             Whence::Playlist => Destination::Playlist(id),
             Whence::Artist => Destination::Artist(id),
             Whence::Radio => Destination::Song(id),
-            Whence::Saved => Destination::Library(LibraryTab::Songs),
-            Whence::Local => Destination::Local(LibraryTab::Songs),
+            Whence::Saved | Whence::Local => Destination::Library(LibraryTab::Songs),
         };
         let name = match origin.whence {
             Whence::Saved => match Sonora::global(cx).library.read(cx).shape(Shelf::Streaming) {

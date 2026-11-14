@@ -30,6 +30,7 @@ nav-history = History
 nav-home = Home
 nav-search = Search
 nav-library = Your Library
+sidebar-library = Library
 nav-settings = Settings
 nav-songs = Songs
 nav-albums = Albums
@@ -327,6 +328,8 @@ filter-playable = Playable only
 filter-favorites = Favorites only
 filter-downloaded = Downloaded
 filter-owned = By you
+filter-local-only = Local only
+filter-streaming-only = Streaming only
 
 # view
 view-list = List
@@ -724,7 +727,6 @@ settings-font-smaller = Smaller text
 settings-font-larger = Larger text
 settings-startup = Start on
 settings-startup-detail = The screen Sonora opens on launch
-settings-startup-no-guest = Unavailable in Guest mode
 settings-entries = Sidebar entries
 settings-entries-detail = The sections listed in the sidebar
 settings-entries-pick = Choose entries

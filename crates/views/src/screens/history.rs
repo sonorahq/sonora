@@ -12,6 +12,7 @@ use ui::{
 };
 
 use crate::chrome::{Searchable, Toolbar, Tooled};
+use crate::shared::blend::Joined;
 use crate::shared::cells;
 use crate::shared::hero::{HeroMetaStrip, PageHero};
 use crate::shared::page;
@@ -20,8 +21,8 @@ use crate::shared::tracks::{HISTORY_COLUMNS, TrackSource, Tracks, drop_picked};
 struct HistoryTracks(Entity<History>);
 
 impl Tracks for HistoryTracks {
-    fn tracks<'a>(&self, cx: &'a App) -> &'a [Track] {
-        self.0.read(cx).tracks()
+    fn tracks<'a>(&self, cx: &'a App) -> Joined<'a, Track> {
+        self.0.read(cx).tracks().into()
     }
 
     fn is_loading(&self, cx: &App) -> bool {

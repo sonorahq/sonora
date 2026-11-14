@@ -635,7 +635,6 @@ settings-font-detail = Bazowy rozmiar tekstu, reszta skaluje się razem z nim
 settings-font-value = { $size } px
 settings-startup = Pokaż przy uruchomieniu
 settings-startup-detail = Ekran otwierany przez Sonorę po uruchomieniu
-settings-startup-no-guest = Niedostępne w trybie gościa
 settings-entries = Sekcje paska bocznego
 settings-entries-detail = Sekcje widoczne na pasku bocznym
 settings-entries-pick = Wybierz sekcje
