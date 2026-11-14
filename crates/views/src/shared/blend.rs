@@ -5,6 +5,8 @@ use ui::{Filter, FilterChange, FlagAxis};
 
 const LOCAL_ONLY: &str = "filter-local-only";
 const STREAMING_ONLY: &str = "filter-streaming-only";
+/// The glyph that marks a local file on a library page that mixes the two shelves.
+pub(crate) const LOCAL_MARK: &str = "icons/file-music.svg";
 
 /// Two lists read as one, every row of `head` before the rows of `tail`. The library pages list
 /// the streaming shelf and the local one together through it, without copying either.
@@ -105,6 +107,11 @@ impl Reach {
         self.0.is_some()
     }
 
+    /// Whether a page that `mixed` both shelves badges its local rows. It does unless the Local
+    /// only filter is on, when every row left is local and the badge would tell nothing apart.
+    pub(crate) fn marks_local(self, mixed: bool) -> bool {
+        mixed && self.0 != Some(Shelf::Local)
+    }
 
     /// The two flags, offered while the page mixes both shelves and kept while one is on, so a
     /// filter that emptied the page can still be turned off.

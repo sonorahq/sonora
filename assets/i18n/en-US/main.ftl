@@ -513,6 +513,7 @@ song-genres = Genres
 song-language = Language
 song-content = Content
 song-explicit = Explicit
+song-local = Local file
 song-clean = Clean
 artist-about = About the artist
 artist-about-fallback = Explore the artist's popular songs and releases.

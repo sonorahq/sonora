@@ -14,7 +14,7 @@ use i18n::t;
 use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
 use state::{AppSettings, Playback, PlayerBarLayout, Queue, SideTab, Sonora};
 use ui::{
-    Artwork, Button, ExplicitBadge, Flight, InlineLink, InlineLinks, Perch, Pinnable, Popup, Room,
+    Artwork, Badge, Button, Flight, InlineLink, InlineLinks, Perch, Pinnable, Popup, Room,
     Scrollbar, Scrubber, ScrubberState, clock, tabular,
 };
 
@@ -438,7 +438,7 @@ impl PlayerBar {
             .items_center()
             .gap_1()
             .when(explicit, |this| {
-                this.child(div().flex_none().child(ExplicitBadge::new()))
+                this.child(div().flex_none().child(Badge::explicit()))
             })
             .child(like(track, &self.playback, cx));
         let headline = match centered {

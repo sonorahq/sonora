@@ -78,6 +78,10 @@ impl ArtistSource {
         }
     }
 
+    /// Whether the page badges its local artists, see `Reach::marks_local`.
+    pub(super) fn marks_local(&self, cx: &App) -> bool {
+        self.reach.marks_local(self.artists(cx).mixed())
+    }
 
     fn index_cell(&self, cell: &Cell<ArtistField>, artist: &SavedArtist, cx: &App) -> AnyElement {
         let origin = Origin::artist(artist.id.clone()).named(artist.name.clone());
@@ -238,7 +242,12 @@ impl TableSource for ArtistSource {
 
         match cell.field {
             ArtistField::Cover => cells::avatar(&cell, artist.cover.clone()),
-            ArtistField::Name => cells::dim(&cell, artist.name.clone(), theme.foreground),
+            ArtistField::Name => cells::name(
+                &cell,
+                artist.name.clone(),
+                theme.foreground,
+                self.marks_local(cx) && Shelf::of(&artist.id).local(),
+            ),
             ArtistField::AddedAt => cells::dim(&cell, cells::stamp(artist.added_at), muted),
             ArtistField::Index => cells::blank(&cell),
         }

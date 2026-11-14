@@ -1080,6 +1080,8 @@ impl LibraryView {
         let context = track.clone();
         let view = self.me.clone();
         let total = listing.read(cx).delegate().row_count();
+        let local = listing.read(cx).delegate().source().marks_local(cx)
+            && track.id.as_deref().is_some_and(|id| Shelf::of(id).local());
         let id: ElementId = match &track.id {
             Some(id) => SharedString::from(format!("library-track-{id}")).into(),
             None => ("library-track", display).into(),
@@ -1095,6 +1097,7 @@ impl LibraryView {
                 .weight(FontWeight::SEMIBOLD)
                 .flat()
                 .when(track.explicit, Card::explicit)
+                .map(|card| cards::marked_local(card, local))
                 .bare_meta(artists)
                 .menu(move |event, _, cx| {
                     let Some(view) = view.upgrade() else {
@@ -1130,7 +1133,9 @@ impl LibraryView {
                 .map(|album| (display, album))
         });
 
-        AlbumGrid::new("library-album", room, albums, self.playback.clone())
+        let marks = self.albums.read(cx).delegate().source().marks_local(cx);
+
+        AlbumGrid::new("library-album", room, albums, self.playback.clone()).marking(marks)
     }
 
     fn playlist_card(
@@ -1142,6 +1147,8 @@ impl LibraryView {
     ) -> Option<AnyElement> {
         let playlist = self.playlists.read(cx).delegate().source().at(row, cx)?;
         let total = self.playlists.read(cx).delegate().row_count();
+        let local = self.playlists.read(cx).delegate().source().marks_local(cx)
+            && Shelf::of(&playlist.id).local();
         let build = match Shelf::of(&playlist.id).local() {
             true => cards::imported_playlist_card,
             false => cards::playlist_card,
@@ -1150,6 +1157,7 @@ impl LibraryView {
 
         Some(
             build(id, &playlist, &self.playback, cx)
+                .map(|card| cards::marked_local(card, local))
                 .tile(card)
                 .flat()
                 .aria_position_in_set(display + 1)
@@ -1167,10 +1175,13 @@ impl LibraryView {
     ) -> Option<AnyElement> {
         let artist = self.artists.read(cx).delegate().source().at(row, cx)?;
         let total = self.artists.read(cx).delegate().row_count();
+        let local = self.artists.read(cx).delegate().source().marks_local(cx)
+            && Shelf::of(&artist.id).local();
         let id = SharedString::from(format!("library-artist-{}", artist.id));
 
         Some(
             cards::artist_card(id, &artist, &self.playback, cx)
+                .map(|card| cards::marked_local(card, local))
                 .tile(card)
                 .flat()
                 .aria_position_in_set(display + 1)

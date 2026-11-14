@@ -94,6 +94,10 @@ impl PlaylistSource {
         }
     }
 
+    /// Whether the page badges its local playlists, see `Reach::marks_local`.
+    pub(super) fn marks_local(&self, cx: &App) -> bool {
+        self.reach.marks_local(self.playlists(cx).mixed())
+    }
 
     fn index_cell(&self, cell: &Cell<PlaylistField>, playlist: &Playlist, cx: &App) -> AnyElement {
         let origin = Origin::playlist(playlist.id.clone()).named(playlist.name.clone());
@@ -235,7 +239,12 @@ impl TableSource for PlaylistSource {
 
         match cell.field {
             PlaylistField::Cover => cells::artwork(&cell, playlist.cover.clone()),
-            PlaylistField::Name => cells::dim(&cell, playlist.name.clone(), theme.foreground),
+            PlaylistField::Name => cells::name(
+                &cell,
+                playlist.name.clone(),
+                theme.foreground,
+                self.marks_local(cx) && Shelf::of(&playlist.id).local(),
+            ),
             PlaylistField::Owner => match playlist.owner_id.is_empty() {
                 true => cells::dim(&cell, playlist.owner.clone(), muted),
                 false => cells::link(

@@ -489,6 +489,7 @@ song-genres = Жанры
 song-language = Язык
 song-content = Контент
 song-explicit = Ненормативная лексика
+song-local = Локальный файл
 song-clean = Без ограничений
 artist-about = Об исполнителе
 artist-about-fallback = Послушайте популярные треки и релизы исполнителя.

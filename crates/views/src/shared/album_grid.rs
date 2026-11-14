@@ -1,7 +1,7 @@
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Entity, Pixels, RenderOnce, Window, div, px};
 use music::Album;
-use state::Playback;
+use state::{Playback, Shelf};
 use ui::Card;
 
 use crate::shared::cards;
@@ -75,6 +75,8 @@ pub(crate) struct AlbumGrid {
     layout: CardLayout,
     albums: Vec<(usize, Album)>,
     playback: Entity<Playback>,
+    /// Whether local albums carry the local file badge.
+    marking: bool,
 }
 
 impl AlbumGrid {
@@ -89,7 +91,14 @@ impl AlbumGrid {
             layout: CardLayout::new(available),
             albums: albums.into_iter().collect(),
             playback,
+            marking: false,
         }
+    }
+
+    /// Badges the local albums, for a library page that mixes both shelves.
+    pub(crate) fn marking(mut self, marking: bool) -> Self {
+        self.marking = marking;
+        self
     }
 }
 
@@ -100,9 +109,13 @@ impl RenderOnce for AlbumGrid {
             layout,
             albums,
             playback,
+            marking,
         } = self;
         let cards = albums.into_iter().map(|(index, album)| {
-            album_card(id, index, &album, &playback, layout.card, cx).into_any_element()
+            let local = marking && Shelf::of(&album.id).local();
+            album_card(id, index, &album, &playback, layout.card, cx)
+                .map(|card| cards::marked_local(card, local))
+                .into_any_element()
         });
 
         div()

@@ -130,6 +130,10 @@ impl AlbumSource {
         }
     }
 
+    /// Whether the page badges its local albums, see `Reach::marks_local`.
+    pub(super) fn marks_local(&self, cx: &App) -> bool {
+        self.reach.marks_local(self.albums(cx).mixed())
+    }
 
     fn index_cell(&self, cell: &Cell<AlbumField>, album: &Album, cx: &App) -> AnyElement {
         let origin = Origin::album(album.id.clone()).named(album.name.clone());
@@ -349,7 +353,12 @@ impl TableSource for AlbumSource {
 
         match cell.field {
             AlbumField::Cover => cells::artwork(&cell, album.cover.clone()),
-            AlbumField::Name => cells::dim(&cell, album.name.clone(), theme.foreground),
+            AlbumField::Name => cells::name(
+                &cell,
+                album.name.clone(),
+                theme.foreground,
+                self.marks_local(cx) && Shelf::of(&album.id).local(),
+            ),
             AlbumField::Artists => cells::artists(
                 &cell,
                 album.artist_refs.clone(),

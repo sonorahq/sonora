@@ -312,6 +312,11 @@ impl TrackSource {
         self
     }
 
+    /// Whether the table badges its local tracks, which only a library page that mixes both
+    /// shelves does, see `Reach::marks_local`.
+    pub(crate) fn marks_local(&self, cx: &App) -> bool {
+        self.shelved && self.reach.marks_local(self.provider.tracks(cx).mixed())
+    }
 
     /// Whether offline mode keeps a library row of `shelf` to its downloads.
     fn downloads_only(&self, shelf: Shelf, cx: &App) -> bool {
@@ -491,7 +496,12 @@ impl TrackSource {
             color,
             track.explicit.then(|| t!("song-explicit")),
             None,
-            download_mark(cell, track, cx),
+            match self.marks_local(cx)
+                && track.id.as_deref().is_some_and(|id| Shelf::of(id).local())
+            {
+                true => Some(cells::local_badge(cell.row)),
+                false => download_mark(cell, track, cx),
+            },
             self.liked_button(cell, track, cx),
         )
     }

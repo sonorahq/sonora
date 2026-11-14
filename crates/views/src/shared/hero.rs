@@ -10,7 +10,7 @@ use i18n::t;
 use music::{Album, Track};
 use state::{Origin, Playback};
 use ui::{
-    ActiveTheme as _, Artwork, Button, ExplicitBadge, LEADING, MenuItem, Perch, Pin, Pinnable as _,
+    ActiveTheme as _, Artwork, Badge, Button, LEADING, MenuItem, Perch, Pin, Pinnable as _,
     Skeleton, TableState, Tails as _, Text, Tipped as _, spoken,
 };
 
@@ -573,7 +573,7 @@ impl RenderOnce for PageHero {
                                         .role(Role::Image)
                                         .aria_label(t!("song-explicit"))
                                         .flex_none()
-                                        .child(ExplicitBadge::new()),
+                                        .child(Badge::explicit()),
                                 )
                             }),
                     )
