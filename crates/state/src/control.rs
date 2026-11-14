@@ -14,7 +14,7 @@ use cli::wire::{
 use futures::future;
 use gpui::{App, Context, Entity, Subscription, Task};
 use music::link::Linked;
-use music::{Album, MediaKind, MusicApi, MusicProvider, Playlist, SavedArtist, Track};
+use music::{Found, MediaKind, MusicApi, MusicProvider, Track};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::search::{self, Catalog};
@@ -29,14 +29,6 @@ const LOCAL: &str = "local";
 /// How often a watch looks again on its own, for the position it reports and for a change made
 /// somewhere that does not go through `Playback`, such as the volume of a steered device.
 const WATCH_TICK: Duration = Duration::from_secs(1);
-
-/// What the four searches of a query answered: songs, albums, playlists and artists.
-type Found = (
-    anyhow::Result<Vec<Track>>,
-    anyhow::Result<Vec<Album>>,
-    anyhow::Result<Vec<Playlist>>,
-    anyhow::Result<Vec<SavedArtist>>,
-);
 
 /// Carries out what the command line asks of the running Sonora. Playback goes through
 /// `Playback`, so a device steered over Connect is the one that obeys. A command that fetches
@@ -330,17 +322,7 @@ impl Control {
         let fetch = {
             let client = client.clone();
             let asked = query.text.clone();
-            Io::global(cx).spawn(async move {
-                anyhow::Ok(
-                    future::join4(
-                        client.search(&asked),
-                        client.search_albums(&asked),
-                        client.search_playlists(&asked),
-                        client.search_artists(&asked),
-                    )
-                    .await,
-                )
-            })
+            Io::global(cx).spawn(async move { anyhow::Ok(client.search_all(&asked).await) })
         };
         let key = self.issued;
         self.issued += 1;
@@ -368,15 +350,23 @@ impl Control {
     fn hits(
         &self,
         query: &SearchQuery,
-        (tracks, albums, playlists, artists): Found,
+        found: Found,
         client: &dyn MusicApi,
         cx: &mut App,
     ) -> Result<Vec<wire::Hit>, Failure> {
-        if let (Err(error), Err(_), Err(_), Err(_)) = (&tracks, &albums, &playlists, &artists) {
+        if found.is_failed()
+            && let Err(error) = &found.tracks
+        {
             log::warn!("control: cannot search: {error:#}");
             noted(error, cx);
             return Err(Failure::Unfetched(query.text.clone()));
         }
+        let Found {
+            tracks,
+            albums,
+            playlists,
+            artists,
+        } = found;
         let catalog = Catalog {
             tracks: tracks.unwrap_or_default(),
             albums: albums.unwrap_or_default(),

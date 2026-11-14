@@ -52,7 +52,7 @@ pub use audio::Meter;
 pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
-    Contributor, CoverSize, Credit, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
+    Contributor, CoverSize, Credit, Found, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
     ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsWord,
     PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail, ReleaseType, RomanizedText,
     SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
@@ -368,6 +368,24 @@ pub trait MusicApi: Send + Sync {
     /// the songs and albums it found.
     async fn search_artists(&self, _query: &str) -> Result<Vec<SavedArtist>> {
         Ok(Vec::new())
+    }
+
+    /// Songs, albums, playlists and artists for `query`, which is what the search page and the
+    /// command line show. The default runs the four searches at once. A provider that can
+    /// answer every kind in one request overrides it, so a query costs one round trip.
+    async fn search_all(&self, query: &str) -> Found {
+        let (tracks, albums, playlists, artists) = futures::join!(
+            self.search(query),
+            self.search_albums(query),
+            self.search_playlists(query),
+            self.search_artists(query),
+        );
+        Found {
+            tracks,
+            albums,
+            playlists,
+            artists,
+        }
     }
 
     async fn home(&self) -> Result<HomeFeed> {

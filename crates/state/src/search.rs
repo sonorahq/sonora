@@ -4,7 +4,8 @@ use std::time::Duration;
 use anyhow::Result;
 use gpui::{Context, Entity, Task};
 use music::link::{self, Linked};
-use music::{Album, ArtistRef, MusicApi, Playlist, SavedArtist, Track};
+use music::{Album, ArtistRef, Found, MusicApi, Playlist, SavedArtist, Track};
+use tokio::task::AbortHandle;
 
 use crate::{Io, Library, Network, Session, SessionEvent, Shelf, join};
 
@@ -124,6 +125,16 @@ struct Scored {
     score: u32,
     popularity: u32,
     hit: Hit,
+}
+
+/// Aborts a provider request when the search task waiting on it is dropped, so a query the
+/// user typed past stops asking and stops retrying.
+struct Abort(AbortHandle);
+
+impl Drop for Abort {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// A search against the provider and the library, ranked into hits as the answers land. The
@@ -329,28 +340,11 @@ impl Search {
                 .ok();
             }
 
-            let songs = {
-                let client = client.clone();
-                let asked = asked.clone();
-                io.spawn(async move { client.search(&asked).await })
-            };
-            let albums = {
-                let client = client.clone();
-                let asked = asked.clone();
-                io.spawn(async move { client.search_albums(&asked).await })
-            };
-            let playlists = {
-                let client = client.clone();
-                let asked = asked.clone();
-                io.spawn(async move { client.search_playlists(&asked).await })
-            };
-            let artists = io.spawn(async move { client.search_artists(&asked).await });
-            let (songs, albums, playlists, artists) = (
-                join(songs).await,
-                join(albums).await,
-                join(playlists).await,
-                join(artists).await,
-            );
+            let request = io.spawn(async move { client.search_all(&asked).await });
+            let _abort = Abort(request.abort_handle());
+            let found = request
+                .await
+                .unwrap_or_else(|error| Found::failed(error.into()));
 
             this.update(cx, |this, cx| {
                 if this.query != query {
@@ -369,10 +363,10 @@ impl Search {
                     artists: kept_artists,
                 } = std::mem::take(&mut this.catalog);
                 this.catalog = Catalog {
-                    tracks: salvaged(songs, tracks, &mut trouble),
-                    albums: salvaged(albums, kept_albums, &mut trouble),
-                    playlists: salvaged(playlists, kept_playlists, &mut trouble),
-                    artists: salvaged(artists, kept_artists, &mut trouble),
+                    tracks: salvaged(found.tracks, tracks, &mut trouble),
+                    albums: salvaged(found.albums, kept_albums, &mut trouble),
+                    playlists: salvaged(found.playlists, kept_playlists, &mut trouble),
+                    artists: salvaged(found.artists, kept_artists, &mut trouble),
                 };
                 match trouble.first() {
                     Some(reason) => Network::failed(reason, cx),
@@ -381,6 +375,7 @@ impl Search {
                         this.served = Some(query);
                     }
                 }
+                trouble.dedup();
                 this.error =
                     (!trouble.is_empty() && this.catalog.is_empty()).then(|| trouble.join(" · "));
                 this.rank(cx);
