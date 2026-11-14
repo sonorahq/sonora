@@ -804,6 +804,11 @@ impl Sprung {
         *self = Self::at(position);
     }
 
+    /// Moves where the spring stands by `delta`, keeping its velocity.
+    pub fn shift(&mut self, delta: f32) {
+        self.state.position += delta;
+    }
+
     /// Steps the spring towards `target` on `config` and answers where it stands. It asks for the
     /// next frame while it moves, counts as landed within `epsilon` of the target, and lands at
     /// once under reduced motion. A target that changes mid-flight turns the spring from where
