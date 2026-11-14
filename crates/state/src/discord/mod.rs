@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use discord_rich_presence::{DiscordIpc, activity};
 use gpui::{App, AppContext as _, Context, Entity, Global, Task};
@@ -26,6 +26,9 @@ const MAX_TEXT_UTF16_UNITS: usize = 128;
 const MUSIC: &str = "Music";
 /// Where the Sonora button sends a friend who presses it.
 const SONORA_URL: &str = "https://sonorahq.org";
+/// How long an uploaded cover is shown before it is uploaded again. Uguu keeps it for three
+/// hours, so a status that runs longer never points at a picture that has gone.
+const UPLOAD_FRESH: Duration = Duration::from_secs(150 * 60);
 
 struct Attached {
     _discord: Entity<Discord>,
@@ -126,12 +129,37 @@ struct Discord {
     artwork: ArtworkSearch,
     /// Covers found by name, and the queries that found nothing, so neither is asked twice.
     found: HashMap<ArtworkQuery, Option<String>>,
-    /// The query the last presence had no cover for, taken by `look_up` once it is published.
-    wanted: Option<ArtworkQuery>,
-    /// The query last sent to the search. A failed one is not retried until another was asked.
-    asked: Option<ArtworkQuery>,
+    /// The query whose search failed last, which counts as a miss until another search starts.
+    failed: Option<ArtworkQuery>,
+    /// Covers uploaded from the provider's own art, by album, with when they went up.
+    uploaded: HashMap<String, (String, Instant)>,
+    /// The album whose upload failed last, which falls back to the search until another upload
+    /// starts.
+    upload_failed: Option<String>,
+    /// The search or upload the last presence went without, taken by `look_up` once it is
+    /// published.
+    wanted: Option<Wanted>,
+    /// The search or upload still running, so a presence published meanwhile does not start it
+    /// twice.
+    asked: Option<Wanted>,
     lookup: Option<Task<()>>,
     _worker: Task<()>,
+}
+
+/// What `look_up` is to fetch: a cover found by name, or failing that the provider's own one
+/// uploaded where Discord can reach it.
+#[derive(Clone, PartialEq, Eq)]
+enum Wanted {
+    Search(ArtworkQuery),
+    Upload(Upload),
+}
+
+/// The provider's own cover at `source`, kept in `Discord::uploaded` under `key`. It has no
+/// `Debug`, since `source` carries the credentials of a self-hosted server.
+#[derive(Clone, PartialEq, Eq)]
+struct Upload {
+    key: String,
+    source: String,
 }
 
 impl Discord {
@@ -171,6 +199,9 @@ impl Discord {
             io,
             artwork: ArtworkSearch::new(),
             found: HashMap::new(),
+            failed: None,
+            uploaded: HashMap::new(),
+            upload_failed: None,
             wanted: None,
             asked: None,
             lookup: None,
@@ -190,35 +221,66 @@ impl Discord {
         self.look_up(cx);
     }
 
-    /// Searches for the cover the last presence went without, then publishes again with it.
-    /// Replacing the previous task throws away the answer for a track that is no longer playing.
+    /// Searches for the cover the last presence went without, or uploads the provider's own
+    /// one, then publishes again with it. Replacing the previous task throws away the answer
+    /// for a track that is no longer playing.
     fn look_up(&mut self, cx: &mut Context<Self>) {
-        let Some(query) = self.wanted.take() else {
+        let Some(wanted) = self.wanted.take() else {
             return;
         };
-        if self.asked.as_ref() == Some(&query) {
+        if self.asked.as_ref() == Some(&wanted) {
             return;
         }
-        self.asked = Some(query.clone());
+        self.asked = Some(wanted.clone());
+        match &wanted {
+            Wanted::Search(_) => self.failed = None,
+            Wanted::Upload(_) => self.upload_failed = None,
+        }
 
         let search = self.artwork.clone();
         let io = self.io.clone();
-        self.lookup = Some(cx.spawn(async move |this, cx| {
-            let wanted = query.clone();
-            let found = join(io.spawn(async move { search.find(&wanted).await })).await;
+        self.lookup = Some(match wanted {
+            Wanted::Search(query) => cx.spawn(async move |this, cx| {
+                let wanted = query.clone();
+                let found = join(io.spawn(async move { search.find(&wanted).await })).await;
 
-            this.update(cx, |this, cx| {
-                this.lookup = None;
-                match found {
-                    Ok(cover) => {
-                        this.found.insert(query, cover);
-                        this.publish(cx);
+                this.update(cx, |this, cx| {
+                    this.lookup = None;
+                    this.asked = None;
+                    match found {
+                        Ok(cover) => {
+                            this.found.insert(query, cover);
+                        }
+                        Err(error) => {
+                            log::warn!("discord: cannot look up the artwork: {error:#}");
+                            this.failed = Some(query);
+                        }
                     }
-                    Err(error) => log::warn!("discord: cannot look up the artwork: {error:#}"),
-                }
-            })
-            .ok();
-        }));
+                    this.publish(cx);
+                })
+                .ok();
+            }),
+            Wanted::Upload(upload) => cx.spawn(async move |this, cx| {
+                let source = upload.source.clone();
+                let uploaded = join(io.spawn(async move { search.upload(&source).await })).await;
+
+                this.update(cx, |this, cx| {
+                    this.lookup = None;
+                    this.asked = None;
+                    match uploaded {
+                        Ok(url) => {
+                            this.uploaded.insert(upload.key, (url, Instant::now()));
+                        }
+                        Err(error) => {
+                            log::warn!("discord: cannot upload the cover: {error:#}");
+                            this.upload_failed = Some(upload.key);
+                        }
+                    }
+                    this.publish(cx);
+                })
+                .ok();
+            }),
+        });
     }
 
     fn shown(&mut self, cx: &App) -> Shown {
@@ -247,23 +309,7 @@ impl Discord {
         let provider = track.id.as_deref().and_then(|id| session.provider_for(id));
         let named = provider.map(|provider| Source {
             badge: settings.discord_badge().then(|| provider.slug()),
-            listening: match settings.discord_name() {
-                DiscordName::Sonora => None,
-                DiscordName::Provider => Some(provider.listening_to().to_owned()),
-                DiscordName::Music => Some(MUSIC.to_owned()),
-                DiscordName::Title => fit_text(&track.name).or_else(|| Some(MUSIC.to_owned())),
-                DiscordName::Artist => fit_text(&track.artists).or_else(|| Some(MUSIC.to_owned())),
-                DiscordName::ArtistTitle => {
-                    let artists = track.artists.trim();
-                    let title = track.name.trim();
-                    fit_text(&match (artists.is_empty(), title.is_empty()) {
-                        (false, false) => format!("{artists} - {title}"),
-                        (false, true) => artists.to_owned(),
-                        (true, false) => title.to_owned(),
-                        (true, true) => MUSIC.to_owned(),
-                    })
-                }
-            },
+            listening: listening(settings.discord_name(), track, provider.listening_to()),
             name: provider.name(),
         });
         if settings.discord_without_details() {
@@ -287,11 +333,12 @@ impl Discord {
         let public_art = provider.is_some_and(|provider| provider.public_art());
         let lookup = !track.id.as_deref().is_some_and(music::is_local_id)
             || settings.artwork_for_local_files();
+        let upload = !public_art && settings.discord_upload_covers();
         Shown::On(Box::new(Presence {
             source: named,
             details: fit_text(&track.name).unwrap_or_else(anonymous_details),
             state: fit_text(&track.artists),
-            image: self.artwork(track, public_art, lookup, cx),
+            image: self.artwork(track, public_art, lookup, upload, cx),
             image_text: fit_text(&track.album),
             started_at,
             ends_at: started_at
@@ -303,14 +350,17 @@ impl Discord {
 
     /// Cover art for the track. The provider's own art is used only when it is public, since
     /// Discord fetches the image through its own proxy, so a path on disk is unreachable and a
-    /// self-hosted url would hand over the credentials that fetch it. Without it, and when
-    /// `lookup` allows, the cover is one found by name, and a search not yet made is left in
-    /// `wanted` for `look_up`.
+    /// self-hosted url would hand over the credentials that fetch it. Without it, the cover is
+    /// the provider's own one or the local file's uploaded to a temporary public host when
+    /// `upload` allows, since nothing else is sure to be the same picture. Otherwise, or when the
+    /// upload failed, it is one found by name when `lookup` allows. A search or upload not yet
+    /// made is left in `wanted` for `look_up`.
     fn artwork(
         &mut self,
         track: &Track,
         public_art: bool,
         lookup: bool,
+        upload: bool,
         cx: &App,
     ) -> Option<String> {
         let own = public_art
@@ -324,17 +374,54 @@ impl Discord {
                     .filter(|cover| cover.starts_with("https://"))
             })
             .flatten();
-        if own.is_some() || !lookup {
+        if own.is_some() {
             return own;
         }
+        if upload && let Some(cover) = self.own_upload(track, cx) {
+            return cover;
+        }
+        if !lookup {
+            return None;
+        }
+
         let query = ArtworkQuery::for_track(track)?;
         match self.found.get(&query) {
             Some(found) => found.clone(),
+            None if self.failed.as_ref() == Some(&query) => None,
             None => {
-                self.wanted = Some(query);
+                self.wanted = Some(Wanted::Search(query));
                 None
             }
         }
+    }
+
+    /// The upload of the provider's own cover: `Some` with its url, or `Some(None)` while it is
+    /// still to be made, and `None` when there is nothing to upload or the upload failed, so the
+    /// search answers instead.
+    fn own_upload(&mut self, track: &Track, cx: &App) -> Option<Option<String>> {
+        // a provider url or a local file, neither of which leaves the machine, only the picture
+        let source = track
+            .album_id
+            .as_deref()
+            .and_then(|album| self.cover.read(cx).large_for(album))
+            .map(str::to_owned)
+            .or_else(|| track.cover.clone())
+            .filter(|source| {
+                ["https://", "http://", "file://"]
+                    .iter()
+                    .any(|scheme| source.starts_with(scheme))
+            })?;
+        let key = track.album_id.clone().unwrap_or_else(|| source.clone());
+        if let Some((url, at)) = self.uploaded.get(&key)
+            && at.elapsed() < UPLOAD_FRESH
+        {
+            return Some(Some(url.clone()));
+        }
+        if self.upload_failed.as_ref() == Some(&key) {
+            return None;
+        }
+        self.wanted = Some(Wanted::Upload(Upload { key, source }));
+        Some(None)
     }
 }
 
@@ -545,7 +632,7 @@ fn buttons(
             .and_then(|client| client.share_url(MediaKind::Track, id))
     {
         buttons.push(Button {
-            label: format!("Listen on {}", provider.name()).to_string(),
+            label: format!("Listen on {}", provider.name()),
             url,
         });
     }
@@ -556,6 +643,32 @@ fn buttons(
         });
     }
     (!buttons.is_empty()).then_some(buttons)
+}
+
+/// What the status calls itself for `name`, or `None` to leave Discord's own name, which is
+/// Sonora. `provider` is what the provider the track came from calls listening to it. A value
+/// the track leaves empty, such as an album artist the provider does not name, says Music
+/// rather than borrowing another field.
+fn listening(name: DiscordName, track: &Track, provider: &str) -> Option<String> {
+    let music = || Some(MUSIC.to_owned());
+    match name {
+        DiscordName::Sonora => None,
+        DiscordName::Provider => Some(provider.to_owned()),
+        DiscordName::Music => music(),
+        DiscordName::Title => fit_text(&track.name).or_else(music),
+        DiscordName::Artist => fit_text(&track.artists).or_else(music),
+        DiscordName::AlbumArtist => fit_text(&track.album_artist).or_else(music),
+        DiscordName::ArtistTitle => {
+            let artists = track.artists.trim();
+            let title = track.name.trim();
+            fit_text(&match (artists.is_empty(), title.is_empty()) {
+                (false, false) => format!("{artists} - {title}"),
+                (false, true) => artists.to_owned(),
+                (true, false) => title.to_owned(),
+                (true, true) => MUSIC.to_owned(),
+            })
+        }
+    }
 }
 
 /// What the status says when the track is deliberately left out of it.
@@ -594,4 +707,44 @@ fn unix_time() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(artists: &str, album_artist: &str) -> Track {
+        Track {
+            name: "Blue Monday".to_owned(),
+            artists: artists.to_owned(),
+            album_artist: album_artist.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_album_artist_names_the_status() {
+        let track = track("New Order, Arthur Baker", "New Order");
+        let name = listening(DiscordName::AlbumArtist, &track, "Spotify");
+        assert_eq!(name.as_deref(), Some("New Order"));
+    }
+
+    #[test]
+    fn a_missing_album_artist_says_music_rather_than_the_track_artists() {
+        let track = track("New Order, Arthur Baker", "  ");
+        let name = listening(DiscordName::AlbumArtist, &track, "Spotify");
+        assert_eq!(name.as_deref(), Some(MUSIC));
+    }
+
+    #[test]
+    fn the_track_artists_still_name_the_status() {
+        let track = track("New Order, Arthur Baker", "New Order");
+        let name = listening(DiscordName::Artist, &track, "Spotify");
+        assert_eq!(name.as_deref(), Some("New Order, Arthur Baker"));
+        let both = listening(DiscordName::ArtistTitle, &track, "Spotify");
+        assert_eq!(
+            both.as_deref(),
+            Some("New Order, Arthur Baker - Blue Monday")
+        );
+    }
 }

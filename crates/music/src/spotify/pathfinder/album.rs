@@ -251,6 +251,7 @@ fn track_from(track: PathTrack, album: &Album) -> Result<Track> {
         artists,
         artist_refs,
         album: album.name.clone(),
+        album_artist: album.artists.clone(),
         album_id: Some(album.id.clone()),
         cover: album.cover.clone(),
         duration: Duration::from_millis(track.duration.milliseconds),
@@ -276,6 +277,7 @@ fn artists(artists: &Artists) -> (String, Vec<ArtistRef>) {
             Some(ArtistRef {
                 name,
                 id: artist.uri.strip_prefix(ARTIST_PREFIX).map(str::to_owned),
+                channel: false,
             })
         })
         .collect();

@@ -9,7 +9,7 @@ use gpui::{
 };
 use i18n::t;
 use input::SEARCH_CONTEXT;
-use music::{Album, Playlist, ReleaseType, SavedArtist, Track};
+use music::{Album, Playlist, SavedArtist, Track};
 use router::{Destination, navigate};
 use ui::Input;
 
@@ -20,9 +20,9 @@ use state::{
 };
 use ui::ActiveTheme as _;
 use ui::{
-    Activate, Button, Card, Deck, Deselect, Dismiss, Dropdown, Pinnable, Popup, Room, Scrollbar,
-    Scroller, SelectLeft, SelectNext, SelectPrevious, SelectRight, Separator, Submit, Text, Theme,
-    VAST, clock, eyebrow, scrolled, snapped, tabular, vacant,
+    Activate, Button, Card, Cascade, Deck, Deselect, Dismiss, Dropdown, Pinnable, Popup, Room,
+    Scrollbar, Scroller, SelectLeft, SelectNext, SelectPrevious, SelectRight, Separator, Submit,
+    Text, Theme, Unfold, VAST, clock, eyebrow, scrolled, snapped, tabular, vacant,
 };
 
 use crate::shared::cards;
@@ -66,7 +66,7 @@ enum HitMenu {
 impl HitMenu {
     fn of(hit: &Hit) -> Option<Self> {
         match hit {
-            Hit::Song(track) => Some(Self::Song(Box::new(track.clone()))),
+            Hit::Song(track) => Some(Self::Song(track.clone())),
             Hit::Album(album) => Some(Self::Album(album.clone())),
             Hit::Playlist(list) => Some(Self::Playlist(list.clone())),
             Hit::Artist(artist) if artist.id.is_some() => Some(Self::Artist(artist.clone())),
@@ -80,6 +80,7 @@ impl HitMenu {
 #[derive(Clone)]
 enum Offer {
     Past(String),
+    Link(String),
     Hit(Box<Hit>),
 }
 
@@ -88,6 +89,7 @@ impl Offer {
     fn key(&self) -> String {
         match self {
             Offer::Past(query) => format!("past:{query}"),
+            Offer::Link(query) => format!("link:{query}"),
             Offer::Hit(hit) => match &**hit {
                 Hit::Song(track) => {
                     format!("song:{}", track.id.as_deref().unwrap_or(&track.name))
@@ -120,6 +122,10 @@ pub(crate) struct SearchView {
     pick: Option<usize>,
     /// The `key` of the row `pick` is on, so the pick stays with it as the suggestions reorder.
     picked: Option<String>,
+    /// The panel's rows surfacing one after another as the suggestions come in.
+    cascade: Cascade,
+    /// The panel's box, stretching to fit as rows come and go.
+    unfold: Unfold,
     /// Whether the arrow keys are on the best match, the stop between the field and the lists.
     on_best: bool,
     genres: Entity<Genres>,
@@ -223,6 +229,8 @@ impl SearchView {
             hush: false,
             pick: None,
             picked: None,
+            cascade: Cascade::default(),
+            unfold: Unfold::default(),
             on_best: false,
             genres,
             playback,
@@ -275,13 +283,26 @@ impl SearchView {
                 .map(Offer::Past)
                 .collect();
         }
-        self.suggestions
+        let suggestions = self.suggestions.read(cx);
+        let mut offers = Vec::new();
+        if Sonora::global(cx)
+            .links
             .read(cx)
-            .hits()
-            .iter()
-            .take(SUGGESTED)
-            .map(|hit| Offer::Hit(Box::new(hit.clone())))
-            .collect()
+            .recognizes(&self.typed, cx)
+        {
+            offers.push(Offer::Link(self.typed.trim().to_owned()));
+            if suggestions.linked_query().is_none() {
+                return offers;
+            }
+        }
+        offers.extend(
+            suggestions
+                .hits()
+                .iter()
+                .take(SUGGESTED)
+                .map(|hit| Offer::Hit(Box::new(hit.clone()))),
+        );
+        offers
     }
 
     /// Whether the panel shows: the field has the keyboard, nothing put the panel away, and it
@@ -321,14 +342,26 @@ impl SearchView {
         cx.notify();
     }
 
-    /// Runs `query` as a full search, files it in the history and puts the panel away.
+    /// Searches by the resolved name or lets the full search load the link's metadata.
     fn run(&mut self, query: &str, cx: &mut Context<Self>) {
         let query = query.trim().to_owned();
         if query.is_empty() {
             return;
         }
-        remember(&query, cx);
-        self.search.update(cx, |search, cx| search.ask(&query, cx));
+        let suggestions = self.suggestions.read(cx);
+        if suggestions.query() == query
+            && let Some(name) = suggestions.linked_query().map(str::to_owned)
+        {
+            self.search_text(&name, cx);
+            return;
+        }
+        self.search_text(&query, cx);
+    }
+
+    /// Runs a full search and records the submitted query in history.
+    fn search_text(&mut self, query: &str, cx: &mut Context<Self>) {
+        remember(query, cx);
+        self.search.update(cx, |search, cx| search.ask(query, cx));
         self.close_panel(cx);
     }
 
@@ -352,6 +385,13 @@ impl SearchView {
     /// it does in the results, which files what was typed in the history as a search would.
     fn take(&mut self, offer: Offer, cx: &mut Context<Self>) {
         match offer {
+            Offer::Link(query) => {
+                Sonora::global(cx)
+                    .links
+                    .clone()
+                    .update(cx, |links, cx| links.open(&query, cx));
+                self.close_panel(cx);
+            }
             Offer::Past(query) => {
                 // Set ahead of the field, so its observer does not take this for typing and
                 // open the panel again.
@@ -404,6 +444,24 @@ impl SearchView {
         let chosen = self.pick == Some(at);
         let query = match offer {
             Offer::Hit(hit) => return self.row(hit, at, at, total, true, chosen, me, cx),
+            Offer::Link(_) => {
+                let label = t!("search-open-link");
+                let taken = offer.clone();
+                let take = me.clone();
+                return Card::new(SharedString::from(offer.key()), label)
+                    .tucked()
+                    .fallback("icons/search.svg")
+                    .press(move |_, _, cx| {
+                        cx.stop_propagation();
+                        take.update(cx, |this, cx| this.take(taken.clone(), cx))
+                            .ok();
+                    })
+                    .chosen(chosen)
+                    .aria_position_in_set(at + 1)
+                    .aria_size_of_set(total)
+                    .when(chosen, |card| card.aria_active_descendant())
+                    .into_any_element();
+            }
             Offer::Past(query) => query,
         };
         let theme = *cx.theme();
@@ -441,7 +499,7 @@ impl SearchView {
 
     /// The panel's rows, with placeholder rows while the first suggestions load. The heading only
     /// names the list for screen readers.
-    fn panel_rows(&self, cx: &Context<Self>) -> AnyElement {
+    fn panel_rows(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
         let offers = self.offers(cx);
         let me = cx.entity().downgrade();
         let heading = match self.typed.trim().is_empty() {
@@ -456,7 +514,11 @@ impl SearchView {
             })
         });
 
-        div()
+        // New rows surface one after another and the panel stretches to fit them, the way the
+        // quick search fills.
+        self.cascade
+            .show(offers.iter().map(|offer| SharedString::from(offer.key())));
+        let list = div()
             .id("search-offers")
             .role(Role::ListBox)
             .aria_label(heading)
@@ -470,13 +532,11 @@ impl SearchView {
                 this.close_panel(cx);
             }))
             .children(waiting.into_iter().flatten())
-            .children(
-                offers
-                    .iter()
-                    .enumerate()
-                    .map(|(at, offer)| self.offer_row(offer, at, offers.len(), &me, cx)),
-            )
-            .into_any_element()
+            .children(offers.iter().enumerate().map(|(at, offer)| {
+                let level = self.cascade.level(&offer.key(), window, cx);
+                Cascade::surface(self.offer_row(offer, at, offers.len(), &me, cx), level)
+            }));
+        self.unfold.wrap(list, false, window, cx).into_any_element()
     }
 
     /// The search field with its panel and the button that runs the full search. Once the page
@@ -484,6 +544,11 @@ impl SearchView {
     /// suggestions get the whole width.
     fn field(&self, gutter: Pixels, window: &Window, cx: &Context<Self>) -> AnyElement {
         let open = self.panel_open(window, cx);
+        // A closed panel forgets its rows and height, so the next one unfolds from nothing.
+        if !open {
+            self.cascade.clear();
+            self.unfold.reset();
+        }
         let me = cx.entity().downgrade();
         let input = div()
             .flex_1()
@@ -520,7 +585,7 @@ impl SearchView {
                 .on_close(move |_, cx| {
                     me.update(cx, |this, cx| this.close_panel(cx)).ok();
                 })
-                .when(open, |this| this.child(self.panel_rows(cx)))
+                .when(open, |this| this.child(self.panel_rows(window, cx)))
         };
 
         let width = cells::content_width(window, cx.theme().metrics.inset * 2., cx);
@@ -855,7 +920,7 @@ impl SearchView {
                             .font_features(tabular())
                             .child(clock(track.duration)),
                     )
-                    .press(pressed(Press::Song(Box::new(track.clone())), me))
+                    .press(pressed(Press::Song(track.clone()), me))
             }
             Hit::Artist(artist) => {
                 let card = Card::new(("artist", place), artist.name.clone())
@@ -925,7 +990,7 @@ impl SearchView {
                 state::Origin::playlist(list.id.clone()).named(list.name.clone())
             }
         };
-        let playing = self.playback.read(cx).playing_from(&origin, cx) == Some(true);
+        let playing = self.playback.read(cx).engaged(&origin, cx);
         let play: Play = Box::new(move |_, _, cx| {
             me.update(cx, |this, cx| {
                 this.playback
@@ -945,7 +1010,7 @@ impl SearchView {
                 Kind::Song,
                 track.name.clone(),
                 track.artist_refs.clone(),
-                Some(Press::Song(Box::new(track.clone()))),
+                Some(Press::Song(track.clone())),
             ),
             Hit::Artist(artist) => (
                 Kind::Artist,
@@ -970,7 +1035,7 @@ impl SearchView {
         let me = cx.entity().downgrade();
         let card = Card::new("best", title)
             .art(theme.metrics.cover * 0.45)
-            .cover(cover(hit).clone())
+            .cover(cover(hit))
             .when(matches!(kind, Kind::Artist), Card::circle)
             .eyebrow(noun(kind))
             .size(Text::Title)
@@ -1241,13 +1306,12 @@ impl SearchView {
         let scroll = bar.read(cx).scroll().clone();
         let me = cx.entity().downgrade();
         let measured = self.lead.clone();
-        let tracked = scroll.clone();
         let deck = Deck::new(format!("{id}-deck"))
             .rows((0..seats.len()).map(|_| row))
             .gap(theme.font_size * ROW_GAP)
             .when(lead.is_some(), |deck| {
                 deck.on_measure(move |top, _, _| {
-                    let content = tracked.bounds().origin.y - scrolled(&tracked);
+                    let content = scroll.bounds().origin.y - scrolled(&scroll);
                     measured.set(top - content);
                 })
             })
@@ -1390,13 +1454,7 @@ fn album_of(hit: &AlbumHit, cx: &App) -> Album {
             artist_refs: hit.artist_refs.clone(),
             cover: hit.cover.clone(),
             cover_large: hit.cover.clone(),
-            release_type: ReleaseType::Album,
-            year: 0,
-            track_count: 0,
-            release_date: String::new(),
-            label: String::new(),
-            copyrights: Vec::new(),
-            added_at: None,
+            ..Default::default()
         })
 }
 
@@ -1410,14 +1468,8 @@ fn playlist_of(hit: &PlaylistHit, cx: &App) -> Playlist {
             id: hit.id.clone(),
             name: hit.name.clone(),
             owner: hit.owner.clone(),
-            owner_id: String::new(),
-            owned: false,
-            collaborative: false,
-            blend: false,
-            public: false,
             cover: hit.cover.clone(),
-            track_count: 0,
-            modified_at: None,
+            ..Default::default()
         })
 }
 
@@ -1432,7 +1484,7 @@ fn artist_of(hit: &ArtistHit, cx: &App) -> SavedArtist {
             id,
             name: hit.name.clone(),
             cover: hit.cover.clone(),
-            added_at: None,
+            ..Default::default()
         })
 }
 
@@ -1460,7 +1512,7 @@ fn meta(hit: &Hit, compact: bool) -> SharedString {
     }
 }
 
-fn tag(kind: Kind) -> SharedString {
+pub(crate) fn tag(kind: Kind) -> SharedString {
     let noun = noun(kind);
     t!("search-tag", kind = &noun)
 }
@@ -1472,7 +1524,7 @@ fn held(saved: usize) -> SharedString {
     }
 }
 
-fn noun(kind: Kind) -> SharedString {
+pub(crate) fn noun(kind: Kind) -> SharedString {
     match kind {
         Kind::Song => t!("kind-song"),
         Kind::Artist => t!("kind-artist"),

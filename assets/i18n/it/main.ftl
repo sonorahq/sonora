@@ -85,6 +85,7 @@ column-index = #
 column-title = Titolo
 column-artist = Artista
 column-album = Album
+column-genre = Genere
 column-date-added = Data aggiunta
 column-added-by = Aggiunto da
 column-modified = Modificato
@@ -96,26 +97,13 @@ column-year = Anno
 column-tracks = Brani
 
 # track menu
-menu-add-to-playlist = Aggiungi alla playlist
-menu-add-tracks-to-playlist = { $count ->
-    [one] Aggiungi { $count } brano alla playlist
-   *[other] Aggiungi { $count } brani alla playlist
-}
 menu-new-playlist = Nuova playlist
 menu-import-playlist = Importa playlist…
 menu-edit-tags = Modifica tag
 menu-no-playlists = Nessuna playlist
 menu-search-playlists = Cerca una playlist
 menu-add-to-library = Aggiungi ai Preferiti
-menu-add-tracks-to-library = { $count ->
-    [one] Aggiungi { $count } brano ai Preferiti
-   *[other] Aggiungi { $count } brani ai Preferiti
-}
 menu-remove-from-library = Rimuovi dai Preferiti
-menu-remove-tracks-from-library = { $count ->
-    [one] Rimuovi { $count } brano dai Preferiti
-   *[other] Rimuovi { $count } brani dai Preferiti
-}
 menu-remove-from-playlist = Rimuovi dalla playlist
 menu-remove-tracks-from-playlist = { $count ->
     [one] Rimuovi { $count } brano dalla playlist
@@ -129,15 +117,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Elimina file del brano
 menu-delete-track-files = Elimina { $count } file dei brani
 menu-download = Scarica
-menu-download-tracks = { $count ->
-    [one] Scarica { $count } brano
-   *[other] Scarica { $count } brani
-}
 menu-remove-download = Rimuovi download
-menu-remove-downloads = { $count ->
-    [one] Rimuovi { $count } download
-   *[other] Rimuovi { $count } download
-}
 menu-downloading = Download in corso. Fai clic per interrompere
 menu-play-next = Riproduci per prossimo
 menu-play-tracks-next = { $count ->
@@ -154,11 +134,8 @@ menu-play-tracks-last = { $count ->
     [one] Riproduci { $count } brano per ultimo
    *[other] Riproduci { $count } brani per ultimi
 }
-menu-go-to = Vai a
-menu-artist = Artista
-menu-album = Album
-menu-radio = Radio
-menu-details = Dettagli
+menu-song-radio = Vai alla radio del brano
+menu-go-to-album = Vai all'album
 menu-go-to-artist = Vai all'artista
 menu-view-details = Mostra dettagli
 menu-copy-link = Copia link
@@ -172,16 +149,6 @@ menu-delete-playlist = Elimina playlist
 menu-export-playlist = Esporta playlist…
 menu-add-playlist-to-library = Aggiungi alla Libreria
 menu-remove-playlist-from-library = Rimuovi dalla Libreria
-menu-library-add = Aggiungi alla Libreria
-menu-library-add-tracks = { $count ->
-    [one] Aggiungi { $count } brano alla Libreria
-   *[other] Aggiungi { $count } brani alla Libreria
-}
-menu-library-remove = Rimuovi dalla Libreria
-menu-library-remove-tracks = { $count ->
-    [one] Rimuovi { $count } brano dalla Libreria
-   *[other] Rimuovi { $count } brani dalla Libreria
-}
 menu-make-playlist-public = Rendi pubblica
 menu-make-playlist-private = Rendi privata
 menu-play-artist = Riproduci artista
@@ -952,6 +919,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } can.
 }
+settings-lyrics = Mostra i testi
+settings-lyrics-detail = Disattiva per nascondere i testi ovunque e smettere di cercarli
 settings-panel-lyrics-size = Dimensione testi (pannello)
 settings-panel-lyrics-size-detail = Dimensione del testo nel pannello laterale, oltre alla dimensione base del carattere
 settings-fullscreen-lyrics-size = Dimensione testi (schermo intero)

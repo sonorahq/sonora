@@ -8,6 +8,7 @@ use gpui::{
 };
 
 use crate::glass::{GLASS_BLUR, blurring, popover_fill};
+use crate::linger::Linger;
 use crate::motion::{Fading as _, Rising as _};
 use crate::theme::ActiveTheme as _;
 
@@ -98,19 +99,22 @@ impl RenderOnce for Dropdown {
             .rising("dropdown-rise");
         // The entrance is a paint filter, which drops a backdrop inside it, so the frost is a
         // sibling under the panel fading in on the same curve, as a context menu does it.
-        let frosted = div()
-            .relative()
-            .when(blurring(cx), |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .rounded(theme.radius)
-                        .backdrop_blur(GLASS_BLUR)
-                        .fading("dropdown-frost"),
-                )
-            })
-            .child(panel);
+        let frosted = Linger::new(
+            "dropdown-linger",
+            div()
+                .relative()
+                .when(blurring(cx), |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .rounded(theme.radius)
+                            .backdrop_blur(GLASS_BLUR)
+                            .fading("dropdown-frost"),
+                    )
+                })
+                .child(panel),
+        );
 
         base.relative()
             .child(anchor)

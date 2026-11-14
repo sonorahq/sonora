@@ -256,6 +256,9 @@ pub struct Input {
     compact: bool,
     tucked: bool,
     blurred: bool,
+    /// Whether the field draws no fill or border of its own, for one that is the whole surface
+    /// it sits on.
+    bare: bool,
     clearable: bool,
     masked: bool,
     /// Whether the text keeps to the field's end rather than its start, as a column of numbers.
@@ -291,6 +294,7 @@ impl Input {
             compact: false,
             tucked: false,
             blurred: false,
+            bare: false,
             clearable: false,
             masked: false,
             end: false,
@@ -331,6 +335,13 @@ impl Input {
     /// `blurring` itself at render.
     pub fn blurred(mut self) -> Self {
         self.blurred = true;
+        self
+    }
+
+    /// Drops the field's fill and border and gives it a list row's height and a larger icon,
+    /// for a field that fills the surface around it, such as the line atop the quick search.
+    pub fn bare(mut self) -> Self {
+        self.bare = true;
         self
     }
 

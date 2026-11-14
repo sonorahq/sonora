@@ -1,7 +1,7 @@
 use crate::metrics::snapped;
 use crate::palette::{CoverPalette, of_image};
 use crate::skeleton::Skeleton;
-use crate::theme::ActiveTheme as _;
+use crate::theme::{ActiveTheme as _, legible};
 use futures::AsyncReadExt as _;
 use futures::channel::oneshot;
 use gpui::prelude::*;
@@ -990,6 +990,11 @@ impl Artwork {
         self
     }
 
+    /// The corner radius a cover takes when it is given none.
+    pub fn rounding(cx: &App) -> Pixels {
+        cx.theme().radius.min(ROUNDED)
+    }
+
     pub fn corner_radius(mut self, radius: Pixels) -> Self {
         self.radius = Some(radius);
         self
@@ -1047,7 +1052,7 @@ impl RenderOnce for Artwork {
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
         let glyph = match accent {
-            true => theme.tint.unwrap_or(theme.primary),
+            true => legible(theme.tint.unwrap_or(theme.primary), theme.background),
             false => muted.opacity(0.5),
         };
         let size = snapped(size, window);
@@ -1056,7 +1061,7 @@ impl RenderOnce for Artwork {
         let rounded = match (circle, radius) {
             (true, _) => size / 2.,
             (false, Some(radius)) => radius,
-            (false, None) => cx.theme().radius.min(ROUNDED),
+            (false, None) => Self::rounding(cx),
         };
         let placeholder = {
             let fallback = fallback.clone();

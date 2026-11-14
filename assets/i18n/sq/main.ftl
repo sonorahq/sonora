@@ -85,6 +85,7 @@ column-index = #
 column-title = Titulli
 column-artist = Artisti
 column-album = Albumi
+column-genre = Zhanri
 column-date-added = Data e shtimit
 column-added-by = Shtuar nga
 column-modified = Ndryshuar
@@ -96,26 +97,13 @@ column-year = Viti
 column-tracks = Këngë
 
 # track menu
-menu-add-to-playlist = Shto te lista e luajtjes
-menu-add-tracks-to-playlist = { $count ->
-    [one] Shto { $count } këngë te lista e luajtjes
-   *[other] Shto { $count } këngë te lista e luajtjes
-}
 menu-new-playlist = Listë e re luajtjeje
 menu-import-playlist = Importo listë luajtjeje…
 menu-edit-tags = Ndrysho etiketat
 menu-no-playlists = Asnjë listë luajtjeje
 menu-search-playlists = Kërko një listë luajtjeje
 menu-add-to-library = Shto te të preferuarat
-menu-add-tracks-to-library = { $count ->
-    [one] Shto { $count } këngë te të preferuarat
-   *[other] Shto { $count } këngë te të preferuarat
-}
 menu-remove-from-library = Hiq nga të preferuarat
-menu-remove-tracks-from-library = { $count ->
-    [one] Hiq { $count } këngë nga të preferuarat
-   *[other] Hiq { $count } këngë nga të preferuarat
-}
 menu-remove-from-playlist = Hiq nga lista e luajtjes
 menu-remove-tracks-from-playlist = { $count ->
     [one] Hiq { $count } këngë nga lista e luajtjes
@@ -129,15 +117,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Fshi skedarin e këngës
 menu-delete-track-files = Fshi { $count } skedarë këngësh
 menu-download = Shkarko
-menu-download-tracks = { $count ->
-    [one] Shkarko { $count } këngë
-   *[other] Shkarko { $count } këngë
-}
 menu-remove-download = Hiq shkarkimin
-menu-remove-downloads = { $count ->
-    [one] Hiq { $count } shkarkim
-   *[other] Hiq { $count } shkarkime
-}
 menu-downloading = Duke shkarkuar. Kliko për ta ndalur
 menu-play-next = Luaj të radhës
 menu-play-tracks-next = { $count ->
@@ -154,11 +134,8 @@ menu-play-tracks-last = { $count ->
     [one] Luaj { $count } këngë të fundit
    *[other] Luaj { $count } këngë të fundit
 }
-menu-go-to = Shko te
-menu-artist = Artisti
-menu-album = Albumi
-menu-radio = Radio
-menu-details = Detajet
+menu-song-radio = Shko te radio e këngës
+menu-go-to-album = Shko te albumi
 menu-go-to-artist = Shko te artisti
 menu-view-details = Shiko detajet
 menu-copy-link = Kopjo lidhjen
@@ -172,16 +149,6 @@ menu-delete-playlist = Fshi listën e luajtjes
 menu-export-playlist = Eksporto listën e luajtjes…
 menu-add-playlist-to-library = Shto te Biblioteka
 menu-remove-playlist-from-library = Hiq nga Biblioteka
-menu-library-add = Shto te Biblioteka
-menu-library-add-tracks = { $count ->
-    [one] Shto { $count } këngë te Biblioteka
-   *[other] Shto { $count } këngë te Biblioteka
-}
-menu-library-remove = Hiq nga Biblioteka
-menu-library-remove-tracks = { $count ->
-    [one] Hiq { $count } këngë nga Biblioteka
-   *[other] Hiq { $count } këngë nga Biblioteka
-}
 menu-make-playlist-public = Bëje publike
 menu-make-playlist-private = Bëje private
 menu-play-artist = Luaj artistin
@@ -951,6 +918,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kan.
 }
+settings-lyrics = Shfaq tekstet
+settings-lyrics-detail = Çaktivizoje për t'i fshehur tekstet kudo dhe për të ndaluar kërkimin e tyre
 settings-panel-lyrics-size = Madhësia e teksteve (panel)
 settings-panel-lyrics-size-detail = Madhësia e tekstit të teksteve në panelin anësor, mbi madhësinë bazë të shkronjave
 settings-fullscreen-lyrics-size = Madhësia e teksteve (ekran i plotë)

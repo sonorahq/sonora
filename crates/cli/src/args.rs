@@ -21,7 +21,7 @@ use crate::item;
 #[derive(Parser)]
 #[command(
     name = "sonora",
-    about = "A native music streaming client",
+    about = "A native, familiar music streaming client",
     override_usage = "sonora [FILE_OR_LINK]...\n       sonora [--json] <COMMAND>",
     disable_help_subcommand = true,
     disable_version_flag = true,

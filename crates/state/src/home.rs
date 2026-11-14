@@ -266,7 +266,7 @@ impl Home {
             .filter(|picks| picks.starts_with(&self.picks));
         held |= !grown || (feed.quick_picks.is_some() && quick_picks.is_none());
 
-        self.pending = held.then_some(feed.clone());
+        self.pending = held.then_some(feed);
         self.take(
             HomeFeed {
                 listen_again,
@@ -513,21 +513,10 @@ mod tests {
             artist_refs: vec![ArtistRef {
                 name: format!("Artist {artist}"),
                 id: Some(format!("artist-{artist}")),
+                channel: false,
             }],
-            album: String::new(),
-            album_id: None,
-            cover: None,
             duration: Duration::from_secs(180),
-            added_at: None,
-            added_by: None,
-            playcount: None,
-            popularity: 0,
-            explicit: false,
-            track_number: 0,
-            disc_number: 0,
-            tags: Vec::new(),
-            languages: Vec::new(),
-            credits: Vec::new(),
+            ..Default::default()
         }
     }
 

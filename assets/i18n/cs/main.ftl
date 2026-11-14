@@ -85,6 +85,7 @@ column-index = #
 column-title = Název
 column-artist = Interpret
 column-album = Album
+column-genre = Žánr
 column-date-added = Datum přidání
 column-added-by = Přidáno uživatelem
 column-modified = Změněno
@@ -96,29 +97,13 @@ column-year = Rok
 column-tracks = Skladby
 
 # track menu
-menu-add-to-playlist = Přidat do playlistu
-menu-add-tracks-to-playlist = { $count ->
-    [one] Přidat { $count } skladbu do playlistu
-    [few] Přidat { $count } skladby do playlistu
-   *[other] Přidat { $count } skladeb do playlistu
-}
 menu-new-playlist = Nový playlist
 menu-import-playlist = Importovat playlist…
 menu-edit-tags = Upravit tagy
 menu-no-playlists = Žádné playlisty
 menu-search-playlists = Hledat playlist
 menu-add-to-library = Přidat do oblíbených
-menu-add-tracks-to-library = { $count ->
-    [one] Přidat { $count } skladbu do oblíbených
-    [few] Přidat { $count } skladby do oblíbených
-   *[other] Přidat { $count } skladeb do oblíbených
-}
 menu-remove-from-library = Odebrat z oblíbených
-menu-remove-tracks-from-library = { $count ->
-    [one] Odebrat { $count } skladbu z oblíbených
-    [few] Odebrat { $count } skladby z oblíbených
-   *[other] Odebrat { $count } skladeb z oblíbených
-}
 menu-remove-from-playlist = Odebrat z playlistu
 menu-remove-tracks-from-playlist = { $count ->
     [one] Odebrat { $count } skladbu z playlistu
@@ -138,17 +123,7 @@ menu-delete-track-files = { $count ->
    *[other] Smazat { $count } souborů skladeb
 }
 menu-download = Stáhnout
-menu-download-tracks = { $count ->
-    [one] Stáhnout { $count } skladbu
-    [few] Stáhnout { $count } skladby
-   *[other] Stáhnout { $count } skladeb
-}
 menu-remove-download = Odebrat ze stažených
-menu-remove-downloads = { $count ->
-    [one] Odebrat { $count } staženou skladbu
-    [few] Odebrat { $count } stažené skladby
-   *[other] Odebrat { $count } stažených skladeb
-}
 menu-downloading = Stahuje se. Kliknutím zastavíš
 menu-play-next = Přehrát jako další
 menu-play-tracks-next = { $count ->
@@ -168,11 +143,8 @@ menu-play-tracks-last = { $count ->
     [few] Přehrát { $count } skladby jako poslední
    *[other] Přehrát { $count } skladeb jako poslední
 }
-menu-go-to = Přejít na
-menu-artist = Interpret
-menu-album = Album
-menu-radio = Rádio
-menu-details = Podrobnosti
+menu-song-radio = Přejít na rádio skladby
+menu-go-to-album = Přejít na album
 menu-go-to-artist = Přejít na interpreta
 menu-view-details = Zobrazit podrobnosti
 menu-copy-link = Kopírovat odkaz
@@ -186,18 +158,6 @@ menu-delete-playlist = Smazat playlist
 menu-export-playlist = Exportovat playlist…
 menu-add-playlist-to-library = Přidat do knihovny
 menu-remove-playlist-from-library = Odebrat z knihovny
-menu-library-add = Přidat do knihovny
-menu-library-add-tracks = { $count ->
-    [one] Přidat { $count } skladbu do knihovny
-    [few] Přidat { $count } skladby do knihovny
-   *[other] Přidat { $count } skladeb do knihovny
-}
-menu-library-remove = Odebrat z knihovny
-menu-library-remove-tracks = { $count ->
-    [one] Odebrat { $count } skladbu z knihovny
-    [few] Odebrat { $count } skladby z knihovny
-   *[other] Odebrat { $count } skladeb z knihovny
-}
 menu-make-playlist-public = Nastavit jako veřejný
 menu-make-playlist-private = Nastavit jako soukromý
 menu-play-artist = Přehrát interpreta
@@ -984,6 +944,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kan.
 }
+settings-lyrics = Zobrazovat texty písní
+settings-lyrics-detail = Vypnutím skryjete texty písní všude a přestanou se vyhledávat
 settings-panel-lyrics-size = Velikost textu (panel)
 settings-panel-lyrics-size-detail = Velikost textu písně v postranním panelu nad základní velikostí písma
 settings-fullscreen-lyrics-size = Velikost textu (celá obrazovka)

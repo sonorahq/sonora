@@ -218,6 +218,7 @@ fn overview(data: Data, artist_id: &str) -> Result<Overview> {
     let artist_ref = ArtistRef {
         name: artist.profile.name.clone(),
         id: Some(artist_id.to_owned()),
+        channel: false,
     };
     let albums = releases(albums, singles, compilations, &artist_ref);
 

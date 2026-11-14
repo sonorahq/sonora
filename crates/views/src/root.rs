@@ -3,8 +3,8 @@ use gpui::{App, Font, FontFallbacks, SharedString, StyleRefinement, font, prelud
 use gpui::{Window, div};
 use input::{
     CloseWindow, MinimizeWindow, NavigateBack, NavigateForward, OpenFilter, OpenSearch,
-    OpenSettings, Refresh, ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue,
-    ToggleWindowFullscreen, ZoomWindow,
+    OpenSettings, Refresh, ShowMembers, ToggleFullscreen, ToggleLyrics, TogglePowerbar,
+    ToggleQueue, ToggleWindowFullscreen, ZoomWindow,
 };
 use router::{Destination, NavigationEvent, Screen, back, forward, navigate};
 use state::{
@@ -15,8 +15,8 @@ use state::{
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ui::WindowFrame;
 use ui::{
-    ActiveTheme as _, Dismiss, Entrance, INPUT_CONTEXT, Look, Stillness, Theme, ThemeKind,
-    clear_listing,
+    ActiveTheme as _, Dismiss, Entrance, INPUT_CONTEXT, Look, Springs, Sprung, Stillness, Theme,
+    ThemeKind, clear_listing,
 };
 
 use crate::chrome::{
@@ -25,13 +25,21 @@ use crate::chrome::{
 use crate::screens::search::SearchView;
 use crate::screens::settings::SettingsHeader;
 use crate::shared::ambient::{self, Ambient};
+use crate::shared::powerbar::Powerbar;
 use crate::shared::tracks::{LIBRARY_COLUMNS, album_columns};
+use crate::shared::transport::{CoverAway, CoverFade, ShellSwap};
 use crate::shells::Shell;
 use crate::shells::workspace::Workspace;
 use crate::{
     Adaptive, ArtistView, DetailView, EqualizerView, FullscreenView, GenreView, HistoryView,
     HomeView, LibraryView, LoginView, SettingsView, SongView, UserView,
 };
+
+/// How much smaller than its size the fullscreen player starts as it opens, zooming up to fill
+/// the window.
+const SHELL_ZOOM: f32 = 0.03;
+/// How close the opening zoom comes to its end before it counts as landed.
+const SHELL_ZOOM_REST: f32 = 1e-3;
 
 struct Screens {
     home: Entity<HomeView>,
@@ -102,6 +110,8 @@ pub struct Root {
     jam_invite: Entity<JamInvite>,
     /// The question before a linked theme is installed, drawn over whichever shell is up.
     theme_invite: Entity<ThemeInvite>,
+    /// The quick search, drawn over whichever shell is up so it opens in fullscreen too.
+    powerbar: Entity<Powerbar>,
     shells: Shells,
     view: RootView,
     signing_in: bool,
@@ -110,6 +120,15 @@ pub struct Root {
     navigation_transition: Option<Task<()>>,
     /// The entrance the shell plays as the window moves from one shell to another.
     shell_entrance: Option<Entrance>,
+    /// How much of the fullscreen player its opening still hides, springing from 1 as it opens
+    /// to 0, where it lets go. The player fades in as it zooms up from a little smaller.
+    shell_zoom: Option<Sprung>,
+    /// How much of the fullscreen player is still showing over the workspace it gave way to,
+    /// springing from 1 as it closes to 0.
+    shell_leave: Option<Sprung>,
+    /// Whether the closing player has faded out and draws one last frame, in which the player
+    /// bar takes its cover back under the one that just landed on it.
+    shell_left: bool,
     /// The OS fullscreen move the next render owes the fullscreen view, true as it opens and
     /// false as it closes.
     os_follow: Option<bool>,
@@ -143,6 +162,9 @@ impl Root {
             if matches!(session.read(cx).state(), SessionState::SignedOut) {
                 this.navigation_transition = None;
                 this.shell_entrance = None;
+                this.shell_zoom = None;
+                this.shell_leave = None;
+                this.shell_left = false;
                 this.shells
                     .workspace
                     .update(cx, |workspace, cx| workspace.finish_transition(cx));
@@ -213,6 +235,9 @@ impl Root {
         let queries = cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
         let suggestions =
             cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
+        // The quick search asks on its own, so typing in it leaves the search screen as it was.
+        let quick = cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
+        let powerbar = Powerbar::entity(quick, playback.clone(), cx);
         let genres = cx.new(|cx| Genres::new(session.clone(), io.clone(), cx));
         let search = cx.new(|cx| {
             SearchView::new(
@@ -292,8 +317,10 @@ impl Root {
             .detach();
         update_focus_for_wake(window, cx);
 
+        ui::WindowBlur::update(window, cx);
         window
-            .observe_window_appearance(|_, cx| {
+            .observe_window_appearance(|window, cx| {
+                ui::WindowBlur::update(window, cx);
                 let settings = Sonora::global(cx).settings.clone();
                 let reported = ThemeKind::reported(cx);
                 let changed = ThemeKind::assumed() != Some(reported);
@@ -323,7 +350,7 @@ impl Root {
             login,
             title_bar,
             shells: Shells {
-                workspace: workspace.clone(),
+                workspace,
                 fullscreen,
             },
             view: RootView::Workspace,
@@ -332,6 +359,9 @@ impl Root {
             pending: None,
             navigation_transition: None,
             shell_entrance: None,
+            shell_zoom: None,
+            shell_leave: None,
+            shell_left: false,
             os_follow: None,
             os_entered: false,
             screens: Screens {
@@ -362,6 +392,7 @@ impl Root {
             ambient,
             jam_invite: cx.new(JamInvite::new),
             theme_invite: cx.new(ThemeInvite::new),
+            powerbar,
             background: None,
             font: None,
             #[cfg(target_os = "windows")]
@@ -721,12 +752,15 @@ impl Root {
         }
     }
 
-    /// Moves to `destination`. A move to another shell plays the entrance over the whole
-    /// window, a move within the workspace plays it over the page, and reduced motion skips
-    /// both.
+    /// Moves to `destination`. Opening the fullscreen player zooms it in, a move back to the
+    /// workspace plays the entrance over the whole window, a move within the workspace plays it
+    /// over the page, and reduced motion skips them all.
     fn transition_to(&mut self, destination: Destination, cx: &mut Context<Self>) {
         self.navigation_transition = None;
         self.shell_entrance = None;
+        self.shell_zoom = None;
+        self.shell_leave = None;
+        self.shell_left = false;
 
         let next = RootView::of(&destination);
         let moving = next != self.view;
@@ -736,7 +770,19 @@ impl Root {
                 .update(cx, |workspace, cx| workspace.finish_transition(cx));
             self.show(destination, cx);
             if moving && !cx.reduce_motion() {
-                self.reveal_shell(cx);
+                // Set here rather than in render, so the cached player bar hears of it before
+                // the first frame of the move draws.
+                cx.set_global(match next {
+                    RootView::Fullscreen => ShellSwap::Opening,
+                    RootView::Workspace => ShellSwap::Closing,
+                });
+                match next {
+                    RootView::Fullscreen => self.shell_zoom = Some(Sprung::at(1.)),
+                    RootView::Workspace => {
+                        self.shell_leave = Some(Sprung::at(1.));
+                        self.reveal_shell(cx);
+                    }
+                }
             }
             return;
         }
@@ -805,6 +851,45 @@ impl Root {
             }
         }
         entrance.hidden()
+    }
+
+    /// How much of the fullscreen player its opening zoom still hides, stepping the spring and
+    /// asking for the next frame while it runs. The player holds cached views, which replay the
+    /// opacity they were first painted with, so every frame of the fade repaints the window.
+    fn fullscreen_hidden(&mut self, window: &mut Window, cx: &Context<Self>) -> f32 {
+        let Some(zoom) = self.shell_zoom.as_mut() else {
+            return 0.;
+        };
+        let hidden = match self.view {
+            RootView::Fullscreen => zoom.follow(0., Springs::shell(), SHELL_ZOOM_REST, window, cx),
+            RootView::Workspace => 0.,
+        };
+        match hidden > 0. {
+            true => window.on_next_frame(|window, _| window.refresh()),
+            false => self.shell_zoom = None,
+        }
+        hidden
+    }
+
+    /// How much of the fullscreen player still shows over the workspace as it closes, stepping
+    /// the spring and repainting the window for every frame of the fade, as its opening does.
+    /// It runs at the pace the cover flies back to the player bar, and answers 0 for one frame
+    /// more once it is done, `None` when no player is closing.
+    fn fullscreen_left(&mut self, window: &mut Window, cx: &Context<Self>) -> Option<f32> {
+        let leave = self.shell_leave.as_mut()?;
+        let left = match self.view {
+            RootView::Workspace => {
+                leave.follow(0., Springs::ARTWORK_FLIGHT, SHELL_ZOOM_REST, window, cx)
+            }
+            RootView::Fullscreen => 0.,
+        };
+        if left <= 0. && std::mem::replace(&mut self.shell_left, true) {
+            self.shell_leave = None;
+            self.shell_left = false;
+            return None;
+        }
+        window.on_next_frame(|window, _| window.refresh());
+        Some(left)
     }
 
     /// Loads the screen on show again, which is what a page that gave up while the network was
@@ -1121,6 +1206,8 @@ impl Render for Root {
         // background quad correct and costs nothing.
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let radius = crate::chrome::window_radius(Sonora::global(cx).settings.read(cx), cx, window);
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        window.set_window_corner_radius(radius.unwrap_or_default());
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<gpui::Pixels> = None;
 
@@ -1137,16 +1224,54 @@ impl Render for Root {
         // until the veil lifted.
         let hidden = self.shell_hidden(window, cx);
         let dissolving = theme.transparent;
+        // Opening fullscreen fades the player in while it zooms up from a little smaller. The zoom is a paint filter, which drops the backdrop
+        // blurs inside it, so it lets go as soon as what is left of it is under half a pixel and
+        // the frosted controls get their blur back while the fade finishes.
+        let zooming = self.fullscreen_hidden(window, cx);
+        let left = self.fullscreen_left(window, cx);
+        let away = zooming > 0. || left.is_some_and(|left| left > 0.);
+        if cx.try_global::<CoverAway>().is_none_or(|was| was.0 != away) {
+            cx.set_global(CoverAway(away));
+        }
+        let fade = 1. - zooming;
+        if cx.try_global::<CoverFade>().is_none_or(|was| was.0 != fade) {
+            cx.set_global(CoverFade(fade));
+        }
+        // The fullscreen button swaps in place for the whole move, the workspace's entrance
+        // included, since that scrim would otherwise dim the player bar's button once it is back.
+        let swap = match self.view {
+            RootView::Fullscreen if zooming > 0. => ShellSwap::Opening,
+            RootView::Workspace if left.is_some() || hidden > 0. => ShellSwap::Closing,
+            _ => ShellSwap::Settled,
+        };
+        if cx.try_global::<ShellSwap>().is_none_or(|was| *was != swap) {
+            cx.set_global(swap);
+        }
+        let viewport = window.viewport_size();
+        let reach = f32::from(viewport.width.max(viewport.height));
+        let zoom = (zooming * SHELL_ZOOM * reach / 2. >= 0.5).then_some(1. - SHELL_ZOOM * zooming);
         let shell = match self.view {
             RootView::Workspace => self.shells.workspace.clone().into_any_element(),
             RootView::Fullscreen => self.shells.fullscreen.clone().into_any_element(),
         };
+        // While fullscreen opens, the workspace it leaves fades out under it, and nothing in it
+        // answers the pointer.
+        let leaving = (zooming > 0. && matches!(self.view, RootView::Fullscreen)).then(|| {
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .flex_col()
+                .opacity(zooming)
+                .child(self.shells.workspace.clone())
+        });
         let shell = div()
             .relative()
             .flex()
             .flex_col()
             .flex_1()
             .min_h_0()
+            .children(leaving)
             .child(
                 div()
                     .flex()
@@ -1154,6 +1279,8 @@ impl Render for Root {
                     .flex_1()
                     .min_h_0()
                     .when(hidden > 0. && dissolving, |this| this.opacity(1. - hidden))
+                    .when(zooming > 0., |this| this.opacity(1. - zooming).occlude())
+                    .when_some(zoom, |this, zoom| this.layer_scale(zoom))
                     .child(shell),
             )
             .when(hidden > 0. && !dissolving, |this| {
@@ -1166,8 +1293,22 @@ impl Render for Root {
                         .opacity(hidden),
                 )
             })
+            // The fullscreen player fades out over the workspace it gives way to.
+            // Its cover draws above the fade and flies down onto the player bar's.
+            .when_some(left, |this, left| {
+                this.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .flex_col()
+                        .opacity(left * left)
+                        .child(self.shells.fullscreen.clone()),
+                )
+            })
             .child(self.jam_invite.clone())
-            .child(self.theme_invite.clone());
+            .child(self.theme_invite.clone())
+            .child(self.powerbar.clone());
 
         let root = div()
             .relative()
@@ -1233,6 +1374,12 @@ impl Render for Root {
             .on_action(
                 cx.listener(|this, _: &ToggleLyrics, _, cx| this.show_side(SideTab::Lyrics, cx)),
             )
+            .on_action(cx.listener(|this, _: &TogglePowerbar, window, cx| {
+                // The sign-in screen stands in for every shell, so there is nothing to search.
+                if !this.signing_in {
+                    Powerbar::toggle(window, cx);
+                }
+            }))
             .on_action(
                 cx.listener(|this, _: &ShowMembers, _, cx| this.reveal_side(SideTab::Members, cx)),
             )
@@ -1253,6 +1400,8 @@ impl Render for Root {
                 |this| this.child(div().flex().flex_1().min_h_0().child(self.login.clone())),
                 |this| this.child(shell),
             );
+        // A closed menu or dialog fades out here, over everything else in the window.
+        let root = root.child(ui::lingers());
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let root = root.child(WindowFrame::new());
         root

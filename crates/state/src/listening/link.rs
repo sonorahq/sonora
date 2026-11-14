@@ -1,7 +1,8 @@
 //! The WebSocket to the Sonora Session server, run on tokio. Requests go in through a channel and
 //! replies come out of another, so the entity never touches the socket itself.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures::{SinkExt as _, StreamExt as _};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -13,6 +14,10 @@ use crate::Io;
 /// How often the server's clock is asked for. It also keeps the connection from going idle,
 /// which the server hangs up on after a minute.
 const PING: Duration = Duration::from_secs(5);
+/// How many pings go out quickly once connected, so the clock is read well before playback is
+/// first brought in step, and how far apart they are.
+const BURST: u32 = 10;
+const BURST_GAP: Duration = Duration::from_millis(150);
 /// How long connecting may take before it counts as out of reach.
 const CONNECT: Duration = Duration::from_secs(10);
 
@@ -43,11 +48,18 @@ impl Link {
     }
 }
 
-/// This client's clock in milliseconds since the Unix epoch.
+/// This client's clock in milliseconds since the Unix epoch. It is read once and runs on the
+/// monotonic clock from there, so the system clock being set or slewed never moves it under the
+/// offsets measured against the server.
 pub(crate) fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_millis() as u64)
+    static ORIGIN: OnceLock<(Instant, u64)> = OnceLock::new();
+    let (start, epoch) = ORIGIN.get_or_init(|| {
+        let epoch = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis() as u64);
+        (Instant::now(), epoch)
+    });
+    epoch + start.elapsed().as_millis() as u64
 }
 
 async fn run(
@@ -70,7 +82,8 @@ async fn run(
         }
     };
     let (mut sink, mut stream) = socket.split();
-    let mut ping = tokio::time::interval(PING);
+    let mut ping = tokio::time::interval(BURST_GAP);
+    let mut pinged = 0;
     let mut pending = Some(first);
 
     loop {
@@ -106,6 +119,12 @@ async fn run(
         let Some(request) = request else {
             continue;
         };
+        if matches!(request, Request::Ping { .. }) {
+            pinged += 1;
+            if pinged == BURST {
+                ping = tokio::time::interval_at(tokio::time::Instant::now() + PING, PING);
+            }
+        }
         let text = match serde_json::to_string(&request) {
             Ok(text) => text,
             Err(error) => {

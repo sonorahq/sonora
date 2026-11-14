@@ -106,7 +106,7 @@ impl HttpClient for Client {
                     outgoing = outgoing.body(body);
                 }
 
-                let incoming = outgoing.send().await?;
+                let incoming = outgoing.send().await.map_err(reqwest::Error::without_url)?;
                 let status = incoming.status();
                 let is_image = incoming
                     .headers()
@@ -291,7 +291,10 @@ impl DiskCache {
 }
 
 fn key(url: &str) -> String {
-    format!("{:x}", Sha256::digest(url.as_bytes()))
+    Sha256::digest(url.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn cache_entry(path: &Path) -> bool {

@@ -116,7 +116,33 @@ const LISTED_FILES: usize = 5;
 /// room for a skip that has not been heard yet.
 const SIGNALS: usize = 4;
 /// The FAQ entry on why Spotify may refuse an account the keys to its audio.
+/// How long the pointer rests on a play button before its collection is fetched, so a pointer
+/// crossing a row of covers asks for none of them.
+const WARM_DWELL: Duration = Duration::from_millis(40);
+/// How long a fetched collection may start a press without being asked for again.
+const WARM_TTL: Duration = Duration::from_secs(120);
 const KEYS_FAQ: &str = "https://sonorahq.org/faq#spotify-playback-keys";
+
+/// A collection fetched for a play button, so a press on it need not wait for its tracks.
+struct Warm {
+    origin: Origin,
+    /// The tracks, the radio continuation and when they arrived.
+    loaded: Option<(Vec<Track>, Option<String>, Instant)>,
+    /// The fetch while it runs unclaimed. A press moves it to the playback's `fetch`.
+    fetch: Option<Task<()>>,
+}
+
+impl Warm {
+    /// Whether a press on `origin` can use this, which takes a fetch still running or tracks
+    /// that arrived recently.
+    fn serves(&self, origin: &Origin) -> bool {
+        let recent = self
+            .loaded
+            .as_ref()
+            .is_some_and(|(_, _, at)| at.elapsed() < WARM_TTL);
+        self.origin == *origin && (self.fetch.is_some() || recent)
+    }
+}
 
 /// A track the engine was asked to fetch ahead, and whether it was also lined up to follow the
 /// current one gaplessly.
@@ -343,7 +369,7 @@ impl Origin {
         let tracks = match self.whence {
             Whence::Album => client.album_tracks(&self.id).await?,
             Whence::Playlist => client.playlist_tracks(&self.id).await?,
-            Whence::Artist => client.artist(&self.id).await?.top_tracks,
+            Whence::Artist => client.artist_tracks(&self.id).await?,
             Whence::Saved => client.saved_tracks().await?,
             Whence::Radio => {
                 let (mut tracks, next) = client.track_radio(&self.id, None).await?;
@@ -467,6 +493,11 @@ pub struct Playback {
     load: Option<Task<()>>,
     /// The collection being fetched to start or extend the queue.
     fetch: Option<Task<()>>,
+    /// The collection a press is waiting on and whether it asked for shuffle. It means
+    /// something only while `fetch` holds the load.
+    sought: Option<(Origin, bool)>,
+    /// The collection last fetched for a play button, before or after its press.
+    warm: Option<Warm>,
     enqueue: Option<Task<()>>,
     suggest: Option<Task<()>>,
     /// The track the engine was asked to fetch ahead, so it is asked once.
@@ -518,6 +549,9 @@ pub struct Playback {
     /// How many seeks the listener asked for, which a Sonora Session watches to share them. Seeks
     /// made for the session itself, through `locally`, are not counted.
     seeks: u64,
+    /// How many tracks played out to their end, which a Sonora Session tells apart from the
+    /// listener moving on.
+    ends: u64,
 }
 
 impl EventEmitter<PlaybackEvent> for Playback {}
@@ -530,6 +564,14 @@ impl Playback {
         equalizer: &Entity<Equalizer>,
         cx: &mut Context<Self>,
     ) -> Self {
+        // An engine can run a program of its own, as Soloist does. Letting go of the engine
+        // stops it, and the app waits for that before it is gone.
+        cx.on_app_quit(|this, _| {
+            this.task = None;
+            this.engine = None;
+            music::soloist::stopped()
+        })
+        .detach();
         cx.subscribe(&session, |this, session, event, cx| match event {
             SessionEvent::SignedIn => {
                 let Some(playback) = session.read(cx).playback() else {
@@ -634,6 +676,8 @@ impl Playback {
             local_task: None,
             load: None,
             fetch: None,
+            sought: None,
+            warm: None,
             enqueue: None,
             suggest: None,
             preloaded: None,
@@ -659,6 +703,7 @@ impl Playback {
             devices: None,
             local: false,
             seeks: 0,
+            ends: 0,
         };
         // Start the local engine at startup so files can play before the first scan.
         if let Some(factory) = playback.session.read(cx).local_playback() {
@@ -1063,6 +1108,7 @@ impl Playback {
 
         let seed_id = seed.id.clone();
         let title = seed.name.clone();
+        self.sought = None;
         self.fetch = Some(Io::global(cx).load(
             async move {
                 let (mut tracks, next) = client.track_radio(&id, None).await?;
@@ -1375,6 +1421,152 @@ impl Playback {
         }
     }
 
+    /// Whether a play button for `origin` shows pause: its tracks play, or a press on it is
+    /// still fetching them. The second half is what answers the press in the frame it lands.
+    pub fn engaged(&self, origin: &Origin, cx: &App) -> bool {
+        self.playing_from(origin, cx) == Some(true) || self.awaits(origin)
+    }
+
+    /// Whether a press on `origin` is waiting for its tracks.
+    fn awaits(&self, origin: &Origin) -> bool {
+        self.fetch.is_some()
+            && self
+                .sought
+                .as_ref()
+                .is_some_and(|(sought, _)| sought == origin)
+    }
+
+    /// Fetches `origin` ahead of a press, as when the pointer rests on its play button, so the
+    /// press starts it at once. One collection is kept at a time. Asking again for the one held
+    /// or the one playing does nothing.
+    pub fn warm_origin(&mut self, origin: &Origin, cx: &mut Context<Self>) {
+        if !matches!(
+            origin.whence,
+            Whence::Album | Whence::Playlist | Whence::Artist | Whence::Radio
+        ) {
+            return;
+        }
+        if self.origin(cx) == Some(origin) || self.awaits(origin) {
+            return;
+        }
+        if self.warm.as_ref().is_some_and(|warm| warm.serves(origin)) {
+            return;
+        }
+        let Some(client) = self.client_for(&origin.id, cx) else {
+            return;
+        };
+        self.warm = Some(Warm {
+            origin: origin.clone(),
+            loaded: None,
+            fetch: Some(self.collect(origin.clone(), client, WARM_DWELL, cx)),
+        });
+    }
+
+    /// Fetches the tracks of `origin` after `dwell` and hands them to `collected`.
+    fn collect(
+        &self,
+        origin: Origin,
+        client: Arc<dyn MusicApi>,
+        dwell: Duration,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let io = Io::global(cx);
+        cx.spawn(async move |this, cx| {
+            if !dwell.is_zero() {
+                cx.background_executor().timer(dwell).await;
+            }
+            let from = origin.clone();
+            let loaded = crate::join(io.spawn(async move { from.load(&*client).await })).await;
+            this.update(cx, |this, cx| this.collected(origin, loaded, cx))
+                .ok();
+        })
+    }
+
+    /// Takes the tracks of `origin` once they arrive. A press that was waiting on them starts
+    /// the queue. With no press they are kept for one, and the track a press would open is
+    /// fetched ahead too.
+    fn collected(
+        &mut self,
+        origin: Origin,
+        loaded: Result<(Vec<Track>, Option<String>)>,
+        cx: &mut Context<Self>,
+    ) {
+        let pressed = match self.awaits(&origin) {
+            true => self.sought.take().map(|(_, shuffled)| shuffled),
+            false => None,
+        };
+        let held = self.warm.as_ref().is_some_and(|warm| warm.origin == origin);
+        match loaded {
+            Ok((tracks, next)) => {
+                let kept = Some((tracks.clone(), next.clone(), Instant::now()));
+                match &mut self.warm {
+                    Some(warm) if held => {
+                        warm.loaded = kept;
+                        warm.fetch = None;
+                    }
+                    // another collection is being fetched for the pointer, so this one is
+                    // not kept
+                    Some(warm) if warm.fetch.is_some() => {}
+                    _ => {
+                        self.warm = Some(Warm {
+                            origin: origin.clone(),
+                            loaded: kept,
+                            fetch: None,
+                        })
+                    }
+                }
+                match pressed {
+                    Some(shuffled) => self.arrive(origin, tracks, next, shuffled, cx),
+                    None if !self.queue.read(cx).shuffle() => {
+                        if let Some(index) = self.opener(&tracks, cx) {
+                            self.preload(&tracks[index]);
+                        }
+                    }
+                    None => {}
+                }
+            }
+            Err(error) => {
+                if held {
+                    self.warm = None;
+                }
+                match pressed {
+                    None => log::debug!("playback: cannot fetch a collection ahead: {error:#}"),
+                    Some(_) if self.has_active_playback() => {
+                        log::error!("playback: cannot load context: {error:#}");
+                        cx.notify();
+                    }
+                    Some(_) => {
+                        let reason = crate::blamed(&error, cx);
+                        self.failed(reason, cx);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Starts the queue from the fetched tracks of `origin`, shuffled when the press asked.
+    fn arrive(
+        &mut self,
+        origin: Origin,
+        tracks: Vec<Track>,
+        next: Option<String>,
+        shuffled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if shuffled && !tracks.is_empty() {
+            self.queue
+                .update(cx, |queue, cx| queue.set_shuffle(true, cx));
+        }
+        let index = self.opener(&tracks, cx).unwrap_or_default();
+        let station = next.map(|next| Station {
+            origin: origin.clone(),
+            next,
+        });
+        if self.begin(tracks, index, Some(origin), cx) {
+            self.station = station;
+        }
+    }
+
     /// Drops the station the queue was playing, continuation and fetch alike, once the queue
     /// is something else.
     fn leave_station(&mut self) {
@@ -1416,43 +1608,33 @@ impl Playback {
         true
     }
 
-    /// Fetches a collection and starts the queue from it, keeping the continuation if it is a
-    /// station. Shows Loading only when nothing plays yet, so a failure mid-playback is logged
-    /// rather than shown.
-    fn gather(&mut self, origin: Origin, cx: &mut Context<Self>) {
+    /// Starts the queue from a collection, keeping the continuation if it is a station. Tracks
+    /// fetched ahead by `warm_origin` start it at once, and a fetch still running is waited on
+    /// rather than repeated. Shows Loading only when nothing plays yet, so a failure
+    /// mid-playback is logged rather than shown.
+    fn gather(&mut self, origin: Origin, shuffled: bool, cx: &mut Context<Self>) {
         let Some(client) = self.client_for(&origin.id, cx) else {
             return;
         };
-
+        if self.awaits(&origin) {
+            return;
+        }
+        let warm = self.warm.as_mut().filter(|warm| warm.serves(&origin));
+        if let Some((tracks, next, _)) = warm.as_ref().and_then(|warm| warm.loaded.clone()) {
+            self.fetch = None;
+            self.sought = None;
+            return self.arrive(origin, tracks, next, shuffled, cx);
+        }
+        let running = warm.and_then(|warm| warm.fetch.take());
         if !self.has_active_playback() && self.steering(cx).is_none() {
             self.state = PlaybackState::Loading;
-            cx.notify();
         }
-
-        let from = origin.clone();
-        self.fetch = Some(Io::global(cx).load(
-            async move { from.load(&*client).await },
-            move |this, loaded, cx| match loaded {
-                Ok((tracks, next)) => {
-                    let index = this.opener(&tracks, cx).unwrap_or_default();
-                    let station = next.map(|next| Station {
-                        origin: origin.clone(),
-                        next,
-                    });
-                    if this.begin(tracks, index, Some(origin), cx) {
-                        this.station = station;
-                    }
-                }
-                Err(error) if this.has_active_playback() => {
-                    log::error!("playback: cannot load context: {error:#}");
-                }
-                Err(error) => {
-                    let reason = crate::blamed(&error, cx);
-                    this.failed(reason, cx);
-                }
-            },
-            cx,
-        ));
+        self.fetch = Some(match running {
+            Some(running) => running,
+            None => self.collect(origin.clone(), client, Duration::ZERO, cx),
+        });
+        self.sought = Some((origin, shuffled));
+        cx.notify();
     }
 
     /// Skips to the next playable track.
@@ -1799,6 +1981,7 @@ impl Playback {
 
         let origin = Origin::radio(id.clone()).named(seed.name.clone());
         let heard = self.queue.read(cx).ids();
+        self.sought = None;
         self.fetch = Some(Io::global(cx).load(
             async move {
                 let (mut tracks, _) = client.track_radio(&id, None).await?;
@@ -2129,10 +2312,20 @@ impl Playback {
     pub fn play_origin(&mut self, origin: Origin, cx: &mut Context<Self>) {
         match origin.whence {
             Whence::Album | Whence::Playlist | Whence::Artist | Whence::Radio => {
-                self.gather(origin, cx)
+                self.gather(origin, false, cx)
             }
             // the table plays these
             Whence::Saved | Whence::Local => {}
+        }
+    }
+
+    /// Turns shuffle on and plays `origin` from a random track once its tracks are loaded.
+    pub fn shuffle_origin(&mut self, origin: Origin, cx: &mut Context<Self>) {
+        if matches!(
+            origin.whence,
+            Whence::Album | Whence::Playlist | Whence::Artist | Whence::Radio
+        ) {
+            self.gather(origin, true, cx);
         }
     }
 
@@ -2235,6 +2428,11 @@ impl Playback {
     /// How many seeks the listener asked for since launch.
     pub fn seeks(&self) -> u64 {
         self.seeks
+    }
+
+    /// How many tracks played out to their end since launch.
+    pub fn ends(&self) -> u64 {
+        self.ends
     }
 
     pub fn state(&self) -> &PlaybackState {
@@ -2460,6 +2658,12 @@ impl Playback {
         &self.vault
     }
 
+    /// Rewrites the downloads `ids` that are still sealed as plain files, for a provider that
+    /// keeps plain downloads. `None` while there is no streaming engine.
+    pub fn unseal(&self, ids: Vec<String>) -> Option<BoxFuture<'static, ()>> {
+        self.engine.as_deref().map(|engine| engine.unseal(ids))
+    }
+
     /// Turns caching played tracks on or off. Turning it off also removes every cached track,
     /// and downloads stay. Spotify keeps its own files and follows at its next sign-in.
     pub fn set_keep_tracks(&mut self, on: bool, cx: &mut Context<Self>) {
@@ -2544,6 +2748,14 @@ impl Playback {
             true => self.start_engine(playback, cx),
             false => self.rebind(playback, cx),
         }
+    }
+
+    /// Rebuilds the streaming engine after the provider changed which engine it plays through,
+    /// and lifts a refusal the old one ran into.
+    pub(crate) fn switch_engine(&mut self, cx: &mut Context<Self>) {
+        self.refused = None;
+        self.failures = 0;
+        self.restart_engine(cx);
     }
 
     /// Rebuilds every running engine on the audio device it should play on now, as when the
@@ -2855,6 +3067,7 @@ impl Playback {
             }
             BackendEvent::Ended { .. } => {
                 let ended = self.track.take();
+                self.ends += 1;
                 self.state = PlaybackState::Idle;
                 self.position = Duration::ZERO;
                 self.clock.reset(Duration::ZERO, false);
@@ -2941,6 +3154,8 @@ impl Playback {
         if !self.local_active() {
             self.load = None;
             self.fetch = None;
+            self.sought = None;
+            self.warm = None;
             self.enqueue = None;
             self.suggest = None;
             self.seeded = None;
@@ -3074,7 +3289,9 @@ impl Playback {
         cx.notify();
     }
 
-    /// Records that Spotify denied an audio key and stops for the rest of the session.
+    /// Records that Spotify denied an audio key, or that Soloist can no longer sign in, and
+    /// stops for the rest of the session. Where Soloist runs, the toast leads to its setup, which
+    /// is the way past either. Elsewhere it explains the refusal.
     fn refuse(&mut self, cx: &mut Context<Self>) {
         let first = self.refused.is_none();
         self.refused = Some(Refusal::Keys);
@@ -3090,12 +3307,25 @@ impl Playback {
                  this session"
             );
         }
-        Toasts::post(
-            Toast::new(Outcome::Failed, "toast-keys-error")
-                .note("toast-keys-refused")
-                .visit("toast-why", KEYS_FAQ),
-            cx,
-        );
+        let note = match music::soloist::ready() {
+            true => "toast-soloist-refused",
+            false => "toast-keys-refused",
+        };
+        let toast = Toast::new(Outcome::Failed, "toast-keys-error").note(note);
+        let toast = match music::soloist::supported() {
+            true => toast.lead("toast-soloist-setup", Target::PlaybackSettings, |cx| {
+                let soloist = Sonora::global(cx).soloist.clone();
+                soloist.update(cx, |soloist, cx| soloist.begin(cx));
+            }),
+            false => toast.visit("toast-why", KEYS_FAQ),
+        };
+        Toasts::post(toast, cx);
+        if let Some(soloist) = cx
+            .try_global::<Sonora>()
+            .map(|sonora| sonora.soloist.clone())
+        {
+            soloist.update(cx, |soloist, cx| soloist.refused(cx));
+        }
         cx.notify();
     }
 }
@@ -3191,7 +3421,6 @@ fn retire(engine: Option<Box<dyn Player>>) {
         log::warn!("playback: cannot retire the old engine off the main thread: {error}");
     }
 }
-
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};

@@ -40,6 +40,19 @@ impl SidebarRight {
         };
         let aside = cx.new(|cx| Aside::new(queue, playback, shown, cx));
         let members = cx.new(Members::new);
+        cx.observe(&settings, |this, settings, cx| {
+            if this.tab != SideTab::Lyrics || settings.read(cx).lyrics_enabled() {
+                return;
+            }
+            this.tab = SideTab::Queue;
+            this.aside
+                .update(cx, |aside, cx| aside.show(SideTab::Queue, cx));
+            settings.update(cx, |settings, cx| {
+                settings.set_sidebar_right_tab(SideTab::Queue, cx)
+            });
+            cx.notify();
+        })
+        .detach();
 
         Self {
             aside,
@@ -91,6 +104,9 @@ impl SidebarRight {
     }
 
     pub(crate) fn show(&mut self, tab: SideTab, cx: &mut Context<Self>) {
+        if tab == SideTab::Lyrics && !self.settings.read(cx).lyrics_enabled() {
+            return;
+        }
         if self.open && self.tab == tab {
             self.close(cx);
             return;

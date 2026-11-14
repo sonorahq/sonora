@@ -212,12 +212,14 @@ const HEPBURN: &[(&str, &str)] = &[
     ("ゎ", "wa"),
 ];
 
+/// Groups source characters by how they join romanized words.
 #[derive(Clone, Copy, PartialEq)]
 enum Script {
     Kanji,
     Kata,
     Kana,
     Mark,
+    Open,
     Gap,
 }
 
@@ -227,6 +229,7 @@ impl Script {
     }
 }
 
+/// Keeps a source run with its contextual reading and attachment to the following kana.
 struct Piece {
     script: Script,
     source: String,
@@ -271,9 +274,11 @@ fn hiragana(letter: char) -> bool {
     matches!(letter as u32, 0x3041..=0x309f)
 }
 
+/// Separates opening punctuation so it joins the following word rather than the preceding one.
 fn script_of(letter: char) -> Script {
     match letter {
         _ if letter.is_whitespace() => Script::Gap,
+        '「' | '『' | '（' | '(' | '[' | '［' | '{' | '｛' => Script::Open,
         _ if kanji(letter) => Script::Kanji,
         _ if katakana(letter) || letter == 'ー' => Script::Kata,
         _ if hiragana(letter) => Script::Kana,
@@ -356,12 +361,14 @@ fn reading(pieces: &[Piece], index: usize) -> Option<String> {
         .map(|(_, _, reading)| (*reading).to_owned())
 }
 
+/// Groups contextual readings into words while keeping punctuation beside its text.
 fn words(pieces: &[Piece]) -> Vec<String> {
     let mut words: Vec<String> = Vec::new();
     let mut previous: Option<&Piece> = None;
     for piece in pieces {
         match piece.script {
             Script::Gap => {}
+            Script::Open => words.push(piece.source.clone()),
             Script::Mark => match piece.source.chars().any(char::is_alphanumeric) {
                 true => words.push(piece.source.clone()),
                 false => attach(&mut words, &piece.source),
@@ -404,9 +411,14 @@ fn joined(words: Vec<String>) -> Vec<String> {
     merged
 }
 
+/// Recognizes punctuation that attaches to the following word.
 fn opening(word: &str) -> bool {
-    word.chars()
-        .all(|letter| matches!(letter, '「' | '『' | '（' | '(' | '"'))
+    word.chars().all(|letter| {
+        matches!(
+            letter,
+            '「' | '『' | '（' | '(' | '[' | '［' | '{' | '｛' | '"'
+        )
+    })
 }
 
 fn around(run: &str) -> Vec<String> {

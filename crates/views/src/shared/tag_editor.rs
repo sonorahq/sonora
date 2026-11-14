@@ -415,7 +415,7 @@ impl Render for TagEditor {
                 Modal::new("tag-editor", t!("tags-edit-title"))
                     .w(theme.metrics.cover * 3.2)
                     .h(theme.metrics.cover * 3.6)
-                    .detail(SharedString::from(track.name.clone()))
+                    .detail(SharedString::from(track.name))
                     .when(ready, |modal| {
                         modal.child(self.sheets(cx)).child(self.rows(cx))
                     })

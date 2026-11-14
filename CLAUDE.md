@@ -1,7 +1,9 @@
 # sonora
 
-A native music streaming client, built with Rust and [GPUI](https://github.com/zed-industries/zed)
-(Zed's UI framework). Cargo workspace, edition 2024, resolver 3.
+A native, familiar music streaming client.
+
+Built with Rust and [GPUI](https://github.com/zed-industries/zed), Zed's UI framework.
+Cargo workspace, edition 2024, resolver 3.
 
 ## Crate layout
 
@@ -105,14 +107,30 @@ cargo clippy --workspace --all-targets
 ```
 
 The devShell has no `cargo` or `cargo-clippy`; those come from the system profile. The flake's
-default package is the released binary, so `nix build` never sees the working tree, while
-`nix build .#sonora-src` compiles it.
+default package compiles the working tree. CI caches the `stable` branch, the `nightly` tag and
+main on sonora.cachix.org.
 `.cargo/config.toml` links with mold on `x86_64-unknown-linux-gnu`, so mold must be on PATH, or
 build with `RUSTFLAGS=""`. `crates/widevine` compiles C++, so a C++ compiler is needed too.
 
 Clippy is clean, `--all-targets` included, and stays that way. Boxed callback fields get a
 module-local `type` alias rather than a `type_complexity` warning. The one `#[allow]` is
 `reversed_empty_ranges` on the `clamp_range("abc", &(2..1))` test in `crates/ui/src/input/mod.rs`.
+
+## Patching gpui
+
+`gpui` comes from the `sonorahq/gpui` fork, pinned by `rev`. To change it, clone the fork into
+the ignored `vendor/gpui` (never a submodule), branch off `master`, and point Cargo at it while
+you work:
+
+```toml
+[patch."https://github.com/sonorahq/gpui"]
+gpui = { path = "vendor/gpui/crates/gpui" }
+gpui_platform = { path = "vendor/gpui/crates/gpui_platform" }
+```
+
+Run `cargo fmt` and `cargo clippy` inside `vendor/gpui` too. Once the fork's change is merged,
+drop the `[patch]`, move both `rev`s to the merge commit and let `Cargo.lock` follow. A `[patch]`
+is never committed.
 
 ## Code style
 

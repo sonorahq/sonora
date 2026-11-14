@@ -11,7 +11,7 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 /// How many redirects a short link may take, the same as reqwest's default policy.
 const REDIRECTS: usize = 10;
 /// How much of a short link's page is read when its address alone does not say where it goes.
-const PAGE_LIMIT: usize = 256 * 1024;
+const PAGE_LIMIT: usize = 2 * 1024 * 1024;
 /// What ends an address written into a page.
 const ADDRESS_END: [char; 7] = ['"', '\'', '<', '>', '\\', ' ', '`'];
 
@@ -25,7 +25,7 @@ pub enum Linked {
     User(String),
     /// A group session to join, kept as the whole link since the device network reads it.
     Jam(String),
-    /// A short link, which says what it points at only once `follow` has fetched it.
+    /// A link whose destination id must be resolved from a redirect or page metadata.
     Short,
 }
 
@@ -69,7 +69,7 @@ pub fn query(url: &Url, key: &str) -> Option<String> {
 /// Fetches an https short link, following its redirects, and reads the start of the page it
 /// ends at. Nothing but https is ever fetched, so a redirect to any other scheme fails the follow.
 pub async fn follow(link: &str) -> Option<Followed> {
-    let url = address(link).filter(|url| url.scheme() == "https")?;
+    let url = follow_address(address(link).filter(|url| url.scheme() == "https")?)?;
     static CLIENT: OnceLock<Option<reqwest::Client>> = OnceLock::new();
     let client = CLIENT
         .get_or_init(|| {
@@ -107,6 +107,19 @@ pub fn addresses(page: &str) -> impl Iterator<Item = &str> {
         let end = rest.find(ADDRESS_END).unwrap_or(rest.len());
         &rest[..end]
     })
+}
+
+/// Resolves YouTube Music handles on YouTube, whose page exposes the channel id.
+/// Other addresses retain their original host, path and query.
+fn follow_address(mut url: Url) -> Option<Url> {
+    if host(&url) == Some("music.youtube.com")
+        && segments(&url)
+            .first()
+            .is_some_and(|part| part.starts_with('@') && part.len() > 1)
+    {
+        url.set_host(Some("www.youtube.com")).ok()?;
+    }
+    Some(url)
 }
 
 /// Follows a redirect only to another https address and only within `REDIRECTS` hops.

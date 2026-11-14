@@ -85,6 +85,7 @@ column-index = #
 column-title = Judul
 column-artist = Artis
 column-album = Album
+column-genre = Genre
 column-date-added = Tanggal Ditambahkan
 column-added-by = Ditambahkan Oleh
 column-modified = Diubah
@@ -96,26 +97,13 @@ column-year = Tahun
 column-tracks = Trek
 
 # track menu
-menu-add-to-playlist = Tambahkan ke playlist
-menu-add-tracks-to-playlist = { $count ->
-    [one] Tambahkan { $count } lagu ke playlist
-   *[other] Tambahkan { $count } lagu ke playlist
-}
 menu-new-playlist = Playlist baru
 menu-import-playlist = Impor playlist…
 menu-edit-tags = Edit tag
 menu-no-playlists = Tidak ada playlist
 menu-search-playlists = Cari playlist
 menu-add-to-library = Tambahkan ke Favorit
-menu-add-tracks-to-library = { $count ->
-    [one] Tambahkan { $count } lagu ke Favorit
-   *[other] Tambahkan { $count } lagu ke Favorit
-}
 menu-remove-from-library = Hapus dari Favorit
-menu-remove-tracks-from-library = { $count ->
-    [one] Hapus { $count } lagu dari Favorit
-   *[other] Hapus { $count } lagu dari Favorit
-}
 menu-remove-from-playlist = Hapus dari playlist
 menu-remove-tracks-from-playlist = { $count ->
     [one] Hapus { $count } lagu dari playlist
@@ -129,15 +117,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Hapus file lagu
 menu-delete-track-files = Hapus { $count } file lagu
 menu-download = Unduh
-menu-download-tracks = { $count ->
-    [one] Unduh { $count } lagu
-   *[other] Unduh { $count } lagu
-}
 menu-remove-download = Hapus unduhan
-menu-remove-downloads = { $count ->
-    [one] Hapus { $count } unduhan
-   *[other] Hapus { $count } unduhan
-}
 menu-downloading = Mengunduh. Klik untuk berhenti
 menu-play-next = Putar berikutnya
 menu-play-tracks-next = { $count ->
@@ -154,11 +134,8 @@ menu-play-tracks-last = { $count ->
     [one] Putar { $count } lagu terakhir
    *[other] Putar { $count } lagu terakhir
 }
-menu-go-to = Buka
-menu-artist = Artis
-menu-album = Album
-menu-radio = Radio
-menu-details = Detail
+menu-song-radio = Buka radio lagu
+menu-go-to-album = Buka album
 menu-go-to-artist = Buka artis
 menu-view-details = Lihat detail
 menu-copy-link = Salin tautan
@@ -172,16 +149,6 @@ menu-delete-playlist = Hapus playlist
 menu-export-playlist = Ekspor playlist…
 menu-add-playlist-to-library = Simpan ke Koleksi
 menu-remove-playlist-from-library = Hapus dari Koleksi
-menu-library-add = Tambahkan ke Koleksi
-menu-library-add-tracks = { $count ->
-    [one] Tambahkan { $count } lagu ke Koleksi
-   *[other] Tambahkan { $count } lagu ke Koleksi
-}
-menu-library-remove = Hapus dari Koleksi
-menu-library-remove-tracks = { $count ->
-    [one] Hapus { $count } lagu dari Koleksi
-   *[other] Hapus { $count } lagu dari Koleksi
-}
 menu-make-playlist-public = Jadikan publik
 menu-make-playlist-private = Jadikan privat
 menu-play-artist = Putar artis
@@ -951,6 +918,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } ch
 }
+settings-lyrics = Tampilkan lirik
+settings-lyrics-detail = Matikan untuk menyembunyikan lirik di mana pun dan berhenti mencarinya
 settings-panel-lyrics-size = Ukuran lirik (panel)
 settings-panel-lyrics-size-detail = Ukuran teks lirik pada panel samping, di atas ukuran font dasar
 settings-fullscreen-lyrics-size = Ukuran lirik (layar penuh)

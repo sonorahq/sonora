@@ -493,7 +493,6 @@ impl RenderOnce for ResponseGraph {
         let released = plot.clone();
         let removed = plot.clone();
         let hovering = plot.clone();
-        let scrolled = plot;
         let release = move |event: &MouseUpEvent, window: &mut Window, cx: &mut App| {
             released.moved(event.position, true, window, cx);
         };
@@ -568,8 +567,8 @@ impl RenderOnce for ResponseGraph {
                 })
                 .when(reshape, |this| {
                     this.on_scroll_wheel(move |event, window, cx| {
-                        let hovered = scrolled.state.hovered.get();
-                        if let Some(node) = scrolled
+                        let hovered = plot.state.hovered.get();
+                        if let Some(node) = plot
                             .hit(event.position)
                             .filter(|node| hovered == Some(node.id))
                         {
@@ -577,7 +576,7 @@ impl RenderOnce for ResponseGraph {
                                 ScrollDelta::Lines(delta) => delta.y / LINES_PER_NOTCH,
                                 ScrollDelta::Pixels(delta) => delta.y / theme.metrics.control,
                             };
-                            scrolled.emit(GraphEdit::Width { id: node.id, steps }, window, cx);
+                            plot.emit(GraphEdit::Width { id: node.id, steps }, window, cx);
                             cx.stop_propagation();
                         }
                     })
@@ -668,7 +667,7 @@ fn paint_plot(
         .grabbed
         .get()
         .map(|grab| grab.id)
-        .or(plot.state.hovered.get());
+        .or_else(|| plot.state.hovered.get());
     for node in plot
         .nodes
         .iter()

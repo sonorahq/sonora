@@ -26,6 +26,8 @@ const PLACEHOLDER_LENGTH: Duration = Duration::from_secs(214);
 /// How far past a frame its corner ring reaches, as a share of the radius. It has to pass
 /// the square root of two less one for the ring to cover the corners.
 const CORNER_REACH: f32 = 0.5;
+/// How much of a preview shows while the feature it pictures is turned off.
+const DIMMED: f32 = 0.4;
 
 /// The state every preview keeps between frames, one field per preview, each owned by its file,
 /// and what they share.
@@ -50,6 +52,7 @@ pub(super) struct Sample {
     pub(super) id: Option<String>,
     pub(super) title: SharedString,
     pub(super) artist: SharedString,
+    pub(super) album_artist: SharedString,
     pub(super) album: SharedString,
     pub(super) album_id: Option<String>,
     pub(super) cover: Option<String>,
@@ -151,6 +154,7 @@ impl Sample {
             id: track.id.clone(),
             title: track.name.clone().into(),
             artist: track.artists.clone().into(),
+            album_artist: track.album_artist.clone().into(),
             album: track.album.clone().into(),
             album_id: track.album_id.clone(),
             cover: track.cover.clone(),
@@ -164,6 +168,7 @@ impl Sample {
             id: None,
             title: t!("settings-preview-title"),
             artist: t!("settings-preview-artist"),
+            album_artist: t!("settings-preview-artist"),
             album: t!("settings-preview-album"),
             album_id: None,
             cover: None,

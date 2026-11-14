@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
@@ -14,6 +15,9 @@ use crate::button::Button;
 use crate::glass::{GLASS_BLUR, blurring};
 use crate::label::{Tails as _, upper};
 use crate::metrics::{LEADING, Text, snapped};
+use crate::motion::{
+    LIT_HOVER, PRESS_SCALE, PRESS_SCALE_CARD, glow_fill, glowing, pressing, solid_fill,
+};
 use crate::skeleton::Skeleton;
 use crate::theme::ActiveTheme as _;
 use crate::tooltip::{Perch, Tipped as _};
@@ -35,9 +39,11 @@ pub const CARD_GROUP: &str = "card";
 type Press = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 type Summon = Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>;
 type DragStart = Rc<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>;
+type Warm = Rc<dyn Fn(&mut Window, &mut App) + 'static>;
 
 #[derive(IntoElement)]
 pub struct Card {
+    id: ElementId,
     base: Stateful<Div>,
     title: SharedString,
     eyebrow: Option<SharedString>,
@@ -58,16 +64,22 @@ pub struct Card {
     explicit: bool,
     fill: bool,
     hovered: Option<StyleRefinement>,
+    /// Whether the card is lit, and the fill it is lit with.
+    lit: Option<(bool, Hsla)>,
     press: Option<Press>,
     loading: bool,
     tile: Option<Pixels>,
     play: Option<Press>,
+    warm: Option<Warm>,
     hint: bool,
     underline: bool,
     playing: bool,
     chosen: bool,
     tucked: bool,
+    glance: bool,
     action: Option<AnyElement>,
+    /// Whether the hover action takes no room until the card is hovered.
+    collapsed: bool,
     drag_start: Option<DragStart>,
     menu: Option<Summon>,
 }
@@ -75,8 +87,10 @@ pub struct Card {
 impl Card {
     #[track_caller]
     pub fn new(id: impl Into<ElementId>, title: impl Into<SharedString>) -> Self {
+        let id = id.into();
         Self {
-            base: div().id(id),
+            base: div().id(id.clone()),
+            id,
             title: title.into(),
             eyebrow: None,
             description: None,
@@ -95,16 +109,20 @@ impl Card {
             explicit: false,
             fill: true,
             hovered: None,
+            lit: None,
             press: None,
             loading: false,
             tile: None,
             play: None,
+            warm: None,
             hint: false,
             underline: false,
             playing: false,
             chosen: false,
             tucked: false,
+            glance: false,
             action: None,
+            collapsed: false,
             drag_start: None,
             menu: None,
         }
@@ -148,6 +166,13 @@ impl Card {
         self
     }
 
+    /// Runs `handler` when the pointer comes to rest on the play button, so the caller can
+    /// fetch ahead what a press would start.
+    pub fn warm(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.warm = Some(Rc::new(handler));
+        self
+    }
+
     pub fn hint(mut self) -> Self {
         self.hint = true;
         self
@@ -160,6 +185,14 @@ impl Card {
 
     pub fn action(mut self, action: impl IntoElement) -> Self {
         self.action = Some(action.into_any_element());
+        self
+    }
+
+    /// Shows an action on hover like `action`, but it takes no room until then, so the trailing
+    /// content only moves aside while the card is hovered.
+    pub fn collapsed_action(mut self, action: impl IntoElement) -> Self {
+        self.action = Some(action.into_any_element());
+        self.collapsed = true;
         self
     }
 
@@ -273,8 +306,22 @@ impl Card {
         self
     }
 
+    /// Draws only the cover, with the title in a tooltip beside it.
+    pub fn glance(mut self) -> Self {
+        self.glance = true;
+        self
+    }
+
     pub fn chosen(mut self, chosen: bool) -> Self {
         self.chosen = chosen;
+        self
+    }
+
+    /// Fills the card with `color` while `lit`, for a row that marks where the app is. Under the
+    /// pointer alone the card takes `LIT_HOVER` of that fill. Either comes on at once and fades
+    /// out the way a hover does.
+    pub fn lit(mut self, lit: bool, color: Hsla) -> Self {
+        self.lit = Some((lit, color));
         self
     }
 }
@@ -301,6 +348,7 @@ impl StatefulInteractiveElement for Card {}
 impl RenderOnce for Card {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Self {
+            id,
             mut base,
             title,
             eyebrow,
@@ -320,16 +368,20 @@ impl RenderOnce for Card {
             explicit,
             fill,
             hovered,
+            lit,
             press,
             loading,
             tile,
             play,
+            warm,
             hint,
             underline,
             playing,
             chosen,
             tucked,
+            glance,
             action,
+            collapsed,
             drag_start,
             menu,
         } = self;
@@ -343,12 +395,25 @@ impl RenderOnce for Card {
         let play_fill =
             theme.cover_fill(cover.as_deref().and_then(|cover| cover_palette(cover, cx)));
         let art_radius = art_radius.or_else(|| tile.map(|_| theme.radius));
-        let art = art.or(tile).unwrap_or(snapped(height - inset * 2., window));
-        let hovered = match (hovered, fill) {
+        let art = art
+            .or(tile)
+            .unwrap_or_else(|| snapped(height - inset * 2., window));
+        let mut hovered = match (hovered, fill) {
             (Some(style), _) => Some(style),
             (None, true) => Some(StyleRefinement::default().bg(theme.table_hover)),
             (None, false) => None,
         };
+        // The hover's fill fades out, so the glow paints it and gpui applies only what is left
+        // of the hover style.
+        let hover_fill = hovered.as_mut().and_then(|style| {
+            let fill = solid_fill(style)?;
+            style.background = None;
+            Some(fill)
+        });
+        let glow_color = lit
+            .map(|(_, color)| color)
+            .or(hover_fill)
+            .filter(|_| !chosen);
         let overrides = std::mem::take(base.style());
 
         let leading = match loading {
@@ -385,6 +450,13 @@ impl RenderOnce for Card {
                             .absolute()
                             .right(PLAY_INSET)
                             .bottom(PLAY_INSET)
+                            .when_some(warm.clone(), |this, warm| {
+                                this.on_hover(move |hovered, window, cx| {
+                                    if *hovered {
+                                        warm(window, cx);
+                                    }
+                                })
+                            })
                             .when(!playing, |this| {
                                 this.invisible()
                                     .group_hover(CARD_GROUP, |style| style.visible())
@@ -438,7 +510,12 @@ impl RenderOnce for Card {
                                     .bg(theme.overlay)
                                     .role(gpui::accesskit::Role::Button)
                                     .aria_label(i18n::lookup(hint, None))
-                                    .tip(hint, Perch::Below)
+                                    // A glance card is little more than its cover, so the
+                                    // scrim over it shows the title the card would.
+                                    .map(|this| match glance {
+                                        true => this.tip_label(title.clone(), Perch::Trailing),
+                                        false => this.tip(hint, Perch::Below),
+                                    })
                                     .child(
                                         svg()
                                             .path(icons::path(glyph))
@@ -446,11 +523,7 @@ impl RenderOnce for Card {
                                             .flex_none()
                                             .text_color(theme.overlay_foreground),
                                     )
-                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                        cx.stop_propagation()
-                                    })
                                     .on_click(move |event, window, cx| {
-                                        cx.stop_propagation();
                                         play(event, window, cx);
                                     }),
                             )
@@ -458,13 +531,34 @@ impl RenderOnce for Card {
                     }
                 };
 
-                div()
+                let cover = div()
                     .relative()
                     .flex_none()
                     .size(art)
                     .child(leading)
-                    .child(control)
-                    .into_any_element()
+                    .child(control);
+                match tile {
+                    Some(_) => cover.into_any_element(),
+                    // The scrim fills the cover, so the cover is what takes the press: it keeps
+                    // the press and the click from reaching the card, and shrinks as a whole,
+                    // artwork and scrim together, the way a button does. What the click starts
+                    // may take a while to load, and nothing else would show the press landed.
+                    None => {
+                        let held = ElementId::NamedChild(Arc::new(id.clone()), "play".into());
+                        let cover = cover
+                            .id("card-cover")
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(|_, _, cx| cx.stop_propagation())
+                            .when_some(warm, |this, warm| {
+                                this.on_hover(move |hovered, window, cx| {
+                                    if *hovered {
+                                        warm(window, cx);
+                                    }
+                                })
+                            });
+                        pressing(cover, &held, PRESS_SCALE, window, cx).into_any_element()
+                    }
+                }
             }
         };
 
@@ -480,6 +574,7 @@ impl RenderOnce for Card {
         .collect::<Vec<_>>()
         .join(", ");
         let name = title.clone();
+        let name_tip = title.clone();
         let title = div()
             .id("card-title")
             .min_w_0()
@@ -520,7 +615,8 @@ impl RenderOnce for Card {
                 .child(meta),
         });
 
-        let mut card = base
+        let pressable = press.is_some();
+        let card = base
             // A card that opens something reads as one button named for its
             // title, while a still card is a group so the title stays reachable.
             .role(match press.is_some() {
@@ -543,6 +639,10 @@ impl RenderOnce for Card {
             })
             .when(listed, |this| {
                 this.flex_none().h(height).py(inset).w_full().min_w_0()
+            })
+            .when(glance, |this| {
+                this.justify_center()
+                    .tip_label(name_tip.clone(), Perch::Trailing)
             })
             .when(chosen, |this| this.bg(theme.table_active))
             .when_some(hovered.filter(|_| !chosen), |this, style| {
@@ -578,6 +678,7 @@ impl RenderOnce for Card {
                     .overflow_hidden()
                     .line_height(relative(LEADING))
                     .when(tile.is_some(), |this| this.w_full().flex_none())
+                    .when(glance, |this| this.hidden())
                     .when_else(
                         loading,
                         |this| {
@@ -608,17 +709,58 @@ impl RenderOnce for Card {
                         },
                     ),
             )
-            .children(trailing.map(|trailing| div().flex_none().child(trailing)))
-            .children(action.map(|action| {
+            .children(
+                trailing
+                    .filter(|_| !glance)
+                    .map(|trailing| div().flex_none().child(trailing)),
+            )
+            .children(action.filter(|_| !glance).map(|action| {
                 div()
                     .id("card-action")
                     .flex_none()
-                    .invisible()
-                    .group_hover(CARD_GROUP, |style| style.visible())
+                    .map(|this| match collapsed {
+                        true => this
+                            .overflow_hidden()
+                            .invisible()
+                            // Keep the action in prepaint even when it takes no space.
+                            .when_else(
+                                tile.is_some(),
+                                |this| {
+                                    this.h_0().mt_neg_2().group_hover(CARD_GROUP, |style| {
+                                        style.h_auto().mt_0().visible()
+                                    })
+                                },
+                                |this| {
+                                    this.w_0().ml_neg_3().group_hover(CARD_GROUP, |style| {
+                                        style.w_auto().ml_0().visible()
+                                    })
+                                },
+                            ),
+                        false => this
+                            .invisible()
+                            .group_hover(CARD_GROUP, |style| style.visible()),
+                    })
                     .child(action)
             }));
 
+        let mut card = match pressable {
+            true => pressing(card, &id, PRESS_SCALE_CARD, window, cx),
+            false => card,
+        };
         card.style().refine(&overrides);
-        card
+        let Some(fill) = glow_color else {
+            return card;
+        };
+        let rest = solid_fill(&overrides);
+        let hover = match lit {
+            Some(_) => LIT_HOVER,
+            None => 1.,
+        };
+        let lit = lit.is_some_and(|(lit, _)| lit);
+        let (card, level) = glowing(card, &id, lit, hover, window, cx);
+        match glow_fill(rest, fill, level) {
+            Some(color) => card.bg(color),
+            None => card,
+        }
     }
 }

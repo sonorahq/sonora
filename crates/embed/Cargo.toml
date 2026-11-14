@@ -3,3 +3,6 @@ name = "embed"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+[lints]
+workspace = true

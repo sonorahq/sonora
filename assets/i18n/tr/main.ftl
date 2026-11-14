@@ -85,6 +85,7 @@ column-index = #
 column-title = Başlık
 column-artist = Sanatçı
 column-album = Albüm
+column-genre = Tür
 column-date-added = Eklenme tarihi
 column-added-by = Ekleyen
 column-modified = Değiştirilme
@@ -96,17 +97,13 @@ column-year = Yıl
 column-tracks = Parçalar
 
 # track menu
-menu-add-to-playlist = Çalma listesine ekle
-menu-add-tracks-to-playlist = { $count } parçayı çalma listesine ekle
 menu-new-playlist = Yeni çalma listesi
 menu-import-playlist = Çalma listesini içe aktar…
 menu-edit-tags = Etiketleri düzenle
 menu-no-playlists = Çalma listesi yok
 menu-search-playlists = Çalma listesi ara
 menu-add-to-library = Favorilere ekle
-menu-add-tracks-to-library = { $count } parçayı favorilere ekle
 menu-remove-from-library = Favorilerden çıkar
-menu-remove-tracks-from-library = { $count } parçayı favorilerden çıkar
 menu-remove-from-playlist = Çalma listesinden çıkar
 menu-remove-tracks-from-playlist = { $count } parçayı çalma listesinden çıkar
 menu-remove-from-history = Geçmişten kaldır
@@ -114,13 +111,7 @@ menu-remove-tracks-from-history = { $count } parçayı geçmişten kaldır
 menu-delete-track-file = Parça dosyasını sil
 menu-delete-track-files = { $count } parça dosyasını sil
 menu-download = İndir
-menu-download-tracks = { $count ->
-   *[other] { $count } parçayı indir
-}
 menu-remove-download = İndirmeyi kaldır
-menu-remove-downloads = { $count ->
-   *[other] { $count } indirmeyi kaldır
-}
 menu-downloading = İndiriliyor. Durdurmak için tıkla
 menu-play-next = Sıradaki olarak çal
 menu-play-tracks-next = { $count } parçayı sıradaki olarak çal
@@ -130,11 +121,8 @@ menu-play-last = En son çal
 menu-play-tracks-last = { $count ->
    *[other] { $count } parçayı en son çal
 }
-menu-go-to = Git
-menu-artist = Sanatçı
-menu-album = Albüm
-menu-radio = Radyo
-menu-details = Ayrıntılar
+menu-song-radio = Şarkı radyosuna git
+menu-go-to-album = Albüme git
 menu-go-to-artist = Sanatçıya git
 menu-view-details = Ayrıntıları gör
 menu-copy-link = Bağlantıyı kopyala
@@ -148,14 +136,6 @@ menu-delete-playlist = Çalma listesini sil
 menu-export-playlist = Çalma listesini dışa aktar…
 menu-add-playlist-to-library = Kitaplığa ekle
 menu-remove-playlist-from-library = Kitaplıktan çıkar
-menu-library-add = Kitaplığa ekle
-menu-library-add-tracks = { $count ->
-   *[other] { $count } parçayı kitaplığa ekle
-}
-menu-library-remove = Kitaplıktan çıkar
-menu-library-remove-tracks = { $count ->
-   *[other] { $count } parçayı kitaplıktan çıkar
-}
 menu-make-playlist-public = Herkese açık yap
 menu-make-playlist-private = Gizli yap
 menu-play-artist = Sanatçıyı çal
@@ -927,6 +907,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kanal
 }
+settings-lyrics = Şarkı sözlerini göster
+settings-lyrics-detail = Şarkı sözlerini her yerde gizlemek ve aramayı durdurmak için kapatın
 settings-panel-lyrics-size = Şarkı sözü boyutu (panel)
 settings-panel-lyrics-size-detail = Yan paneldeki şarkı sözü metninin, temel yazı boyutuna eklenen boyutu
 settings-fullscreen-lyrics-size = Şarkı sözü boyutu (tam ekran)
