@@ -930,7 +930,6 @@ soloist-continue = Continue
 soloist-pair-step-open = Open Spotify on a phone or computer on this network
 soloist-pair-step-play = Start any song there
 soloist-pair-step-pick = Open the device list and pick { $device }
-soloist-pair-waiting = Waiting for Spotify…
 soloist-pair-firewall = Not showing up? A firewall has to let in UDP 5353 and TCP { $port } on this computer.
 soloist-back = Back
 soloist-problem-download = Soloist could not be downloaded
