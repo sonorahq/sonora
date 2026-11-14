@@ -1148,6 +1148,11 @@ impl Playback {
         self.enqueue_tracks(vec![track], None, QueuePlacement::End, cx);
     }
 
+    /// Whether the active player can honour a local queue placement other than appending.
+    pub fn can_order_queue(&self) -> bool {
+        self.active_engine().is_none_or(Player::can_order_queue)
+    }
+
     /// Replaces Sonora's Spotify queue with Soloist's reported remote window.
     fn sync_soloist_queue(
         &mut self,
@@ -1164,7 +1169,7 @@ impl Playback {
         self.soloist_queue = Some(Io::global(cx).load(
             async move {
                 let current = match current {
-                    Some(entry) => Some((client.track(&entry.id).await?, entry.queued)),
+                    Some(entry) => Some((client.track(&entry.id).await?, entry)),
                     None => None,
                 };
                 let tracks = join_all(entries.iter().map(|entry| client.track(&entry.id)))
@@ -1294,6 +1299,30 @@ impl Playback {
                 _ => QueuePlacement::End,
             };
             return sent.then_some(placed);
+        }
+        if playing && !self.local_active() && !self.can_order_queue() {
+            if placement != QueuePlacement::End {
+                log::debug!("playback: Soloist cannot order a shared queue");
+                return None;
+            }
+            let Some(engine) = self.engine.as_deref() else {
+                return None;
+            };
+            let sent = tracks.iter().all(|track| {
+                track
+                    .id
+                    .as_deref()
+                    .filter(|id| !music::is_local_id(id))
+                    .is_some_and(|id| match engine.append_to_queue(id) {
+                        Ok(true) => true,
+                        Ok(false) => false,
+                        Err(error) => {
+                            log::warn!("playback: cannot append to Soloist queue: {error:#}");
+                            false
+                        }
+                    })
+            });
+            return sent.then_some(QueuePlacement::End);
         }
         if !playing {
             self.begin(tracks, 0, origin, cx);
@@ -3518,11 +3547,14 @@ fn split_soloist_window(
     entries: Vec<connect::QueuedTrack>,
     tracks: Vec<Track>,
     previous_len: usize,
-) -> (Vec<(Track, bool)>, Vec<(Track, bool)>) {
+) -> (
+    Vec<(Track, connect::QueuedTrack)>,
+    Vec<(Track, connect::QueuedTrack)>,
+) {
     let mut window: Vec<_> = entries
         .into_iter()
         .zip(tracks)
-        .map(|(entry, track)| (track, entry.queued))
+        .map(|(entry, track)| (track, entry))
         .collect();
     let upcoming = window.split_off(previous_len);
     (window, upcoming)
@@ -3568,11 +3600,11 @@ mod tests {
         let (previous, upcoming) = split_soloist_window(entries, tracks, 1);
 
         assert_eq!(previous[0].0.name, "past");
-        assert!(!previous[0].1);
+        assert!(!previous[0].1.queued);
         assert_eq!(
             upcoming
                 .iter()
-                .map(|(track, queued)| (track.name.as_str(), *queued))
+                .map(|(track, queued)| (track.name.as_str(), queued.queued))
                 .collect::<Vec<_>>(),
             [("manual", true), ("context", false)]
         );

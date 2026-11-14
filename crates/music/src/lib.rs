@@ -725,6 +725,17 @@ pub trait Player: Send + Sync {
     /// Fetches a track ahead of time so a later `load` starts at once. `segue` marks the next
     /// queue item, which a gapless engine may already line up behind the current one.
     fn preload(&self, track_id: &str, segue: bool) -> Result<()>;
+
+    /// Adds a track to the engine's own shared queue. `false` keeps queue ownership local.
+    fn append_to_queue(&self, _track_id: &str) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// Whether the engine can honour ordered local queue placements.
+    fn can_order_queue(&self) -> bool {
+        true
+    }
+
     fn play(&self);
     fn pause(&self);
 

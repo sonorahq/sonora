@@ -104,6 +104,8 @@ impl Entity {
 #[derive(Debug, Default, Deserialize)]
 pub(super) struct Queued {
     #[serde(default)]
+    pub uid: String,
+    #[serde(default)]
     source: String,
     #[serde(default)]
     pub item: Option<Entity>,

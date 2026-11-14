@@ -122,6 +122,11 @@ impl Engine {
         self.ask(Command::Next(track_id.to_owned()));
     }
 
+    /// Appends a track through Soloist so Spotify Connect owns the shared queue.
+    pub(crate) fn append_to_queue(&self, track_id: &str) {
+        self.ask(Command::Enqueue(track_id.to_owned()));
+    }
+
     pub(crate) fn set_gain(&self, gain: f32) {
         self.ask(Command::Volume(percent(gain)));
     }
@@ -185,6 +190,7 @@ enum Command {
     Seek(Duration),
     Volume(u8),
     Next(String),
+    Enqueue(String),
 }
 
 /// What a daemon is started with, beyond the key.
@@ -379,6 +385,13 @@ impl Brain {
                     self.next = Some(format!("{TRACK_PREFIX}{id}"));
                     self.feed();
                 }
+            }
+            Command::Enqueue(id) => {
+                self.send(
+                    "add_to_queue",
+                    json!({ "uri": format!("{TRACK_PREFIX}{id}") }),
+                );
+                self.send("get_queue", json!({}));
             }
         }
     }
@@ -661,9 +674,8 @@ impl Brain {
                 self.follow_position();
             }
             Event::QueueChanged { previous, upcoming } => {
-                self.queue = previous
+                self.queue = upcoming
                     .iter()
-                    .chain(&upcoming)
                     .filter(|entry| entry.queued())
                     .filter_map(|entry| entry.item.as_ref())
                     .map(|item| item.uri.clone())
@@ -1426,8 +1438,17 @@ fn queued_tracks(entries: Vec<wire::Queued>) -> Vec<QueuedTrack> {
         .into_iter()
         .filter_map(|entry| {
             let queued = entry.queued();
-            let id = entry.item.and_then(|item| track_id(&item.uri))?;
-            Some(QueuedTrack::new(id, queued))
+            let uid = entry.uid;
+            let item = entry.item?;
+            let id = track_id(&item.uri)?;
+            Some(QueuedTrack {
+                uid: (!uid.is_empty())
+                    .then_some(uid)
+                    .unwrap_or_else(|| item.uri.clone()),
+                id,
+                queued,
+                added_by: None,
+            })
         })
         .collect()
 }
