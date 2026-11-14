@@ -681,11 +681,13 @@ impl Brain {
                     self.settle_options();
                 }
             }
-            Event::DeviceChanged { is_active } => {
-                if !is_active {
-                    self.taken();
+            Event::DeviceChanged { is_active } => match is_active {
+                true => {
+                    self.send("get_state", json!({}));
+                    self.send("get_queue", json!({}));
                 }
-            }
+                false => self.taken(),
+            },
             Event::CommandResult { command } => self.acknowledged(&command),
             Event::Error { message } => {
                 // a seek is turned down while the track loads, and is simply sent again
@@ -769,11 +771,18 @@ impl Brain {
     /// just named the track it moved to, which counts as playing it even before a status says so.
     fn observe(&mut self, announced: bool) {
         let Some(track) = self.track.as_mut() else {
-            // Something was started on the daemon from one of Spotify's apps. Sonora shows
-            // none of it, so it does not get to play. A track the daemon went on to from its
-            // queue is Sonora's own, and waits for the load that asks for it.
-            if self.adopted.is_none() && self.heard.status == Status::Playing {
-                self.send("pause", json!({}));
+            // A Spotify app can begin playing on Soloist before Sonora has loaded a track.
+            // Adopt it here; the queue snapshot that follows supplies the rest of the window.
+            if self.adopted.is_none() && active(self.heard.status) {
+                if let Some(id) = track_id(&self.heard.uri) {
+                    self.adopted = Some((self.heard.uri.clone(), Instant::now()));
+                    self.report(PlaybackEvent::QueuedTrack {
+                        id,
+                        at: self.heard.position,
+                    });
+                } else {
+                    self.send("pause", json!({}));
+                }
             }
             return;
         };
@@ -1083,6 +1092,7 @@ impl Brain {
         self.settle_options();
         let volume = self.volume;
         self.send("set_volume", json!({ "volume": volume }));
+        self.send("get_state", json!({}));
         self.send("get_queue", json!({}));
     }
 
