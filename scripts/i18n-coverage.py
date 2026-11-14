@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import plistlib
 import re
 import sys
 from pathlib import Path
@@ -8,12 +9,16 @@ ROOT = Path(__file__).resolve().parent.parent
 LANGUAGES = ROOT / "crates/i18n/src/language.rs"
 LOCALES = ROOT / "assets/i18n"
 README = ROOT / "README.md"
+INFO_PLIST = ROOT / "assets/macos/Info.plist"
 
 START = "<!-- i18n:start -->"
 END = "<!-- i18n:end -->"
 
 SOURCE = "en-US"
 ARM = re.compile(r"Self::(\w+) => \"([^\"]+)\",")
+
+# Sonora ids that macOS spells differently in CFBundleLocalizations.
+APPLE_IDS = {"en-US": "en", "zh-CN": "zh-Hans"}
 
 
 def shipped():
@@ -61,7 +66,22 @@ def table():
     return "\n".join(rows)
 
 
+def check_bundle():
+    """Exit unless the macOS bundle declares every shipped language.
+
+    The Dock draws Options, Hide and Quit in the app's bundle language, so a language missing from
+    CFBundleLocalizations leaves those items in English.
+    """
+    with INFO_PLIST.open("rb") as file:
+        declared = set(plistlib.load(file).get("CFBundleLocalizations", []))
+    wanted = [APPLE_IDS.get(locale, locale) for locale, _ in shipped()]
+    missing = [locale for locale in wanted if locale not in declared]
+    if missing:
+        sys.exit(f"add {missing} to CFBundleLocalizations in {INFO_PLIST}")
+
+
 def main():
+    check_bundle()
     readme = README.read_text(encoding="utf-8")
     if START not in readme or END not in readme:
         sys.exit(f"{README} has no {START} … {END} block")
