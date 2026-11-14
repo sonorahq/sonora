@@ -199,6 +199,10 @@ pub struct TableDelegate<S: TableSource> {
     marked: HashSet<usize>,
     sort: Option<(S::Field, Sort)>,
     query: String,
+    /// Set when a search was cleared and the restored list may have left the
+    /// selection off-screen. The table reveals whatever row is selected when it
+    /// next renders, so a pick in between rebinds it and a deselect cancels it.
+    pending_reveal: bool,
     order: Vec<usize>,
     revision: u64,
     locked: Option<&'static [&'static str]>,
@@ -228,6 +232,7 @@ impl<S: TableSource> TableDelegate<S> {
             marked: HashSet::new(),
             sort: None,
             query: String::new(),
+            pending_reveal: false,
             order: Vec::new(),
             revision: 0,
             locked: None,
@@ -518,8 +523,18 @@ impl<S: TableSource> TableDelegate<S> {
     }
 
     pub fn set_query(&mut self, query: &str, cx: &App) {
+        let clearing = !self.query.is_empty();
         self.query = query.trim().to_lowercase();
         self.reorder(cx);
+        // Clearing a search hands the full list back with the selection wherever
+        // it now lands, which can be far off-screen. Mark it so the table scrolls
+        // it back into view on its next render. A fresh search before then drops
+        // the mark, and typing or a repeated empty query never sets one.
+        if clearing && self.query.is_empty() {
+            self.pending_reveal = true;
+        } else if !self.query.is_empty() {
+            self.pending_reveal = false;
+        }
     }
 
     pub fn query(&self) -> &str {
@@ -802,7 +817,7 @@ impl<S: TableSource> TableState<S> {
         cx.notify();
     }
 
-    fn reveal(&self, display: usize, window: &Window, cx: &App) {
+    fn reveal(&mut self, display: usize, window: &Window, cx: &App) {
         let Some(scroll) = &self.scroll else {
             return;
         };
@@ -824,6 +839,10 @@ impl<S: TableSource> TableState<S> {
 
         let offset = scroll.offset();
         scroll.set_offset(point(offset.x, offset.y - delta));
+        // Keep the viewport where the jump put it: a reveal fired from render
+        // moves the offset after the owner already measured it for this frame,
+        // and the rows below draw from `viewport`.
+        self.viewport.top += delta;
     }
 
     fn height(&self, head: Pixels, row: Pixels, count: usize) -> Pixels {
@@ -1466,6 +1485,20 @@ impl<S: TableSource> Render for TableState<S> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.delegate.measure(window, cx);
 
+        // A cleared search reorders the list around wherever the selection now
+        // sits, which can leave it far off-screen: bring it into view once, then
+        // leave scrolling alone. The mark waits for a table with a scroll handle
+        // and reads the selection only now, so it follows a pick since the clear
+        // and goes away with a deselect.
+        if self.scroll.is_some() && self.delegate.pending_reveal {
+            self.delegate.pending_reveal = false;
+            if let Some(row) = self.delegate.selected
+                && let Some(display) = self.delegate.display_of(row)
+            {
+                self.reveal(display, window, cx);
+            }
+        }
+
         let metrics = cx.theme().metrics;
         let row = snapped(metrics.row, window);
         let head = snapped(metrics.header, window);
@@ -1781,5 +1814,290 @@ impl<S: TableSource> Listing for Entity<TableState<S>> {
 
     fn remove(&self, cx: &mut App) {
         self.update(cx, |table, cx| table.fire_remove(cx));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+
+    use super::*;
+    use crate::theme::Theme;
+
+    #[derive(Clone, Copy, PartialEq)]
+    struct Name;
+
+    /// A bare list of rows; any non-empty query keeps only odd rows, standing
+    /// in for a title search.
+    struct Rows {
+        count: usize,
+    }
+
+    static COLUMNS: &[ColumnSpec<Name>] = &[ColumnSpec {
+        key: "title",
+        ..ColumnSpec::filling(Name)
+    }];
+
+    impl TableSource for Rows {
+        type Field = Name;
+
+        fn columns(&self) -> &'static [ColumnSpec<Self::Field>] {
+            COLUMNS
+        }
+
+        fn rows(&self, _cx: &App) -> usize {
+            self.count
+        }
+
+        fn cell(&self, _cell: Cell<Self::Field>, _cx: &mut App) -> AnyElement {
+            div().into_any_element()
+        }
+
+        fn matches(&self, row: usize, query: &str, _cx: &App) -> bool {
+            query.is_empty() || row % 2 == 1
+        }
+    }
+
+    fn delegate(count: usize, cx: &App) -> TableDelegate<Rows> {
+        TableDelegate::new(Rows { count }, px(800.), cx)
+    }
+
+    #[gpui::test]
+    async fn clearing_search_marks_the_selection_for_reveal(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(Theme::dark());
+            let mut table = delegate(1000, cx);
+            table.set_query("odd", cx);
+            table.pick(999, false, false);
+            table.set_query("", cx);
+            assert!(table.pending_reveal);
+            assert_eq!(table.selected, Some(999));
+            assert_eq!(table.display_of(999), Some(999));
+        });
+    }
+
+    #[gpui::test]
+    async fn typing_never_marks_a_reveal(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(Theme::dark());
+            let mut table = delegate(1000, cx);
+            table.set_query("", cx);
+            assert!(!table.pending_reveal);
+            table.set_query("o", cx);
+            table.pick(1, false, false);
+            assert!(!table.pending_reveal);
+            table.set_query("od", cx);
+            assert!(!table.pending_reveal);
+        });
+    }
+
+    #[gpui::test]
+    async fn a_fresh_search_supersedes_a_pending_reveal(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(Theme::dark());
+            let mut table = delegate(1000, cx);
+            table.set_query("odd", cx);
+            table.pick(999, false, false);
+            table.set_query("", cx);
+            assert!(table.pending_reveal);
+            table.set_query("ev", cx);
+            assert!(!table.pending_reveal);
+        });
+    }
+
+    #[gpui::test]
+    async fn clearing_without_a_selection_has_nothing_to_reveal(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(Theme::dark());
+            let mut table = delegate(1000, cx);
+            table.set_query("odd", cx);
+            table.set_query("", cx);
+            assert!(table.pending_reveal);
+            assert_eq!(table.selected, None);
+        });
+    }
+
+    #[gpui::test]
+    async fn a_sorted_clear_marks_the_selected_source_row(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(Theme::dark());
+            let mut table = delegate(1000, cx);
+            table.set_sorting(
+                Some(Sorting {
+                    column: "title".to_owned(),
+                    order: Sort::Descending,
+                }),
+                cx,
+            );
+            table.set_query("odd", cx);
+            table.pick(999, false, false);
+            table.set_query("", cx);
+            assert!(table.pending_reveal);
+            assert_eq!(table.selected, Some(999));
+            // Descending flips display positions: source row 999 now sits on top.
+            assert_eq!(table.display_of(999), Some(0));
+        });
+    }
+
+    /// A table with a 400px viewport and a followable scroll handle, sharing
+    /// the handle with the test so its offset can be read.
+    fn windowed_table(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<TableState<Rows>>,
+        ScrollHandle,
+        &mut gpui::VisualTestContext,
+        Pixels,
+        Pixels,
+    ) {
+        cx.update(|cx| cx.set_global(Theme::dark()));
+        let scroll = ScrollHandle::new();
+        let followed = scroll.clone();
+        let (view, window_cx) = cx.add_window_view(move |_, cx| {
+            let delegate = TableDelegate::new(Rows { count: 1000 }, px(800.), cx);
+            TableState::new(delegate, cx).follow(followed)
+        });
+        let (row, head) = window_cx.update(|window, cx| {
+            let metrics = cx.theme().metrics;
+            (
+                snapped(metrics.row, window),
+                snapped(metrics.header, window),
+            )
+        });
+        (view, scroll, window_cx, row, head)
+    }
+
+    #[gpui::test]
+    async fn a_cleared_search_scrolls_a_hidden_selection_into_view(cx: &mut TestAppContext) {
+        let (view, scroll, cx, row, head) = windowed_table(cx);
+        view.update(cx, |table, _| {
+            table.set_viewport(Viewport {
+                top: px(0.),
+                height: px(400.),
+            });
+        });
+        view.update(cx, |table, cx| {
+            table.delegate_mut().set_query("odd", cx);
+            table.delegate_mut().pick(999, false, false);
+            cx.notify();
+        });
+        assert_eq!(scroll.offset().y, px(0.));
+
+        view.update(cx, |table, cx| {
+            table.delegate_mut().set_query("", cx);
+            cx.notify();
+        });
+
+        // Row 999 sat far below the viewport; clearing the search scrolled to it.
+        let shown = -scroll.offset().y;
+        let top = head + row * 999.;
+        assert!(shown > px(0.), "clearing the search did not scroll");
+        assert!(
+            shown + head <= top && top + row <= shown + px(400.),
+            "row 999 not fully visible after the reveal: top {top:?}, window {shown:?}..{:?}",
+            shown + px(400.)
+        );
+    }
+
+    #[gpui::test]
+    async fn a_cleared_search_leaves_a_visible_selection_alone(cx: &mut TestAppContext) {
+        let (view, scroll, cx, _, _) = windowed_table(cx);
+        view.update(cx, |table, _| {
+            table.set_viewport(Viewport {
+                top: px(0.),
+                height: px(400.),
+            });
+        });
+        view.update(cx, |table, cx| {
+            table.delegate_mut().set_query("odd", cx);
+            table.delegate_mut().pick(1, false, false);
+            cx.notify();
+        });
+        view.update(cx, |table, cx| {
+            table.delegate_mut().set_query("", cx);
+            cx.notify();
+        });
+        assert_eq!(scroll.offset().y, px(0.));
+    }
+
+    #[gpui::test]
+    async fn a_cleared_search_scrolls_up_to_a_selection_above(cx: &mut TestAppContext) {
+        let (view, scroll, cx, row, _) = windowed_table(cx);
+        let down = row * 20.;
+        scroll.set_offset(point(px(0.), -down));
+        view.update(cx, |table, _| {
+            table.set_viewport(Viewport {
+                top: down,
+                height: px(400.),
+            });
+        });
+        view.update(cx, |table, cx| {
+            table.delegate_mut().set_query("odd", cx);
+            table.delegate_mut().pick(1, false, false);
+            cx.notify();
+        });
+        view.update(cx, |table, cx| {
+            table.delegate_mut().set_query("", cx);
+            cx.notify();
+        });
+
+        // Row 1 sat above the viewport; the clear scrolled back up to it.
+        assert_eq!(scroll.offset().y, -row);
+
+        // The reveal fired once: scrolling away afterwards is left alone.
+        scroll.set_offset(point(px(0.), px(0.)));
+        view.update(cx, |table, _| {
+            table.set_viewport(Viewport {
+                top: px(0.),
+                height: px(400.),
+            });
+        });
+        view.update(cx, |_, cx| cx.notify());
+        assert_eq!(scroll.offset().y, px(0.));
+    }
+
+    #[gpui::test]
+    async fn a_deselect_before_the_render_cancels_the_reveal(cx: &mut TestAppContext) {
+        let (view, scroll, cx, _, _) = windowed_table(cx);
+        view.update(cx, |table, _| {
+            table.set_viewport(Viewport {
+                top: px(0.),
+                height: px(400.),
+            });
+        });
+        view.update(cx, |table, cx| {
+            table.delegate_mut().set_query("odd", cx);
+            table.delegate_mut().pick(999, false, false);
+            table.delegate_mut().set_query("", cx);
+            table.delegate_mut().clear_selection();
+            cx.notify();
+        });
+        assert_eq!(scroll.offset().y, px(0.));
+    }
+
+    #[gpui::test]
+    async fn a_pick_before_the_render_rebinds_the_reveal(cx: &mut TestAppContext) {
+        let (view, scroll, cx, row, head) = windowed_table(cx);
+        view.update(cx, |table, _| {
+            table.set_viewport(Viewport {
+                top: px(0.),
+                height: px(400.),
+            });
+        });
+        view.update(cx, |table, cx| {
+            table.delegate_mut().set_query("odd", cx);
+            table.delegate_mut().pick(999, false, false);
+            table.delegate_mut().set_query("", cx);
+            table.delegate_mut().pick(500, false, false);
+            cx.notify();
+        });
+        // The reveal followed the fresh pick (row 500), not the row from clear time.
+        let shown = -scroll.offset().y;
+        let top = head + row * 500.;
+        assert!(
+            shown + head <= top && top + row <= shown + px(400.),
+            "row 500 not fully visible after the reveal: top {top:?}, window {shown:?}..{:?}",
+            shown + px(400.)
+        );
     }
 }
