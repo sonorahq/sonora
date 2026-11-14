@@ -7,7 +7,10 @@ use cli::commands::{
     self, Item, Kind, Level, PlaybackCommand, ProviderCommand, QueueCommand, Request, SearchQuery,
     SessionCommand, Switch, Time, Watch,
 };
-use cli::wire::{self, Current, Failure, Reply, SessionInfo, State, Value};
+use cli::wire::{
+    self, Current, Failure, QueueEntry, QueueEntryKind, QueueSnapshot, Reply, SessionInfo, State,
+    Value,
+};
 use futures::future;
 use gpui::{App, Context, Entity, Subscription, Task};
 use music::link::Linked;
@@ -16,8 +19,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::search::{self, Catalog};
 use crate::{
-    Hit, Io, Library, Origin, Playback, PlaybackState, QueuePlacement, Repeat, Session,
-    SessionState, Shelf, Sonora, Whence, join, noted,
+    Hit, Io, Library, Origin, Playback, PlaybackState, QueueKind, QueuePlacement, QueuePosition,
+    Repeat, Session, SessionState, Shelf, Sonora, Whence, join, noted,
 };
 
 /// What `sonora current` calls the provider of a local file, the slug `sonora providers` gives it.
@@ -204,6 +207,11 @@ impl Control {
         cx: &mut Context<Self>,
     ) {
         let (items, placement) = match command {
+            QueueCommand::Snapshot => {
+                let snapshot = queue_snapshot(self.playback.read(cx), cx);
+                reply.send(Reply::Value(Value::Queue(snapshot))).ok();
+                return;
+            }
             QueueCommand::Add(items) => (items, Place::Queue(QueuePlacement::End)),
             QueueCommand::PlayNext(items) => (items, Place::Queue(QueuePlacement::Next)),
             QueueCommand::Play(items) => (items, Place::Now),
@@ -726,6 +734,39 @@ fn current(playback: &Playback, cx: &App) -> Option<Current> {
         liked: id.is_some_and(|id| sonora.library.read(cx).saved(id)),
         origin: playback.origin(cx).map(wire_origin),
     })
+}
+
+/// A read-only snapshot of the queue as `sonora queue` prints it, in play order. It reads
+/// only what the queue already holds: on a steered device that is the metadata already read
+/// in, whose sections stop at the first track not read in yet, so nothing is fetched from a
+/// provider to answer. With nothing queued it is empty in every section.
+fn queue_snapshot(playback: &Playback, cx: &App) -> QueueSnapshot {
+    let view = playback.shown_queue(cx);
+    let entry = |position: QueuePosition| {
+        view.track(position, cx).map(|track| QueueEntry {
+            track: wire_track(&track),
+            kind: wire_kind(view.kind(position, cx)),
+        })
+    };
+    let previous = (0..view.sections.past)
+        .filter_map(|at| entry(QueuePosition::Past(at)))
+        .collect();
+    let current = match view.sections.current {
+        true => entry(QueuePosition::Current),
+        false => None,
+    };
+    let upcoming = (0..view.sections.upcoming)
+        .filter_map(|at| entry(QueuePosition::Upcoming(at)))
+        .collect();
+    QueueSnapshot::bounded(previous, current, upcoming)
+}
+
+fn wire_kind(kind: Option<QueueKind>) -> QueueEntryKind {
+    match kind {
+        Some(QueueKind::Queued) => QueueEntryKind::Queued,
+        Some(QueueKind::Suggested) => QueueEntryKind::Suggested,
+        Some(QueueKind::Context) | None => QueueEntryKind::Context,
+    }
 }
 
 fn wire_origin(origin: &Origin) -> wire::Origin {
