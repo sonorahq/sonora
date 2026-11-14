@@ -466,3 +466,78 @@ pub(crate) fn library_playlist(source: ytmusic::Playlist, account: &str) -> Opti
 
     Some(playlist)
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+    use ytmusic::parse;
+
+    use super::*;
+
+    /// A library grid tile the way YouTube Music sends it, with the given subtitle texts and
+    /// the icons of its menu actions.
+    fn tile(id: &str, subtitle: &[&str], icons: &[&str]) -> Value {
+        let runs: Vec<Value> = subtitle
+            .iter()
+            .map(|text| json!({ "text": text }))
+            .collect();
+        let items: Vec<Value> = icons
+            .iter()
+            .map(|icon| json!({ "menuNavigationItemRenderer": { "icon": { "iconType": icon } } }))
+            .collect();
+        json!({
+            "musicTwoRowItemRenderer": {
+                "title": { "runs": [{ "text": "plis dije" }] },
+                "subtitle": { "runs": runs },
+                "navigationEndpoint": { "browseEndpoint": { "browseId": format!("VL{id}") } },
+                "menu": { "menuRenderer": { "items": items } },
+            }
+        })
+    }
+
+    fn read(tile: &Value) -> Playlist {
+        let source = parse::two_row_playlist(tile).expect("the tile is a playlist");
+        library_playlist(source, "Zefanya").expect("the playlist is listed")
+    }
+
+    #[test]
+    fn a_playlist_made_before_the_channel_is_the_listeners_own() {
+        let playlist = read(&tile("PLold", &["18 songs"], &["QUEUE_PLAY_NEXT"]));
+
+        assert!(playlist.owned);
+        assert_eq!(playlist.owner, "Zefanya");
+        assert_eq!(playlist.track_count, 18);
+    }
+
+    #[test]
+    fn a_playlist_with_a_delete_action_is_the_listeners_own() {
+        let playlist = read(&tile(
+            "PLnew",
+            &["Zefanya", " • ", "21 songs"],
+            &["EDIT", "DELETE"],
+        ));
+
+        assert!(playlist.owned);
+        assert_eq!(playlist.owner, "Zefanya");
+    }
+
+    #[test]
+    fn a_saved_playlist_stays_its_authors() {
+        let playlist = read(&tile(
+            "PLsaved",
+            &["Someone Else", " • ", "40 songs"],
+            &["QUEUE_PLAY_NEXT"],
+        ));
+
+        assert!(!playlist.owned);
+        assert_eq!(playlist.owner, "Someone Else");
+    }
+
+    #[test]
+    fn the_saved_episodes_list_is_left_out() {
+        let source = parse::two_row_playlist(&tile(EPISODES, &["Auto playlist"], &[]))
+            .expect("the tile is a playlist");
+
+        assert!(library_playlist(source, "Zefanya").is_none());
+    }
+}
