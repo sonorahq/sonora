@@ -18,6 +18,7 @@ music = { path = "crates/music" }
 state = { path = "crates/state" }
 storage = { path = "crates/storage" }
 input = { path = "crates/input" }
+logic = { path = "crates/logic" }
 router = { path = "crates/router" }
 ui = { path = "crates/ui" }
 views = { path = "crates/views" }

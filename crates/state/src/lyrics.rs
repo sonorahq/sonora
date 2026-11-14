@@ -3,9 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{Context, Entity, Task};
+use logic::lyrics::{awaits_better, gather, ordered};
 use music::lyrics::LOCAL;
 use music::{LyricsHit, LyricsProvider, LyricsQuery, Track, TrackKey};
-use tokio::task::JoinSet;
 
 use crate::sheets::{Sheets, Unsaved};
 use crate::{AppSettings, Io, Playback, Queue, QueuePosition, Session, join};
@@ -468,15 +468,8 @@ impl Lyrics {
                     synced = best.lyrics.synced();
                     displayed = Some(best);
                 }
-                // The best kind of lyrics can only lose to a source ranked higher, anything else
-                // to whichever source answers next.
                 let waiting = displayed.as_ref().is_some_and(|displayed| {
-                    let best = music::lyrics::best_kind(&ranking, &displayed.lyrics, worded_first);
-                    let place = match best {
-                        true => rank_in(&priority, displayed.source),
-                        false => usize::MAX,
-                    };
-                    pending.iter().any(|name| rank_in(&priority, name) < place)
+                    awaits_better(&ranking, displayed, &pending, &priority, worded_first)
                 });
                 let anchor = displayed.clone();
                 this.update(cx, |this, cx| {
@@ -686,29 +679,6 @@ fn same(left: &LyricsHit, right: &LyricsHit) -> bool {
         && left.lyrics.worded() == right.lyrics.worded()
 }
 
-fn ordered(
-    query: &LyricsQuery,
-    hits: Vec<LyricsHit>,
-    priority: &[String],
-    worded_first: bool,
-) -> Vec<LyricsHit> {
-    let mut ranked = music::lyrics::rank_with_priority(query, hits, priority, worded_first);
-    music::lyrics::reshape(&mut ranked);
-    ranked
-}
-
-/// Hits sent to a lookup, with the provider that has now answered. Hits held from an earlier
-/// lookup come with no provider.
-type Reply = (Option<&'static str>, Vec<LyricsHit>);
-
-/// Where `source` stands in the user's priority. Sources missing from it come last.
-fn rank_in(priority: &[String], source: &str) -> usize {
-    priority
-        .iter()
-        .position(|name| name == source)
-        .unwrap_or(priority.len())
-}
-
 /// What the services have said about one track: every hit matched to it, unranked and from every
 /// source, and the services that replied. The selection is applied when it is shown.
 #[derive(Clone, Default)]
@@ -751,57 +721,6 @@ fn query_for(track: &Track, key: Option<TrackKey>) -> LyricsQuery {
         duration: track.duration,
         track: key,
     }
-}
-
-/// Asks every provider at once and sends each one's name and hits for the queried track as
-/// they arrive. A provider that fails sends its name with no hits, so the receiver knows it is
-/// done. Returns the providers that replied, leaving out any that failed.
-async fn gather(
-    providers: Vec<Arc<dyn LyricsProvider>>,
-    query: LyricsQuery,
-    sender: tokio::sync::mpsc::UnboundedSender<Reply>,
-) -> anyhow::Result<Vec<&'static str>> {
-    let mut tasks = JoinSet::new();
-    for provider in providers {
-        let query = query.clone();
-        tasks.spawn(async move {
-            let name = provider.name();
-            let found = provider
-                .search(&query)
-                .await
-                .inspect_err(|error| log::warn!("lyrics: {name} did not answer: {error:#}"))
-                .ok()
-                .map(|mut found| {
-                    // Hits for another track are dropped here, before the lookup holds and
-                    // copies them.
-                    found.retain(|hit| music::lyrics::matched(&query, hit));
-                    log::debug!(
-                        "lyrics: {name} returned {} matching answer(s) for {}",
-                        found.len(),
-                        query.title
-                    );
-                    found
-                });
-            (name, found)
-        });
-    }
-    let mut answered = Vec::new();
-    while !tasks.is_empty() {
-        tokio::select! {
-            // Dropping the foreground lookup (including on a provider change) must also
-            // stop its network requests. Dropping this JoinSet aborts the remaining tasks.
-            _ = sender.closed() => break,
-            found = tasks.join_next() => {
-                if let Some(Ok((name, found))) = found {
-                    if found.is_some() {
-                        answered.push(name);
-                    }
-                    sender.send((Some(name), found.unwrap_or_default())).ok();
-                }
-            }
-        }
-    }
-    Ok(answered)
 }
 
 #[cfg(test)]

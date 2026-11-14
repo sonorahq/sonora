@@ -4319,6 +4319,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "logic"
+version = "0.50.2"
+dependencies = [
+ "anyhow",
+ "fastrand",
+ "log",
+ "music",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "longest-increasing-subsequence"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7689,6 +7702,7 @@ dependencies = [
  "image",
  "libc",
  "log",
+ "logic",
  "moka",
  "mpris-server",
  "music",
