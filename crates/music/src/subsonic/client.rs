@@ -429,6 +429,7 @@ impl MusicApi for SubsonicClient {
             banner: None,
             biography,
             monthly_listeners: None,
+            followers: None,
             top_tracks,
             albums,
         })
