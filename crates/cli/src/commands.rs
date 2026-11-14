@@ -164,6 +164,13 @@ pub enum Item {
         text: String,
         kind: Kind,
     },
+    /// The matches of this kind in the local library, the ones `sonora play local` and
+    /// `sonora queue local` find. `play` takes the top one, `queue` takes them all, up to the
+    /// number a search page lists. Stands for `sonora play local -s <query> [-t TYPE]`
+    Local {
+        text: String,
+        kind: Kind,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

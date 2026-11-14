@@ -82,7 +82,10 @@ enum Place {
 /// An item to queue, checked on the main thread and fetched on tokio.
 enum Source {
     Path(PathBuf),
-    /// The link as typed, for the failure that names it, and what it points at.
+    /// A track already read from the local library, which needs no fetch.
+    Track(Box<Track>),
+    /// The link as typed, or a name for a local match, for the failure that names it, and what
+    /// it points at.
     Link(String, Linked),
 }
 
@@ -208,6 +211,10 @@ impl Control {
             QueueCommand::PlayNext(items) => (items, Place::Queue(QueuePlacement::Next)),
             QueueCommand::Play(items) => (items, Place::Now),
         };
+        if let [Item::Local { text, kind }] = items.as_slice() {
+            let (text, kind) = (text.clone(), *kind);
+            return self.local(text, kind, placement, reply, cx);
+        }
         if !items.iter().any(|item| matches!(item, Item::Search { .. })) {
             return self.enqueue(items, placement, reply, cx);
         }
@@ -233,6 +240,44 @@ impl Control {
         });
     }
 
+    /// Plays or queues the local library's matches of `text` and `kind`, ranked as the search page
+    /// ranks them. Play takes the top match and queue takes every one found, up to the search
+    /// page's limit. With nothing found, nothing is fetched or played.
+    fn local(
+        &mut self,
+        text: String,
+        kind: Kind,
+        placement: Place,
+        reply: oneshot::Sender<Reply>,
+        cx: &mut Context<Self>,
+    ) {
+        let take = match placement {
+            Place::Now => 1,
+            Place::Queue(_) => search::LIMIT,
+        };
+        let sources: Vec<Source> = {
+            let library = self.library.read(cx).state(Shelf::Local);
+            search::matching(
+                library.tracks(),
+                library.albums(),
+                library.playlists(),
+                &text,
+                search_kind(kind),
+                take,
+            )
+            .into_iter()
+            .filter_map(local_source)
+            .collect()
+        };
+        let client = self.session.read(cx).local_client();
+        match (sources.is_empty(), client) {
+            (false, Some(client)) => self.fetch_into(sources, Some(client), placement, reply, cx),
+            _ => {
+                reply.send(Reply::Failed(Failure::NothingFound(text))).ok();
+            }
+        }
+    }
+
     /// Fetches every item at once and queues them together, in the order they were given. One
     /// that fails refuses the whole command, so nothing is queued half.
     fn enqueue(
@@ -253,10 +298,21 @@ impl Control {
                 return;
             }
         };
+        let client = self.session.read(cx).client();
+        self.fetch_into(sources, client, placement, reply, cx);
+    }
 
-        let session = self.session.read(cx);
-        let local = session.local_provider();
-        let client = session.client();
+    /// Fetches what `sources` stand for, links through `client`, then places the tracks together
+    /// and answers. One that fails refuses the whole command, so nothing is queued half.
+    fn fetch_into(
+        &mut self,
+        sources: Vec<Source>,
+        client: Option<Arc<dyn MusicApi>>,
+        placement: Place,
+        reply: oneshot::Sender<Reply>,
+        cx: &mut Context<Self>,
+    ) {
+        let local = self.session.read(cx).local_provider();
         let fetch = Io::global(cx).spawn(async move {
             let fetches = sources
                 .into_iter()
@@ -469,8 +525,8 @@ impl Control {
         let link = match item {
             Item::Path(path) => return Ok(Source::Path(path)),
             Item::Link(link) => link,
-            // `queue` finds a search before anything reaches here
-            Item::Search { .. } => return Err(Failure::Malformed),
+            // `queue` finds a search or local matches before anything reaches here
+            Item::Search { .. } | Item::Local { .. } => return Err(Failure::Malformed),
         };
         let session = self.session.read(cx);
         let Some((slug, linked)) = session.read_link(&link) else {
@@ -776,6 +832,27 @@ fn percent(level: f32) -> u8 {
     (level.clamp(0., 1.) * 100.).round() as u8
 }
 
+/// The search kind a command-line kind names.
+fn search_kind(kind: Kind) -> search::Kind {
+    match kind {
+        Kind::Song => search::Kind::Song,
+        Kind::Album => search::Kind::Album,
+        Kind::Artist => search::Kind::Artist,
+        Kind::Playlist => search::Kind::Playlist,
+    }
+}
+
+/// What a local match plays or queues: a song as it is, an album or artist fetched from the
+/// local provider. A playlist is no local match, so it has nothing to play.
+fn local_source(hit: Hit) -> Option<Source> {
+    match hit {
+        Hit::Song(track) => Some(Source::Track(track)),
+        Hit::Album(album) => Some(Source::Link(album.name, Linked::Album(album.id))),
+        Hit::Artist(artist) => Some(Source::Link(artist.name, Linked::Artist(artist.id?))),
+        Hit::Playlist(_) => None,
+    }
+}
+
 /// The tracks a checked item stands for. A file is read by the local provider, a link
 /// fetched from the provider it belongs to.
 async fn fetch(
@@ -791,6 +868,12 @@ async fn fetch(
             })?;
             return Ok(Batch {
                 tracks: vec![track],
+                origin: None,
+            });
+        }
+        Source::Track(track) => {
+            return Ok(Batch {
+                tracks: vec![*track],
                 origin: None,
             });
         }
