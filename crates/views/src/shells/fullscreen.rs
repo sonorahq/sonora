@@ -12,7 +12,9 @@ use gpui::{
 };
 use gpui::{Div, Window, anchored, canvas, deferred, div, phi, point, px};
 use i18n::t;
-use input::{ToggleFullscreen, ToggleWindowFullscreen, WORKSPACE_CONTEXT};
+use input::{
+    ToggleFullscreen, ToggleLyrics, ToggleQueue, ToggleWindowFullscreen, WORKSPACE_CONTEXT,
+};
 use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
 use ui::{
@@ -251,15 +253,17 @@ impl FullscreenView {
     /// hides the cursor over the workspace. Either way the view next shows with its controls up.
     pub fn set_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
         self.on_show = shown;
-        self.flip(true);
-        self.hidden = SpringState {
-            position: 0.,
-            velocity: 0.,
-        };
-        self.unpark();
-        self.last_pos = None;
         match shown {
-            true => self.stir(cx),
+            true => {
+                self.flip(true);
+                self.hidden = SpringState {
+                    position: 0.,
+                    velocity: 0.,
+                };
+                self.unpark();
+                self.last_pos = None;
+                self.stir(cx);
+            }
             false => self.rest = None,
         }
         cx.notify();
@@ -281,7 +285,19 @@ impl FullscreenView {
         if let Some(tab) = panel {
             self.aside.update(cx, |aside, cx| aside.show(tab, cx));
         }
-        self.stir(cx);
+    }
+
+    /// Flips the fullscreen panel to `tab` from a key press. The cover comes back when `tab`
+    /// is already showing.
+    fn toggle_panel(&mut self, tab: SideTab, cx: &mut Context<Self>) {
+        if tab == SideTab::Lyrics && !self.settings.read(cx).lyrics_enabled() {
+            return;
+        }
+        let panel = match self.panel == Some(tab) {
+            true => None,
+            false => Some(tab),
+        };
+        self.show(panel, cx);
     }
 
     /// Whether the panel on show had finished coming in, so it has a whole self to fade out.
@@ -1513,6 +1529,12 @@ impl Render for FullscreenView {
                 }
             }))
             .on_key_down(cx.listener(|this, _: &KeyDownEvent, _, cx| this.poke(cx)))
+            .on_action(
+                cx.listener(|this, _: &ToggleLyrics, _, cx| this.toggle_panel(SideTab::Lyrics, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &ToggleQueue, _, cx| this.toggle_panel(SideTab::Queue, cx)),
+            )
             .child(
                 canvas(move |bounds, _, _| root_bounds.set(bounds), |_, _, _, _| {})
                     .absolute()
