@@ -12,6 +12,7 @@ pub enum Language {
     Italian,
     Indonesian,
     Japanese,
+    Korean,
     Russian,
     Ukrainian,
     Polish,
@@ -23,7 +24,7 @@ pub enum Language {
 }
 
 impl Language {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::English,
         Self::German,
         Self::Spanish,
@@ -31,6 +32,7 @@ impl Language {
         Self::Italian,
         Self::Indonesian,
         Self::Japanese,
+	Self::Korean,
         Self::Russian,
         Self::Ukrainian,
         Self::Polish,
@@ -50,6 +52,7 @@ impl Language {
             Self::Italian => "it",
             Self::Indonesian => "id",
             Self::Japanese => "ja",
+	    Self::Korean => "ko",
             Self::Russian => "ru",
             Self::Ukrainian => "uk",
             Self::Polish => "pl",
@@ -70,6 +73,7 @@ impl Language {
             Self::Italian => "Italiano",
             Self::Indonesian => "Bahasa Indonesia",
             Self::Japanese => "日本語",
+	    Self::Korean => "한국어",
             Self::Russian => "Русский",
             Self::Ukrainian => "Українська",
             Self::Polish => "Polski",
@@ -106,6 +110,7 @@ impl Language {
             Self::Italian => langid!("it"),
             Self::Indonesian => langid!("id"),
             Self::Japanese => langid!("ja"),
+	    Self::Korean => langid!("ko"),
             Self::Russian => langid!("ru"),
             Self::Ukrainian => langid!("uk"),
             Self::Polish => langid!("pl"),
@@ -126,6 +131,7 @@ impl Language {
             Self::Italian => include_str!("../../../assets/i18n/it/main.ftl"),
             Self::Indonesian => include_str!("../../../assets/i18n/id/main.ftl"),
             Self::Japanese => include_str!("../../../assets/i18n/ja/main.ftl"),
+	    Self:Korean => include_str!("../../../assets/i18n/ko/main.ftl"),
             Self::Russian => include_str!("../../../assets/i18n/ru/main.ftl"),
             Self::Ukrainian => include_str!("../../../assets/i18n/uk/main.ftl"),
             Self::Polish => include_str!("../../../assets/i18n/pl/main.ftl"),
