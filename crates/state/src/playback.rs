@@ -56,6 +56,23 @@ enum Intent {
     Pause,
 }
 
+/// Identifies the newest Soloist queue snapshot whose metadata is still being resolved.
+#[derive(Default)]
+struct SoloistQueueRevision(u64);
+
+impl SoloistQueueRevision {
+    /// Starts a newer queue snapshot, making every earlier completion stale.
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(1);
+        self.0
+    }
+
+    /// Whether a completed snapshot still matches the newest request.
+    fn is_current(&self, revision: u64) -> bool {
+        self.0 == revision
+    }
+}
+
 use crate::queue::{Queue, QueuePlacement};
 use serde::{Deserialize, Serialize};
 
@@ -501,6 +518,8 @@ pub struct Playback {
     enqueue: Option<Task<()>>,
     /// Reads tracks another Spotify app put on Soloist's queue.
     soloist_queue: Option<Task<()>>,
+    /// Rejects older queue snapshots that finish resolving after a newer one.
+    soloist_queue_revision: SoloistQueueRevision,
     /// Reads a queued track Soloist moved to before Sonora knew its metadata.
     soloist_track: Option<Task<()>>,
     suggest: Option<Task<()>>,
@@ -684,6 +703,7 @@ impl Playback {
             warm: None,
             enqueue: None,
             soloist_queue: None,
+            soloist_queue_revision: SoloistQueueRevision::default(),
             soloist_track: None,
             suggest: None,
             preloaded: None,
@@ -1166,6 +1186,7 @@ impl Playback {
         };
         let previous_len = previous.len();
         let entries: Vec<_> = previous.into_iter().chain(upcoming).collect();
+        let revision = self.soloist_queue_revision.next();
         self.soloist_queue = Some(Io::global(cx).load(
             async move {
                 let current = match current {
@@ -1179,6 +1200,9 @@ impl Playback {
                 Ok((current, entries, tracks))
             },
             move |this, found, cx| {
+                if !this.soloist_queue_revision.is_current(revision) {
+                    return;
+                }
                 this.soloist_queue = None;
                 match found {
                     Ok((current, entries, tracks)) => {
@@ -3289,6 +3313,7 @@ impl Playback {
             self.warm = None;
             self.enqueue = None;
             self.soloist_queue = None;
+            self.soloist_queue_revision.next();
             self.soloist_track = None;
             self.suggest = None;
             self.seeded = None;
@@ -3577,7 +3602,17 @@ mod tests {
 
     use music::{Track, connect::QueuedTrack};
 
-    use super::{LiveClock, gain, split_soloist_window};
+    use super::{LiveClock, SoloistQueueRevision, gain, split_soloist_window};
+
+    #[test]
+    fn newest_soloist_queue_snapshot_wins() {
+        let mut revision = SoloistQueueRevision::default();
+        let older = revision.next();
+        let newer = revision.next();
+
+        assert!(!revision.is_current(older));
+        assert!(revision.is_current(newer));
+    }
 
     #[test]
     fn soloist_window_keeps_remote_order_and_queue_kind() {
