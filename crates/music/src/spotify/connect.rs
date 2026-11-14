@@ -10,6 +10,8 @@ use std::hash::{Hash as _, Hasher as _};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use futures::{StreamExt as _, stream::SelectAll};
 use http::{HeaderMap, HeaderValue, Method, header::CONTENT_TYPE};
 use librespot_core::dealer::manager::{BoxedStreamResult, Reply, RequestReply};
@@ -35,7 +37,8 @@ use librespot_protocol::social_connect_v2::Session as SocialSession;
 use librespot_protocol::transfer_state::TransferState;
 use protobuf::rt::WireType;
 use protobuf::{CodedInputStream, EnumOrUnknown, Message as _, MessageField};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use sha1::{Digest as _, Sha1};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::time::Instant;
 
 use crate::connect::{
@@ -54,6 +57,14 @@ const ACK_DELAY: Duration = Duration::from_millis(600);
 /// How long after claiming playback a report of another active device is taken to be older than
 /// the claim.
 const CLAIM_GRACE: Duration = Duration::from_secs(3);
+/// The most pages of a collection that are read for the uids of its tracks.
+const UID_PAGES: usize = 40;
+/// How many characters of the digest make the uid Spotify's apps give a track they find listed
+/// without one.
+const DERIVED_UID: usize = 20;
+/// How far this device may be from where a Jam says its song is before it is moved there. A
+/// seek is heard, and a transfer arrives for every change a listener makes.
+const JAM_SLACK: Duration = Duration::from_millis(1500);
 /// The most upcoming tracks a start carries over from the device that sent it.
 const CARRIED: usize = 80;
 /// The recent history window Spotify includes in its player state.
@@ -187,6 +198,21 @@ struct Worker {
     /// listeners of a Jam tell a new track from a seek by them.
     run: String,
     play: String,
+    /// The uids Spotify itself gives the tracks of the collection being played. Its apps find a
+    /// track in a collection by them, so a track reported under any other uid is one they cannot
+    /// place, and a listener of a Jam then plays the collection from its top.
+    uids: Uids,
+    /// Where a collection's uids come back to once they are read, and where they are taken from.
+    learned: UnboundedSender<(String, Vec<(String, String)>)>,
+    learning: UnboundedReceiver<(String, Vec<(String, String)>)>,
+    /// Whether this device hosts a Jam that others listen to.
+    hosting: bool,
+    /// What this device really plays while it is paused on its own in the Jam it hosts. A pause
+    /// in a Jam is the listener's own: the others' music goes on, and Spotify hands the lead to
+    /// whoever still plays once it hears of the pause, after which nothing this device does
+    /// reaches them. So the pause is kept from Spotify, `now` goes on saying what the Jam hears,
+    /// and resuming catches up with it.
+    apart: Option<Arc<Snapshot>>,
     active_since: Option<SystemTime>,
     claimed_at: Option<Instant>,
     /// The id and sender of the last command handled, which the next state echoes back.
@@ -210,6 +236,7 @@ struct Worker {
 impl Worker {
     fn new(session: Session, out: UnboundedSender<Event>) -> Self {
         let info = device_info(&session, &Naming::default());
+        let (learned, learning) = unbounded_channel();
         Self {
             session,
             out,
@@ -225,6 +252,11 @@ impl Worker {
             now: None,
             run: String::new(),
             play: String::new(),
+            uids: Uids::default(),
+            learned,
+            learning,
+            hosting: false,
+            apart: None,
             active_since: None,
             claimed_at: None,
             last_command: (0, String::new()),
@@ -260,6 +292,7 @@ impl Worker {
                     Some(Err(error)) => log::warn!("connect: bad dealer update: {error}"),
                     None => {}
                 },
+                Some((context, tracks)) = self.learning.recv() => self.learn(context, tracks).await,
                 () = acknowledge(self.rename_at) => {
                     self.rename_at = None;
                     if self.enabled && self.connected {
@@ -334,7 +367,7 @@ impl Worker {
             Ok(Some(read)) => {
                 log::info!("connect: joined a jam");
                 // the update that follows has the members, and this has them too when it reads
-                self.out.send(Event::Jam(Some(read.jam))).ok();
+                self.tell_jam(Some(read.jam));
             }
             Ok(None) => {}
             Err(error) => {
@@ -409,7 +442,7 @@ impl Worker {
         match jam_read(&self.session, &Method::GET, &endpoint).await {
             Ok(Some(read)) => {
                 log::info!("connect: started a jam, link {}", read.jam.link.is_some());
-                self.out.send(Event::Jam(Some(read.jam))).ok();
+                self.tell_jam(Some(read.jam));
             }
             Ok(None) => {
                 log::warn!("connect: the jam that started cannot be read");
@@ -449,7 +482,7 @@ impl Worker {
         };
         match answer {
             Ok(_) => {
-                self.out.send(Event::Jam(None)).ok();
+                self.tell_jam(None);
             }
             Err(error) => {
                 log::warn!("connect: cannot leave the jam: {error}");
@@ -463,7 +496,7 @@ impl Worker {
     async fn leave_failed(&mut self) {
         self.out.send(Event::LeaveFailed).ok();
         if let Ok(jam) = Self::current_jam(&self.session).await {
-            self.out.send(Event::Jam(jam)).ok();
+            self.tell_jam(jam);
         }
     }
 
@@ -490,7 +523,7 @@ impl Worker {
             Ok(_) => {
                 log::info!("connect: removed a member from the jam");
                 if let Ok(Some(read)) = Self::current_session(&self.session).await {
-                    self.out.send(Event::Jam(Some(read.jam))).ok();
+                    self.tell_jam(Some(read.jam));
                 }
             }
             Err(error) => log::warn!("connect: cannot remove the member: {error}"),
@@ -498,7 +531,7 @@ impl Worker {
     }
 
     /// Reads session updates without requiring the reason enum to be known to librespot.
-    fn jam_update(&self, message: Message) {
+    fn jam_update(&mut self, message: Message) {
         let PayloadValue::Json(json) = message.payload else {
             return;
         };
@@ -516,11 +549,25 @@ impl Worker {
             .and_then(|session| social_json(session.clone()))
             .map(|session| read_social(session, &self.session.username()).jam);
         match (ended, jam) {
-            (true, _) => self.out.send(Event::Jam(None)).ok(),
+            (true, _) => self.tell_jam(None),
             // an update with no session says nothing about who is in it
-            (false, Some(jam)) => self.out.send(Event::Jam(Some(jam))).ok(),
-            (false, None) => None,
-        };
+            (false, Some(jam)) => self.tell_jam(Some(jam)),
+            (false, None) => {}
+        }
+    }
+
+    /// Reports the Jam this device is in, and notes whether it hosts one that others listen to.
+    /// Once it no longer does, a pause it kept to itself is told like any other.
+    fn tell_jam(&mut self, jam: Option<Jam>) {
+        self.hosting = jam
+            .as_ref()
+            .is_some_and(|jam| jam.owner && jam.members.len() > 1);
+        if let (false, Some(paused)) = (self.hosting, self.apart.take()) {
+            self.now = Some(paused);
+            self.hold(PutStateReason::PLAYER_STATE_CHANGED);
+            self.flush_at.get_or_insert_with(Instant::now);
+        }
+        self.out.send(Event::Jam(jam)).ok();
     }
 
     /// Moves playback to `to`. This app takes it the way librespot does, by naming itself on both
@@ -670,7 +717,7 @@ impl Worker {
         // the listener may have joined a jam from another app before this one was listed
         match Self::current_jam(&self.session).await {
             Ok(jam) => {
-                self.out.send(Event::Jam(jam)).ok();
+                self.tell_jam(jam);
             }
             Err(error) => log::warn!("connect: cannot read the jam: {error}"),
         }
@@ -692,9 +739,105 @@ impl Worker {
     }
 
     async fn publish(&mut self, now: Option<Arc<Snapshot>>) {
+        let Some(now) = self.heard(now) else {
+            return;
+        };
         let before = std::mem::replace(&mut self.now, now);
         self.identify(before.as_deref());
+        self.read_uids();
         self.sync(before).await;
+    }
+
+    /// What to tell Spotify plays when the device is in the state `now`, or `None` when there
+    /// is nothing new to tell. It differs from `now` only while this device is paused on its own
+    /// in a Jam it hosts: the Jam then hears the song go on, and a resume first moves the device
+    /// to where the Jam has got to.
+    fn heard(&mut self, now: Option<Arc<Snapshot>>) -> Option<Option<Arc<Snapshot>>> {
+        let (Some(told), Some(real), true) = (self.now.clone(), now.clone(), self.hosting) else {
+            self.apart = None;
+            return Some(now);
+        };
+        let same = told.track.as_ref().map(|track| &track.id)
+            == real.track.as_ref().map(|track| &track.id);
+        match (self.apart.is_some(), real.playing) {
+            // a pause of a song the Jam hears is kept from it
+            (false, false) if told.playing && same => {
+                log::debug!("connect: pausing apart from the jam");
+                self.apart = Some(real);
+                None
+            }
+            (false, _) => Some(now),
+            // whatever else changed while paused is told, with the song still going on
+            (true, false) => {
+                let mut heard = (*real).clone();
+                heard.playing = true;
+                match same {
+                    true => {
+                        heard.position = told.position;
+                        heard.stamp = told.stamp;
+                    }
+                    // another song starts for the Jam where it stands here
+                    false => heard.stamp = Some(SystemTime::now()),
+                }
+                self.apart = Some(real);
+                Some(Some(Arc::new(heard)))
+            }
+            (true, true) => {
+                self.apart = None;
+                if !same {
+                    return Some(now);
+                }
+                let at = told.live_position();
+                let over = !told.duration.is_zero() && at >= told.duration;
+                let command = match over {
+                    true => Command::Next,
+                    false if at.abs_diff(real.live_position()) > JAM_SLACK => Command::Seek(at),
+                    false => return Some(now),
+                };
+                log::debug!("connect: catching up with the jam at {at:?}");
+                // the song is told again once the device is where the Jam is
+                self.out.send(Event::Command(command)).ok();
+                None
+            }
+        }
+    }
+
+    /// Reads the uids of the collection now playing, unless they are known or being read.
+    fn read_uids(&mut self) {
+        let Some(context) = self.now.as_deref().and_then(|now| now.context.as_ref()) else {
+            return;
+        };
+        let uri = collection_uri(context, &self.session.username());
+        if self.uids.context == uri {
+            return;
+        }
+        self.uids = Uids {
+            context: uri.clone(),
+            ..Default::default()
+        };
+        let session = self.session.clone();
+        let learned = self.learned.clone();
+        self.session.spawn(async move {
+            match listed_uids(&session, &uri).await {
+                Ok(tracks) => {
+                    learned.send((uri, tracks)).ok();
+                }
+                Err(error) => log::warn!("connect: cannot read the uids of {uri}: {error}"),
+            }
+        });
+    }
+
+    /// Keeps the uids read for `context` and reports the queue again under them.
+    async fn learn(&mut self, context: String, tracks: Vec<(String, String)>) {
+        if self.uids.context != context {
+            return;
+        }
+        log::debug!("connect: read {} uids of {context}", tracks.len());
+        self.uids.tracks = tracks;
+        self.uids.read = true;
+        if self.now.is_some() {
+            self.want_put(PutStateReason::PLAYER_STATE_CHANGED).await;
+        }
     }
 
     /// Gives what plays now new ids where it is not what played `before`: the track's play for
@@ -878,16 +1021,21 @@ impl Worker {
             Some(context) => collection_uri(context, &self.session.username()),
             None => format!("{TRACK_PREFIX}{}", track.id),
         };
-        state.track = MessageField::some(provided(track, &uri));
+        let known = match now.context.is_some() {
+            true => self.uids.of(&uri),
+            // a song that is its own collection has nothing to read, and its apps name it alike
+            false => Known::unlisted(),
+        };
+        state.track = MessageField::some(provided(track, &uri, known.at(track, now.index)));
         state.prev_tracks = now
             .previous
             .iter()
-            .map(|track| provided(track, &uri))
+            .map(|track| provided(track, &uri, known.at(track, None)))
             .collect();
         state.next_tracks = now
             .upcoming
             .iter()
-            .map(|track| provided(track, &uri))
+            .map(|track| provided(track, &uri, known.at(track, None)))
             .collect();
         state.context_url = format!("context://{uri}");
         state.context_uri = uri;
@@ -1144,7 +1292,10 @@ impl Worker {
                     outline(&queue.next_tracks),
                 );
                 // an edit that added songs runs past the window it was shown, and all of it counts
-                let upcoming = listed(&queue.next_tracks, queue.next_tracks.len());
+                let mut upcoming = listed(&queue.next_tracks, queue.next_tracks.len());
+                if let Some(now) = self.now.as_deref().filter(|now| now.context.is_none()) {
+                    keep_kinds(&mut upcoming, &now.upcoming);
+                }
                 // Acknowledge the edit with its new queue while the host resolves missing metadata.
                 // The history an edit carries is left alone: a phone sends its own or none at
                 // all, and no app can edit it, so taking it would only wipe what played here.
@@ -1155,6 +1306,10 @@ impl Worker {
             }
             Wire::UpdateContext(_) => Vec::new(),
             Wire::Unknown(value) => {
+                if let Some(state) = jam_transfer(&value) {
+                    log::debug!("connect: a jam brings this device back in step");
+                    return Some(self.in_step(self.transferred(state)));
+                }
                 // the field names only, since a transfer carries the listener's whole state
                 let fields = value
                     .as_object()
@@ -1163,6 +1318,44 @@ impl Worker {
                 return None;
             }
         })
+    }
+
+    /// What it takes to play as `start` says. A song that already plays here is not loaded again,
+    /// which would be heard: the queue after it is taken, and its place when that is audibly
+    /// off.
+    fn in_step(&mut self, start: Start) -> Vec<Command> {
+        let wanted = &start.state;
+        let Some(now) = self.now.as_ref().filter(|now| {
+            now.track.as_ref().map(|track| &track.id)
+                == wanted.track.as_ref().map(|track| &track.id)
+                && now.playing == wanted.playing
+        }) else {
+            return vec![Command::Start(start)];
+        };
+        let mut commands = Vec::new();
+        let mut upcoming = wanted.upcoming.clone();
+        if now.context.is_none() {
+            keep_kinds(&mut upcoming, &now.upcoming);
+        }
+        let listed = |tracks: &[QueuedTrack]| -> Vec<(String, bool)> {
+            tracks
+                .iter()
+                .map(|track| (track.id.clone(), track.queued))
+                .collect()
+        };
+        if listed(&upcoming) != listed(&now.upcoming) {
+            commands.push(Command::SetQueue {
+                upcoming: upcoming.clone(),
+            });
+        }
+        let at = wanted.live_position();
+        if at.abs_diff(now.live_position()) > JAM_SLACK {
+            commands.push(Command::Seek(at));
+        }
+        if let Some(now) = self.now.as_mut() {
+            Arc::make_mut(now).upcoming = upcoming;
+        }
+        commands
     }
 
     /// The repeat mode after a request to switch the context or the track repeat, each of which
@@ -1568,11 +1761,163 @@ fn kind(info: &DeviceInfo) -> DeviceKind {
     }
 }
 
-/// Reports the occurrence's identity and provenance consistently in every part of play order.
-fn provided(track: &QueuedTrack, context: &str) -> ProvidedTrack {
+/// The uids Spotify gives the tracks of one collection, in the order it lists them.
+#[derive(Default)]
+struct Uids {
+    /// The uri of the collection, empty before any was played.
+    context: String,
+    /// Each listed track's uri and uid. Empty until they are read, and it stays so for a
+    /// collection that lists its tracks without uids, as an album does.
+    tracks: Vec<(String, String)>,
+    /// Whether the collection was read, which tells one without uids from one not read yet.
+    read: bool,
+}
+
+impl Uids {
+    /// The uids as they hold for `context`, none when another collection is the one known.
+    fn of(&self, context: &str) -> Known<'_> {
+        match self.context == context {
+            true => Known {
+                listed: &self.tracks,
+                derived: self.read && self.tracks.is_empty(),
+            },
+            false => Known {
+                listed: &[],
+                derived: false,
+            },
+        }
+    }
+}
+
+/// The uids of the collection being reported.
+#[derive(Clone, Copy)]
+struct Known<'a> {
+    listed: &'a [(String, String)],
+    /// Whether the collection lists its tracks without uids, so that Spotify's apps make each
+    /// one's up from its uri, and this app has to name the tracks the same way.
+    derived: bool,
+}
+
+impl Known<'_> {
+    /// The uids of a collection that lists none.
+    fn unlisted() -> Self {
+        Self {
+            listed: &[],
+            derived: true,
+        }
+    }
+
+    /// The uid Spotify's apps know `track` by in the collection: the one listed at `index` when
+    /// the track sits there, or else that of its first listing. A track the collection lists
+    /// under no uid goes by the one made from its uri, and one not found in a collection that
+    /// has uids, or in one not read yet, goes without, which leaves the apps to find it by uri.
+    fn at(self, track: &QueuedTrack, index: Option<usize>) -> String {
+        if track.queued {
+            return track.uid.clone();
+        }
+        let uri = format!("{TRACK_PREFIX}{}", track.id);
+        let listed = index
+            .and_then(|index| self.listed.get(index))
+            .filter(|(listed, _)| *listed == uri)
+            .or_else(|| self.listed.iter().find(|(listed, _)| *listed == uri));
+        match (listed, self.derived) {
+            (Some((_, uid)), _) => uid.clone(),
+            (None, true) => derived_uid(&uri),
+            (None, false) => String::new(),
+        }
+    }
+}
+
+/// The uid Spotify's apps give a track listed without one: the start of the SHA-1 of its uri.
+fn derived_uid(uri: &str) -> String {
+    let digest = Sha1::digest(uri.as_bytes());
+    let mut uid: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    uid.truncate(DERIVED_UID);
+    uid
+}
+
+/// The uri and uid of every track `uri` lists that has a uid, in the order it lists them. A long
+/// collection comes in pages, each naming the next, and they are read one after another up to
+/// `UID_PAGES` of them.
+async fn listed_uids(session: &Session, uri: &str) -> Result<Vec<(String, String)>, Error> {
+    let context = session.spclient().get_context(uri).await?;
+    let mut tracks = Vec::new();
+    let mut next = None;
+    for page in &context.pages {
+        tracks.extend(
+            page.tracks
+                .iter()
+                .filter_map(|track| Some((track.uri.clone()?, track.uid.clone()?))),
+        );
+        // a page with no tracks of its own only says where they are
+        next = match page.tracks.is_empty() {
+            true => page.page_url.clone().or_else(|| page.next_page_url.clone()),
+            false => page.next_page_url.clone(),
+        };
+    }
+    let mut pages = context.pages.len();
+    while let Some(url) = next
+        .take()
+        .filter(|url| !url.is_empty() && pages < UID_PAGES)
+    {
+        pages += 1;
+        let page = session.spclient().get_next_page(&url).await?;
+        let Ok(page) = serde_json::from_slice::<serde_json::Value>(&page) else {
+            break;
+        };
+        let text = |value: &serde_json::Value, key: &str| {
+            Some(value.get(key)?.as_str()?.to_owned()).filter(|text| !text.is_empty())
+        };
+        let listed = page.get("tracks").and_then(|tracks| tracks.as_array());
+        tracks.extend(
+            listed
+                .into_iter()
+                .flatten()
+                .filter_map(|track| Some((text(track, "uri")?, text(track, "uid")?))),
+        );
+        next = text(&page, "next_page_url").or_else(|| text(&page, "nextPageUrl"));
+    }
+    tracks.retain(|(_, uid)| !uid.is_empty());
+    log::debug!(
+        "connect: {uri} lists {} uids over {pages} pages",
+        tracks.len()
+    );
+    Ok(tracks)
+}
+
+/// The state of a transfer librespot could not read. A Jam brings a listener who paused back in
+/// step with a transfer that leaves out the logging details librespot insists on, so the command
+/// arrives as one it does not know.
+fn jam_transfer(command: &serde_json::Value) -> Option<TransferState> {
+    if command.get("endpoint")?.as_str()? != "transfer" {
+        return None;
+    }
+    let data = STANDARD.decode(command.get("data")?.as_str()?).ok()?;
+    TransferState::parse_from_bytes(&data).ok()
+}
+
+/// Gives the songs of an edited queue back the kind they have here, where this app plays a list
+/// that is no collection of Spotify's. The app that made the edit knows no collection the songs
+/// could come from, so it sends every one of them back as queued by hand. A song is taken for
+/// one of `before` once, a queued one first, so a song queued a second time stays queued.
+fn keep_kinds(upcoming: &mut [QueuedTrack], before: &[QueuedTrack]) {
+    let mut pool: Vec<&QueuedTrack> = before.iter().collect();
+    for track in upcoming.iter_mut().filter(|track| track.queued) {
+        let same = pool
+            .iter()
+            .position(|known| known.id == track.id && known.queued)
+            .or_else(|| pool.iter().position(|known| known.id == track.id));
+        if let Some(index) = same {
+            track.queued = pool.remove(index).queued;
+        }
+    }
+}
+
+/// Reports the occurrence's provenance consistently in every part of play order, under `uid`.
+fn provided(track: &QueuedTrack, context: &str, uid: String) -> ProvidedTrack {
     let mut provided = ProvidedTrack {
         uri: format!("{TRACK_PREFIX}{}", track.id),
-        uid: track.uid.clone(),
+        uid,
         provider: match track.queued {
             true => "queue",
             false => "context",
@@ -1584,6 +1929,13 @@ fn provided(track: &QueuedTrack, context: &str) -> ProvidedTrack {
             .collect(),
         ..Default::default()
     };
+    if track.queued {
+        // Spotify's apps mark a song queued by hand this way, and one that joins a Jam while
+        // such a song plays only takes it for the current one with the mark
+        provided
+            .metadata
+            .insert("is_queued".to_owned(), "true".to_owned());
+    }
     if let Some(adder) = &track.added_by {
         provided
             .metadata
