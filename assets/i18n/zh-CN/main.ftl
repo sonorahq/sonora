@@ -85,6 +85,7 @@ column-index = #
 column-title = 标题
 column-artist = 歌手
 column-album = 专辑
+column-genre = 流派
 column-date-added = 添加日期
 column-added-by = 添加者
 column-modified = 修改时间
@@ -917,6 +918,8 @@ equalizer-status-channels = { $from ->
     [2] 立体声
    *[other] { $to } 声道
 }
+settings-lyrics = 显示歌词
+settings-lyrics-detail = 关闭后将在所有位置隐藏歌词，并停止查找歌词
 settings-panel-lyrics-size = 歌词大小（面板）
 settings-panel-lyrics-size-detail = 侧边面板中歌词文字的大小，基于基础字体大小
 settings-fullscreen-lyrics-size = 歌词大小（全屏）

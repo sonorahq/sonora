@@ -3,10 +3,9 @@ use async_trait::async_trait;
 use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 
-use super::{Account, Link, Play, Secret, Service};
+use super::{Account, Link, Play, Secret, Service, host, root};
 
-/// The public instance. An account that names its own `server` is used instead, which is how a
-/// self-hosted ListenBrainz is reached without a second settings field.
+/// The public instance, used whenever the account names no `server` of its own.
 const API: &str = "https://api.listenbrainz.org";
 const SETTINGS: &str = "https://listenbrainz.org/settings/";
 /// How many listens the endpoint takes in one call.
@@ -30,16 +29,21 @@ impl Service for ListenBrainz {
     }
 
     async fn connect(&self, secret: Secret) -> Result<Account> {
-        let Secret::Token(token) = secret else {
+        let Secret::Token { token, server } = secret else {
             bail!("listenbrainz needs a user token");
         };
         let token = token.trim().to_owned();
         if token.is_empty() {
             bail!("listenbrainz needs a user token");
         }
+        let server = base(&server);
+        let api = match server.is_empty() {
+            true => API,
+            false => server.as_str(),
+        };
 
         let answer: Validation = super::http()
-            .get(format!("{API}/1/validate-token"))
+            .get(format!("{api}/1/validate-token"))
             .header(AUTHORIZATION, format!("Token {token}"))
             .send()
             .await
@@ -53,9 +57,15 @@ impl Service for ListenBrainz {
             bail!("listenbrainz refused the token: {message}");
         }
 
+        let name = answer
+            .user_name
+            .filter(|name| !name.is_empty())
+            .or_else(|| (!server.is_empty()).then(|| host(&server)))
+            .unwrap_or_default();
         Ok(Account {
             session: token,
-            name: answer.user_name.unwrap_or_default(),
+            server,
+            name,
             enabled: true,
             ..Account::default()
         })
@@ -79,6 +89,16 @@ fn api(account: &Account) -> &str {
     match account.server.is_empty() {
         true => API,
         false => account.server.trim_end_matches('/'),
+    }
+}
+
+/// The root an instance's `/1/` endpoints hang off. Users paste either the root or the API path
+/// that tools such as multi-scrobbler print, so a trailing `/1` is dropped.
+fn base(url: &str) -> String {
+    let url = root(url);
+    match url.strip_suffix("/1") {
+        Some(rest) => rest.trim_end_matches('/').to_owned(),
+        None => url,
     }
 }
 

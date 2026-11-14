@@ -6,7 +6,7 @@ use gpui::{
 use i18n::t;
 use music::Playlist;
 use state::{Addition, CoverEdit, Leaving, Outcome, Shelf, Sonora, Toasts, cover_problem};
-use ui::{ActiveTheme as _, Artwork, Button, Modal};
+use ui::{ActiveTheme as _, Artwork, Button, Modal, PinKind};
 use ui::{Dismiss, FORM_CONTEXT, Input, Submit};
 
 #[derive(Clone)]
@@ -204,7 +204,7 @@ impl PlaylistEditor {
                 Artwork::new(self.preview(playlist, cx))
                     .size(theme.metrics.cover)
                     .corner_radius(theme.radius)
-                    .fallback("icons/list-music.svg")
+                    .fallback(PinKind::Playlist.icon())
                     .flex_none(),
             )
             .child(

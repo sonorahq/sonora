@@ -18,11 +18,13 @@ impl PinKind {
         matches!(self, Self::Artist)
     }
 
+    /// The glyph that stands for the kind wherever it has no cover of its own: a pin's
+    /// fallback, a library page's hero and empty state, the sidebar's menus.
     pub fn icon(self) -> &'static str {
         match self {
             Self::Album => "icons/disc-3.svg",
             Self::Artist => "icons/user.svg",
-            Self::Playlist => "icons/list.svg",
+            Self::Playlist => "icons/list-music.svg",
             Self::Song => "icons/music.svg",
         }
     }

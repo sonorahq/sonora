@@ -9,7 +9,7 @@ use std::time::Duration;
 use i18n::t;
 
 use crate::glide::Glide;
-use crate::motion::{ease_out_cubic, paced};
+use crate::motion::{Glowing as _, ease_out_cubic, paced};
 use crate::theme::ActiveTheme as _;
 
 /// How far the items fade out towards a side of the rail, and how far the rail reaches past
@@ -137,7 +137,8 @@ impl RenderOnce for Rail {
             .track_scroll(&scroll)
             // A touchpad already moves smoothly. A wheel jumps a whole step, which the glide
             // eases out.
-            .on_scroll_wheel(move |event: &ScrollWheelEvent, window, _| {
+            .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+                crate::hold_swipe(event, &wheeled, cx);
                 match event.delta.precise() {
                     true => gliding.jump(&wheeled, wheeled.offset()),
                     false if event.delta.pixel_delta(LINE).x != Pixels::ZERO => {
@@ -159,7 +160,14 @@ impl RenderOnce for Rail {
             .filter(|forward| seen[usize::from(*forward)])
             .map(|forward| {
                 let wanted = wanted[usize::from(forward)];
-                arrow(&id, forward, wanted, arrows_at, &scroll, &glide, cx)
+                Arrow {
+                    rail: id.clone(),
+                    forward,
+                    wanted,
+                    at: arrows_at,
+                    scroll: scroll.clone(),
+                    glide: glide.clone(),
+                }
             });
 
         div().relative().child(row).children(arrows)
@@ -169,86 +177,97 @@ impl RenderOnce for Rail {
 /// The round button over one end of a rail that glides it most of a view further, towards the
 /// end it sits on. It is centred on the column's edge, over the inner half of the fade. While
 /// not `wanted` it fades out and lets the pointer through to the items under it.
-fn arrow(
-    rail: &ElementId,
+#[derive(IntoElement)]
+struct Arrow {
+    rail: ElementId,
     forward: bool,
     wanted: bool,
     at: Option<Pixels>,
-    scroll: &ScrollHandle,
-    glide: &Glide,
-    cx: &App,
-) -> AnyElement {
-    let theme = cx.theme();
-    // the active wash is translucent, so it is laid over the button's own fill to keep the
-    // cards under the arrow hidden
-    let hover = theme.secondary.blend(theme.secondary_active);
-    let (side, icon) = match forward {
-        true => ("forward", "icons/chevron-right.svg"),
-        false => ("back", "icons/chevron-left.svg"),
-    };
-    let (scroll, glide) = (scroll.clone(), glide.clone());
-    let inset = -ARROW / 2.;
+    scroll: ScrollHandle,
+    glide: Glide,
+}
 
-    let button = div()
-        .id((rail.clone(), side))
-        .absolute()
-        .map(|this| match at {
-            Some(y) => this.top(y - ARROW / 2.),
-            None => this.top(relative(0.5)).mt(-ARROW / 2.),
-        })
-        .when(forward, |this| this.right(inset))
-        .when(!forward, |this| this.left(inset))
-        .size(ARROW)
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_full()
-        .bg(theme.secondary)
-        .border_1()
-        .border_color(theme.border)
-        .shadow_md()
-        .child(
-            svg()
-                .path(icons::path(icon))
-                .size(CHEVRON)
-                .text_color(theme.foreground),
-        )
-        // a hidden arrow takes no clicks, so only one that is showing reaches screen readers
-        .when(wanted, |this| {
-            this.role(gpui::accesskit::Role::Button)
-                .aria_label(match forward {
-                    true => t!("rail-forward"),
-                    false => t!("rail-back"),
-                })
-                .cursor_pointer()
-                .occlude()
-                .hover(move |style| style.bg(hover))
-                .on_click(move |_, window, _| {
-                    let step = scroll.bounds().size.width * STEP;
-                    let goal = glide.goal(&scroll);
-                    let x = match forward {
-                        true => goal.x - step,
-                        false => goal.x + step,
-                    };
-                    glide.aim(&scroll, point(x, goal.y), window);
-                })
-        });
+impl RenderOnce for Arrow {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let Self {
+            rail,
+            forward,
+            wanted,
+            at,
+            scroll,
+            glide,
+        } = self;
+        let theme = *cx.theme();
+        // the active wash is translucent, so it is laid over the button's own fill to keep the
+        // cards under the arrow hidden
+        let hover = theme.secondary.blend(theme.secondary_active);
+        let (side, icon) = match forward {
+            true => ("forward", "icons/chevron-right.svg"),
+            false => ("back", "icons/chevron-left.svg"),
+        };
+        let inset = -ARROW / 2.;
 
-    if cx.reduce_motion() {
-        return button
-            .opacity(f32::from(u8::from(wanted)))
-            .into_any_element();
+        let button = div()
+            .id((rail.clone(), side))
+            .absolute()
+            .map(|this| match at {
+                Some(y) => this.top(y - ARROW / 2.),
+                None => this.top(relative(0.5)).mt(-ARROW / 2.),
+            })
+            .when(forward, |this| this.right(inset))
+            .when(!forward, |this| this.left(inset))
+            .size(ARROW)
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .bg(theme.secondary)
+            .border_1()
+            .border_color(theme.border)
+            .shadow_md()
+            .child(
+                svg()
+                    .path(icons::path(icon))
+                    .size(CHEVRON)
+                    .text_color(theme.foreground),
+            )
+            // a hidden arrow takes no clicks, so only one that is showing reaches screen readers
+            .when(wanted, |this| {
+                this.role(gpui::accesskit::Role::Button)
+                    .aria_label(match forward {
+                        true => t!("rail-forward"),
+                        false => t!("rail-back"),
+                    })
+                    .cursor_pointer()
+                    .occlude()
+                    .glow(hover, window, cx)
+                    .on_click(move |_, window, _| {
+                        let step = scroll.bounds().size.width * STEP;
+                        let goal = glide.goal(&scroll);
+                        let x = match forward {
+                            true => goal.x - step,
+                            false => goal.x + step,
+                        };
+                        glide.aim(&scroll, point(x, goal.y), window);
+                    })
+            });
+
+        if cx.reduce_motion() {
+            return button
+                .opacity(f32::from(u8::from(wanted)))
+                .into_any_element();
+        }
+        // a new id on each change starts the fade again
+        let fade = SharedString::from(format!("{side}-{}", if wanted { "in" } else { "out" }));
+        button
+            .with_animation(
+                (rail, fade),
+                Animation::new(paced(ARROW_FADE)).with_easing(ease_out_cubic),
+                move |button, delta| match wanted {
+                    true => button.opacity(delta),
+                    false => button.opacity(1. - delta),
+                },
+            )
+            .into_any_element()
     }
-    // a new id on each change starts the fade again
-    let fade = SharedString::from(format!("{side}-{}", if wanted { "in" } else { "out" }));
-    button
-        .with_animation(
-            (rail.clone(), fade),
-            Animation::new(paced(ARROW_FADE)).with_easing(ease_out_cubic),
-            move |button, delta| match wanted {
-                true => button.opacity(delta),
-                false => button.opacity(1. - delta),
-            },
-        )
-        .into_any_element()
 }

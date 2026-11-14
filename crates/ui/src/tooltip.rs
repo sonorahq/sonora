@@ -6,8 +6,8 @@ use std::time::Duration;
 use gpui::prelude::*;
 use gpui::{
     Anchor, AnyElement, App, Bounds, Context, DispatchPhase, Display, ElementId, GlobalElementId,
-    InspectorElementId, LayoutId, MouseMoveEvent, Pixels, Position, SharedString, Style, Window,
-    anchored, canvas, div, point, px,
+    InspectorElementId, LayoutId, MouseMoveEvent, Pixels, Position, SharedString, Style,
+    TextLayout, Window, anchored, canvas, div, point, px,
 };
 
 use crate::metrics::Text;
@@ -15,6 +15,9 @@ use crate::theme::ActiveTheme as _;
 
 const MARGIN: Pixels = px(8.);
 const OFFSET: Pixels = px(6.);
+/// How long the pointer rests on an element before a perched tooltip shows. Long enough that
+/// a pointer pausing on its way to a click raises none.
+const DELAY: Duration = Duration::from_millis(800);
 
 /// Where a tooltip sits relative to the element that owns it.
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -24,6 +27,8 @@ pub enum Perch {
     Below,
     /// Centred above the element, or below it when the window has no room above.
     Above,
+    /// Centred to the right of the element, or to its left when the window has no room there.
+    Trailing,
     /// Below and to the left of the pointer, shown the moment the pointer arrives and moved
     /// along with it.
     Follow,
@@ -37,6 +42,8 @@ pub struct Tooltip {
     perch: Perch,
     /// The owning element in window coordinates. A following tooltip ignores it.
     host: Bounds<Pixels>,
+    /// Draws nothing, for a clipped tooltip whose text showed in full when the pointer arrived.
+    hidden: bool,
 }
 
 /// Attaches a tooltip to an element with the show delay its perch calls for. A tooltip perched
@@ -46,28 +53,38 @@ pub trait Tipped: Sized {
     fn tip(self, key: impl Into<SharedString>, perch: Perch) -> Self;
     /// Shows `text` on hover as it is, without a Fluent lookup.
     fn tip_label(self, text: impl Into<SharedString>, perch: Perch) -> Self;
+    /// Shows `text` on hover as it is, but only when `layout` drew it cut short, such as a title
+    /// that ends in an ellipsis. `layout` is the handle of the `StyledText` that renders `text`.
+    fn tip_clipped(self, text: impl Into<SharedString>, layout: TextLayout, perch: Perch) -> Self;
 }
 
 /// Places a tooltip bubble centred against its host, on the preferred side when the window has
 /// room there and on the other side otherwise, and keeps it inside the window margin.
 struct Beside {
     host: Bounds<Pixels>,
-    above: bool,
+    perch: Perch,
     child: AnyElement,
 }
 
 impl<E: StatefulInteractiveElement + ParentElement> Tipped for E {
     fn tip(self, key: impl Into<SharedString>, perch: Perch) -> Self {
-        attach(self, key.into(), false, perch)
+        attach(self, key.into(), false, None, perch)
     }
 
     fn tip_label(self, text: impl Into<SharedString>, perch: Perch) -> Self {
-        attach(self, text.into(), true, perch)
+        attach(self, text.into(), true, None, perch)
+    }
+
+    fn tip_clipped(self, text: impl Into<SharedString>, layout: TextLayout, perch: Perch) -> Self {
+        attach(self, text.into(), true, Some(layout), perch)
     }
 }
 
 impl Render for Tooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.hidden {
+            return div().into_any_element();
+        }
         let theme = *cx.theme();
         let follow = self.perch == Perch::Follow;
         let bubble = div()
@@ -94,7 +111,7 @@ impl Render for Tooltip {
                 .into_any_element(),
             false => Beside {
                 host: self.host,
-                above: self.perch == Perch::Above,
+                perch: self.perch,
                 child: bubble.into_any_element(),
             }
             .into_any_element(),
@@ -151,19 +168,33 @@ impl Element for Beside {
         let viewport = window.viewport_size();
         let margin = MARGIN + window.client_inset().unwrap_or_default();
 
-        let below = self.host.bottom() + OFFSET;
-        let above = self.host.top() - OFFSET - size.height;
-        let fits_below = below + size.height <= viewport.height - margin;
-        let fits_above = above >= margin;
-        let up = match self.above {
-            true => fits_above || !fits_below,
-            false => fits_above && !fits_below,
+        let (x, y) = match self.perch {
+            Perch::Trailing => {
+                let right = self.host.right() + OFFSET;
+                let left = self.host.left() - OFFSET - size.width;
+                let fits_right = right + size.width <= viewport.width - margin;
+                let x = match fits_right || left < margin {
+                    true => right,
+                    false => left,
+                };
+                (x, self.host.center().y - size.height / 2.)
+            }
+            perch => {
+                let below = self.host.bottom() + OFFSET;
+                let above = self.host.top() - OFFSET - size.height;
+                let fits_below = below + size.height <= viewport.height - margin;
+                let fits_above = above >= margin;
+                let up = match perch == Perch::Above {
+                    true => fits_above || !fits_below,
+                    false => fits_above && !fits_below,
+                };
+                let y = match up {
+                    true => above,
+                    false => below,
+                };
+                (self.host.center().x - size.width / 2., y)
+            }
         };
-        let y = match up {
-            true => above,
-            false => below,
-        };
-        let x = self.host.center().x - size.width / 2.;
         let origin = point(
             inside(x, size.width, viewport.width, margin).round(),
             inside(y, size.height, viewport.height, margin).round(),
@@ -189,30 +220,36 @@ impl Element for Beside {
 }
 
 /// Wires a tooltip into `element`. A perched tooltip also lays a recorder over the element so
-/// the tooltip knows where the element stood, and a following one drops the hover delay.
-fn attach<E>(element: E, text: SharedString, raw: bool, perch: Perch) -> E
+/// the tooltip knows where the element stood, and a following one drops the hover delay. With
+/// `clip`, the tooltip stays empty unless that layout drew a shorter text than `text`.
+fn attach<E>(element: E, text: SharedString, raw: bool, clip: Option<TextLayout>, perch: Perch) -> E
 where
     E: StatefulInteractiveElement + ParentElement,
 {
+    let hidden = move |text: &str| clip.as_ref().is_some_and(|layout| layout.text() == text);
     match perch {
         Perch::Follow => element
             .tooltip_show_delay(Duration::ZERO)
             .tooltip(move |_, cx| {
                 let text = text.clone();
+                let hidden = hidden(&text);
                 cx.new(|_| Tooltip {
                     text,
                     raw,
                     perch,
                     host: Bounds::default(),
+                    hidden,
                 })
                 .into()
             }),
-        Perch::Below | Perch::Above => {
+        Perch::Below | Perch::Above | Perch::Trailing => {
             let host = Rc::new(Cell::new(None));
             element
                 .child(recorder(host.clone()))
+                .tooltip_show_delay(DELAY)
                 .tooltip(move |window, cx| {
                     let text = text.clone();
+                    let hidden = hidden(&text);
                     let host = host.get().unwrap_or_else(|| {
                         Bounds::new(window.mouse_position(), Default::default())
                     });
@@ -221,6 +258,7 @@ where
                         raw,
                         perch,
                         host,
+                        hidden,
                     })
                     .into()
                 })

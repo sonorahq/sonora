@@ -10,7 +10,7 @@ use music::equalizer::{
     PREAMP_RANGE, Preamp, Q_RANGE, Width, apo,
 };
 use state::{Outcome, Toast, Toasts};
-use ui::{ActiveTheme as _, Button, Input, MenuItem, Picker, Switch, Text, vacant};
+use ui::{ActiveTheme as _, Button, Glowing as _, Input, MenuItem, Picker, Switch, Text, vacant};
 
 use super::{EqualizerView, FILTERS_ICON, heading};
 
@@ -300,19 +300,17 @@ impl EqualizerView {
             .px_3()
             .rounded(theme.radius)
             .when(selected, |row| row.bg(theme.secondary_active))
-            .when(!selected, |row| {
-                row.hover(|style| style.bg(theme.secondary_hover))
-            })
-            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                let hovered = *hovered;
-                this.graph
-                    .update(cx, |graph, cx| graph.light(index, hovered, cx));
-            }))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.graph
                     .update(cx, |graph, cx| graph.select_index(index, cx));
             }));
-        match wide {
+        // The glow holds the row's hover listener, so the graph hears the pointer through it.
+        let heard = cx.listener(move |this, hovered: &bool, _, cx| {
+            let hovered = *hovered;
+            this.graph
+                .update(cx, |graph, cx| graph.light(index, hovered, cx));
+        });
+        let row = match wide {
             true => row
                 .h(theme.metrics.list_row)
                 .child(enabled)
@@ -349,8 +347,14 @@ impl EqualizerView {
                             .child(width.flex_1().min_w_0()),
                     ),
             ),
+        };
+        match selected {
+            true => row.on_hover(heard).into_any_element(),
+            false => row
+                .glowed(theme.secondary_hover)
+                .on_hover(heard)
+                .into_any_element(),
         }
-        .into_any_element()
     }
 
     /// The button that appends a flat filter, which does nothing once the curve is full.

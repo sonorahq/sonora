@@ -106,6 +106,8 @@ pub struct Search<'a> {
     pub albums: Relation<'a>,
     #[serde(deserialize_with = "loose")]
     pub playlists: Relation<'a>,
+    #[serde(deserialize_with = "loose")]
+    pub artists: Relation<'a>,
     #[serde(rename = "library-artists", deserialize_with = "loose")]
     pub library_artists: Relation<'a>,
 }
@@ -750,6 +752,7 @@ pub fn artist_refs(value: &Resource, attributes: &Attributes) -> Vec<ArtistRef> 
             Some(ArtistRef {
                 name: text(&artist.attributes.as_ref()?.name)?,
                 id: artist.id.as_str().map(str::to_owned),
+                channel: false,
             })
         })
         .collect();
@@ -757,23 +760,25 @@ pub fn artist_refs(value: &Resource, attributes: &Attributes) -> Vec<ArtistRef> 
         true => vec![ArtistRef {
             name: text(&attributes.artist_name).unwrap_or_default(),
             id: None,
+            channel: false,
         }],
         false => listed,
     }
 }
 
-/// One catalog song.
-pub fn song(value: &Resource) -> Option<Track> {
+/// One catalog song. `root` is the genre that parents every other one, which is left out of the
+/// song's genres.
+pub fn song(value: &Resource, root: &str) -> Option<Track> {
     let id = value.id.as_str()?;
-    song_as(value, id.to_owned())
+    song_as(value, id.to_owned(), root)
 }
 
 /// One row of a playlist: a library song on the listener's own playlists, a catalog song on
 /// everyone else's.
-pub fn playlist_track(row: &Resource) -> Option<Track> {
+pub fn playlist_track(row: &Resource, root: &str) -> Option<Track> {
     match row.kind.as_str() {
-        Some("library-songs") => library_song(row),
-        _ => song(row),
+        Some("library-songs") => library_song(row, root),
+        _ => song(row, root),
     }
 }
 
@@ -782,7 +787,7 @@ pub fn playlist_track(row: &Resource) -> Option<Track> {
 /// relationship was asked for and came back empty names an id Apple has pulled, which web
 /// playback refuses. It plays through the reporting id when Apple delivered the song again
 /// under a new one, and is listed unplayable when it did not.
-pub fn library_song(value: &Resource) -> Option<Track> {
+pub fn library_song(value: &Resource, root: &str) -> Option<Track> {
     let attributes = value.attributes.as_ref();
     let params = attributes.and_then(|attributes| attributes.play_params.as_ref());
     let id = params
@@ -793,15 +798,15 @@ pub fn library_song(value: &Resource) -> Option<Track> {
     // so the date is the library album's when that was included: the day the first song of
     // that album joined the library, which is also the order Apple itself sorts songs by.
     let mut track = match catalog(value) {
-        Some(found) => song_as(found, id)?,
-        None if value.relationships.catalog.data.is_none() => song_as(value, id)?,
+        Some(found) => song_as(found, id, root)?,
+        None if value.relationships.catalog.data.is_none() => song_as(value, id, root)?,
         None => match params
             .and_then(|params| params.reporting_id.as_str())
             .filter(|replacement| *replacement != id)
         {
-            Some(replacement) => song_as(value, replacement.to_owned())?,
+            Some(replacement) => song_as(value, replacement.to_owned(), root)?,
             None => {
-                let mut track = song_as(value, id)?;
+                let mut track = song_as(value, id, root)?;
                 track.playable = false;
                 track
             }
@@ -916,7 +921,7 @@ pub fn library_playlist(value: &Resource, owner: &str) -> Option<Playlist> {
         cover: artwork(attributes, ART),
         track_count: 0,
         modified_at: moment(attributes.last_modified_date.as_str())
-            .or(moment(attributes.date_added.as_str())),
+            .or_else(|| moment(attributes.date_added.as_str())),
     })
 }
 
@@ -936,8 +941,9 @@ pub fn saved_artist(value: &Resource) -> Option<SavedArtist> {
     })
 }
 
-/// A catalog artist page, with whatever its views brought along.
-pub fn artist(value: &Resource) -> Option<Artist> {
+/// A catalog artist page, with whatever its views brought along. `root` is the genre left out
+/// of its top songs.
+pub fn artist(value: &Resource, root: &str) -> Option<Artist> {
     let attributes = value.attributes.as_ref()?;
     let notes = &attributes.editorial_notes;
     Some(Artist {
@@ -948,7 +954,10 @@ pub fn artist(value: &Resource) -> Option<Artist> {
             .or_else(|| text(&notes.standard))
             .or_else(|| text(&attributes.artist_bio)),
         monthly_listeners: None,
-        top_tracks: view(value, "top-songs").iter().filter_map(song).collect(),
+        top_tracks: view(value, "top-songs")
+            .iter()
+            .filter_map(|row| song(row, root))
+            .collect(),
         albums: newest_first(
             DISCOGRAPHY
                 .iter()
@@ -978,8 +987,8 @@ pub fn artist_profile(value: &Resource) -> Option<ArtistProfile> {
     })
 }
 
-/// One artist out of a similar-artists view: an id to open and a face for the rail's
-/// artists tab.
+/// One catalog artist with an id to open and a face, out of a similar-artists view or an
+/// artist search.
 pub fn similar_artist(value: &Resource) -> Option<SavedArtist> {
     let attributes = value.attributes.as_ref()?;
     Some(SavedArtist {
@@ -1083,8 +1092,9 @@ fn pin_target(value: &Resource, catalog: Option<&Resource>, owner: &str) -> Opti
 }
 
 /// One song listed under `id`, which a library row sets to the catalog id it plays through. The
-/// row still needs an id of its own, as every song has.
-fn song_as(value: &Resource, id: String) -> Option<Track> {
+/// row still needs an id of its own, as every song has. Apple files every song under `root` as
+/// well as its real genres, so that one is dropped.
+fn song_as(value: &Resource, id: String, root: &str) -> Option<Track> {
     value.id.as_str()?;
     let attributes = value.attributes.as_ref()?;
     Some(Track {
@@ -1095,6 +1105,8 @@ fn song_as(value: &Resource, id: String) -> Option<Track> {
         artists: text(&attributes.artist_name).unwrap_or_default(),
         artist_refs: artist_refs(value, attributes),
         album: text(&attributes.album_name).unwrap_or_default(),
+        // Apple lists a song's own artist only
+        album_artist: String::new(),
         album_id: value
             .relationships
             .albums
@@ -1115,6 +1127,7 @@ fn song_as(value: &Resource, id: String) -> Option<Track> {
             .genre_names
             .iter()
             .filter_map(Leaf::as_str)
+            .filter(|genre| *genre != root)
             .map(str::to_owned)
             .collect(),
         languages: Vec::new(),
@@ -1208,14 +1221,14 @@ mod tests {
 
     #[test]
     fn reads_a_catalog_song() {
-        let track = song(&read(&catalog_song())).unwrap();
+        let track = song(&read(&catalog_song()), "Music").unwrap();
         assert_eq!(track.id.as_deref(), Some("1440857781"));
         assert_eq!(track.name, "Blue Monday");
         assert_eq!(track.album_id.as_deref(), Some("888"));
         assert_eq!(track.duration, Duration::from_millis(447_000));
         assert!(track.explicit);
         assert!(track.playable);
-        assert_eq!(track.tags, vec!["Alternative", "Music"]);
+        assert_eq!(track.tags, vec!["Alternative"]);
         assert_eq!(
             track.cover.as_deref(),
             Some("https://is1.mzstatic.com/a/600x600bb.jpg")
@@ -1232,7 +1245,7 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("playParams");
-        assert!(!song(&read(&row)).unwrap().playable);
+        assert!(!song(&read(&row), "Music").unwrap().playable);
     }
 
     #[test]
@@ -1247,7 +1260,7 @@ mod tests {
                 "playParams": { "catalogId": "1440857781", "isLibrary": true }
             }
         });
-        let track = library_song(&read(&row)).unwrap();
+        let track = library_song(&read(&row), "Music").unwrap();
         assert_eq!(track.id.as_deref(), Some("1440857781"));
         assert_eq!(track.added_at, Some(1_739_441_080));
     }
@@ -1259,7 +1272,7 @@ mod tests {
             "type": "library-songs",
             "attributes": { "name": "Home Recording" }
         });
-        assert!(library_song(&read(&row)).is_none());
+        assert!(library_song(&read(&row), "Music").is_none());
     }
 
     /// The library row carries the date, the catalog row everything else.
@@ -1340,7 +1353,7 @@ mod tests {
                 }] }
             }
         });
-        let artist = artist(&read(&row)).unwrap();
+        let artist = artist(&read(&row), "Music").unwrap();
         assert_eq!(artist.name, "Daft Punk");
         assert_eq!(artist.biography.as_deref(), Some("Robots."));
         assert_eq!(artist.top_tracks.len(), 1);

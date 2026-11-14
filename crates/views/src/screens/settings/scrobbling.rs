@@ -16,10 +16,49 @@ struct Field {
 }
 
 impl SettingsView {
-    /// One row per scrobbling service, in the order `music::scrobble` lists them.
+    /// One row per scrobbling service, in the order `music::scrobble` lists them, then the
+    /// switch for the active provider's plays when a provider is signed in.
     pub(super) fn scrobbling_groups(&self, cx: &App) -> Vec<Group> {
         let services = self.scrobbling.read(cx).rows().len();
-        vec![Group::untitled().rows((0..services).map(Slot::Scrobble))]
+        let provider = self.session.read(cx).provider_slug().is_some();
+        vec![
+            Group::untitled().rows(
+                (0..services)
+                    .map(Slot::Scrobble)
+                    .chain(provider.then_some(Slot::ScrobbleProvider)),
+            ),
+        ]
+    }
+
+    /// The switch's label and explanation, named after the active provider.
+    pub(super) fn scrobble_provider_meta(&self, cx: &App) -> Option<(SharedString, SharedString)> {
+        let provider = self.session.read(cx).provider_name()?;
+        Some((
+            t!("settings-scrobble-provider", provider = provider),
+            t!("settings-scrobble-provider-detail", provider = provider),
+        ))
+    }
+
+    /// The switch that keeps the active provider's plays out of the linked services, for
+    /// accounts that already scrobble to Last.fm on their own. Empty when no provider is active.
+    pub(super) fn scrobble_provider_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let session = self.session.read(cx);
+        let (Some(slug), Some(name)) = (session.provider_slug(), session.provider_name()) else {
+            return div().into_any_element();
+        };
+        let on = self.settings.read(cx).scrobbles(slug);
+        let label = t!("settings-scrobble-provider", provider = name);
+
+        self.row(
+            label.clone(),
+            Switch::new("scrobble-provider", on)
+                .name(label)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.set_scrobbles(slug, !on, cx));
+                }))
+                .into_any_element(),
+        )
     }
 
     /// A service's name and where its link stands, which the row shows and a search reads.
@@ -157,7 +196,11 @@ impl SettingsView {
                     value: account.session,
                     masked: true,
                 },
-                None,
+                Some(Field {
+                    hint: "settings-scrobble-server-optional",
+                    value: account.server,
+                    masked: false,
+                }),
             ),
             Link::Server => (
                 Field {
@@ -203,7 +246,10 @@ impl SettingsView {
                 key: first,
                 secret: second,
             },
-            Link::Token => Secret::Token(first),
+            Link::Token => Secret::Token {
+                token: first,
+                server: second,
+            },
             Link::Server => Secret::Server {
                 url: first,
                 key: second,
@@ -246,9 +292,7 @@ impl SettingsView {
                 .flex_col()
                 .gap_2()
                 .child(self.scrobble_first.clone())
-                .when(link != Link::Token, |this| {
-                    this.child(self.scrobble_second.clone())
-                }),
+                .child(self.scrobble_second.clone()),
         )
         .when_some(signup, |this, url| {
             this.action(

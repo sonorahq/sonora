@@ -23,10 +23,11 @@ optdepends=('vulkan-radeon: Vulkan driver for AMD GPUs'
 provides=("${_pkgname}=${pkgver%%.nightly.*}")
 conflicts=("${_pkgname}" "${_pkgname}-bin")
 options=('!strip' '!debug')
-source=("${_pkgname}-${_commit}.tar.gz::${url}/archive/${_commit}.tar.gz")
+source=("${_pkgname}-${_commit}.tar.gz::${url}/archive/${_commit}.tar.gz"
+        "sonora-build-${pkgver}.json::${url}/releases/download/nightly/sonora-build.json")
 source_x86_64=("${pkgname}-${pkgver}-x86_64::${url}/releases/download/nightly/sonora-nightly-x86_64-unknown-linux-gnu")
 source_aarch64=("${pkgname}-${pkgver}-aarch64::${url}/releases/download/nightly/sonora-nightly-aarch64-unknown-linux-gnu")
-sha256sums=('@SHA256_SOURCE@')
+sha256sums=('@SHA256_SOURCE@' '@SHA256_METADATA@')
 sha256sums_x86_64=('@SHA256_X86_64@')
 sha256sums_aarch64=('@SHA256_AARCH64@')
 
@@ -34,6 +35,7 @@ package() {
   cd "${_pkgname}-${_commit}"
 
   install -Dm755 "${srcdir}/${pkgname}-${pkgver}-${CARCH}" "${pkgdir}/usr/bin/${_pkgname}"
+  install -Dm644 "${srcdir}/sonora-build-${pkgver}.json" "${pkgdir}/usr/lib/sonora/build.json"
   install -Dm644 assets/linux/sonora.desktop \
     "${pkgdir}/usr/share/applications/sonora.desktop"
   install -Dm644 assets/linux/sonora.svg \

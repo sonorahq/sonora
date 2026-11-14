@@ -85,6 +85,7 @@ column-index = #
 column-title = Titel
 column-artist = Künstler
 column-album = Album
+column-genre = Genre
 column-date-added = Hinzugefügt am
 column-added-by = Hinzugefügt von
 column-modified = Geändert
@@ -917,6 +918,8 @@ equalizer-status-channels = { $from ->
     [2] Stereo
    *[other] { $to } Kanäle
 }
+settings-lyrics = Lyrics anzeigen
+settings-lyrics-detail = Ausschalten, um Lyrics überall auszublenden und nicht mehr danach zu suchen
 settings-panel-lyrics-size = Lyricsgröße (panel)
 settings-panel-lyrics-size-detail = Größe des Lyrics-Textes in der Seitenleiste, auf der Basis der Basis-Schriftgröße
 settings-fullscreen-lyrics-size = Lyricsgröße (fullscreen)
@@ -926,6 +929,8 @@ settings-lyrics-for-local-files = Lyrics für lokale Dateien
 settings-lyrics-for-local-files-detail = Metadaten aus lokalen Dateien verwenden, um Lyrics vom Internet zu laden
 settings-artwork-for-local-files = Cover für lokale Dateien
 settings-artwork-for-local-files-detail = Metadaten aus lokalen Dateien verwenden, um für deinen Discord-Status ein Cover bei Deezer zu finden
+settings-discord-upload-covers = Cover hochladen
+settings-discord-upload-covers-detail = Das Cover deines Servers oder deiner lokalen Dateien für 3 Stunden auf uguu.se hochladen, damit dein Status genau dieses Bild zeigt statt eines online gefundenen
 settings-karaoke-lyrics = Karaoke-Songtext
 settings-karaoke-lyrics-detail = Den Songtext Wort für Wort hervorheben, wenn Timings vorliegen
 settings-blur-lyrics = Interaktive Lyrics verwischen

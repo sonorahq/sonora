@@ -222,6 +222,7 @@ impl MusicApi for YouTubeClient {
             artists: vec![ytmusic::ArtistRef {
                 name: author,
                 id: channel,
+                channel: false,
             }],
             album: None,
             duration: Some(std::time::Duration::from_secs(seconds)),
@@ -446,6 +447,10 @@ impl MusicApi for YouTubeClient {
             .into_iter()
             .map(wire::album)
             .collect())
+    }
+
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        subscriptions::search(&self.api, query).await
     }
 
     async fn search_playlists(&self, query: &str) -> Result<Vec<Playlist>> {

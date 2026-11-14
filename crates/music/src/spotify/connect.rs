@@ -1030,7 +1030,7 @@ impl Worker {
         self.session.spawn(async move {
             match session.spclient().get_context(&uri).await {
                 Ok(context) => play.context.pages = context.pages,
-                Err(error) => log::warn!("connect: cannot read {} back: {error}", redacted(&uri)),
+                Err(error) => log::warn!("connect: cannot read {uri} back: {error}"),
             }
             out.send(Event::Command(Command::Start(started_by_play(&play))))
                 .ok();
@@ -1585,22 +1585,6 @@ fn keys(track: &ProvidedTrack) -> Vec<&String> {
     keys
 }
 
-/// `uri` with the name after each `user:` replaced, so a log never carries a Spotify user name.
-fn redacted(uri: &str) -> String {
-    let mut owner = false;
-    uri.split(':')
-        .map(|part| {
-            let shown = match owner {
-                true => "<user>",
-                false => part,
-            };
-            owner = part == "user";
-            shown
-        })
-        .collect::<Vec<_>>()
-        .join(":")
-}
-
 /// The id of a track another device lists, read from its uri or, since Spotify's apps often send
 /// only that, from its raw id.
 fn listed_id(track: &ContextTrack) -> Option<String> {
@@ -1739,7 +1723,7 @@ fn started_by_play(play: &PlayCommand) -> Start {
     let skip = play.options.skip_to.as_ref();
     log::debug!(
         "connect: play in {:?}, skip to {skip:?}, {} pages with {} tracks",
-        play.context.uri.as_deref().map(redacted),
+        play.context.uri.as_deref(),
         play.context.pages.len(),
         listed.len(),
     );

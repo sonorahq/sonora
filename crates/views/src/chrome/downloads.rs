@@ -11,8 +11,8 @@ use i18n::t;
 use router::{Destination, navigate};
 use state::{Active, Collection, Downloads, Pending, Sonora, Subject};
 use ui::{
-    ActiveTheme as _, ArrowRing, Artwork, Button, Menu, Picker, Popovers, Scrollbar, Scroller,
-    Text, Theme, faint,
+    ActiveTheme as _, ArrowRing, Artwork, Button, Glowing as _, Menu, Picker, Popovers, Scrollbar,
+    Scroller, Text, Theme, faint,
 };
 
 /// How tall the list of running downloads grows before it scrolls.
@@ -157,10 +157,11 @@ impl DownloadsButton {
                             .child(Artwork::new(cover.clone()).size(COVER).flex_none())
                             .child(
                                 faint(cx)
+                                    .id("download-name")
                                     .min_w_0()
                                     .truncate()
-                                    .hover(|this| this.text_color(theme.foreground))
-                                    .child(name.clone()),
+                                    .child(name.clone())
+                                    .glowed_text(theme.muted_foreground, theme.foreground),
                             )
                             .on_click(move |_, _, cx| {
                                 popovers.close();
@@ -190,7 +191,6 @@ impl DownloadsButton {
                     .aria_size_of_set(self.songs)
                     .rounded(theme.radius)
                     .cursor_pointer()
-                    .hover(|this| this.bg(theme.secondary_hover))
                     .child(div().flex_none().child(ring(&key, pending, &theme)))
                     .child(
                         div()
@@ -229,6 +229,7 @@ impl DownloadsButton {
                         navigate(Destination::Song(song.clone().into()), cx);
                         cx.refresh_windows();
                     })
+                    .glowed(theme.secondary_hover)
                     .into_any_element()
             }
         }

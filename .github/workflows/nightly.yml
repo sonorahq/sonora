@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Reuse this stable release when main has no newer application changes
+        type: string
+        default: ""
 
 concurrency:
   group: nightly
@@ -23,6 +28,7 @@ jobs:
       number: ${{ steps.decide.outputs.number }}
       aur: ${{ steps.decide.outputs.aur }}
       tap: ${{ steps.decide.outputs.tap }}
+      reuse: ${{ steps.decide.outputs.reuse }}
     steps:
       - uses: actions/checkout@v5
 
@@ -33,6 +39,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           HAS_AUR_KEY: ${{ secrets.AUR_SSH_KEY != '' }}
           HAS_TAP_KEY: ${{ secrets.TAP_DEPLOY_KEY != '' }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           # The nightly tag sits one commit above the main it built, the one that adds nix/nightly.json.
@@ -41,8 +48,7 @@ jobs:
             echo "::notice::main is still at ${GITHUB_SHA:0:7}, which the current nightly was built from"
             exit 0
           fi
-          # A release rebuilds the nightly and then points the flake at itself in a commit of its
-          # own. flake.nix does not go into the binary, so that commit alone needs no build.
+          # A change to flake.nix alone does not affect the binary.
           if [ "$EVENT" = schedule ] && [ -n "$built" ]; then
             changed="$(gh api "repos/$GITHUB_REPOSITORY/compare/$built...$GITHUB_SHA" \
               --jq '[.files[].filename | select(. != "flake.nix")] | length' || echo unknown)"
@@ -52,8 +58,20 @@ jobs:
             fi
           fi
           version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          reuse=""
+          if [ -n "$RELEASE_TAG" ]; then
+            [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            git fetch origin "refs/tags/$RELEASE_TAG"
+            source=$(git rev-parse FETCH_HEAD)
+            # Older releases cannot read the package metadata that preserves the nightly channel.
+            if git cat-file -e "$source:crates/state/src/updates/build.rs" 2>/dev/null &&
+              git diff --quiet "$source" "$GITHUB_SHA" -- . ':!flake.nix'; then
+              reuse="$RELEASE_TAG"
+            fi
+          fi
           {
             echo "number=$version-nightly.$(date -u +%Y%m%d)"
+            echo "reuse=$reuse"
             echo "aur=$HAS_AUR_KEY"
             echo "tap=$HAS_TAP_KEY"
           } >> "$GITHUB_OUTPUT"
@@ -69,6 +87,10 @@ jobs:
       actions: write
     with:
       nightly: ${{ needs.gate.outputs.number }}
+      reuse: ${{ needs.gate.outputs.reuse }}
+    # Only nix.yml reads a secret when release.yml runs for a nightly. The other secrets it names
+    # belong to jobs that run for tags alone.
+    secrets: inherit
 
   # sonora-nightly-bin is rendered from aur/sonora-nightly-bin/PKGBUILD every night, so the AUR
   # repository only ever holds what this job pushed. It needs AUR_SSH_KEY, a private key whose
@@ -98,8 +120,10 @@ jobs:
           source="$(curl -fsSL "$base/archive/$GITHUB_SHA.tar.gz" | sha256sum | cut -d ' ' -f 1)"
           x86_64="$(sum sonora-nightly-x86_64-unknown-linux-gnu)"
           aarch64="$(sum sonora-nightly-aarch64-unknown-linux-gnu)"
+          metadata="$(sum sonora-build.json)"
           test -n "$x86_64"
           test -n "$aarch64"
+          test -n "$metadata"
 
           mkdir package
           sed \
@@ -108,6 +132,7 @@ jobs:
             -e "s/@SHA256_SOURCE@/$source/" \
             -e "s/@SHA256_X86_64@/$x86_64/" \
             -e "s/@SHA256_AARCH64@/$aarch64/" \
+            -e "s/@SHA256_METADATA@/$metadata/" \
             aur/sonora-nightly-bin/PKGBUILD > package/PKGBUILD
           if grep -n '@[A-Z0-9_]*@' package/PKGBUILD; then exit 1; fi
 

@@ -146,10 +146,10 @@ impl QueueView {
         }
     }
 
-    pub fn origin<'a>(&'a self, cx: &'a App) -> Option<&'a Origin> {
+    pub fn origin(&self, cx: &App) -> Option<Origin> {
         match &self.source {
-            Source::Local(queue) => queue.read(cx).origin(),
-            Source::Remote(_) => None,
+            Source::Local(queue) => queue.read(cx).origin().cloned(),
+            Source::Remote(devices) => devices.read(cx).origin(cx),
         }
     }
 

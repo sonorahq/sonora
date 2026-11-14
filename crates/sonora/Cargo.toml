@@ -38,6 +38,8 @@ image.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
 ksni.workspace = true
+raw-window-handle.workspace = true
+x11rb.workspace = true
 zbus.workspace = true
 
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
@@ -48,13 +50,20 @@ block2.workspace = true
 libc.workspace = true
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = [
-  "block2",
-  "NSEvent",
-  "NSToolbar",
-  "NSView",
-  "NSWindow",
+    "block2",
+    "NSEvent",
+    "NSImage",
+    "NSImageRep",
+    "NSToolbar",
+    "NSView",
+    "NSWindow",
 ] }
-objc2-foundation = { workspace = true, features = ["NSString"] }
+objc2-foundation = { workspace = true, features = [
+    "NSBundle",
+    "NSData",
+    "NSGeometry",
+    "NSString",
+] }
 raw-window-handle.workspace = true
 
 [target.'cfg(windows)'.dependencies]
@@ -64,15 +73,16 @@ state = { workspace = true, features = ["bundled-sqlite"] }
 widestring.workspace = true
 windows.workspace = true
 windows-sys = { workspace = true, features = [
-  "Win32_Foundation",
-  "Win32_Security",
-  "Win32_Security_Authorization",
-  "Win32_System_Console",
-  "Win32_System_Threading",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Console",
+    "Win32_System_Threading",
 ] }
 
 [build-dependencies]
 embed.workspace = true
-
-[target.'cfg(windows)'.build-dependencies]
 winresource.workspace = true
+
+[lints]
+workspace = true

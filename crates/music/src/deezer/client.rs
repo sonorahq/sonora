@@ -867,6 +867,7 @@ impl MusicApi for DeezerClient {
                 .unwrap_or_default()
                 .to_owned(),
             id: Some(artist_id.to_owned()),
+            channel: false,
         };
         Ok(Artist {
             name: own.name.clone(),
@@ -1249,6 +1250,7 @@ impl MusicApi for DeezerClient {
                 .and_then(|detail| wire::text(&detail, &["name"]).map(str::to_owned))
                 .unwrap_or_default(),
             id: Some(artist_id.to_owned()),
+            channel: false,
         };
         // Nothing read at all is an error rather than an empty rail, so the catalog does not
         // keep the empty answer for the rest of the session.
@@ -1281,6 +1283,7 @@ impl MusicApi for DeezerClient {
                         let theirs = ArtistRef {
                             name: artist.name.clone(),
                             id: Some(artist.id.clone()),
+                            channel: false,
                         };
                         for album in releases.into_iter().take(SIMILAR_RELEASES) {
                             if liked.len() >= SUGGESTIONS {
@@ -1403,6 +1406,23 @@ impl MusicApi for DeezerClient {
             .unwrap_or_default()
             .iter()
             .filter_map(wire::album)
+            .collect())
+    }
+
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        let page = self
+            .public(&format!(
+                "/search/artist?q={}&limit=30",
+                escape::component(query)
+            ))
+            .await
+            .context("cannot search deezer artists")?;
+        Ok(page
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(wire::saved_artist)
             .collect())
     }
 

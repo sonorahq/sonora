@@ -66,7 +66,7 @@ enum HitMenu {
 impl HitMenu {
     fn of(hit: &Hit) -> Option<Self> {
         match hit {
-            Hit::Song(track) => Some(Self::Song(Box::new(track.clone()))),
+            Hit::Song(track) => Some(Self::Song(track.clone())),
             Hit::Album(album) => Some(Self::Album(album.clone())),
             Hit::Playlist(list) => Some(Self::Playlist(list.clone())),
             Hit::Artist(artist) if artist.id.is_some() => Some(Self::Artist(artist.clone())),
@@ -80,6 +80,7 @@ impl HitMenu {
 #[derive(Clone)]
 enum Offer {
     Past(String),
+    Link(String),
     Hit(Box<Hit>),
 }
 
@@ -88,6 +89,7 @@ impl Offer {
     fn key(&self) -> String {
         match self {
             Offer::Past(query) => format!("past:{query}"),
+            Offer::Link(query) => format!("link:{query}"),
             Offer::Hit(hit) => match &**hit {
                 Hit::Song(track) => {
                     format!("song:{}", track.id.as_deref().unwrap_or(&track.name))
@@ -275,13 +277,26 @@ impl SearchView {
                 .map(Offer::Past)
                 .collect();
         }
-        self.suggestions
+        let suggestions = self.suggestions.read(cx);
+        let mut offers = Vec::new();
+        if Sonora::global(cx)
+            .links
             .read(cx)
-            .hits()
-            .iter()
-            .take(SUGGESTED)
-            .map(|hit| Offer::Hit(Box::new(hit.clone())))
-            .collect()
+            .recognizes(&self.typed, cx)
+        {
+            offers.push(Offer::Link(self.typed.trim().to_owned()));
+            if suggestions.linked_query().is_none() {
+                return offers;
+            }
+        }
+        offers.extend(
+            suggestions
+                .hits()
+                .iter()
+                .take(SUGGESTED)
+                .map(|hit| Offer::Hit(Box::new(hit.clone()))),
+        );
+        offers
     }
 
     /// Whether the panel shows: the field has the keyboard, nothing put the panel away, and it
@@ -321,14 +336,26 @@ impl SearchView {
         cx.notify();
     }
 
-    /// Runs `query` as a full search, files it in the history and puts the panel away.
+    /// Searches by the resolved name or lets the full search load the link's metadata.
     fn run(&mut self, query: &str, cx: &mut Context<Self>) {
         let query = query.trim().to_owned();
         if query.is_empty() {
             return;
         }
-        remember(&query, cx);
-        self.search.update(cx, |search, cx| search.ask(&query, cx));
+        let suggestions = self.suggestions.read(cx);
+        if suggestions.query() == query
+            && let Some(name) = suggestions.linked_query().map(str::to_owned)
+        {
+            self.search_text(&name, cx);
+            return;
+        }
+        self.search_text(&query, cx);
+    }
+
+    /// Runs a full search and records the submitted query in history.
+    fn search_text(&mut self, query: &str, cx: &mut Context<Self>) {
+        remember(query, cx);
+        self.search.update(cx, |search, cx| search.ask(query, cx));
         self.close_panel(cx);
     }
 
@@ -352,6 +379,13 @@ impl SearchView {
     /// it does in the results, which files what was typed in the history as a search would.
     fn take(&mut self, offer: Offer, cx: &mut Context<Self>) {
         match offer {
+            Offer::Link(query) => {
+                Sonora::global(cx)
+                    .links
+                    .clone()
+                    .update(cx, |links, cx| links.open(&query, cx));
+                self.close_panel(cx);
+            }
             Offer::Past(query) => {
                 // Set ahead of the field, so its observer does not take this for typing and
                 // open the panel again.
@@ -404,6 +438,24 @@ impl SearchView {
         let chosen = self.pick == Some(at);
         let query = match offer {
             Offer::Hit(hit) => return self.row(hit, at, at, total, true, chosen, me, cx),
+            Offer::Link(_) => {
+                let label = t!("search-open-link");
+                let taken = offer.clone();
+                let take = me.clone();
+                return Card::new(SharedString::from(offer.key()), label)
+                    .tucked()
+                    .fallback("icons/search.svg")
+                    .press(move |_, _, cx| {
+                        cx.stop_propagation();
+                        take.update(cx, |this, cx| this.take(taken.clone(), cx))
+                            .ok();
+                    })
+                    .chosen(chosen)
+                    .aria_position_in_set(at + 1)
+                    .aria_size_of_set(total)
+                    .when(chosen, |card| card.aria_active_descendant())
+                    .into_any_element();
+            }
             Offer::Past(query) => query,
         };
         let theme = *cx.theme();
@@ -855,7 +907,7 @@ impl SearchView {
                             .font_features(tabular())
                             .child(clock(track.duration)),
                     )
-                    .press(pressed(Press::Song(Box::new(track.clone())), me))
+                    .press(pressed(Press::Song(track.clone()), me))
             }
             Hit::Artist(artist) => {
                 let card = Card::new(("artist", place), artist.name.clone())
@@ -925,7 +977,7 @@ impl SearchView {
                 state::Origin::playlist(list.id.clone()).named(list.name.clone())
             }
         };
-        let playing = self.playback.read(cx).playing_from(&origin, cx) == Some(true);
+        let playing = self.playback.read(cx).engaged(&origin, cx);
         let play: Play = Box::new(move |_, _, cx| {
             me.update(cx, |this, cx| {
                 this.playback
@@ -945,7 +997,7 @@ impl SearchView {
                 Kind::Song,
                 track.name.clone(),
                 track.artist_refs.clone(),
-                Some(Press::Song(Box::new(track.clone()))),
+                Some(Press::Song(track.clone())),
             ),
             Hit::Artist(artist) => (
                 Kind::Artist,
@@ -970,7 +1022,7 @@ impl SearchView {
         let me = cx.entity().downgrade();
         let card = Card::new("best", title)
             .art(theme.metrics.cover * 0.45)
-            .cover(cover(hit).clone())
+            .cover(cover(hit))
             .when(matches!(kind, Kind::Artist), Card::circle)
             .eyebrow(noun(kind))
             .size(Text::Title)
@@ -1241,13 +1293,12 @@ impl SearchView {
         let scroll = bar.read(cx).scroll().clone();
         let me = cx.entity().downgrade();
         let measured = self.lead.clone();
-        let tracked = scroll.clone();
         let deck = Deck::new(format!("{id}-deck"))
             .rows((0..seats.len()).map(|_| row))
             .gap(theme.font_size * ROW_GAP)
             .when(lead.is_some(), |deck| {
                 deck.on_measure(move |top, _, _| {
-                    let content = tracked.bounds().origin.y - scrolled(&tracked);
+                    let content = scroll.bounds().origin.y - scrolled(&scroll);
                     measured.set(top - content);
                 })
             })

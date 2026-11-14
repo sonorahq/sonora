@@ -1,9 +1,13 @@
+use std::f32::consts::TAU;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Animation, AnimationElement, AnimationExt as _, App, ElementId, Hsla, IntoElement, Pixels,
-    Rgba, SharedString, SpringConfig, Styled, ease_in_out, ease_out_quint, px,
+    Animation, AnimationElement, AnimationExt as _, App, ElementId, Entity, HoverListenerMode,
+    Hsla, InteractiveElement, IntoElement, MouseButton, Pixels, RenderOnce, Rgba, SharedString,
+    SpringConfig, SpringState, StatefulInteractiveElement, StyleRefinement, Styled, Window,
+    ease_in_out, ease_out_quint, px,
 };
 use i18n::t;
 
@@ -13,8 +17,29 @@ const BASE: Duration = Duration::from_millis(200);
 const SLOW: Duration = Duration::from_millis(320);
 
 const ENTRANCE_EXTRA: Duration = Duration::from_millis(50);
-const ENTRANCE_BLUR: Pixels = px(1.5);
-const ENTRANCE_ZOOM: f32 = 0.01;
+pub(crate) const ENTRANCE_BLUR: Pixels = px(1.5);
+pub(crate) const ENTRANCE_ZOOM: f32 = 0.01;
+
+/// How long a hover highlight takes to fade out, before the listener's pace stretches it.
+const DIM: Duration = Duration::from_millis(100);
+/// How much of a lit row's fill the pointer alone brings up, so the row under the pointer
+/// reads as lighter than the one that marks where the app is.
+pub const LIT_HOVER: f32 = 0.5;
+
+/// How far a pressed control shrinks.
+pub const PRESS_SCALE: f32 = 0.96;
+/// How far a pressed card or tile shrinks; larger things move less.
+pub const PRESS_SCALE_CARD: f32 = 0.975;
+/// How far a scale may sit from its target and still count as landed.
+const SCALE_REST: f32 = 1e-4;
+/// How much of the way down a press goes before it may spring back, so a click shorter than
+/// the press still shows one.
+const PRESS_LANDED: f32 = 0.85;
+/// The longest step a stepped spring takes in one frame, so a frame that comes late after a
+/// stall resumes the motion rather than jumping to its end.
+const STEP_STALL: Duration = Duration::from_millis(64);
+
+type Hover = Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>;
 
 /// Shared physical-motion presets. Call sites still own their stopping threshold and maximum
 /// timestep because those values depend on whether the spring moves pixels, opacity, or scale.
@@ -29,6 +54,38 @@ impl Springs {
     pub const RESPONSIVE: SpringConfig = SpringConfig::new(360., 38., 1.);
     /// A soft spring that overshoots a little and swings back, for an icon settling after it spun.
     pub const SETTLE: SpringConfig = SpringConfig::new(160., 17., 1.);
+    /// A press going down: barely a spring, so the shrink follows the hand without lagging it.
+    pub const PRESS: SpringConfig = spring(0.1, 0.);
+    /// A release with a little life in it, for a pressed control springing back and a swapped
+    /// icon popping in. Keep it to presses and confirmations.
+    pub const RELEASE: SpringConfig = spring(0.25, 0.15);
+    /// A control growing or shrinking to fit what it now says, and a label gliding to where its
+    /// new text sits.
+    pub const RESIZE: SpringConfig = spring(0.18, 0.);
+    /// A swapped icon growing into place.
+    pub const SWAP_IN: SpringConfig = spring(0.3, 0.);
+    /// A belt of icons moving on by one icon.
+    pub const BELT: SpringConfig = spring(0.4, 0.);
+    /// The icon it replaced shrinking away, a little quicker.
+    pub const SWAP_OUT: SpringConfig = spring(0.24, 0.);
+    /// Something large travelling to a new place, such as the playing cover flying into the
+    /// fullscreen player or sliding aside for a panel.
+    pub const FLIGHT: SpringConfig = spring(0.42, 0.);
+
+    /// Moves artwork between the player bar and fullscreen without a bounce.
+    pub const ARTWORK_FLIGHT: SpringConfig = spring(0.32, 0.);
+
+    /// A whole shell arriving, such as the fullscreen player zooming in, at the listener's pace.
+    pub fn shell() -> SpringConfig {
+        spring(0.3 * pace().scale(), 0.)
+    }
+}
+
+/// A spring described the way people tune one: how long it takes, in seconds, and how much it
+/// overshoots, 0 for none. Bounce stays below 1.
+pub const fn spring(duration: f32, bounce: f32) -> SpringConfig {
+    let omega = TAU / duration;
+    SpringConfig::new(omega * omega, 2. * (1. - bounce) * omega, 1.)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,6 +215,12 @@ impl Saver {
 /// Stretches or shortens `span` by the chosen pace, for motion that sets its own length.
 pub fn paced(span: Duration) -> Duration {
     span.mul_f32(pace().scale())
+}
+
+/// How long a hover highlight takes to fade out, at the listener's pace. A view that fades a
+/// hover of its own reads the span here, so every hover goes out alike.
+pub fn dim_span() -> Duration {
+    paced(DIM)
 }
 
 pub fn entrance_span() -> Duration {
@@ -477,6 +540,391 @@ impl HoverFade {
             false => (self.from - travelled).max(target),
         }
     }
+}
+
+/// A highlight that comes on at once and fades out. It stands at 1 while the pointer or its
+/// owner lights the element and eases to 0 over `DIM` once both let go. [`glowing`] keeps one
+/// for an element, and an element with a hover listener of its own feeds one from
+/// [`Glow::keyed`].
+#[derive(Default)]
+pub struct Glow {
+    hovered: bool,
+    /// The level the last read showed while something lit the element, 0 once nothing did.
+    lit: f32,
+    /// When the light went off and the level it fades from, while the fade still runs.
+    dimming: Option<(Instant, f32)>,
+}
+
+impl Glow {
+    /// The glow kept for the element `id`, which has to be stable across frames and unique
+    /// within the view.
+    pub fn keyed(id: &ElementId, window: &mut Window, cx: &mut App) -> Entity<Self> {
+        let key = ElementId::NamedChild(Arc::new(id.clone()), "glow".into());
+        window.use_keyed_state(key, cx, |_, _| Self::default())
+    }
+
+    /// Tells the glow whether the pointer is over its element.
+    pub fn hover(&mut self, hovered: bool) {
+        self.hovered = hovered;
+    }
+
+    /// How lit the element is, from 0 to 1, counting it lit while `on` as well as under the
+    /// pointer. It asks for the next frame while the fade runs and goes dark at once under
+    /// reduced motion.
+    pub fn level(&mut self, on: bool, window: &Window, cx: &App) -> f32 {
+        self.peaked(on, 1., window, cx)
+    }
+
+    /// The same as [`level`](Self::level), with the pointer alone bringing the element up to
+    /// `hover` rather than all the way, for a row whose full light marks the current one.
+    pub fn peaked(&mut self, on: bool, hover: f32, window: &Window, cx: &App) -> f32 {
+        let peak = match (on, self.hovered) {
+            (true, _) => 1.,
+            (false, true) => hover,
+            (false, false) => 0.,
+        };
+        if peak > 0. {
+            self.lit = peak;
+            self.dimming = None;
+            return peak;
+        }
+        let from = std::mem::take(&mut self.lit);
+        if from > 0. && !cx.reduce_motion() {
+            self.dimming = Some((Instant::now(), from));
+        }
+        let Some((since, from)) = self.dimming else {
+            return 0.;
+        };
+        let passed = since.elapsed().as_secs_f32() / dim_span().as_secs_f32().max(f32::EPSILON);
+        if passed >= 1. {
+            self.dimming = None;
+            return 0.;
+        }
+        window.request_animation_frame();
+        from * (1. - ease_out_quad(passed))
+    }
+}
+
+/// Follows the pointer over `element` and answers how lit it is, as [`Glow::peaked`] counts it
+/// with `on` and `hover`. The caller paints the highlight from that level. `id` keys the glow, so keep it
+/// stable across frames and unique within the view. The element takes no other `on_hover`.
+pub fn glowing<E: StatefulInteractiveElement>(
+    element: E,
+    id: &ElementId,
+    on: bool,
+    hover: f32,
+    window: &mut Window,
+    cx: &mut App,
+) -> (E, f32) {
+    let glow = Glow::keyed(id, window, cx);
+    let level = glow.update(cx, |glow, cx| glow.peaked(on, hover, window, cx));
+    (hearing(element, glow, None), level)
+}
+
+/// The colour a highlight shows at `level`, on its way from `rest` to `fill`. `None` means the
+/// element keeps what it has. A highlight over nothing fades by its own opacity.
+pub fn glow_fill(rest: Option<Hsla>, fill: Hsla, level: f32) -> Option<Hsla> {
+    if level <= 0. {
+        return None;
+    }
+    Some(match rest.filter(|rest| rest.a > 0.) {
+        Some(rest) => mix(rest, fill, level),
+        None => fill.opacity(level),
+    })
+}
+
+/// The solid colour `style` fills its element with, if it sets one.
+pub(crate) fn solid_fill(style: &StyleRefinement) -> Option<Hsla> {
+    style.background.as_ref()?.color()?.as_solid()
+}
+
+/// Hover highlights that fade out, in place of `hover`. Each needs an element with an id that
+/// is unique within the view, and leaves it no `on_hover` for anything else.
+pub trait Glowing: StatefulInteractiveElement + Styled + Sized {
+    /// Fills the element with `fill` under the pointer at once, and lets the fill fade back to
+    /// the element's own background once the pointer leaves. Call it after `bg`.
+    fn glow(self, fill: Hsla, window: &mut Window, cx: &mut App) -> Self {
+        Light::Fill(fill).shine(self, None, window, cx)
+    }
+
+    /// Turns the element's text from `rest` to `fill` under the pointer at once, and fades it
+    /// back once the pointer leaves.
+    fn glow_text(self, rest: Hsla, fill: Hsla, window: &mut Window, cx: &mut App) -> Self {
+        Light::Text(rest, fill).shine(self, None, window, cx)
+    }
+
+    /// The same as [`glow`](Self::glow) where no window is at hand. It wraps the element, so
+    /// it is the last call on it.
+    fn glowed(self, fill: Hsla) -> Glowed<Self>
+    where
+        Self: IntoElement + 'static,
+    {
+        Glowed {
+            element: self,
+            light: Light::Fill(fill),
+            heard: None,
+        }
+    }
+
+    /// The same as [`glow_text`](Self::glow_text) where no window is at hand. It wraps the
+    /// element, so it is the last call on it.
+    fn glowed_text(self, rest: Hsla, fill: Hsla) -> Glowed<Self>
+    where
+        Self: IntoElement + 'static,
+    {
+        Glowed {
+            element: self,
+            light: Light::Text(rest, fill),
+            heard: None,
+        }
+    }
+}
+
+impl<E: StatefulInteractiveElement + Styled> Glowing for E {}
+
+/// An element that lights up under the pointer once it renders, from [`Glowing::glowed`].
+#[derive(IntoElement)]
+pub struct Glowed<E: StatefulInteractiveElement + Styled + IntoElement + 'static> {
+    element: E,
+    light: Light,
+    heard: Option<Hover>,
+}
+
+impl<E: StatefulInteractiveElement + Styled + IntoElement + 'static> Glowed<E> {
+    /// Tells `listener` as the pointer comes and goes, since the glow holds the element's own
+    /// `on_hover`.
+    pub fn on_hover(mut self, listener: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        self.heard = Some(Box::new(listener));
+        self
+    }
+}
+
+impl<E: StatefulInteractiveElement + Styled + IntoElement + 'static> RenderOnce for Glowed<E> {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        self.light.shine(self.element, self.heard, window, cx)
+    }
+}
+
+/// What a glow changes on its element.
+#[derive(Clone, Copy)]
+enum Light {
+    /// The background, on its way to this fill.
+    Fill(Hsla),
+    /// The text, from its colour at rest to the lit one.
+    Text(Hsla, Hsla),
+}
+
+impl Light {
+    /// Paints `element` as lit as the pointer leaves it, and passes hover on to `heard`. An
+    /// element with no id has nothing to key a fade by, so it hovers the plain way.
+    fn shine<E: StatefulInteractiveElement + Styled>(
+        self,
+        mut element: E,
+        heard: Option<Hover>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> E {
+        let Some(id) = element.interactivity().element_id.clone() else {
+            return match self {
+                Self::Fill(fill) => element.hover(move |style| style.bg(fill)),
+                Self::Text(rest, fill) => element
+                    .text_color(rest)
+                    .hover(move |style| style.text_color(fill)),
+            };
+        };
+        let glow = Glow::keyed(&id, window, cx);
+        let level = glow.update(cx, |glow, cx| glow.level(false, window, cx));
+        let rest = solid_fill(element.style());
+        let element = hearing(element, glow, heard);
+        match self {
+            Self::Fill(fill) => match glow_fill(rest, fill, level) {
+                Some(color) => element.bg(color),
+                None => element,
+            },
+            Self::Text(rest, fill) => element.text_color(mix(rest, fill, level)),
+        }
+    }
+}
+
+/// Feeds `glow` from the pointer over `element`, and tells `heard` the same.
+fn hearing<E: StatefulInteractiveElement>(
+    element: E,
+    glow: Entity<Glow>,
+    heard: Option<Hover>,
+) -> E {
+    element
+        .hover_listener_mode(HoverListenerMode::InputModalityIndependent)
+        .on_hover(move |hovered, window, cx| {
+            glow.update(cx, |glow, cx| {
+                glow.hover(*hovered);
+                cx.notify();
+            });
+            if let Some(heard) = heard.as_ref() {
+                heard(hovered, window, cx);
+            }
+        })
+}
+
+/// A spring an element keeps across frames and steps each time it draws, for motion on an
+/// element that has to stay itself, since an animation wrapper hides its role from the
+/// accessibility tree. Keep one in `window.use_keyed_state` and read it with
+/// [`Sprung::follow`] while rendering.
+#[derive(Clone, Copy, Debug)]
+pub struct Sprung {
+    state: SpringState,
+    /// When the spring last stepped, `None` while it rests.
+    beat: Option<Instant>,
+}
+
+impl Sprung {
+    /// A spring resting at `position`.
+    pub fn at(position: f32) -> Self {
+        Self {
+            state: SpringState {
+                position,
+                velocity: 0.,
+            },
+            beat: None,
+        }
+    }
+
+    /// Where the spring stands now.
+    pub fn position(&self) -> f32 {
+        self.state.position
+    }
+
+    /// Whether the spring has come to rest where it was last sent, rather than moving.
+    pub fn resting(&self) -> bool {
+        self.beat.is_none()
+    }
+
+    /// Sets the spring at `position` at once, keeping nothing of where it was going, as the
+    /// start of a motion that springs from there.
+    pub fn jump(&mut self, position: f32) {
+        *self = Self::at(position);
+    }
+
+    /// Steps the spring towards `target` on `config` and answers where it stands. It asks for the
+    /// next frame while it moves, counts as landed within `epsilon` of the target, and lands at
+    /// once under reduced motion. A target that changes mid-flight turns the spring from where
+    /// it stands, velocity and all.
+    pub fn follow(
+        &mut self,
+        target: f32,
+        config: SpringConfig,
+        epsilon: f32,
+        window: &Window,
+        cx: &App,
+    ) -> f32 {
+        if cx.reduce_motion() || config.is_settled(self.state, target, epsilon) {
+            self.jump(target);
+            return target;
+        }
+        let now = Instant::now();
+        let elapsed = self.beat.map_or(Duration::ZERO, |beat| {
+            now.duration_since(beat).min(STEP_STALL)
+        });
+        self.beat = Some(now);
+        self.state = config.step(self.state, target, elapsed.as_secs_f32());
+        match config.is_settled(self.state, target, epsilon) {
+            true => self.jump(target),
+            false => window.request_animation_frame(),
+        }
+        self.state.position
+    }
+}
+
+/// Whether a pressable element is held down, and the scale it shrinks on.
+struct Held {
+    down: bool,
+    /// Whether the press still has to land. A click lets go before the scale gets anywhere, so
+    /// the scale keeps going down until it has landed and only then springs back.
+    landing: bool,
+    scale: Sprung,
+    _activation: gpui::Subscription,
+}
+
+/// Animates a paint-only press without changing layout or hitboxes, cancelling it on drag,
+/// pointer exit or loss of window activation. Call this after the element's mouse handlers
+/// and keep `id` stable across frames.
+pub fn pressing<E: InteractiveElement + Styled>(
+    element: E,
+    id: &ElementId,
+    depth: f32,
+    window: &mut Window,
+    cx: &mut App,
+) -> E {
+    let key = ElementId::NamedChild(Arc::new(id.clone()), "press".into());
+    let held = window.use_keyed_state(key, cx, |window, cx| {
+        let activation = cx.observe_window_activation(window, |held: &mut Held, window, cx| {
+            if !window.is_window_active() && (held.down || held.landing) {
+                held.down = false;
+                held.landing = false;
+                cx.notify();
+            }
+        });
+        Held {
+            down: false,
+            landing: false,
+            scale: Sprung::at(1.),
+            _activation: activation,
+        }
+    });
+    let scale = held.update(cx, |held, cx| {
+        if cx.has_active_drag() {
+            held.down = false;
+            held.landing = false;
+        }
+        let (target, config) = match held.down || held.landing {
+            true => (depth, Springs::PRESS),
+            false => (1., Springs::RELEASE),
+        };
+        let scale = held.scale.follow(target, config, SCALE_REST, window, cx);
+        if held.landing && 1. - scale >= (1. - depth) * PRESS_LANDED {
+            held.landing = false;
+            // the scale may have come to rest at the bottom, where nothing asks for the frame
+            // that starts it back up
+            if !held.down {
+                window.request_animation_frame();
+            }
+        }
+        scale
+    });
+    let release = |held: &Entity<Held>, cx: &mut App| {
+        if held.read(cx).down {
+            held.update(cx, |held, cx| {
+                held.down = false;
+                cx.notify();
+            });
+        }
+    };
+    let (down, up, out, moved, exited) =
+        (held.clone(), held.clone(), held.clone(), held.clone(), held);
+
+    let element = match (scale - 1.).abs() > SCALE_REST {
+        true => element.layer_scale(scale),
+        false => element,
+    };
+    element
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            down.update(cx, |held, cx| {
+                held.down = true;
+                held.landing = true;
+                // a press that lands on the spring-back of the last one starts from where the
+                // scale stands, without the speed that was carrying it back up
+                let at = held.scale.position();
+                held.scale.jump(at);
+                cx.notify();
+            });
+        })
+        .on_mouse_up(MouseButton::Left, move |_, _, cx| release(&up, cx))
+        .on_mouse_up_out(MouseButton::Left, move |_, _, cx| release(&out, cx))
+        .on_mouse_move(move |event, _, cx| {
+            if event.pressed_button != Some(MouseButton::Left) {
+                release(&moved, cx);
+            }
+        })
+        .on_mouse_exit(move |_, _, cx| release(&exited, cx))
 }
 
 pub(crate) struct Movement {

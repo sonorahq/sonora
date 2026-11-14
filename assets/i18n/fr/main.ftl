@@ -85,6 +85,7 @@ column-index = #
 column-title = Titre
 column-artist = Artiste
 column-album = Album
+column-genre = Genre
 column-date-added = Date d'ajout
 column-added-by = Ajouté par
 column-modified = Modifié
@@ -921,6 +922,8 @@ equalizer-status-channels = { $from ->
     [2] stéréo
    *[other] { $to } canaux
 }
+settings-lyrics = Afficher les paroles
+settings-lyrics-detail = Désactivez pour masquer les paroles partout et ne plus les rechercher
 settings-panel-lyrics-size = Taille des paroles (panneau)
 settings-panel-lyrics-size-detail = Taille du texte des paroles dans le panneau latéral, en plus de la taille de base
 settings-fullscreen-lyrics-size = Taille des paroles (plein écran)

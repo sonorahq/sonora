@@ -246,7 +246,6 @@ impl RenderOnce for Scrubber {
         };
 
         let dragged = {
-            let state = state.clone();
             let on_move = on_move.clone();
             let mine = id.clone();
             move |event: &DragMoveEvent<Grab>, window: &mut Window, cx: &mut App| {
