@@ -13,7 +13,7 @@ use crate::artwork::cover_palette;
 use crate::artwork::{Artwork, Avatar, ROUNDED};
 use crate::button::Button;
 use crate::glass::{GLASS_BLUR, blurring};
-use crate::label::{Tails as _, upper};
+use crate::label::Tails as _;
 use crate::metrics::{LEADING, Text, snapped};
 use crate::motion::{PRESS_SCALE, PRESS_SCALE_CARD, glow_fill, glowing, pressing, solid_fill};
 use crate::skeleton::Skeleton;
@@ -695,7 +695,7 @@ impl RenderOnce for Card {
                                         .text_size(theme.text(Text::Small))
                                         .text_color(theme.muted_foreground)
                                         .font_weight(FontWeight::SEMIBOLD)
-                                        .child(upper(eyebrow)),
+                                        .child(eyebrow),
                                 )
                                 .child(
                                     div()

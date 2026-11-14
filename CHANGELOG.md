@@ -39,6 +39,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Ctrl+F (⌘F on macOS) now opens search and / filters the page you are on, and shortcuts list Ctrl before Shift.
 - Hovered rows share one fill in tables, cards and the sidebar, the softer one the sidebar used.
 - The song title and artist in the player bar sit closer together.
+- Section labels across the app, such as the settings group headings and Pinned in the sidebar, are no longer set in capitals.
 
 ## [0.49.1] - 2026-11-13
 
