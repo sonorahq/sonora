@@ -1119,6 +1119,7 @@ settings-local-folder-empty = Не настроено
 settings-choose-folder = Выбрать папку…
 settings-add-folder = Добавить папку
 settings-remove-folder = Удалить папку
+settings-open-folder = Открыть папку
 settings-rescan = Пересканировать
 settings-scan-walking = Сканирую…
 settings-scan-progress = { $percent }%

@@ -38,6 +38,7 @@ MAP = {
     "ellipsis": ("more-horiz", "menu-dots-linear", "more-line"),
     "external-link": ("open-new-window", "square-top-down-linear", "external-link-line"),
     "file-music": (None, "music-library-2-linear", "file-music-line"),
+    "folder-open": ("folder", "folder-open-linear", "folder-open-line"),
     "folder-plus": ("folder-plus", "add-folder-linear", "folder-add-line"),
     "funnel": ("filter", "filter-linear", "filter-3-line"),
     "gauge": ("dashboard-speed", "speedometer-middle-linear", "dashboard-3-line"),

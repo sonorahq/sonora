@@ -1204,6 +1204,7 @@ settings-local-folder-empty = Not configured
 settings-choose-folder = Choose folder…
 settings-add-folder = Add folder
 settings-remove-folder = Remove folder
+settings-open-folder = Open folder
 settings-rescan = Rescan
 settings-scan-walking = Scanning…
 settings-scan-progress = { $percent }%
