@@ -36,6 +36,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The fullscreen button now swaps in place when the fullscreen player opens or closes, instead of fading and zooming with it.
 - Your accounts now open Settings, General, and the separate Providers tab is gone.
 - Ctrl+F (⌘F on macOS) now opens search and / filters the page you are on, and shortcuts list Ctrl before Shift.
+- Hovered rows share one fill in tables, cards and the sidebar, the softer one the sidebar used.
 
 ## [0.49.1] - 2026-11-13
 

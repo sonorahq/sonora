@@ -22,10 +22,6 @@ pub(crate) const ENTRANCE_ZOOM: f32 = 0.01;
 
 /// How long a hover highlight takes to fade out, before the listener's pace stretches it.
 const DIM: Duration = Duration::from_millis(100);
-/// How much of a lit row's fill the pointer alone brings up, so the row under the pointer
-/// reads as lighter than the one that marks where the app is.
-pub const LIT_HOVER: f32 = 0.5;
-
 /// How far a pressed control shrinks.
 pub const PRESS_SCALE: f32 = 0.96;
 /// How far a pressed card or tile shrinks; larger things move less.

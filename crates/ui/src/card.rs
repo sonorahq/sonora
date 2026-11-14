@@ -15,9 +15,7 @@ use crate::button::Button;
 use crate::glass::{GLASS_BLUR, blurring};
 use crate::label::{Tails as _, upper};
 use crate::metrics::{LEADING, Text, snapped};
-use crate::motion::{
-    LIT_HOVER, PRESS_SCALE, PRESS_SCALE_CARD, glow_fill, glowing, pressing, solid_fill,
-};
+use crate::motion::{PRESS_SCALE, PRESS_SCALE_CARD, glow_fill, glowing, pressing, solid_fill};
 use crate::skeleton::Skeleton;
 use crate::theme::ActiveTheme as _;
 use crate::tooltip::{Perch, Tipped as _};
@@ -318,8 +316,8 @@ impl Card {
     }
 
     /// Fills the card with `color` while `lit`, for a row that marks where the app is. Under the
-    /// pointer alone the card takes `LIT_HOVER` of that fill. Either comes on at once and fades
-    /// out the way a hover does.
+    /// pointer alone it takes the theme's `table_hover`, the hover every row shares. Either comes
+    /// on at once and fades out the way a hover does.
     pub fn lit(mut self, lit: bool, color: Hsla) -> Self {
         self.lit = Some((lit, color));
         self
@@ -410,10 +408,12 @@ impl RenderOnce for Card {
             style.background = None;
             Some(fill)
         });
-        let glow_color = lit
-            .map(|(_, color)| color)
-            .or(hover_fill)
-            .filter(|_| !chosen);
+        let glow_color = match lit {
+            Some((true, color)) => Some(color),
+            Some((false, _)) => Some(theme.table_hover),
+            None => hover_fill,
+        }
+        .filter(|_| !chosen);
         let overrides = std::mem::take(base.style());
 
         let leading = match loading {
@@ -752,12 +752,8 @@ impl RenderOnce for Card {
             return card;
         };
         let rest = solid_fill(&overrides);
-        let hover = match lit {
-            Some(_) => LIT_HOVER,
-            None => 1.,
-        };
         let lit = lit.is_some_and(|(lit, _)| lit);
-        let (card, level) = glowing(card, &id, lit, hover, window, cx);
+        let (card, level) = glowing(card, &id, lit, 1., window, cx);
         match glow_fill(rest, fill, level) {
             Some(color) => card.bg(color),
             None => card,
