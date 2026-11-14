@@ -48,6 +48,7 @@ mod shader;
 mod shield;
 mod skeleton;
 mod spinner;
+mod swell;
 mod swipe;
 mod switch;
 mod table;
@@ -139,6 +140,7 @@ pub use separator::Separator;
 pub use shield::Shield;
 pub use skeleton::{Initials, Skeleton};
 pub use spinner::{Spin, Spinner};
+pub use swell::{EdgeSwell, Swells};
 pub use swipe::{hold_swipe, swipe_pull, swiped};
 pub use switch::Switch;
 pub use table::{

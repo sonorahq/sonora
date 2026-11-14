@@ -21,10 +21,10 @@ use state::{
     Sonora, Whence,
 };
 use ui::{
-    ActiveTheme as _, Avatar, Button, Card, DraggedPin, Edge, Glowing as _, Initials, Motion,
-    Motioned as _, PREFETCH_REACH, Pin, Pinnable as _, Popup, Scrollbar, Scroller, Spot, Springs,
-    Tails as _, Text, Vacancy, drop_gap, drop_marker, ease_out_cubic, ease_out_expo, eyebrow,
-    faint, mix, prefetch, snapped, vacant,
+    ActiveTheme as _, Avatar, Button, Card, DraggedPin, Edge, EdgeSwell, Glowing as _, Initials,
+    Motion, Motioned as _, PREFETCH_REACH, Pin, Pinnable as _, Popup, Scrollbar, Scroller, Spot,
+    Springs, Swells, Tails as _, Text, Vacancy, drop_gap, drop_marker, ease_out_cubic,
+    ease_out_expo, eyebrow, faint, mix, prefetch, snapped, vacant,
 };
 use unicode_bidi::{BidiClass, Direction};
 
@@ -223,6 +223,7 @@ pub(crate) struct Aside {
     context_menu: Option<ContextMenuState>,
     track_menu: ItemMenu,
     drop_gap: Option<usize>,
+    swell: EdgeSwell,
     scroll: UniformListScrollHandle,
     scrollbar: Entity<Scrollbar>,
     past_len: usize,
@@ -331,6 +332,7 @@ impl Aside {
             context_menu: None,
             track_menu: ItemMenu::new(playlist_scrollbar, cx),
             drop_gap: None,
+            swell: EdgeSwell::new(),
             scroll,
             scrollbar,
             past_len: 0,
@@ -2012,6 +2014,20 @@ impl Aside {
     }
 }
 
+impl Swells for Aside {
+    fn swell(&mut self) -> &mut EdgeSwell {
+        &mut self.swell
+    }
+
+    fn swell_bar(&self) -> &Entity<Scrollbar> {
+        &self.scrollbar
+    }
+
+    fn swelling(&self, _cx: &App) -> bool {
+        self.tab == SideTab::Queue
+    }
+}
+
 impl Render for Aside {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.scrollbar.read(cx).sync();
@@ -2071,6 +2087,19 @@ impl Render for Aside {
                         this.on_drop(
                             cx.listener(|this, dragged: &DraggedPin, _, cx| this.land(dragged, cx)),
                         )
+                        .on_drag_move(cx.listener(
+                            |this, event: &DragMoveEvent<DraggedPin>, _, cx| {
+                                let bar = this.scrollbar.clone();
+                                let bottom = this.bottom(cx);
+                                this.swell.hold(
+                                    &bar,
+                                    event.bounds,
+                                    event.event.position,
+                                    bottom,
+                                    cx,
+                                );
+                            },
+                        ))
                     })
                     .when(self.tab == SideTab::Lyrics, |this| {
                         this.child(self.verses(window, cx)).child(self.witness())

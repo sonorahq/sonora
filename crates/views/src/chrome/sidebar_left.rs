@@ -1,9 +1,9 @@
 use std::rc::Rc;
 
 use ui::{
-    ActiveTheme as _, Button, Card, Deck, DraggedPin, Edge, Menu, MenuItem, Panel, Picker, Pin,
-    PinKind, Pinnable as _, Popover, Popup, SNUG, Scroller, Shield, Side, Spot, Tabs, Text,
-    Vacancy, drop_gap, drop_into, drop_marker,
+    ActiveTheme as _, Button, Card, Deck, DraggedPin, Edge, EdgeSwell, Menu, MenuItem, Panel,
+    Picker, Pin, PinKind, Pinnable as _, Popover, Popup, SNUG, Scroller, Shield, Side, Spot,
+    Swells, Tabs, Text, Vacancy, drop_gap, drop_into, drop_marker,
 };
 
 use gpui::accesskit::Role;
@@ -150,6 +150,7 @@ pub(crate) struct SidebarLeft {
     track_menu: ItemMenu,
     context_menu: Option<(Pin, Point<Pixels>)>,
     scrollbar: Entity<ui::Scrollbar>,
+    swell: EdgeSwell,
     popovers: ui::Popovers,
 }
 
@@ -217,6 +218,7 @@ impl SidebarLeft {
             track_menu: ItemMenu::new(playlist_scrollbar, cx),
             context_menu: None,
             scrollbar,
+            swell: EdgeSwell::new(),
             popovers: ui::Popovers::default(),
         }
     }
@@ -897,6 +899,20 @@ impl SidebarLeft {
     }
 }
 
+impl Swells for SidebarLeft {
+    fn swell(&mut self) -> &mut EdgeSwell {
+        &mut self.swell
+    }
+
+    fn swell_bar(&self) -> &Entity<ui::Scrollbar> {
+        &self.scrollbar
+    }
+
+    fn swelling(&self, _cx: &App) -> bool {
+        self.is_open()
+    }
+}
+
 impl Render for SidebarLeft {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
@@ -974,6 +990,14 @@ impl Render for SidebarLeft {
                     .flex_1()
                     .min_h_0()
                     .when(closing, |this| this.hidden())
+                    .on_drag_move(
+                        cx.listener(|this, event: &DragMoveEvent<DraggedPin>, _, cx| {
+                            let bar = this.scrollbar.clone();
+                            let bottom = super::Chrome::bottom(cx);
+                            this.swell
+                                .hold(&bar, event.bounds, event.event.position, bottom, cx);
+                        }),
+                    )
                     .child(
                         Scroller::new("sidebar-left-rows", &self.scrollbar)
                             .bottom_inset(super::Chrome::bottom(cx))
