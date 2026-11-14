@@ -348,6 +348,7 @@
                 cmake
                 rustToolchain
                 sccache
+                dioxus-cli
               ])
               ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.mold ];
 
