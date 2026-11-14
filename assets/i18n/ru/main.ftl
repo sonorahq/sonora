@@ -862,7 +862,6 @@ soloist-continue = Продолжить
 soloist-pair-step-open = Откройте Spotify на телефоне или компьютере в этой сети
 soloist-pair-step-play = Включите там любую песню
 soloist-pair-step-pick = Откройте список устройств и выберите { $device }
-soloist-pair-waiting = Ждём Spotify…
 soloist-pair-firewall = Не появляется? Файрвол на этом компьютере должен пропускать входящие UDP 5353 и TCP { $port }.
 soloist-back = Назад
 soloist-problem-download = Не удалось скачать Soloist
