@@ -99,6 +99,10 @@ yay -S sonora
 flatpak install --user https://sonorahq.github.io/sonora/sonora.flatpakref
 ```
 
+#### Snap
+
+Install from the [Snap Store](https://snapcraft.io/sonora): `sudo snap install sonora`.
+
 #### AppImage
 
 Download from the [latest release](https://github.com/sonorahq/sonora/releases/latest), make it executable and run
