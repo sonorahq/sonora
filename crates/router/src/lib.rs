@@ -27,7 +27,8 @@ impl LibraryTab {
 }
 
 /// A row the sidebar can hide from Settings. The four library pages are rows of their own,
-/// each opening its page of the merged streaming and local library.
+/// each opening its page of the merged streaming and local library. History and Settings always
+/// sit in the account menu, so their rows are optional and stay out of the sidebar until asked for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavEntry {
     Home,
@@ -37,11 +38,12 @@ pub enum NavEntry {
     Artists,
     Playlists,
     History,
+    Settings,
     Pins,
 }
 
 impl NavEntry {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Home,
         Self::Search,
         Self::Songs,
@@ -49,6 +51,7 @@ impl NavEntry {
         Self::Artists,
         Self::Playlists,
         Self::History,
+        Self::Settings,
         Self::Pins,
     ];
 
@@ -61,6 +64,7 @@ impl NavEntry {
             Self::Artists => "artists",
             Self::Playlists => "playlists",
             Self::History => "history",
+            Self::Settings => "settings",
             Self::Pins => "sidebar-pins",
         }
     }
@@ -74,10 +78,16 @@ impl NavEntry {
             Self::Artists => "nav-artists",
             Self::Playlists => "nav-playlists",
             Self::History => "nav-history",
+            Self::Settings => "nav-settings",
             Self::Pins => "nav-pinned",
         }
     }
 
+    /// Whether the row stays out of the sidebar until the listener adds it, rather than showing
+    /// until hidden.
+    pub fn optional(self) -> bool {
+        matches!(self, Self::History | Self::Settings)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

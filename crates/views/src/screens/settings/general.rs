@@ -7,6 +7,7 @@ use ui::{MenuItem, OptionCard, Pace, Picker, Rounding, Saver, Stillness, Switch}
 use super::appearance::corner;
 use super::rows::{Announced as _, grid, segmented};
 use super::{Group, LANGUAGES, SettingsView, Slot};
+use crate::shared::nav::{entry_shown, set_entry_shown};
 use crate::shared::popups::matches_query;
 
 const STARTUP: &str = "startup";
@@ -85,13 +86,13 @@ impl SettingsView {
             .width(Picker::REGULAR)
             .sticky()
             .items(NavEntry::ALL.map(|entry| {
-                let shown = self.settings.read(cx).nav_shown(entry.id());
+                let shown = entry_shown(entry, self.settings.read(cx));
 
                 MenuItem::new(entry.id(), i18n::lookup(entry.key(), None))
                     .selected(shown)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.settings.update(cx, |settings, cx| {
-                            settings.set_nav_shown(entry.id(), !shown, cx)
+                            set_entry_shown(entry, !shown, settings, cx)
                         });
                         cx.notify();
                     }))
