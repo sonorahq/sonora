@@ -151,7 +151,7 @@ impl Unfold {
                         canvas(
                             move |bounds, window, _| {
                                 if measured.replace(bounds.size.height) != bounds.size.height {
-                                    window.refresh();
+                                    window.request_animation_frame();
                                 }
                             },
                             |_, _, _, _| {},

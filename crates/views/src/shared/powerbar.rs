@@ -15,6 +15,7 @@ use ui::{
 
 use crate::screens::search::{noun, tag};
 use crate::shared::tracks::{PlaybackStatus, playback_status};
+use crate::shared::trouble;
 
 /// How many results the powerbar lists, taken from the top of the ranked search.
 const MAX_HITS: usize = 8;
@@ -90,7 +91,7 @@ impl Powerbar {
                     let query = input.read(cx).text().to_owned();
                     // A new query starts the keyboard cursor over, while a caret move or a
                     // selection in the field leaves it where it was.
-                    if this.search.read(cx).query() == query {
+                    if this.search.read(cx).query() == query.trim() {
                         return;
                     }
                     this.selected = None;
@@ -153,6 +154,9 @@ impl Powerbar {
         self.restore = window.focused(cx);
         self.open = true;
         self.selected = None;
+        // Results from the last time stay only for the lift away. Search may have been reset
+        // since, sign-outs included, and an empty query does not notify.
+        self.hits.clear();
         self.cascade.clear();
         self.unfold.reset();
         self.scroll.set_offset(point(Pixels::ZERO, Pixels::ZERO));
@@ -347,26 +351,39 @@ impl Powerbar {
             .collect()
     }
 
-    /// The muted line under the field while there is a query and nothing to show for it: a
-    /// spinner while the answer is on its way and "no matches" once it came back empty.
+    /// What shows under the field while there is a query and nothing to list for it: a spinner
+    /// while the answer is on its way, the reason with a retry when the search failed, and "no
+    /// matches" once it came back empty.
     fn quiet(&self, cx: &App) -> Option<AnyElement> {
         let search = self.search.read(cx);
-        if search.query().trim().is_empty() || !self.hits.is_empty() {
+        if search.query().is_empty() || !self.hits.is_empty() {
             return None;
         }
-        match search.is_loading() {
-            true => Some(
+        if search.is_loading() {
+            return Some(
                 div()
                     .flex()
                     .justify_center()
                     .p(cx.theme().metrics.pad * 2.)
                     .child(Spinner::new("powerbar-loading"))
                     .into_any_element(),
-            ),
-            false => Some(
-                spoken_vacant("powerbar-empty", t!("search-no-matches"), cx).into_any_element(),
-            ),
+            );
         }
+        if let Some(reason) = search.error() {
+            let again = self.search.clone();
+            let query = search.query().to_owned();
+            return Some(
+                trouble::lost(
+                    "powerbar-lost",
+                    t!("trouble-not-loaded"),
+                    Some(reason),
+                    move |_, _, cx| again.update(cx, |search, cx| search.ask(&query, cx)),
+                    cx,
+                )
+                .into_any_element(),
+            );
+        }
+        Some(spoken_vacant("powerbar-empty", t!("search-no-matches"), cx).into_any_element())
     }
 
     /// The row of key hints along the foot of the panel.

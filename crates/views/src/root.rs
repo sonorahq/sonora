@@ -110,6 +110,8 @@ pub struct Root {
     jam_invite: Entity<JamInvite>,
     /// The question before a linked theme is installed, drawn over whichever shell is up.
     theme_invite: Entity<ThemeInvite>,
+    /// The quick search, drawn over whichever shell is up so it opens in fullscreen too.
+    powerbar: Entity<Powerbar>,
     shells: Shells,
     view: RootView,
     signing_in: bool,
@@ -235,6 +237,7 @@ impl Root {
             cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
         // The quick search asks on its own, so typing in it leaves the search screen as it was.
         let quick = cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
+        let powerbar = Powerbar::entity(quick, playback.clone(), cx);
         let genres = cx.new(|cx| Genres::new(session.clone(), io.clone(), cx));
         let search = cx.new(|cx| {
             SearchView::new(
@@ -264,7 +267,6 @@ impl Root {
             Workspace::new(
                 playback.clone(),
                 queue.clone(),
-                quick,
                 library_view.clone().into(),
                 cx,
             )
@@ -390,6 +392,7 @@ impl Root {
             ambient,
             jam_invite: cx.new(JamInvite::new),
             theme_invite: cx.new(ThemeInvite::new),
+            powerbar,
             background: None,
             font: None,
             #[cfg(target_os = "windows")]
@@ -1288,7 +1291,8 @@ impl Render for Root {
                 )
             })
             .child(self.jam_invite.clone())
-            .child(self.theme_invite.clone());
+            .child(self.theme_invite.clone())
+            .child(self.powerbar.clone());
 
         let root = div()
             .relative()
@@ -1354,8 +1358,11 @@ impl Render for Root {
             .on_action(
                 cx.listener(|this, _: &ToggleLyrics, _, cx| this.show_side(SideTab::Lyrics, cx)),
             )
-            .on_action(cx.listener(|_, _: &TogglePowerbar, window, cx| {
-                Powerbar::toggle(window, cx);
+            .on_action(cx.listener(|this, _: &TogglePowerbar, window, cx| {
+                // The sign-in screen stands in for every shell, so there is nothing to search.
+                if !this.signing_in {
+                    Powerbar::toggle(window, cx);
+                }
             }))
             .on_action(
                 cx.listener(|this, _: &ShowMembers, _, cx| this.reveal_side(SideTab::Members, cx)),
