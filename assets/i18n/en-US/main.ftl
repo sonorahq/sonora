@@ -32,6 +32,7 @@ nav-search = Search
 nav-library = Your Library
 sidebar-library = Library
 nav-settings = Settings
+account-manage = Manage accounts
 nav-songs = Songs
 nav-albums = Albums
 nav-playlists = Playlists
@@ -338,6 +339,7 @@ view-cards = Grid
 # toolbar
 tool-sort = Sort
 tool-filters = Filters
+tool-account = Account
 
 # login
 login-signed-out = Sign in to load your music library

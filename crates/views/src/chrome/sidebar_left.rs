@@ -21,7 +21,7 @@ use router::{
 use state::{AppSettings, Leaving, Library, Origin, PinSort, Pins, Playback, Shelf, Sonora};
 
 use crate::shared::menus::{ItemMenu, item_menu};
-use crate::shared::nav::{nav_icon, nav_row};
+use crate::shared::nav::{entry_shown, nav_icon, nav_row};
 use crate::shared::pins::leaving;
 use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 
@@ -29,39 +29,39 @@ use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 const PINS: &str = "sidebar-pins";
 
 /// The sidebar's navigation rows in order: the entry that can hide each, its icon and where it goes.
-/// The four library rows each open one page of the merged streaming and local library. Settings
-/// has no entry, so it is always shown, and it opens on the settings page last visited rather
-/// than on the one named here.
-pub(crate) const NAV: [(Option<NavEntry>, &str, Destination); 8] = [
-    (Some(NavEntry::Home), "icons/house.svg", Destination::Home),
-    (Some(NavEntry::Search), "icons/search.svg", Destination::Search),
+/// The four library rows each open one page of the merged streaming and local library. History
+/// and Settings live in the account menu of the title bar and come back here only when added.
+/// Settings opens on the settings page last visited rather than on the one named here.
+pub(crate) const NAV: [(NavEntry, &str, Destination); 8] = [
+    (NavEntry::Home, "icons/house.svg", Destination::Home),
+    (NavEntry::Search, "icons/search.svg", Destination::Search),
     (
-        Some(NavEntry::Songs),
+        NavEntry::Songs,
         LibraryTab::Songs.icon(),
         Destination::Library(LibraryTab::Songs),
     ),
     (
-        Some(NavEntry::Albums),
+        NavEntry::Albums,
         LibraryTab::Albums.icon(),
         Destination::Library(LibraryTab::Albums),
     ),
     (
-        Some(NavEntry::Artists),
+        NavEntry::Artists,
         LibraryTab::Artists.icon(),
         Destination::Library(LibraryTab::Artists),
     ),
     (
-        Some(NavEntry::Playlists),
+        NavEntry::Playlists,
         LibraryTab::Playlists.icon(),
         Destination::Library(LibraryTab::Playlists),
     ),
     (
-        Some(NavEntry::History),
+        NavEntry::History,
         "icons/rotate-ccw-clock.svg",
         Destination::History,
     ),
     (
-        None,
+        NavEntry::Settings,
         "icons/settings.svg",
         Destination::Settings(SettingsPage::Providers),
     ),
@@ -323,11 +323,7 @@ impl SidebarLeft {
     fn navigation(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let shown = |range: std::ops::Range<usize>, cx: &App| -> Vec<usize> {
             range
-                .filter(|index| {
-                    NAV[*index]
-                        .0
-                        .is_none_or(|entry| self.settings.read(cx).nav_shown(entry.id()))
-                })
+                .filter(|index| entry_shown(NAV[*index].0, self.settings.read(cx)))
                 .collect()
         };
         let top = shown(0..2, cx);
@@ -709,7 +705,7 @@ impl SidebarLeft {
         let theme = *cx.theme();
         let accent = theme.sidebar_accent;
         let (entry, icon, destination) = NAV[index].clone();
-        let key = entry.map_or("nav-settings", NavEntry::key);
+        let key = entry.key();
         let current = self.trail.read(cx).current();
         let active = destination.same_section(&current);
         let tint = match active {

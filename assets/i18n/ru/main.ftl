@@ -25,6 +25,7 @@ nav-search = Поиск
 nav-library = Моя медиатека
 sidebar-library = Медиатека
 nav-settings = Настройки
+account-manage = Управление аккаунтами
 nav-songs = Треки
 nav-albums = Альбомы
 nav-playlists = Плейлисты
@@ -325,6 +326,7 @@ view-cards = Карточки
 # toolbar
 tool-sort = Сортировка
 tool-filters = Фильтры
+tool-account = Аккаунт
 
 # login
 login-signed-out = Войдите, чтобы загрузить медиатеку

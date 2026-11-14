@@ -30,6 +30,7 @@ MAP = {
     "chevrons-up-down": ("expand-lines", "sort-vertical-linear", "expand-up-down-line"),
     "circle-alert": ("warning-circle", "danger-circle-linear", "error-warning-line"),
     "circle-check": ("check-circle", "check-circle-linear", "checkbox-circle-line"),
+    "circle-user-round": ("profile-circle", "user-circle-linear", "account-circle-line"),
     "clipboard-paste": ("paste-clipboard", "clipboard-linear", "clipboard-line"),
     "columns-3": ("view-columns-3", None, "layout-column-line"),
     "copy": ("copy", "copy-linear", "file-copy-line"),

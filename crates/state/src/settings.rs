@@ -493,6 +493,9 @@ struct Values {
     local_folders: Vec<PathBuf>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     hidden_nav: Vec<String>,
+    /// The optional sidebar rows the user added, which stay out of the sidebar otherwise.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    added_nav: Vec<String>,
     /// Missing system requirements the user asked never to hear about again.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     silenced_requirements: Vec<String>,
@@ -710,6 +713,7 @@ impl Default for Values {
             startup: DEFAULT_STARTUP.to_owned(),
             local_folders: Vec::new(),
             hidden_nav: Vec::new(),
+            added_nav: Vec::new(),
             silenced_requirements: Vec::new(),
             scrobbling: BTreeMap::new(),
             unscrobbled: BTreeSet::new(),
@@ -2234,6 +2238,22 @@ impl AppSettings {
         match shown {
             true => self.values.hidden_nav.retain(|hidden| hidden != entry),
             false => self.values.hidden_nav.push(entry.to_owned()),
+        }
+        self.schedule_save(cx);
+    }
+
+    /// Whether the user added the optional sidebar row `entry`. None is added on a first run.
+    pub fn nav_added(&self, entry: &str) -> bool {
+        self.values.added_nav.iter().any(|added| added == entry)
+    }
+
+    pub fn set_nav_added(&mut self, entry: &str, added: bool, cx: &mut Context<Self>) {
+        if self.nav_added(entry) == added {
+            return;
+        }
+        match added {
+            true => self.values.added_nav.push(entry.to_owned()),
+            false => self.values.added_nav.retain(|known| known != entry),
         }
         self.schedule_save(cx);
     }
