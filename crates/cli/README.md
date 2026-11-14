@@ -22,6 +22,7 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora seek <0-100\|TIME\|±STEP>` | Jump to a percent of the current track, a time such as `1:30`, or a step such as `+10` |
 | `sonora current` | Print what plays now as JSON, or `null` when nothing is loaded |
 | `sonora queue` | Print the queue: what played, what plays and what follows, without changing it |
+| `sonora lyrics` | Print the lyrics of the current track, without looking any up |
 | `sonora watch [--position]` | Print what plays again on every change, one line of JSON each, until stopped |
 | `sonora volume [N\|+N\|-N]` | Print the volume, set it from 0 to 100, or step it |
 | `sonora shuffle [on\|off\|toggle]` | Print shuffle, or switch it |
@@ -266,3 +267,23 @@ The crate knows nothing of GPUI or of the app's state, so it can be built and re
 - **Messages through Fluent.** Errors, table headers, statuses and `--help` are in English in
   the code for now. They move to `assets/i18n/en-US/main.ftl`, in the language the running
   Sonora uses or, for `--help` with none running, the system's.
+
+`lyrics` answers what Sonora already holds for the track shown, on the steered device while
+another is steered over Spotify Connect, and never looks anything up. Its `state` is `ready`,
+`loading`, `missing`, `instrumental`, `failed`, `disabled` when lyrics are off in the settings, or
+`idle` when nothing is loaded; only `ready` has `lines`. A synced text gives each line the time it
+starts at in milliseconds (`start_ms`, `null` for plain lyrics), and `current` and `next` are the
+line sung now and the one after it, picked from the playback position when the command runs.
+Before the first line `current` is `null`, and after the last `next` is. A line carries its
+`romanized` form when its script has one. At most 500 lines are listed (`wire::LYRICS_LIMIT`),
+with `truncated` set when there were more; `current` and `next` are picked before the cut. The
+text form prints one line each, with its time when synced and its romanization under it:
+
+```sh
+sonora lyrics
+sonora lyrics --json | jq -r .current.text
+```
+
+```json
+{"state":"ready","source":"lrclib","instrumental":false,"synced":true,"current":{"start_ms":62500,"text":"…","romanized":null},"next":{"start_ms":65000,"text":"…","romanized":null},"lines":[{"start_ms":62500,"text":"…","romanized":null}],"truncated":false}
+```
