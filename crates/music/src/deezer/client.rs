@@ -44,11 +44,20 @@ const RESET_PICTURE: &str = "mutation ResetDefaultPlaylistCover($input: ResetDef
     ... on ResetDefaultPlaylistCoverMutationOutput { playlist { id } } \
     ... on ResetDefaultPlaylistCoverMutationError { playlistNotFound userIsNotPlaylistOwner isLovedTracksPlaylist } } }";
 
-/// The audio formats `get_url` knows, best first. The license decides which ones come back.
-const FORMATS: [&str; 3] = ["FLAC", "MP3_320", "MP3_128"];
+/// The audio formats `get_url` knows, best first. The license decides which ones come back, and
+/// a track never mastered in hi-res answers no url for `FLAC_24`, so the next format is tried.
+const FORMATS: [&str; 4] = ["FLAC_24", "FLAC", "MP3_320", "MP3_128"];
 
 /// The levels Deezer serves, best first, one for each of `FORMATS`.
 pub(crate) const QUALITIES: &[Offer] = &[
+    Offer {
+        quality: Quality::HiRes,
+        encoding: Encoding::Flac {
+            depth: 24,
+            rate: 192_000,
+        },
+        up_to: true,
+    },
     Offer {
         quality: Quality::Lossless,
         encoding: Encoding::Flac {
@@ -1617,7 +1626,8 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 /// Where in `FORMATS` the best format a plan covers sits, from the `OPTIONS` of
 /// `deezer.getUserData`. A level the options do not mention counts as covered, so an account
-/// that says nothing about its plan is asked for every format.
+/// that says nothing about its plan is asked for every format. Deezer has no hi-res flag, since a
+/// lossless plan is licensed for `FLAC_24` too.
 fn plan(options: &Value) -> usize {
     let covers = |keys: [&str; 2]| {
         let flags = keys
@@ -1632,17 +1642,18 @@ fn plan(options: &Value) -> usize {
         covers(["web_hq", "mobile_hq"]),
     ) {
         (true, _) => 0,
-        (false, true) => 1,
-        (false, false) => 2,
+        (false, true) => 2,
+        (false, false) => 3,
     }
 }
 
 /// The formats to try for a level, from its own down to the lowest.
 fn formats_from(quality: Quality) -> &'static [&'static str] {
     let first = match quality.within(QUALITIES) {
-        Quality::HiRes | Quality::Lossless => 0,
-        Quality::High => 1,
-        Quality::Normal | Quality::Low => 2,
+        Quality::HiRes => 0,
+        Quality::Lossless => 1,
+        Quality::High => 2,
+        Quality::Normal | Quality::Low => 3,
     };
     &FORMATS[first..]
 }

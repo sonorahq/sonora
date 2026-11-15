@@ -62,6 +62,8 @@ impl Timeline {
             .detach();
         cx.observe(&settings, |this, _, cx| this.follow(cx))
             .detach();
+        let sponsorblock = Sonora::global(cx).sponsorblock.clone();
+        cx.observe(&sponsorblock, |_, _, cx| cx.notify()).detach();
         Self {
             playback,
             settings,
@@ -179,6 +181,10 @@ impl Render for Timeline {
                         .name(t!("song-position"))
                         .value(clock(elapsed))
                         .colors(theme.progress_bar, empty, theme.foreground)
+                        .ranges(
+                            Sonora::global(cx).sponsorblock.read(cx).ranges(cx),
+                            theme.foreground.opacity(0.4),
+                        )
                         .enabled(seekable)
                         .when_some(bubble, |this, (at, text)| this.bubble(at, text))
                         .on_move(cx.listener(|this, fraction: &f32, _, cx| {

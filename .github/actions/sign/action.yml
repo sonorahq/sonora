@@ -23,7 +23,7 @@ runs:
   steps:
     - name: upload the unsigned file
       id: unsigned
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ inputs.artifact }}
         path: ${{ inputs.file }}
@@ -31,7 +31,7 @@ runs:
         if-no-files-found: error
 
     - name: submit the signing request
-      uses: signpath/github-action-submit-signing-request@v3
+      uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
       with:
         api-token: ${{ inputs.api-token }}
         organization-id: 01c226e0-eb0d-4c10-b8a0-ff7185d57d19
