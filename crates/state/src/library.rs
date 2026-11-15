@@ -93,11 +93,11 @@ struct Held {
     /// provider. The part's real rows replace them once they have all arrived.
     stale: HashSet<LibraryPart>,
     starred: Starred,
-    /// The favorite changes to tracks made while a load could still replace the favorites,
-    /// by track id: the track for a favorite, nothing for one taken back. The load puts them
-    /// back over the rows it reads, since the provider may have read its list before the
-    /// change took effect.
-    edits: HashMap<String, Option<Track>>,
+    /// The favorite changes to tracks made while a load could still replace the favorites, in
+    /// the order they were made: the track for a favorite, nothing for one taken back. Each
+    /// track keeps only its latest change. The load puts them back over the rows it reads in
+    /// that order, since the provider may have read its list before the change took effect.
+    edits: Vec<(String, Option<Track>)>,
     tasks: Vec<Task<()>>,
 }
 
@@ -111,7 +111,7 @@ impl Held {
             expected: HashMap::new(),
             stale: HashSet::new(),
             starred: Starred::default(),
-            edits: HashMap::new(),
+            edits: Vec::new(),
             tasks: Vec::new(),
         }
     }
@@ -3097,7 +3097,8 @@ impl Library {
         };
         let held = self.held_mut(Shelf::of(&id));
         let arrival = held.arrival.unwrap_or(Arrival::OldestFirst);
-        held.edits.insert(id.clone(), saved.then(|| track.clone()));
+        held.edits.retain(|(edited, _)| *edited != id);
+        held.edits.push((id.clone(), saved.then(|| track.clone())));
         let Some(favorites) = held.favorites_mut() else {
             return;
         };
@@ -3226,7 +3227,7 @@ impl Library {
         let held = self.held_mut(shelf);
         held.shape = shape;
         held.arrival = arrival;
-        held.edits.retain(|id, _| asked.contains(id));
+        held.edits.retain(|(id, _)| asked.contains(id));
         held.awaited = LibraryPart::ALL.to_vec();
         match held.stale.is_empty() {
             true => {
