@@ -398,6 +398,8 @@ login-password-hint = Password
 login-server-submit = Connect
 login-account-title = Choose an account
 login-account-detail = This session is signed in to more than one Google account. Pick the one Sonora should use.
+login-profile-title = Choose a profile
+login-profile-detail = This account has more than one profile. Pick the one Sonora should use.
 login-choose-title = Sign in to { $provider }
 login-choose-detail = Choose how to sign in to { $provider }.
 login-providers = Music services
@@ -1229,6 +1231,8 @@ settings-scan-progress = { $percent }%
 settings-scan-done = Done in { $seconds }s
 settings-version = Version
 settings-version-detail = The build of sonora you are running
+# A nightly's version followed by the shortened hash of the commit it was built from.
+settings-version-commit = { $version } ({ $commit })
 settings-license = License
 settings-license-detail = GNU General Public License version 3 or later
 settings-source = Source code

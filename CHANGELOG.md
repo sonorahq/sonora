@@ -33,9 +33,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Opening a file from a file manager can now switch to the now playing view automatically, if enabled in Settings > General.
 - Sonora supports drag-and-drop from other programs, like file managers, into the queue. The line shows the place in the queue where the files will land, the same one in-app drops use.
 - See how much of the song is left on Sonora's taskbar button on Windows. The button fills as the song plays and turns yellow while it is paused.
+- Nightly builds show the commit they were built from beside the version under Settings, About.
 
 ### Fixed
 
+- Signing in to a Deezer Family account asks which profile to use instead of always picking the account owner's, so each member sees their own playlists.
 - `sonora like` waits for the provider to confirm a favorite change and reports if it fails.
 - A song you favorite or unfavorite while the library is refreshing stays that way instead of flipping back.
 - Unmuting now respects volume changes made on another device.

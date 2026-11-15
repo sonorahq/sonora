@@ -152,8 +152,8 @@
               --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : ${gstPluginPath}
           '';
 
-          # Compiles the checked-out tree. At the `nightly` tag it takes the nightly's version and
-          # update channel, which the app reads at compile time.
+          # Compiles the checked-out tree. At the `nightly` tag it takes the nightly's version, commit
+          # and update channel, which the app reads at compile time.
           sonora = rustPlatform.buildRustPackage (final: {
             pname = "sonora";
             version = nightly.version or (lib.importTOML "${final.src}/Cargo.toml").workspace.package.version;
@@ -169,6 +169,9 @@
               // lib.optionalAttrs (nightly ? version) {
                 SONORA_VERSION = nightly.version;
                 SONORA_CHANNEL = "nightly";
+              }
+              // lib.optionalAttrs (nightly ? commit) {
+                SONORA_COMMIT = nightly.commit;
               };
             cargoLock = {
               lockFile = "${final.src}/Cargo.lock";
