@@ -28,6 +28,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Use Sonora in Korean.
 - Open a music folder in your file manager from Settings, Music folders.
 - Library pages that list both local and streaming music mark local files with a file icon beside their names.
+- Deezer plays in hi-res, up to 24-bit 192 kHz FLAC, on tracks that have it. Pick Hi-res under Settings, Playback.
 - Tidal artist pages show how many people follow the artist, beside the listener count.
 - See Sonora's similar tracks on your other Spotify devices under their recommended tracks, and Spotify's recommendations from another device apart from what is up next in Sonora.
 - Opening a file from a file manager can now switch to the now playing view automatically, if enabled in Settings > General.
