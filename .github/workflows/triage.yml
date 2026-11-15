@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # With the app configured the timeline says Sonora Buddy and carries its icon. Without
       # it everything still works, signed github-actions.

@@ -55,7 +55,7 @@ jobs:
           - name: tests
             task: test
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # Restores the packages' files instead of running apt, which spends most of its time
       # refreshing the package index.
@@ -121,7 +121,7 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # Cargo on the runner's NTFS drive spends much of its time in the filesystem and Defender,
       # so Windows lints a copy of the checkout on a ReFS Dev Drive. The cache follows it there.
@@ -178,7 +178,7 @@ jobs:
             arch: arm64
             setup: Sonora-Setup-arm64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # Cargo on the runner's NTFS drive spends much of its time in the filesystem and Defender.
       # A ReFS Dev Drive takes the target directory instead, through a junction, so every path
@@ -211,7 +211,7 @@ jobs:
         shell: bash
         run: rustup toolchain install && rustup target add ${{ matrix.target }}
 
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}
@@ -280,7 +280,7 @@ jobs:
 
       # A convenience binary, not a release artefact: GitHub's artifact service times out often
       # enough that it must not be what turns a green build red.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         continue-on-error: true
         with:
           name: build-${{ matrix.target }}
