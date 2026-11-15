@@ -113,10 +113,7 @@ jobs:
       github.event_name != 'pull_request' &&
       !contains(github.event.head_commit.message, 'from sonorahq/release/')
     runs-on: ${{ matrix.os }}
-    # These are convenience builds, so they trade the release profile's single codegen unit for
-    # a parallel compile. release.yml keeps it for nightlies and tagged releases.
     env:
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
       SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -172,6 +169,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      # rust-toolchain.toml pins the toolchain cargo actually runs, and it only comes with the
+      # host's standard library, so a cross-compiled target has to be added to it as well.
+      - name: add the target to the pinned toolchain
+        run: rustup target add ${{ matrix.target }}
 
       - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: Swatinem/rust-cache@v2

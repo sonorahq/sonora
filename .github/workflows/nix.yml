@@ -43,9 +43,11 @@ on:
         type: string
         default: ""
 
+# A push to main never cancels the build before it, or merges landing faster than a build
+# finishes would leave the cache without any of them. A queued run still gives way to a newer one.
 concurrency:
   group: nix-${{ inputs.ref || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 permissions:
   contents: read

@@ -68,6 +68,20 @@ jobs:
           if [ -n "$NIGHTLY" ]; then version=nightly; fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      # Cargo on the runner's NTFS drive spends much of its time in the filesystem and Defender.
+      # A ReFS Dev Drive takes the target directory instead, through a junction, so every path
+      # below stays the same.
+      - uses: samypr100/setup-dev-drive@v4
+        if: runner.os == 'Windows' && !inputs.reuse
+        with:
+          drive-size: 40GB
+      - name: put the target directory on the Dev Drive
+        if: runner.os == 'Windows' && !inputs.reuse
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:DEV_DRIVE/target" | Out-Null
+          New-Item -ItemType Junction -Path target -Target "$env:DEV_DRIVE/target" | Out-Null
+
       - name: system dependencies
         if: runner.os == 'Linux' && !inputs.reuse
         run: |
@@ -83,6 +97,11 @@ jobs:
         if: ${{ !inputs.reuse }}
         with:
           targets: ${{ matrix.target }}
+      # rust-toolchain.toml pins the toolchain cargo actually runs, and it only comes with the
+      # host's standard library, so a cross-compiled target has to be added to it as well.
+      - name: add the target to the pinned toolchain
+        if: ${{ !inputs.reuse }}
+        run: rustup target add ${{ matrix.target }}
 
       - uses: mozilla-actions/sccache-action@v0.0.9
         if: ${{ !inputs.reuse }}
