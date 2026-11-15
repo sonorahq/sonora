@@ -152,10 +152,12 @@ impl RenderOnce for Modal {
         } = self;
         let outside = dismiss.clone();
         // with no action row under it the body carries the bottom padding itself, so the
-        // panel is inset by the same amount all the way round
+        // panel is inset by the same amount all the way round. Above an action row it keeps
+        // enough of it that the focus ring of a field at its foot is not cut off by the
+        // scrolling body, and the row takes the rest.
         let tail = match actions.is_empty() {
             true => room,
-            false => Pixels::ZERO,
+            false => theme.metrics.pad,
         };
         let close = dismiss.clone().filter(|_| close_button);
         let overrides = std::mem::take(base.style());
@@ -321,7 +323,9 @@ impl RenderOnce for Modal {
                                 .flex_none()
                                 .justify_end()
                                 .gap_2()
-                                .p(room)
+                                .px(room)
+                                .pb(room)
+                                .pt(room - tail)
                                 .children(actions),
                         )
                     });
