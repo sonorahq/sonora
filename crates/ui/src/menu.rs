@@ -7,7 +7,7 @@ use gpui::{
     Anchor, AnyElement, AnyWindowHandle, App, Bounds, ClickEvent, Div, ElementId, Entity,
     FocusHandle, Focusable as _, Global, Interactivity, MouseButton, MouseClickEvent,
     MouseDownEvent, Pixels, Point, ScrollWheelEvent, SharedString, Size, Stateful, StyleRefinement,
-    Window, anchored, deferred, div, point, px, svg,
+    Window, anchored, deferred, div, phi, point, px, svg,
 };
 
 use crate::Artwork;
@@ -1242,6 +1242,9 @@ impl RenderOnce for Menu {
             .when_some(name, |this, name| this.aria_label(name))
             .flex()
             .flex_col()
+            // the menu sets its own leading, since one opened from a page header would otherwise
+            // take the header's tighter lines and draw shorter rows than everywhere else
+            .line_height(phi())
             .p_1()
             .rounded(theme.radius)
             .border_1()
