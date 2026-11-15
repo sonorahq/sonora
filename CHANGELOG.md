@@ -54,6 +54,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Hovered rows share one fill in tables, cards and the sidebar, the softer one the sidebar used.
 - History is now called Recents and shows in the sidebar right under Search. Hide it again under Settings, General, Sidebar entries. Settings, once added there, sits right under Recents.
 - Recents keeps your last 5000 plays instead of 500.
+- Search history now lists the songs, artists, albums and playlists you opened or played from a search instead of the words you typed, and it shows as soon as you open search or press Ctrl+K (⌘K on macOS).
 - The track filter menu no longer offers "Playable only".
 - The song title and artist in the player bar sit closer together.
 - Section labels across the app, such as the settings group headings and Pinned in the sidebar, are no longer set in capitals.

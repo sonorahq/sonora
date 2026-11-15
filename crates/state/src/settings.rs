@@ -42,7 +42,7 @@ use crate::equalizer::DeviceRule;
 use crate::pins::PinSort;
 use crate::queue::{Resume, gap_target};
 use crate::updates::{Channel, updates_itself};
-use crate::{Outcome, Repeat, Sonora, Toasts};
+use crate::{Hit, Outcome, Repeat, Sonora, Toasts};
 
 /// How Sonora is named on the device list of the provider's apps. `Both` is the app's name with
 /// the computer's in brackets, so two machines on one account tell apart.
@@ -342,8 +342,8 @@ const RELOAD_RETRY_DELAY: Duration = Duration::from_secs(1);
 const RELOAD_RETRIES: usize = 3;
 const THEMES_DIRECTORY: &str = "themes";
 const DEFAULT_VOLUME: f32 = 0.7;
-/// How many past searches the history keeps.
-const SEARCHES: usize = 20;
+/// How many chosen search results the history keeps, across every provider.
+const PICKS: usize = 40;
 const DEFAULT_SIDEBAR_WIDTH: f32 = 195.;
 const DEFAULT_SIDEBAR_RIGHT_WIDTH: f32 = 254.;
 const DEFAULT_FONT_SIZE: f32 = 14.;
@@ -372,6 +372,13 @@ struct Held {
     slug: String,
     #[serde(flatten)]
     pin: Pin,
+}
+
+/// A search result the listener chose, with the provider it belongs to.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Picked {
+    slug: String,
+    hit: Hit,
 }
 
 /// Everything `settings.json` holds. Preferences a user sets on purpose, safe to edit by hand.
@@ -770,8 +777,8 @@ struct StateValues {
     system_theme: String,
     /// The variant last chosen in each theme family, by family id.
     theme_variants: HashMap<String, String>,
-    /// What the search page was asked, newest first, without repeats.
-    searches: Vec<String>,
+    /// The search results the listener chose, newest first, without repeats.
+    picks: Vec<Picked>,
 }
 
 impl Default for StateValues {
@@ -802,7 +809,7 @@ impl Default for StateValues {
             window: None,
             system_theme: ThemeKind::Dark.id().to_owned(),
             theme_variants: HashMap::new(),
-            searches: Vec::new(),
+            picks: Vec::new(),
         }
     }
 }
@@ -2172,32 +2179,40 @@ impl AppSettings {
         self.schedule_state_save(cx);
     }
 
-    /// The queries the search page was asked, newest first.
-    pub fn searches(&self) -> &[String] {
-        &self.state.searches
+    /// The search results chosen on the providers in `slugs`, newest first.
+    pub fn picks(&self, slugs: &[&str]) -> Vec<Hit> {
+        self.state
+            .picks
+            .iter()
+            .filter(|picked| slugs.contains(&picked.slug.as_str()))
+            .map(|picked| picked.hit.clone())
+            .collect()
     }
 
-    /// Puts `query` at the top of the search history, dropping an earlier copy that differs only
-    /// in case and the oldest entry past the cap. The save skips settings observers, so the
-    /// caller repaints what shows the history.
-    pub fn remember_search(&mut self, query: &str, cx: &mut Context<Self>) {
-        let query = query.trim();
-        if query.is_empty() {
-            return;
-        }
-        let searches = &mut self.state.searches;
-        let folded = query.to_lowercase();
-        searches.retain(|kept| kept.to_lowercase() != folded);
-        searches.insert(0, query.to_owned());
-        searches.truncate(SEARCHES);
+    /// Puts `hit` at the top of the search history, dropping an earlier copy and the oldest
+    /// entry past the cap. The save skips settings observers, so the caller repaints what shows
+    /// the history.
+    pub fn remember_pick(&mut self, slug: &str, hit: Hit, cx: &mut Context<Self>) {
+        let key = hit.key();
+        let picks = &mut self.state.picks;
+        picks.retain(|picked| picked.hit.key() != key);
+        picks.insert(
+            0,
+            Picked {
+                slug: slug.to_owned(),
+                hit,
+            },
+        );
+        picks.truncate(PICKS);
         self.save_state_quietly(cx);
     }
 
-    /// Drops `query` from the search history. Like `remember_search`, it wakes no observers.
-    pub fn forget_search(&mut self, query: &str, cx: &mut Context<Self>) {
-        let kept = self.state.searches.len();
-        self.state.searches.retain(|held| held != query);
-        if self.state.searches.len() != kept {
+    /// Drops the hit with `key` from the search history. Like `remember_pick`, it wakes no
+    /// observers.
+    pub fn forget_pick(&mut self, key: &str, cx: &mut Context<Self>) {
+        let kept = self.state.picks.len();
+        self.state.picks.retain(|picked| picked.hit.key() != key);
+        if self.state.picks.len() != kept {
             self.save_state_quietly(cx);
         }
     }

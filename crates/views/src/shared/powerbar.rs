@@ -9,8 +9,9 @@ use input::{POWERBAR_CONTEXT, PowerbarDetails};
 use router::{Destination, navigate};
 use state::{Hit, Origin, Playback, Search};
 use ui::{
-    ActiveTheme as _, Card, Cascade, Dismiss, Input, Kbd, SelectNext, SelectPrevious, Spinner,
-    Sprung, Submit, Text, Unfold, blurring, corners, effects, popover_fill, snapped, spoken_vacant,
+    ActiveTheme as _, Button, Card, Cascade, Dismiss, Input, Kbd, SelectNext, SelectPrevious,
+    Spinner, Sprung, Submit, Text, Unfold, blurring, corners, effects, eyebrow, popover_fill,
+    snapped, spoken_vacant,
 };
 
 use crate::screens::search::hit_card;
@@ -97,6 +98,10 @@ impl Powerbar {
                     this.selected = None;
                     this.scroll.set_offset(point(Pixels::ZERO, Pixels::ZERO));
                     this.search.update(cx, |search, cx| search.ask(&query, cx));
+                    // An emptied field goes back to the search history, which no answer brings.
+                    if query.trim().is_empty() {
+                        this.rebuild_items(cx);
+                    }
                     cx.notify();
                 })
                 .detach();
@@ -159,15 +164,15 @@ impl Powerbar {
         });
     }
 
-    /// Opens the panel on an empty query. The previous query is cleared here rather than on
-    /// close, so the results stay put while the panel lifts away.
+    /// Opens the panel on an empty query, listing the search history. The previous query is
+    /// cleared here rather than on close, so the results stay put while the panel lifts away.
     fn show(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.restore = window.focused(cx);
         self.open = true;
         self.selected = None;
         // Results from the last time stay only for the lift away. Search may have been reset
         // since, sign-outs included, and an empty query does not notify.
-        self.hits.clear();
+        self.hits = recent(cx);
         self.cascade.clear();
         self.unfold.reset();
         self.scroll.set_offset(point(Pixels::ZERO, Pixels::ZERO));
@@ -198,7 +203,7 @@ impl Powerbar {
         }
         let search = self.search.read(cx);
         let hits: Vec<Hit> = match search.query().trim().is_empty() {
-            true => Vec::new(),
+            true => recent(cx),
             false => search.hits().iter().take(MAX_HITS).cloned().collect(),
         };
 
@@ -207,9 +212,9 @@ impl Powerbar {
         let picked = self
             .selected
             .and_then(|idx| self.hits.get(idx))
-            .map(hit_key);
+            .map(Hit::key);
         self.selected = self.selected.and_then(|idx| {
-            let found = picked.and_then(|key| hits.iter().position(|hit| hit_key(hit) == key));
+            let found = picked.and_then(|key| hits.iter().position(|hit| hit.key() == key));
             found.or_else(|| hits.len().checked_sub(1).map(|last| idx.min(last)))
         });
         self.hits = hits;
@@ -248,7 +253,14 @@ impl Powerbar {
         let Some(current) = self.selected else {
             return;
         };
-        self.choose(current.saturating_sub(1), cx);
+        // Up from the first result lets go of the list, the keyboard staying in the field.
+        match current.checked_sub(1) {
+            Some(idx) => self.choose(idx, cx),
+            None => {
+                self.selected = None;
+                cx.notify();
+            }
+        }
     }
 
     /// Enter: plays the chosen song at once and opens anything else.
@@ -262,9 +274,21 @@ impl Powerbar {
     /// Ctrl+Enter: opens the page of the chosen result, a song's included.
     fn details(&mut self, _: &PowerbarDetails, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(hit) = self.target() {
+            hit.remember(cx);
             navigate_hit(&hit, cx);
         }
         self.close(window, cx);
+    }
+
+    /// Whether the panel lists the search history rather than answers to a query.
+    fn recalling(&self, cx: &App) -> bool {
+        self.input.read(cx).text().trim().is_empty()
+    }
+
+    /// Drops `hit` from the search history and the list, the keyboard cursor staying put.
+    fn forget(&mut self, hit: &Hit, cx: &mut Context<Self>) {
+        hit.forget(cx);
+        self.rebuild_items(cx);
     }
 
     /// The result the keys act on: the one under the keyboard cursor, or the first.
@@ -316,13 +340,16 @@ impl Powerbar {
     }
 
     /// One row per result in the order the search ranked them, each wrapped in its entrance.
+    /// A row of the search history has a button that drops it.
     fn results(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let total = self.hits.len();
+        let recalling = self.recalling(cx);
+        let muted = cx.theme().muted_foreground;
         self.hits
             .iter()
             .enumerate()
             .map(|(item_idx, hit)| {
-                let shown = self.cascade.level(&hit_key(hit), window, cx);
+                let shown = self.cascade.level(&hit.key(), window, cx);
                 let opened = hit.clone();
                 let played = hit.clone();
                 let entered = self.playback.clone();
@@ -343,6 +370,23 @@ impl Powerbar {
                     },
                     cx,
                 );
+                let forgotten = hit.clone();
+                let forget = cx.entity();
+                let card = card.when(recalling, |card| {
+                    card.collapsed_action(
+                        Button::new(("powerbar-forget", item_idx))
+                            .ghost()
+                            .small()
+                            .mr_1()
+                            .icon("icons/x.svg")
+                            .tooltip("search-forget")
+                            .tint(muted)
+                            .on_click(move |_, _, cx| {
+                                cx.stop_propagation();
+                                forget.update(cx, |this, cx| this.forget(&forgotten, cx));
+                            }),
+                    )
+                });
                 Cascade::surface(card, shown).into_any_element()
             })
             .collect()
@@ -450,7 +494,8 @@ impl Render for Powerbar {
         let radius = corners(theme.radius);
         let reach = room * REACH;
 
-        self.cascade.show(self.hits.iter().map(hit_key));
+        self.cascade
+            .show(self.hits.iter().map(|hit| SharedString::from(hit.key())));
         let results = self.results(window, cx);
         let quiet = self.quiet(cx);
         let empty = results.is_empty() && quiet.is_none();
@@ -460,13 +505,28 @@ impl Render for Powerbar {
             .flex()
             .flex_col()
             .w_full()
+            .when(self.recalling(cx) && !self.hits.is_empty(), |this| {
+                let label = t!("search-recent");
+                this.child(
+                    eyebrow(label.clone(), cx)
+                        .id("powerbar-recent-heading")
+                        .role(Role::Heading)
+                        .aria_level(2)
+                        .aria_label(label)
+                        .px(theme.metrics.pad * 2.)
+                        .pt(theme.metrics.pad * 1.5),
+                )
+            })
             .map(|this| match quiet {
                 Some(quiet) => this.child(quiet),
                 None => this.child(
                     div()
                         .id("powerbar-results")
                         .role(Role::ListBox)
-                        .aria_label(t!("search-results"))
+                        .aria_label(match self.recalling(cx) {
+                            true => t!("search-recent"),
+                            false => t!("search-results"),
+                        })
                         .flex()
                         .flex_col()
                         .w_full()
@@ -585,16 +645,9 @@ impl Render for Powerbar {
     }
 }
 
-/// What tells one result from another across answers, so a result that stays keeps its place
-/// in the entrance.
-fn hit_key(hit: &Hit) -> SharedString {
-    let (kind, id) = match hit {
-        Hit::Song(track) => ("song", track.id.as_deref().unwrap_or(&track.name)),
-        Hit::Artist(artist) => ("artist", artist.id.as_deref().unwrap_or(&artist.name)),
-        Hit::Album(album) => ("album", album.id.as_str()),
-        Hit::Playlist(list) => ("playlist", list.id.as_str()),
-    };
-    SharedString::from(format!("{kind}:{id}"))
+/// The latest of the search history, as many as the panel lists.
+fn recent(cx: &App) -> Vec<Hit> {
+    Hit::recent(cx).into_iter().take(MAX_HITS).collect()
 }
 
 fn navigate_hit(hit: &Hit, cx: &mut App) {
@@ -632,8 +685,10 @@ fn origin_of(hit: &Hit) -> Option<Origin> {
 }
 
 /// What Enter or a click on a row does: a song starts playing with its radio after it, and
-/// any other result opens its page.
+/// any other result opens its page. Either way the result moves to the top of the search
+/// history.
 fn enter_hit(hit: &Hit, playback: &Entity<Playback>, cx: &mut App) {
+    hit.remember(cx);
     match hit {
         Hit::Song(track) => playback.update(cx, |playback, cx| playback.play_radio(track, cx)),
         _ => navigate_hit(hit, cx),
@@ -641,8 +696,9 @@ fn enter_hit(hit: &Hit, playback: &Entity<Playback>, cx: &mut App) {
 }
 
 /// The play button on a result: pauses or resumes what already plays from it, and starts it
-/// otherwise.
+/// otherwise. The result moves to the top of the search history.
 fn toggle_hit(hit: &Hit, playback: &Entity<Playback>, cx: &mut App) {
+    hit.remember(cx);
     playback.update(cx, |playback, cx| match (hit, origin_of(hit)) {
         (Hit::Song(track), _) => {
             let current = track.id.is_some()
