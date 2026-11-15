@@ -146,7 +146,7 @@ impl TitleBar {
         div()
             .id("titlebar-history")
             .role(Role::Toolbar)
-            .aria_label(i18n::lookup("nav-history", None))
+            .aria_label(i18n::lookup("nav-trail", None))
             .flex()
             .flex_none()
             .items_center()
