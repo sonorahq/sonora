@@ -58,6 +58,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Releases tagged with the label `[no label]` no longer show a copyright line crediting it.
 - The fullscreen player's ambient background no longer leaves a light line along the right and bottom edges of the window.
 - The ambient background in fullscreen uses far less GPU, so laptops with integrated graphics stay cooler.
+- Unsynced lyrics in a `.lrc` file beside a song show in the lyrics panel, as embedded lyrics do.
 - The Nix package runs Soloist on NixOS without nix-ld.
 - Apple Music search no longer runs into "Too Many Requests" while you type.
 - A page that cannot load says so in a plain sentence instead of the raw error, and a busy service asks you to wait a minute.
