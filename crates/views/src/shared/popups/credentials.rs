@@ -1,8 +1,11 @@
 use std::rc::Rc;
 
-use gpui::{App, AppContext as _, Entity, IntoElement, RenderOnce, Window, prelude::*, px};
+use gpui::accesskit::Role;
+use gpui::{
+    App, AppContext as _, Entity, Focusable as _, IntoElement, RenderOnce, Window, div, prelude::*,
+};
 use i18n::t;
-use ui::{Button, Field, Form, Input, Modal};
+use ui::{ActiveTheme as _, Button, Field, Form, Input, Modal, Text};
 
 type Action = Rc<dyn Fn(&(), &mut Window, &mut App)>;
 
@@ -17,17 +20,34 @@ pub(crate) struct Credentials {
 
 impl Credentials {
     pub(crate) fn new(cx: &mut App) -> Self {
-        Self {
+        let fields = Self {
             server: cx.new(|cx| Input::new("login-server-hint", cx).name("login-server-label")),
             username: cx.new(|cx| Input::new("", cx).name("login-username-hint")),
             password: cx.new(|cx| Input::new("", cx).name("login-password-hint").masked()),
+        };
+        // a field marked as missing loses the mark as soon as something is typed into it
+        for field in fields.all() {
+            cx.observe(field, |field, cx| {
+                if !field.read(cx).text().trim().is_empty() {
+                    field.update(cx, |input, cx| input.set_invalid(false, cx));
+                }
+            })
+            .detach();
         }
+        fields
     }
 
-    /// Empties every field.
+    fn all(&self) -> [&Entity<Input>; 3] {
+        [&self.server, &self.username, &self.password]
+    }
+
+    /// Empties every field and clears the missing marks.
     pub(crate) fn clear(&self, cx: &mut App) {
-        for field in [&self.server, &self.username, &self.password] {
-            field.update(cx, |input, cx| input.set_text("", cx));
+        for field in self.all() {
+            field.update(cx, |input, cx| {
+                input.set_text("", cx);
+                input.set_invalid(false, cx);
+            });
         }
     }
 
@@ -45,9 +65,28 @@ impl Credentials {
             || (password.is_empty() && !jellyfin);
         (!missing).then_some((server, username, password))
     }
+
+    /// Marks every field in `needed` that is still empty and moves the focus to the first of
+    /// them. Returns whether all of them hold something.
+    fn check(&self, needed: &[&Entity<Input>], window: &mut Window, cx: &mut App) -> bool {
+        let empty: Vec<&Entity<Input>> = needed
+            .iter()
+            .copied()
+            .filter(|field| field.read(cx).text().trim().is_empty())
+            .collect();
+        for field in &empty {
+            field.update(cx, |input, cx| input.set_invalid(true, cx));
+        }
+        if let Some(first) = empty.first() {
+            let focus = first.read(cx).focus_handle(cx);
+            window.focus(&focus, cx);
+        }
+        empty.is_empty()
+    }
 }
 
-/// The dialog that asks for a server's address and the account on it.
+/// The dialog that asks for a server's address and the account on it. A Jellyfin server also
+/// offers Quick Connect, which needs only the address.
 #[derive(IntoElement)]
 pub(crate) struct CredentialsPrompt {
     fields: Credentials,
@@ -66,8 +105,8 @@ impl CredentialsPrompt {
         }
     }
 
-    /// Names the provider signing in, whose title and explanation the dialog shows. Subsonic's
-    /// is the default.
+    /// Names the provider signing in, whose title and explanation the dialog shows.
+    /// Subsonic's is the default.
     pub(crate) fn provider(mut self, slug: &'static str) -> Self {
         self.provider = slug;
         self
@@ -98,44 +137,112 @@ impl RenderOnce for CredentialsPrompt {
             submit,
             cancel,
         } = self;
-        let (title, detail) = match provider {
-            "jellyfin" => (t!("login-jellyfin-title"), t!("login-jellyfin-detail")),
-            _ => (t!("login-server-title"), t!("login-server-detail")),
+        let theme = cx.theme();
+        let jellyfin = provider == "jellyfin";
+        let (title, detail, note) = match jellyfin {
+            true => (
+                t!("login-jellyfin-title"),
+                t!("login-jellyfin-detail"),
+                t!("login-jellyfin-note"),
+            ),
+            false => (
+                t!("login-server-title"),
+                t!("login-server-detail"),
+                t!("login-server-note"),
+            ),
         };
-        let run = |action: &Option<Action>| {
-            let action = action.clone();
-            move |_: &(), window: &mut Window, cx: &mut App| {
-                if let Some(action) = &action {
-                    action(&(), window, cx);
+        // the sign-in itself, which needs the password everywhere but on Jellyfin
+        let sign_in: Action = {
+            let fields = fields.clone();
+            let submit = submit.clone();
+            Rc::new(move |_, window, cx| {
+                let needed = match jellyfin {
+                    true => vec![&fields.server, &fields.username],
+                    false => vec![&fields.server, &fields.username, &fields.password],
+                };
+                if !fields.check(&needed, window, cx) {
+                    return;
+                }
+                if let Some(submit) = &submit {
+                    submit(&(), window, cx);
+                }
+            })
+        };
+        // Quick Connect needs only the address, and empty account fields are what ask for it
+        let quick_connect = {
+            let fields = fields.clone();
+            let submit = submit.clone();
+            move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
+                if !fields.check(&[&fields.server], window, cx) {
+                    return;
+                }
+                for field in [&fields.username, &fields.password] {
+                    field.update(cx, |input, cx| {
+                        input.set_text("", cx);
+                        input.set_invalid(false, cx);
+                    });
+                }
+                if let Some(submit) = &submit {
+                    submit(&(), window, cx);
                 }
             }
         };
-        let (submitted, cancelled) = (run(&submit), run(&cancel));
-        let (button_submit, button_cancel, dismissed) = (run(&submit), run(&cancel), run(&cancel));
+        let dismiss = move |_: &(), window: &mut Window, cx: &mut App| {
+            if let Some(cancel) = &cancel {
+                cancel(&(), window, cx);
+            }
+        };
+        let (submitted, clicked) = (sign_in.clone(), sign_in);
+        let muted = theme.muted_foreground;
+        let body = theme.text(Text::Body);
 
         Modal::new("server-prompt", title)
-            .w(px(560.))
             .detail(detail)
+            .close_button()
             .child(
                 Form::new("server-form")
                     .field(Field::new(&fields.server, cx).label(t!("login-server-label")))
                     .field(Field::new(&fields.username, cx).label(t!("login-username-hint")))
                     .field(Field::new(&fields.password, cx).label(t!("login-password-hint")))
-                    .on_submit(submitted)
-                    .on_dismiss(cancelled),
+                    .on_submit(move |_, window, cx| submitted(&(), window, cx))
+                    .on_dismiss(dismiss.clone()),
             )
-            .action(
-                Button::new("cancel-server")
-                    .ghost()
-                    .label(t!("common-cancel"))
-                    .on_click(move |_, window, cx| button_cancel(&(), window, cx)),
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .pt_2()
+                    .child(
+                        Button::new("submit-server")
+                            .primary()
+                            .large()
+                            .w_full()
+                            .label(t!("login-server-submit"))
+                            .on_click(move |_, window, cx| clicked(&(), window, cx)),
+                    )
+                    .when(jellyfin, |this| {
+                        this.child(
+                            Button::new("quick-connect")
+                                .outline()
+                                .large()
+                                .w_full()
+                                .label(t!("login-quick-connect"))
+                                .on_click(quick_connect),
+                        )
+                    }),
             )
-            .action(
-                Button::new("submit-server")
-                    .label(t!("login-server-submit"))
-                    .primary()
-                    .on_click(move |_, window, cx| button_submit(&(), window, cx)),
+            .child(
+                div()
+                    .id("server-note")
+                    .role(Role::Paragraph)
+                    .aria_label(note.clone())
+                    .w_full()
+                    .text_center()
+                    .text_size(body)
+                    .text_color(muted)
+                    .child(note),
             )
-            .on_dismiss(dismissed)
+            .on_dismiss(dismiss)
     }
 }
