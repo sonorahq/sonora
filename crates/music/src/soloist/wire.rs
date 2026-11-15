@@ -49,6 +49,9 @@ pub(super) enum Event {
     Error {
         #[serde(default)]
         message: String,
+        /// The command the daemon rejected, when its protocol can identify one.
+        #[serde(default)]
+        command: String,
     },
     #[serde(other)]
     Other,

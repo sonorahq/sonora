@@ -995,6 +995,7 @@ impl Queue {
         current: Option<(Track, QueuedTrack)>,
         previous: Vec<(Track, QueuedTrack)>,
         upcoming: Vec<(Track, QueuedTrack)>,
+        retained: &[String],
         cx: &mut Context<Self>,
     ) {
         let local_upcoming: Vec<_> = self
@@ -1010,19 +1011,35 @@ impl Queue {
             .chain(&self.upcoming)
             .cloned()
             .collect();
+        let reserved: HashSet<_> = current
+            .iter()
+            .chain(&previous)
+            .chain(&upcoming)
+            .map(|(_, queued)| queued.uid.clone())
+            .filter(|uid| !uid.is_empty())
+            .collect();
         let mut entry = |(track, queued): (Track, QueuedTrack)| {
             let kind = match queued.queued {
                 true => QueueKind::Queued,
                 false => QueueKind::Context,
             };
-            let uid = soloist_uid(&mut known, track.id.as_deref(), queued.uid);
+            let uid = soloist_uid(&mut known, track.id.as_deref(), queued.uid, &reserved);
             Entry::with_uid(uid, track, None, kind)
         };
         self.past = previous.into_iter().map(&mut entry).collect();
         self.current = current.map(&mut entry);
-        self.upcoming = upcoming
+        let remote: Vec<_> = upcoming.into_iter().map(&mut entry).collect();
+        let remote_window: Vec<_> = self
+            .past
+            .iter()
+            .chain(self.current.iter())
+            .chain(&remote)
+            .cloned()
+            .collect();
+        let retained = retained_soloist_entries(&self.upcoming, &remote_window, retained);
+        self.upcoming = remote
             .into_iter()
-            .map(&mut entry)
+            .chain(retained)
             .chain(local_upcoming)
             .collect();
         self.source.clear();
@@ -1394,9 +1411,18 @@ fn queue_uid() -> String {
 }
 
 /// Keeps an anonymous Soloist occurrence stable across its next reported queue window.
-fn soloist_uid(known: &mut Vec<Entry>, id: Option<&str>, uid: String) -> String {
+fn soloist_uid(
+    known: &mut Vec<Entry>,
+    id: Option<&str>,
+    uid: String,
+    reserved: &HashSet<String>,
+) -> String {
     let index = match uid.is_empty() {
-        true => id.and_then(|id| known.iter().position(|entry| entry.id() == Some(id))),
+        true => id.and_then(|id| {
+            known
+                .iter()
+                .position(|entry| entry.id() == Some(id) && !reserved.contains(entry.uid.as_str()))
+        }),
         false => known.iter().position(|entry| entry.uid == uid),
     };
     match index {
@@ -1404,6 +1430,38 @@ fn soloist_uid(known: &mut Vec<Entry>, id: Option<&str>, uid: String) -> String 
         None if !uid.is_empty() => uid,
         None => queue_uid(),
     }
+}
+
+/// Keeps unpublished collection entries after the latest authoritative remote window.
+fn retained_soloist_entries(
+    upcoming: &VecDeque<Entry>,
+    remote: &[Entry],
+    retained: &[String],
+) -> Vec<Entry> {
+    let mut remote_ids: HashMap<_, usize> = HashMap::new();
+    for entry in remote {
+        if let Some(id) = entry.id() {
+            *remote_ids.entry(id).or_default() += 1;
+        }
+    }
+    let mut wanted = retained.iter().map(String::as_str).peekable();
+    upcoming
+        .iter()
+        .filter_map(|entry| {
+            let id = entry.id()?;
+            if wanted.peek().copied() != Some(id) {
+                return None;
+            }
+            wanted.next();
+            match remote_ids.get_mut(id) {
+                Some(count) if *count > 0 => {
+                    *count -= 1;
+                    None
+                }
+                _ => Some(entry.clone()),
+            }
+        })
+        .collect()
 }
 
 /// Excludes local files from the provider's queue report while retaining occurrence identities.
@@ -1424,15 +1482,16 @@ fn connect_entry(entry: &Entry) -> Option<QueuedTrack> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
+    use std::collections::{HashSet, VecDeque};
     use std::rc::Rc;
     use std::time::Duration;
 
     use music::{ArtistRef, Track};
 
     use super::{
-        Entry, gap_target, hydrate, in_order, local, move_item, record, restore, scramble,
-        select_past, select_upcoming, sift, soloist_uid, stub, trim,
+        Entry, gap_target, hydrate, in_order, local, move_item, record, restore,
+        retained_soloist_entries, scramble, select_past, select_upcoming, sift, soloist_uid, stub,
+        trim,
     };
 
     fn track(id: &str) -> Track {
@@ -1506,10 +1565,52 @@ mod tests {
         );
         let mut known = vec![first, second];
 
-        let first = soloist_uid(&mut known, Some("duplicate"), String::new());
-        let second = soloist_uid(&mut known, Some("duplicate"), String::new());
+        let first = soloist_uid(
+            &mut known,
+            Some("duplicate"),
+            String::new(),
+            &HashSet::new(),
+        );
+        let second = soloist_uid(
+            &mut known,
+            Some("duplicate"),
+            String::new(),
+            &HashSet::new(),
+        );
 
         assert_eq!([first, second], ["first", "second"]);
+    }
+
+    #[test]
+    fn anonymous_soloist_occurrence_does_not_consume_an_explicit_uid() {
+        let explicit = Entry::with_uid(
+            "remote".into(),
+            track("duplicate"),
+            None,
+            super::QueueKind::Context,
+        );
+        let anonymous = Entry::with_uid(
+            "local".into(),
+            track("duplicate"),
+            None,
+            super::QueueKind::Context,
+        );
+        let mut known = vec![explicit, anonymous];
+        let reserved = HashSet::from(["remote".to_owned()]);
+
+        let anonymous = soloist_uid(&mut known, Some("duplicate"), String::new(), &reserved);
+        let explicit = soloist_uid(&mut known, Some("duplicate"), "remote".into(), &reserved);
+
+        assert_eq!([anonymous, explicit], ["local", "remote"]);
+    }
+
+    #[test]
+    fn remote_current_keeps_only_unpublished_collection_entries() {
+        let upcoming = VecDeque::from([entry("b"), entry("c")]);
+        let remote = vec![entry("b")];
+        let retained = retained_soloist_entries(&upcoming, &remote, &["b".into(), "c".into()]);
+
+        assert_eq!(ids(&retained.into()), ["c"]);
     }
 
     #[test]

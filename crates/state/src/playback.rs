@@ -73,6 +73,43 @@ impl SoloistQueueRevision {
     }
 }
 
+/// Collection entries that still need an acknowledged append to Soloist's shared queue.
+struct SoloistPublish {
+    tail: VecDeque<String>,
+    awaiting: Option<String>,
+}
+
+impl SoloistPublish {
+    /// Returns every collection occurrence that is not yet visible in an acknowledged snapshot.
+    fn retained(&self) -> Vec<String> {
+        self.awaiting.iter().chain(&self.tail).cloned().collect()
+    }
+
+    /// Starts one append, never issuing another until its command result arrives.
+    fn next(&mut self) -> Option<String> {
+        if self.awaiting.is_some() {
+            return None;
+        }
+        let id = self.tail.pop_front()?;
+        self.awaiting = Some(id.clone());
+        Some(id)
+    }
+
+    /// Clears the one append this publication is waiting to confirm.
+    fn confirm(&mut self, id: &str) -> bool {
+        if self.awaiting.as_deref() != Some(id) {
+            return false;
+        }
+        self.awaiting = None;
+        true
+    }
+
+    /// Whether every collection entry has reached Soloist.
+    fn complete(&self) -> bool {
+        self.awaiting.is_none() && self.tail.is_empty()
+    }
+}
+
 use crate::queue::{Queue, QueuePlacement};
 use serde::{Deserialize, Serialize};
 
@@ -591,8 +628,8 @@ pub struct Playback {
     soloist_queue_revision: SoloistQueueRevision,
     /// Reads a queued track Soloist moved to before Sonora knew its metadata.
     soloist_track: Option<Task<()>>,
-    /// The collection tail to append once Soloist confirms its first track is playing.
-    soloist_publish: Option<VecDeque<String>>,
+    /// The collection tail being published to Soloist's append-only shared queue.
+    soloist_publish: Option<SoloistPublish>,
     suggest: Option<Task<()>>,
     /// The track the engine was asked to fetch ahead, so it is asked once.
     preloaded: Option<Preloaded>,
@@ -1273,7 +1310,7 @@ impl Playback {
         upcoming: Vec<connect::QueuedTrack>,
         cx: &mut Context<Self>,
     ) {
-        if !self.soloist_owns_playback() || self.soloist_publish.is_some() {
+        if !self.soloist_owns_playback() {
             return;
         }
         let Some(client) = self.session.read(cx).client() else {
@@ -1305,8 +1342,12 @@ impl Playback {
                     Ok((current, entries, tracks)) => {
                         let (previous, upcoming) =
                             split_soloist_window(entries, tracks, previous_len);
+                        let retained = this
+                            .soloist_publish
+                            .as_ref()
+                            .map_or_else(Vec::new, SoloistPublish::retained);
                         this.queue.update(cx, |queue, cx| {
-                            queue.replace_soloist_remote(current, previous, upcoming, cx)
+                            queue.replace_soloist_remote(current, previous, upcoming, &retained, cx)
                         });
                     }
                     Err(error) => log::warn!("soloist: cannot read the remote queue: {error:#}"),
@@ -1361,8 +1402,14 @@ impl Playback {
 
     /// Appends the pending collection tail after Soloist accepted its first track.
     fn publish_soloist_collection(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.soloist_publish.as_mut().and_then(VecDeque::pop_front) else {
-            self.soloist_publish = None;
+        let Some(id) = self.soloist_publish.as_mut().and_then(SoloistPublish::next) else {
+            if self
+                .soloist_publish
+                .as_ref()
+                .is_some_and(SoloistPublish::complete)
+            {
+                self.soloist_publish = None;
+            }
             return;
         };
         let Some(engine) = self.engine.as_deref() else {
@@ -1883,7 +1930,10 @@ impl Playback {
                 .filter(|id| !music::is_local_id(id))
                 .map(str::to_owned)
                 .collect();
-            self.soloist_publish = (!ids.is_empty()).then_some(ids.into());
+            self.soloist_publish = (!ids.is_empty()).then_some(SoloistPublish {
+                tail: ids.into(),
+                awaiting: None,
+            });
         }
         true
     }
@@ -3274,14 +3324,26 @@ impl Playback {
             self.learn_signal(id, track, cx);
             return;
         }
-        if let BackendEvent::QueueRejected = event {
-            self.soloist_publish = None;
+        if let BackendEvent::QueueRejected { id } = event {
+            if self
+                .soloist_publish
+                .as_ref()
+                .is_some_and(|publish| publish.awaiting.as_deref() == Some(&id))
+            {
+                self.soloist_publish = None;
+            }
             log::warn!("playback: Soloist rejected a shared queue addition");
             Toasts::show(Outcome::Failed, "toast-queue-failed", cx);
             return;
         }
-        if let BackendEvent::QueueAppended = event {
-            self.publish_soloist_collection(cx);
+        if let BackendEvent::QueueAppended { id } = event {
+            if self
+                .soloist_publish
+                .as_mut()
+                .is_some_and(|publish| publish.confirm(&id))
+            {
+                self.publish_soloist_collection(cx);
+            }
             return;
         }
         if let BackendEvent::QueueChanged {
@@ -3333,8 +3395,8 @@ impl Playback {
             | BackendEvent::Signal { .. }
             | BackendEvent::QueueChanged { .. }
             | BackendEvent::QueuedTrack { .. }
-            | BackendEvent::QueueRejected
-            | BackendEvent::QueueAppended => {}
+            | BackendEvent::QueueRejected { .. }
+            | BackendEvent::QueueAppended { .. } => {}
             BackendEvent::Unavailable { .. }
             | BackendEvent::Throttled { .. }
             | BackendEvent::Refused
@@ -3802,12 +3864,13 @@ fn retire(engine: Option<Box<dyn Player>>) {
 }
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
     use std::time::{Duration, Instant};
 
     use music::{Track, connect::QueuedTrack};
 
     use super::{
-        DEFAULT_UNMUTE_VOLUME, LiveClock, MuteMemory, SoloistQueueRevision, gain,
+        DEFAULT_UNMUTE_VOLUME, LiveClock, MuteMemory, SoloistPublish, SoloistQueueRevision, gain,
         split_soloist_window,
     };
 
@@ -3819,6 +3882,20 @@ mod tests {
 
         assert!(!revision.is_current(older));
         assert!(revision.is_current(newer));
+    }
+
+    #[test]
+    fn soloist_collection_waits_for_its_own_append() {
+        let mut publish = SoloistPublish {
+            tail: VecDeque::from(["b".into(), "c".into()]),
+            awaiting: None,
+        };
+
+        assert_eq!(publish.next().as_deref(), Some("b"));
+        assert_eq!(publish.next(), None);
+        assert!(!publish.confirm("other"));
+        assert!(publish.confirm("b"));
+        assert_eq!(publish.next().as_deref(), Some("c"));
     }
 
     #[test]

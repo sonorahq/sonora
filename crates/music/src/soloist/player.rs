@@ -303,6 +303,8 @@ struct Brain {
     signed_in: bool,
     /// Queue additions waiting for this daemon's initial sign-in.
     pending_enqueues: VecDeque<String>,
+    /// Queue additions accepted by the daemon, in command-result order.
+    sent_enqueues: VecDeque<String>,
     /// Sonora's volume, from 0 to 100.
     volume: u8,
     /// Whether the daemon's volume is held at zero while an opening seek lands, so the start of
@@ -339,6 +341,7 @@ impl Brain {
             link: None,
             signed_in: false,
             pending_enqueues: VecDeque::new(),
+            sent_enqueues: VecDeque::new(),
             volume,
             muted: false,
             track: None,
@@ -707,11 +710,13 @@ impl Brain {
             },
             Event::CommandResult { command } => {
                 self.acknowledged(&command);
-                if command == "add_to_queue" {
-                    self.report(PlaybackEvent::QueueAppended);
+                if command == "add_to_queue"
+                    && let Some(id) = self.sent_enqueues.pop_front()
+                {
+                    self.report(PlaybackEvent::QueueAppended { id });
                 }
             }
-            Event::Error { message } => {
+            Event::Error { message, command } => {
                 // a seek is turned down while the track loads, and is simply sent again
                 let seeking = self
                     .track
@@ -721,7 +726,15 @@ impl Brain {
                     true => log::debug!("soloist: the daemon is not ready to seek: {message}"),
                     false => {
                         log::warn!("soloist: the daemon turned a command down: {message}");
-                        self.report(PlaybackEvent::QueueRejected);
+                        if command == "add_to_queue" {
+                            if let Some(id) = self.sent_enqueues.pop_front() {
+                                self.report(PlaybackEvent::QueueRejected { id });
+                            }
+                        } else if command.is_empty() {
+                            // shortcut: older Soloist errors omit the command, so retain queue
+                            // work rather than reject an unrelated append; upgrade with IDs.
+                            log::debug!("soloist: cannot attribute the command rejection");
+                        }
                     }
                 }
             }
@@ -798,7 +811,11 @@ impl Brain {
         let Some(track) = self.track.as_mut() else {
             // A Spotify app can begin playing on Soloist before Sonora has loaded a track.
             // Adopt it here; the queue snapshot that follows supplies the rest of the window.
-            if self.adopted.is_none() && active(self.heard.status) {
+            let changed = self
+                .adopted
+                .as_ref()
+                .is_none_or(|(uri, _)| uri != &self.heard.uri);
+            if changed && active(self.heard.status) {
                 if let Some(id) = track_id(&self.heard.uri) {
                     self.adopted = Some((self.heard.uri.clone(), Instant::now()));
                     self.report(PlaybackEvent::QueuedTrack {
@@ -1132,7 +1149,7 @@ impl Brain {
         if self.link.is_some() && self.pending_enqueues.len() < PENDING_ENQUEUES {
             self.pending_enqueues.push_back(id);
         } else {
-            self.report(PlaybackEvent::QueueRejected);
+            self.report(PlaybackEvent::QueueRejected { id });
         }
     }
 
@@ -1144,21 +1161,26 @@ impl Brain {
     }
 
     /// Sends one queue addition and reports a failure instead of claiming it was accepted.
-    fn send_enqueue(&self, id: String) {
+    fn send_enqueue(&mut self, id: String) {
         if !self.send(
             "add_to_queue",
             json!({ "uri": format!("{TRACK_PREFIX}{id}") }),
         ) {
-            return self.report(PlaybackEvent::QueueRejected);
+            return self.report(PlaybackEvent::QueueRejected { id });
         }
+        self.sent_enqueues.push_back(id);
         self.send("get_queue", json!({}));
     }
 
     /// Discards work that cannot safely cross a daemon disconnect or session teardown.
     fn reject_enqueues(&mut self) {
-        if !self.pending_enqueues.is_empty() {
-            self.pending_enqueues.clear();
-            self.report(PlaybackEvent::QueueRejected);
+        let rejected: Vec<_> = self
+            .pending_enqueues
+            .drain(..)
+            .chain(self.sent_enqueues.drain(..))
+            .collect();
+        for id in rejected {
+            self.report(PlaybackEvent::QueueRejected { id });
         }
     }
 
@@ -1566,7 +1588,25 @@ mod tests {
         assert!(brain.pending_enqueues.is_empty());
         assert!(matches!(
             events.try_recv(),
-            Ok(PlaybackEvent::QueueRejected)
+            Ok(PlaybackEvent::QueueRejected { id }) if id == "pending"
+        ));
+    }
+
+    #[test]
+    fn changed_remote_track_replaces_an_unloaded_adoption() {
+        let (mut brain, mut events) = brain();
+        brain.adopted = Some(("spotify:track:older".into(), Instant::now()));
+        brain.heard = Heard {
+            uri: "spotify:track:newer".into(),
+            status: Status::Playing,
+            ..Default::default()
+        };
+
+        brain.observe(false);
+
+        assert!(matches!(
+            events.try_recv(),
+            Ok(PlaybackEvent::QueuedTrack { id, .. }) if id == "newer"
         ));
     }
 
