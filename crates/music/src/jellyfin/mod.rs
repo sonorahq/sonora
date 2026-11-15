@@ -230,8 +230,9 @@ fn session(client: JellyfinClient, profile: crate::UserProfile) -> ProviderSessi
 }
 
 /// Signs in by Quick Connect. The server hands out a code, the sign-in page shows it with the
-/// address of the server's Quick Connect page, and once the user approves it from a signed-in
-/// Jellyfin app the secret buys an access token. Gives up after five minutes.
+/// server's address while the browser opens the server's Quick Connect page, and once the user
+/// approves it from a signed-in Jellyfin app the secret buys an access token. Gives up after
+/// five minutes.
 async fn quick_connect(
     server: &str,
     device: &str,
@@ -263,10 +264,12 @@ async fn quick_connect(
         .json()
         .await
         .context("cannot read the quick connect code")?;
+    let shown = server.split_once("://").map_or(server, |(_, rest)| rest);
     prompt(SignInPrompt::Code {
         code: started.code.clone(),
-        url: format!("{server}/web/#/quickconnect"),
+        url: shown.to_owned(),
     });
+    open::that_in_background(format!("{server}/web/#/quickconnect"));
     let waited = tokio::time::timeout(QUICK_CONNECT_PATIENCE, async {
         loop {
             tokio::time::sleep(QUICK_CONNECT_POLL).await;
