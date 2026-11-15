@@ -100,6 +100,7 @@ sonora → views → state → music
 ```sh
 nix develop                    # or direnv allow
 cargo run --locked --package sonora
+RUSTC_WRAPPER= dx serve --hot-patch --package sonora --features hot-reload   # hot reload
 cargo fmt
 cargo check --workspace
 cargo test --workspace
@@ -107,10 +108,14 @@ cargo clippy --workspace --all-targets
 ```
 
 The devShell has no `cargo` or `cargo-clippy`; those come from the system profile. The flake's
-default package is the released binary, so `nix build` never sees the working tree, while
-`nix build .#sonora-src` compiles it.
+default package compiles the working tree. CI caches the `stable` branch, the `nightly` tag and
+main on sonora.cachix.org.
 `.cargo/config.toml` links with mold on `x86_64-unknown-linux-gnu`, so mold must be on PATH, or
 build with `RUSTFLAGS=""`. `crates/widevine` compiles C++, so a C++ compiler is needed too.
+`dx serve --hot-patch` patches a running debug build in about a second on every save. The first
+build is a full one into its own `desktop-dev` profile. `RUSTC_WRAPPER=` keeps sccache out, since a
+sccache server of another version fails the build. A changed struct layout, a dependency, gpui or
+`Cargo.toml` needs a restart, `r` in the dx console.
 
 Clippy is clean, `--all-targets` included, and stays that way. Boxed callback fields get a
 module-local `type` alias rather than a `type_complexity` warning. The one `#[allow]` is

@@ -11,3 +11,6 @@ log.workspace = true
 
 [build-dependencies]
 embed.workspace = true
+
+[lints]
+workspace = true

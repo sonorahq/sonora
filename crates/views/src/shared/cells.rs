@@ -14,8 +14,8 @@ use music::{ArtistRef, Contributor};
 use router::{Destination, Link as _, navigate};
 use state::Playback;
 use ui::{
-    ActiveTheme as _, Artwork, Avatar, Cell, ExplicitBadge, InlineLink, InlineLinks, ROW_GROUP,
-    Theme, clock, tabular,
+    ActiveTheme as _, Artwork, Avatar, Badge, Cell, InlineLink, InlineLinks, ROW_GROUP, Theme,
+    clock, tabular,
 };
 
 use crate::chrome::Chrome;
@@ -324,6 +324,40 @@ pub(crate) fn length<F>(cell: &Cell<F>, value: Duration, muted: Hsla) -> AnyElem
     )
 }
 
+/// The name of a library row in `color`, followed by the local file badge when `local`. The text
+/// node is keyed to the call site like `dim`.
+#[track_caller]
+pub(crate) fn name<F>(
+    cell: &Cell<F>,
+    value: impl Into<SharedString>,
+    color: Hsla,
+    local: bool,
+) -> AnyElement {
+    let caller = Location::caller();
+    if !local {
+        return said(line(cell, Some(color)), caller, value.into());
+    }
+    line(cell, Some(color))
+        .flex()
+        .items_center()
+        .gap_1p5()
+        .child(said(div().min_w_0().truncate(), caller, value.into()))
+        .child(local_badge(cell.row))
+        .into_any_element()
+}
+
+/// The badge a local file carries beside its name on a library page that mixes both shelves,
+/// announced as a local file.
+pub(crate) fn local_badge(row: usize) -> AnyElement {
+    div()
+        .id(("local-badge", row))
+        .role(Role::Image)
+        .aria_label(t!("song-local"))
+        .flex_none()
+        .child(Badge::icon(crate::shared::blend::LOCAL_MARK))
+        .into_any_element()
+}
+
 /// Puts `value` in `frame` and exposes it to screen readers as a label. Empty text stays out of
 /// the tree.
 fn said(frame: Div, id: impl Into<ElementId>, value: SharedString) -> AnyElement {
@@ -427,7 +461,7 @@ pub(crate) fn title<F>(
                     .role(Role::Image)
                     .aria_label(label)
                     .flex_none()
-                    .child(ExplicitBadge::new()),
+                    .child(Badge::explicit()),
             )
         })
         .when_some(status, |this, status| this.child(status))
@@ -508,8 +542,10 @@ pub(crate) fn blank<F>(cell: &Cell<F>) -> AnyElement {
     cell.frame().into_any_element()
 }
 
+/// The room a page leaves for its content once `inset` is taken off its width. On a wide window
+/// this is measured against the centred page, not the whole content area.
 pub(crate) fn content_width(window: &Window, inset: Pixels, cx: &App) -> Pixels {
-    (Chrome::content(window, cx) - inset).max(ui::MIN_CONTENT)
+    (Chrome::page(window, cx) - inset).max(ui::MIN_CONTENT)
 }
 
 #[cfg(test)]

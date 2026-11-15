@@ -5,7 +5,7 @@ use crate::link::{self, Linked};
 
 const HOSTS: [&str; 3] = ["music.youtube.com", "youtube.com", "youtu.be"];
 
-/// What a YouTube link points at. A video opens as a track and a channel as an artist.
+/// Reads videos as tracks and channels as artists. Handles need their page fetched to find the channel id.
 pub(super) fn read(text: &str) -> Option<Linked> {
     let url = link::address(text).filter(|url| matches!(url.scheme(), "https" | "http"))?;
     let host = link::host(&url)?;
@@ -17,6 +17,9 @@ pub(super) fn read(text: &str) -> Option<Linked> {
         return segments.first().map(|id| Linked::Track((*id).to_owned()));
     }
     match segments.as_slice() {
+        [handle, ..] if handle.starts_with('@') && handle.len() > 1 && url.scheme() == "https" => {
+            Some(Linked::Short)
+        }
         ["watch", ..] => link::query(&url, "v").map(Linked::Track),
         ["playlist", ..] => link::query(&url, "list").map(Linked::Playlist),
         ["channel", id, ..] => Some(Linked::Artist((*id).to_owned())),

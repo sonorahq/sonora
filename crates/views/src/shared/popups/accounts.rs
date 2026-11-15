@@ -5,7 +5,7 @@ use gpui::prelude::*;
 use gpui::{App, FontWeight, SharedString, Window, div, px};
 use i18n::t;
 use music::AccountChoice;
-use ui::{ActiveTheme as _, Button, Initials, Modal, Text};
+use ui::{ActiveTheme as _, Button, Glowing as _, Initials, Modal, Text};
 
 const AVATAR: gpui::Pixels = px(32.);
 
@@ -84,7 +84,6 @@ impl RenderOnce for AccountPicker {
                             .border_1()
                             .border_color(theme.border)
                             .cursor_pointer()
-                            .hover(|this| this.bg(theme.secondary_hover))
                             .child(Initials::new(account.name.clone(), AVATAR))
                             .child(
                                 div()
@@ -112,6 +111,7 @@ impl RenderOnce for AccountPicker {
                                     pick(&id, window, cx);
                                 }
                             })
+                            .glowed(theme.secondary_hover)
                     })
             }))
             .action(

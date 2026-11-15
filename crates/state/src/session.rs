@@ -294,6 +294,16 @@ impl Session {
         provider.protected() && provider.stored()
     }
 
+    /// Whether the current provider can play through Soloist on this computer and has an
+    /// account, which is when the app offers its setup.
+    pub fn offers_soloist(&self) -> bool {
+        let Some(index) = self.active else {
+            return false;
+        };
+        let provider = &self.providers[index];
+        provider.soloist() && provider.stored()
+    }
+
     /// Whether a browser window matters right now: the current provider signs in through one,
     /// or no account is stored yet and the sign-in screen offers every provider.
     pub fn wants_browser(&self) -> bool {
@@ -407,15 +417,25 @@ impl Session {
 
     /// What the live streaming provider can do beyond listing and playing. Nothing is offered
     /// while signed out, which is what the empty set means.
+    /// What the signed-in provider can do. The stream levels are the playback factory's when it
+    /// names any, since a provider with a second engine serves other levels through it.
     pub fn capabilities(&self) -> Capabilities {
-        self.capabilities
+        let qualities = self
+            .playback
+            .as_ref()
+            .and_then(|playback| playback.qualities())
+            .unwrap_or(self.capabilities.qualities);
+        Capabilities {
+            qualities,
+            ..self.capabilities
+        }
     }
 
     /// The same, for whichever shelf a thing belongs to. Anything that routes by id asks this
     /// one, since the two shelves can differ: local files keep favorites but seed no station.
     pub fn capabilities_of(&self, shelf: Shelf) -> Capabilities {
         match shelf {
-            Shelf::Streaming => self.capabilities,
+            Shelf::Streaming => self.capabilities(),
             Shelf::Local => self.local_capabilities,
         }
     }

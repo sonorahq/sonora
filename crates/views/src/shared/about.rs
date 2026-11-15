@@ -9,7 +9,9 @@ use gpui::{
 };
 use i18n::t;
 use router::{Destination, navigate};
-use ui::{ActiveTheme as _, Artwork, Button, Modal, Scrollbar, Scroller, eyebrow, heading};
+use ui::{
+    ActiveTheme as _, Artwork, Button, Glowing as _, Modal, Scrollbar, Scroller, eyebrow, heading,
+};
 
 use crate::shared::effects;
 
@@ -61,7 +63,7 @@ impl AboutArtist {
 }
 
 impl RenderOnce for AboutArtist {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = *cx.theme();
         let pressable = self.on_open.is_some();
         let name = self.name.clone();
@@ -86,7 +88,7 @@ impl RenderOnce for AboutArtist {
             .border_color(theme.border)
             .when_some(self.on_open, |this, open| {
                 this.cursor_pointer()
-                    .hover(|style| style.bg(theme.secondary))
+                    .glow(theme.secondary, window, cx)
                     .on_click(move |event, window, cx| open(event, window, cx))
             })
             .child(Artwork::new(self.cover).size(PORTRAIT).circle())

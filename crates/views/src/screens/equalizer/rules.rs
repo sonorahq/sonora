@@ -218,13 +218,10 @@ impl EqualizerView {
             };
         let known = |id: &str| listed.iter().any(|(output, _)| output.id == id);
 
-        let leading = playing
-            .clone()
-            .filter(|output| !known(&output.id))
-            .map(|output| {
-                let label = output.name.clone().into();
-                item(RuleDevice::Output(output), label, true, None)
-            });
+        let leading = playing.filter(|output| !known(&output.id)).map(|output| {
+            let label = output.name.clone().into();
+            item(RuleDevice::Output(output), label, true, None)
+        });
         let chosen_id = chosen.and_then(RuleDevice::id);
         let listed_items = self.device_menu.items(
             rows,

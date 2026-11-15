@@ -15,6 +15,7 @@ use gpui::{
 use i18n::t;
 use state::DiscordName;
 use ui::ActiveTheme as _;
+use ui::Glowing as _;
 use ui::{Artwork, tabular};
 
 use super::Tick;
@@ -157,6 +158,11 @@ pub(in crate::screens::settings) fn preview(
         DiscordName::Music => t!("settings-discord-preview-music"),
         DiscordName::Title => sample.title.clone(),
         DiscordName::Artist => sample.artist.clone(),
+        // an album with no artist named falls back the way the status itself does
+        DiscordName::AlbumArtist => match sample.album_artist.trim().is_empty() {
+            true => t!("settings-discord-preview-music"),
+            false => sample.album_artist.clone(),
+        },
         DiscordName::ArtistTitle => format!("{} - {}", sample.artist, sample.title).into(),
     };
     let elapsed = state.since.get().elapsed();
@@ -248,11 +254,11 @@ pub(in crate::screens::settings) fn preview(
                         .justify_center()
                         .rounded(BUTTON_RADIUS)
                         .bg(rgb(BUTTON))
-                        .hover(|style| style.bg(rgb(BUTTON_HOVER)))
                         .text_size(BUTTON_SIZE)
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(rgb(BUTTON_TEXT))
                         .child(label)
+                        .glowed(rgb(BUTTON_HOVER).into())
                 }),
             ))
         });

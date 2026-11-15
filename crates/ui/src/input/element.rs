@@ -264,9 +264,10 @@ impl Element for Text {
 impl Render for Input {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
-        let height = match self.compact {
-            true => theme.metrics.control_small,
-            false => theme.metrics.field,
+        let height = match (self.bare, self.compact) {
+            (true, _) => theme.metrics.list_row,
+            (false, true) => theme.metrics.control_small,
+            (false, false) => theme.metrics.field,
         };
         let radius = match self.tucked {
             true => crate::tucked(theme.radius, window),
@@ -360,14 +361,17 @@ impl Render for Input {
             .rounded(radius)
             // a field tucked into a frosted menu takes the menu's own translucent row fill, since
             // a flat one would sit on the frost as a solid slab
-            .map(|this| match (self.blurred, self.tucked, blurring(cx)) {
-                (true, _, true) => glass(this, cx),
-                (false, true, true) => this.bg(theme.secondary_hover),
-                _ => this.bg(theme.secondary),
-            })
+            .map(
+                |this| match (self.bare, self.blurred, self.tucked, blurring(cx)) {
+                    (true, ..) => this,
+                    (false, true, _, true) => glass(this, cx),
+                    (false, false, true, true) => this.bg(theme.secondary_hover),
+                    _ => this.bg(theme.secondary),
+                },
+            )
             .when(self.blurred, |this| this.shadow_sm())
             .when_else(
-                self.tucked,
+                self.tucked || self.bare,
                 |this| this.w_full(),
                 |this| {
                     this.border_1().border_color(match self.invalid {
@@ -416,14 +420,15 @@ impl Render for Input {
                 this.child(
                     svg()
                         .path(icons::path(path))
-                        .size_4()
+                        .map(|icon| match self.bare {
+                            true => icon.size_5(),
+                            false => icon.size_4(),
+                        })
                         .flex_none()
                         .text_color(theme.muted_foreground),
                 )
             })
-            .child(Text {
-                input: cx.entity().clone(),
-            })
+            .child(Text { input: cx.entity() })
             .when_some(self.suffix.clone(), |this, key| {
                 this.child(
                     div()

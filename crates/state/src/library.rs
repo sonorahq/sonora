@@ -10,7 +10,7 @@ use music::{
     Album, Catalog, ImportedPlaylist, MediaKind, MusicApi, Page, Pages, Playlist, SavedArtist,
     Shape, Track,
 };
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, oneshot};
 
 use crate::snapshot::{Kind, Remembered, Snapshots};
 use crate::{
@@ -90,6 +90,11 @@ struct Held {
     /// provider. The part's real rows replace them once they have all arrived.
     stale: HashSet<LibraryPart>,
     starred: Starred,
+    /// The favorite changes to tracks made while a load could still replace the favorites,
+    /// by track id: the track for a favorite, nothing for one taken back. The load puts them
+    /// back over the rows it reads, since the provider may have read its list before the
+    /// change took effect.
+    edits: HashMap<String, Option<Track>>,
     tasks: Vec<Task<()>>,
 }
 
@@ -102,7 +107,29 @@ impl Held {
             expected: HashMap::new(),
             stale: HashSet::new(),
             starred: Starred::default(),
+            edits: HashMap::new(),
             tasks: Vec::new(),
+        }
+    }
+
+    /// Lays the recorded favorite changes over the favorite tracks that a load has just
+    /// replaced, then forgets them. The shelf shows the change the listener made rather than
+    /// the provider's list from before it. Nothing happens while the favorites are not there
+    /// to amend, and the changes are dropped all the same, since a load that failed leaves
+    /// the cache as the optimistic change already left it.
+    fn reapply_edits(&mut self) {
+        let edits = std::mem::take(&mut self.edits);
+        let Some(favorites) = self.favorites_mut() else {
+            return;
+        };
+        for (id, edit) in edits {
+            let tracks = &mut *favorites.tracks;
+            let held = |track: &Track| track.id.as_deref() == Some(id.as_str());
+            match edit {
+                Some(track) if !tracks.iter().any(held) => tracks.push(track),
+                Some(_) => {}
+                None => tracks.retain(|track| !held(track)),
+            }
         }
     }
 
@@ -596,18 +623,34 @@ fn holds_pin(items: &[music::PinTarget], uri: &str) -> bool {
     items.iter().any(|item| item.uri == uri && item.pinned)
 }
 
+/// Reports whether a provider accepted a favorite update when a caller is waiting for it.
+fn finish_save(completion: Option<oneshot::Sender<bool>>, succeeded: bool) {
+    if let Some(completion) = completion {
+        completion.send(succeeded).ok();
+    }
+}
+
 impl Library {
     /// Favorites `item` or takes it out of the favorites, whichever it is not now. With
     /// `announce`, a removal is reported in a toast with an Undo once the provider agrees,
     /// which a deliberate removal wants and a heart that can simply be clicked again does not.
-    fn toggle_saved<S: Savable>(&mut self, mut item: S, announce: bool, cx: &mut Context<Self>) {
+    fn toggle_saved<S: Savable>(
+        &mut self,
+        mut item: S,
+        announce: bool,
+        completion: Option<oneshot::Sender<bool>>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(id) = item.id().map(str::to_owned) else {
+            finish_save(completion, false);
             return;
         };
         if S::requests(self).contains_key(&id) {
+            finish_save(completion, false);
             return;
         }
         let Some(client) = self.session.read(cx).client_of(Shelf::of(&id)) else {
+            finish_save(completion, false);
             return;
         };
 
@@ -626,6 +669,7 @@ impl Library {
         let task = cx.spawn(async move |this, cx| {
             let result = join(io.spawn(S::ask(client, asked, saved))).await;
             this.update(cx, |this, cx| {
+                let succeeded = result.is_ok();
                 S::requests(this).remove(&answered);
                 let gone = match result {
                     Ok(()) if saved => {
@@ -654,6 +698,7 @@ impl Library {
                 if let Some(sweep) = sweep {
                     this.answer(sweep, gone, cx);
                 }
+                finish_save(completion, succeeded);
                 cx.notify();
             })
             .ok();
@@ -671,7 +716,7 @@ impl Library {
         if S::saved_now(self, id).is_some() || S::requests(self).contains_key(id) {
             return;
         }
-        self.toggle_saved(item, false, cx);
+        self.toggle_saved(item, false, None, cx);
     }
 
     /// The sweep that removals of `family` started during this turn join, opened by the first
@@ -1666,7 +1711,31 @@ impl Library {
 
     /// Flips the heart on a track. Nothing is announced, since the heart is the way back.
     pub fn toggle(&mut self, track: Track, cx: &mut Context<Self>) {
-        self.toggle_saved(track, false, cx);
+        self.toggle_saved(track, false, None, cx);
+    }
+
+    /// Sets one track's favorite state and reports whether the provider accepted the change.
+    pub fn save_track(
+        &mut self,
+        track: Track,
+        saved: bool,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<bool> {
+        let (completion, result) = oneshot::channel();
+        let Some(id) = track.id.as_deref() else {
+            finish_save(Some(completion), false);
+            return result;
+        };
+        if self.pending(id) {
+            finish_save(Some(completion), false);
+            return result;
+        }
+        if self.saved(id) == saved {
+            finish_save(Some(completion), true);
+            return result;
+        }
+        self.toggle_saved(track, false, Some(completion), cx);
+        result
     }
 
     /// Favorites every track not yet a favorite, or takes every favorite out. Taking them out
@@ -1679,7 +1748,7 @@ impl Library {
             if self.saved(id) == saved || self.pending(id) {
                 continue;
             }
-            self.toggle_saved(track, !saved, cx);
+            self.toggle_saved(track, !saved, None, cx);
         }
     }
 
@@ -1817,12 +1886,12 @@ impl Library {
     /// Favorites an album or takes it out of the favorites. A removal is reported with an Undo,
     /// and removals in the same turn share one toast.
     pub fn toggle_album(&mut self, album: Album, cx: &mut Context<Self>) {
-        self.toggle_saved(album, true, cx);
+        self.toggle_saved(album, true, None, cx);
     }
 
     /// Flips the heart on an album. Nothing is announced, since the heart is the way back.
     pub fn heart_album(&mut self, album: Album, cx: &mut Context<Self>) {
-        self.toggle_saved(album, false, cx);
+        self.toggle_saved(album, false, None, cx);
     }
 
     fn set_album_saved(&mut self, album: Album, saved: bool) {
@@ -1863,12 +1932,12 @@ impl Library {
     /// Follows an artist or unfollows them. An unfollow is reported with an Undo, and
     /// unfollows in the same turn share one toast.
     pub fn toggle_artist(&mut self, artist: SavedArtist, cx: &mut Context<Self>) {
-        self.toggle_saved(artist, true, cx);
+        self.toggle_saved(artist, true, None, cx);
     }
 
     /// Flips the heart on an artist. Nothing is announced, since the heart is the way back.
     pub fn heart_artist(&mut self, artist: SavedArtist, cx: &mut Context<Self>) {
-        self.toggle_saved(artist, false, cx);
+        self.toggle_saved(artist, false, None, cx);
     }
 
     fn set_artist_saved(&mut self, artist: SavedArtist, saved: bool) {
@@ -3011,7 +3080,9 @@ impl Library {
         let Some(id) = track.id.clone() else {
             return;
         };
-        let Some(favorites) = self.held_mut(Shelf::of(&id)).favorites_mut() else {
+        let held = self.held_mut(Shelf::of(&id));
+        held.edits.insert(id.clone(), saved.then(|| track.clone()));
+        let Some(favorites) = held.favorites_mut() else {
             return;
         };
         let tracks = favorites.tracks;
@@ -3132,8 +3203,12 @@ impl Library {
         };
         let shape = session.shape_of(shelf);
 
+        // a change whose request is still out may be missed by the read about to start; one
+        // the provider has answered is in what it reads
+        let asked: HashSet<String> = self.pending.keys().cloned().collect();
         let held = self.held_mut(shelf);
         held.shape = shape;
+        held.edits.retain(|id, _| asked.contains(id));
         held.awaited = LibraryPart::ALL.to_vec();
         match held.stale.is_empty() {
             true => {
@@ -3283,6 +3358,9 @@ impl Library {
                 held.expected.remove(&part);
                 shed(&mut held.state, &mut held.stale, part);
                 extend(&mut held.state, wrap(Ok(held_back)));
+                if part == LibraryPart::Tracks && held.shape == Shape::Saved {
+                    held.reapply_edits();
+                }
                 settle(&mut held.state, &mut held.awaited, part, shelf.fatal());
                 this.keep(shelf, Kind::Listed, part, cx);
                 cx.notify();
@@ -3315,6 +3393,9 @@ impl Library {
             shed(&mut held.state, &mut held.stale, part);
         }
         place(&mut held.state, &mut held.awaited, landed, shelf.fatal());
+        if part == LibraryPart::Tracks && held.shape == Shape::Saved {
+            held.reapply_edits();
+        }
         if arrived {
             self.keep(shelf, Kind::Listed, part, cx);
         }
@@ -3338,7 +3419,11 @@ impl Library {
 
     fn land_starred(&mut self, shelf: Shelf, landed: Landed, cx: &mut Context<Self>) {
         let part = landed.part();
-        if star(self.held_mut(shelf), landed) {
+        let held = self.held_mut(shelf);
+        if star(held, landed) {
+            if part == LibraryPart::Tracks && held.shape.is_catalog() {
+                held.reapply_edits();
+            }
             self.keep(shelf, Kind::Starred, part, cx);
         }
         cx.notify();

@@ -1,14 +1,17 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use futures::{StreamExt as _, stream};
 use opensubsonic::api::lists::AlbumListType;
 use opensubsonic::data::{AlbumId3, AlbumWithSongsId3, Child, Genre as SourceGenre};
-use opensubsonic::{Auth, Client};
-use tokio::sync::OnceCell;
+use opensubsonic::{
+    AlbumListOptions, Auth, Client, RandomSongsOptions, Search3Options, StreamOptions,
+    UpdatePlaylistOptions,
+};
+use tokio::sync::{Mutex, OnceCell};
 use tokio::task::JoinSet;
 
 use crate::cover::{self, CoverLimits};
@@ -17,9 +20,10 @@ use crate::escape;
 use crate::subsonic::auth::{Library, Signature};
 use crate::subsonic::wire;
 use crate::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, Codec, Genre, GenreDetail,
-    GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail, Report,
-    SUGGESTIONS, SavedArtist, Track, Transcode, UserProfile, distinct_covers, iso_8601_to_epoch,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, Codec, CoverSize, Genre,
+    GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail,
+    Report, SUGGESTIONS, SavedArtist, Track, Transcode, UserProfile, distinct_covers,
+    iso_8601_to_epoch,
 };
 
 const PORTRAIT_LIMIT: usize = 24;
@@ -33,6 +37,13 @@ const HOME_ALBUMS: i32 = 12;
 /// How many albums playing an artist reads at once.
 const ALBUM_READS: usize = 4;
 const LIBRARY_PAGE: i32 = 500;
+/// One page of the library membership walk.
+const SCOPE_PAGE: i32 = 500;
+/// The most pages the walk reads before it calls the library too large to verify.
+const SCOPE_PAGES: i32 = 100;
+/// How long a read of the library's album ids stands before the next scoped artist call reads
+/// it again, so albums added on the server show up without a restart.
+const SCOPE_TTL: Duration = Duration::from_secs(10 * 60);
 const API_VERSION: &str = "1.16.1";
 const CLIENT_NAME: &str = "sonora";
 /// The first Navidrome that takes a playlist picture through its own API.
@@ -51,6 +62,9 @@ const COVER: i32 = 300;
 /// would send whole multi-megabyte scans to every album card.
 const COVER_LARGE: i32 = 1200;
 
+/// The album ids of the chosen library and when they were read.
+type Membership = (Instant, Arc<HashSet<String>>);
+
 #[derive(Clone)]
 pub struct SubsonicClient {
     client: Client,
@@ -61,7 +75,7 @@ pub struct SubsonicClient {
     signed: String,
     /// The server address with no trailing slash.
     server: String,
-    http: reqwest::Client,
+    pub(super) http: reqwest::Client,
     /// The cover art endpoint with the fixed signature already on it. The library client signs
     /// every url afresh, which would give one cover a new url on every conversion and defeat
     /// every image cache between here and the screen.
@@ -69,66 +83,49 @@ pub struct SubsonicClient {
     /// Whether the server takes `reportPlayback`, asked the first time a report goes out.
     playback_report: Arc<OnceCell<bool>>,
     /// The library every scoped request is limited to, chosen in settings. `None` reads the
-    /// whole server, as every account did before libraries could be chosen. It is fixed for
-    /// the client's life: a change rebuilds the session rather than mutating requests in
-    /// flight.
+    /// whole server. It is fixed for the client's life, because a change rebuilds the session.
     library: Option<i64>,
+    /// The chosen library's album ids and when they were read, shared by every clone so one
+    /// walk serves every artist page until `SCOPE_TTL` runs out.
+    scope: Arc<Mutex<Option<Membership>>>,
+}
+
+/// The request options that take a `musicFolderId`, so `SubsonicClient::scoped` can limit any
+/// of them to the chosen library.
+trait InFolder {
+    fn in_folder(self, folder: String) -> Self;
+}
+
+impl InFolder for Search3Options {
+    fn in_folder(self, folder: String) -> Self {
+        self.music_folder_id(folder)
+    }
+}
+
+impl InFolder for AlbumListOptions {
+    fn in_folder(self, folder: String) -> Self {
+        self.music_folder_id(folder)
+    }
+}
+
+impl InFolder for RandomSongsOptions {
+    fn in_folder(self, folder: String) -> Self {
+        self.music_folder_id(folder)
+    }
 }
 
 /// What the server records about a track that playback wants before the decoder can tell.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Details {
     pub duration: Option<Duration>,
     /// The track's ReplayGain, which OpenSubsonic servers such as Navidrome report and plain
     /// Subsonic servers do not.
     pub loudness: Option<Loudness>,
+    /// The artist and title, which a plain download's file is named after.
+    pub label: Option<String>,
 }
 
-/// One page of the library-membership walk.
-const SCOPE_PAGE: i32 = 500;
-/// The most pages the walk reads before calling the library unverifiably large.
-const SCOPE_PAGES: i32 = 100;
-
 impl SubsonicClient {
-    /// Every album ID in the chosen library, paged through the empty-query search the
-    /// OpenSubsonic spec guarantees ("servers must support an empty query and return all the
-    /// data"). This is the membership oracle for scoping what the API cannot scope itself:
-    /// complete, exact IDs, no name matching. Only an empty page ends the walk: a short page
-    /// can be a server cap rather than the end, and stopping there would truncate membership.
-    /// A page that adds nothing means the server ignores offsets, and more than `SCOPE_PAGES`
-    /// pages means the library is too large to verify - both error, because partial
-    /// membership silently drops valid albums, the same failure as widening the scope.
-    async fn scoped_album_ids(&self, folder: &str) -> Result<std::collections::HashSet<String>> {
-        let mut ids = std::collections::HashSet::new();
-        let mut offset = 0;
-        for _ in 0..SCOPE_PAGES {
-            let found = self
-                .client
-                .search3(
-                    "",
-                    Some(0),
-                    None,
-                    Some(SCOPE_PAGE),
-                    Some(offset),
-                    Some(0),
-                    None,
-                    Some(folder),
-                )
-                .await
-                .context("cannot read the chosen library's contents")?;
-            if found.album.is_empty() {
-                return Ok(ids);
-            }
-            offset += found.album.len() as i32;
-            let before = ids.len();
-            ids.extend(found.album.into_iter().map(|album| album.id));
-            if ids.len() == before {
-                anyhow::bail!("the server repeats one page of the library's contents");
-            }
-        }
-        anyhow::bail!("the chosen library is too large to verify")
-    }
-
     pub fn new(
         server: String,
         username: String,
@@ -157,7 +154,97 @@ impl SubsonicClient {
             covers,
             playback_report: Arc::default(),
             library,
+            scope: Arc::default(),
         })
+    }
+
+    /// The library scope as the query value the API takes, for the calls that take it.
+    fn folder(&self) -> Option<String> {
+        self.library.map(|id| id.to_string())
+    }
+
+    /// Limits a request's options to the chosen library, or leaves them alone when the account
+    /// reads the whole server.
+    fn scoped<O: InFolder>(&self, options: O) -> O {
+        match self.folder() {
+            Some(folder) => options.in_folder(folder),
+            None => options,
+        }
+    }
+
+    /// The album ids of the chosen library, or `None` for an account that reads the whole
+    /// server. `getArtist` and `getTopSongs` take no library, so their answers are filtered
+    /// against this set. The read is cached for `SCOPE_TTL`, and concurrent callers wait for the
+    /// one walk in flight. A failed read is not cached.
+    async fn library_albums(&self) -> Result<Option<Arc<HashSet<String>>>> {
+        let Some(folder) = self.folder() else {
+            return Ok(None);
+        };
+        let mut scope = self.scope.lock().await;
+        if let Some((read, albums)) = scope.as_ref()
+            && read.elapsed() < SCOPE_TTL
+        {
+            return Ok(Some(albums.clone()));
+        }
+        let albums = Arc::new(self.scoped_album_ids(&folder).await?);
+        *scope = Some((Instant::now(), albums.clone()));
+        Ok(Some(albums))
+    }
+
+    /// Every album id in the given library, paged through the empty-query search that every
+    /// OpenSubsonic server must answer with all of its data. Only an empty page ends the walk,
+    /// since a short page can be a server cap rather than the end. A page that adds nothing
+    /// means the server ignores offsets, and more than `SCOPE_PAGES` pages means the library is
+    /// too large to verify. Both fail, because partial membership would hide albums the library
+    /// holds.
+    async fn scoped_album_ids(&self, folder: &str) -> Result<HashSet<String>> {
+        let mut ids = HashSet::new();
+        let mut offset = 0;
+        for _ in 0..SCOPE_PAGES {
+            let found = self
+                .client
+                .search3(
+                    "",
+                    &Search3Options::new()
+                        .artist_count(0)
+                        .album_count(SCOPE_PAGE)
+                        .album_offset(offset)
+                        .song_count(0)
+                        .music_folder_id(folder),
+                )
+                .await
+                .map_err(bare)
+                .context("cannot read the chosen library's contents")?;
+            if found.album.is_empty() {
+                return Ok(ids);
+            }
+            offset += found.album.len() as i32;
+            let before = ids.len();
+            ids.extend(found.album.into_iter().map(|album| album.id));
+            if ids.len() == before {
+                anyhow::bail!("the server repeats one page of the library's contents");
+            }
+        }
+        anyhow::bail!("the chosen library is too large to verify")
+    }
+
+    /// The libraries the server lists for this account, sorted by name. Anything the account
+    /// cannot read is the server's to leave out.
+    pub async fn music_folders(&self) -> Result<Vec<Library>> {
+        let mut folders = self
+            .client
+            .get_music_folders()
+            .await
+            .map_err(bare)
+            .context("cannot load the libraries")?
+            .into_iter()
+            .map(|folder| Library {
+                id: folder.id,
+                name: folder.name,
+            })
+            .collect::<Vec<_>>();
+        folders.sort_by_key(|folder| folder.name.clone().unwrap_or_default().to_lowercase());
+        Ok(folders)
     }
 
     /// Whether the server is a Navidrome that takes playlist pictures. Only its own API does,
@@ -245,29 +332,6 @@ impl SubsonicClient {
         )
     }
 
-    /// The library scope as the query value the API takes, for the calls that take it.
-    fn folder(&self) -> Option<String> {
-        self.library.map(|id| id.to_string())
-    }
-
-    /// The libraries the server lists for this account, named where they have names. Anything
-    /// the account cannot read is the server's to leave out.
-    pub async fn music_folders(&self) -> Result<Vec<Library>> {
-        let mut folders = self
-            .client
-            .get_music_folders()
-            .await
-            .context("cannot load the libraries")?
-            .into_iter()
-            .map(|folder| Library {
-                id: folder.id,
-                name: folder.name,
-            })
-            .collect::<Vec<_>>();
-        folders.sort_by_key(|folder| folder.name.clone().unwrap_or_default().to_lowercase());
-        Ok(folders)
-    }
-
     fn song(&self, song: Child) -> Track {
         let cover = self.cover(song.cover_art.as_deref(), &song.id);
         wire::track(song, cover)
@@ -344,9 +408,10 @@ impl SubsonicClient {
         self.cover_large(art, fallback)
     }
 
-    /// Up to `SUGGESTIONS` of the artist's own albums without the album the page is already
-    /// showing.
+    /// Up to `SUGGESTIONS` of the artist's own albums in the chosen library, without the album
+    /// the page is already showing.
     async fn more_from_artist(&self, album_id: &str, artist_id: &str) -> Result<Vec<Album>> {
+        let held = self.library_albums().await?;
         let detail = self
             .client
             .get_artist(artist_id)
@@ -356,6 +421,7 @@ impl SubsonicClient {
         Ok(detail
             .album
             .into_iter()
+            .filter(|album| held.as_ref().is_none_or(|held| held.contains(&album.id)))
             .map(|album| self.convert_album(album))
             .filter(|album| album.id != album_id)
             .take(SUGGESTIONS)
@@ -388,14 +454,23 @@ impl SubsonicClient {
             .collect())
     }
 
-    /// A few albums each from the first similar artists, skipping the page's own album:
-    /// the cross-artist half of the rail. One artist failing only shortens the rail.
+    /// A few albums each from the first similar artists, skipping the page's own album and
+    /// anything outside the chosen library. This is the cross-artist half of the rail. One
+    /// artist failing only shortens the rail, and an unreadable library leaves it empty.
     async fn similar_releases(&self, album_id: &str, similar: &[SavedArtist]) -> Vec<Album> {
+        let held = match self.library_albums().await {
+            Ok(held) => held,
+            Err(error) => {
+                log::warn!("subsonic: cannot scope similar releases: {error:#}");
+                return Vec::new();
+            }
+        };
         let mut tasks = JoinSet::new();
         for artist in similar.iter().take(SIMILAR_ARTISTS) {
             let client = self.clone();
             let album_id = album_id.to_owned();
             let artist_id = artist.id.clone();
+            let held = held.clone();
             tasks.spawn(async move {
                 let detail = match client.client.get_artist(&artist_id).await.map_err(bare) {
                     Ok(detail) => detail,
@@ -408,6 +483,7 @@ impl SubsonicClient {
                     detail
                         .album
                         .into_iter()
+                        .filter(|album| held.as_ref().is_none_or(|held| held.contains(&album.id)))
                         .map(|album| client.convert_album(album))
                         .filter(|album| album.id != album_id)
                         .take(SIMILAR_RELEASES)
@@ -427,6 +503,10 @@ impl SubsonicClient {
 
 #[async_trait]
 impl MusicApi for SubsonicClient {
+    fn cover_original(&self, cover: &str) -> Option<String> {
+        cover_url_at(&self.covers, cover, CoverSize::Full)
+    }
+
     fn share_url(&self, _kind: MediaKind, _id: &str) -> Option<String> {
         None
     }
@@ -463,26 +543,13 @@ impl MusicApi for SubsonicClient {
             .and_then(|info| info.biography)
             .filter(|bio| !bio.trim().is_empty());
 
-        // getTopSongs and the by-id getArtist take no musicFolderId (the API has none; on
-        // Navidrome top songs come from Last.fm), so under a chosen library both are
-        // intersected with the library's complete album set, paged through the empty-query
-        // search every OpenSubsonic server must answer. Top tracks keep only songs on albums
-        // the library holds, and the album list keeps only the library's own copies, which
-        // collapses the "same album from two libraries" duplicates the issue reports. A name
-        // search is deliberately not used: it can miss miscredited albums and fabricate an
-        // empty membership. If the library's contents cannot be read the page fails visibly
-        // rather than quietly showing server-wide data. Unscoped accounts are untouched.
-        let scoped = match self.folder() {
-            Some(folder) => Some(self.scoped_album_ids(&folder).await?),
-            None => None,
-        };
-
-        let mut top_tracks: Vec<Track> = match self.client.get_top_songs(&name, Some(20)).await {
-            Ok(songs) => songs.into_iter().map(|song| self.song(song)).collect(),
-            Err(_) => Vec::new(),
-        };
+        // Under a chosen library, the top songs and the artist's albums keep only what sits on
+        // the library's own albums. This also drops the copy of an album that another library
+        // holds too. If the library cannot be read the page fails rather than showing the whole
+        // server.
+        let held = self.library_albums().await?;
         let keep_held = |tracks: &mut Vec<Track>| {
-            if let Some(held) = &scoped {
+            if let Some(held) = &held {
                 tracks.retain(|track| {
                     track
                         .album_id
@@ -491,21 +558,16 @@ impl MusicApi for SubsonicClient {
                 });
             }
         };
-        keep_held(&mut top_tracks);
 
+        let mut top_tracks: Vec<Track> = match self.client.get_top_songs(&name, Some(20)).await {
+            Ok(songs) => songs.into_iter().map(|song| self.song(song)).collect(),
+            Err(_) => Vec::new(),
+        };
+        keep_held(&mut top_tracks);
         if top_tracks.is_empty()
             && let Ok(similar) = self
                 .client
-                .search3(
-                    &name,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(10),
-                    None,
-                    self.folder().as_deref(),
-                )
+                .search3(&name, &self.scoped(Search3Options::new().song_count(10)))
                 .await
                 .map_err(bare)
         {
@@ -520,7 +582,7 @@ impl MusicApi for SubsonicClient {
         let albums = detail
             .album
             .into_iter()
-            .filter(|album| scoped.as_ref().is_none_or(|held| held.contains(&album.id)))
+            .filter(|album| held.as_ref().is_none_or(|held| held.contains(&album.id)))
             .map(|album| self.convert_album(album))
             .collect();
 
@@ -530,6 +592,7 @@ impl MusicApi for SubsonicClient {
             banner: None,
             biography,
             monthly_listeners: None,
+            followers: None,
             top_tracks,
             albums,
         })
@@ -612,13 +675,13 @@ impl MusicApi for SubsonicClient {
                 .client
                 .search3(
                     "",
-                    Some(0),
-                    None,
-                    Some(0),
-                    None,
-                    Some(LIBRARY_PAGE),
-                    Some(offset),
-                    self.folder().as_deref(),
+                    &self.scoped(
+                        Search3Options::new()
+                            .artist_count(0)
+                            .album_count(0)
+                            .song_count(LIBRARY_PAGE)
+                            .song_offset(offset),
+                    ),
                 )
                 .await
                 .map_err(bare)
@@ -725,7 +788,7 @@ impl MusicApi for SubsonicClient {
 
     async fn rename_playlist(&self, playlist_id: &str, name: &str) -> Result<()> {
         self.client
-            .update_playlist(playlist_id, Some(name), None, None, &[], &[])
+            .update_playlist(playlist_id, &UpdatePlaylistOptions::new().name(name))
             .await
             .map_err(bare)
             .context("cannot rename the playlist")
@@ -749,7 +812,7 @@ impl MusicApi for SubsonicClient {
 
     async fn set_playlist_public(&self, playlist_id: &str, public: bool) -> Result<()> {
         self.client
-            .update_playlist(playlist_id, None, None, Some(public), &[], &[])
+            .update_playlist(playlist_id, &UpdatePlaylistOptions::new().public(public))
             .await
             .map_err(bare)
             .context("cannot change the playlist visibility")
@@ -802,7 +865,10 @@ impl MusicApi for SubsonicClient {
 
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
         self.client
-            .update_playlist(playlist_id, None, None, None, &[track_id], &[])
+            .update_playlist(
+                playlist_id,
+                &UpdatePlaylistOptions::new().add_song(track_id),
+            )
             .await
             .map_err(bare)
             .context("cannot add the track to the playlist")
@@ -821,7 +887,10 @@ impl MusicApi for SubsonicClient {
             .position(|song| song.id == track_id)
             .context("track is not in the playlist")? as i32;
         self.client
-            .update_playlist(playlist_id, None, None, None, &[], &[index])
+            .update_playlist(
+                playlist_id,
+                &UpdatePlaylistOptions::new().remove_index(index),
+            )
             .await
             .map_err(bare)
             .context("cannot remove the track from the playlist")
@@ -849,12 +918,7 @@ impl MusicApi for SubsonicClient {
                 .client
                 .get_album_list2(
                     AlbumListType::AlphabeticalByName,
-                    Some(LIBRARY_PAGE),
-                    Some(offset),
-                    None,
-                    None,
-                    None,
-                    self.folder().as_deref(),
+                    &self.scoped(AlbumListOptions::new().size(LIBRARY_PAGE).offset(offset)),
                 )
                 .await
                 .map_err(bare)
@@ -1061,7 +1125,7 @@ impl MusicApi for SubsonicClient {
         }
         let random = self
             .client
-            .get_random_songs(Some(20), None, None, None, self.folder().as_deref())
+            .get_random_songs(&self.scoped(RandomSongsOptions::new().size(20)))
             .await
             .map_err(bare)
             .context("cannot load a radio fallback")?;
@@ -1078,16 +1142,7 @@ impl MusicApi for SubsonicClient {
     async fn search(&self, query: &str) -> Result<Vec<Track>> {
         let found = self
             .client
-            .search3(
-                query,
-                None,
-                None,
-                None,
-                None,
-                Some(50),
-                None,
-                self.folder().as_deref(),
-            )
+            .search3(query, &self.scoped(Search3Options::new().song_count(50)))
             .await
             .map_err(bare)
             .context("cannot search")?;
@@ -1097,16 +1152,7 @@ impl MusicApi for SubsonicClient {
     async fn search_albums(&self, query: &str) -> Result<Vec<Album>> {
         let found = self
             .client
-            .search3(
-                query,
-                None,
-                None,
-                Some(30),
-                None,
-                None,
-                None,
-                self.folder().as_deref(),
-            )
+            .search3(query, &self.scoped(Search3Options::new().album_count(30)))
             .await
             .map_err(bare)
             .context("cannot search albums")?;
@@ -1122,13 +1168,12 @@ impl MusicApi for SubsonicClient {
             .client
             .search3(
                 query,
-                Some(30),
-                None,
-                Some(0),
-                None,
-                Some(0),
-                None,
-                self.folder().as_deref(),
+                &self.scoped(
+                    Search3Options::new()
+                        .artist_count(30)
+                        .album_count(0)
+                        .song_count(0),
+                ),
             )
             .await
             .map_err(bare)
@@ -1160,7 +1205,7 @@ impl MusicApi for SubsonicClient {
     async fn home(&self) -> Result<HomeFeed> {
         let random = self
             .client
-            .get_random_songs(Some(HOME_SONGS), None, None, None, self.folder().as_deref())
+            .get_random_songs(&self.scoped(RandomSongsOptions::new().size(HOME_SONGS)))
             .await
             .map_err(bare)
             .map(|songs| {
@@ -1215,12 +1260,7 @@ impl MusicApi for SubsonicClient {
             .client
             .get_album_list2(
                 AlbumListType::ByGenre,
-                Some(50),
-                None,
-                None,
-                None,
-                Some(genre_id),
-                self.folder().as_deref(),
+                &self.scoped(AlbumListOptions::new().size(50).genre(genre_id)),
             )
             .await
             .map_err(bare)
@@ -1247,12 +1287,7 @@ impl MusicApi for SubsonicClient {
             .client
             .get_album_list2(
                 AlbumListType::ByGenre,
-                Some(1),
-                None,
-                None,
-                None,
-                Some(genre_id),
-                self.folder().as_deref(),
+                &self.scoped(AlbumListOptions::new().size(1).genre(genre_id)),
             )
             .await
             .map_err(bare)
@@ -1292,15 +1327,7 @@ impl SubsonicClient {
         size: i32,
     ) -> Vec<Album> {
         self.client
-            .get_album_list2(
-                kind,
-                Some(size),
-                None,
-                None,
-                None,
-                None,
-                self.folder().as_deref(),
-            )
+            .get_album_list2(kind, &self.scoped(AlbumListOptions::new().size(size)))
             .await
             .map_err(bare)
             .map(|albums| {
@@ -1327,9 +1354,16 @@ impl SubsonicClient {
     ) -> Result<reqwest::Response> {
         let bitrate = transcode.bitrate.and_then(|kbps| i32::try_from(kbps).ok());
         let format = transcode.codec.map(Codec::id);
+        let mut options = StreamOptions::new();
+        if let Some(bitrate) = bitrate {
+            options = options.max_bit_rate(bitrate);
+        }
+        if let Some(format) = format {
+            options = options.format(format);
+        }
         let url = self
             .client
-            .stream_url(track_id, bitrate, format)
+            .stream_url(track_id, &options)
             .context("cannot build the stream url")?;
         self.http
             .get(url)
@@ -1388,8 +1422,38 @@ impl SubsonicClient {
                 peak.map(|peak| peak as f32),
             ))
         });
-        Details { duration, loudness }
+        let label = match song.artist.as_deref().map(str::trim) {
+            Some(artist) if !artist.is_empty() => format!("{artist} - {}", song.title.trim()),
+            _ => song.title.trim().to_owned(),
+        };
+        Details {
+            duration,
+            loudness,
+            label: Some(label),
+        }
     }
+}
+
+/// A signed cover url at another size, worked out from the url alone. Only the exact url
+/// shape this client hands out is rewritten, since the prefix carries the server and the fixed
+/// signature: a foreign or reshaped url is refused rather than pointed at another server or
+/// cover. The original comes from asking `getCoverArt` without a size, so a whole
+/// multi-megabyte scan only ever downloads for a full-size view, never for a list or the
+/// player.
+fn cover_url_at(covers: &str, cover: &str, size: CoverSize) -> Option<String> {
+    let id = cover
+        .strip_prefix(covers)?
+        .strip_prefix("&id=")?
+        .split('&')
+        .next()?;
+    if id.is_empty() {
+        return None;
+    }
+    let sized = match size {
+        CoverSize::Large => format!("&size={COVER_LARGE}"),
+        CoverSize::Full => String::new(),
+    };
+    Some(format!("{covers}&id={id}{sized}"))
 }
 
 fn source_genre(source: SourceGenre) -> Genre {
@@ -1427,6 +1491,51 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
+
+    const COVERS: &str = "https://navidrome.example/rest/getCoverArt?u=de%40ep.me&t=token&s=salt&v=1.16.1&c=sonora&f=json";
+
+    #[test]
+    fn cover_at_drops_the_size_for_the_original() {
+        let large = format!("{COVERS}&id=al-1&size={COVER_LARGE}");
+        assert_eq!(
+            cover_url_at(COVERS, &large, CoverSize::Full).as_deref(),
+            Some(format!("{COVERS}&id=al-1").as_str())
+        );
+    }
+
+    #[test]
+    fn cover_at_sizes_a_list_cover_up() {
+        let small = format!("{COVERS}&id=al-1&size={COVER}");
+        assert_eq!(
+            cover_url_at(COVERS, &small, CoverSize::Large).as_deref(),
+            Some(format!("{COVERS}&id=al-1&size={COVER_LARGE}").as_str())
+        );
+    }
+
+    #[test]
+    fn cover_at_keeps_an_escaped_cover_id() {
+        let cover = format!("{COVERS}&id=al%2F1&size={COVER}");
+        assert_eq!(
+            cover_url_at(COVERS, &cover, CoverSize::Full).as_deref(),
+            Some(format!("{COVERS}&id=al%2F1").as_str())
+        );
+    }
+
+    #[test]
+    fn cover_at_refuses_a_foreign_url() {
+        let foreign = "https://other.example/rest/getCoverArt?u=de%40ep.me&t=token&s=salt&v=1.16.1&c=sonora&f=json&id=al-1&size=300";
+        assert_eq!(cover_url_at(COVERS, foreign, CoverSize::Full), None);
+    }
+
+    #[test]
+    fn cover_at_refuses_a_reshaped_url() {
+        let no_id = format!("{COVERS}&size={COVER}");
+        assert_eq!(cover_url_at(COVERS, &no_id, CoverSize::Full), None);
+        let reordered = format!("{COVERS}&size={COVER}&id=al-1");
+        assert_eq!(cover_url_at(COVERS, &reordered, CoverSize::Full), None);
+        let empty_id = format!("{COVERS}&id=");
+        assert_eq!(cover_url_at(COVERS, &empty_id, CoverSize::Full), None);
+    }
 
     /// A stand-in Subsonic server that records the path and query of every request and answers
     /// each listing endpoint with an empty page. It exists to prove which calls carry the
