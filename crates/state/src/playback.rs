@@ -3996,11 +3996,11 @@ mod tests {
     use std::collections::VecDeque;
     use std::time::{Duration, Instant};
 
-    use music::{Track, connect::QueuedTrack};
     use super::{
         DEFAULT_UNMUTE_VOLUME, LiveClock, MuteMemory, SoloistPublish, SoloistQueueRevision,
         VOLUME_STEP, gain, seek_target, split_soloist_window, volume_after,
     };
+    use music::{Track, connect::QueuedTrack};
 
     #[test]
     fn newest_soloist_queue_snapshot_wins() {
