@@ -45,6 +45,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Your accounts now open Settings, General, and the separate Providers tab is gone.
 - Ctrl+F (⌘F on macOS) now opens search and / filters the page you are on, and shortcuts list Ctrl before Shift.
 - Hovered rows share one fill in tables, cards and the sidebar, the softer one the sidebar used.
+- The track filter menu no longer offers "Playable only".
 - The song title and artist in the player bar sit closer together.
 - Section labels across the app, such as the settings group headings and Pinned in the sidebar, are no longer set in capitals.
 - Local files sit beside your streaming library in Songs, Albums, Artists and Playlists, and the separate Local Music section is gone. Filter a page to Local only or Streaming only.

@@ -268,7 +268,6 @@ filter-reset = 重置筛选
 filter-duration = 时长
 filter-year = 年份
 filter-hide-explicit = 隐藏露骨内容
-filter-playable = 仅播放
 filter-favorites = 仅收藏
 filter-downloaded = 已下载
 filter-owned = 由你拥有

@@ -284,7 +284,6 @@ filter-reset = Resetovat filtry
 filter-duration = Délka
 filter-year = Rok
 filter-hide-explicit = Skrýt explicitní
-filter-playable = Jen přehratelné
 filter-favorites = Jen oblíbené
 filter-downloaded = Stažené
 filter-owned = Vytvořené tebou
