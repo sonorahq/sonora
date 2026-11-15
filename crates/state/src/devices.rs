@@ -172,6 +172,11 @@ impl Devices {
         self.link.is_some() && self.shown
     }
 
+    /// Whether the device network has group sessions to start and join.
+    pub fn jams(&self) -> bool {
+        self.link.as_ref().is_some_and(|link| link.jams())
+    }
+
     /// Whether this app's playback is what the account's other devices are being told about.
     pub fn publishing(&self) -> bool {
         self.available() && self.sent.is_some()

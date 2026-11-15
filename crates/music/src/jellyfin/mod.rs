@@ -5,6 +5,7 @@ pub(crate) mod auth;
 mod client;
 mod lyrics;
 mod playback;
+mod remote;
 mod session;
 mod wire;
 
@@ -214,7 +215,10 @@ fn log_out(credentials: auth::Credentials) {
     }
 }
 
+/// A signed-in session. Its client carries the remote control, whose worker lives as long as the
+/// session's client does.
 fn session(client: JellyfinClient, profile: crate::UserProfile) -> ProviderSession {
+    let client = client.clone().with_remote(remote::start(client));
     ProviderSession {
         profile,
         api: Arc::new(client.clone()),

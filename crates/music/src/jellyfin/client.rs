@@ -10,6 +10,7 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 
+use crate::connect::Connect;
 use crate::cover::{self, CoverLimits};
 use crate::engine::Loudness;
 use crate::escape;
@@ -74,6 +75,10 @@ pub struct JellyfinClient {
     covers: Covers,
     /// What this device last told the server it plays, shared by every clone.
     session: Session,
+    /// The id this install signed in under, which names its session on the server.
+    device_id: String,
+    /// The remote control handle of a signed-in session, which the session's client hands out.
+    remote: Option<Arc<Connect>>,
 }
 
 /// What the server records about a track that playback wants before the decoder can tell.
@@ -161,7 +166,7 @@ pub async fn authenticate(
     let status = response.status();
     log::info!("jellyfin: the sign-in answered {status}");
     if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
-        anyhow::bail!("the jellyfin server did not accept that username and password");
+        return Err(SignInFailure(SignInProblem::Password).into());
     }
     if !status.is_success() {
         anyhow::bail!("the jellyfin server answered the sign-in with {status}");
@@ -204,6 +209,8 @@ impl JellyfinClient {
             http: reqwest::Client::new(),
             covers: Covers::new(&server),
             session: Session::default(),
+            device_id: credentials.device_id.clone(),
+            remote: None,
             server,
             user_id: credentials.user_id.clone(),
             username: credentials.username.clone(),
@@ -213,6 +220,88 @@ impl JellyfinClient {
                 Some(&credentials.token),
             ),
         }
+    }
+
+    /// Hands out `remote` as this client's remote control, for the client of a signed-in
+    /// session.
+    pub(crate) fn with_remote(mut self, remote: Arc<Connect>) -> Self {
+        self.remote = Some(remote);
+        self
+    }
+
+    pub(crate) fn device_id(&self) -> &str {
+        &self.device_id
+    }
+
+    pub(crate) fn server(&self) -> &str {
+        &self.server
+    }
+
+    pub(crate) fn user_id(&self) -> &str {
+        &self.user_id
+    }
+
+    /// Sends a request whose path already holds its query, and reads nothing back.
+    pub(crate) async fn request(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<serde_json::Value>,
+    ) -> Result<()> {
+        self.send(method, path, &Query::default(), body)
+            .await
+            .map(drop)
+    }
+
+    /// Reads the json at a path that already holds its query.
+    pub(crate) async fn read<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        self.get(path, &Query::default()).await
+    }
+
+    /// The songs that items stand for, in order: a song is itself, and an album, a playlist or
+    /// an artist is the songs in it. Items the server does not know are left out.
+    pub(crate) async fn songs_of(&self, ids: &[String]) -> Result<Vec<String>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let items = self.list(Query::ids(&ids.join(","))).await?;
+        let mut songs = Vec::new();
+        for id in ids {
+            let Some(item) = items.iter().find(|item| &item.id == id) else {
+                continue;
+            };
+            let tracks = match item.kind.as_deref() {
+                Some("Audio") => {
+                    songs.push(item.id.clone());
+                    continue;
+                }
+                Some("MusicAlbum") => self.album_songs(id).await?,
+                Some("Playlist") => self.playlist_tracks(id).await?,
+                Some("MusicArtist") => self.artist_tracks(id).await?,
+                _ => continue,
+            };
+            songs.extend(tracks.into_iter().filter_map(|track| track.id));
+        }
+        Ok(songs)
+    }
+
+    /// The instant mix of an item, as song ids with the seed first.
+    pub(crate) async fn instant_mix(&self, seed: &str) -> Result<Vec<String>> {
+        let (mix, _) = self.track_radio(seed, None).await?;
+        Ok(std::iter::once(seed.to_owned())
+            .chain(mix.into_iter().filter_map(|track| track.id))
+            .collect())
+    }
+
+    /// Which of these ids are songs.
+    pub(crate) async fn audio_ids(&self, ids: &[String]) -> Result<HashSet<String>> {
+        Ok(self
+            .list(Query::ids(&ids.join(",")))
+            .await?
+            .into_iter()
+            .filter(Item::is_audio)
+            .map(|item| item.id)
+            .collect())
     }
 
     /// The account and server this client plays from. A track id only means something on its
@@ -639,6 +728,10 @@ impl JellyfinClient {
 
 #[async_trait]
 impl MusicApi for JellyfinClient {
+    fn connect(&self) -> Option<Arc<Connect>> {
+        self.remote.clone()
+    }
+
     fn cover_at(&self, cover: &str, size: CoverSize) -> Option<String> {
         self.covers.resized(cover, size)
     }
@@ -1396,13 +1489,17 @@ impl MusicApi for JellyfinClient {
 
 /// Passes a successful response on and turns any other into an error. A 401 is the server
 /// refusing the token, which the session reads as a sign-in to do again. Only the status is
-/// logged, never the request's headers.
+/// logged, never the request's headers, and a 404 quietly, since asking after a playlist the
+/// account may not change answers one.
 fn checked(response: reqwest::Response, what: &str) -> Result<reqwest::Response> {
     let status = response.status();
     if status.is_success() {
         return Ok(response);
     }
-    log::warn!("jellyfin: {what} answered {status}");
+    match status {
+        StatusCode::NOT_FOUND => log::info!("jellyfin: {what} answered {status}"),
+        _ => log::warn!("jellyfin: {what} answered {status}"),
+    }
     match status {
         StatusCode::UNAUTHORIZED => Err(anyhow::Error::new(SignInFailure(
             SignInProblem::Credentials,
@@ -1604,12 +1701,11 @@ mod tests {
             .await
             .unwrap_err();
 
-        let reason = format!("{error:#}");
         assert_eq!(
-            reason,
-            "the jellyfin server did not accept that username and password"
+            error.downcast_ref::<SignInFailure>(),
+            Some(&SignInFailure(SignInProblem::Password))
         );
-        assert!(!crate::trouble::offline(&reason));
+        assert!(!crate::trouble::offline(&format!("{error:#}")));
     }
 
     #[tokio::test]

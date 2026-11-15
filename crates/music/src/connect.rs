@@ -284,6 +284,8 @@ pub enum Request {
 /// A provider-independent channel to the device worker. Dropping the last handle ends it.
 pub struct Connect {
     device: String,
+    /// Whether the network has group sessions to start and join.
+    jams: bool,
     requests: UnboundedSender<Request>,
     events: Mutex<Option<UnboundedReceiver<Event>>>,
 }
@@ -296,6 +298,7 @@ impl Connect {
         (
             Self {
                 device,
+                jams: true,
                 requests,
                 events: Mutex::new(Some(events)),
             },
@@ -315,5 +318,15 @@ impl Connect {
 
     pub fn device(&self) -> &str {
         &self.device
+    }
+
+    /// Marks a network that has no group sessions, so the app offers none.
+    pub fn without_jams(mut self) -> Self {
+        self.jams = false;
+        self
+    }
+
+    pub fn jams(&self) -> bool {
+        self.jams
     }
 }
