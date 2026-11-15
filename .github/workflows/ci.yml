@@ -1,9 +1,23 @@
 name: ci
 
+# A change that only touches prose, issue templates or bot configuration cannot change what
+# compiles, so it skips the run entirely.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - .github/ISSUE_TEMPLATE/**
+      - .github/triage/**
+      - .github/labeler.yml
+      - .coderabbit.yaml
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - .github/ISSUE_TEMPLATE/**
+      - .github/triage/**
+      - .github/labeler.yml
+      - .coderabbit.yaml
   workflow_dispatch:
 
 # A pull request event handled after the merge resolves github.ref to the base branch, so
@@ -43,15 +57,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Restores the packages' files instead of running apt, which spends most of its time
+      # refreshing the package index.
       - name: system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config cmake mold \
-            libasound2-dev libfontconfig1-dev libfreetype-dev libsqlite3-dev \
-            libx11-dev libxcb1-dev libxcursor-dev libxi-dev \
-            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: >-
+            build-essential pkg-config cmake mold
+            libasound2-dev libfontconfig1-dev libfreetype-dev libsqlite3-dev
+            libx11-dev libxcb1-dev libxcursor-dev libxi-dev
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev
             libvulkan-dev libdbus-1-dev
+          version: 1
 
       # rust-toolchain.toml pins the toolchain cargo runs, along with its components.
       - name: rust toolchain
@@ -106,16 +123,27 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Cargo on the runner's NTFS drive spends much of its time in the filesystem and Defender,
+      # so Windows lints a copy of the checkout on a ReFS Dev Drive. The cache follows it there.
+      - uses: samypr100/setup-dev-drive@562171fe8df7401fdf582d766cd3b6ab80d5b1a0 # v4.1.0
+        if: runner.os == 'Windows'
+        with:
+          drive-size: 20GB
+          workspace-copy: true
+
       - name: rust toolchain
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: lint-${{ matrix.target }}
+          workspaces: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: clippy
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         run: cargo clippy --workspace --all-targets --locked --target ${{ matrix.target }} -- -D warnings
 
   build:
