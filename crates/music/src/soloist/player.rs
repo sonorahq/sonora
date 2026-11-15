@@ -705,7 +705,12 @@ impl Brain {
                 }
                 false => self.taken(),
             },
-            Event::CommandResult { command } => self.acknowledged(&command),
+            Event::CommandResult { command } => {
+                self.acknowledged(&command);
+                if command == "add_to_queue" {
+                    self.report(PlaybackEvent::QueueAppended);
+                }
+            }
             Event::Error { message } => {
                 // a seek is turned down while the track loads, and is simply sent again
                 let seeking = self
@@ -714,7 +719,10 @@ impl Brain {
                     .is_some_and(|track| track.seek.is_some());
                 match seeking && message.starts_with("seek failed") {
                     true => log::debug!("soloist: the daemon is not ready to seek: {message}"),
-                    false => log::warn!("soloist: the daemon turned a command down: {message}"),
+                    false => {
+                        log::warn!("soloist: the daemon turned a command down: {message}");
+                        self.report(PlaybackEvent::QueueRejected);
+                    }
                 }
             }
             Event::Other => {}

@@ -693,6 +693,8 @@ pub enum PlaybackEvent {
     },
     /// Soloist could not add a track to its shared queue.
     QueueRejected,
+    /// Soloist confirmed a track was added to its shared queue.
+    QueueAppended,
 }
 
 impl PlaybackEvent {

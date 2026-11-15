@@ -523,7 +523,7 @@ pub struct Playback {
     /// Reads a queued track Soloist moved to before Sonora knew its metadata.
     soloist_track: Option<Task<()>>,
     /// The collection tail to append once Soloist confirms its first track is playing.
-    soloist_publish: Option<Vec<String>>,
+    soloist_publish: Option<VecDeque<String>>,
     suggest: Option<Task<()>>,
     /// The track the engine was asked to fetch ahead, so it is asked once.
     preloaded: Option<Preloaded>,
@@ -1290,20 +1290,20 @@ impl Playback {
 
     /// Appends the pending collection tail after Soloist accepted its first track.
     fn publish_soloist_collection(&mut self, cx: &mut Context<Self>) {
-        let Some(ids) = self.soloist_publish.take() else {
+        let Some(id) = self.soloist_publish.as_mut().and_then(VecDeque::pop_front) else {
+            self.soloist_publish = None;
             return;
         };
         let Some(engine) = self.engine.as_deref() else {
+            self.soloist_publish = None;
             return;
         };
-        for id in ids {
-            match engine.append_to_queue(&id) {
-                Ok(true) => {}
-                Ok(false) | Err(_) => {
-                    log::warn!("playback: cannot publish the collection tail to Soloist");
-                    Toasts::show(Outcome::Failed, "toast-queue-failed", cx);
-                    return;
-                }
+        match engine.append_to_queue(&id) {
+            Ok(true) => {}
+            Ok(false) | Err(_) => {
+                self.soloist_publish = None;
+                log::warn!("playback: cannot publish the collection tail to Soloist");
+                Toasts::show(Outcome::Failed, "toast-queue-failed", cx);
             }
         }
     }
@@ -1804,15 +1804,15 @@ impl Playback {
         self.leave_station();
         self.play(&track, cx);
         if self.soloist_owns_playback() {
-            self.soloist_publish = Some(
-                self.queue
-                    .read(cx)
-                    .upcoming()
-                    .filter_map(|track| track.id.as_deref())
-                    .filter(|id| !music::is_local_id(id))
-                    .map(str::to_owned)
-                    .collect(),
-            );
+            let ids: Vec<_> = self
+                .queue
+                .read(cx)
+                .upcoming()
+                .filter_map(|track| track.id.as_deref())
+                .filter(|id| !music::is_local_id(id))
+                .map(str::to_owned)
+                .collect();
+            self.soloist_publish = (!ids.is_empty()).then_some(ids.into());
         }
         true
     }
@@ -3159,8 +3159,13 @@ impl Playback {
             return;
         }
         if let BackendEvent::QueueRejected = event {
+            self.soloist_publish = None;
             log::warn!("playback: Soloist rejected a shared queue addition");
             Toasts::show(Outcome::Failed, "toast-queue-failed", cx);
+            return;
+        }
+        if let BackendEvent::QueueAppended = event {
+            self.publish_soloist_collection(cx);
             return;
         }
         if let BackendEvent::QueueChanged {
@@ -3212,7 +3217,8 @@ impl Playback {
             | BackendEvent::Signal { .. }
             | BackendEvent::QueueChanged { .. }
             | BackendEvent::QueuedTrack { .. }
-            | BackendEvent::QueueRejected => {}
+            | BackendEvent::QueueRejected
+            | BackendEvent::QueueAppended => {}
             BackendEvent::Unavailable { .. }
             | BackendEvent::Throttled { .. }
             | BackendEvent::Refused

@@ -1000,6 +1000,12 @@ impl Queue {
         upcoming: Vec<(Track, QueuedTrack)>,
         cx: &mut Context<Self>,
     ) {
+        let local_upcoming: Vec<_> = self
+            .upcoming
+            .iter()
+            .filter(|entry| entry.id().is_some_and(music::is_local_id))
+            .cloned()
+            .collect();
         let mut known: Vec<_> = self
             .past
             .iter()
@@ -1017,7 +1023,11 @@ impl Queue {
         };
         self.past = previous.into_iter().map(&mut entry).collect();
         self.current = current.map(&mut entry);
-        self.upcoming = upcoming.into_iter().map(&mut entry).collect();
+        self.upcoming = upcoming
+            .into_iter()
+            .map(&mut entry)
+            .chain(local_upcoming)
+            .collect();
         self.source.clear();
         self.suggested += 1;
         self.changed(cx);
@@ -1392,9 +1402,11 @@ fn soloist_uid(known: &mut Vec<Entry>, id: Option<&str>, uid: String) -> String 
         true => id.and_then(|id| known.iter().position(|entry| entry.id() == Some(id))),
         false => known.iter().position(|entry| entry.uid == uid),
     };
-    index
-        .map(|index| known.remove(index).uid)
-        .unwrap_or_else(|| (!uid.is_empty()).then_some(uid).unwrap_or_else(queue_uid))
+    match index {
+        Some(index) => known.remove(index).uid,
+        None if !uid.is_empty() => uid,
+        None => queue_uid(),
+    }
 }
 
 /// Excludes local files from the provider's queue report while retaining occurrence identities.
