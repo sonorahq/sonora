@@ -3997,11 +3997,10 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use music::{Track, connect::QueuedTrack};
-
     use super::{
-        DEFAULT_UNMUTE_VOLUME, LiveClock, MuteMemory, SoloistPublish, SoloistQueueRevision, VOLUME_STEP,
         DEFAULT_UNMUTE_VOLUME, LiveClock, MuteMemory, SoloistPublish, SoloistQueueRevision,
         VOLUME_STEP, gain, seek_target, split_soloist_window, volume_after,
+    };
 
     #[test]
     fn newest_soloist_queue_snapshot_wins() {
