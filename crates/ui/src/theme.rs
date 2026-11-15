@@ -408,14 +408,17 @@ pub struct Theme {
     pub progress_bar: Hsla,
     pub selection: Hsla,
     pub sidebar: Hsla,
-    /// The fill under a hovered or selected sidebar entry, thinned the way `secondary_hover`
-    /// is and for the same reason.
+    /// The fill under the sidebar entry of the page that is open, thinned the way
+    /// `secondary_hover` is and for the same reason.
     pub sidebar_accent: Hsla,
     pub sidebar_border: Hsla,
     pub title_bar_border: Hsla,
     pub table_head: Hsla,
     pub table_head_foreground: Hsla,
     pub table_row_border: Hsla,
+    /// The one hover fill every row shares: table rows, cards, and sidebar entries alike. The
+    /// built-in themes set it to half of `sidebar_accent`, so a hovered row reads lighter than
+    /// the open page's entry.
     pub table_hover: Hsla,
     pub table_active: Hsla,
     pub table_active_border: Hsla,
@@ -474,7 +477,7 @@ impl Theme {
             table_head: rgba(0x171717cc).into(),
             table_head_foreground: rgb(0x8a8a8a).into(),
             table_row_border: rgba(0x262626b3).into(),
-            table_hover: rgba(0x3b3b3b66).into(),
+            table_hover: rgba(0x50505033).into(),
             table_active: rgba(0x1e40af33).into(),
             table_active_border: rgb(0x1d4ed8).into(),
             radius: px(6.),
@@ -517,7 +520,7 @@ impl Theme {
             table_head: rgba(0xf5f5f5e6).into(),
             table_head_foreground: rgb(0x666666).into(),
             table_row_border: rgba(0xd4d4d4b3).into(),
-            table_hover: rgba(0xe8e8e866).into(),
+            table_hover: rgba(0xcdcdcd33).into(),
             table_active: rgba(0x2563eb1f).into(),
             table_active_border: rgb(0x2563eb).into(),
             radius: px(6.),

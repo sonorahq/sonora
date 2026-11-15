@@ -50,6 +50,8 @@ pub struct Modal {
     detail: Option<SharedString>,
     body: Vec<AnyElement>,
     actions: Vec<AnyElement>,
+    /// What sits at the end of the title row, before the close button.
+    trailing: Option<AnyElement>,
     dismiss: Option<Dismiss>,
     close_button: bool,
 }
@@ -64,6 +66,7 @@ impl Modal {
             detail: None,
             body: Vec::new(),
             actions: Vec::new(),
+            trailing: None,
             dismiss: None,
             close_button: false,
         }
@@ -81,6 +84,13 @@ impl Modal {
 
     pub fn action(mut self, action: impl IntoElement) -> Self {
         self.actions.push(action.into_any_element());
+        self
+    }
+
+    /// Puts an element at the end of the title row, for a side door out of the dialog that
+    /// does not belong among its answers.
+    pub fn trailing(mut self, element: impl IntoElement) -> Self {
+        self.trailing = Some(element.into_any_element());
         self
     }
 
@@ -128,6 +138,7 @@ impl RenderOnce for Modal {
             detail,
             body,
             actions,
+            trailing,
             dismiss,
             close_button,
         } = self;
@@ -230,6 +241,7 @@ impl RenderOnce for Modal {
                                         )
                                     }),
                             )
+                            .children(trailing)
                             .children(close.map(|close| {
                                 Button::new("modal-close")
                                     .icon("icons/x.svg")

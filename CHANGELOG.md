@@ -9,7 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Press Ctrl+K (⌘K on macOS) anywhere to search. Enter plays a song right away, and Ctrl+Enter opens its page.
+- Use Sonora in European Portuguese. A system set to Portuguese from Portugal picks it on its own.
+- Open an album's cover from its page to see the original artwork full size, zoom in with the wheel or the buttons and drag it around.
+- Press Ctrl+K (⌘K on macOS) anywhere to search. Enter plays a song right away, Ctrl+Enter opens its page, and the artist and album under a result open theirs.
 - Scrobble to your own ListenBrainz server or to multi-scrobbler by filling in the server address when you connect ListenBrainz.
 - Name your Discord status after the album artist under Settings, Discord, Status name.
 - Hover a cut-off track title in the player bar to read it in full.
@@ -20,21 +22,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `sonora lyrics` prints the lyrics of the current track with their times, and `sonora lyrics --json` also gives a script the line sung now and the next one.
 - Rebind keyboard shortcuts under Settings, Keybinds, and give shuffle, repeat, the queue and lyrics shortcuts of their own.
 - Move between the fields of a dialog with Tab and Shift+Tab.
+- Use Sonora in Korean.
+- Open a music folder in your file manager from Settings, Music folders.
+- Library pages that list both local and streaming music mark local files with a file icon beside their names.
+- Tidal artist pages show how many people follow the artist, beside the listener count.
 
 ### Fixed
 
+- The snap shows Sonora's tray icon instead of a generic placeholder.
+- On Windows, playback no longer crackles when you open apps or browser tabs, and the buffer setting under Settings, Sound works again.
+- Friends who join a Spotify Jam you host from Sonora hear the track you play instead of the first one of the album or playlist, see the same queue, and the songs they remove or move stay that way.
+- Pausing while you host a Spotify Jam pauses it only for you, the way Spotify does: your friends keep listening, and resuming brings you back to where the Jam is.
+- A friend editing the queue of your Spotify Jam no longer clears your listening history in Sonora.
+- Seeking from another device while a track is still loading no longer leaves Sonora showing it as loading.
 - The Flatpak shows your Discord status in Vesktop and in Discord installed from Flathub.
 - On Linux with WebKitGTK 2.54 or newer, signing in to Apple Music no longer fills all your memory and crashes Sonora before the sign-in page loads.
 - Tidal artists with no portrait show the album cover Tidal draws them with, instead of an empty picture.
 - Releases tagged with the label `[no label]` no longer show a copyright line crediting it.
 - The fullscreen player's ambient background no longer leaves a light line along the right and bottom edges of the window.
 - The ambient background in fullscreen uses far less GPU, so laptops with integrated graphics stay cooler.
+- The Nix package runs Soloist on NixOS without nix-ld.
+- Apple Music search no longer runs into "Too Many Requests" while you type.
+- A page that cannot load says so in a plain sentence instead of the raw error, and a busy service asks you to wait a minute.
+- A bare `sonora://` or `sonora://open` now brings Sonora to the front instead of showing an error toast.
 
 ### Changed
 
 - The fullscreen button now swaps in place when the fullscreen player opens or closes, instead of fading and zooming with it.
 - Your accounts now open Settings, General, and the separate Providers tab is gone.
 - Ctrl+F (⌘F on macOS) now opens search and / filters the page you are on, and shortcuts list Ctrl before Shift.
+- Hovered rows share one fill in tables, cards and the sidebar, the softer one the sidebar used.
+- History is now called Recents and shows in the sidebar right under Search. Hide it again under Settings, General, Sidebar entries. Settings, once added there, sits right under Recents.
+- The track filter menu no longer offers "Playable only".
+- The song title and artist in the player bar sit closer together.
+- Section labels across the app, such as the settings group headings and Pinned in the sidebar, are no longer set in capitals.
+- Local files sit beside your streaming library in Songs, Albums, Artists and Playlists, and the separate Local Music section is gone. Filter a page to Local only or Streaming only.
+- Songs, Albums, Artists and Playlists are rows of their own in the sidebar under a Library heading, and the icon-only sidebar shows them as icons too.
+- Import an M3U playlist from the Create playlist dialog, which replaces the import button in the Playlists toolbar.
+- History and Settings moved from the sidebar to the account menu at the top right, which also switches between your connected services and opens Manage accounts. Add them back to the sidebar under Settings, General, Sidebar entries.
 
 ## [0.49.1] - 2026-11-13
 
@@ -166,6 +191,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - YouTube Music no longer loses its refreshed sign-in cookies when several requests finish together.
 - On Windows, the hidden YouTube playback page no longer shares cookies with the sign-in window.
 - Local libraries no longer list macOS AppleDouble metadata files as songs.
+- YouTube Music playlists made before the account had a channel show up in Add to playlist and can be edited.
 - Text pasted on several lines, into a field or the Jam link, shows on one line instead of leaving the field blank.
 - On Windows, playback no longer crackles while you open apps or browser tabs.
 - Sonora no longer downloads every genre page at launch to find their pictures, so it uses far less memory with YouTube Music.

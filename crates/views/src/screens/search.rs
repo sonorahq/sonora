@@ -20,9 +20,10 @@ use state::{
 };
 use ui::ActiveTheme as _;
 use ui::{
-    Activate, Button, Card, Cascade, Deck, Deselect, Dismiss, Dropdown, Pinnable, Popup, Room,
-    Scrollbar, Scroller, SelectLeft, SelectNext, SelectPrevious, SelectRight, Separator, Submit,
-    Text, Theme, Unfold, VAST, clock, eyebrow, scrolled, snapped, tabular, vacant,
+    Activate, Button, Card, Cascade, Deck, Deselect, Dismiss, Dropdown, InlineLink, InlineLinks,
+    Pinnable, Popup, Room, Scrollbar, Scroller, SelectLeft, SelectNext, SelectPrevious,
+    SelectRight, Separator, Submit, Text, Theme, Unfold, VAST, clock, eyebrow, scrolled, snapped,
+    tabular, vacant,
 };
 
 use crate::shared::cards;
@@ -41,6 +42,7 @@ const SUGGESTED: usize = 6;
 /// How many placeholder rows stand in while the first suggestions load.
 const SUGGESTED_WAITING: usize = 3;
 const ROW_GAP: f32 = 0.25;
+const BULLET: SharedString = SharedString::new_static("·");
 const SONGS: &[Kind] = &[Kind::Song];
 const ARTISTS: &[Kind] = &[Kind::Artist];
 const RELEASES: &[Kind] = &[Kind::Album, Kind::Playlist];
@@ -830,57 +832,6 @@ impl SearchView {
         }
     }
 
-    fn subtitle(&self, hit: &Hit, place: usize, compact: bool, theme: &Theme) -> AnyElement {
-        if let (Hit::Album(album), false) = (hit, compact) {
-            return cards::released(
-                format!("album-artist-{place}"),
-                album.year,
-                None,
-                &album.artist_refs,
-                album.artists.clone(),
-                theme,
-            )
-            .into_any_element();
-        }
-
-        let (kind, id, artists, fallback) = match hit {
-            Hit::Song(track) => (
-                Kind::Song,
-                format!("song-artist-{place}"),
-                track.artist_refs.clone(),
-                track.artists.clone(),
-            ),
-            Hit::Album(album) => (
-                Kind::Album,
-                format!("album-artist-{place}"),
-                album.artist_refs.clone(),
-                album.artists.clone(),
-            ),
-            Hit::Playlist(list) if !list.owner.is_empty() => (
-                Kind::Playlist,
-                format!("playlist-owner-{place}"),
-                Vec::new(),
-                list.owner.clone(),
-            ),
-            Hit::Artist(_) | Hit::Playlist(_) => {
-                return meta(hit, compact).into_any_element();
-            }
-        };
-
-        let links = cells::artist_links(id, artists, fallback, theme.muted_foreground).truncate();
-
-        match compact {
-            true => div()
-                .flex()
-                .min_w_0()
-                .gap_1()
-                .child(div().flex_none().child(tag(kind)))
-                .child(links)
-                .into_any_element(),
-            false => links.into_any_element(),
-        }
-    }
-
     #[allow(
         clippy::too_many_arguments,
         reason = "the row reports its seat in the list, so position and total ride along"
@@ -896,68 +847,30 @@ impl SearchView {
         me: &WeakEntity<Self>,
         cx: &App,
     ) -> AnyElement {
-        let theme = *cx.theme();
-        let meta = self.subtitle(hit, place, compact, &theme);
-
+        let current = match hit {
+            Hit::Song(track) => track.id.is_some() && track.id == self.playback_status.0,
+            _ => false,
+        };
+        let card = hit_card(hit, place, compact, current, cx.theme());
         let card = match hit {
-            Hit::Song(track) => {
-                let current = track.id.is_some() && track.id == self.playback_status.0;
-                let tint = match current {
-                    true => theme.primary,
-                    false => theme.foreground,
-                };
-                Card::new(("song", place), track.name.clone())
-                    .cover(track.cover.clone())
-                    .tint(tint)
-                    .meta(meta)
-                    .when(track.explicit, |card| card.explicit())
-                    .trailing(
-                        div()
-                            .flex_none()
-                            .whitespace_nowrap()
-                            .text_size(theme.text(Text::Small))
-                            .text_color(theme.muted_foreground)
-                            .font_features(tabular())
-                            .child(clock(track.duration)),
-                    )
-                    .press(pressed(Press::Song(track.clone()), me))
-            }
-            Hit::Artist(artist) => {
-                let card = Card::new(("artist", place), artist.name.clone())
-                    .cover(artist.cover.clone())
-                    .circle()
-                    .underline()
-                    .meta(meta);
-                match &artist.id {
-                    Some(id) => card.press(pressed(Press::Artist(id.clone()), me)),
-                    None => card,
-                }
-            }
-            Hit::Album(album) => Card::new(("album", place), album.name.clone())
-                .cover(album.cover.clone())
-                .underline()
-                .meta(meta)
-                .press(pressed(Press::Album(album.id.clone()), me)),
-            Hit::Playlist(list) => Card::new(("playlist", place), list.name.clone())
-                .cover(list.cover.clone())
-                .underline()
-                .meta(meta)
-                .press(pressed(Press::Playlist(list.id.clone()), me)),
+            Hit::Song(track) => card.press(pressed(Press::Song(track.clone()), me)),
+            Hit::Artist(artist) => match &artist.id {
+                Some(id) => card.press(pressed(Press::Artist(id.clone()), me)),
+                None => card,
+            },
+            Hit::Album(album) => card.press(pressed(Press::Album(album.id.clone()), me)),
+            Hit::Playlist(list) => card.press(pressed(Press::Playlist(list.id.clone()), me)),
         };
 
         card.when_some(self.transport(hit, me, cx), |card, (playing, play)| {
             card.play(playing, play)
         })
-        .when_some(hit.pin(), Pinnable::pin)
         .when_some(HitMenu::of(hit), |card, target| card.menu(menu(target, me)))
         .chosen(chosen)
-        .when(compact, Card::tucked)
         // The keyboard cursor stays on the container, so the chosen card claims
         // the active descendant while every card reports its seat in the list.
         .aria_position_in_set(index + 1)
         .aria_size_of_set(total)
-        // The mixed list tags each row with its kind, which the card's name leaves out.
-        .when(compact, |card| card.aria_description(noun(hit.kind())))
         .when(chosen, |card| {
             card.aria_selected(true).aria_active_descendant()
         })
@@ -1510,6 +1423,127 @@ fn meta(hit: &Hit, compact: bool) -> SharedString {
             false => SharedString::from(list.owner.clone()),
         },
     }
+}
+
+/// The card for one hit, shared by the search page and the quick search so a hit looks and
+/// links the same in both. `compact` is the mixed list, where the subtitle leads with the kind
+/// and a song names its album. The caller decides what a press and the play button do.
+pub(crate) fn hit_card(
+    hit: &Hit,
+    place: usize,
+    compact: bool,
+    current: bool,
+    theme: &Theme,
+) -> Card {
+    let meta = subtitle(hit, place, compact, theme);
+    let card = match hit {
+        Hit::Song(track) => Card::new(("song", place), track.name.clone())
+            .cover(track.cover.clone())
+            .fallback("icons/music.svg")
+            .when(current, |card| card.tint(theme.primary))
+            .when(track.explicit, |card| card.explicit())
+            .trailing(
+                div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_size(theme.text(Text::Small))
+                    .text_color(theme.muted_foreground)
+                    .font_features(tabular())
+                    .child(clock(track.duration)),
+            ),
+        Hit::Artist(artist) => Card::new(("artist", place), artist.name.clone())
+            .cover(artist.cover.clone())
+            .fallback("icons/user.svg")
+            .circle()
+            .underline(),
+        Hit::Album(album) => Card::new(("album", place), album.name.clone())
+            .cover(album.cover.clone())
+            .fallback("icons/disc-3.svg")
+            .underline(),
+        Hit::Playlist(list) => Card::new(("playlist", place), list.name.clone())
+            .cover(list.cover.clone())
+            .fallback("icons/list.svg")
+            .underline(),
+    };
+
+    card.meta(meta)
+        .when_some(hit.pin(), Pinnable::pin)
+        .when(compact, Card::tucked)
+        // The mixed list tags each row with its kind, which the card's name leaves out.
+        .when(compact, |card| card.aria_description(noun(hit.kind())))
+}
+
+/// The line under a hit's name, where every artist, owner and album links to its page.
+fn subtitle(hit: &Hit, place: usize, compact: bool, theme: &Theme) -> AnyElement {
+    if let (Hit::Album(album), false) = (hit, compact) {
+        return cards::released(
+            format!("album-artist-{place}"),
+            album.year,
+            None,
+            &album.artist_refs,
+            album.artists.clone(),
+            theme,
+        )
+        .into_any_element();
+    }
+
+    let muted = theme.muted_foreground;
+    let (kind, id, artists, fallback) = match hit {
+        Hit::Song(track) => (
+            Kind::Song,
+            format!("song-artist-{place}"),
+            track.artist_refs.clone(),
+            track.artists.clone(),
+        ),
+        Hit::Album(album) => (
+            Kind::Album,
+            format!("album-artist-{place}"),
+            album.artist_refs.clone(),
+            album.artists.clone(),
+        ),
+        Hit::Playlist(list) if !list.owner.is_empty() => (
+            Kind::Playlist,
+            format!("playlist-owner-{place}"),
+            Vec::new(),
+            list.owner.clone(),
+        ),
+        Hit::Artist(_) | Hit::Playlist(_) => {
+            return meta(hit, compact).into_any_element();
+        }
+    };
+
+    let links = cells::artist_links(id, artists, fallback, muted).truncate();
+    if !compact {
+        return links.into_any_element();
+    }
+
+    let album = match hit {
+        Hit::Song(track) if !track.album.is_empty() => Some(
+            InlineLinks::new(
+                format!("song-album-{place}"),
+                [InlineLink::new(
+                    track.album.clone(),
+                    track.album_id.clone().map(Into::into),
+                )],
+                track.album.clone(),
+                muted,
+            )
+            .truncate()
+            .on_click(|id, cx| navigate(Destination::Album(id), cx)),
+        ),
+        _ => None,
+    };
+
+    div()
+        .flex()
+        .min_w_0()
+        .gap_1()
+        .child(div().flex_none().child(tag(kind)))
+        .child(links)
+        .when_some(album, |this, album| {
+            this.child(div().flex_none().child(BULLET)).child(album)
+        })
+        .into_any_element()
 }
 
 pub(crate) fn tag(kind: Kind) -> SharedString {

@@ -13,7 +13,7 @@ use ui::{
     Sprung, Submit, Text, Unfold, blurring, corners, effects, popover_fill, snapped, spoken_vacant,
 };
 
-use crate::screens::search::{noun, tag};
+use crate::screens::search::hit_card;
 use crate::shared::tracks::{PlaybackStatus, playback_status};
 use crate::shared::trouble;
 
@@ -110,6 +110,17 @@ impl Powerbar {
                     let current = playback_status(&playback, cx);
                     if this.playback_status != current {
                         this.playback_status = current;
+                        cx.notify();
+                    }
+                })
+                .detach();
+
+                // An artist or album link in a result navigates on its own, so the panel goes
+                // away with any move to another page. Focus stays with the new page.
+                cx.observe(&router::trail(cx), |this: &mut Powerbar, _, cx| {
+                    if this.open {
+                        this.open = false;
+                        this.restore = None;
                         cx.notify();
                     }
                 })
@@ -287,27 +298,13 @@ impl Powerbar {
         on_play: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
         cx: &App,
     ) -> Card {
-        let theme = cx.theme();
         let chosen = self.selected == Some(item_idx);
-        let (label, detail, cover, icon) = describe_hit(hit);
-        // The list mixes every kind, so each row names its kind ahead of its own detail.
-        let subtitle = match detail {
-            Some(detail) => SharedString::from(format!("{} {detail}", tag(hit.kind()))),
-            None => noun(hit.kind()),
-        };
         let current = match hit {
             Hit::Song(track) => track.id.is_some() && track.id == self.playback_status.0,
             _ => false,
         };
 
-        Card::new(("powerbar-hit", item_idx), label)
-            .cover(cover)
-            .fallback(icon)
-            .when(matches!(hit, Hit::Artist(_)), Card::circle)
-            .when(current, |card| card.tint(theme.primary))
-            .tucked()
-            .meta(div().child(subtitle.clone()))
-            .aria_description(subtitle)
+        hit_card(hit, item_idx, true, current, cx.theme())
             .chosen(chosen)
             .aria_position_in_set(item_idx + 1)
             .aria_size_of_set(total)
@@ -658,45 +655,4 @@ fn toggle_hit(hit: &Hit, playback: &Entity<Playback>, cx: &mut App) {
         (_, Some(origin)) => playback.toggle_origin(&origin, cx),
         (_, None) => {}
     });
-}
-
-/// The title, the detail line, the cover and the fallback icon of a result. The detail is
-/// `None` where the kind alone says enough, as for an artist or a playlist with no owner.
-fn describe_hit(
-    hit: &Hit,
-) -> (
-    SharedString,
-    Option<SharedString>,
-    Option<String>,
-    &'static str,
-) {
-    match hit {
-        Hit::Song(track) => (
-            SharedString::from(track.name.clone()),
-            Some(SharedString::from(format!(
-                "{} · {}",
-                track.artists, track.album
-            ))),
-            track.cover.clone(),
-            "icons/music.svg",
-        ),
-        Hit::Artist(artist) => (
-            SharedString::from(artist.name.clone()),
-            None,
-            artist.cover.clone(),
-            "icons/user.svg",
-        ),
-        Hit::Album(album) => (
-            SharedString::from(album.name.clone()),
-            Some(SharedString::from(album.artists.clone())),
-            album.cover.clone(),
-            "icons/disc-3.svg",
-        ),
-        Hit::Playlist(list) => (
-            SharedString::from(list.name.clone()),
-            (!list.owner.is_empty()).then(|| SharedString::from(list.owner.clone())),
-            list.cover.clone(),
-            "icons/list.svg",
-        ),
-    }
 }

@@ -235,7 +235,7 @@ const SHORTCUTS: &[Shortcut] = &[
         section: Section::View,
         scope: Scope::Anywhere,
         bind: bind::<ToggleQueue>,
-        defaults: &[],
+        defaults: &["q"],
         mac: &[],
     },
     Shortcut {
@@ -244,7 +244,7 @@ const SHORTCUTS: &[Shortcut] = &[
         section: Section::View,
         scope: Scope::Anywhere,
         bind: bind::<ToggleLyrics>,
-        defaults: &[],
+        defaults: &["l"],
         mac: &[],
     },
     Shortcut {
