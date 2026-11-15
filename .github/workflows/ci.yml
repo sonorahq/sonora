@@ -60,7 +60,7 @@ jobs:
       # The check and lint jobs cache their whole target directory, so sccache would only
       # duplicate it. Only main saves that cache: a pull request's cache is visible to that pull
       # request alone, and would only push main's out of the repository's quota.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ci-${{ matrix.task }}
           cache-on-failure: true
@@ -109,7 +109,7 @@ jobs:
       - name: rust toolchain
         run: rustup toolchain install
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: lint-${{ matrix.target }}
           cache-on-failure: true
@@ -155,7 +155,7 @@ jobs:
       # Cargo on the runner's NTFS drive spends much of its time in the filesystem and Defender.
       # A ReFS Dev Drive takes the target directory instead, through a junction, so every path
       # below stays the same.
-      - uses: samypr100/setup-dev-drive@v4
+      - uses: samypr100/setup-dev-drive@562171fe8df7401fdf582d766cd3b6ab80d5b1a0 # v4.1.0
         if: runner.os == 'Windows'
         with:
           drive-size: 40GB
@@ -183,8 +183,8 @@ jobs:
         shell: bash
         run: rustup toolchain install && rustup target add ${{ matrix.target }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
-      - uses: Swatinem/rust-cache@v2
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}
           cache-targets: false

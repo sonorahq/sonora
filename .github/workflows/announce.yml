@@ -25,7 +25,7 @@ jobs:
         with:
           ref: ${{ inputs.tag }}
 
-      - uses: taiki-e/install-action@parse-changelog
+      - uses: taiki-e/install-action@cb52ed39beb39fe1f259c189625977d6c14035de # parse-changelog
 
       - name: Send release announcement
         env:
