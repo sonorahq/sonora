@@ -28,7 +28,7 @@ const REMOTE_TRACKS: usize = 25;
 /// How often the views are told that another device's playback moved on while it plays.
 const TICK: Duration = Duration::from_millis(500);
 /// The actual history and upcoming order supplied by another device.
-type RemoteWindow = (Vec<(Track, bool)>, bool, Vec<(Track, bool)>);
+type RemoteWindow = (Vec<(Track, QueueKind)>, QueueKind, Vec<(Track, QueueKind)>);
 
 /// A seek another device asked for while a song was loading, kept until that song plays.
 struct LateSeek {
@@ -91,7 +91,8 @@ pub struct Devices {
     seek_due: Option<LateSeek>,
     queuing: HashMap<String, Task<()>>,
     liking: HashMap<String, Task<()>>,
-    /// Notifies twice a second while another device plays, so its progress is redrawn.
+    /// Notifies `Playback::ticks` twice a second while another device plays, so its progress is
+    /// redrawn.
     ticking: Option<Task<()>>,
 }
 
@@ -118,6 +119,9 @@ impl Devices {
             this.publish(cx);
         })
         .detach();
+        // the report to the other devices also follows the position as it moves
+        let ticks = playback.read(cx).ticks().clone();
+        cx.observe(&ticks, |this, _, cx| this.publish(cx)).detach();
         cx.observe(&queue, |this, _, cx| this.publish(cx)).detach();
         cx.observe(&settings, |this, _, cx| this.apply(cx)).detach();
 
@@ -334,10 +338,7 @@ impl Devices {
                 .upcoming
                 .iter()
                 .take_while(|row| self.readable(&row.id))
-                .map(|row| match row.queued {
-                    true => QueueKind::Queued,
-                    false => QueueKind::Context,
-                }),
+                .map(kind_of),
         )
     }
 
@@ -659,6 +660,15 @@ impl Devices {
     }
 
     fn set_roster(&mut self, roster: Roster, cx: &mut Context<Self>) {
+        let reported_volume = match (self.roster.elsewhere.as_ref(), roster.elsewhere.as_ref()) {
+            (Some(had), Some(wanted))
+                if had.device.id == wanted.device.id
+                    && had.device.volume != wanted.device.volume =>
+            {
+                Some((wanted.device.id.clone(), wanted.device.volume))
+            }
+            _ => None,
+        };
         let wanted = roster
             .elsewhere
             .as_ref()
@@ -678,6 +688,11 @@ impl Devices {
                 .as_ref()
                 .is_some_and(|e| e.state.playing);
         self.roster = roster;
+        if let Some((device, level)) = reported_volume {
+            self.playback.update(cx, |playback, _| {
+                playback.reported_steered_volume(&device, level)
+            });
+        }
         // playback taken for a local file is never reported, so the network never releases it,
         // and another device starting to play is what takes it back
         if started && self.claimed && self.sent.is_none() {
@@ -820,7 +835,8 @@ impl Devices {
         self.available() && self.elsewhere().is_some_and(|e| e.state.playing)
     }
 
-    /// Redraws a remote device's advancing clock until playback stops or moves here.
+    /// Redraws a remote device's advancing clock until playback stops or moves here. Only the
+    /// observers of `Playback::ticks` hear each tick.
     fn tick(&mut self, cx: &mut Context<Self>) {
         if !self.moving() {
             self.ticking = None;
@@ -829,7 +845,8 @@ impl Devices {
                 while this
                     .update(cx, |this, cx| {
                         if this.moving() {
-                            this.redraw(cx);
+                            let ticks = this.playback.read(cx).ticks().clone();
+                            ticks.update(cx, |_, cx| cx.notify());
                         } else {
                             this.ticking = None;
                         }
@@ -1285,7 +1302,7 @@ async fn load(
             .by_ref()
             .take(start.previous.len())
             .zip(&start.previous)
-            .filter_map(|(track, listed)| Some((track?, listed.queued)))
+            .filter_map(|(track, listed)| Some((track?, kind_of(listed))))
             .collect();
         // The current song has its own slot in the resolver, outside history and upcoming.
         if start.track.is_some() {
@@ -1293,11 +1310,11 @@ async fn load(
         }
         let next = resolved
             .zip(&start.upcoming)
-            .filter_map(|(track, listed)| Some((track?, listed.queued)))
+            .filter_map(|(track, listed)| Some((track?, kind_of(listed))))
             .collect();
         (
             past,
-            start.track.as_ref().is_some_and(|track| track.queued),
+            start.track.as_ref().map_or(QueueKind::Context, kind_of),
             next,
         )
     });
@@ -1330,6 +1347,16 @@ async fn resolve_queue(
         }
     }
     ids.iter().map(|id| known.get(id).cloned()).collect()
+}
+
+/// Why a track another device lists is in its play order: queued by hand, picked by the
+/// provider to follow the collection, or part of the collection itself.
+fn kind_of(row: &QueuedTrack) -> QueueKind {
+    match (row.queued, row.suggested) {
+        (true, _) => QueueKind::Queued,
+        (false, true) => QueueKind::Suggested,
+        (false, false) => QueueKind::Context,
+    }
 }
 
 /// Whether two reports show the same queue around the same song, whatever their clocks say.
