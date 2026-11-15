@@ -91,8 +91,8 @@ jobs:
           key: ${{ matrix.target }}
           cache-targets: false
           cache-on-failure: true
-      # A nightly compiles its label in as the version the app shows. Other builds leave the
-      # variable unset, since an empty one would still count as set.
+      # A nightly compiles its label and commit in as the version the app shows. Other builds leave
+      # the variables unset, since an empty one would still count as set.
       - name: build
         if: ${{ !inputs.reuse }}
         shell: bash
@@ -102,7 +102,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "$NIGHTLY" ]; then
-            export SONORA_VERSION="$NIGHTLY" SONORA_CHANNEL=nightly
+            export SONORA_VERSION="$NIGHTLY" SONORA_CHANNEL=nightly SONORA_COMMIT="$GITHUB_SHA"
           fi
           cargo build --release --locked --package sonora --target "$TARGET"
 
@@ -173,7 +173,7 @@ jobs:
           }
           $env:SONORA_VERSION = $number
           $channel = if ($env:NIGHTLY) { "nightly" } else { "stable" }
-          @{ version = $number; channel = $channel } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM build.json
+          @{ version = $number; channel = $channel; commit = $env:GITHUB_SHA } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM build.json
           $env:SONORA_BUILD_METADATA = (Resolve-Path build.json).Path
           $env:SONORA_EXE = (Resolve-Path "target/$env:TARGET/release/sonora.exe").Path
           $env:SONORA_DIST = (Resolve-Path "dist").Path
@@ -296,8 +296,8 @@ jobs:
           version="${NIGHTLY:-$NUMBER}"
           channel=stable
           if [ -n "$NIGHTLY" ]; then channel=nightly; fi
-          jq -n --arg version "$version" --arg channel "$channel" \
-            '{version: $version, channel: $channel}' > Sonora.app/Contents/Resources/sonora-build.json
+          jq -n --arg version "$version" --arg channel "$channel" --arg commit "$GITHUB_SHA" \
+            '{version: $version, channel: $channel, commit: $commit}' > Sonora.app/Contents/Resources/sonora-build.json
 
       - name: sign the bundle
         shell: bash
@@ -444,8 +444,8 @@ jobs:
           chmod +x AppDir/usr/bin/sonora
           channel=stable
           if [ -n "$NIGHTLY" ]; then channel=nightly; fi
-          jq -n --arg version "$NUMBER" --arg channel "$channel" \
-            '{version: $version, channel: $channel}' > AppDir/usr/bin/sonora-build.json
+          jq -n --arg version "$NUMBER" --arg channel "$channel" --arg commit "$GITHUB_SHA" \
+            '{version: $version, channel: $channel, commit: $commit}' > AppDir/usr/bin/sonora-build.json
 
           # Artwork is compiled into the executable. The AppDir supplies launcher integration.
           mkdir -p AppDir/usr/share/icons
@@ -752,8 +752,8 @@ jobs:
         env:
           NIGHTLY: ${{ inputs.nightly }}
         run: |
-          jq -n --arg version "$NIGHTLY" \
-            '{version: $version, channel: "nightly"}' > dist/sonora-build.json
+          jq -n --arg version "$NIGHTLY" --arg commit "$GITHUB_SHA" \
+            '{version: $version, channel: "nightly", commit: $commit}' > dist/sonora-build.json
 
       - name: checksums
         run: cd dist && shasum -a 256 * > SHA256SUMS
@@ -762,7 +762,8 @@ jobs:
         env:
           NIGHTLY: ${{ inputs.nightly }}
         run: |
-          jq -n --arg version "$NIGHTLY" '{version: $version}' > nix/nightly.json
+          jq -n --arg version "$NIGHTLY" --arg commit "$GITHUB_SHA" \
+            '{version: $version, commit: $commit}' > nix/nightly.json
 
       - name: move the nightly tag
         env:
