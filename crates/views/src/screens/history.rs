@@ -67,6 +67,8 @@ impl HistoryView {
             TableState::new(TableDelegate::new(source, width, cx), cx).follow(scroll)
         });
 
+        let chrome = crate::chrome::Chrome::entity(cx);
+        cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
         cx.observe(&history, |this, _, cx| {
             this.table.rebuild(cx);
             cx.notify();

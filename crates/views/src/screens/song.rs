@@ -78,6 +78,8 @@ impl SongView {
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         let library = Sonora::global(cx).library.clone();
         cx.observe(&library, |_, _, cx| cx.notify()).detach();
+        let chrome = crate::chrome::Chrome::entity(cx);
+        cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
         let me = cx.entity_id();
         let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(me));
 
