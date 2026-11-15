@@ -934,24 +934,30 @@ impl Queue {
                 (earlier, Vec::new(), known, Vec::new(), beyond)
             }
         };
-        let mut identity =
-            |track: &Track| match known.iter().position(|entry| entry.track.id == track.id) {
-                Some(index) => known.remove(index).uid,
-                None => queue_uid(),
-            };
+        // the occurrence a track of the window stands for here, when the queue has one
+        let mut matched = |track: &Track| {
+            let index = known.iter().position(|entry| entry.track.id == track.id)?;
+            Some(known.remove(index))
+        };
         let past_len = past.len();
         let mut entries: Vec<_> = past
             .into_iter()
             .chain(upcoming)
             .map(|(track, kind)| {
-                Entry::with_uid(
-                    identity(&track),
-                    track,
-                    (kind != QueueKind::Queued)
-                        .then(|| origin.clone())
-                        .flatten(),
-                    kind,
-                )
+                let before = matched(&track);
+                let from = match kind {
+                    QueueKind::Queued => None,
+                    QueueKind::Context => origin.clone(),
+                    // a suggestion keeps the radio it came from, which the collection that
+                    // plays is not
+                    QueueKind::Suggested => before
+                        .as_ref()
+                        .filter(|before| before.kind == QueueKind::Suggested)
+                        .and_then(|before| before.origin.clone())
+                        .or_else(|| origin.clone()),
+                };
+                let uid = before.map_or_else(queue_uid, |before| before.uid);
+                Entry::with_uid(uid, track, from, kind)
             })
             .collect();
         let window: Vec<_> = entries.split_off(past_len);
@@ -968,15 +974,17 @@ impl Queue {
         if let Some(entry) = self.current.as_mut() {
             entry.kind = current;
         }
-        let queued: HashSet<_> = self
+        // only the collection's own songs belong in its order, or a shuffle would deal a queued
+        // or a suggested one in a second time
+        let apart: HashSet<_> = self
             .past
             .iter()
             .chain(&self.current)
             .chain(&self.upcoming)
-            .filter(|entry| entry.kind == QueueKind::Queued)
+            .filter(|entry| entry.kind != QueueKind::Context)
             .map(|entry| &entry.uid)
             .collect();
-        self.source.retain(|entry| !queued.contains(&entry.uid));
+        self.source.retain(|entry| !apart.contains(&entry.uid));
         self.suggested += 1;
         self.changed(cx);
     }
