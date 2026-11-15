@@ -23,7 +23,9 @@ nav-history = История
 nav-home = Главная
 nav-search = Поиск
 nav-library = Моя медиатека
+sidebar-library = Медиатека
 nav-settings = Настройки
+account-manage = Управление аккаунтами
 nav-songs = Треки
 nav-albums = Альбомы
 nav-playlists = Плейлисты
@@ -37,7 +39,6 @@ nav-pinned = Закреплённое
 nav-unpin = Открепить
 nav-pin-hint = Перетащите сюда, чтобы закрепить
 library-liked-songs = Избранное
-library-play-liked-songs = Слушать
 library-no-songs = Пока нет избранного
 library-no-albums = Пока нет сохранённых альбомов
 library-no-playlists = Пока нет плейлистов
@@ -86,6 +87,7 @@ column-index = #
 column-title = Название
 column-artist = Исполнитель
 column-album = Альбом
+column-genre = Жанр
 column-date-added = Дата добавления
 column-added-by = Добавил
 column-modified = Изменён
@@ -108,18 +110,9 @@ menu-import-playlist = Импортировать плейлист…
 menu-edit-tags = Изменить теги
 menu-no-playlists = Нет плейлистов
 menu-search-playlists = Поиск плейлиста
+menu-save-library = Медиатека
 menu-add-to-library = В избранное
-menu-add-tracks-to-library = { $count ->
-    [one] Добавить { $count } трек в избранное
-    [few] Добавить { $count } трека в избранное
-   *[other] Добавить { $count } треков в избранное
-}
 menu-remove-from-library = Убрать из избранного
-menu-remove-tracks-from-library = { $count ->
-    [one] Убрать { $count } трек из избранного
-    [few] Убрать { $count } трека из избранного
-   *[other] Убрать { $count } треков из избранного
-}
 menu-remove-from-playlist = Удалить из плейлиста
 menu-remove-tracks-from-playlist = { $count ->
     [one] Удалить { $count } трек из плейлиста
@@ -135,17 +128,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Удалить файл трека
 menu-delete-track-files = Удалить файлы треков ({ $count })
 menu-download = Скачать
-menu-download-tracks = { $count ->
-    [one] Скачать { $count } трек
-    [few] Скачать { $count } трека
-   *[other] Скачать { $count } треков
-}
 menu-remove-download = Удалить загрузку
-menu-remove-downloads = { $count ->
-    [one] Удалить { $count } загрузку
-    [few] Удалить { $count } загрузки
-   *[other] Удалить { $count } загрузок
-}
 menu-downloading = Скачивается. Щёлкните для остановки
 menu-play-next = Воспроизвести следующим
 menu-play-tracks-next = { $count ->
@@ -180,18 +163,6 @@ menu-delete-playlist = Удалить плейлист
 menu-export-playlist = Экспортировать плейлист…
 menu-add-playlist-to-library = Добавить в медиатеку
 menu-remove-playlist-from-library = Удалить из медиатеки
-menu-library-add = Добавить в медиатеку
-menu-library-add-tracks = { $count ->
-    [one] Добавить { $count } трек в медиатеку
-    [few] Добавить { $count } трека в медиатеку
-   *[other] Добавить { $count } треков в медиатеку
-}
-menu-library-remove = Удалить из медиатеки
-menu-library-remove-tracks = { $count ->
-    [one] Удалить { $count } трек из медиатеки
-    [few] Удалить { $count } трека из медиатеки
-   *[other] Удалить { $count } треков из медиатеки
-}
 menu-make-playlist-public = Сделать публичным
 menu-make-playlist-private = Сделать приватным
 menu-play-artist = Воспроизвести исполнителя
@@ -277,10 +248,7 @@ player-previous = Предыдущий трек
 player-next = Следующий трек
 player-fullscreen = Полноэкранный режим
 player-fullscreen-leave = Выйти из полноэкранного режима
-player-devices = Устройства
 devices-this-computer = Этот компьютер
-devices-pause = Пауза
-devices-resume = Продолжить
 devices-jam-join = Присоединиться к Jam…
 devices-jam-join-title = Присоединиться к Jam
 devices-jam-join-detail = Вставьте ссылку, которой поделился друг
@@ -288,15 +256,12 @@ devices-jam-paste = Вставить
 devices-jam-link-hint = Ссылка на Jam
 devices-jam-start = Начать Jam
 devices-jam-copy = Копировать ссылку на Jam
-devices-jam-code = QR-код
 devices-jam-code-menu = Показать QR-код
 devices-jam-code-title = Отсканируйте, чтобы присоединиться к Jam { $host }
 devices-jam-code-title-anonymous = Отсканируйте, чтобы присоединиться к Jam
 devices-jam-code-close = Закрыть
 devices-jam-leave = Покинуть Jam
 devices-jam-end = Завершить Jam
-devices-jam-banner = В Jam { $host }
-devices-jam-banner-anonymous = В Jam
 devices-jam-more = +{ $count }
 devices-jam-host = Организатор
 devices-jam-you = Вы
@@ -309,8 +274,29 @@ devices-jam-invite-detail = { $count ->
    *[other] В этом Jam уже { $count } человек.
 }
 devices-jam-invite-join = Присоединиться
-devices-elsewhere-banner = Играет на { $device }
-devices-elsewhere-here = Играть здесь
+player-sessions = Сессии
+devices-spotify-jams = Spotify Jams
+members-title = Участники
+members-empty = Начните сессию или присоединитесь к ней, чтобы увидеть, кто слушает вместе с вами
+devices-session-start = Начать сессию
+devices-session-join = Присоединиться к сессии…
+devices-session-join-title = Присоединиться к сессии
+devices-session-join-detail = Введите код, которым с вами поделились
+devices-session-join-confirm = Присоединиться
+devices-session-code = Код сессии
+devices-session-code-menu = Показать код сессии
+devices-session-code-title = Код вашей сессии
+devices-session-code-detail = Присоединиться по этому коду может любой, кто вошёл в { $provider }
+devices-session-code-close = Готово
+devices-session-copy = Скопировать код
+devices-session-leave = Покинуть сессию
+devices-session-end = Завершить сессию
+devices-session-reconnecting = Переподключение…
+devices-session-people = { $count ->
+    [one] { $count } человек в этой сессии
+    [few] { $count } человека в этой сессии
+   *[many] { $count } человек в этой сессии
+    }
 fullscreen-artwork = Обложка
 
 # filters
@@ -326,10 +312,11 @@ filter-reset = Сбросить фильтры
 filter-duration = Длительность
 filter-year = Год
 filter-hide-explicit = Скрыть с ненормативной лексикой
-filter-playable = Только доступные
 filter-favorites = Только избранное
 filter-downloaded = Скачанное
 filter-owned = Ваши
+filter-local-only = Только локальные
+filter-streaming-only = Только стриминг
 
 # view
 view-list = Список
@@ -338,6 +325,7 @@ view-cards = Карточки
 # toolbar
 tool-sort = Сортировка
 tool-filters = Фильтры
+tool-account = Аккаунт
 
 # login
 login-signed-out = Войдите, чтобы загрузить медиатеку
@@ -391,8 +379,6 @@ login-choose-detail = Выберите способ входа в { $provider }.
 
 # album and playlist pages
 detail-playlist = Плейлист
-detail-play-album = Слушать альбом
-detail-play-playlist = Слушать плейлист
 
 # play button
 play-pause = Пауза
@@ -406,7 +392,6 @@ artist-monthly-listeners = { $count ->
     [few] { $value } слушателя в месяц
    *[other] { $value } слушателей в месяц
 }
-artist-play = Слушать
 artist-popular = Популярное
 artist-popular-eyebrow = Знакомство с исполнителем
 artist-popular-empty = Пока нечего слушать у этого исполнителя
@@ -486,7 +471,6 @@ kind-playlist = Плейлист
 
 # song page
 song-eyebrow = Трек
-song-play = Слушать трек
 song-view-album = Открыть альбом
 song-loading = Загружаем информацию о треке…
 song-about = О треке
@@ -506,6 +490,7 @@ song-genres = Жанры
 song-language = Язык
 song-content = Контент
 song-explicit = Ненормативная лексика
+song-local = Локальный файл
 song-clean = Без ограничений
 artist-about = Об исполнителе
 artist-about-fallback = Послушайте популярные треки и релизы исполнителя.
@@ -615,6 +600,7 @@ settings-group-playing = Воспроизведение
 settings-group-cache = Прослушанные треки
 settings-group-downloads = Загрузки
 settings-group-protected = Защищённое воспроизведение
+settings-group-soloist = Плеер Spotify
 settings-group-output = Вывод
 settings-group-status = Статус
 settings-group-startup = Запуск
@@ -656,6 +642,9 @@ settings-visualizer-style-none = Выключен
 settings-visualizer-style-bars = Столбики
 settings-visualizer-style-wave = Волна
 settings-visualizer-style-both = Столбики и волна
+settings-visualizer-screens = Показывать на экранах
+settings-visualizer-screens-detail = На каких экранах полноэкранного режима рисуется спектр
+settings-visualizer-screens-pick = Выбрать экраны
 settings-visualizer-absolute = Не учитывать громкость
 settings-visualizer-absolute-detail = Рисовать спектр по уровню самого трека, как бы громко ни играла Sonora
 settings-preview-title = Название трека
@@ -684,7 +673,6 @@ settings-font-detail = Базовый размер текста, остальн�
 settings-font-value = { $size } px
 settings-startup = Показывать при запуске
 settings-startup-detail = Экран, который Sonora открывает при старте
-settings-startup-no-guest = Недоступно в гостевом режиме
 settings-entries = Разделы боковой панели
 settings-entries-detail = Разделы, которые видны в боковой панели
 settings-entries-pick = Выбрать разделы
@@ -745,6 +733,7 @@ settings-discord-hide-on-connect-detail = Оставлять статус сам
 settings-discord-buttons = Кнопки
 settings-discord-buttons-detail = Ссылки под статусом, которые могут открыть ваши друзья: одна на трек в его сервисе, другая на Sonora
 settings-discord-buttons-pick = Выбрать кнопки
+settings-discord-preview = Предпросмотр статуса Discord
 settings-discord-preview-listening = Слушает { $name }
 settings-discord-preview-music = Музыка
 settings-discord-preview-elapsed = Прошло { $time }
@@ -814,6 +803,7 @@ settings-output-device-loading = Загрузка устройств…
 settings-output-failed = Устройство не поддерживается
 settings-output-failed-detail = Ошибка: { $error }
 settings-signal-source = Источник
+settings-signal-soloist = Soloist
 settings-signal-normalized = Громкость
 settings-signal-gain = { $db } дБ
 settings-signal-resampled = Ресемплинг
@@ -844,6 +834,48 @@ settings-widevine-fetch = Скачать
 settings-widevine-uninstall = Удалить
 confirm-uninstall-widevine-title = Удалить модуль Widevine?
 confirm-uninstall-widevine = Sonora удалит копию, скачанную у Google. Треки Apple Music перестанут играть, пока модуль не будет скачан снова.
+settings-soloist = Использовать Soloist
+settings-soloist-detail = Плеер Soloist выпускает сам Spotify. Он играет на аккаунтах, где встроенному плееру отказывают, и умеет lossless. Нужны Spotify Premium и собственный API-ключ.
+settings-soloist-on-detail = Spotify играет через Soloist, который выводит звук прямо в системный выход. Эквалайзер, визуализатор и настройки вывода действуют только на локальные файлы, а список устройств Spotify Connect Sonora оставляет Soloist.
+settings-soloist-looking = Поиск…
+settings-soloist-off = Не настроен
+settings-soloist-setting-up = Настройка…
+settings-soloist-ready = Версия { $version }
+settings-soloist-unavailable = Недоступно с Soloist
+settings-soloist-local-only = Пока Spotify играет через Soloist, действует только на локальные файлы
+settings-soloist-setup = Настроить
+settings-soloist-remove = Удалить
+confirm-remove-soloist-title = Удалить Soloist?
+confirm-remove-soloist = Sonora удалит программу Soloist, ваш API-ключ и её вход в аккаунт. Spotify вернётся на встроенный плеер.
+soloist-setup-title = Настройка Soloist
+soloist-offered = Spotify отказывается играть на этом аккаунте через встроенный плеер. Через Soloist он играет.
+soloist-step-download = Загрузка
+soloist-step-key = API-ключ
+soloist-step-pair = Сопряжение
+soloist-terms = Sonora скачает Soloist у Spotify. Его использование означает согласие с условиями Spotify.
+soloist-terms-open = Читать условия
+soloist-download = Скачать
+soloist-later = Не сейчас
+soloist-downloading = Скачивание у Spotify…
+soloist-key-step-open = Откройте страницу Soloist в панели разработчика Spotify
+soloist-key-step-generate = Примите там условия и создайте API-ключ
+soloist-key-step-paste = Вставьте ключ ниже
+soloist-key-open = Открыть панель
+soloist-key-hint = API-ключ
+soloist-continue = Продолжить
+soloist-pair-step-open = Откройте Spotify на телефоне или компьютере в этой сети
+soloist-pair-step-play = Включите там любую песню
+soloist-pair-step-pick = Откройте список устройств и выберите { $device }
+soloist-pair-firewall = Не появляется? Файрвол на этом компьютере должен пропускать входящие UDP 5353 и TCP { $port }.
+soloist-back = Назад
+soloist-problem-download = Не удалось скачать Soloist
+soloist-problem-key = Spotify не принял этот ключ
+soloist-problem-key-detail = Проверьте, что он скопирован целиком и не отозван, и попробуйте снова.
+soloist-problem-account = Сопряжено с другим аккаунтом
+soloist-problem-account-detail = Это приложение Spotify вошло как { $name }, а не в тот аккаунт, которым пользуется Sonora. Выберите устройство из приложения со своим аккаунтом.
+soloist-problem-waited = Устройство никто не выбрал
+soloist-problem-waited-detail = Сопряжение ждёт десять минут. Попробуйте снова, когда приложение Spotify будет под рукой.
+soloist-problem-pairing = Сопряжение не удалось
 confirm-remove-downloads-title = Удалить все загрузки?
 confirm-remove-downloads = Все скачанные треки из всех сервисов будут удалены с этого компьютера. Они снова будут играть по сети, пока вы не скачаете их заново.
 widevine-prompt-title = Модуль Widevine
@@ -984,6 +1016,7 @@ equalizer-status-more = +{ $count }
 equalizer-status-equalized = EQ
 equalizer-status-volume = Громкость
 equalizer-status-normalized = Нормализация
+equalizer-status-direct = Играет Soloist, мимо Sonora
 equalizer-status-rate = { $from } → { $to } кГц
 equalizer-status-bits = { $from } → { $to } бит
 equalizer-status-float = Float → { $to } бит
@@ -996,6 +1029,8 @@ equalizer-status-channels = { $from ->
     [2] стерео
    *[other] { $to } кан.
 }
+settings-lyrics = Показывать тексты песен
+settings-lyrics-detail = Выключите, чтобы скрыть тексты песен везде и перестать их искать
 settings-panel-lyrics-size = Размер текста песни (панель)
 settings-panel-lyrics-size-detail = Размер строк текста песни на боковой панели поверх базового размера шрифта
 settings-fullscreen-lyrics-size = Размер текста песни (полный экран)
@@ -1019,7 +1054,9 @@ settings-romanized-lyrics = Романизация текста
 settings-romanized-lyrics-detail = Показывать локально собранное произношение для выбранных систем письма
 settings-romanization-writing-systems = Системы письма
 settings-lyrics-priority = Приоритет источников
-settings-lyrics-providers-detail = Выберите сервисы для поиска текстов песен
+settings-lyrics-word-synced-first = Сначала тексты с таймингами по словам
+settings-lyrics-word-synced-first-detail = Показывать текст с таймингами по словам первым, даже если его источник стоит ниже в списке
+settings-lyrics-providers-detail =Выберите сервисы для поиска текстов песен
 settings-lyrics-providers-selected = { $count ->
     [one] Выбран { $count } источник
     [few] Выбрано { $count } источника
@@ -1046,6 +1083,12 @@ settings-group-text = Текст
 settings-group-motion = Анимация
 settings-group-streaming = Стриминг
 settings-group-spotify-connect = Spotify Connect
+settings-group-sessions = Сессии
+settings-sessions-button = Показывать кнопку сессий
+settings-sessions-official = Использовать официальный сервер Sonora Sessions
+settings-sessions-server = Адрес сервера
+settings-sessions-server-hint = wss://sessions.example.com
+settings-sessions-save = Сохранить
 settings-adaptive-menu = Адаптивное контекстное меню
 settings-adaptive-menu-detail = Убирает пункты, которые уже видны в строке, — например альбом или исполнителя
 settings-accounts = Управление аккаунтами
@@ -1080,6 +1123,7 @@ settings-local-folder-empty = Не настроено
 settings-choose-folder = Выбрать папку…
 settings-add-folder = Добавить папку
 settings-remove-folder = Удалить папку
+settings-open-folder = Открыть папку
 settings-rescan = Пересканировать
 settings-scan-walking = Сканирую…
 settings-scan-progress = { $percent }%
@@ -1192,6 +1236,10 @@ toast-open-some-failed = Не удалось открыть часть файл�
 toast-keys-error = Ошибка ключа
 toast-keys-refused = Spotify может не играть
 toast-why = Почему?
+toast-soloist-setup = Настроить Soloist
+toast-soloist-refused = Soloist больше не может войти
+toast-soloist-ready = Spotify теперь играет через Soloist
+toast-soloist-remove-failed = Не удалось удалить Soloist
 toast-sign-in-to-play = { $name } отдаёт музыку только тем, кто вошёл в аккаунт
 toast-restore-failed = Не удалось снова войти в { $name }, Sonora продолжила работу без него
 toast-track-unplayable = Не удалось воспроизвести { $name }
@@ -1321,6 +1369,23 @@ toast-jam-failed = Не удалось начать Jam или присоеди�
 toast-jam-ended = Jam завершён
 toast-jam-left = Вы покинули Jam
 toast-jam-leave-failed = Не удалось завершить или покинуть Jam.
+toast-session-needs-provider = Войдите в стриминговый сервис, чтобы начать сессию.
+toast-session-not-found = Сессии с таким кодом нет.
+toast-session-provider = Эта сессия играет из { $name }. Войдите в { $name }, чтобы присоединиться.
+toast-session-full = В этой сессии нет мест.
+toast-session-rate-limited = Слишком много неверных кодов. Попробуйте через несколько минут.
+toast-session-too-many = Из вашей сети уже запущено максимальное число сессий. Завершите одну, чтобы начать новую.
+toast-session-unreachable = Не удалось связаться с Sonora Session. Попробуйте позже.
+toast-session-failed = Не удалось начать сессию или присоединиться к ней.
+toast-session-lost = Связь с сессией потеряна
+toast-session-ended = Сессия завершена
+toast-session-left = Вы покинули сессию
+toast-session-kicked = Хост удалил вас из сессии
+toast-session-code-copied = Код скопирован
+toast-sessions-server-saved = Сервер сессий сохранён
+toast-sessions-server-empty = Сначала введите адрес вашего сервера
+toast-sessions-server-malformed = Это не похоже на адрес сервера
+toast-sessions-server-silent = По этому адресу не отвечает сервер Sonora Sessions, поэтому он не сохранён
 nav-nothing-pinned = Здесь пусто
 nav-pins-alphabetical = По алфавиту
 nav-pins-kind = По типу
@@ -1332,26 +1397,15 @@ trouble-offline = Нет соединения
 trouble-offline-detail = Проверьте подключение к интернету и попробуйте снова.
 trouble-not-loaded = Не удалось загрузить
 trouble-retry = Повторить
+trouble-busy = Сервис перегружен
+trouble-busy-detail = Слишком много запросов сразу. Подождите минуту и попробуйте снова.
+trouble-failed-detail = Что-то пошло не так на стороне сервиса. Попробуйте ещё раз чуть позже.
 toast-offline = Нет соединения. Ничего не будет воспроизводиться, пока оно не вернётся.
 toast-offline-unsupported = { $name } играет скачанное только онлайн.
 toast-offline-mode = Вы офлайн. Перейдите в онлайн, чтобы слушать эту песню.
 offline-title = Вы офлайн.
 offline-go-online = Перейти в онлайн
 toast-download-failed = Не удалось получить список треков для скачивания.
-toast-downloading = Скачивание { $name }
-toast-downloading-songs = { $count ->
-    [one] Скачивание { $count } трека
-   *[other] Скачивание { $count } треков
-}
-toast-downloaded = Скачано: { $name }
-toast-downloaded-songs = { $count ->
-    [one] Скачан { $count } трек
-    [few] Скачано { $count } трека
-   *[other] Скачано { $count } треков
-}
-toast-download-set-failed = Не удалось скачать часть треков из { $name }
-toast-download-song-failed = Не удалось скачать { $name }
-toast-download-songs-failed = Не удалось скачать часть треков
 toast-percent = { $percent }%
 toast-download-cancelled = Отменено скачивание { $name }
 toast-downloads-cancelled = { $count ->

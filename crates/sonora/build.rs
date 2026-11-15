@@ -5,8 +5,7 @@ use std::path::PathBuf;
 fn main() {
     fonts();
 
-    #[cfg(windows)]
-    {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let icon = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../assets/windows/sonora.ico"
@@ -16,9 +15,7 @@ fn main() {
         resource.set_icon(icon);
         resource.set("ProductName", "Sonora");
         resource.set("FileDescription", "Sonora");
-        if let Err(error) = resource.compile() {
-            println!("cargo:warning=cannot embed the windows icon: {error}");
-        }
+        resource.compile().expect("cannot embed the windows icon");
     }
 }
 

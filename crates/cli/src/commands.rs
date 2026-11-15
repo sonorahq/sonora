@@ -44,6 +44,11 @@ pub enum Request {
     /// What plays, sent again every time it changes, until the command line hangs up. Stands
     /// for `sonora watch`
     Watch(Watch),
+    /// Commands serving Sonora Session, listening together with other Sonora apps
+    Session(SessionCommand),
+    /// The lyrics of the current track, as already held, without looking any up. Stands for
+    /// `sonora lyrics`
+    Lyrics,
 }
 
 impl Request {
@@ -103,6 +108,8 @@ pub enum PlaybackCommand {
     CurrentTrack,
     /// Returns or sets volume in order to `Switch`. Stands for `sonora volume < +/-N|N >`
     Volume(Option<Level>),
+    /// Returns or sets playback mute. Stands for `sonora mute [on|off|toggle]`
+    Mute(Option<Switch>),
     /// Returns or sets playback shuffle in order to `Switch`. Stands for `sonora shuffle <on|off|toggle>`
     Shuffle(Option<Switch>),
     /// Returns or sets playback repeat in order to `Repeat`. Stands for `sonora repeat <off|all|one>`
@@ -121,10 +128,28 @@ pub enum ProviderCommand {
     Current(Option<String>),
 }
 
+/// Commands serving Sonora Session
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionCommand {
+    /// Returns the session Sonora is in, if any. Stands for `sonora session`
+    Status,
+    /// Starts a session on the current provider. Stands for `sonora session start`
+    Start,
+    /// Joins the session a six-digit code names, or opens the dialog that takes one when none is
+    /// given. Stands for `sonora session join [code]`
+    Join(Option<String>),
+    /// Leaves the session, ending it when Sonora hosts it. Stands for `sonora session leave`
+    Leave,
+}
+
 /// Commands serving queue manipulation
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum QueueCommand {
+    /// Returns a read-only snapshot of the queue, without changing playback. Stands for
+    /// `sonora queue`
+    Snapshot,
     /// Queues items after the ones queued by hand. Stands for `sonora add <items>`
     Add(Vec<Item>),
     /// Queues items right after the current track. Stands for `sonora play-next <items>`

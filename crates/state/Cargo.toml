@@ -5,7 +5,11 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-bundled-sqlite = ["rusqlite/bundled", "music/bundled-sqlite", "storage/bundled-sqlite"]
+bundled-sqlite = [
+    "rusqlite/bundled",
+    "music/bundled-sqlite",
+    "storage/bundled-sqlite",
+]
 
 [dependencies]
 anyhow.workspace = true
@@ -32,6 +36,7 @@ sha2.workspace = true
 storage.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 ui.workspace = true
 webview.workspace = true
 
@@ -54,3 +59,6 @@ objc2-io-kit.workspace = true
 
 [build-dependencies]
 embed.workspace = true
+
+[lints]
+workspace = true

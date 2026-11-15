@@ -12,7 +12,7 @@ use clap_complete::Shell;
 
 use crate::commands::{
     CommandType, Format, Item, Kind, Level, Local, PlaybackCommand, ProviderCommand, QueueCommand,
-    Repeat, Request, SearchQuery, Switch, Time, Watch,
+    Repeat, Request, SearchQuery, SessionCommand, Switch, Time, Watch,
 };
 use crate::item;
 
@@ -21,7 +21,7 @@ use crate::item;
 #[derive(Parser)]
 #[command(
     name = "sonora",
-    about = "A native music streaming client",
+    about = "A native, familiar music streaming client",
     override_usage = "sonora [FILE_OR_LINK]...\n       sonora [--json] <COMMAND>",
     disable_help_subcommand = true,
     disable_version_flag = true,
@@ -89,12 +89,18 @@ enum Sub {
         #[arg(long)]
         position: bool,
     },
+    /// Print the queue: what played, what plays and what follows, without changing it.
+    Queue,
+    /// Print the lyrics of the current track, without looking any up.
+    Lyrics,
     /// Print the volume, or set it: `50`, `+5`, `-5`.
     Volume {
         /// A level from 0 to 100, or a step from the current one.
         #[arg(allow_negative_numbers = true, value_parser = level)]
         level: Option<Level>,
     },
+    /// Print whether playback is muted, or switch it.
+    Mute { switch: Option<SwitchArg> },
     /// Print shuffle, or switch it.
     Shuffle { switch: Option<SwitchArg> },
     /// Print repeat, or set it.
@@ -143,8 +149,24 @@ enum Sub {
         /// A provider as `sonora providers` lists it, such as `spotify`.
         slug: Option<String>,
     },
+    /// Print the Sonora Session Sonora is in, or start, join or leave one.
+    Session {
+        #[command(subcommand)]
+        action: Option<SessionSub>,
+    },
     /// Print the completion script for a shell.
     Completions { shell: Shell },
+}
+
+/// What `sonora session` does with a Sonora Session.
+#[derive(Subcommand)]
+enum SessionSub {
+    /// Start a session on the current provider and print its code.
+    Start,
+    /// Join the session a friend's six-digit code names, or open the dialog to type it in.
+    Join { code: Option<String> },
+    /// Leave the session, which ends it for everyone when Sonora hosts it.
+    Leave,
 }
 
 /// A search to take the best hit of, in place of files or links.
@@ -278,8 +300,11 @@ fn into_command(args: Args, line: &mut Command) -> Result<CommandType, clap::Err
         Sub::Prev => play(PlaybackCommand::Previous),
         Sub::Seek { point } => play(point),
         Sub::Current => play(PlaybackCommand::CurrentTrack),
+        Sub::Queue => Request::Queue(QueueCommand::Snapshot),
+        Sub::Lyrics => Request::Lyrics,
         Sub::Watch { position } => Request::Watch(Watch { position }),
         Sub::Volume { level } => play(PlaybackCommand::Volume(level)),
+        Sub::Mute { switch } => play(PlaybackCommand::Mute(switch.map(Switch::from))),
         Sub::Shuffle { switch } => play(PlaybackCommand::Shuffle(switch.map(Switch::from))),
         Sub::Repeat { repeat } => play(PlaybackCommand::Repeat(repeat.map(Repeat::from))),
         Sub::Add { items, searched } => Request::Queue(QueueCommand::Add(searched.or(items))),
@@ -293,6 +318,12 @@ fn into_command(args: Args, line: &mut Command) -> Result<CommandType, clap::Err
         }),
         Sub::Providers => Request::Provider(ProviderCommand::List),
         Sub::Provider { slug } => Request::Provider(ProviderCommand::Current(slug)),
+        Sub::Session { action } => Request::Session(match action {
+            None => SessionCommand::Status,
+            Some(SessionSub::Start) => SessionCommand::Start,
+            Some(SessionSub::Join { code }) => SessionCommand::Join(code),
+            Some(SessionSub::Leave) => SessionCommand::Leave,
+        }),
         Sub::Completions { shell } => return Ok(CommandType::Local(Local::Completions(shell))),
     };
     Ok(CommandType::Remote(request, format))
@@ -424,4 +455,77 @@ fn queued(text: &str) -> Result<Item, String> {
 /// that names no file here and is no address.
 fn is_typo(item: &str) -> bool {
     !item.contains(['/', '\\', ':', '.']) && !Path::new(item).exists()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parsed(args: &[&str]) -> CommandType {
+        let args: Vec<OsString> = std::iter::once("sonora")
+            .chain(args.iter().copied())
+            .map(OsString::from)
+            .collect();
+        match parse(args, "0.0.0") {
+            Ok(command) => command,
+            Err(_) => panic!("arguments should parse"),
+        }
+    }
+
+    #[test]
+    fn queue_reads_as_a_snapshot_request() {
+        let CommandType::Remote(request, format) = parsed(&["queue"]) else {
+            panic!("`sonora queue` should ask the running Sonora");
+        };
+        assert_eq!(request, Request::Queue(QueueCommand::Snapshot));
+        assert_eq!(format, Format::Text);
+        assert!(!request.streams());
+    }
+
+    #[test]
+    fn queue_json_keeps_the_snapshot_request() {
+        let CommandType::Remote(request, format) = parsed(&["queue", "--json"]) else {
+            panic!("`sonora queue --json` should ask the running Sonora");
+        };
+        assert_eq!(request, Request::Queue(QueueCommand::Snapshot));
+        assert_eq!(format, Format::Json);
+    }
+
+    #[test]
+    fn lyrics_reads_as_a_read_only_request_in_both_formats() {
+        for (args, expected) in [
+            (&["lyrics"][..], Format::Text),
+            (&["lyrics", "--json"], Format::Json),
+        ] {
+            let CommandType::Remote(request, format) = parsed(args) else {
+                panic!("`sonora lyrics` should ask the running Sonora");
+            };
+            assert_eq!(request, Request::Lyrics);
+            assert_eq!(format, expected);
+            assert!(!request.streams());
+        }
+    }
+
+    #[test]
+    fn mute_reads_and_changes_playback_in_both_formats() {
+        for (args, switch, format) in [
+            (&["mute"][..], None, Format::Text),
+            (&["mute", "on"][..], Some(Switch::On), Format::Text),
+            (&["mute", "off"][..], Some(Switch::Off), Format::Text),
+            (&["mute", "toggle"][..], Some(Switch::Toggle), Format::Text),
+            (&["mute", "--json"][..], None, Format::Json),
+        ] {
+            let CommandType::Remote(actual, actual_format) = parsed(args) else {
+                panic!("`sonora mute` should ask the running Sonora");
+            };
+            assert_eq!(actual, Request::Playback(PlaybackCommand::Mute(switch)));
+            assert_eq!(actual_format, format);
+        }
+    }
+
+    #[test]
+    fn mute_rejects_an_unknown_switch() {
+        let args = ["sonora", "mute", "perhaps"].map(OsString::from);
+        assert!(parse(args.to_vec(), "0.0.0").is_err());
+    }
 }

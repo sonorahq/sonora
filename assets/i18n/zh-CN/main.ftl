@@ -37,7 +37,6 @@ nav-pinned = 已固定
 nav-unpin = 取消固定
 nav-pin-hint = 拖放到此处以固定
 library-liked-songs = 收藏
-library-play-liked-songs = 播放
 library-no-songs = 还没有收藏的歌曲
 library-no-albums = 还没有保存的专辑
 library-no-playlists = 还没有播放列表
@@ -86,6 +85,7 @@ column-index = #
 column-title = 标题
 column-artist = 歌手
 column-album = 专辑
+column-genre = 流派
 column-date-added = 添加日期
 column-added-by = 添加者
 column-modified = 修改时间
@@ -97,26 +97,13 @@ column-year = 年份
 column-tracks = 歌曲总数
 
 # track menu
-menu-add-to-playlist = 添加到播放列表
-menu-add-tracks-to-playlist = { $count ->
-    [one] 将 { $count } 首歌曲添加到播放列表
-   *[other] 将 { $count } 首歌曲添加到播放列表
-}
 menu-new-playlist = 新建播放列表
 menu-import-playlist = 导入播放列表…
 menu-edit-tags = 编辑标签
 menu-no-playlists = 没有播放列表
 menu-search-playlists = 搜索播放列表
 menu-add-to-library = 添加到收藏
-menu-add-tracks-to-library = { $count ->
-    [one] 将 { $count } 首歌曲添加到收藏
-   *[other] 将 { $count } 首歌曲添加到收藏
-}
 menu-remove-from-library = 从收藏中移除
-menu-remove-tracks-from-library = { $count ->
-    [one] 从收藏中移除 { $count } 首歌曲
-   *[other] 从收藏中移除 { $count } 首歌曲
-}
 menu-remove-from-playlist = 从播放列表中移除
 menu-remove-tracks-from-playlist = { $count ->
     [one] 从播放列表中移除 { $count } 首歌曲
@@ -130,15 +117,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = 删除歌曲文件
 menu-delete-track-files = 删除 { $count } 个歌曲文件
 menu-download = 下载
-menu-download-tracks = { $count ->
-    [one] 下载 { $count } 首歌曲
-   *[other] 下载 { $count } 首歌曲
-}
 menu-remove-download = 移除下载
-menu-remove-downloads = { $count ->
-    [one] 移除 { $count } 个下载
-   *[other] 移除 { $count } 个下载
-}
 menu-downloading = 正在下载。点击停止
 menu-play-next = 下一首播放
 menu-play-tracks-next = { $count ->
@@ -170,16 +149,6 @@ menu-delete-playlist = 删除播放列表
 menu-export-playlist = 导出播放列表…
 menu-add-playlist-to-library = 添加到音乐库
 menu-remove-playlist-from-library = 从音乐库中移除
-menu-library-add = 添加到音乐库
-menu-library-add-tracks = { $count ->
-    [one] 将 { $count } 首歌曲添加到音乐库
-   *[other] 将 { $count } 首歌曲添加到音乐库
-}
-menu-library-remove = 从音乐库中移除
-menu-library-remove-tracks = { $count ->
-    [one] 从音乐库中移除 { $count } 首歌曲
-   *[other] 从音乐库中移除 { $count } 首歌曲
-}
 menu-make-playlist-public = 设为公开
 menu-make-playlist-private = 设为私密
 menu-play-artist = 播放歌手
@@ -259,10 +228,7 @@ player-previous = 上一首
 player-next = 下一首
 player-fullscreen = 全屏
 player-fullscreen-leave = 退出全屏
-player-devices = 设备
 devices-this-computer = 此电脑
-devices-pause = 暂停
-devices-resume = 继续播放
 devices-jam-join = 加入 Jam…
 devices-jam-join-title = 加入 Jam
 devices-jam-join-detail = 粘贴好友分享给你的链接
@@ -270,15 +236,12 @@ devices-jam-paste = 粘贴
 devices-jam-link-hint = Jam 链接
 devices-jam-start = 发起 Jam
 devices-jam-copy = 复制 Jam 链接
-devices-jam-code = 二维码
 devices-jam-code-menu = 显示二维码
 devices-jam-code-title = 扫码加入 { $host } 的 Jam
 devices-jam-code-title-anonymous = 扫码加入 Jam
 devices-jam-code-close = 关闭
 devices-jam-leave = 退出 Jam
 devices-jam-end = 结束 Jam
-devices-jam-banner = 正在 { $host } 的 Jam 中
-devices-jam-banner-anonymous = 正在 Jam 中
 devices-jam-more = +{ $count }
 devices-jam-host = 主持人
 devices-jam-you = 你
@@ -290,8 +253,6 @@ devices-jam-invite-detail = { $count ->
    *[other] 已有 { $count } 人在此 Jam 中。
 }
 devices-jam-invite-join = 加入
-devices-elsewhere-banner = 正在 { $device } 上播放
-devices-elsewhere-here = 在此播放
 fullscreen-artwork = 封面
 
 # filters
@@ -307,7 +268,6 @@ filter-reset = 重置筛选
 filter-duration = 时长
 filter-year = 年份
 filter-hide-explicit = 隐藏露骨内容
-filter-playable = 仅播放
 filter-favorites = 仅收藏
 filter-downloaded = 已下载
 filter-owned = 由你拥有
@@ -372,8 +332,6 @@ login-choose-detail = 选择登录 { $provider } 的方式。
 
 # album and playlist pages
 detail-playlist = 播放列表
-detail-play-album = 播放专辑
-detail-play-playlist = 播放该列表
 
 # play button
 play-pause = 暂停
@@ -386,7 +344,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } 位每月听众
    *[other] { $value } 位每月听众
 }
-artist-play = 立即播放
 artist-popular = 热门
 artist-popular-eyebrow = 探索这位歌手
 artist-popular-empty = 这位歌手暂无可播放内容
@@ -462,7 +419,6 @@ kind-playlist = 播放列表
 
 # song page
 song-eyebrow = 歌曲
-song-play = 播放歌曲
 song-view-album = 查看专辑
 song-loading = 正在加载歌曲信息…
 song-about = 关于这首歌
@@ -652,7 +608,6 @@ settings-font-detail = 基础文字大小，其他所有内容随之缩放
 settings-font-value = { $size } px
 settings-startup = 欢迎页
 settings-startup-detail = Sonora 启动时打开的页面
-settings-startup-no-guest = 访客模式下不可用
 settings-entries = 侧边栏项
 settings-entries-detail = 侧边栏中显示的项
 settings-entries-pick = 选择项
@@ -961,6 +916,8 @@ equalizer-status-channels = { $from ->
     [2] 立体声
    *[other] { $to } 声道
 }
+settings-lyrics = 显示歌词
+settings-lyrics-detail = 关闭后将在所有位置隐藏歌词，并停止查找歌词
 settings-panel-lyrics-size = 歌词大小（面板）
 settings-panel-lyrics-size-detail = 侧边面板中歌词文字的大小，基于基础字体大小
 settings-fullscreen-lyrics-size = 歌词大小（全屏）
@@ -1274,19 +1231,6 @@ toast-offline-mode = 你处于离线状态。切换为在线即可串流这首�
 offline-title = 你处于离线状态。
 offline-go-online = 切换为在线
 toast-download-failed = 无法列出要下载的歌曲。
-toast-downloading = 正在下载 { $name }
-toast-downloading-songs = { $count ->
-    [one] 正在下载 { $count } 首歌曲
-   *[other] 正在下载 { $count } 首歌曲
-}
-toast-downloaded = 已下载 { $name }
-toast-downloaded-songs = { $count ->
-    [one] 已下载 { $count } 首歌曲
-   *[other] 已下载 { $count } 首歌曲
-}
-toast-download-set-failed = { $name } 中的部分歌曲无法下载
-toast-download-song-failed = { $name } 无法下载
-toast-download-songs-failed = 部分歌曲无法下载
 toast-percent = { $percent }%
 toast-download-cancelled = 已取消下载 { $name }
 toast-downloads-cancelled = { $count ->

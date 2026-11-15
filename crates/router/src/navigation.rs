@@ -90,7 +90,7 @@ impl Navigation {
         let destination = self
             .last_settings
             .clone()
-            .unwrap_or(Destination::Settings(SettingsPage::General));
+            .unwrap_or_else(|| Destination::Settings(crate::SettingsTab::General.lead()));
         self.go(destination, cx);
     }
 

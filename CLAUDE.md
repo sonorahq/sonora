@@ -1,7 +1,9 @@
 # sonora
 
-A native music streaming client, built with Rust and [GPUI](https://github.com/zed-industries/zed)
-(Zed's UI framework). Cargo workspace, edition 2024, resolver 3.
+A native, familiar music streaming client.
+
+Built with Rust and [GPUI](https://github.com/zed-industries/zed), Zed's UI framework.
+Cargo workspace, edition 2024, resolver 3.
 
 ## Crate layout
 
@@ -98,6 +100,7 @@ sonora → views → state → music
 ```sh
 nix develop                    # or direnv allow
 cargo run --locked --package sonora
+RUSTC_WRAPPER= dx serve --hot-patch --package sonora --features hot-reload   # hot reload
 cargo fmt
 cargo check --workspace
 cargo test --workspace
@@ -105,14 +108,34 @@ cargo clippy --workspace --all-targets
 ```
 
 The devShell has no `cargo` or `cargo-clippy`; those come from the system profile. The flake's
-default package is the released binary, so `nix build` never sees the working tree, while
-`nix build .#sonora-src` compiles it.
+default package compiles the working tree. CI caches the `stable` branch, the `nightly` tag and
+main on sonora.cachix.org.
 `.cargo/config.toml` links with mold on `x86_64-unknown-linux-gnu`, so mold must be on PATH, or
 build with `RUSTFLAGS=""`. `crates/widevine` compiles C++, so a C++ compiler is needed too.
+`dx serve --hot-patch` patches a running debug build in about a second on every save. The first
+build is a full one into its own `desktop-dev` profile. `RUSTC_WRAPPER=` keeps sccache out, since a
+sccache server of another version fails the build. A changed struct layout, a dependency, gpui or
+`Cargo.toml` needs a restart, `r` in the dx console.
 
 Clippy is clean, `--all-targets` included, and stays that way. Boxed callback fields get a
 module-local `type` alias rather than a `type_complexity` warning. The one `#[allow]` is
 `reversed_empty_ranges` on the `clamp_range("abc", &(2..1))` test in `crates/ui/src/input/mod.rs`.
+
+## Patching gpui
+
+`gpui` comes from the `sonorahq/gpui` fork, pinned by `rev`. To change it, clone the fork into
+the ignored `vendor/gpui` (never a submodule), branch off `master`, and point Cargo at it while
+you work:
+
+```toml
+[patch."https://github.com/sonorahq/gpui"]
+gpui = { path = "vendor/gpui/crates/gpui" }
+gpui_platform = { path = "vendor/gpui/crates/gpui_platform" }
+```
+
+Run `cargo fmt` and `cargo clippy` inside `vendor/gpui` too. Once the fork's change is merged,
+drop the `[patch]`, move both `rev`s to the merge commit and let `Cargo.lock` follow. A `[patch]`
+is never committed.
 
 ## Code style
 
@@ -136,7 +159,7 @@ body. Scopes in use: `views`, `ui`, `music`, `state`, `playback`, `player`, `set
 
 ## Pull requests
 
-One heading, one list, nothing else:
+One heading, one list and, for a visual change, screenshots. Nothing else:
 
 ```markdown
 ## Summary
@@ -146,6 +169,12 @@ One heading, one list, nothing else:
 ```
 
 Bullets are lowercase, imperative, one line each, and describe behaviour rather than files.
+
+A pull request that noticeably changes what the user sees gets screenshots of the result. That
+means a new screen or element, a reworked layout, a theme change, or anything else a reviewer
+would only judge by looking at it. When the change alters something that already exists, show it
+before and after. The images go below the list with no heading. A small spacing nudge or a change
+nobody can see needs none.
 
 ## Changelog
 

@@ -19,6 +19,17 @@ C++ compiler, `cmake`, `pkg-config`, `mold`, and the development packages for AL
 fontconfig, libxkbcommon, libxcb, libX11 and SQLite. Running it also needs a Vulkan driver. Install
 those from your package manager.
 
+For hot reload, start Sonora through `dx` from the dev shell instead of `cargo run`:
+
+```sh
+dx serve --hot-patch --package sonora --features hot-reload
+```
+
+Saving a file patches the running debug build, and every window renders again with the new code
+while the app keeps its state. Changing the fields of a struct that is already alive needs a full
+restart, so press `r` in the dx console. The `dx` version has to match the `subsecond` crate
+that gpui pins, currently 0.7.10.
+
 Run `cargo fmt`, `cargo test --workspace` and `cargo clippy --workspace --all-targets` before you
 open a pull request.
 

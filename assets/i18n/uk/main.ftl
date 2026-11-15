@@ -37,7 +37,6 @@ nav-pinned = Закріплене
 nav-unpin = Відкріпити
 nav-pin-hint = Перетягніть сюди, щоб закріпити
 library-liked-songs = Улюблене
-library-play-liked-songs = Слухати
 library-no-songs = Улюбленого ще немає
 library-no-albums = Поки немає збережених альбомів
 library-no-playlists = Поки немає плейлистів
@@ -86,6 +85,7 @@ column-index = #
 column-title = Назва
 column-artist = Виконавець
 column-album = Альбом
+column-genre = Жанр
 column-date-added = Дата додавання
 column-added-by = Додав
 column-modified = Змінено
@@ -97,29 +97,14 @@ column-year = Рік
 column-tracks = Треки
 
 # track menu
-menu-add-to-playlist = Додати до плейлиста
-menu-add-tracks-to-playlist = { $count ->
-    [one] Додати { $count } трек до плейлиста
-    [few] Додати { $count } треки до плейлиста
-   *[other] Додати { $count } треків до плейлиста
-}
 menu-new-playlist = Новий плейлист
 menu-import-playlist = Імпортувати плейлист…
 menu-edit-tags = Змінити теги
 menu-no-playlists = Немає плейлистів
 menu-search-playlists = Пошук плейлиста
+menu-save-library = Медіатека
 menu-add-to-library = До улюбленого
-menu-add-tracks-to-library = { $count ->
-    [one] Додати { $count } трек до улюбленого
-    [few] Додати { $count } треки до улюбленого
-   *[other] Додати { $count } треків до улюбленого
-}
 menu-remove-from-library = Прибрати з улюбленого
-menu-remove-tracks-from-library = { $count ->
-    [one] Прибрати { $count } трек з улюбленого
-    [few] Прибрати { $count } треки з улюбленого
-   *[other] Прибрати { $count } треків з улюбленого
-}
 menu-remove-from-playlist = Вилучити з плейлиста
 menu-remove-tracks-from-playlist = { $count ->
     [one] Вилучити { $count } трек з плейлиста
@@ -135,17 +120,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Видалити файл треку
 menu-delete-track-files = Видалити файли треків: { $count }
 menu-download = Завантажити
-menu-download-tracks = { $count ->
-    [one] Завантажити { $count } трек
-    [few] Завантажити { $count } треки
-   *[other] Завантажити { $count } треків
-}
 menu-remove-download = Видалити завантаження
-menu-remove-downloads = { $count ->
-    [one] Видалити { $count } завантаження
-    [few] Видалити { $count } завантаження
-   *[other] Видалити { $count } завантажень
-}
 menu-downloading = Завантажується. Натисніть, щоб зупинити
 menu-play-next = Відтворити наступним
 menu-play-tracks-next = { $count ->
@@ -180,18 +155,6 @@ menu-delete-playlist = Видалити плейлист
 menu-export-playlist = Експортувати плейлист…
 menu-add-playlist-to-library = Додати до медіатеки
 menu-remove-playlist-from-library = Вилучити з медіатеки
-menu-library-add = Додати до медіатеки
-menu-library-add-tracks = { $count ->
-    [one] Додати { $count } трек до медіатеки
-    [few] Додати { $count } треки до медіатеки
-   *[other] Додати { $count } треків до медіатеки
-}
-menu-library-remove = Вилучити з медіатеки
-menu-library-remove-tracks = { $count ->
-    [one] Вилучити { $count } трек з медіатеки
-    [few] Вилучити { $count } треки з медіатеки
-   *[other] Вилучити { $count } треків з медіатеки
-}
 menu-make-playlist-public = Зробити публічним
 menu-make-playlist-private = Зробити приватним
 menu-play-artist = Відтворити виконавця
@@ -277,10 +240,7 @@ player-previous = Попередній трек
 player-next = Наступний трек
 player-fullscreen = Повноекранний режим
 player-fullscreen-leave = Вийти з повноекранного режиму
-player-devices = Пристрої
 devices-this-computer = Цей комп'ютер
-devices-pause = Пауза
-devices-resume = Продовжити
 devices-jam-join = Приєднатися до Jam…
 devices-jam-join-title = Приєднатися до Jam
 devices-jam-join-detail = Вставте посилання, яким поділився друг
@@ -288,15 +248,12 @@ devices-jam-paste = Вставити
 devices-jam-link-hint = Посилання на Jam
 devices-jam-start = Почати Jam
 devices-jam-copy = Копіювати посилання на Jam
-devices-jam-code = QR-код
 devices-jam-code-menu = Показати QR-код
 devices-jam-code-title = Скануйте, щоб приєднатися до Jam користувача { $host }
 devices-jam-code-title-anonymous = Скануйте, щоб приєднатися до Jam
 devices-jam-code-close = Закрити
 devices-jam-leave = Вийти з Jam
 devices-jam-end = Завершити Jam
-devices-jam-banner = У Jam користувача { $host }
-devices-jam-banner-anonymous = У Jam
 devices-jam-more = +{ $count }
 devices-jam-host = Організатор
 devices-jam-you = Ви
@@ -309,8 +266,6 @@ devices-jam-invite-detail = { $count ->
    *[other] У цьому Jam уже { $count } учасників.
 }
 devices-jam-invite-join = Приєднатися
-devices-elsewhere-banner = Грає на { $device }
-devices-elsewhere-here = Слухати тут
 fullscreen-artwork = Обкладинка
 
 # filters
@@ -326,7 +281,6 @@ filter-reset = Скинути фільтри
 filter-duration = Тривалість
 filter-year = Рік
 filter-hide-explicit = Приховати з ненормативною лексикою
-filter-playable = Лише доступні
 filter-favorites = Лише улюблене
 filter-downloaded = Завантажене
 filter-owned = Мої
@@ -391,8 +345,6 @@ login-choose-detail = Виберіть спосіб входу в { $provider }.
 
 # album and playlist pages
 detail-playlist = Плейлист
-detail-play-album = Слухати альбом
-detail-play-playlist = Слухати плейлист
 
 # play button
 play-pause = Пауза
@@ -406,7 +358,6 @@ artist-monthly-listeners = { $count ->
     [few] { $value } слухачі на місяць
    *[other] { $value } слухачів на місяць
 }
-artist-play = Слухати
 artist-popular = Популярне
 artist-popular-eyebrow = Знайомство з виконавцем
 artist-popular-empty = Поки немає чого слухати в цього виконавця
@@ -486,7 +437,6 @@ kind-playlist = Плейлист
 
 # song page
 song-eyebrow = Трек
-song-play = Слухати трек
 song-view-album = Відкрити альбом
 song-loading = Завантажуємо інформацію про трек…
 song-about = Про трек
@@ -684,7 +634,6 @@ settings-font-detail = Базовий розмір тексту, решта ма
 settings-font-value = { $size } px
 settings-startup = Показувати під час запуску
 settings-startup-detail = Екран, який Sonora відкриває на старті
-settings-startup-no-guest = Недоступно в гостьовому режимі
 settings-entries = Розділи бічної панелі
 settings-entries-detail = Розділи, які видно на бічній панелі
 settings-entries-pick = Обрати розділи
@@ -745,6 +694,7 @@ settings-discord-hide-on-connect-detail = Залишає статус самом
 settings-discord-buttons = Кнопки
 settings-discord-buttons-detail = Посилання під статусом, які можуть відкрити друзі: на трек у його сервісі й на Sonora
 settings-discord-buttons-pick = Обрати кнопки
+settings-discord-preview = Попередній перегляд статусу Discord
 settings-discord-preview-listening = Слухає { $name }
 settings-discord-preview-music = Музика
 settings-discord-preview-elapsed = Минуло { $time }
@@ -995,6 +945,8 @@ equalizer-status-channels = { $from ->
     [2] стерео
    *[other] { $to } кан.
 }
+settings-lyrics = Показувати тексти пісень
+settings-lyrics-detail = Вимкніть, щоб приховати тексти пісень усюди й припинити їх пошук
 settings-panel-lyrics-size = Розмір тексту пісні (панель)
 settings-panel-lyrics-size-detail = Розмір рядків тексту пісні на бічній панелі поверх базового розміру шрифту
 settings-fullscreen-lyrics-size = Розмір тексту пісні (повний екран)
@@ -1317,21 +1269,6 @@ toast-offline-mode = Ви офлайн. Перейдіть в онлайн, що
 offline-title = Ви офлайн.
 offline-go-online = Перейти в онлайн
 toast-download-failed = Не вдалося отримати список треків для завантаження.
-toast-downloading = Завантажуємо { $name }
-toast-downloading-songs = { $count ->
-    [one] Завантажуємо { $count } трек
-    [few] Завантажуємо { $count } треки
-   *[other] Завантажуємо { $count } треків
-}
-toast-downloaded = { $name } завантажено
-toast-downloaded-songs = { $count ->
-    [one] Завантажено { $count } трек
-    [few] Завантажено { $count } треки
-   *[other] Завантажено { $count } треків
-}
-toast-download-set-failed = Не вдалося завантажити деякі треки з { $name }
-toast-download-song-failed = Не вдалося завантажити { $name }
-toast-download-songs-failed = Не вдалося завантажити деякі треки
 toast-percent = { $percent }%
 toast-download-cancelled = Завантаження { $name } скасовано
 toast-downloads-cancelled = { $count ->

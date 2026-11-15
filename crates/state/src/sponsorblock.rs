@@ -35,6 +35,8 @@ impl SponsorBlock {
     ) -> Self {
         cx.observe(&playback, |this, _, cx| this.follow(cx))
             .detach();
+        let ticks = playback.read(cx).ticks().clone();
+        cx.observe(&ticks, |this, _, cx| this.follow(cx)).detach();
         cx.observe(&settings, |this, _, cx| this.follow(cx))
             .detach();
         cx.observe(&session, |this, _, cx| this.follow(cx)).detach();

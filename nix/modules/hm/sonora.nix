@@ -45,7 +45,7 @@ let
 in
 {
   options.programs.sonora = {
-    enable = lib.mkEnableOption "Sonora, a native music streaming client";
+    enable = lib.mkEnableOption "Sonora, a native, familiar music streaming client";
 
     package = lib.mkOption {
       type = lib.types.package;

@@ -37,7 +37,6 @@ nav-pinned = Sabitlenenler
 nav-unpin = Sabitlemeyi kaldır
 nav-pin-hint = Sabitlemek için buraya bırak
 library-liked-songs = Favoriler
-library-play-liked-songs = Çal
 library-no-songs = Henüz favori yok
 library-no-albums = Henüz kaydedilmiş albüm yok
 library-no-playlists = Henüz çalma listesi yok
@@ -86,6 +85,7 @@ column-index = #
 column-title = Başlık
 column-artist = Sanatçı
 column-album = Albüm
+column-genre = Tür
 column-date-added = Eklenme tarihi
 column-added-by = Ekleyen
 column-modified = Değiştirilme
@@ -97,17 +97,13 @@ column-year = Yıl
 column-tracks = Parçalar
 
 # track menu
-menu-add-to-playlist = Çalma listesine ekle
-menu-add-tracks-to-playlist = { $count } parçayı çalma listesine ekle
 menu-new-playlist = Yeni çalma listesi
 menu-import-playlist = Çalma listesini içe aktar…
 menu-edit-tags = Etiketleri düzenle
 menu-no-playlists = Çalma listesi yok
 menu-search-playlists = Çalma listesi ara
 menu-add-to-library = Favorilere ekle
-menu-add-tracks-to-library = { $count } parçayı favorilere ekle
 menu-remove-from-library = Favorilerden çıkar
-menu-remove-tracks-from-library = { $count } parçayı favorilerden çıkar
 menu-remove-from-playlist = Çalma listesinden çıkar
 menu-remove-tracks-from-playlist = { $count } parçayı çalma listesinden çıkar
 menu-remove-from-history = Geçmişten kaldır
@@ -115,13 +111,7 @@ menu-remove-tracks-from-history = { $count } parçayı geçmişten kaldır
 menu-delete-track-file = Parça dosyasını sil
 menu-delete-track-files = { $count } parça dosyasını sil
 menu-download = İndir
-menu-download-tracks = { $count ->
-   *[other] { $count } parçayı indir
-}
 menu-remove-download = İndirmeyi kaldır
-menu-remove-downloads = { $count ->
-   *[other] { $count } indirmeyi kaldır
-}
 menu-downloading = İndiriliyor. Durdurmak için tıkla
 menu-play-next = Sıradaki olarak çal
 menu-play-tracks-next = { $count } parçayı sıradaki olarak çal
@@ -146,14 +136,6 @@ menu-delete-playlist = Çalma listesini sil
 menu-export-playlist = Çalma listesini dışa aktar…
 menu-add-playlist-to-library = Kitaplığa ekle
 menu-remove-playlist-from-library = Kitaplıktan çıkar
-menu-library-add = Kitaplığa ekle
-menu-library-add-tracks = { $count ->
-   *[other] { $count } parçayı kitaplığa ekle
-}
-menu-library-remove = Kitaplıktan çıkar
-menu-library-remove-tracks = { $count ->
-   *[other] { $count } parçayı kitaplıktan çıkar
-}
 menu-make-playlist-public = Herkese açık yap
 menu-make-playlist-private = Gizli yap
 menu-play-artist = Sanatçıyı çal
@@ -239,10 +221,7 @@ player-previous = Önceki parça
 player-next = Sonraki parça
 player-fullscreen = Tam ekran
 player-fullscreen-leave = Tam ekrandan çık
-player-devices = Cihazlar
 devices-this-computer = Bu bilgisayar
-devices-pause = Duraklat
-devices-resume = Sürdür
 devices-jam-join = Jam'e katıl…
 devices-jam-join-title = Jam'e katıl
 devices-jam-join-detail = Bir arkadaşının paylaştığı bağlantıyı yapıştır
@@ -250,15 +229,12 @@ devices-jam-paste = Yapıştır
 devices-jam-link-hint = Jam bağlantısı
 devices-jam-start = Jam başlat
 devices-jam-copy = Jam bağlantısını kopyala
-devices-jam-code = QR kodu
 devices-jam-code-menu = QR kodunu göster
 devices-jam-code-title = { $host } ile Jam'e katılmak için tara
 devices-jam-code-title-anonymous = Jam'e katılmak için tara
 devices-jam-code-close = Kapat
 devices-jam-leave = Jam'den ayrıl
 devices-jam-end = Jam'i bitir
-devices-jam-banner = { $host } ile Jam'de
-devices-jam-banner-anonymous = Jam'de
 devices-jam-more = +{ $count }
 devices-jam-host = Ev sahibi
 devices-jam-you = Sen
@@ -269,8 +245,6 @@ devices-jam-invite-detail = { $count ->
    *[other] Bu Jam'de zaten { $count } kişi var.
 }
 devices-jam-invite-join = Katıl
-devices-elsewhere-banner = { $device } üzerinde çalıyor
-devices-elsewhere-here = Burada çal
 fullscreen-artwork = Kapak
 
 # filters
@@ -286,7 +260,6 @@ filter-reset = Süzgeçleri sıfırla
 filter-duration = Süre
 filter-year = Yıl
 filter-hide-explicit = Müstehcenleri gizle
-filter-playable = Yalnızca çalınabilir
 filter-favorites = Yalnızca favoriler
 filter-downloaded = İndirilenler
 filter-owned = Senin
@@ -351,8 +324,6 @@ login-choose-detail = { $provider } için oturum açma yolunu seç.
 
 # album and playlist pages
 detail-playlist = Çalma listesi
-detail-play-album = Albümü çal
-detail-play-playlist = Çalma listesini çal
 
 # play button
 play-pause = Duraklat
@@ -365,7 +336,6 @@ artist-monthly-listeners =
     { $count ->
        *[other] { $value } aylık dinleyici
     }
-artist-play = Şimdi çal
 artist-popular = Popüler
 artist-popular-eyebrow = Bu sanatçıyı keşfet
 artist-popular-empty = Bu sanatçıdan çalınacak bir şey henüz yok
@@ -441,7 +411,6 @@ kind-playlist = Çalma listesi
 
 # song page
 song-eyebrow = Şarkı
-song-play = Şarkıyı çal
 song-view-album = Albümü gör
 song-loading = Şarkı bilgileri yükleniyor…
 song-about = Bu şarkı hakkında
@@ -628,7 +597,6 @@ settings-font-detail = Temel metin boyutu, diğer her şey buna göre ölçeklen
 settings-font-value = { $size } px
 settings-startup = Açılışta göster
 settings-startup-detail = Sonora'nın açılışta gösterdiği ekran
-settings-startup-no-guest = Konuk modunda kullanılamaz
 settings-entries = Kenar çubuğu girdileri
 settings-entries-detail = Kenar çubuğunda listelenen bölümler
 settings-entries-pick = Girdileri seç
@@ -937,6 +905,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kanal
 }
+settings-lyrics = Şarkı sözlerini göster
+settings-lyrics-detail = Şarkı sözlerini her yerde gizlemek ve aramayı durdurmak için kapatın
 settings-panel-lyrics-size = Şarkı sözü boyutu (panel)
 settings-panel-lyrics-size-detail = Yan paneldeki şarkı sözü metninin, temel yazı boyutuna eklenen boyutu
 settings-fullscreen-lyrics-size = Şarkı sözü boyutu (tam ekran)
@@ -1249,17 +1219,6 @@ toast-offline-mode = Çevrimdışısın. Bu şarkıyı internetten çalmak için
 offline-title = Çevrimdışısın.
 offline-go-online = Çevrimiçi ol
 toast-download-failed = İndirilecek parçalar listelenemedi.
-toast-downloading = { $name } indiriliyor
-toast-downloading-songs = { $count ->
-   *[other] { $count } parça indiriliyor
-}
-toast-downloaded = { $name } indirildi
-toast-downloaded-songs = { $count ->
-   *[other] { $count } parça indirildi
-}
-toast-download-set-failed = { $name } içindeki bazı parçalar indirilemedi
-toast-download-song-failed = { $name } indirilemedi
-toast-download-songs-failed = Parçaların bazıları indirilemedi
 toast-percent = { $percent }%
 toast-download-cancelled = { $name } indirmesi iptal edildi
 toast-downloads-cancelled = { $count ->

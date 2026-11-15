@@ -37,7 +37,6 @@ nav-pinned = Fixados
 nav-unpin = Desafixar
 nav-pin-hint = Solte aqui para fixar
 library-liked-songs = Favoritas
-library-play-liked-songs = Tocar
 library-no-songs = Nenhuma favorita ainda
 library-no-albums = Nenhum álbum salvo ainda
 library-no-playlists = Nenhuma playlist ainda
@@ -86,6 +85,7 @@ column-index = #
 column-title = Título
 column-artist = Artista
 column-album = Álbum
+column-genre = Gênero
 column-date-added = Data de adição
 column-added-by = Adicionado por
 column-modified = Modificado
@@ -97,26 +97,13 @@ column-year = Ano
 column-tracks = Faixas
 
 # track menu
-menu-add-to-playlist = Adicionar à playlist
-menu-add-tracks-to-playlist = { $count ->
-    [one] Adicionar { $count } faixa à playlist
-   *[other] Adicionar { $count } faixas à playlist
-}
 menu-new-playlist = Nova playlist
 menu-import-playlist = Importar playlist…
 menu-edit-tags = Editar tags
 menu-no-playlists = Nenhuma playlist
 menu-search-playlists = Pesquisar playlist
 menu-add-to-library = Adicionar às Favoritas
-menu-add-tracks-to-library = { $count ->
-    [one] Adicionar { $count } faixa às Favoritas
-   *[other] Adicionar { $count } faixas às Favoritas
-}
 menu-remove-from-library = Remover das Favoritas
-menu-remove-tracks-from-library = { $count ->
-    [one] Remover { $count } faixa das Favoritas
-   *[other] Remover { $count } faixas das Favoritas
-}
 menu-remove-from-playlist = Remover da playlist
 menu-remove-tracks-from-playlist = { $count ->
     [one] Remover { $count } faixa da playlist
@@ -130,15 +117,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Excluir arquivo da faixa
 menu-delete-track-files = Excluir { $count } arquivos de faixa
 menu-download = Baixar
-menu-download-tracks = { $count ->
-    [one] Baixar { $count } faixa
-   *[other] Baixar { $count } faixas
-}
 menu-remove-download = Remover download
-menu-remove-downloads = { $count ->
-    [one] Remover { $count } download
-   *[other] Remover { $count } downloads
-}
 menu-downloading = Baixando. Clique para parar
 menu-play-next = Tocar a seguir
 menu-play-tracks-next = { $count ->
@@ -170,16 +149,6 @@ menu-delete-playlist = Excluir playlist
 menu-export-playlist = Exportar playlist…
 menu-add-playlist-to-library = Adicionar à Biblioteca
 menu-remove-playlist-from-library = Remover da Biblioteca
-menu-library-add = Adicionar à Biblioteca
-menu-library-add-tracks = { $count ->
-    [one] Adicionar { $count } faixa à Biblioteca
-   *[other] Adicionar { $count } faixas à Biblioteca
-}
-menu-library-remove = Remover da Biblioteca
-menu-library-remove-tracks = { $count ->
-    [one] Remover { $count } faixa da Biblioteca
-   *[other] Remover { $count } faixas da Biblioteca
-}
 menu-make-playlist-public = Tornar pública
 menu-make-playlist-private = Tornar privada
 menu-play-artist = Tocar artista
@@ -259,10 +228,7 @@ player-previous = Faixa anterior
 player-next = Próxima faixa
 player-fullscreen = Tela cheia
 player-fullscreen-leave = Sair da tela cheia
-player-devices = Dispositivos
 devices-this-computer = Este computador
-devices-pause = Pausar
-devices-resume = Retomar
 devices-jam-join = Entrar em uma Jam…
 devices-jam-join-title = Entrar em uma Jam
 devices-jam-join-detail = Cole o link que um amigo compartilhou com você
@@ -270,15 +236,12 @@ devices-jam-paste = Colar
 devices-jam-link-hint = Link da Jam
 devices-jam-start = Iniciar uma Jam
 devices-jam-copy = Copiar link da Jam
-devices-jam-code = Código QR
 devices-jam-code-menu = Mostrar código QR
 devices-jam-code-title = Escaneie para entrar na Jam de { $host }
 devices-jam-code-title-anonymous = Escaneie para entrar na Jam
 devices-jam-code-close = Fechar
 devices-jam-leave = Sair da Jam
 devices-jam-end = Encerrar Jam
-devices-jam-banner = Na Jam de { $host }
-devices-jam-banner-anonymous = Em uma Jam
 devices-jam-more = +{ $count }
 devices-jam-host = Anfitrião
 devices-jam-you = Você
@@ -290,8 +253,6 @@ devices-jam-invite-detail = { $count ->
    *[other] { $count } pessoas já estão nesta Jam.
 }
 devices-jam-invite-join = Entrar
-devices-elsewhere-banner = Tocando em { $device }
-devices-elsewhere-here = Tocar aqui
 fullscreen-artwork = Capa
 
 # filters
@@ -307,7 +268,6 @@ filter-reset = Redefinir filtros
 filter-duration = Duração
 filter-year = Ano
 filter-hide-explicit = Ocultar explícitas
-filter-playable = Reproduzíveis apenas
 filter-favorites = Apenas favoritas
 filter-downloaded = Baixadas
 filter-owned = Suas
@@ -372,8 +332,6 @@ login-choose-detail = Escolha como entrar no { $provider }.
 
 # album and playlist pages
 detail-playlist = Playlist
-detail-play-album = Tocar álbum
-detail-play-playlist = Tocar playlist
 
 # play button
 play-pause = Pausar
@@ -386,7 +344,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } ouvinte mensal
    *[other] { $value } ouvintes mensais
 }
-artist-play = Tocar agora
 artist-popular = Populares
 artist-popular-eyebrow = Explorar este artista
 artist-popular-empty = Nada para tocar deste artista ainda
@@ -462,7 +419,6 @@ kind-playlist = Playlist
 
 # song page
 song-eyebrow = Música
-song-play = Tocar música
 song-view-album = Ver álbum
 song-loading = Carregando informações da música…
 song-about = Sobre esta música
@@ -652,7 +608,6 @@ settings-font-detail = Tamanho base do texto, tudo o mais escala junto
 settings-font-value = { $size } px
 settings-startup = Mostrar na inicialização
 settings-startup-detail = A tela que o Sonora abre ao iniciar
-settings-startup-no-guest = Indisponível no modo convidado
 settings-entries = Itens da barra lateral
 settings-entries-detail = As seções listadas na barra lateral
 settings-entries-pick = Escolher itens
@@ -961,6 +916,8 @@ equalizer-status-channels = { $from ->
     [2] estéreo
    *[other] { $to } canais
 }
+settings-lyrics = Mostrar letras
+settings-lyrics-detail = Desative para ocultar as letras em todo lugar e parar de buscá-las
 settings-panel-lyrics-size = Tamanho da letra (painel)
 settings-panel-lyrics-size-detail = Tamanho do texto da letra no painel lateral, além do tamanho base da fonte
 settings-fullscreen-lyrics-size = Tamanho da letra (tela cheia)
@@ -1274,19 +1231,6 @@ toast-offline-mode = Você está offline. Fique online para ouvir esta música.
 offline-title = Você está offline.
 offline-go-online = Ficar online
 toast-download-failed = Não foi possível listar as faixas para baixar.
-toast-downloading = Baixando { $name }
-toast-downloading-songs = { $count ->
-    [one] Baixando { $count } faixa
-   *[other] Baixando { $count } faixas
-}
-toast-downloaded = { $name } baixado
-toast-downloaded-songs = { $count ->
-    [one] { $count } faixa baixada
-   *[other] { $count } faixas baixadas
-}
-toast-download-set-failed = Algumas faixas de { $name } não puderam ser baixadas
-toast-download-song-failed = Não foi possível baixar { $name }
-toast-download-songs-failed = Algumas faixas não puderam ser baixadas
 toast-percent = { $percent }%
 toast-download-cancelled = Download de { $name } cancelado
 toast-downloads-cancelled = { $count ->

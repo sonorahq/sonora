@@ -319,24 +319,6 @@ pub(super) fn load(directory: &Path, previous: &[ThemeVariant]) -> Loaded {
     Loaded { themes, retry }
 }
 
-/// Writes the backup of a removed built-in theme into `directory` when `id` names one and no
-/// theme file of that id is there yet, so whoever wore it keeps it. Returns whether it wrote.
-pub(super) fn adopt_legacy(id: &str, directory: &Path) -> bool {
-    let Some((_, bytes)) = LEGACY.iter().find(|(name, _)| *name == id) else {
-        return false;
-    };
-    let path = directory.join(format!("{id}.json"));
-    if fs::symlink_metadata(&path).is_ok() {
-        return false;
-    }
-    if let Err(error) = fs::create_dir_all(directory).and_then(|()| fs::write(&path, bytes)) {
-        log::warn!("settings: cannot write {}: {error}", path.display());
-        return false;
-    }
-    log::info!("settings: moved legacy theme {id} into the themes folder");
-    true
-}
-
 /// Whether `text` is a link in Sonora's own scheme, which no provider reads and which is never
 /// a file to play.
 pub fn is_own_link(text: &str) -> bool {
