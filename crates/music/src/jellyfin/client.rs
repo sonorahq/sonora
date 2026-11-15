@@ -657,13 +657,19 @@ impl JellyfinClient {
             .collect())
     }
 
-    /// The artists the server finds similar, from shared genres and tags.
+    /// The artists the server finds similar, from shared genres and tags. Artists with no songs
+    /// are left out, since the server also keeps one for every artist folder and stale tag.
     async fn similar_artists(&self, artist_id: &str) -> Result<Vec<SavedArtist>> {
         let path = format!("/Artists/{}/Similar", escape::component(artist_id));
-        let found: Items = self.get(&path, &self.user().limit(SUGGESTIONS + 1)).await?;
+        let query = self
+            .user()
+            .with("Fields", "ItemCounts")
+            .limit(SUGGESTIONS + 4);
+        let found: Items = self.get(&path, &query).await?;
         Ok(found
             .items
             .into_iter()
+            .filter(|item| item.song_count != Some(0))
             .map(|item| self.covers.artist(item))
             .filter(|artist| !wire::is_various(&artist.name))
             .take(SUGGESTIONS)
