@@ -2,11 +2,13 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::Result;
-use gpui::{Context, Entity, Task};
+use gpui::{App, Context, Entity, Task};
 use music::link::{self, Linked};
-use music::{Album, ArtistRef, MusicApi, Playlist, SavedArtist, Track};
+use music::{Album, ArtistRef, Found, MusicApi, Playlist, SavedArtist, Track};
+use serde::{Deserialize, Serialize};
+use tokio::task::AbortHandle;
 
-use crate::{Io, Library, Network, Session, SessionEvent, Shelf, join};
+use crate::{Io, Library, Network, Session, SessionEvent, Shelf, Sonora, join};
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
 const LIMIT: usize = 20;
@@ -35,7 +37,7 @@ impl Kind {
     pub const ALL: [Kind; 4] = [Kind::Song, Kind::Artist, Kind::Album, Kind::Playlist];
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ArtistHit {
     pub name: String,
     pub id: Option<String>,
@@ -43,7 +45,7 @@ pub struct ArtistHit {
     pub saved: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AlbumHit {
     pub id: String,
     pub name: String,
@@ -53,7 +55,7 @@ pub struct AlbumHit {
     pub year: i32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PlaylistHit {
     pub id: String,
     pub name: String,
@@ -61,7 +63,8 @@ pub struct PlaylistHit {
     pub cover: Option<String>,
 }
 
-#[derive(Clone)]
+/// One result of a search. The search history keeps these too, so it serializes.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Hit {
     Song(Box<Track>),
     Artist(ArtistHit),
@@ -77,6 +80,62 @@ impl Hit {
             Hit::Album(_) => Kind::Album,
             Hit::Playlist(_) => Kind::Playlist,
         }
+    }
+
+    /// The provider id of what the hit opens. A song or an artist the provider gave no id has
+    /// none, and the search history does not keep such a hit.
+    pub fn id(&self) -> Option<&str> {
+        match self {
+            Hit::Song(track) => track.id.as_deref(),
+            Hit::Artist(artist) => artist.id.as_deref(),
+            Hit::Album(album) => Some(&album.id),
+            Hit::Playlist(list) => Some(&list.id),
+        }
+    }
+
+    /// Tells one hit from another across answers and in the history, by kind and id, or by
+    /// name when there is no id.
+    pub fn key(&self) -> String {
+        let (kind, name) = match self {
+            Hit::Song(track) => ("song", &track.name),
+            Hit::Artist(artist) => ("artist", &artist.name),
+            Hit::Album(album) => ("album", &album.name),
+            Hit::Playlist(list) => ("playlist", &list.name),
+        };
+        format!("{kind}:{}", self.id().unwrap_or(name))
+    }
+
+    /// Files the hit at the top of the search history of the provider it belongs to. A hit
+    /// without an id is not kept.
+    pub fn remember(&self, cx: &mut App) {
+        let sonora = Sonora::global(cx);
+        let Some(slug) = self
+            .id()
+            .and_then(|id| sonora.session.read(cx).slug_for(id))
+        else {
+            return;
+        };
+        let hit = self.clone();
+        sonora
+            .settings
+            .clone()
+            .update(cx, |settings, cx| settings.remember_pick(slug, hit, cx));
+    }
+
+    /// Drops the hit from the search history.
+    pub fn forget(&self, cx: &mut App) {
+        let key = self.key();
+        Sonora::global(cx)
+            .settings
+            .clone()
+            .update(cx, |settings, cx| settings.forget_pick(&key, cx));
+    }
+
+    /// What the listener chose out of searches on the providers signed in now, newest first.
+    pub fn recent(cx: &App) -> Vec<Hit> {
+        let sonora = Sonora::global(cx);
+        let slugs = sonora.session.read(cx).active_slugs();
+        sonora.settings.read(cx).picks(&slugs)
     }
 }
 
@@ -124,6 +183,16 @@ struct Scored {
     score: u32,
     popularity: u32,
     hit: Hit,
+}
+
+/// Aborts a provider request when the search task waiting on it is dropped, so a query the
+/// user typed past stops asking and stops retrying.
+struct Abort(AbortHandle);
+
+impl Drop for Abort {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// A search against the provider and the library, ranked into hits as the answers land. The
@@ -329,28 +398,11 @@ impl Search {
                 .ok();
             }
 
-            let songs = {
-                let client = client.clone();
-                let asked = asked.clone();
-                io.spawn(async move { client.search(&asked).await })
-            };
-            let albums = {
-                let client = client.clone();
-                let asked = asked.clone();
-                io.spawn(async move { client.search_albums(&asked).await })
-            };
-            let playlists = {
-                let client = client.clone();
-                let asked = asked.clone();
-                io.spawn(async move { client.search_playlists(&asked).await })
-            };
-            let artists = io.spawn(async move { client.search_artists(&asked).await });
-            let (songs, albums, playlists, artists) = (
-                join(songs).await,
-                join(albums).await,
-                join(playlists).await,
-                join(artists).await,
-            );
+            let request = io.spawn(async move { client.search_all(&asked).await });
+            let _abort = Abort(request.abort_handle());
+            let found = request
+                .await
+                .unwrap_or_else(|error| Found::failed(error.into()));
 
             this.update(cx, |this, cx| {
                 if this.query != query {
@@ -369,10 +421,10 @@ impl Search {
                     artists: kept_artists,
                 } = std::mem::take(&mut this.catalog);
                 this.catalog = Catalog {
-                    tracks: salvaged(songs, tracks, &mut trouble),
-                    albums: salvaged(albums, kept_albums, &mut trouble),
-                    playlists: salvaged(playlists, kept_playlists, &mut trouble),
-                    artists: salvaged(artists, kept_artists, &mut trouble),
+                    tracks: salvaged(found.tracks, tracks, &mut trouble),
+                    albums: salvaged(found.albums, kept_albums, &mut trouble),
+                    playlists: salvaged(found.playlists, kept_playlists, &mut trouble),
+                    artists: salvaged(found.artists, kept_artists, &mut trouble),
                 };
                 match trouble.first() {
                     Some(reason) => Network::failed(reason, cx),
@@ -381,6 +433,7 @@ impl Search {
                         this.served = Some(query);
                     }
                 }
+                trouble.dedup();
                 this.error =
                     (!trouble.is_empty() && this.catalog.is_empty()).then(|| trouble.join(" · "));
                 this.rank(cx);

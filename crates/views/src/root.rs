@@ -6,11 +6,11 @@ use input::{
     OpenSettings, Refresh, ShowMembers, ToggleFullscreen, ToggleLyrics, TogglePowerbar,
     ToggleQueue, ToggleWindowFullscreen, ZoomWindow,
 };
-use router::{Destination, NavigationEvent, Screen, back, forward, navigate};
+use router::{Destination, NavigationEvent, back, forward, navigate};
 use state::{
     ArtistDetail, Detail, GenreDetails, Genres, HistoryState, Home, Io, Library, LibraryState,
     Network, Playback, Profile, Queue, Reconnected, SYSTEM_FONT, Scan, Search, Session,
-    SessionEvent, SessionState, Shelf, SideTab, SongDetail, Sonora,
+    SessionState, Shelf, SideTab, SongDetail, Sonora,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ui::WindowFrame;
@@ -45,7 +45,6 @@ struct Screens {
     home: Entity<HomeView>,
     history: Entity<HistoryView>,
     library: Entity<LibraryView>,
-    local: Entity<LibraryView>,
     artist: Option<Entity<ArtistView>>,
     artist_detail: Option<Entity<ArtistDetail>>,
     album: Option<Entity<DetailView>>,
@@ -179,25 +178,6 @@ impl Root {
         })
         .detach();
 
-        cx.subscribe(&session, |_, session, event, cx| {
-            if matches!(event, SessionEvent::SignedIn) && !session.read(cx).authenticated() {
-                let settings = Sonora::global(cx).settings.clone();
-                let startup = settings.read(cx).startup().to_owned();
-                if Screen::from_id(&startup).is_some_and(Screen::needs_account) {
-                    settings.update(cx, |settings, cx| {
-                        settings.set_startup(Screen::Home.id(), cx);
-                    });
-                }
-                if matches!(
-                    router::trail(cx).read(cx).current(),
-                    Destination::Library(_)
-                ) {
-                    navigate(Destination::Home, cx);
-                }
-            }
-        })
-        .detach();
-
         let login = cx.new(|cx| LoginView::new(session.clone(), cx));
 
         let navigation = router::trail(cx);
@@ -213,18 +193,8 @@ impl Root {
         })
         .detach();
 
-        let library_view = cx.new(|cx| {
-            LibraryView::new(
-                Shelf::Streaming,
-                library.clone(),
-                playback.clone(),
-                window,
-                cx,
-            )
-        });
-        let local_view = cx.new(|cx| {
-            LibraryView::new(Shelf::Local, library.clone(), playback.clone(), window, cx)
-        });
+        let library_view =
+            cx.new(|cx| LibraryView::new(library.clone(), playback.clone(), window, cx));
 
         let io = Io::global(cx);
         let home_state = cx.new(|cx| Home::new(library.clone(), session.clone(), io.clone(), cx));
@@ -368,7 +338,6 @@ impl Root {
                 home,
                 history,
                 library: library_view,
-                local: local_view,
                 artist: None,
                 artist_detail: None,
                 album: None,
@@ -652,6 +621,7 @@ impl Root {
     fn loading(&self, destination: &Destination, cx: &App) -> Option<Busy> {
         let library = Sonora::global(cx).library.clone();
         let shelf = |shelf: Shelf| -> Busy {
+            let library = library.clone();
             Box::new(move |cx| matches!(library.read(cx).state(shelf), LibraryState::Loading))
         };
         Some(match destination {
@@ -663,11 +633,11 @@ impl Root {
                 let history = Sonora::global(cx).history.clone();
                 Box::new(move |cx| matches!(history.read(cx).state(), HistoryState::Loading))
             }
-            Destination::Library(_) => shelf(Shelf::Streaming),
-            Destination::Local(_) => {
+            Destination::Library(_) => {
                 let session = Sonora::global(cx).session.clone();
+                let streaming = shelf(Shelf::Streaming);
                 let local = shelf(Shelf::Local);
-                Box::new(move |cx| session.read(cx).scanning() || local(cx))
+                Box::new(move |cx| session.read(cx).scanning() || streaming(cx) || local(cx))
             }
             Destination::Album(_) => {
                 let detail = self.screens.album_detail.clone()?;
@@ -709,12 +679,10 @@ impl Root {
                 let history = Sonora::global(cx).history.clone();
                 history.update(cx, |history, cx| history.reload(cx));
             }
-            Destination::Library(_) => {
-                library.update(cx, |library, cx| library.reload(Shelf::Streaming, cx))
-            }
-            Destination::Local(_) => {
-                library.update(cx, |library, cx| library.reload(Shelf::Local, cx))
-            }
+            Destination::Library(_) => library.update(cx, |library, cx| {
+                library.reload(Shelf::Streaming, cx);
+                library.reload(Shelf::Local, cx);
+            }),
             Destination::Album(id) => {
                 if let Some(detail) = self.screens.album_detail.clone() {
                     detail.update(cx, |detail, cx| detail.refresh(cx));
@@ -967,12 +935,6 @@ impl Root {
                 history.update(cx, |history, cx| history.refresh(cx));
                 toolbar = Some(history.read(cx).toolbar());
                 history.into()
-            }
-            Destination::Local(tab) => {
-                let local = self.screens.local.clone();
-                local.update(cx, |local, cx| local.select(tab.into(), cx));
-                toolbar = Some(local.read(cx).toolbar());
-                local.into()
             }
             Destination::Library(tab) => {
                 self.screens

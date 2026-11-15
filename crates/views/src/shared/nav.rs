@@ -1,5 +1,7 @@
 use gpui::prelude::*;
-use gpui::{ElementId, Hsla};
+use gpui::{Context, ElementId, Hsla};
+use router::NavEntry;
+use state::AppSettings;
 use ui::Button;
 
 /// A navigation row as the sidebars draw it: a ghost button with its label at the start, in
@@ -38,4 +40,26 @@ pub(crate) fn nav_icon(
         .w_full()
         .lit(false, accent)
         .active(move |style| style.bg(accent))
+}
+
+/// Whether the sidebar shows `entry`. An optional row shows once the listener adds it, any other
+/// until they hide it.
+pub(crate) fn entry_shown(entry: NavEntry, settings: &AppSettings) -> bool {
+    match entry.optional() {
+        true => settings.nav_added(entry.id()),
+        false => settings.nav_shown(entry.id()),
+    }
+}
+
+/// Shows or hides `entry` in the sidebar, the counterpart of `entry_shown`.
+pub(crate) fn set_entry_shown(
+    entry: NavEntry,
+    shown: bool,
+    settings: &mut AppSettings,
+    cx: &mut Context<AppSettings>,
+) {
+    match entry.optional() {
+        true => settings.set_nav_added(entry.id(), shown, cx),
+        false => settings.set_nav_shown(entry.id(), shown, cx),
+    }
 }

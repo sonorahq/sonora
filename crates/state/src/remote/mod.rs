@@ -121,6 +121,9 @@ impl Remote {
 
         cx.observe(&playback, |this, _, cx| this.publish(cx))
             .detach();
+        // the media controls show the position as it moves
+        let ticks = playback.read(cx).ticks().clone();
+        cx.observe(&ticks, |this, _, cx| this.publish(cx)).detach();
         cx.observe(&queue, |this, _, cx| this.publish(cx)).detach();
         // the album art resolves after the track it belongs to, so republish when it lands
         cx.observe(&cover, |this, _, cx| this.publish(cx)).detach();

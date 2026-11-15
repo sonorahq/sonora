@@ -16,7 +16,7 @@
 use std::time::Instant;
 
 use gpui::prelude::*;
-use gpui::{App, Context, Hsla, Pixels, Render, Rgba, Task, Window, div};
+use gpui::{App, Context, Hsla, Pixels, Render, Rgba, Task, Window, div, px};
 use state::Sonora;
 use ui::{ActiveTheme as _, CoverPalette, Theme};
 
@@ -297,13 +297,14 @@ impl Render for Ambient {
                 Some(_) => this.child(waves),
                 None => {
                     let viewport = window.viewport_size();
+                    let scale = window.scale_factor();
                     this.child(
                         div()
                             .absolute()
                             .top_0()
                             .left_0()
-                            .w((viewport.width / FIELD_SHRINK).ceil())
-                            .h((viewport.height / FIELD_SHRINK).ceil())
+                            .w(field_side(viewport.width, scale))
+                            .h(field_side(viewport.height, scale))
                             .layer_scale(FIELD_SHRINK)
                             .layer_scale_origin(gpui::point(0., 0.))
                             .child(waves.when_some(
@@ -384,6 +385,14 @@ fn blend(from: Hsla, to: Hsla, delta: f32) -> Hsla {
         b: channel(from.b, to.b),
         a: channel(from.a, to.a),
     })
+}
+
+/// The logical length of one side of the shrunken field, a whole number of device pixels that
+/// reaches the window's own `side` once stretched by `FIELD_SHRINK`. A plain logical quarter can
+/// snap below that and leave a line of whatever lies behind the window along its bottom or right.
+fn field_side(side: Pixels, scale: f32) -> Pixels {
+    let device = (f32::from(side) * scale).round();
+    px((device / FIELD_SHRINK).ceil() / scale)
 }
 
 #[cfg(test)]

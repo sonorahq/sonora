@@ -6,7 +6,7 @@ use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Div, ElementId, Entity, FocusHandle, Pixels, Render, ScrollHandle,
-    SharedString, Subscription, Task, Window, canvas, div, px, svg,
+    SharedString, Subscription, Task, Window, canvas, div, px,
 };
 use i18n::{Language, t};
 use music::SignInPrompt;
@@ -17,7 +17,7 @@ use state::{
 };
 use ui::{
     ActiveTheme as _, Card, Deck, Dismiss, Input, Lazy, Popovers, Scrollbar, ScrubberState,
-    Vacancy, faint, snapped, upper,
+    Vacancy, snapped,
 };
 
 use crate::chrome::{Chrome, OutputPicker};
@@ -1513,19 +1513,5 @@ impl Render for SettingsView {
 
 /// A group's heading: its icon, when it has one, before its name as an uppercase eyebrow.
 pub(super) fn group_heading(label: SharedString, icon: Option<&'static str>, cx: &App) -> Div {
-    let theme = cx.theme();
-
-    faint(cx)
-        .flex()
-        .items_center()
-        .gap_2()
-        .mb(theme.metrics.pad)
-        .children(icon.map(|icon| {
-            svg()
-                .path(icons::path(icon))
-                .size(theme.text(ui::Text::Small))
-                .flex_none()
-                .text_color(theme.muted_foreground)
-        }))
-        .child(upper(label))
+    ui::eyebrow_with(icon, label, cx).mb(cx.theme().metrics.pad)
 }

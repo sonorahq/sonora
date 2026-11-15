@@ -8,16 +8,14 @@ use gpui::{
     svg,
 };
 
-use crate::ExplicitBadge;
+use crate::Badge;
 use crate::artwork::cover_palette;
 use crate::artwork::{Artwork, Avatar, ROUNDED};
 use crate::button::Button;
 use crate::glass::{GLASS_BLUR, blurring};
-use crate::label::{Tails as _, upper};
+use crate::label::Tails as _;
 use crate::metrics::{LEADING, Text, snapped};
-use crate::motion::{
-    LIT_HOVER, PRESS_SCALE, PRESS_SCALE_CARD, glow_fill, glowing, pressing, solid_fill,
-};
+use crate::motion::{PRESS_SCALE, PRESS_SCALE_CARD, glow_fill, glowing, pressing, solid_fill};
 use crate::skeleton::Skeleton;
 use crate::theme::ActiveTheme as _;
 use crate::tooltip::{Perch, Tipped as _};
@@ -62,6 +60,8 @@ pub struct Card {
     circle: bool,
     tint: Option<Hsla>,
     explicit: bool,
+    /// A badge after the title and the words it is read as, as `(icon, label)`.
+    mark: Option<(SharedString, SharedString)>,
     fill: bool,
     hovered: Option<StyleRefinement>,
     /// Whether the card is lit, and the fill it is lit with.
@@ -107,6 +107,7 @@ impl Card {
             circle: false,
             tint: None,
             explicit: false,
+            mark: None,
             fill: true,
             hovered: None,
             lit: None,
@@ -270,6 +271,13 @@ impl Card {
         self
     }
 
+    /// Sets a badge showing `icon` after the title, after the explicit one, which screen readers
+    /// hear as `label`.
+    pub fn mark(mut self, icon: impl Into<SharedString>, label: impl Into<SharedString>) -> Self {
+        self.mark = Some((icon.into(), label.into()));
+        self
+    }
+
     pub fn trailing(mut self, trailing: impl IntoElement) -> Self {
         self.trailing = Some(trailing.into_any_element());
         self
@@ -318,8 +326,8 @@ impl Card {
     }
 
     /// Fills the card with `color` while `lit`, for a row that marks where the app is. Under the
-    /// pointer alone the card takes `LIT_HOVER` of that fill. Either comes on at once and fades
-    /// out the way a hover does.
+    /// pointer alone it takes the theme's `table_hover`, the hover every row shares. Either comes
+    /// on at once and fades out the way a hover does.
     pub fn lit(mut self, lit: bool, color: Hsla) -> Self {
         self.lit = Some((lit, color));
         self
@@ -366,6 +374,7 @@ impl RenderOnce for Card {
             circle,
             tint,
             explicit,
+            mark,
             fill,
             hovered,
             lit,
@@ -410,10 +419,12 @@ impl RenderOnce for Card {
             style.background = None;
             Some(fill)
         });
-        let glow_color = lit
-            .map(|(_, color)| color)
-            .or(hover_fill)
-            .filter(|_| !chosen);
+        let glow_color = match lit {
+            Some((true, color)) => Some(color),
+            Some((false, _)) => Some(theme.table_hover),
+            None => hover_fill,
+        }
+        .filter(|_| !chosen);
         let overrides = std::mem::take(base.style());
 
         let leading = match loading {
@@ -567,6 +578,7 @@ impl RenderOnce for Card {
         let about = [
             description.or_else(|| eyebrow.clone()),
             explicit.then(|| i18n::lookup("song-explicit", None)),
+            mark.as_ref().map(|(_, label)| label.clone()),
         ]
         .into_iter()
         .flatten()
@@ -593,7 +605,7 @@ impl RenderOnce for Card {
             .text_color(tint.unwrap_or(theme.foreground))
             .when_some(size, |this, size| this.text_size(theme.text(size)))
             .child(title);
-        let heading = match explicit {
+        let heading = match explicit || mark.is_some() {
             false => title.into_any_element(),
             true => div()
                 .flex()
@@ -601,7 +613,12 @@ impl RenderOnce for Card {
                 .gap(px(3.))
                 .min_w_0()
                 .child(title)
-                .child(div().flex_none().child(ExplicitBadge::new()))
+                .when(explicit, |this| {
+                    this.child(div().flex_none().child(Badge::explicit()))
+                })
+                .when_some(mark, |this, (icon, _)| {
+                    this.child(div().flex_none().child(Badge::icon(icon)))
+                })
                 .into_any_element(),
         };
         let caption = meta.map(|meta| match bare {
@@ -695,7 +712,7 @@ impl RenderOnce for Card {
                                         .text_size(theme.text(Text::Small))
                                         .text_color(theme.muted_foreground)
                                         .font_weight(FontWeight::SEMIBOLD)
-                                        .child(upper(eyebrow)),
+                                        .child(eyebrow),
                                 )
                                 .child(
                                     div()
@@ -752,12 +769,8 @@ impl RenderOnce for Card {
             return card;
         };
         let rest = solid_fill(&overrides);
-        let hover = match lit {
-            Some(_) => LIT_HOVER,
-            None => 1.,
-        };
         let lit = lit.is_some_and(|(lit, _)| lit);
-        let (card, level) = glowing(card, &id, lit, hover, window, cx);
+        let (card, level) = glowing(card, &id, lit, 1., window, cx);
         match glow_fill(rest, fill, level) {
             Some(color) => card.bg(color),
             None => card,

@@ -1450,10 +1450,9 @@ fn share_link(kind: MediaKind, id: Option<&str>, cx: &App) -> Result<String, &'s
         })
 }
 
-/// The menu behind the playlists of a library page. A local shelf also offers to import an
-/// M3U file.
+/// The menu behind the playlists of the library page, which creates a playlist or imports an
+/// M3U file into the local shelf.
 pub(crate) fn new_playlist_menu(
-    shelf: Shelf,
     on_create: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Menu {
     Menu::new("playlist-background-menu")
@@ -1462,11 +1461,11 @@ pub(crate) fn new_playlist_menu(
                 .icon("icons/plus.svg")
                 .on_click(on_create),
         )
-        .items(shelf.local().then(|| {
+        .item(
             MenuItem::new("import-playlist", t!("menu-import-playlist"))
                 .icon("icons/file-music.svg")
-                .on_click(|_, _, cx| local::import_playlist(cx))
-        }))
+                .on_click(|_, _, cx| local::import_playlist(cx)),
+        )
 }
 
 /// The whole album or playlist a download tile acts on.

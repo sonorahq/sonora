@@ -46,6 +46,9 @@ pub enum Request {
     Watch(Watch),
     /// Commands serving Sonora Session, listening together with other Sonora apps
     Session(SessionCommand),
+    /// The lyrics of the current track, as already held, without looking any up. Stands for
+    /// `sonora lyrics`
+    Lyrics,
 }
 
 impl Request {
@@ -105,6 +108,8 @@ pub enum PlaybackCommand {
     CurrentTrack,
     /// Returns or sets volume in order to `Switch`. Stands for `sonora volume < +/-N|N >`
     Volume(Option<Level>),
+    /// Returns or sets playback mute. Stands for `sonora mute [on|off|toggle]`
+    Mute(Option<Switch>),
     /// Returns or sets playback shuffle in order to `Switch`. Stands for `sonora shuffle <on|off|toggle>`
     Shuffle(Option<Switch>),
     /// Returns or sets playback repeat in order to `Repeat`. Stands for `sonora repeat <off|all|one>`

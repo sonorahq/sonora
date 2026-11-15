@@ -48,11 +48,16 @@ actions!(
         DecreaseFontSize,
         ResetFontSize,
         Undo,
-        Redo
+        Redo,
+        ZoomIn,
+        ZoomOut,
+        ZoomReset
     ]
 );
 
 pub const WORKSPACE_CONTEXT: &str = "Workspace";
+/// The context of the album cover viewer, open above the detail page.
+pub const COVER_VIEWER_CONTEXT: &str = "CoverViewer";
 pub const SEARCH_CONTEXT: &str = "Search";
 pub const POWERBAR_CONTEXT: &str = "Powerbar";
 
@@ -159,6 +164,10 @@ fn shared() -> Vec<KeyBinding> {
         KeyBinding::new("escape", Dismiss, form),
         KeyBinding::new("tab", NextField, form),
         KeyBinding::new("shift-tab", PreviousField, form),
+        KeyBinding::new("+", ZoomIn, Some(COVER_VIEWER_CONTEXT)),
+        KeyBinding::new("=", ZoomIn, Some(COVER_VIEWER_CONTEXT)),
+        KeyBinding::new("-", ZoomOut, Some(COVER_VIEWER_CONTEXT)),
+        KeyBinding::new("0", ZoomReset, Some(COVER_VIEWER_CONTEXT)),
     ]
 }
 
