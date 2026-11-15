@@ -4,13 +4,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
-use futures::future::BoxFuture;
+use futures::future::{BoxFuture, join_all};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use music::connect::{self, Command, Repeat};
 use music::vault::Vault;
 use music::{
     Analyzer, Meter, MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent, PlaybackEvents,
-    PlaybackFactory, Player, Quality, Spectrum, Track, TrackSignal, Transcode,
+    PlaybackFactory, Player, Quality, QueueAppend, Spectrum, Track, TrackSignal, Transcode,
 };
 use ui::{Pin, PinKind};
 
@@ -54,6 +54,60 @@ impl Start {
 enum Intent {
     Play,
     Pause,
+}
+
+/// Identifies the newest Soloist queue snapshot whose metadata is still being resolved.
+#[derive(Default)]
+struct SoloistQueueRevision(u64);
+
+impl SoloistQueueRevision {
+    /// Starts a newer queue snapshot, making every earlier completion stale.
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(1);
+        self.0
+    }
+
+    /// Whether a completed snapshot still matches the newest request.
+    fn is_current(&self, revision: u64) -> bool {
+        self.0 == revision
+    }
+}
+
+/// Collection entries that still need an acknowledged append to Soloist's shared queue.
+struct SoloistPublish {
+    tail: VecDeque<String>,
+    awaiting: Option<String>,
+}
+
+impl SoloistPublish {
+    /// Returns every collection occurrence that is not yet visible in an acknowledged snapshot.
+    fn retained(&self) -> Vec<String> {
+        self.awaiting.iter().chain(&self.tail).cloned().collect()
+    }
+
+    /// Starts one append, never issuing another until its command result arrives.
+    fn next(&mut self) -> Option<String> {
+        if self.awaiting.is_some() {
+            return None;
+        }
+        let id = self.tail.pop_front()?;
+        self.awaiting = Some(id.clone());
+        Some(id)
+    }
+
+    /// Clears the one append this publication is waiting to confirm.
+    fn confirm(&mut self, id: &str) -> bool {
+        if self.awaiting.as_deref() != Some(id) {
+            return false;
+        }
+        self.awaiting = None;
+        true
+    }
+
+    /// Whether every collection entry has reached Soloist.
+    fn complete(&self) -> bool {
+        self.awaiting.is_none() && self.tail.is_empty()
+    }
 }
 
 use crate::queue::{Queue, QueuePlacement};
@@ -590,6 +644,16 @@ pub struct Playback {
     /// The collection last fetched for a play button, before or after its press.
     warm: Option<Warm>,
     enqueue: Option<Task<()>>,
+    /// Reads tracks another Spotify app put on Soloist's queue.
+    soloist_queue: Option<Task<()>>,
+    /// The current occurrence named by the Soloist snapshot being resolved.
+    soloist_queue_current: Option<String>,
+    /// Rejects older queue snapshots that finish resolving after a newer one.
+    soloist_queue_revision: SoloistQueueRevision,
+    /// Reads a queued track Soloist moved to before Sonora knew its metadata.
+    soloist_track: Option<Task<()>>,
+    /// The collection tail being published to Soloist's append-only shared queue.
+    soloist_publish: Option<SoloistPublish>,
     suggest: Option<Task<()>>,
     /// The track the engine was asked to fetch ahead, so it is asked once.
     preloaded: Option<Preloaded>,
@@ -776,6 +840,11 @@ impl Playback {
             sought: None,
             warm: None,
             enqueue: None,
+            soloist_queue: None,
+            soloist_queue_current: None,
+            soloist_queue_revision: SoloistQueueRevision::default(),
+            soloist_track: None,
+            soloist_publish: None,
             suggest: None,
             preloaded: None,
             skipped: None,
@@ -1069,6 +1138,12 @@ impl Playback {
         if self.engine_for(&id).is_none() {
             return;
         }
+        if self.soloist_queue_current.as_deref() == Some(&id) {
+            self.soloist_track = None;
+            self.soloist_publish = None;
+        } else {
+            self.cancel_soloist_work();
+        }
         self.silence_other(&id);
         if !matches!(start, Start::Segue | Start::Retry) {
             self.failures = 0;
@@ -1240,6 +1315,155 @@ impl Playback {
         self.enqueue_tracks(vec![track], None, QueuePlacement::End, cx);
     }
 
+    /// Whether the active player can honour a local queue placement other than appending.
+    pub fn can_order_queue(&self) -> bool {
+        self.active_engine().is_none_or(Player::can_order_queue)
+    }
+
+    /// Whether Soloist owns the current playback and its remote queue may replace Sonora's.
+    fn soloist_owns_playback(&self) -> bool {
+        !self.local_active()
+            && self
+                .engine
+                .as_deref()
+                .is_some_and(|engine| !engine.can_order_queue())
+    }
+
+    /// Cancels metadata work that belongs to an older Soloist selection or session.
+    fn cancel_soloist_work(&mut self) {
+        self.soloist_queue = None;
+        self.soloist_queue_current = None;
+        self.soloist_queue_revision.next();
+        self.soloist_track = None;
+        self.soloist_publish = None;
+    }
+
+    /// Replaces Sonora's Spotify queue with Soloist's reported remote window.
+    fn sync_soloist_queue(
+        &mut self,
+        current: Option<connect::QueuedTrack>,
+        previous: Vec<connect::QueuedTrack>,
+        upcoming: Vec<connect::QueuedTrack>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.soloist_owns_playback() {
+            return;
+        }
+        let Some(client) = self.session.read(cx).client() else {
+            return;
+        };
+        let previous_len = previous.len();
+        self.soloist_queue_current = current.as_ref().map(|entry| entry.id.clone());
+        let entries: Vec<_> = previous.into_iter().chain(upcoming).collect();
+        let revision = self.soloist_queue_revision.next();
+        let retained = self
+            .soloist_publish
+            .as_ref()
+            .map_or_else(Vec::new, SoloistPublish::retained);
+        self.soloist_queue = Some(Io::global(cx).load(
+            async move {
+                let current = match current {
+                    Some(entry) => Some((client.track(&entry.id).await?, entry)),
+                    None => None,
+                };
+                let tracks = join_all(entries.iter().map(|entry| client.track(&entry.id)))
+                    .await
+                    .into_iter()
+                    .collect::<Result<Vec<_>>>()?;
+                Ok((current, entries, tracks))
+            },
+            move |this, found, cx| {
+                if !this.soloist_queue_revision.is_current(revision)
+                    || !this.soloist_owns_playback()
+                {
+                    return;
+                }
+                this.soloist_queue = None;
+                this.soloist_queue_current = None;
+                match found {
+                    Ok((current, entries, tracks)) => {
+                        let (previous, upcoming) =
+                            split_soloist_window(entries, tracks, previous_len);
+                        this.queue.update(cx, |queue, cx| {
+                            queue.replace_soloist_remote(current, previous, upcoming, &retained, cx)
+                        });
+                    }
+                    Err(error) => log::warn!("soloist: cannot read the remote queue: {error:#}"),
+                }
+            },
+            cx,
+        ));
+    }
+
+    /// Follows a track selected from Soloist's queue rather than advancing Sonora's own queue.
+    fn follow_soloist_track(&mut self, id: String, at: Duration, cx: &mut Context<Self>) {
+        if !self.soloist_owns_playback() {
+            return;
+        }
+        if let Some(track) = self
+            .queue
+            .read(cx)
+            .current()
+            .filter(|track| track.id.as_deref() == Some(&id))
+            .cloned()
+        {
+            return self.load_from(&track, at, Start::Pick, cx);
+        }
+        if let Some(track) = self.queue.update(cx, |queue, cx| queue.select_id(&id, cx)) {
+            return self.load_from(&track, at, Start::Pick, cx);
+        }
+        let Some(client) = self.session.read(cx).client() else {
+            return;
+        };
+        let wanted = id.clone();
+        self.soloist_track = Some(Io::global(cx).load(
+            async move { client.track(&wanted).await },
+            move |this, found, cx| {
+                this.soloist_track = None;
+                match found {
+                    Ok(track) if track.id.as_deref() == Some(&id) => {
+                        let selected = this.queue.update(cx, |queue, cx| {
+                            queue.insert([track], None, QueuePlacement::End, cx);
+                            queue.select_id(&id, cx)
+                        });
+                        if let Some(track) = selected {
+                            this.load_from(&track, at, Start::Pick, cx);
+                        }
+                    }
+                    Ok(_) => log::warn!("soloist: the remote queue returned the wrong track"),
+                    Err(error) => log::warn!("soloist: cannot read the selected track: {error:#}"),
+                }
+            },
+            cx,
+        ));
+    }
+
+    /// Appends the pending collection tail after Soloist accepted its first track.
+    fn publish_soloist_collection(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.soloist_publish.as_mut().and_then(SoloistPublish::next) else {
+            if self
+                .soloist_publish
+                .as_ref()
+                .is_some_and(SoloistPublish::complete)
+            {
+                self.soloist_publish = None;
+            }
+            return;
+        };
+        let Some(engine) = self.engine.as_deref() else {
+            self.soloist_publish = None;
+            return;
+        };
+        match engine.append_to_queue(&id, QueueAppend::Publication) {
+            Ok(true) => {}
+            Ok(false) | Err(_) => {
+                self.soloist_publish = None;
+                log::warn!("playback: cannot publish the collection tail to Soloist");
+                Toasts::show(Outcome::Failed, "toast-queue-failed", cx);
+            }
+        }
+    }
+
     pub fn play_next(&mut self, track: Track, cx: &mut Context<Self>) {
         self.enqueue_tracks(vec![track], None, QueuePlacement::Next, cx);
     }
@@ -1304,6 +1528,36 @@ impl Playback {
                 _ => QueuePlacement::End,
             };
             return sent.then_some(placed);
+        }
+        if playing && !self.local && self.soloist_owns_playback() {
+            if placement != QueuePlacement::End {
+                log::debug!("playback: Soloist cannot order a shared queue");
+                return None;
+            }
+            let engine = self.engine.as_deref()?;
+            if !tracks.iter().all(|track| {
+                track
+                    .id
+                    .as_deref()
+                    .is_some_and(|id| !music::is_local_id(id))
+            }) {
+                log::info!("playback: cannot append a mixed local and Spotify batch to Soloist");
+                Toasts::show(Outcome::Info, "toast-queue-local-elsewhere", cx);
+                return None;
+            }
+            let sent = tracks.iter().all(|track| {
+                track.id.as_deref().is_some_and(|id| {
+                    match engine.append_to_queue(id, QueueAppend::User) {
+                        Ok(true) => true,
+                        Ok(false) => false,
+                        Err(error) => {
+                            log::warn!("playback: cannot append to Soloist queue: {error:#}");
+                            false
+                        }
+                    }
+                })
+            });
+            return sent.then_some(QueuePlacement::End);
         }
         if !playing {
             self.begin(tracks, 0, origin, cx);
@@ -1755,6 +2009,20 @@ impl Playback {
         };
         self.leave_station();
         self.play(&track, cx);
+        if self.soloist_owns_playback() {
+            let ids: Vec<_> = self
+                .queue
+                .read(cx)
+                .upcoming()
+                .filter_map(|track| track.id.as_deref())
+                .filter(|id| !music::is_local_id(id))
+                .map(str::to_owned)
+                .collect();
+            self.soloist_publish = (!ids.is_empty()).then_some(SoloistPublish {
+                tail: ids.into(),
+                awaiting: None,
+            });
+        }
         true
     }
 
@@ -3144,6 +3412,46 @@ impl Playback {
             self.learn_signal(id, track, cx);
             return;
         }
+        if let BackendEvent::QueueRejected { id, append } = event {
+            if self.soloist_publish.as_ref().is_some_and(|publish| {
+                append == QueueAppend::Publication && publish.awaiting.as_deref() == Some(&id)
+            }) {
+                self.soloist_publish = None;
+                self.soloist_queue = None;
+                self.soloist_queue_current = None;
+                self.soloist_queue_revision.next();
+            }
+            log::warn!("playback: Soloist rejected a shared queue addition");
+            Toasts::show(Outcome::Failed, "toast-queue-failed", cx);
+            return;
+        }
+        if let BackendEvent::QueueAppended { id, append } = event {
+            if self
+                .soloist_publish
+                .as_mut()
+                .is_some_and(|publish| append == QueueAppend::Publication && publish.confirm(&id))
+            {
+                self.publish_soloist_collection(cx);
+            }
+            return;
+        }
+        if let BackendEvent::QueueChanged {
+            current,
+            previous,
+            upcoming,
+        } = event
+        {
+            if !local && self.soloist_owns_playback() {
+                self.sync_soloist_queue(current, previous, upcoming, cx);
+            }
+            return;
+        }
+        if let BackendEvent::QueuedTrack { id, at } = event {
+            if !local && self.soloist_owns_playback() {
+                self.follow_soloist_track(id, at, cx);
+            }
+            return;
+        }
         if local != self.local_active() {
             return;
         }
@@ -3172,7 +3480,12 @@ impl Playback {
         }
         match event {
             // rebuilt or kept before the filters above
-            BackendEvent::OutputChanged { .. } | BackendEvent::Signal { .. } => {}
+            BackendEvent::OutputChanged { .. }
+            | BackendEvent::Signal { .. }
+            | BackendEvent::QueueChanged { .. }
+            | BackendEvent::QueuedTrack { .. }
+            | BackendEvent::QueueRejected { .. }
+            | BackendEvent::QueueAppended { .. } => {}
             BackendEvent::Unavailable { .. }
             | BackendEvent::Throttled { .. }
             | BackendEvent::Refused
@@ -3207,6 +3520,7 @@ impl Playback {
                 if started {
                     cx.emit(PlaybackEvent::StartedPlayback);
                 }
+                self.publish_soloist_collection(cx);
                 self.follow_up_seek(cx);
             }
             BackendEvent::Paused { at, .. } => {
@@ -3348,6 +3662,7 @@ impl Playback {
         self.task = None;
         self.engine = None;
         self.signals.retain(|(id, _)| music::is_local_id(id));
+        self.cancel_soloist_work();
 
         if !self.local_active() {
             self.load = None;
@@ -3605,6 +3920,23 @@ fn throttle_wait(throttles: u8) -> Duration {
         .min(THROTTLE_CAP)
 }
 
+type ResolvedSoloistTrack = (Track, connect::QueuedTrack);
+
+/// Splits a resolved Soloist queue snapshot without changing the daemon's reported order.
+fn split_soloist_window(
+    entries: Vec<connect::QueuedTrack>,
+    tracks: Vec<Track>,
+    previous_len: usize,
+) -> (Vec<ResolvedSoloistTrack>, Vec<ResolvedSoloistTrack>) {
+    let mut window: Vec<_> = entries
+        .into_iter()
+        .zip(tracks)
+        .map(|(entry, track)| (track, entry))
+        .collect();
+    let upcoming = window.split_off(previous_len);
+    (window, upcoming)
+}
+
 /// Drops an engine on a thread of its own. Spotify's waits for its player thread to end, which
 /// sits out an output device that takes CoreAudio ten seconds to give up on, so dropping it here
 /// would hold the window for as long.
@@ -3621,9 +3953,67 @@ fn retire(engine: Option<Box<dyn Player>>) {
 }
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
     use std::time::{Duration, Instant};
 
-    use super::{DEFAULT_UNMUTE_VOLUME, LiveClock, MuteMemory, gain};
+    use music::{Track, connect::QueuedTrack};
+
+    use super::{
+        DEFAULT_UNMUTE_VOLUME, LiveClock, MuteMemory, SoloistPublish, SoloistQueueRevision, gain,
+        split_soloist_window,
+    };
+
+    #[test]
+    fn newest_soloist_queue_snapshot_wins() {
+        let mut revision = SoloistQueueRevision::default();
+        let older = revision.next();
+        let newer = revision.next();
+
+        assert!(!revision.is_current(older));
+        assert!(revision.is_current(newer));
+    }
+
+    #[test]
+    fn soloist_collection_waits_for_its_own_append() {
+        let mut publish = SoloistPublish {
+            tail: VecDeque::from(["b".into(), "c".into()]),
+            awaiting: None,
+        };
+
+        assert_eq!(publish.next().as_deref(), Some("b"));
+        assert_eq!(publish.next(), None);
+        assert!(!publish.confirm("other"));
+        assert!(publish.confirm("b"));
+        assert_eq!(publish.next().as_deref(), Some("c"));
+    }
+
+    #[test]
+    fn soloist_window_keeps_remote_order_and_queue_kind() {
+        let entries = vec![
+            QueuedTrack::new("past".into(), false),
+            QueuedTrack::new("manual".into(), true),
+            QueuedTrack::new("context".into(), false),
+        ];
+        let tracks = ["past", "manual", "context"]
+            .into_iter()
+            .map(|name| Track {
+                name: name.to_owned(),
+                ..Default::default()
+            })
+            .collect();
+
+        let (previous, upcoming) = split_soloist_window(entries, tracks, 1);
+
+        assert_eq!(previous[0].0.name, "past");
+        assert!(!previous[0].1.queued);
+        assert_eq!(
+            upcoming
+                .iter()
+                .map(|(track, queued)| (track.name.as_str(), queued.queued))
+                .collect::<Vec<_>>(),
+            [("manual", true), ("context", false)]
+        );
+    }
 
     #[test]
     fn never_amplifies_past_unity() {

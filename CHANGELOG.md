@@ -55,6 +55,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A friend editing the queue of your Spotify Jam no longer clears your listening history in Sonora.
 - Seeking from another device while a track is still loading no longer leaves Sonora showing it as loading.
 - The Flatpak shows your Discord status in Vesktop and in Discord installed from Flathub.
+- Tracks queued from another Spotify app now appear in Sonora's queue and play when selected on that app while using Soloist.
 - On Linux with WebKitGTK 2.54 or newer, signing in to Apple Music no longer fills all your memory and crashes Sonora before the sign-in page loads.
 - Tidal artists with no portrait show the album cover Tidal draws them with, instead of an empty picture.
 - Releases tagged with the label `[no label]` no longer show a copyright line crediting it.

@@ -27,6 +27,8 @@ pub(super) enum Event {
     },
     QueueChanged {
         #[serde(default)]
+        previous: Vec<Queued>,
+        #[serde(default)]
         upcoming: Vec<Queued>,
     },
     VolumeChanged {
@@ -47,6 +49,9 @@ pub(super) enum Event {
     Error {
         #[serde(default)]
         message: String,
+        /// The command the daemon rejected, when its protocol can identify one.
+        #[serde(default)]
+        command: String,
     },
     #[serde(other)]
     Other,
@@ -101,6 +106,8 @@ impl Entity {
 /// One entry of what the daemon plays after the current track.
 #[derive(Debug, Default, Deserialize)]
 pub(super) struct Queued {
+    #[serde(default)]
+    pub uid: String,
     #[serde(default)]
     source: String,
     #[serde(default)]
