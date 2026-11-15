@@ -13,7 +13,7 @@ arch=('x86_64' 'aarch64')
 url='https://github.com/sonorahq/sonora'
 license=('GPL-3.0-or-later')
 depends=('glibc' 'alsa-lib' 'dbus' 'fontconfig' 'hicolor-icon-theme' 'libxcb'
-         'libxkbcommon' 'libxkbcommon-x11' 'sqlite' 'vulkan-icd-loader' 'wayland')
+         'libxkbcommon' 'libxkbcommon-x11' 'vulkan-icd-loader' 'wayland')
 optdepends=('vulkan-radeon: Vulkan driver for AMD GPUs'
             'vulkan-intel: Vulkan driver for Intel GPUs'
             'nvidia-utils: Vulkan driver for NVIDIA GPUs'

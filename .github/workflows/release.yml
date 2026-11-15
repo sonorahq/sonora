@@ -24,8 +24,6 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_PROFILE_RELEASE_STRIP: symbols
   RUST_BACKTRACE: 1
-  RUSTC_WRAPPER: sccache
-  SCCACHE_GHA_ENABLED: "true"
 
 jobs:
   build:
@@ -41,8 +39,9 @@ jobs:
             os: ubuntu-22.04-arm
           - target: aarch64-apple-darwin
             os: macos-15
+          # Apple silicon cross-compiles for Intel faster than GitHub's Intel runners build natively.
           - target: x86_64-apple-darwin
-            os: macos-15-intel
+            os: macos-15
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             arch: x64compatible
@@ -52,7 +51,7 @@ jobs:
             arch: arm64
             setup: Sonora-Setup-arm64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: name the artifact
         id: meta
@@ -67,32 +66,44 @@ jobs:
           if [ -n "$NIGHTLY" ]; then version=nightly; fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      # Cargo on the runner's NTFS drive spends much of its time in the filesystem and Defender.
+      # A ReFS Dev Drive takes the target directory instead, through a junction, so every path
+      # below stays the same.
+      - uses: samypr100/setup-dev-drive@562171fe8df7401fdf582d766cd3b6ab80d5b1a0 # v4.1.0
+        if: runner.os == 'Windows' && !inputs.reuse
+        with:
+          drive-size: 40GB
+      - name: put the target directory on the Dev Drive
+        if: runner.os == 'Windows' && !inputs.reuse
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:DEV_DRIVE/target" | Out-Null
+          New-Item -ItemType Junction -Path target -Target "$env:DEV_DRIVE/target" | Out-Null
+
       - name: system dependencies
         if: runner.os == 'Linux' && !inputs.reuse
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config cmake mold \
-            libasound2-dev libfontconfig1-dev libfreetype-dev libsqlite3-dev \
+            libasound2-dev libfontconfig1-dev libfreetype-dev \
             libx11-dev libxcb1-dev libxcursor-dev libxi-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libvulkan-dev libdbus-1-dev
 
-      - uses: dtolnay/rust-toolchain@stable
+      # rust-toolchain.toml pins the toolchain cargo runs, and it only comes with the host's
+      # standard library, so a cross-compiled target has to be added to it.
+      - name: rust toolchain
         if: ${{ !inputs.reuse }}
-        with:
-          targets: ${{ matrix.target }}
+        shell: bash
+        run: rustup toolchain install && rustup target add ${{ matrix.target }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
-        if: ${{ !inputs.reuse }}
-      - uses: Swatinem/rust-cache@v2
-        if: ${{ !inputs.reuse }}
-        with:
-          key: ${{ matrix.target }}
-          cache-targets: false
-          cache-on-failure: true
-      # A nightly compiles its label in as the version the app shows. Other builds leave the
-      # variable unset, since an empty one would still count as set.
+      # Nightlies and releases reach users, so they compile from source and restore nothing from
+      # the Actions cache: anything that runs code in a job on main can write that cache, and a
+      # poisoned entry would end up in a signed binary.
+      #
+      # A nightly compiles its label and commit in as the version the app shows. Other builds leave
+      # the variables unset, since an empty one would still count as set.
       - name: build
         if: ${{ !inputs.reuse }}
         shell: bash
@@ -102,7 +113,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "$NIGHTLY" ]; then
-            export SONORA_VERSION="$NIGHTLY" SONORA_CHANNEL=nightly
+            export SONORA_VERSION="$NIGHTLY" SONORA_CHANNEL=nightly SONORA_COMMIT="$GITHUB_SHA"
           fi
           cargo build --release --locked --package sonora --target "$TARGET"
 
@@ -120,9 +131,6 @@ jobs:
           bash scripts/download-release-asset.sh "$TAG" "sonora-$TAG-$TARGET$suffix" \
             "target/$TARGET/release/sonora$suffix"
 
-      - name: sccache stats
-        if: always() && !inputs.reuse
-        run: sccache --show-stats
       - name: stage the executable
         if: ${{ !inputs.reuse || runner.os != 'macOS' }}
         shell: bash
@@ -173,13 +181,13 @@ jobs:
           }
           $env:SONORA_VERSION = $number
           $channel = if ($env:NIGHTLY) { "nightly" } else { "stable" }
-          @{ version = $number; channel = $channel } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM build.json
+          @{ version = $number; channel = $channel; commit = $env:GITHUB_SHA } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM build.json
           $env:SONORA_BUILD_METADATA = (Resolve-Path build.json).Path
           $env:SONORA_EXE = (Resolve-Path "target/$env:TARGET/release/sonora.exe").Path
           $env:SONORA_DIST = (Resolve-Path "dist").Path
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "scripts/windows/sonora.iss"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ !inputs.reuse || runner.os != 'macOS' }}
         with:
           name: "${{ runner.os == 'macOS' && format('darwin-{0}', matrix.target) || format('release-{0}', matrix.target) }}"
@@ -191,7 +199,7 @@ jobs:
     needs: build
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: name the artifact
         id: meta
@@ -218,7 +226,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "number=$number" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: ${{ !inputs.reuse }}
         with:
           pattern: darwin-*
@@ -296,8 +304,8 @@ jobs:
           version="${NIGHTLY:-$NUMBER}"
           channel=stable
           if [ -n "$NIGHTLY" ]; then channel=nightly; fi
-          jq -n --arg version "$version" --arg channel "$channel" \
-            '{version: $version, channel: $channel}' > Sonora.app/Contents/Resources/sonora-build.json
+          jq -n --arg version "$version" --arg channel "$channel" --arg commit "$GITHUB_SHA" \
+            '{version: $version, channel: $channel, commit: $commit}' > Sonora.app/Contents/Resources/sonora-build.json
 
       - name: sign the bundle
         shell: bash
@@ -333,7 +341,7 @@ jobs:
             -format UDZO \
             "dist/sonora-$VERSION-macos.dmg"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-macos
           path: dist/*
@@ -361,7 +369,7 @@ jobs:
       ARCH: ${{ matrix.variant.arch }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: name the artifact
         id: meta
@@ -403,13 +411,14 @@ jobs:
             echo "update=$update"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-${{ matrix.variant.target }}
           path: staged
 
       # The libraries the executable links, so linuxdeploy can resolve and copy them. Its own
       # excludelist decides which of them stay behind and come from the host instead.
+      # libsqlite3-0 is only for an executable reused from a release that predates bundled SQLite.
       - name: system dependencies
         run: |
           sudo apt-get update
@@ -444,8 +453,8 @@ jobs:
           chmod +x AppDir/usr/bin/sonora
           channel=stable
           if [ -n "$NIGHTLY" ]; then channel=nightly; fi
-          jq -n --arg version "$NUMBER" --arg channel "$channel" \
-            '{version: $version, channel: $channel}' > AppDir/usr/bin/sonora-build.json
+          jq -n --arg version "$NUMBER" --arg channel "$channel" --arg commit "$GITHUB_SHA" \
+            '{version: $version, channel: $channel, commit: $commit}' > AppDir/usr/bin/sonora-build.json
 
           # Artwork is compiled into the executable. The AppDir supplies launcher integration.
           mkdir -p AppDir/usr/share/icons
@@ -535,7 +544,7 @@ jobs:
           ldd squashfs-root/usr/bin/sonora
           rm -rf squashfs-root
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-appimage-${{ matrix.variant.arch }}
           path: dist/*
@@ -565,7 +574,7 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: name the artifact
         id: meta
@@ -587,13 +596,16 @@ jobs:
           ./flatpak/generate-sources.sh
 
       - name: Build Flatpak Bundle
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6.8
         with:
           manifest-path: flatpak/flatpak-builder.yaml
           bundle: sonora-${{ steps.meta.outputs.version }}-${{ matrix.variant.arch }}.flatpak
           arch: ${{ matrix.variant.arch }}
           upload-artifact: true
           artifact-name: flatpak-${{ matrix.variant.arch }}
+          # Like the executables, the bundle builds from source and restores nothing from the
+          # Actions cache.
+          cache: false
 
   flatpak-repo:
     needs: flatpak
@@ -602,9 +614,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: flatpak-*
           path: bundles
@@ -666,7 +678,7 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: ./flatpak/export-bundles.sh site/repo "$VERSION" dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-flatpak
           path: dist/*
@@ -694,9 +706,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: dist
@@ -720,7 +732,7 @@ jobs:
             -f tag_name="$TAG" --jq .body > notes.md
           printf '\n[Code signing policy](https://github.com/%s#code-signing-policy)\n' "$GITHUB_REPOSITORY" >> notes.md
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           files: dist/*
           body_path: notes.md
@@ -737,9 +749,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: dist
@@ -752,8 +764,8 @@ jobs:
         env:
           NIGHTLY: ${{ inputs.nightly }}
         run: |
-          jq -n --arg version "$NIGHTLY" \
-            '{version: $version, channel: "nightly"}' > dist/sonora-build.json
+          jq -n --arg version "$NIGHTLY" --arg commit "$GITHUB_SHA" \
+            '{version: $version, channel: "nightly", commit: $commit}' > dist/sonora-build.json
 
       - name: checksums
         run: cd dist && shasum -a 256 * > SHA256SUMS
@@ -762,7 +774,8 @@ jobs:
         env:
           NIGHTLY: ${{ inputs.nightly }}
         run: |
-          jq -n --arg version "$NIGHTLY" '{version: $version}' > nix/nightly.json
+          jq -n --arg version "$NIGHTLY" --arg commit "$GITHUB_SHA" \
+            '{version: $version, commit: $commit}' > nix/nightly.json
 
       - name: move the nightly tag
         env:
@@ -873,7 +886,7 @@ jobs:
       - name: system dependencies
         run: pacman -Syu --noconfirm --needed git openssh
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: render and build the PKGBUILD
         env:

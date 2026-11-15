@@ -414,8 +414,7 @@ impl PageHero {
         self
     }
 
-    /// Makes the cover a button that opens it, named and announced as View cover. Pages whose
-    /// cover stands for something else, such as an artist's portrait, leave it inert.
+    /// Makes the cover a button that opens it, named and announced as View cover.
     pub(crate) fn on_cover_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
