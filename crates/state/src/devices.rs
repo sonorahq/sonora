@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 use futures::{StreamExt as _, stream};
@@ -29,6 +29,15 @@ const REMOTE_TRACKS: usize = 25;
 const TICK: Duration = Duration::from_millis(500);
 /// The actual history and upcoming order supplied by another device.
 type RemoteWindow = (Vec<(Track, bool)>, bool, Vec<(Track, bool)>);
+
+/// A seek another device asked for while a song was loading, kept until that song plays.
+struct LateSeek {
+    /// The id of the song it was asked for.
+    track: Option<String>,
+    at: Duration,
+    /// When it was asked, since a song that plays has moved on by the time it loads.
+    asked: Instant,
+}
 
 /// The provider's device network as the app sees it: this app listed as a device, playback
 /// reported to the account's other apps, their commands carried out, and the account's other
@@ -77,6 +86,9 @@ pub struct Devices {
     events: Option<Task<()>>,
     /// The latest transfer or queue edit; a newer request cancels its predecessor.
     changing: Option<Task<()>>,
+    /// A seek another device asked for while the song was loading here. It is made once the
+    /// song plays, unless another song has taken its place by then.
+    seek_due: Option<LateSeek>,
     queuing: HashMap<String, Task<()>>,
     liking: HashMap<String, Task<()>>,
     /// Notifies twice a second while another device plays, so its progress is redrawn.
@@ -101,8 +113,11 @@ impl Devices {
             | SessionEvent::WentOffline => this.relink(cx),
         })
         .detach();
-        cx.observe(&playback, |this, _, cx| this.publish(cx))
-            .detach();
+        cx.observe(&playback, |this, _, cx| {
+            this.seek_late(cx);
+            this.publish(cx);
+        })
+        .detach();
         cx.observe(&queue, |this, _, cx| this.publish(cx)).detach();
         cx.observe(&settings, |this, _, cx| this.apply(cx)).detach();
 
@@ -134,6 +149,7 @@ impl Devices {
             sent: None,
             events: None,
             changing: None,
+            seek_due: None,
             queuing: HashMap::new(),
             liking: HashMap::new(),
             ticking: None,
@@ -400,6 +416,55 @@ impl Devices {
             elsewhere.device.volume = level;
         }
         cx.notify();
+    }
+
+    /// Seeks here as another device asked. A seek into a song that is still loading leaves
+    /// playback showing it as loading for good, so that one waits for the song to play.
+    fn seek(&mut self, at: Duration, cx: &mut Context<Self>) {
+        match self.playback.read(cx).is_loading() {
+            true => {
+                self.seek_due = Some(LateSeek {
+                    track: self.current_id(cx),
+                    at,
+                    asked: Instant::now(),
+                })
+            }
+            false => self.here(cx, |playback, cx| playback.seek(at, cx)),
+        }
+    }
+
+    /// The id of the song that plays or loads here.
+    fn current_id(&self, cx: &App) -> Option<String> {
+        self.queue
+            .read(cx)
+            .current()
+            .and_then(|track| track.id.clone())
+    }
+
+    /// Makes the seek that waited for the song to load, from as far on as the song it follows
+    /// has got since.
+    fn seek_late(&mut self, cx: &mut Context<Self>) {
+        let Some(due) = &self.seek_due else {
+            return;
+        };
+        // the seek was meant for the song that was loading, not for one that came after it
+        if due.track != self.current_id(cx) {
+            self.seek_due = None;
+            return;
+        }
+        let playback = self.playback.read(cx);
+        if playback.is_loading() {
+            return;
+        }
+        let playing = playback.wants_playing();
+        let Some(due) = self.seek_due.take() else {
+            return;
+        };
+        let at = match playing {
+            true => due.at + due.asked.elapsed(),
+            false => due.at,
+        };
+        self.here(cx, |playback, cx| playback.seek(at, cx));
     }
 
     /// Has playback act on this app's own engine, as another device asked, rather than steer
@@ -785,13 +850,13 @@ impl Devices {
             Command::Pause => self.here(cx, |playback, cx| playback.pause(cx)),
             Command::Next => self.here(cx, |playback, cx| playback.next(cx)),
             Command::Previous => self.here(cx, |playback, cx| playback.previous(cx)),
-            Command::Seek(at) => self.here(cx, |playback, cx| playback.seek(at, cx)),
+            Command::Seek(at) => self.seek(at, cx),
             Command::Volume(level) => self.here(cx, |playback, cx| playback.set_volume(level, cx)),
             Command::Shuffle(on) => self.queue.update(cx, |queue, cx| queue.set_shuffle(on, cx)),
             Command::Repeat(mode) => self.here(cx, |playback, cx| playback.set_repeat(mode, cx)),
             Command::Enqueue { id, added_by } => self.enqueue(id, added_by, cx),
             Command::Start(start) => self.start(start, cx),
-            Command::SetQueue { previous, upcoming } => self.set_queue(previous, upcoming, cx),
+            Command::SetQueue { upcoming } => self.set_queue(upcoming, cx),
             Command::Released => {
                 // another device took over, so this one stops without calling playback back
                 self.changing = None;
@@ -865,12 +930,8 @@ impl Devices {
     }
 
     /// Accepts queue edits made in another Spotify client without resetting the current song.
-    fn set_queue(
-        &mut self,
-        previous: Vec<QueuedTrack>,
-        upcoming: Vec<QueuedTrack>,
-        cx: &mut Context<Self>,
-    ) {
+    /// The history stays as it is here, since an edit only ever changes what is still to play.
+    fn set_queue(&mut self, upcoming: Vec<QueuedTrack>, cx: &mut Context<Self>) {
         let Some(state) = self.snapshot(cx) else {
             return;
         };
@@ -888,11 +949,7 @@ impl Devices {
         }
         self.start(
             Start {
-                state: Arc::new(Snapshot {
-                    previous,
-                    upcoming,
-                    ..state
-                }),
+                state: Arc::new(Snapshot { upcoming, ..state }),
                 preserve_queue: true,
                 restart: false,
             },

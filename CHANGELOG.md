@@ -30,6 +30,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The snap shows Sonora's tray icon instead of a generic placeholder.
 - On Windows, playback no longer crackles when you open apps or browser tabs, and the buffer setting under Settings, Sound works again.
+- Friends who join a Spotify Jam you host from Sonora hear the track you play instead of the first one of the album or playlist, see the same queue, and the songs they remove or move stay that way.
+- Pausing while you host a Spotify Jam pauses it only for you, the way Spotify does: your friends keep listening, and resuming brings you back to where the Jam is.
+- A friend editing the queue of your Spotify Jam no longer clears your listening history in Sonora.
+- Seeking from another device while a track is still loading no longer leaves Sonora showing it as loading.
 - The Flatpak shows your Discord status in Vesktop and in Discord installed from Flathub.
 - On Linux with WebKitGTK 2.54 or newer, signing in to Apple Music no longer fills all your memory and crashes Sonora before the sign-in page loads.
 - Tidal artists with no portrait show the album cover Tidal draws them with, instead of an empty picture.
