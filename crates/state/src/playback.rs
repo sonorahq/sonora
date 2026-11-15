@@ -99,6 +99,10 @@ const RESUME_STEP: Duration = Duration::from_secs(5);
 /// and that clock starts at the load rather than the pause, so this leaves room for a long track.
 const STALE_PAUSE: Duration = Duration::from_secs(5 * 60);
 const TAPER_DB: f32 = 50.;
+/// A level this low counts as muted, matching the player's volume button.
+const MUTE_THRESHOLD: f32 = 0.001;
+/// The level a mute button restores when the volume was already zero.
+const DEFAULT_UNMUTE_VOLUME: f32 = 0.7;
 const SIMILAR_LIMIT: usize = 20;
 
 /// How few tracks may be left to play before radio asks for the next batch of suggestions.
@@ -296,6 +300,63 @@ pub enum PlaybackEvent {
     Seeked,
 }
 
+/// Remembers the level silenced by a temporary mute, without saving it as a volume preference.
+#[derive(Default)]
+struct MuteMemory {
+    restore: Option<f32>,
+    target: Option<String>,
+}
+
+impl MuteMemory {
+    /// Returns a temporary volume change for a mute request, preserving the first level silenced.
+    fn change(&mut self, muted: bool, level: f32, target: Option<String>) -> Option<f32> {
+        if self.restore.is_some() && self.target != target {
+            self.forget();
+        }
+        if muted {
+            return match level > MUTE_THRESHOLD {
+                true => {
+                    self.restore = Some(level);
+                    self.target = target;
+                    Some(0.)
+                }
+                false => None,
+            };
+        }
+        match level > MUTE_THRESHOLD {
+            true => {
+                self.forget();
+                None
+            }
+            false => {
+                let restore = self.restore.take().unwrap_or(DEFAULT_UNMUTE_VOLUME);
+                self.target = None;
+                Some(restore)
+            }
+        }
+    }
+
+    /// Forgets the saved level when a volume change comes from another control.
+    fn volume_changed(&mut self) {
+        self.forget();
+    }
+
+    /// Forgets a mute restore level when its device reports a non-silent volume.
+    fn reported_volume(&mut self, device: &str, level: f32) {
+        if self.restore.is_some()
+            && self.target.as_deref() == Some(device)
+            && level > MUTE_THRESHOLD
+        {
+            self.forget();
+        }
+    }
+
+    fn forget(&mut self) {
+        self.restore = None;
+        self.target = None;
+    }
+}
+
 /// A one-shot request to pause after wall-clock time or when the current track ends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sleep {
@@ -429,6 +490,11 @@ impl Unread {
     }
 }
 
+/// Notified on every position report, from the engine here or from the device being steered,
+/// in place of `Playback`. It holds nothing; an observer reads the time from `Playback`, and
+/// anything that draws or counts the position observes both.
+pub struct PositionTick;
+
 /// Everything the UI knows about what is playing, and the only thing that drives an engine.
 /// Holds one engine for the streaming provider and one for local files, a `Queue` for what
 /// comes next, and a clock for the position between the engine's reports. Views act through
@@ -438,6 +504,8 @@ pub struct Playback {
     /// The last position the engine reported, or the one asked of it.
     position: Duration,
     clock: LiveClock,
+    /// Notified on each position report, which notifies nothing else.
+    ticks: Entity<PositionTick>,
     track: Option<Track>,
     engine: Option<Box<dyn Player>>,
     local_engine: Option<Box<dyn Player>>,
@@ -445,6 +513,7 @@ pub struct Playback {
     queue: Entity<Queue>,
     settings: Entity<AppSettings>,
     level: f32,
+    mute: MuteMemory,
     /// The level the volume slider is being dragged to, heard and shown but not yet saved.
     sliding: Option<f32>,
     normalisation: bool,
@@ -643,6 +712,7 @@ impl Playback {
             state: PlaybackState::Idle,
             position: Duration::ZERO,
             clock: LiveClock::new(),
+            ticks: cx.new(|_| PositionTick),
             track: None,
             engine: None,
             local_engine: None,
@@ -650,6 +720,7 @@ impl Playback {
             queue,
             settings,
             level,
+            mute: MuteMemory::default(),
             sliding: None,
             normalisation,
             gapless,
@@ -2439,6 +2510,17 @@ impl Playback {
         &self.state
     }
 
+    /// The entity notified on every position report, which `Playback` itself is not. Observe it
+    /// as well as `Playback` to follow the position as it moves.
+    pub fn ticks(&self) -> &Entity<PositionTick> {
+        &self.ticks
+    }
+
+    /// Tells the observers of `ticks` that the position moved.
+    fn tick(&self, cx: &mut App) {
+        self.ticks.update(cx, |_, cx| cx.notify());
+    }
+
     /// The position as last reported or asked for. It only moves on events.
     pub fn position(&self) -> Duration {
         self.position
@@ -2477,12 +2559,43 @@ impl Playback {
         self.level
     }
 
+    /// Whether the shown playback device is silent.
+    pub fn muted(&self, cx: &App) -> bool {
+        self.shown_volume(cx) <= MUTE_THRESHOLD
+    }
+
+    /// Toggles mute using the volume of the current playback device.
+    pub fn toggle_muted(&mut self, cx: &mut Context<Self>) {
+        self.set_muted(!self.muted(cx), cx);
+    }
+
+    /// Mutes or restores the shown playback device without saving the temporary level.
+    pub fn set_muted(&mut self, muted: bool, cx: &mut Context<Self>) {
+        let target = self.steered(cx).map(|remote| remote.device.id);
+        let current = self.shown_volume(cx);
+        let Some(level) = self.mute.change(muted, current, target) else {
+            return;
+        };
+        self.apply_volume(level, false, cx);
+    }
+
+    /// Updates mute memory when the steered device reports its volume.
+    pub(crate) fn reported_steered_volume(&mut self, device: &str, level: f32) {
+        self.mute.reported_volume(device, level);
+    }
+
     /// The gain the volume applies, 1 at full volume.
     pub fn volume_gain(&self) -> f32 {
         gain(self.level)
     }
 
     pub fn set_volume(&mut self, level: f32, cx: &mut Context<Self>) {
+        self.mute.volume_changed();
+        self.apply_volume(level, true, cx);
+    }
+
+    /// Changes the volume on the shown device and optionally remembers it as the preference.
+    fn apply_volume(&mut self, level: f32, remember: bool, cx: &mut Context<Self>) {
         self.sliding = None;
         if let Some((devices, steered)) = self.steering(cx) {
             devices.update(cx, |devices, cx| {
@@ -2492,8 +2605,10 @@ impl Playback {
             return;
         }
         self.level = level.clamp(0., 1.);
-        self.settings
-            .update(cx, |settings, cx| settings.set_volume(self.level, cx));
+        if remember {
+            self.settings
+                .update(cx, |settings, cx| settings.set_volume(self.level, cx));
+        }
         self.apply_gain();
         cx.notify();
     }
@@ -2503,6 +2618,7 @@ impl Playback {
     /// playback. The caller repaints itself, and calls `end_volume_slide` when the slider is let go.
     pub fn slide_volume(&mut self, level: f32, cx: &App) {
         let level = level.clamp(0., 1.);
+        self.mute.volume_changed();
         self.sliding = Some(level);
         if self.steer(|_| Command::Volume(level), cx) {
             return;
@@ -3052,9 +3168,12 @@ impl Playback {
                 }
                 self.remember(false, cx);
                 self.preload_next(at, cx);
-                if failed {
-                    self.follow_up_seek(cx);
+                self.tick(cx);
+                // a report that only moves the clock reaches the observers of `ticks` alone
+                if !failed {
+                    return;
                 }
+                self.follow_up_seek(cx);
             }
             BackendEvent::Downloaded { .. } => self.preload_upcoming(false, cx),
             BackendEvent::Length { duration, .. } => {
@@ -3425,7 +3544,7 @@ fn retire(engine: Option<Box<dyn Player>>) {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{LiveClock, gain};
+    use super::{DEFAULT_UNMUTE_VOLUME, LiveClock, MuteMemory, gain};
 
     #[test]
     fn never_amplifies_past_unity() {
@@ -3456,6 +3575,40 @@ mod tests {
     fn halves_the_slider_to_the_taper_midpoint() {
         let expected = 10f32.powf(-super::TAPER_DB / 40.);
         assert!((gain(0.5) - expected).abs() < 1e-6);
+    }
+
+    #[test]
+    fn mute_restores_the_last_volume_and_repeated_switches_are_safe() {
+        let mut mute = MuteMemory::default();
+        assert_eq!(mute.change(true, 0.62, None), Some(0.));
+        assert_eq!(mute.change(true, 0., None), None);
+        assert_eq!(mute.change(false, 0., None), Some(0.62));
+        assert_eq!(mute.change(false, 0.62, None), None);
+    }
+
+    #[test]
+    fn a_volume_change_while_muted_discards_the_stale_restore_level() {
+        let mut mute = MuteMemory::default();
+        assert_eq!(mute.change(true, 0.4, None), Some(0.));
+        mute.volume_changed();
+        assert_eq!(mute.change(false, 0.25, None), None);
+    }
+
+    #[test]
+    fn mute_handles_zero_volume_without_inventing_a_restore_level() {
+        let mut mute = MuteMemory::default();
+        assert_eq!(mute.change(true, 0., None), None);
+        assert_eq!(mute.change(false, 0., None), Some(DEFAULT_UNMUTE_VOLUME));
+    }
+
+    #[test]
+    fn mute_does_not_restore_a_different_remote_device() {
+        let mut mute = MuteMemory::default();
+        assert_eq!(mute.change(true, 0.55, Some("device-a".into())), Some(0.));
+        assert_eq!(
+            mute.change(false, 0., Some("device-b".into())),
+            Some(DEFAULT_UNMUTE_VOLUME)
+        );
     }
 
     #[test]

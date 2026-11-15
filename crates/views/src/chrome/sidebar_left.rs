@@ -1,15 +1,15 @@
 use std::rc::Rc;
 
 use ui::{
-    ActiveTheme as _, Button, Card, Deck, DraggedPin, Edge, Menu, MenuItem, Panel, Picker, Pin,
-    PinKind, Pinnable as _, Popover, Popup, SNUG, Scroller, Shield, Side, Spot, Tabs, Text,
-    Vacancy, drop_gap, drop_into, drop_marker,
+    ActiveTheme as _, Card, Deck, DraggedPin, Edge, MenuItem, Panel, Picker, Pin, PinKind,
+    Pinnable as _, Popup, SNUG, Scroller, Shield, Side, Spot, Text, Vacancy, drop_gap, drop_into,
+    drop_marker,
 };
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, DragMoveEvent, ElementId, Entity, MouseButton, MouseDownEvent,
+    AnyElement, App, Context, DragMoveEvent, Entity, FontWeight, MouseButton, MouseDownEvent,
     Pixels, Point, Render, ScrollHandle, SharedString, svg,
 };
 use gpui::{Window, div, px};
@@ -18,12 +18,10 @@ use router::{
     Destination, LibraryTab, NavEntry, Navigation, NavigationEvent, SettingsPage, navigate,
     open_settings,
 };
-use state::{
-    AppSettings, Leaving, Library, Origin, PinSort, Pins, Playback, Session, Shelf, Sonora,
-};
+use state::{AppSettings, Leaving, Library, Origin, PinSort, Pins, Playback, Shelf, Sonora};
 
 use crate::shared::menus::{ItemMenu, item_menu};
-use crate::shared::nav::{nav_icon, nav_row};
+use crate::shared::nav::{entry_shown, nav_icon, nav_row};
 use crate::shared::pins::leaving;
 use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 
@@ -31,42 +29,43 @@ use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 const PINS: &str = "sidebar-pins";
 
 /// The sidebar's navigation rows in order: the entry that can hide each, its icon and where it goes.
-/// Settings has no entry, so it is always shown, and it opens on the settings page last visited
+/// Recents and then Settings sit right under Search, and the four library rows after them each
+/// open one page of the merged streaming and local library. Settings lives in the account menu of
+/// the title bar and shows here only when added. It opens on the settings page last visited
 /// rather than on the one named here.
-pub(crate) const NAV: [(Option<NavEntry>, &str, Destination); 6] = [
-    (Some(NavEntry::Home), "icons/house.svg", Destination::Home),
+pub(crate) const NAV: [(NavEntry, &str, Destination); 8] = [
+    (NavEntry::Home, "icons/house.svg", Destination::Home),
+    (NavEntry::Search, "icons/search.svg", Destination::Search),
     (
-        Some(NavEntry::Search),
-        "icons/search.svg",
-        Destination::Search,
-    ),
-    (
-        Some(NavEntry::Library),
-        "icons/library-big.svg",
-        Destination::Library(LibraryTab::Songs),
-    ),
-    (
-        Some(NavEntry::Local),
-        "icons/file-music.svg",
-        Destination::Local(LibraryTab::Songs),
-    ),
-    (
-        Some(NavEntry::History),
+        NavEntry::History,
         "icons/rotate-ccw-clock.svg",
         Destination::History,
     ),
     (
-        None,
+        NavEntry::Settings,
         "icons/settings.svg",
-        Destination::Settings(SettingsPage::General),
+        Destination::Settings(SettingsPage::Providers),
     ),
-];
-
-const LIBRARY_TABS: [(&str, LibraryTab); 4] = [
-    ("nav-songs", LibraryTab::Songs),
-    ("nav-albums", LibraryTab::Albums),
-    ("nav-artists", LibraryTab::Artists),
-    ("nav-playlists", LibraryTab::Playlists),
+    (
+        NavEntry::Songs,
+        LibraryTab::Songs.icon(),
+        Destination::Library(LibraryTab::Songs),
+    ),
+    (
+        NavEntry::Albums,
+        LibraryTab::Albums.icon(),
+        Destination::Library(LibraryTab::Albums),
+    ),
+    (
+        NavEntry::Artists,
+        LibraryTab::Artists.icon(),
+        Destination::Library(LibraryTab::Artists),
+    ),
+    (
+        NavEntry::Playlists,
+        LibraryTab::Playlists.icon(),
+        Destination::Library(LibraryTab::Playlists),
+    ),
 ];
 
 const MIN_WIDTH: Pixels = px(160.);
@@ -79,50 +78,14 @@ const PIN_MARK: f32 = 0.7;
 const ROW_GAP: Pixels = px(4.);
 /// The rail's side padding in rem, matching its `px_2`.
 const RAIL_INSET: f32 = 0.5;
-/// How far past the rail's edge a group's menu opens.
-const FLYOUT_GAP: Pixels = px(4.);
 const BORDER: Pixels = px(1.);
-
-/// The two navigation entries that expand into tabs rather than navigate.
-#[derive(Clone, Copy, PartialEq)]
-enum Group {
-    Library,
-    Local,
-}
-
-impl Group {
-    const ALL: [Self; 2] = [Self::Library, Self::Local];
-
-    fn of(destination: &Destination) -> Option<Self> {
-        match destination {
-            Destination::Library(_) => Some(Self::Library),
-            Destination::Local(_) => Some(Self::Local),
-            _ => None,
-        }
-    }
-
-    /// The Fluent key of the group's name, which also keys the menu it opens on the rail.
-    fn key(self) -> &'static str {
-        match self {
-            Self::Library => "nav-library",
-            Self::Local => "nav-local",
-        }
-    }
-
-    /// Where `tab` of the group leads.
-    fn at(self, tab: LibraryTab) -> Destination {
-        match self {
-            Self::Library => Destination::Library(tab),
-            Self::Local => Destination::Local(tab),
-        }
-    }
-}
+/// The side padding of a navigation row, which the library heading lines up with. It matches
+/// the regular `ui::Button`.
+const ROW_INSET: Pixels = px(12.);
 
 pub(crate) struct SidebarLeft {
     settings: Entity<AppSettings>,
-    session: Entity<Session>,
     trail: Entity<Navigation>,
-    at: Destination,
     width: Pixels,
     open: bool,
     /// Whether the listener folded the sidebar down to the rail.
@@ -137,8 +100,6 @@ pub(crate) struct SidebarLeft {
     grabbed: Option<(Pixels, bool)>,
     /// Whether an edge drag is held below half the rail, which closes the sidebar on release.
     closing: bool,
-    library_open: bool,
-    local_open: bool,
     pinned_open: bool,
     dropping: bool,
     drop_gap: Option<usize>,
@@ -156,7 +117,6 @@ pub(crate) struct SidebarLeft {
 impl SidebarLeft {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let settings = Sonora::global(cx).settings.clone();
-        let session = Sonora::global(cx).session.clone();
         let playback = Sonora::global(cx).playback.clone();
         let pins = Sonora::global(cx).pins.clone();
         let library = Sonora::global(cx).library.clone();
@@ -178,7 +138,6 @@ impl SidebarLeft {
         let pinned_open = settings.read(cx).sidebar_pinned_open();
         let trail = router::trail(cx);
 
-        cx.observe(&session, |_, _, cx| cx.notify()).detach();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
         cx.observe(&trail, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&trail, |this, _, _: &NavigationEvent, cx| {
@@ -187,15 +146,9 @@ impl SidebarLeft {
         })
         .detach();
 
-        let at = trail.read(cx).current();
-        let library_open = matches!(at, Destination::Library(_));
-        let local_open = matches!(at, Destination::Local(_));
-
         Self {
             settings,
-            session,
             trail,
-            at,
             width,
             open,
             rail,
@@ -205,8 +158,6 @@ impl SidebarLeft {
             cramped: false,
             grabbed: None,
             closing: false,
-            library_open,
-            local_open,
             pinned_open,
             dropping: false,
             drop_gap: None,
@@ -219,16 +170,6 @@ impl SidebarLeft {
             scrollbar,
             popovers: ui::Popovers::default(),
         }
-    }
-
-    fn follow(&mut self, current: &Destination) {
-        if self.at == *current {
-            return;
-        }
-        self.at = current.clone();
-        let (library, local) = expanded(current);
-        self.library_open |= library;
-        self.local_open |= local;
     }
 
     fn dismiss_menu(&mut self, cx: &mut Context<Self>) {
@@ -379,28 +320,75 @@ impl SidebarLeft {
         cx.refresh_windows();
     }
 
-    /// The navigation entries, each followed by its tabs while its group is open. The rail lists
-    /// the entries alone, since a group there opens its tabs in a menu beside it.
-    fn navigation(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        // A shelf with rows on it belongs in the sidebar even before the session has restored,
-        // since a snapshot fills it while the provider is still answering.
-        let stocked = self.session.read(cx).authenticated()
-            || self.library.read(cx).stocked(Shelf::Streaming);
+    /// The navigation entries the listener has not hidden, on the rail and in the full sidebar alike.
+    fn navigation(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let shown = |range: std::ops::Range<usize>, cx: &App| -> Vec<usize> {
+            range
+                .filter(|index| entry_shown(NAV[*index].0, self.settings.read(cx)))
+                .collect()
+        };
+        let top = shown(0..4, cx);
+        let library = shown(4..NAV.len(), cx);
         let mut rows = Vec::new();
-        for (index, (entry, _, destination)) in NAV.iter().enumerate() {
-            if entry.is_some_and(|entry| !self.settings.read(cx).nav_shown(entry.id())) {
-                continue;
+        if self.folded() {
+            for (group, indices) in [top, library]
+                .into_iter()
+                .filter(|indices| !indices.is_empty())
+                .enumerate()
+            {
+                if group > 0 {
+                    rows.push(self.divider(cx));
+                }
+                for index in indices {
+                    rows.push(self.nav(index, cx));
+                }
             }
-            let group = Group::of(destination);
-            if group == Some(Group::Library) && !stocked {
-                continue;
+            return rows;
+        }
+        for index in top {
+            rows.push(self.nav(index, cx));
+        }
+        if !library.is_empty() {
+            rows.push(self.section("sidebar-library", cx));
+            for index in library {
+                rows.push(self.nav(index, cx));
             }
-            rows.push(self.nav(index, window, cx));
-            if let Some(group) = group.filter(|group| !self.folded() && self.opened(*group)) {
-                rows.push(self.tabs(group, cx));
-            }
+            rows.push(self.gap(cx));
         }
         rows
+    }
+
+    /// A heading over a group of entries, set like a settings group's heading. It starts where
+    /// the glyphs of the rows below it start.
+    fn section(&self, key: &'static str, cx: &App) -> AnyElement {
+        let theme = cx.theme();
+
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(theme.metrics.control_small)
+            .pl(ROW_INSET)
+            .mt(theme.metrics.pad)
+            .child(ui::eyebrow(i18n::lookup(key, None), cx).font_weight(FontWeight::MEDIUM))
+            .into_any_element()
+    }
+
+    /// The space between the library rows and the pinned section under them.
+    fn gap(&self, cx: &App) -> AnyElement {
+        div().h(cx.theme().metrics.pad).into_any_element()
+    }
+
+    /// A rule between two groups on the rail, where there is no room for a heading.
+    fn divider(&self, cx: &App) -> AnyElement {
+        let theme = cx.theme();
+
+        div()
+            .h(BORDER)
+            .mx_2()
+            .my_1()
+            .bg(theme.sidebar_border)
+            .into_any_element()
     }
 
     /// The pinned section: its header, and its entries once it is expanded.
@@ -456,21 +444,6 @@ impl SidebarLeft {
         )
     }
 
-    fn opened(&self, group: Group) -> bool {
-        match group {
-            Group::Library => self.library_open,
-            Group::Local => self.local_open,
-        }
-    }
-
-    fn flip(&mut self, group: Group) {
-        let open = match group {
-            Group::Library => &mut self.library_open,
-            Group::Local => &mut self.local_open,
-        };
-        *open = !*open;
-    }
-
     fn flip_pins(&mut self, cx: &mut Context<Self>) {
         self.pinned_open = !self.pinned_open;
         let open = self.pinned_open;
@@ -513,8 +486,8 @@ impl SidebarLeft {
                 header
                     .h(theme.metrics.control_small)
                     .pl_2()
-                    // Narrower on the right than on the left, so the sort glyph falls on the
-                    // same line as the chevrons of the rows above.
+                    // Narrower on the right than on the left, so the sort glyph sits where a
+                    // trailing glyph of the rows above would.
                     .pr_1()
             })
             .mt(theme.metrics.pad)
@@ -724,113 +697,29 @@ impl SidebarLeft {
             .into_any_element()
     }
 
-    /// One navigation entry. An expandable one flips its group open and shut, or on the rail
-    /// opens the group's menu. Any other one navigates and is lit while its section is current.
-    fn nav(&self, index: usize, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    /// One navigation entry, which navigates and is lit while its page is current.
+    fn nav(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
         let accent = theme.sidebar_accent;
         let (entry, icon, destination) = NAV[index].clone();
-        let key = entry.map_or("nav-settings", NavEntry::key);
+        let key = entry.key();
         let current = self.trail.read(cx).current();
-        let group = Group::of(&destination);
-        let active = match group {
-            Some(group) => Group::of(&current) == Some(group),
-            None => destination.same_section(&current),
-        };
+        let active = destination.same_section(&current);
         let tint = match active {
             true => theme.foreground,
             false => theme.muted_foreground,
         };
-        let rail = self.folded();
-        let row = match rail {
+        let row = match self.folded() {
             true => nav_icon(index, key, icon, tint, accent),
             false => nav_row(index, key, tint, accent).icon(icon),
         };
 
-        match group {
-            Some(group) if rail => self.flyout(group, row.lit(active, accent), window, cx),
-            Some(group) => row
-                .trailing(chevron(self.opened(group)))
-                .aria_expanded(self.opened(group))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.flip(group);
-                    cx.notify();
-                }))
-                .into_any_element(),
-            None => row
-                .lit(active, accent)
-                .when(active, |button| button.aria_selected(true))
-                .on_click(move |_, _, cx| match destination.in_settings() {
-                    true => open_settings(cx),
-                    false => navigate(destination.clone(), cx),
-                })
-                .into_any_element(),
-        }
-    }
-
-    /// A group's entry on the rail. `button` opens a menu just past the rail's edge that names
-    /// the group and lists its tabs, each with its glyph and full name, and picking one
-    /// navigates there.
-    fn flyout(&self, group: Group, button: Button, window: &Window, cx: &App) -> AnyElement {
-        let current = self.trail.read(cx).current();
-        let name = i18n::lookup(group.key(), None);
-        let gap = window.rem_size() * RAIL_INSET + BORDER + FLYOUT_GAP;
-        let items = LIBRARY_TABS.into_iter().map(|(key, tab)| {
-            let destination = group.at(tab);
-
-            MenuItem::new(key, i18n::lookup(key, None))
-                .icon(tab.icon())
-                .selected(destination == current)
-                .on_click(move |_, _, cx| navigate(destination.clone(), cx))
-        });
-        let menu = Menu::new(group.key())
-            .name(name.clone())
-            .w(Picker::NARROW)
-            .beside(gap)
-            .header(ui::eyebrow(name, cx).px_3().pt_1())
-            .items(items);
-
-        Popover::new(group.key(), self.popovers.clone())
-            .button(button)
-            .menu(menu)
-            .commands()
-            .w_full()
-            .into_any_element()
-    }
-
-    /// The tabs under an expanded group, which only the full sidebar draws. They carry no
-    /// glyphs, since the names beside them already say everything.
-    fn tabs(&self, group: Group, cx: &mut Context<Self>) -> AnyElement {
-        let theme = *cx.theme();
-        let accent = theme.sidebar_accent;
-        let current = self.trail.read(cx).current();
-        let tab = |id: ElementId, key: &'static str, destination: Destination| {
-            let chosen = destination == current;
-            let tint = match chosen {
-                true => theme.foreground,
-                false => theme.muted_foreground,
-            };
-
-            nav_row(id, key, tint, accent)
-                .flex_1()
-                .lit(chosen, accent)
-                .when(chosen, |button| button.aria_selected(true))
-                .on_click(move |_, _, cx| navigate(destination.clone(), cx))
-        };
-
-        Tabs::new()
-            .items(
-                LIBRARY_TABS
-                    .into_iter()
-                    .enumerate()
-                    .map(|(slot, (name, tab_id))| {
-                        let id = match group {
-                            Group::Library => name.into(),
-                            Group::Local => ("local-tab", slot).into(),
-                        };
-                        tab(id, name, group.at(tab_id))
-                    }),
-            )
+        row.lit(active, accent)
+            .when(active, |button| button.aria_selected(true))
+            .on_click(move |_, _, cx| match destination.in_settings() {
+                true => open_settings(cx),
+                false => navigate(destination.clone(), cx),
+            })
             .into_any_element()
     }
 
@@ -903,8 +792,6 @@ impl Render for SidebarLeft {
         let sidebar_bg = theme.sidebar;
         let sidebar_border = theme.sidebar_border;
 
-        let current = self.trail.read(cx).current();
-        self.follow(&current);
         self.adapt(super::Chrome::reserved_right(cx), window, cx);
 
         if !cx.has_active_drag() {
@@ -915,19 +802,11 @@ impl Render for SidebarLeft {
         }
         let closing = self.closing;
 
-        let mut rows = self.navigation(window, cx);
+        let mut rows = self.navigation(cx);
         rows.extend(self.pins(window, cx));
 
         let overlaid = self.overlays();
         let rail = self.folded();
-        // A group's menu belongs to the rail, so one left open must not come back with it.
-        if !rail
-            && Group::ALL
-                .iter()
-                .any(|group| self.popovers.shows(group.key()))
-        {
-            self.popovers.close();
-        }
         // The edge drags past the rail to zero, so a drag can close the sidebar.
         let panel = Panel::new("sidebar-left", Side::Left, self.breadth())
             .limits(Pixels::ZERO, MAX_WIDTH)
@@ -1103,56 +982,9 @@ fn vacancy() -> AnyElement {
         .into_any_element()
 }
 
-/// Which groups the route opens: Your Library and Local Music, in that order.
-fn expanded(current: &Destination) -> (bool, bool) {
-    (
-        matches!(current, Destination::Library(_)),
-        matches!(current, Destination::Local(_)),
-    )
-}
-
 fn chevron(open: bool) -> &'static str {
     match open {
         true => "icons/chevron-down.svg",
         false => "icons/chevron-right.svg",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use router::{Destination, LibraryTab, SettingsPage};
-
-    use super::expanded;
-
-    #[test]
-    fn a_section_expands_only_where_it_leads() {
-        assert_eq!(
-            expanded(&Destination::Library(LibraryTab::Albums)),
-            (true, false)
-        );
-        assert_eq!(
-            expanded(&Destination::Local(LibraryTab::Albums)),
-            (false, true)
-        );
-        assert_eq!(
-            expanded(&Destination::Settings(SettingsPage::Providers)),
-            (false, false)
-        );
-    }
-
-    #[test]
-    fn content_belongs_to_neither_section() {
-        let away = [
-            Destination::Home,
-            Destination::Search,
-            Destination::Album("id".into()),
-            Destination::Playlist("id".into()),
-            Destination::Artist("id".into()),
-            Destination::Song("id".into()),
-        ];
-
-        for destination in away {
-            assert_eq!(expanded(&destination), (false, false), "{destination:?}");
-        }
     }
 }

@@ -25,6 +25,19 @@ impl Global for CoverAway {}
 pub(crate) struct CoverFade(pub(crate) f32);
 
 impl Global for CoverFade {}
+
+/// Which way the fullscreen player is moving between the shells, if it is. The player bar's
+/// fullscreen button and the player's leave button share one spot, so while the player moves
+/// the button of the shell it moves to paints above the fade and the other paints nothing.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ShellSwap {
+    #[default]
+    Settled,
+    Opening,
+    Closing,
+}
+
+impl Global for ShellSwap {}
 const STEP: f32 = 0.004;
 
 /// The other device playback is on, which the player shows instead of this app's own.

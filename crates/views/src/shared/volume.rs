@@ -20,8 +20,6 @@ pub(crate) const VOLUME_BUBBLE_LIFT: Pixels = px(18.);
 const ZONE: f32 = 14.;
 /// The space between the button and the panel over it.
 const GAP: f32 = 2.;
-/// The level a muted volume comes back to when nothing remembers what it was.
-const RESTORE: f32 = 0.7;
 
 /// What a view keeps for a volume button whose slider rises over it while the pointer is on
 /// the button, the slider or the space between them.
@@ -31,8 +29,6 @@ pub(crate) struct RisingVolume {
     over_panel: bool,
     /// Whether the slider is being dragged, which keeps it up wherever the pointer goes.
     pub(crate) held: bool,
-    /// The level the mute button silenced, which it restores.
-    pub(crate) muted: Option<f32>,
     slider: ScrubberState,
 }
 
@@ -43,7 +39,6 @@ impl RisingVolume {
             over_zone: false,
             over_panel: false,
             held: false,
-            muted: None,
             slider: ScrubberState::new(id),
         }
     }
@@ -90,7 +85,6 @@ pub(crate) fn turn_volume<V: VolumeHost>(
         false => -NOTCH,
     };
     let level = (host.playback().read(cx).shown_volume(cx) + notch).clamp(0., 1.);
-    host.volume().muted = None;
     host.playback()
         .update(cx, |playback, cx| playback.set_volume(level, cx));
 }
@@ -108,8 +102,8 @@ pub(crate) fn rising_volume<V: VolumeHost>(
     let hazy = frosted && ui::blurring(cx);
     let zone = px(ZONE);
     let level = playback.read(cx).shown_volume(cx);
+    let muted = playback.read(cx).muted(cx);
     let empty = theme.muted_foreground.opacity(0.3);
-    let restore = volume.muted.unwrap_or(RESTORE);
     let open = volume.open();
     let span = theme.metrics.control_small + zone * 2.;
     let reach = Scrubber::bubble_reach(VOLUME_BUBBLE_LIFT, cx);
@@ -137,7 +131,7 @@ pub(crate) fn rising_volume<V: VolumeHost>(
                         .icon(volume_icon(level))
                         // No tooltip: it would sit over the slider rising from the same spot,
                         // so the button carries its name for screen readers alone.
-                        .name(match level <= 0.001 {
+                        .name(match muted {
                             true => t!("player-unmute"),
                             false => t!("player-mute"),
                         })
@@ -146,16 +140,8 @@ pub(crate) fn rising_volume<V: VolumeHost>(
                             false => theme.muted_foreground,
                         })
                         .on_click(cx.listener(move |this: &mut V, _, _, cx| {
-                            let wanted = match level <= 0.001 {
-                                true => restore,
-                                false => 0.,
-                            };
-                            this.volume().muted = match wanted {
-                                0. => Some(level),
-                                _ => None,
-                            };
                             this.playback()
-                                .update(cx, |playback, cx| playback.set_volume(wanted, cx));
+                                .update(cx, |playback, cx| playback.toggle_muted(cx));
                         })),
                 ),
         )
@@ -196,7 +182,6 @@ pub(crate) fn rising_volume<V: VolumeHost>(
                             .on_move(cx.listener(|this: &mut V, fraction: &f32, _, cx| {
                                 let level = *fraction;
                                 this.volume().held = true;
-                                this.volume().muted = None;
                                 this.playback()
                                     .update(cx, |playback, cx| playback.slide_volume(level, cx));
                                 cx.notify();

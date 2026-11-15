@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use crate::args;
 use crate::commands::{Format, Kind, Local, Repeat, Request};
-use crate::wire::{self, Failure, Reply, Value};
+use crate::wire::{self, Failure, LyricsStatus, QueueEntryKind, Reply, Value};
 
 /// The running Sonora refused the command, or the exchange broke.
 const FAILED: u8 = 1;
@@ -99,6 +99,10 @@ fn show(value: &Value) -> String {
     match value {
         Value::Current(current) => serde_json::to_string_pretty(current).unwrap_or_default(),
         Value::Volume(level) => level.to_string(),
+        Value::Muted(muted) => match muted {
+            true => "on".to_owned(),
+            false => "off".to_owned(),
+        },
         Value::Shuffle(on) => match on {
             true => "on".to_owned(),
             false => "off".to_owned(),
@@ -140,6 +144,12 @@ fn show(value: &Value) -> String {
                 ]
             }),
         ),
+        Value::Queue(queue) => show_queue(queue),
+        Value::Lyrics(lyrics) => show_lyrics(lyrics),
+        Value::Liked(liked) => match liked {
+            true => "on".to_owned(),
+            false => "off".to_owned(),
+        },
         Value::Session(None) => String::new(),
         Value::Session(Some(session)) => format!(
             "{} on {}{}\n{}",
@@ -154,17 +164,101 @@ fn show(value: &Value) -> String {
     }
 }
 
+/// The queue for a person: each section headed, one track per line in play order, with the
+/// tracks queued by hand and the recommendations marked.
+fn show_queue(queue: &wire::QueueSnapshot) -> String {
+    if queue.previous.is_empty() && queue.current.is_none() && queue.upcoming.is_empty() {
+        return "Queue is empty.".to_owned();
+    }
+    let line = |entry: &wire::QueueEntry| {
+        let track = &entry.track;
+        let mark = match entry.kind {
+            QueueEntryKind::Context => String::new(),
+            QueueEntryKind::Queued => " [queued]".to_owned(),
+            QueueEntryKind::Suggested => " [suggested]".to_owned(),
+        };
+        format!(
+            "{} - {} ({}) {}{}",
+            track.title,
+            track.artists.join(", "),
+            track.album,
+            clock(track.duration),
+            mark
+        )
+    };
+    let mut lines = Vec::new();
+    if !queue.previous.is_empty() {
+        lines.push("Previous:".to_owned());
+        lines.extend(queue.previous.iter().map(line));
+    }
+    if let Some(current) = &queue.current {
+        lines.push("Now playing:".to_owned());
+        lines.push(line(current));
+    }
+    if !queue.upcoming.is_empty() {
+        lines.push("Up next:".to_owned());
+        lines.extend(queue.upcoming.iter().map(line));
+    }
+    if queue.truncated {
+        lines.push(format!(
+            "(only the {} most recent previous and next upcoming tracks are shown)",
+            wire::QUEUE_LIMIT
+        ));
+    }
+    lines.join("\n")
+}
+
+/// The lyrics for a person: a word on why there are none, else one line each with the time it
+/// starts at when synced and its romanization under it when there is one.
+fn show_lyrics(lyrics: &wire::LyricsSnapshot) -> String {
+    let said = match lyrics.state {
+        LyricsStatus::Idle => "No lyrics are loaded.",
+        LyricsStatus::Disabled => "Lyrics are turned off.",
+        LyricsStatus::Loading => "Loading the lyrics.",
+        LyricsStatus::Instrumental => "Instrumental.",
+        LyricsStatus::Missing => "No lyrics found.",
+        LyricsStatus::Failed => "The lyrics could not be loaded.",
+        LyricsStatus::Ready => "",
+    };
+    if !said.is_empty() {
+        return said.to_owned();
+    }
+    let mut lines = Vec::new();
+    for line in &lyrics.lines {
+        lines.push(match line.start_ms {
+            Some(start) => format!("[{}] {}", clock(start / 1000), line.text),
+            None => line.text.clone(),
+        });
+        lines.extend(
+            line.romanized
+                .iter()
+                .map(|romanized| format!("  {romanized}")),
+        );
+    }
+    if lyrics.truncated {
+        lines.push(format!(
+            "(only the first {} lines are shown)",
+            wire::LYRICS_LIMIT
+        ));
+    }
+    lines.join("\n")
+}
+
 /// A queried value for a script, as one line of JSON without the envelope around it.
 fn json(value: &Value) -> String {
     let printed = match value {
         Value::Current(current) => serde_json::to_string(current),
         Value::Volume(level) => serde_json::to_string(level),
+        Value::Muted(muted) => serde_json::to_string(muted),
         Value::Shuffle(on) => serde_json::to_string(on),
         Value::Repeat(repeat) => serde_json::to_string(repeat),
         Value::Providers(providers) => serde_json::to_string(providers),
         Value::Provider(slug) => serde_json::to_string(slug),
         Value::Hits(hits) => serde_json::to_string(hits),
         Value::Session(session) => serde_json::to_string(session),
+        Value::Queue(queue) => serde_json::to_string(queue),
+        Value::Lyrics(lyrics) => serde_json::to_string(lyrics),
+        Value::Liked(liked) => serde_json::to_string(liked),
     };
     printed.unwrap_or_default()
 }
@@ -213,6 +307,8 @@ fn describe(failure: &Failure) -> String {
         }
         Failure::Unsupported => "this command is not supported yet".to_owned(),
         Failure::SignedOut => "no provider is signed in".to_owned(),
+        Failure::NoCurrentTrack => "there is no current track".to_owned(),
+        Failure::MissingTrackId => "the current track has no provider id".to_owned(),
         Failure::OtherProvider { link, current } => {
             format!("the link is for {link}, but {current} is the current provider")
         }
@@ -224,7 +320,125 @@ fn describe(failure: &Failure) -> String {
         }
         Failure::NoAccount(name) => format!("{name} has no account to switch to; sign in first"),
         Failure::SignInFailed(name) => format!("{name} did not sign in"),
-        Failure::Busy => "a sign-in is already on its way; try again in a moment".to_owned(),
+        Failure::Busy => "Sonora is busy; try again in a moment".to_owned(),
+        Failure::FavoriteUpdateFailed => {
+            "could not update the current track's favorite state".to_owned()
+        }
         Failure::NothingFound(query) => format!("nothing found for '{query}'"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wire::{QueueEntry, QueueSnapshot, Track};
+
+    fn entry(title: &str, kind: QueueEntryKind) -> QueueEntry {
+        QueueEntry {
+            track: Track {
+                id: Some(title.to_owned()),
+                title: title.to_owned(),
+                artists: vec!["artist".to_owned()],
+                album: "album".to_owned(),
+                cover: Some("cover".to_owned()),
+                duration: 125,
+            },
+            kind,
+        }
+    }
+
+    #[test]
+    fn an_empty_queue_prints_as_empty_in_both_formats() {
+        let value = Value::Queue(QueueSnapshot::default());
+        assert_eq!(show(&value), "Queue is empty.");
+        assert_eq!(
+            json(&value),
+            "{\"previous\":[],\"current\":null,\"upcoming\":[],\"truncated\":false}"
+        );
+    }
+
+    #[test]
+    fn a_queue_prints_in_order_with_its_kinds_marked() {
+        let value = Value::Queue(QueueSnapshot::bounded(
+            vec![entry("before", QueueEntryKind::Context)],
+            Some(entry("now", QueueEntryKind::Context)),
+            vec![
+                entry("by-hand", QueueEntryKind::Queued),
+                entry("similar", QueueEntryKind::Suggested),
+            ],
+        ));
+        let text = show(&value);
+        let order: Vec<_> = ["before", "now", "by-hand", "similar"]
+            .iter()
+            .map(|title| text.find(title).unwrap())
+            .collect();
+        assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{text}");
+        assert!(text.contains("[queued]"), "{text}");
+        assert!(text.contains("[suggested]"), "{text}");
+        let printed = json(&value);
+        assert!(printed.contains("\"cover\":\"cover\""), "{printed}");
+        assert!(printed.contains("\"duration\":125"), "{printed}");
+    }
+
+    fn line(start_ms: Option<u64>, text: &str, romanized: Option<&str>) -> wire::LyricsLine {
+        wire::LyricsLine {
+            start_ms,
+            text: text.to_owned(),
+            romanized: romanized.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn lyrics_that_are_not_there_say_why_in_a_word() {
+        let said = |state| show(&Value::Lyrics(wire::LyricsSnapshot::without(state)));
+        assert_eq!(said(LyricsStatus::Missing), "No lyrics found.");
+        assert_eq!(said(LyricsStatus::Loading), "Loading the lyrics.");
+        assert_eq!(said(LyricsStatus::Instrumental), "Instrumental.");
+        assert_eq!(said(LyricsStatus::Disabled), "Lyrics are turned off.");
+    }
+
+    #[test]
+    fn synced_lyrics_print_their_times_and_romanization() {
+        let lines = vec![
+            line(Some(62_500), "こんにちは", Some("konnichiwa")),
+            line(Some(65_000), "", None),
+        ];
+        let value = Value::Lyrics(wire::LyricsSnapshot::without(LyricsStatus::Ready).bounded(
+            true,
+            lines,
+            Some(0),
+        ));
+        assert_eq!(show(&value), "[1:02] こんにちは\n  konnichiwa\n[1:05] ");
+        let printed = json(&value);
+        assert!(printed.contains("\"start_ms\":62500"), "{printed}");
+        assert!(
+            printed.contains("\"next\":{\"start_ms\":65000"),
+            "{printed}"
+        );
+    }
+
+    #[test]
+    fn plain_lyrics_print_as_they_are() {
+        let lines = vec![line(None, "one", None), line(None, "two", None)];
+        let value = Value::Lyrics(
+            wire::LyricsSnapshot::without(LyricsStatus::Ready).bounded(false, lines, None),
+        );
+        assert_eq!(show(&value), "one\ntwo");
+    }
+
+    #[test]
+    fn mute_state_prints_as_on_off_or_json_boolean() {
+        assert_eq!(show(&Value::Muted(true)), "on");
+        assert_eq!(show(&Value::Muted(false)), "off");
+        assert_eq!(json(&Value::Muted(true)), "true");
+        assert_eq!(json(&Value::Muted(false)), "false");
+    }
+
+    #[test]
+    fn favorite_state_prints_as_on_off_or_json_boolean() {
+        assert_eq!(show(&Value::Liked(true)), "on");
+        assert_eq!(show(&Value::Liked(false)), "off");
+        assert_eq!(json(&Value::Liked(true)), "true");
+        assert_eq!(json(&Value::Liked(false)), "false");
     }
 }
