@@ -637,13 +637,10 @@ impl Queue {
         self.past.iter().filter_map(connect_entry)
     }
 
-    /// The upcoming play order reported to other clients. Local files and suggestions stay out,
-    /// since the suggestions are this app's own and change whenever the radio refills.
+    /// The upcoming play order reported to other clients, the suggestions with it, so another
+    /// device shows what plays on here once the collection runs out. Local files stay out.
     pub(crate) fn connect_upcoming(&self) -> impl Iterator<Item = QueuedTrack> + '_ {
-        self.upcoming
-            .iter()
-            .filter(|entry| entry.kind != QueueKind::Suggested)
-            .filter_map(connect_entry)
+        self.upcoming.iter().filter_map(connect_entry)
     }
 
     /// Every track the queue holds, for reading a remote queue without asking the provider
@@ -884,13 +881,14 @@ impl Queue {
     }
 
     /// Applies a remote queue window while keeping the current entry and playback position.
-    /// `reach` says how much of this queue the window stands for, so what lies beyond it stays,
-    /// and so do the suggestions, which are never reported.
+    /// `reach` says how much of this queue the window stands for, so what lies beyond it stays.
+    /// So do the suggestions made here, which are never reported, unless the window brings the
+    /// other device's own.
     pub(crate) fn replace_remote(
         &mut self,
-        past: Vec<(Track, bool)>,
+        past: Vec<(Track, QueueKind)>,
         current: bool,
-        upcoming: Vec<(Track, bool)>,
+        upcoming: Vec<(Track, QueueKind)>,
         reach: Reach,
         cx: &mut Context<Self>,
     ) {
@@ -948,20 +946,26 @@ impl Queue {
         let mut entries: Vec<_> = past
             .into_iter()
             .chain(upcoming)
-            .map(|(track, queued)| {
-                let kind = match queued {
-                    true => QueueKind::Queued,
-                    false => QueueKind::Context,
-                };
+            .map(|(track, kind)| {
                 Entry::with_uid(
                     identity(&track),
                     track,
-                    (!queued).then(|| origin.clone()).flatten(),
+                    (kind != QueueKind::Queued)
+                        .then(|| origin.clone())
+                        .flatten(),
                     kind,
                 )
             })
             .collect();
         let window: Vec<_> = entries.split_off(past_len);
+        // the other device's suggestions take the place of the ones made here
+        let suggested = match window
+            .iter()
+            .any(|entry| entry.kind == QueueKind::Suggested)
+        {
+            true => Vec::new(),
+            false => suggested,
+        };
         self.past = earlier
             .into_iter()
             .chain(left_past)
@@ -1353,6 +1357,7 @@ fn connect_entry(entry: &Entry) -> Option<QueuedTrack> {
         id: id.to_owned(),
         uid: entry.uid.clone(),
         queued: entry.kind == QueueKind::Queued,
+        suggested: entry.kind == QueueKind::Suggested,
         added_by: entry
             .track
             .added_by

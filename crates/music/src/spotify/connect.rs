@@ -853,7 +853,7 @@ impl Worker {
 
     /// Reads the uids of the collection now playing, unless they are known or being read.
     fn read_uids(&mut self) {
-        let Some(context) = self.now.as_deref().and_then(|now| now.context.as_ref()) else {
+        let Some(context) = self.now.as_deref().and_then(shared) else {
             return;
         };
         let uri = collection_uri(context, &self.session.username());
@@ -916,7 +916,7 @@ impl Worker {
         };
         let moved = before.is_none_or(|before| before.track != now.track);
         let started = before.is_none_or(|before| before.context != now.context)
-            || (moved && now.context.is_none());
+            || (moved && shared(now).is_none());
         if started || self.run.is_empty() {
             self.run = play_id();
         }
@@ -1084,11 +1084,12 @@ impl Worker {
         };
 
         // A standalone song names itself when there is no collection to load on transfer.
-        let uri = match &now.context {
+        let collection = shared(now);
+        let uri = match collection {
             Some(context) => collection_uri(context, &self.session.username()),
             None => format!("{TRACK_PREFIX}{}", track.id),
         };
-        let known = match now.context.is_some() {
+        let known = match collection.is_some() {
             true => self.uids.of(&uri),
             // a song that is its own collection has nothing to read, and its apps name it alike
             false => Known::unlisted(),
@@ -1365,7 +1366,7 @@ impl Worker {
                 );
                 // an edit that added songs runs past the window it was shown, and all of it counts
                 let mut upcoming = listed(&queue.next_tracks, queue.next_tracks.len());
-                if let Some(now) = self.now.as_deref().filter(|now| now.context.is_none()) {
+                if let Some(now) = self.now.as_deref().filter(|now| shared(now).is_none()) {
                     keep_kinds(&mut upcoming, &now.upcoming);
                 }
                 // Acknowledge the edit with its new queue while the host resolves missing metadata.
@@ -1413,7 +1414,7 @@ impl Worker {
             commands.push(Command::Repeat(repeat));
         }
         let mut upcoming = wanted.upcoming.clone();
-        if now.context.is_none() {
+        if shared(now).is_none() {
             keep_kinds(&mut upcoming, &now.upcoming);
         }
         let listed = |tracks: &[QueuedTrack]| -> Vec<(String, bool)> {
@@ -1811,6 +1812,15 @@ fn repeat_mode(track: Option<bool>, context: Option<bool>) -> Option<Repeat> {
     }
 }
 
+/// The collection `now` plays from when another app reads the same songs from it. A radio is not
+/// one: Spotify draws it afresh for whoever asks, so the songs this app got are told as a list
+/// of their own, the way a song from no collection is.
+fn shared(now: &Snapshot) -> Option<&Collection> {
+    now.context
+        .as_ref()
+        .filter(|context| !matches!(context, Collection::Radio(_)))
+}
+
 /// The uri Spotify knows a collection by.
 fn collection_uri(collection: &Collection, username: &str) -> String {
     match collection {
@@ -1996,7 +2006,9 @@ fn keep_kinds(upcoming: &mut [QueuedTrack], before: &[QueuedTrack]) {
             .position(|known| known.id == track.id && known.queued)
             .or_else(|| pool.iter().position(|known| known.id == track.id));
         if let Some(index) = same {
-            track.queued = pool.remove(index).queued;
+            let known = pool.remove(index);
+            track.queued = known.queued;
+            track.suggested = known.suggested;
         }
     }
 }
@@ -2006,9 +2018,11 @@ fn provided(track: &QueuedTrack, context: &str, uid: String) -> ProvidedTrack {
     let mut provided = ProvidedTrack {
         uri: format!("{TRACK_PREFIX}{}", track.id),
         uid,
-        provider: match track.queued {
-            true => "queue",
-            false => "context",
+        // Spotify's apps list what follows a collection apart from it, under this provider
+        provider: match (track.queued, track.suggested) {
+            (true, _) => "queue",
+            (false, true) => "autoplay",
+            (false, false) => "context",
         }
         .to_owned(),
         metadata: [("context_uri", context), ("entity_uri", context)]
@@ -2057,6 +2071,8 @@ fn listed_track(track: &ProvidedTrack) -> Option<QueuedTrack> {
         id: track_id(&track.uri)?,
         uid: track.uid.clone(),
         queued: is_queued(track),
+        // what Spotify plays on by itself when a collection runs out
+        suggested: track.provider == "autoplay",
         added_by: adder(track),
     })
 }
