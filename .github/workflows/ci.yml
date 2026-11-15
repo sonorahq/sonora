@@ -224,8 +224,18 @@ jobs:
           cache-targets: false
           cache-on-failure: true
 
+      # These binaries are for trying a commit, not for shipping, so they trade a few percent of
+      # speed for a build twice as fast. Without LTO the last step links in seconds instead of
+      # minutes, and the three largest crates compile on every core. The dependencies keep one
+      # codegen unit, since sccache serves them and smaller objects keep its cache inside the
+      # repository's quota. release.yml builds nightlies and releases with the full profile.
       - name: build
-        run: cargo build --release --locked --package sonora --target ${{ matrix.target }} --timings
+        run: >-
+          cargo build --release --locked --package sonora --target ${{ matrix.target }} --timings
+          --config profile.release.lto=false
+          --config profile.release.package.music.codegen-units=16
+          --config profile.release.package.state.codegen-units=16
+          --config profile.release.package.views.codegen-units=16
 
       # The timing report shows which crates and which link step a build spends its time on.
       - uses: actions/upload-artifact@v7
