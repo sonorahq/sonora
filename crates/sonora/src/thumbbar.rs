@@ -4,7 +4,10 @@
 //! puts previous, play/pause and next underneath it, so playback can be driven
 //! without raising the window. They are the same three commands the tray menu
 //! carries and they reach [`state::Playback`] the same way, through an
-//! unbounded channel the window procedure writes to.
+//! unbounded channel the window procedure writes to. The same taskbar button
+//! also fills with the track's progress, in the system accent colour while it
+//! plays and yellow while it is paused, so how much is left shows even with the
+//! window minimised.
 //!
 //! Two Windows rules shape the module. The buttons cannot be added until the
 //! shell has created the taskbar button, which it announces with the registered
@@ -15,6 +18,7 @@
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::rc::Rc;
+use std::time::Duration;
 
 use gpui::{App, AppContext as _, Context, Entity, Global, Subscription, Task, WindowId};
 use i18n::t;
@@ -33,8 +37,9 @@ use windows::Win32::UI::Controls::{
     HIMAGELIST, ILC_COLOR32, ImageList_Create, ImageList_Destroy, ImageList_ReplaceIcon,
 };
 use windows::Win32::UI::Shell::{
-    DefSubclassProc, ITaskbarList3, RemoveWindowSubclass, SetWindowSubclass, THB_BITMAP, THB_FLAGS,
-    THB_TOOLTIP, THBF_DISABLED, THBF_ENABLED, THUMBBUTTON, TaskbarList,
+    DefSubclassProc, ITaskbarList3, RemoveWindowSubclass, SetWindowSubclass, TBPF_NOPROGRESS,
+    TBPF_NORMAL, TBPF_PAUSED, THB_BITMAP, THB_FLAGS, THB_TOOLTIP, THBF_DISABLED, THBF_ENABLED,
+    THUMBBUTTON, TaskbarList,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateIconIndirect, DestroyIcon, GetSystemMetrics, HICON, ICONINFO, RegisterWindowMessageW,
@@ -66,6 +71,14 @@ const FORWARD: usize = 3;
 const ON_DARK: &str = "#ffffff";
 const ON_LIGHT: &str = "#1a1a1a";
 
+/// How finely the taskbar progress is measured. A taskbar button is well under
+/// a thousand pixels wide, so finer steps would only add shell calls.
+const STEPS: u64 = 1000;
+
+/// How often the taskbar progress moves while a track plays. Playback only
+/// notifies on events, so without this the bar would stand still between them.
+const TICK: Duration = Duration::from_secs(1);
+
 /// What a button click asks of playback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Event {
@@ -92,6 +105,23 @@ struct Look {
     pack: &'static str,
     light: bool,
     size: i32,
+}
+
+/// How far the taskbar button's progress bar is filled and in which colour.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Progress {
+    mode: Mode,
+    /// The part of the track played, in [`STEPS`].
+    done: u64,
+}
+
+/// The state the taskbar progress bar is drawn in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    /// No bar, for no track or a track of unknown length.
+    Hidden,
+    Playing,
+    Paused,
 }
 
 /// The toolbar of the one window that has one. Lives exactly as long as that
@@ -140,11 +170,14 @@ pub fn install(window: WindowId, hwnd: *mut c_void, cx: &mut App) -> bool {
     true
 }
 
-/// Owns the toolbar and keeps it in step with playback, the way `Tray` does for
-/// the tray menu.
+/// Owns the toolbar and the taskbar progress and keeps both in step with
+/// playback, the way `Tray` does for the tray menu.
 pub struct ThumbBar {
     bar: Bar,
     shown: Shown,
+    progress: Progress,
+    /// Moves the progress every [`TICK`]. Runs only while a track plays.
+    ticker: Option<Task<()>>,
     _events: Task<()>,
 }
 
@@ -178,20 +211,53 @@ impl ThumbBar {
 
         let shown = shown(cx);
         bar.show(&shown);
-        Self {
+        let progress = progress(cx);
+        bar.mark(progress);
+        let mut this = Self {
             bar,
             shown,
+            progress,
+            ticker: None,
             _events,
-        }
+        };
+        this.tick(cx);
+        this
     }
 
     fn publish(&mut self, cx: &mut Context<Self>) {
+        let progress = progress(cx);
+        if progress != self.progress {
+            self.bar.mark(progress);
+            self.progress = progress;
+            self.tick(cx);
+        }
+
         let shown = shown(cx);
         if shown == self.shown {
             return;
         }
         self.bar.show(&shown);
         self.shown = shown;
+    }
+
+    /// Starts the ticker when a track plays and drops it otherwise, so a paused
+    /// or idle Sonora never wakes up for the taskbar.
+    fn tick(&mut self, cx: &mut Context<Self>) {
+        let playing = self.progress.mode == Mode::Playing;
+        match (playing, self.ticker.is_some()) {
+            (true, false) => {
+                self.ticker = Some(cx.spawn(async move |this, cx| {
+                    loop {
+                        cx.background_executor().timer(TICK).await;
+                        if this.update(cx, |this, cx| this.publish(cx)).is_err() {
+                            break;
+                        }
+                    }
+                }));
+            }
+            (false, true) => self.ticker = None,
+            _ => {}
+        }
     }
 }
 
@@ -232,6 +298,7 @@ impl Bar {
             hwnd,
             buttons: buttons(),
             shown: None,
+            progress: None,
             images: None,
             look: None,
             created,
@@ -260,6 +327,10 @@ impl Bar {
         shared.dress(shown);
         shared.push();
     }
+
+    fn mark(&mut self, progress: Progress) {
+        self.shared.borrow_mut().mark(progress);
+    }
 }
 
 impl Drop for Bar {
@@ -279,6 +350,8 @@ struct Shared {
     /// The last state dressed, replayed when the shell asks for the buttons
     /// again.
     shown: Option<Shown>,
+    /// The last progress marked, replayed with the buttons.
+    progress: Option<Progress>,
     images: Option<HIMAGELIST>,
     look: Option<Look>,
     created: u32,
@@ -387,6 +460,33 @@ impl Shared {
             self.dress(&shown);
         }
         self.push();
+        if let Some(progress) = self.progress {
+            self.mark(progress);
+        }
+    }
+
+    /// Fills the taskbar button's progress bar. Like the buttons, this fails
+    /// before the taskbar button exists, and `arrived` marks it again then.
+    fn mark(&mut self, progress: Progress) {
+        self.progress = Some(progress);
+        let flag = match progress.mode {
+            Mode::Hidden => TBPF_NOPROGRESS,
+            Mode::Playing => TBPF_NORMAL,
+            Mode::Paused => TBPF_PAUSED,
+        };
+        let outcome = unsafe {
+            match progress.mode {
+                Mode::Hidden => Ok(()),
+                Mode::Playing | Mode::Paused => {
+                    self.taskbar
+                        .SetProgressValue(self.hwnd, progress.done, STEPS)
+                }
+            }
+            .and_then(|()| self.taskbar.SetProgressState(self.hwnd, flag))
+        };
+        if let Err(error) = outcome {
+            log::debug!("thumbbar: cannot show the progress on the taskbar: {error:#}");
+        }
     }
 
     fn clear(&mut self) {
@@ -566,6 +666,45 @@ fn shown(cx: &App) -> Shown {
         playing,
         idle: playback.shown_track(cx).is_none(),
         look: look(),
+    }
+}
+
+/// Reads how far the shown track has played, on the steered device when there
+/// is one. A track that is loading counts as playing, so the bar does not flick
+/// to yellow between tracks.
+fn progress(cx: &App) -> Progress {
+    let hidden = Progress {
+        mode: Mode::Hidden,
+        done: 0,
+    };
+    let playback = Sonora::global(cx).playback.read(cx);
+    if playback.shown_track(cx).is_none() {
+        return hidden;
+    }
+    let (mode, elapsed) = match playback.steered(cx) {
+        Some(remote) => {
+            let mode = match remote.state.playing {
+                true => Mode::Playing,
+                false => Mode::Paused,
+            };
+            (mode, remote.state.live_position())
+        }
+        None => match playback.state() {
+            PlaybackState::Playing | PlaybackState::Loading => {
+                (Mode::Playing, playback.live_position())
+            }
+            PlaybackState::Paused => (Mode::Paused, playback.live_position()),
+            PlaybackState::Idle | PlaybackState::Failed(_) => return hidden,
+        },
+    };
+    let total = playback.shown_time(cx).1.as_millis();
+    if total == 0 {
+        return hidden;
+    }
+    let done = (elapsed.as_millis() * u128::from(STEPS) / total).min(u128::from(STEPS));
+    Progress {
+        mode,
+        done: done as u64,
     }
 }
 
