@@ -9,13 +9,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-<<<<<<< HEAD
-- Click the tray icon to show Sonora's window, or to hide it when it is already open.
-=======
 - Use Sonora in European Portuguese. A system set to Portuguese from Portugal picks it on its own.
 - Open an album's cover from its page to see the original artwork full size, zoom in with the wheel or the buttons and drag it around.
 - Press Ctrl+K (⌘K on macOS) anywhere to search. Enter plays a song right away, Ctrl+Enter opens its page, and the artist and album under a result open theirs.
->>>>>>> origin/main
+- Click the tray icon on Windows to show Sonora's window, or to hide it when it is already open.
 - Scrobble to your own ListenBrainz server or to multi-scrobbler by filling in the server address when you connect ListenBrainz.
 - Name your Discord status after the album artist under Settings, Discord, Status name.
 - Hover a cut-off track title in the player bar to read it in full.
