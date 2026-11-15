@@ -20,6 +20,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Show the time left in the song instead of its length in the player bar, under Settings, Player bar.
 - `sonora queue` prints what played, what plays and what follows, and `sonora queue --json` gives the same queue to a script, without changing playback.
 - `sonora lyrics` prints the lyrics of the current track with their times, and `sonora lyrics --json` also gives a script the line sung now and the next one.
+- `sonora mute` reads or changes playback mute and restores the previous volume when unmuted.
 - Rebind keyboard shortcuts under Settings, Keybinds, and give shuffle, repeat, the queue and lyrics shortcuts of their own.
 - Move between the fields of a dialog with Tab and Shift+Tab.
 - Use Sonora in Korean.
@@ -27,9 +28,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Library pages that list both local and streaming music mark local files with a file icon beside their names.
 - Tidal artist pages show how many people follow the artist, beside the listener count.
 - See Sonora's similar tracks on your other Spotify devices under their recommended tracks, and Spotify's recommendations from another device apart from what is up next in Sonora.
+- See how much of the song is left on Sonora's taskbar button on Windows. The button fills as the song plays and turns yellow while it is paused.
 
 ### Fixed
 
+- Unmuting now respects volume changes made on another device.
 - The snap shows Sonora's tray icon instead of a generic placeholder.
 - On Windows, playback no longer crackles when you open apps or browser tabs, and the buffer setting under Settings, Sound works again.
 - Friends who join a Spotify Jam you host from Sonora hear the track you play instead of the first one of the album or playlist, see the same queue, and the songs they remove or move stay that way.

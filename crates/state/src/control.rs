@@ -45,7 +45,7 @@ pub struct Control {
     /// Command lines following what plays, as `sonora watch`.
     watchers: Vec<Watcher>,
     /// What keeps the watchers told, held only while there are any.
-    watching: Option<(Subscription, Task<()>)>,
+    watching: Option<([Subscription; 2], Task<()>)>,
     _session: Subscription,
 }
 
@@ -128,7 +128,11 @@ impl Control {
             told: None,
         });
         if self.watching.is_none() {
-            let observed = cx.observe(&self.playback, |this, _, cx| this.tell(cx));
+            let ticks = self.playback.read(cx).ticks().clone();
+            let observed = [
+                cx.observe(&self.playback, |this, _, cx| this.tell(cx)),
+                cx.observe(&ticks, |this, _, cx| this.tell(cx)),
+            ];
             let ticking = cx.spawn(async move |this, cx| {
                 loop {
                     cx.background_executor().timer(WATCH_TICK).await;
@@ -583,6 +587,14 @@ fn play(playback: &mut Playback, command: PlaybackCommand, cx: &mut Context<Play
             };
             playback.set_volume(f32::from(target.clamp(0, 100)) / 100., cx);
         }
+        PlaybackCommand::Mute(None) => {
+            return Reply::Value(Value::Muted(playback.muted(cx)));
+        }
+        PlaybackCommand::Mute(Some(switch)) => match switch {
+            Switch::On => playback.set_muted(true, cx),
+            Switch::Off => playback.set_muted(false, cx),
+            Switch::Toggle => playback.toggle_muted(cx),
+        },
         PlaybackCommand::Shuffle(None) => {
             return Reply::Value(Value::Shuffle(playback.shown_shuffle(cx)));
         }
