@@ -1551,6 +1551,7 @@ mod tests {
                 .map(|(name, id)| crate::ArtistRef {
                     name: name.to_owned(),
                     id: id.map(str::to_owned),
+                    channel: false,
                 })
                 .collect(),
             ..Track::default()
@@ -1565,6 +1566,7 @@ mod tests {
                 .map(|(name, id)| crate::ArtistRef {
                     name: name.to_owned(),
                     id: id.map(str::to_owned),
+                    channel: false,
                 })
                 .collect(),
             ..Album::default()
