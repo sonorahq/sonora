@@ -32,13 +32,17 @@ impl Credentials {
     }
 
     /// The address, username and password typed for provider `slug`, or `None` while one of
-    /// them is missing. A Jellyfin account may have no password, so its password may be empty.
+    /// them is missing. A Jellyfin account may have no password, and leaving out both the
+    /// username and the password signs in to Jellyfin by Quick Connect.
     pub(crate) fn filled(&self, slug: &str, cx: &App) -> Option<(String, String, String)> {
         let server = self.server.read(cx).text().to_string();
         let username = self.username.read(cx).text().to_string();
         let password = self.password.read(cx).text().to_string();
-        let blank_password = password.is_empty() && slug != "jellyfin";
-        let missing = server.trim().is_empty() || username.trim().is_empty() || blank_password;
+        let jellyfin = slug == "jellyfin";
+        let quick_connect = jellyfin && username.trim().is_empty() && password.is_empty();
+        let missing = server.trim().is_empty()
+            || (username.trim().is_empty() && !quick_connect)
+            || (password.is_empty() && !jellyfin);
         (!missing).then_some((server, username, password))
     }
 }

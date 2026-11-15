@@ -9,7 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Sign in to your own Jellyfin server to browse, search and play its music library.
+- Play the music on your own Jellyfin server, signed in with your password or Quick Connect, with favorites, playlists, instant mixes, downloads and word-synced lyrics from the server.
 - Use Sonora in European Portuguese. A system set to Portuguese from Portugal picks it on its own.
 - Use Sonora in Vietnamese. A system set to Vietnamese picks it on its own.
 - Open an album's cover from its page to see the original artwork full size, zoom in with the wheel or the buttons and drag it around.
