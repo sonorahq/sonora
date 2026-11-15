@@ -22,8 +22,9 @@ use ytmusic::YtMusic;
 use crate::youtube::playback::Factory;
 
 use crate::{
-    AccountChoices, AccountKind, Arrival, Capabilities, InputSource, MusicProvider, PlaybackFactory,
-    PromptSink, ProviderSession, Shape, SignIn, SignInPrompt, UserProfile, WebSignIn, credentials,
+    AccountChoices, AccountKind, Arrival, Capabilities, InputSource, MusicProvider,
+    PlaybackFactory, PromptSink, ProviderSession, Shape, SignIn, SignInPrompt, UserProfile,
+    WebSignIn, credentials,
 };
 pub use client::YouTubeClient;
 pub use lyrics::YouTubeLyrics;
