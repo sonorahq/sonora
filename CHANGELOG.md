@@ -37,6 +37,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Browse Tidal's moods and decades from Explore after the genres, and open each one to see its shelves.
 - Nightly builds show the commit they were built from beside the version under Settings, About.
 - Skip sponsors, self-promotion and non-music sections on YouTube Music with SponsorBlock, with sections marked on the seek bar.
+- Subsonic lyrics provider can now read OpenSubsonic's enhanced cueLine data for karaoke lyrics.
 
 ### Fixed
 
