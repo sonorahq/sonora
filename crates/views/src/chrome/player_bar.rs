@@ -14,16 +14,17 @@ use i18n::t;
 use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
 use state::{AppSettings, Playback, PlayerBarLayout, Queue, SideTab, Sonora};
 use ui::{
-    Artwork, Button, ExplicitBadge, Flight, InlineLink, InlineLinks, Perch, Pinnable, Popup, Room,
-    Scrollbar, Scrubber, ScrubberState, clock, tabular,
+    Artwork, Badge, Button, Flight, InlineLink, InlineLinks, Perch, Pinnable, Popup, Room,
+    Scrollbar, Scrubber, ScrubberState,
 };
 
 use crate::chrome::sessions_button::SessionsButton;
+use crate::chrome::timeline::Timeline;
 use crate::chrome::{Chrome, SidebarRight};
 use crate::shared::menus::ItemMenu;
 use crate::shared::pins::Pinned as _;
 use crate::shared::transport::{
-    COVER_FLIGHT, CoverAway, ShellSwap, fraction, like, moved, percent, transport, volume_icon,
+    COVER_FLIGHT, CoverAway, ShellSwap, like, moved, percent, transport, volume_icon,
 };
 use crate::shared::volume::{RisingVolume, VolumeHost, rising_volume, turn_volume};
 
@@ -53,10 +54,6 @@ const SEEK_FLOOR: f32 = 220.;
 const TITLE_ROOM: f32 = 1.4;
 /// The stacked bar's `gap_2` between its two rows, in rems.
 const STACK_GAP: f32 = 0.5;
-const CLOCK_SHORT: f32 = 3.4;
-const CLOCK_LONG: f32 = 5.4;
-/// The extra room both clocks take, in ems, while the right one leads with a minus sign.
-const CLOCK_SIGN: f32 = 0.6;
 
 /// How the bar draws its volume control.
 #[derive(Clone, Copy)]
@@ -73,13 +70,12 @@ pub(crate) struct PlayerBar {
     track_menu: ItemMenu,
     sessions: Entity<SessionsButton>,
     context_menu: Option<(music::Track, Point<Pixels>)>,
-    seek: ScrubberState,
+    /// The clocks and the seek bar, which follow the position without redrawing the bar.
+    timeline: Entity<Timeline>,
     volume: ScrubberState,
     /// The mute memory and the drag both volume controls share, and the slider that rises
     /// over the button where the bar has no room for one beside it.
     rising: RisingVolume,
-    pending: Option<f32>,
-    over_seek: Option<f32>,
     over_volume: Option<f32>,
 }
 
@@ -108,6 +104,7 @@ impl PlayerBar {
         let me = cx.entity_id();
         let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(me));
         let sessions = cx.new(SessionsButton::new);
+        let timeline = cx.new(|cx| Timeline::new(playback.clone(), cx));
 
         Self {
             playback,
@@ -115,10 +112,8 @@ impl PlayerBar {
             track_menu: ItemMenu::new(playlist_scrollbar, cx),
             sessions,
             context_menu: None,
-            seek: ScrubberState::new("seek"),
+            timeline,
             volume: ScrubberState::new("volume"),
-            pending: None,
-            over_seek: None,
             over_volume: None,
             rising: RisingVolume::new("volume-rise"),
         }
@@ -144,21 +139,13 @@ impl PlayerBar {
         self.open_context_menu(track, position, cx);
     }
 
-    fn commit_seek(&mut self, cx: &mut Context<Self>) {
-        let Some(fraction) = self.pending.take() else {
-            return;
-        };
-        self.playback
-            .update(cx, |playback, cx| playback.seek_fraction(fraction, cx));
-    }
-
     fn hover(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         let pad = cx.theme().metrics.pad;
-        let seek = self.seek.hovered(event.position, pad);
+        self.timeline
+            .update(cx, |timeline, cx| timeline.hover(event.position, cx));
         let volume = self.volume.hovered(event.position, pad);
 
-        if moved(self.over_seek, seek) || moved(self.over_volume, volume) {
-            self.over_seek = seek;
+        if moved(self.over_volume, volume) {
             self.over_volume = volume;
             cx.notify();
         }
@@ -179,9 +166,9 @@ impl PlayerBar {
         let theme = *cx.theme();
         let empty = theme.muted_foreground.opacity(0.3);
         let level = self.playback.read(cx).shown_volume(cx);
+        let muted = self.playback.read(cx).muted(cx);
         let showing = self.over_volume.is_some() || self.rising.held;
         let bubble = showing.then(|| (level, percent(level)));
-        let restore = self.rising.muted.unwrap_or(0.7);
 
         div()
             .id("player-volume")
@@ -197,22 +184,14 @@ impl PlayerBar {
                     .ghost()
                     .small()
                     .icon(volume_icon(level))
-                    .tooltip_above(match level <= 0.001 {
+                    .tooltip_above(match muted {
                         true => "player-unmute",
                         false => "player-mute",
                     })
                     .tint(theme.muted_foreground)
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        let wanted = match level <= 0.001 {
-                            true => restore,
-                            false => 0.,
-                        };
-                        this.rising.muted = match wanted {
-                            0. => Some(level),
-                            _ => None,
-                        };
                         this.playback
-                            .update(cx, |playback, cx| playback.set_volume(wanted, cx));
+                            .update(cx, |playback, cx| playback.toggle_muted(cx));
                     })),
             )
             .child(
@@ -225,7 +204,6 @@ impl PlayerBar {
                         .on_move(cx.listener(|this, fraction: &f32, _, cx| {
                             let level = *fraction;
                             this.rising.held = true;
-                            this.rising.muted = None;
                             this.playback
                                 .update(cx, |playback, cx| playback.slide_volume(level, cx));
                             cx.notify();
@@ -438,7 +416,7 @@ impl PlayerBar {
             .items_center()
             .gap_1()
             .when(explicit, |this| {
-                this.child(div().flex_none().child(ExplicitBadge::new()))
+                this.child(div().flex_none().child(Badge::explicit()))
             })
             .child(like(track, &self.playback, cx));
         let headline = match centered {
@@ -469,11 +447,14 @@ impl PlayerBar {
                         ),
                 )
             }
+            // The row is one line of the title tall, so the heart beside it reaches past it rather
+            // than pushing the artist line down.
             false => div()
                 .w_full()
                 .flex()
                 .min_w_0()
                 .items_center()
+                .h(theme.text(ui::Text::Body) * ui::LEADING)
                 .gap_1()
                 .child(title)
                 .child(actions),
@@ -481,9 +462,9 @@ impl PlayerBar {
         div()
             .flex()
             .flex_col()
-            .when(centered, |this| {
-                this.items_center().line_height(gpui::relative(ui::LEADING))
-            })
+            .line_height(gpui::relative(ui::LEADING))
+            .gap(theme.metrics.pad / 2.)
+            .when(centered, |this| this.items_center())
             .justify_center()
             .flex_1()
             .min_w_0()
@@ -593,14 +574,11 @@ impl PlayerBar {
 impl Render for PlayerBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
-        let muted = theme.muted_foreground;
-        let empty = muted.opacity(0.3);
         let span = Chrome::window_room(window);
         let layout = self.settings.read(cx).player_bar_layout();
         let stacked = Self::stacked(window, layout);
         let transparent = self.settings.read(cx).player_bar_translucent();
         let height = Self::height(window, cx);
-        let clock_text = theme.text(ui::Text::Tiny);
         // Equal wings keep the title centered while reserving the original volume slider width.
         let centered_wing = theme.metrics.control * 4. + px(VOLUME_WIDTH) + theme.metrics.pad * 3.;
         let show_track = span.fits(Room::Snug);
@@ -626,75 +604,7 @@ impl Render for PlayerBar {
             .when(picker, |this| this.child(self.sessions.clone()))
             .children(sides);
 
-        let playback = self.playback.read(cx);
-        let seekable = playback.shown_track(cx).is_some();
-        let (elapsed, total) = playback.shown_time(cx);
-        let progress = self.pending.unwrap_or_else(|| fraction(elapsed, total));
-        let time_left = self.settings.read(cx).player_bar_time_left();
-        let clock_width = clock_text
-            * (match total.as_secs() >= 3600 {
-                true => CLOCK_LONG,
-                false => CLOCK_SHORT,
-            } + match time_left {
-                true => CLOCK_SIGN,
-                false => 0.,
-            });
-
-        let seek_bubble = self
-            .over_seek
-            .or(self.pending)
-            .map(|at| (at, clock(total.mul_f32(at))));
-
-        let clock_label = |id: &'static str, text: SharedString, align_end: bool| {
-            ui::spoken(id, text)
-                .w(clock_width)
-                .flex_none()
-                .whitespace_nowrap()
-                .text_size(clock_text)
-                .font_features(tabular())
-                .text_color(muted)
-                .when_else(align_end, |this| this.text_right(), |this| this.text_left())
-        };
-
-        let seek = div()
-            .id("player-seek")
-            .role(Role::Group)
-            .aria_label(t!("song-position"))
-            .flex()
-            .items_center()
-            .gap_2()
-            .w_full()
-            .child(clock_label("player-elapsed", clock(elapsed), true))
-            .child(
-                div().flex_1().min_w_0().child(
-                    Scrubber::new(&self.seek, progress)
-                        .name(t!("song-position"))
-                        .value(clock(elapsed))
-                        .colors(theme.progress_bar, empty, theme.foreground)
-                        .enabled(seekable)
-                        .when_some(seek_bubble, |this, (at, text)| this.bubble(at, text))
-                        .on_move(cx.listener(|this, fraction: &f32, _, cx| {
-                            this.pending = Some(*fraction);
-                            cx.notify();
-                        }))
-                        .on_release(
-                            cx.listener(|this, _: &MouseUpEvent, _, cx| this.commit_seek(cx)),
-                        ),
-                ),
-            )
-            .child(match time_left {
-                true => {
-                    let left = clock(total.saturating_sub(elapsed));
-                    clock_label(
-                        "player-time-left",
-                        t!("player-time-left", time = &left),
-                        false,
-                    )
-                    .aria_value(t!("player-time-left-spoken", time = &left))
-                }
-                false => clock_label("player-duration", clock(total), false),
-            })
-            .into_any_element();
+        let seek = self.timeline.clone();
 
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let radius = crate::chrome::window_radius(self.settings.read(cx), cx, window);

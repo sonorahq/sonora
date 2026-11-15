@@ -99,6 +99,10 @@ yay -S sonora
 flatpak install --user https://sonorahq.github.io/sonora/sonora.flatpakref
 ```
 
+#### Snap
+
+Install from the [Snap Store](https://snapcraft.io/sonora): `sudo snap install sonora`.
+
 #### AppImage
 
 Download from the [latest release](https://github.com/sonorahq/sonora/releases/latest), make it executable and run
@@ -166,21 +170,23 @@ Discord is the primary one, but we do have a Matrix bridge.
 
 | Language | Translated | Coverage |
 | --- | --- | --- |
-| English (`en-US`) | 1282/1282 | 100% |
-| Deutsch (`de`) | 1108/1282 | 86% |
-| Español (`es`) | 1106/1282 | 86% |
-| Français (`fr`) | 1107/1282 | 86% |
-| Italiano (`it`) | 1106/1282 | 86% |
-| Bahasa Indonesia (`id`) | 1106/1282 | 86% |
-| 日本語 (`ja`) | 1106/1282 | 86% |
-| Русский (`ru`) | 1207/1282 | 94% |
-| Українська (`uk`) | 1108/1282 | 86% |
-| Polski (`pl`) | 1108/1282 | 86% |
-| Čeština (`cs`) | 1106/1282 | 86% |
-| Português (Brasil) (`pt-BR`) | 1106/1282 | 86% |
-| 简体中文 (`zh-CN`) | 1106/1282 | 86% |
-| Türkçe (`tr`) | 1106/1282 | 86% |
-| Shqip (`sq`) | 1106/1282 | 86% |
+| English (`en-US`) | 1338/1338 | 100% |
+| Deutsch (`de`) | 1107/1338 | 83% |
+| Español (`es`) | 1105/1338 | 83% |
+| Français (`fr`) | 1106/1338 | 83% |
+| Italiano (`it`) | 1105/1338 | 83% |
+| Bahasa Indonesia (`id`) | 1105/1338 | 83% |
+| 日本語 (`ja`) | 1105/1338 | 83% |
+| 한국어 (`ko`) | 1324/1338 | 99% |
+| Русский (`ru`) | 1215/1338 | 91% |
+| Українська (`uk`) | 1107/1338 | 83% |
+| Polski (`pl`) | 1107/1338 | 83% |
+| Čeština (`cs`) | 1105/1338 | 83% |
+| Português (Brasil) (`pt-BR`) | 1105/1338 | 83% |
+| Português (Portugal) (`pt-PT`) | 1105/1338 | 83% |
+| 简体中文 (`zh-CN`) | 1105/1338 | 83% |
+| Türkçe (`tr`) | 1105/1338 | 83% |
+| Shqip (`sq`) | 1105/1338 | 83% |
 
 <!-- i18n:end -->
 

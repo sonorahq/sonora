@@ -7,6 +7,8 @@ license.workspace = true
 [features]
 # the gpui frame overlay and repaint wash, off in normal builds
 profiler = ["gpui/profiler"]
+# patch running debug builds from `dx serve --hot-patch`, see CONTRIBUTING.md
+hot-reload = ["gpui/hot-reload"]
 bundled-sqlite = ["state/bundled-sqlite"]
 
 [dependencies]

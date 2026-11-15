@@ -66,7 +66,7 @@ mod waves;
 
 pub use arrow_ring::ArrowRing;
 pub use artwork::{
-    Artwork, Avatar, PREFETCH_REACH, Prefetch, artwork_usage, cover_palette, prefetch,
+    Artwork, Avatar, PREFETCH_REACH, Prefetch, artwork_usage, cover_palette, prefetch, prefetching,
 };
 pub use button::{Button, SMALL_INSET};
 pub use card::CARD_GROUP;
@@ -78,7 +78,7 @@ pub use controls::WindowFrame;
 pub use deck::Deck;
 pub use drag::{Edge, Ghost, drop_gap, drop_into, drop_marker, grip};
 pub use dropdown::Dropdown;
-pub use explicit::ExplicitBadge;
+pub use explicit::Badge;
 pub use filters::{
     Filter, FilterChange, FlagAxis, RangeAxis, RangeScrubber, RangeState, SortAxis, Unit,
 };
@@ -98,8 +98,8 @@ pub use input::{
 };
 pub use kbd::Kbd;
 pub use label::{
-    Tails, eyebrow, faint, heading, spoken, spoken_eyebrow, spoken_heading, spoken_vacant, upper,
-    vacant,
+    Tails, eyebrow, eyebrow_with, faint, heading, spoken, spoken_eyebrow, spoken_heading,
+    spoken_vacant, vacant,
 };
 pub use layout::{ALWAYS, MIN_CONTENT, ROOMY, Room, SNUG, VAST, WIDE};
 pub use lazy::Lazy;
