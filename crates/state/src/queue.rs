@@ -1000,21 +1000,24 @@ impl Queue {
         upcoming: Vec<(Track, QueuedTrack)>,
         cx: &mut Context<Self>,
     ) {
-        let entry = |(track, queued): (Track, QueuedTrack)| {
+        let mut known: Vec<_> = self
+            .past
+            .iter()
+            .chain(&self.current)
+            .chain(&self.upcoming)
+            .cloned()
+            .collect();
+        let mut entry = |(track, queued): (Track, QueuedTrack)| {
             let kind = match queued.queued {
                 true => QueueKind::Queued,
                 false => QueueKind::Context,
             };
-            let uid = if queued.uid.is_empty() {
-                queue_uid()
-            } else {
-                queued.uid
-            };
+            let uid = soloist_uid(&mut known, track.id.as_deref(), queued.uid);
             Entry::with_uid(uid, track, None, kind)
         };
-        self.past = previous.into_iter().map(&entry).collect();
-        self.current = current.map(&entry);
-        self.upcoming = upcoming.into_iter().map(&entry).collect();
+        self.past = previous.into_iter().map(&mut entry).collect();
+        self.current = current.map(&mut entry);
+        self.upcoming = upcoming.into_iter().map(&mut entry).collect();
         self.source.clear();
         self.suggested += 1;
         self.changed(cx);
@@ -1383,6 +1386,17 @@ fn queue_uid() -> String {
     format!("sonora-{:016x}", fastrand::u64(..))
 }
 
+/// Keeps an anonymous Soloist occurrence stable across its next reported queue window.
+fn soloist_uid(known: &mut Vec<Entry>, id: Option<&str>, uid: String) -> String {
+    let index = match uid.is_empty() {
+        true => id.and_then(|id| known.iter().position(|entry| entry.id() == Some(id))),
+        false => known.iter().position(|entry| entry.uid == uid),
+    };
+    index
+        .map(|index| known.remove(index).uid)
+        .unwrap_or_else(|| (!uid.is_empty()).then_some(uid).unwrap_or_else(queue_uid))
+}
+
 /// Excludes local files from the provider's queue report while retaining occurrence identities.
 fn connect_entry(entry: &Entry) -> Option<QueuedTrack> {
     let id = entry.id().filter(|id| !music::is_local_id(id))?;
@@ -1408,7 +1422,7 @@ mod tests {
 
     use super::{
         Entry, gap_target, hydrate, in_order, local, move_item, record, restore, scramble,
-        select_past, select_upcoming, sift, stub, trim,
+        select_past, select_upcoming, sift, soloist_uid, stub, trim,
     };
 
     fn track(id: &str) -> Track {
@@ -1464,6 +1478,18 @@ mod tests {
         restore(&mut upcoming, &source, None);
 
         assert_eq!(ids(&upcoming), ids(&source.iter().cloned().collect()));
+    }
+
+    #[test]
+    fn anonymous_soloist_occurrences_keep_their_ordered_identities() {
+        let first = Entry::with_uid("first".into(), track("duplicate"), None, super::QueueKind::Context);
+        let second = Entry::with_uid("second".into(), track("duplicate"), None, super::QueueKind::Context);
+        let mut known = vec![first, second];
+
+        let first = soloist_uid(&mut known, Some("duplicate"), String::new());
+        let second = soloist_uid(&mut known, Some("duplicate"), String::new());
+
+        assert_eq!([first, second], ["first", "second"]);
     }
 
     #[test]
