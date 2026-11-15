@@ -1500,6 +1500,7 @@ fn queued_tracks(entries: Vec<wire::Queued>) -> Vec<QueuedTrack> {
                 uid,
                 id,
                 queued,
+                suggested: false,
                 added_by: None,
             })
         })

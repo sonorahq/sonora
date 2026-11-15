@@ -67,6 +67,8 @@ impl HistoryView {
             TableState::new(TableDelegate::new(source, width, cx), cx).follow(scroll)
         });
 
+        let chrome = crate::chrome::Chrome::entity(cx);
+        cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
         cx.observe(&history, |this, _, cx| {
             this.table.rebuild(cx);
             cx.notify();
@@ -200,6 +202,7 @@ impl Render for HistoryView {
         let note = self.note(cx);
         let page = Scroller::new("history-page", &self.scrollbar)
             .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .px(crate::chrome::Chrome::margin(window, cx))
             .pt(inset)
             .pb(inset)
             .child(div().px(inset).child(self.header(cx)))

@@ -268,7 +268,6 @@ filter-reset = Reset filter
 filter-duration = Durasi
 filter-year = Tahun
 filter-hide-explicit = Sembunyikan eksplisit
-filter-playable = Hanya yang bisa diputar
 filter-favorites = Hanya favorit
 filter-downloaded = Diunduh
 filter-owned = Dibuat oleh Anda

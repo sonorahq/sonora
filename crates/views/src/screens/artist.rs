@@ -407,12 +407,21 @@ impl ArtistView {
     }
 
     /// The artist's banner behind the hero, `height` tall and bled past the page's `inset` to
-    /// its edges, with the hero's top `hero` below its own. It is dimmed throughout and stays sharp
-    /// above the hero, then blurs, darkens and fades harder until it is gone at its bottom.
+    /// its edges, with the hero's top `hero` below its own. It spans the side `margin` of a wide
+    /// window too, so its parent has to be as wide as the content area, since its blurs never
+    /// reach far past that parent. It is dimmed throughout and stays sharp above the hero, then
+    /// blurs, darkens and fades harder until it is gone at its bottom.
     /// Without a banner the portrait stands in, blurred to a wash of its colours so it does not
     /// repeat the cover beside it. None when the artist has neither, or has only a portrait
     /// while blurs are off.
-    fn banner(&self, inset: Pixels, height: Pixels, hero: Pixels, cx: &App) -> Option<AnyElement> {
+    fn banner(
+        &self,
+        inset: Pixels,
+        margin: Pixels,
+        height: Pixels,
+        hero: Pixels,
+        cx: &App,
+    ) -> Option<AnyElement> {
         let artist = self.detail.read(cx).artist()?;
         let (url, wash) = match &artist.banner {
             Some(banner) => (banner.clone(), None),
@@ -423,7 +432,7 @@ impl ArtistView {
         // frame later, so a window being resized would show the box's edge past the picture.
         // Everything is drawn a little wider than the box, centred in it, and the box clips the
         // rest.
-        let width = (self.width + inset * 2.) * (1. + BANNER_SLACK);
+        let width = (self.width + (inset + margin) * 2.) * (1. + BANNER_SLACK);
         let theme = cx.theme();
         let shade = div()
             .absolute()
@@ -1304,14 +1313,15 @@ impl Render for ArtistView {
             .read(cx)
             .artist()
             .is_some_and(|artist| artist.banner.is_some());
+        let margin = crate::chrome::Chrome::margin(window, cx);
         let rise = match banner_shown {
-            true => ((self.width + inset * 2.) / BANNER_BOX - inset - cover)
+            true => ((self.width + (inset + margin) * 2.) / BANNER_BOX - inset - cover)
                 .max(cover * BANNER_RISE_LEAST)
                 .min(cover * BANNER_RISE_MOST),
             false => cover * BANNER_RISE_WASH,
         };
         let rise = snapped(rise, window);
-        let banner = self.banner(inset, inset + rise + cover, inset + rise, cx);
+        let banner = self.banner(inset, margin, inset + rise + cover, inset + rise, cx);
         let tracks = match self.mode {
             Mode::Grid => self.popular(cx),
             Mode::List => self.listed(cx),
@@ -1339,6 +1349,7 @@ impl Render for ArtistView {
             .child(
                 div()
                     .relative()
+                    .px(margin)
                     .pt(rise)
                     .children(banner)
                     .child(head)
@@ -1358,10 +1369,14 @@ impl Render for ArtistView {
                         )
                     }),
             )
-            .child(tracks)
-            .children(grid)
-            .children(rails)
-            .children(about)
+            .child(
+                div()
+                    .px(margin)
+                    .child(tracks)
+                    .children(grid)
+                    .children(rails)
+                    .children(about),
+            )
             .when(release_padding > Pixels::ZERO, |this| {
                 this.child(div().h(release_padding).flex_none())
             });

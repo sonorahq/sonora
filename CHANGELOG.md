@@ -19,15 +19,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Show a local file's own cover on the Discord status, uploaded for 3 hours to uguu.se like Subsonic covers. Turn it off under Settings, Discord.
 - Show the time left in the song instead of its length in the player bar, under Settings, Player bar.
 - `sonora queue` prints what played, what plays and what follows, and `sonora queue --json` gives the same queue to a script, without changing playback.
+- `sonora lyrics` prints the lyrics of the current track with their times, and `sonora lyrics --json` also gives a script the line sung now and the next one.
+- `sonora mute` reads or changes playback mute and restores the previous volume when unmuted.
 - Rebind keyboard shortcuts under Settings, Keybinds, and give shuffle, repeat, the queue and lyrics shortcuts of their own.
 - Move between the fields of a dialog with Tab and Shift+Tab.
 - Use Sonora in Korean.
 - Open a music folder in your file manager from Settings, Music folders.
 - Library pages that list both local and streaming music mark local files with a file icon beside their names.
 - Tidal artist pages show how many people follow the artist, beside the listener count.
+- See Sonora's similar tracks on your other Spotify devices under their recommended tracks, and Spotify's recommendations from another device apart from what is up next in Sonora.
 
 ### Fixed
 
+- Unmuting now respects volume changes made on another device.
+- The snap shows Sonora's tray icon instead of a generic placeholder.
+- On Windows, playback no longer crackles when you open apps or browser tabs, and the buffer setting under Settings, Sound works again.
+- Friends who join a Spotify Jam you host from Sonora hear the track you play instead of the first one of the album or playlist, see the same queue, and the songs they remove or move stay that way.
+- Pausing while you host a Spotify Jam pauses it only for you, the way Spotify does: your friends keep listening, and resuming brings you back to where the Jam is.
+- A friend editing the queue of your Spotify Jam no longer clears your listening history in Sonora.
+- Seeking from another device while a track is still loading no longer leaves Sonora showing it as loading.
 - The Flatpak shows your Discord status in Vesktop and in Discord installed from Flathub.
 - Tracks queued from another Spotify app now appear in Sonora's queue and play when selected on that app while using Soloist.
 - On Linux with WebKitGTK 2.54 or newer, signing in to Apple Music no longer fills all your memory and crashes Sonora before the sign-in page loads.
@@ -38,13 +48,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The Nix package runs Soloist on NixOS without nix-ld.
 - Apple Music search no longer runs into "Too Many Requests" while you type.
 - A page that cannot load says so in a plain sentence instead of the raw error, and a busy service asks you to wait a minute.
+- A bare `sonora://` or `sonora://open` now brings Sonora to the front instead of showing an error toast.
+- The Spotify Jams submenu no longer comes up already open the next time you open the Sessions menu.
 
 ### Changed
 
+- On a wide window pages stop growing at 1600 pixels and stay centred, while artist banners still reach the edges.
 - The fullscreen button now swaps in place when the fullscreen player opens or closes, instead of fading and zooming with it.
 - Your accounts now open Settings, General, and the separate Providers tab is gone.
 - Ctrl+F (⌘F on macOS) now opens search and / filters the page you are on, and shortcuts list Ctrl before Shift.
 - Hovered rows share one fill in tables, cards and the sidebar, the softer one the sidebar used.
+- History is now called Recents and shows in the sidebar right under Search. Hide it again under Settings, General, Sidebar entries. Settings, once added there, sits right under Recents.
+- Recents keeps your last 5000 plays instead of 500.
+- Search history now lists the songs, artists, albums and playlists you opened or played from a search instead of the words you typed, and it shows as soon as you open search or press Ctrl+K (⌘K on macOS).
+- The track filter menu no longer offers "Playable only".
 - The song title and artist in the player bar sit closer together.
 - Section labels across the app, such as the settings group headings and Pinned in the sidebar, are no longer set in capitals.
 - Local files sit beside your streaming library in Songs, Albums, Artists and Playlists, and the separate Local Music section is gone. Filter a page to Local only or Streaming only.
@@ -182,6 +199,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - YouTube Music no longer loses its refreshed sign-in cookies when several requests finish together.
 - On Windows, the hidden YouTube playback page no longer shares cookies with the sign-in window.
 - Local libraries no longer list macOS AppleDouble metadata files as songs.
+- YouTube Music playlists made before the account had a channel show up in Add to playlist and can be edited.
 - Text pasted on several lines, into a field or the Jam link, shows on one line instead of leaving the field blank.
 - On Windows, playback no longer crackles while you open apps or browser tabs.
 - Sonora no longer downloads every genre page at launch to find their pictures, so it uses far less memory with YouTube Music.

@@ -542,8 +542,10 @@ pub(crate) fn blank<F>(cell: &Cell<F>) -> AnyElement {
     cell.frame().into_any_element()
 }
 
+/// The room a page leaves for its content once `inset` is taken off its width. On a wide window
+/// this is measured against the centred page, not the whole content area.
 pub(crate) fn content_width(window: &Window, inset: Pixels, cx: &App) -> Pixels {
-    (Chrome::content(window, cx) - inset).max(ui::MIN_CONTENT)
+    (Chrome::page(window, cx) - inset).max(ui::MIN_CONTENT)
 }
 
 #[cfg(test)]

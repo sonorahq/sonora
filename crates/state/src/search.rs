@@ -2,12 +2,13 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::Result;
-use gpui::{Context, Entity, Task};
+use gpui::{App, Context, Entity, Task};
 use music::link::{self, Linked};
 use music::{Album, ArtistRef, Found, MusicApi, Playlist, SavedArtist, Track};
+use serde::{Deserialize, Serialize};
 use tokio::task::AbortHandle;
 
-use crate::{Io, Library, Network, Session, SessionEvent, Shelf, join};
+use crate::{Io, Library, Network, Session, SessionEvent, Shelf, Sonora, join};
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
 const LIMIT: usize = 20;
@@ -36,7 +37,7 @@ impl Kind {
     pub const ALL: [Kind; 4] = [Kind::Song, Kind::Artist, Kind::Album, Kind::Playlist];
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ArtistHit {
     pub name: String,
     pub id: Option<String>,
@@ -44,7 +45,7 @@ pub struct ArtistHit {
     pub saved: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AlbumHit {
     pub id: String,
     pub name: String,
@@ -54,7 +55,7 @@ pub struct AlbumHit {
     pub year: i32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PlaylistHit {
     pub id: String,
     pub name: String,
@@ -62,7 +63,8 @@ pub struct PlaylistHit {
     pub cover: Option<String>,
 }
 
-#[derive(Clone)]
+/// One result of a search. The search history keeps these too, so it serializes.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Hit {
     Song(Box<Track>),
     Artist(ArtistHit),
@@ -78,6 +80,62 @@ impl Hit {
             Hit::Album(_) => Kind::Album,
             Hit::Playlist(_) => Kind::Playlist,
         }
+    }
+
+    /// The provider id of what the hit opens. A song or an artist the provider gave no id has
+    /// none, and the search history does not keep such a hit.
+    pub fn id(&self) -> Option<&str> {
+        match self {
+            Hit::Song(track) => track.id.as_deref(),
+            Hit::Artist(artist) => artist.id.as_deref(),
+            Hit::Album(album) => Some(&album.id),
+            Hit::Playlist(list) => Some(&list.id),
+        }
+    }
+
+    /// Tells one hit from another across answers and in the history, by kind and id, or by
+    /// name when there is no id.
+    pub fn key(&self) -> String {
+        let (kind, name) = match self {
+            Hit::Song(track) => ("song", &track.name),
+            Hit::Artist(artist) => ("artist", &artist.name),
+            Hit::Album(album) => ("album", &album.name),
+            Hit::Playlist(list) => ("playlist", &list.name),
+        };
+        format!("{kind}:{}", self.id().unwrap_or(name))
+    }
+
+    /// Files the hit at the top of the search history of the provider it belongs to. A hit
+    /// without an id is not kept.
+    pub fn remember(&self, cx: &mut App) {
+        let sonora = Sonora::global(cx);
+        let Some(slug) = self
+            .id()
+            .and_then(|id| sonora.session.read(cx).slug_for(id))
+        else {
+            return;
+        };
+        let hit = self.clone();
+        sonora
+            .settings
+            .clone()
+            .update(cx, |settings, cx| settings.remember_pick(slug, hit, cx));
+    }
+
+    /// Drops the hit from the search history.
+    pub fn forget(&self, cx: &mut App) {
+        let key = self.key();
+        Sonora::global(cx)
+            .settings
+            .clone()
+            .update(cx, |settings, cx| settings.forget_pick(&key, cx));
+    }
+
+    /// What the listener chose out of searches on the providers signed in now, newest first.
+    pub fn recent(cx: &App) -> Vec<Hit> {
+        let sonora = Sonora::global(cx);
+        let slugs = sonora.session.read(cx).active_slugs();
+        sonora.settings.read(cx).picks(&slugs)
     }
 }
 
