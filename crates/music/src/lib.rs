@@ -979,6 +979,8 @@ impl std::fmt::Display for SignInFailure {
 
 impl std::error::Error for SignInFailure {}
 
+/// One account or profile a sign-in can go on as. The picked `id` comes back on the prompt's
+/// input.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AccountChoice {
     pub id: String,
@@ -986,9 +988,25 @@ pub struct AccountChoice {
     pub detail: Option<String>,
 }
 
+/// What the choices in a `SignInPrompt::Accounts` are, which decides how the picker asks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AccountKind {
+    /// Separate accounts that one browser session is signed in to at once.
+    Session,
+    /// Profiles inside one account, such as the members of a family plan.
+    Profile,
+}
+
+/// The accounts a sign-in asks the user to pick from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AccountChoices {
+    pub kind: AccountKind,
+    pub accounts: Vec<AccountChoice>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SignInPrompt {
-    Accounts(Vec<AccountChoice>),
+    Accounts(AccountChoices),
     Code { code: String, url: String },
     Url(String),
     Secret,

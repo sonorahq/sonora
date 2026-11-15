@@ -37,6 +37,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Signing in to a Deezer Family account asks which profile to use instead of always picking the account owner's, so each member sees their own playlists.
 - `sonora like` waits for the provider to confirm a favorite change and reports if it fails.
 - A song you favorite or unfavorite while the library is refreshing stays that way instead of flipping back.
 - Unmuting now respects volume changes made on another device.
