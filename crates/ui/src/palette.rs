@@ -22,6 +22,11 @@ const SECONDARY_SHARE: f32 = 0.02;
 const SECONDARY_WEIGHT: f32 = 10.;
 const SECONDARY_GAP: usize = 3;
 const SECONDARY_HUE: f32 = 0.05;
+/// A runner-up spread over several bins scores low in any one of them, so a hue also counts when
+/// it covers this share of the sampled pixels at this mean saturation or more. A vivid second
+/// family passes and a wide muted backdrop does not.
+const SECONDARY_SPREAD: f32 = 0.05;
+const SECONDARY_VIVID: f32 = 0.35;
 
 /// The palette of a frame that is already decoded, for artwork the cache has in
 /// hand. Sampling walks at most `SAMPLES` pixels, so this costs nothing beside
@@ -60,6 +65,8 @@ pub fn palette(url: impl Into<SharedString>, cx: &mut App) -> Task<CoverPalette>
 #[derive(Clone, Copy, Default)]
 struct Bin {
     weight: f32,
+    /// How many sampled pixels fell in the bin, whatever their weight.
+    count: f32,
     x: f32,
     y: f32,
     saturation: f32,
@@ -70,6 +77,7 @@ impl Bin {
     fn add(&mut self, color: Hsla, weight: f32) {
         let angle = color.h * TAU;
         self.weight += weight;
+        self.count += 1.;
         self.x += angle.cos() * weight;
         self.y += angle.sin() * weight;
         self.saturation += color.s * weight;
@@ -78,6 +86,7 @@ impl Bin {
 
     fn merge(&mut self, other: &Self) {
         self.weight += other.weight;
+        self.count += other.count;
         self.x += other.x;
         self.y += other.y;
         self.saturation += other.saturation;
@@ -147,7 +156,8 @@ fn sampled(pixels: &[u8]) -> CoverPalette {
         .filter(|&index| {
             let gap = index.abs_diff(peak).min(BINS - index.abs_diff(peak));
             gap >= SECONDARY_GAP
-                && score(&bins, index) >= (sampled * SECONDARY_SHARE).max(SECONDARY_WEIGHT)
+                && (score(&bins, index) >= (sampled * SECONDARY_SHARE).max(SECONDARY_WEIGHT)
+                    || vivid(&bins, index, sampled))
         })
         .max_by(|&a, &b| score(&bins, a).total_cmp(&score(&bins, b)));
     let secondary = runner
@@ -171,6 +181,17 @@ fn sampled(pixels: &[u8]) -> CoverPalette {
         secondary,
         lightness: mean,
     }
+}
+
+/// Whether the bin and its two neighbours together cover `SECONDARY_SPREAD` of the `sampled`
+/// pixels at a mean saturation of `SECONDARY_VIVID` or more.
+fn vivid(bins: &[Bin; BINS], index: usize, sampled: f32) -> bool {
+    let mut cluster = bins[index];
+    cluster.merge(&bins[(index + BINS - 1) % BINS]);
+    cluster.merge(&bins[(index + 1) % BINS]);
+    cluster.weight > 0.
+        && cluster.count >= sampled * SECONDARY_SPREAD
+        && cluster.saturation / cluster.weight >= SECONDARY_VIVID
 }
 
 fn score(bins: &[Bin; BINS], index: usize) -> f32 {

@@ -125,8 +125,8 @@ impl AppNotice {
             false => t!("update-available", version = version.as_str()),
         };
         let detail = (!failed).then(|| match installable {
-            true => t!("update-detail", running = state::VERSION),
-            false => t!("update-detail-notes", running = state::VERSION),
+            true => t!("update-detail", running = state::version()),
+            false => t!("update-detail-notes", running = state::version()),
         });
 
         let close = self.updates.clone();

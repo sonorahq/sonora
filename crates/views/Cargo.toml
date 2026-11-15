@@ -20,3 +20,6 @@ dirs.workspace = true
 unicode-bidi.workspace = true
 [dev-dependencies]
 gpui_platform.workspace = true
+
+[lints]
+workspace = true

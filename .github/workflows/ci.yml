@@ -6,8 +6,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A pull request event handled after the merge resolves github.ref to the base branch, so
+# grouping by ref would let a late PR run and a push to main cancel each other. The PR number
+# keeps the two apart.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:

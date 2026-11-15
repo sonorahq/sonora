@@ -12,7 +12,7 @@
     <keyword>audio</keyword>
     <keyword>player</keyword>
   </keywords>
-  <summary>A native music streaming client, built with Rust and GPUI</summary>
+  <summary>A native, familiar music streaming client</summary>
 
   <metadata_license>MIT</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>

@@ -15,13 +15,9 @@ fn main() {
             file: item.file,
         }));
     }
-    let legacy = embed::folder(root.join("themes/legacy"), KIND);
-
     let source = format!(
-        "pub(super) static BUNDLED: &[(&str, &[u8])] = {};\n\n\
-         pub(super) static LEGACY: &[(&str, &[u8])] = {};\n",
+        "pub(super) static BUNDLED: &[(&str, &[u8])] = {};\n",
         embed::embedded(&bundled, |item| item.name.clone()),
-        embed::embedded(&legacy, |item| item.name.clone()),
     );
 
     let out = PathBuf::from(env::var("OUT_DIR").expect("cargo sets the output")).join("themes.rs");

@@ -13,11 +13,12 @@ use ui::{
 
 use crate::chrome::{
     AppNotice, Chrome, JamCode, JamJoin, PlayerBar, SessionCode, SessionJoin, SidebarLeft,
-    SidebarRight, TitleBarOptions, ToastStack,
+    SidebarRight, SwipeCue, TitleBarOptions, ToastStack,
 };
 use crate::shared::confirm::Confirm;
 use crate::shared::menus::CardMenu;
 use crate::shared::playlist_editor::PlaylistEditor;
+use crate::shared::soloist::SoloistSetup;
 use crate::shared::tag_editor::TagEditor;
 use crate::shared::widevine::WidevinePrompt;
 use crate::shells::Shell;
@@ -36,12 +37,14 @@ pub(crate) struct Workspace {
     confirm: Entity<Confirm>,
     card_menu: Entity<CardMenu>,
     widevine: Entity<WidevinePrompt>,
+    soloist: Entity<SoloistSetup>,
     jam_join: Entity<JamJoin>,
     jam_code: Entity<JamCode>,
     session_join: Entity<SessionJoin>,
     session_code: Entity<SessionCode>,
     toasts: Entity<ToastStack>,
     notice: Entity<AppNotice>,
+    swipe_cue: Entity<SwipeCue>,
     content: AnyView,
     /// A screen's own header, floated over the top of the page and outside its transition.
     /// The page pads itself to start beneath it.
@@ -77,12 +80,14 @@ impl Workspace {
             confirm: Confirm::entity(cx),
             card_menu: CardMenu::entity(cx),
             widevine: cx.new(WidevinePrompt::new),
+            soloist: cx.new(SoloistSetup::new),
             jam_join: cx.new(JamJoin::new),
             jam_code: cx.new(JamCode::new),
             session_join: cx.new(SessionJoin::new),
             session_code: cx.new(SessionCode::new),
             toasts: cx.new(ToastStack::new),
             notice: cx.new(AppNotice::new),
+            swipe_cue: cx.new(SwipeCue::new),
             content,
             header: None,
             cached: true,
@@ -112,11 +117,6 @@ impl Workspace {
     pub fn reveal_side(&self, tab: SideTab, cx: &mut Context<Self>) {
         self.sidebar_right
             .update(cx, |panel, cx| panel.reveal(tab, cx));
-    }
-
-    #[allow(dead_code)]
-    pub fn content(&self) -> &AnyView {
-        &self.content
     }
 
     /// Shows a page, with the header it wants above it or none, and laid out `cached` or not.
@@ -165,22 +165,14 @@ impl Workspace {
         }
         transition.hidden()
     }
-
-    #[allow(dead_code)]
-    pub fn player_bar(&self) -> &Entity<PlayerBar> {
-        &self.player_bar
-    }
 }
 
 impl Shell for Workspace {
     fn title_bar(&self, content: Option<AnyView>, cx: &App) -> TitleBarOptions {
-        let sidebar = self.sidebar.read(cx);
-
         TitleBarOptions {
             navigation: true,
-            sidebar_open: sidebar.is_open(),
+            sidebar_open: self.sidebar.read(cx).is_open(),
             sidebar_right: Some(self.sidebar_right.read(cx).is_open()),
-            offset: sidebar.occupied_width(),
             border: true,
             content,
             transparent: false,
@@ -319,6 +311,14 @@ impl Render for Workspace {
                             .ml(overlay_width)
                             .when(overlay, |this| this.overflow_hidden())
                             .when(covered, |this| this.hidden())
+                            // A two-finger swipe across the page steps through its history,
+                            // as in a browser.
+                            .on_scroll_wheel({
+                                let cue = self.swipe_cue.clone();
+                                move |event, window, cx| {
+                                    cue.update(cx, |cue, cx| cue.follow(event, window, cx));
+                                }
+                            })
                             .child(
                                 div()
                                     .relative()
@@ -367,7 +367,8 @@ impl Render for Workspace {
                                                 .child(header),
                                         )
                                     }),
-                            ),
+                            )
+                            .child(self.swipe_cue.clone()),
                     )
                     .child(self.sidebar_right.clone())
                     .when(overlay, |this| this.child(self.sidebar.clone())),
@@ -393,6 +394,7 @@ impl Render for Workspace {
             .child(self.tag_editor.clone())
             .child(self.confirm.clone())
             .child(self.widevine.clone())
+            .child(self.soloist.clone())
             .child(self.jam_join.clone())
             .child(self.jam_code.clone())
             .child(self.session_join.clone())

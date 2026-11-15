@@ -37,7 +37,6 @@ nav-pinned = Angeheftet
 nav-unpin = Lösen
 nav-pin-hint = Zum Anheften hier ablegen
 library-liked-songs = Favoriten
-library-play-liked-songs = Abspielen
 library-no-songs = Noch keine Favoriten
 library-no-albums = Noch keine gespeicherten Alben
 library-no-playlists = Noch keine Playlists
@@ -86,6 +85,7 @@ column-index = #
 column-title = Titel
 column-artist = Künstler
 column-album = Album
+column-genre = Genre
 column-date-added = Hinzugefügt am
 column-added-by = Hinzugefügt von
 column-modified = Geändert
@@ -97,26 +97,13 @@ column-year = Jahr
 column-tracks = Titel
 
 # track menu
-menu-add-to-playlist = Zur Playlist hinzufügen
-menu-add-tracks-to-playlist = { $count ->
-    [one] { $count } Track zur Playlist hinzufügen
-   *[other] { $count } Tracks zur Playlist hinzufügen
-}
 menu-new-playlist = Neue Playlist
 menu-import-playlist = Playlist importieren…
 menu-edit-tags = Tags bearbeiten
 menu-no-playlists = Keine Playlists
 menu-search-playlists = Playlist suchen
 menu-add-to-library = Zu Favoriten hinzufügen
-menu-add-tracks-to-library = { $count ->
-    [one] { $count } Track zu Favoriten hinzufügen
-   *[other] { $count } Tracks zu Favoriten hinzufügen
-}
 menu-remove-from-library = Aus Favoriten entfernen
-menu-remove-tracks-from-library = { $count ->
-    [one] { $count } Track aus Favoriten entfernen
-   *[other] { $count } Tracks aus Favoriten entfernen
-}
 menu-remove-from-playlist = Aus der Playlist entfernen
 menu-remove-tracks-from-playlist = { $count ->
     [one] { $count } Track aus Playlist entfernen
@@ -130,15 +117,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Titeldatei löschen
 menu-delete-track-files = { $count } Titeldateien löschen
 menu-download = Herunterladen
-menu-download-tracks = { $count ->
-    [one] { $count } Track herunterladen
-   *[other] { $count } Tracks herunterladen
-}
 menu-remove-download = Download entfernen
-menu-remove-downloads = { $count ->
-    [one] { $count } Download entfernen
-   *[other] { $count } Downloads entfernen
-}
 menu-downloading = Wird heruntergeladen. Zum Stoppen klicken
 menu-play-next = Als Nächstes spielen
 menu-play-tracks-next = { $count ->
@@ -155,11 +134,8 @@ menu-play-tracks-last = { $count ->
     [one] { $count } Track als Letztes spielen
    *[other] { $count } Tracks als Letztes spielen
 }
-menu-go-to = Gehe zu
-menu-artist = Künstler
-menu-album = Album
-menu-radio = Radio
-menu-details = Details
+menu-song-radio = Song-Radio öffnen
+menu-go-to-album = Zum Album
 menu-go-to-artist = Zum Künstler
 menu-view-details = Details anzeigen
 menu-copy-link = Link kopieren
@@ -173,16 +149,6 @@ menu-delete-playlist = Playlist löschen
 menu-export-playlist = Playlist exportieren…
 menu-add-playlist-to-library = Zur Bibliothek hinzufügen
 menu-remove-playlist-from-library = Aus der Bibliothek entfernen
-menu-library-add = Zur Bibliothek hinzufügen
-menu-library-add-tracks = { $count ->
-    [one] { $count } Track zur Bibliothek hinzufügen
-   *[other] { $count } Tracks zur Bibliothek hinzufügen
-}
-menu-library-remove = Aus der Bibliothek entfernen
-menu-library-remove-tracks = { $count ->
-    [one] { $count } Track aus der Bibliothek entfernen
-   *[other] { $count } Tracks aus der Bibliothek entfernen
-}
 menu-make-playlist-public = Öffentlich machen
 menu-make-playlist-private = Privat machen
 menu-play-artist = Künstler abspielen
@@ -302,7 +268,6 @@ filter-reset = Filter zurücksetzen
 filter-duration = Dauer
 filter-year = Jahr
 filter-hide-explicit = Explizite ausblenden
-filter-playable = Nur abspielbare
 filter-favorites = Nur Favoriten
 filter-downloaded = Heruntergeladen
 filter-owned = Von dir
@@ -367,8 +332,6 @@ login-choose-detail = Wähle, wie du dich bei { $provider } anmeldest.
 
 # album and playlist pages
 detail-playlist = Playlist
-detail-play-album = Album abspielen
-detail-play-playlist = Playlist abspielen
 
 # play button
 play-pause = Pause
@@ -381,7 +344,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } monatlicher Hörer
    *[other] { $value } monatliche Hörer
 }
-artist-play = Jetzt abspielen
 artist-popular = Beliebt
 artist-popular-eyebrow = Diesen Künstler entdecken
 artist-popular-empty = Von diesem Künstler gibt es noch nichts zum Abspielen
@@ -457,7 +419,6 @@ kind-playlist = Playlist
 
 # song page
 song-eyebrow = Song
-song-play = Song abspielen
 song-view-album = Album anzeigen
 song-loading = Songinformationen werden geladen…
 song-about = Über diesen Song
@@ -647,7 +608,6 @@ settings-font-detail = Basisgröße des Textes, alles andere skaliert mit
 settings-font-value = { $size } px
 settings-startup = Beim Start anzeigen
 settings-startup-detail = Der Bildschirm, mit dem Sonora startet
-settings-startup-no-guest = Im Gastmodus nicht verfügbar
 settings-entries = Einträge der Seitenleiste
 settings-entries-detail = Die Bereiche, die in der Seitenleiste erscheinen
 settings-entries-pick = Einträge wählen
@@ -956,6 +916,8 @@ equalizer-status-channels = { $from ->
     [2] Stereo
    *[other] { $to } Kanäle
 }
+settings-lyrics = Lyrics anzeigen
+settings-lyrics-detail = Ausschalten, um Lyrics überall auszublenden und nicht mehr danach zu suchen
 settings-panel-lyrics-size = Lyricsgröße (panel)
 settings-panel-lyrics-size-detail = Größe des Lyrics-Textes in der Seitenleiste, auf der Basis der Basis-Schriftgröße
 settings-fullscreen-lyrics-size = Lyricsgröße (fullscreen)
@@ -965,6 +927,8 @@ settings-lyrics-for-local-files = Lyrics für lokale Dateien
 settings-lyrics-for-local-files-detail = Metadaten aus lokalen Dateien verwenden, um Lyrics vom Internet zu laden
 settings-artwork-for-local-files = Cover für lokale Dateien
 settings-artwork-for-local-files-detail = Metadaten aus lokalen Dateien verwenden, um für deinen Discord-Status ein Cover bei Deezer zu finden
+settings-discord-upload-covers = Cover hochladen
+settings-discord-upload-covers-detail = Das Cover deines Servers oder deiner lokalen Dateien für 3 Stunden auf uguu.se hochladen, damit dein Status genau dieses Bild zeigt statt eines online gefundenen
 settings-karaoke-lyrics = Karaoke-Songtext
 settings-karaoke-lyrics-detail = Den Songtext Wort für Wort hervorheben, wenn Timings vorliegen
 settings-blur-lyrics = Interaktive Lyrics verwischen
@@ -1269,19 +1233,6 @@ toast-offline-mode = Du bist offline. Geh online, um diesen Song zu streamen.
 offline-title = Du bist offline.
 offline-go-online = Online gehen
 toast-download-failed = Die Titel zum Herunterladen konnten nicht aufgelistet werden.
-toast-downloading = { $name } wird heruntergeladen
-toast-downloading-songs = { $count ->
-    [one] { $count } Track wird heruntergeladen
-   *[other] { $count } Tracks werden heruntergeladen
-}
-toast-downloaded = { $name } heruntergeladen
-toast-downloaded-songs = { $count ->
-    [one] { $count } Track heruntergeladen
-   *[other] { $count } Tracks heruntergeladen
-}
-toast-download-set-failed = Einige Titel von { $name } konnten nicht heruntergeladen werden
-toast-download-song-failed = { $name } konnte nicht heruntergeladen werden
-toast-download-songs-failed = Einige Titel konnten nicht heruntergeladen werden
 toast-percent = { $percent } %
 toast-download-cancelled = Download von { $name } abgebrochen
 toast-downloads-cancelled = { $count ->
