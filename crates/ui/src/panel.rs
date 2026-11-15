@@ -10,7 +10,6 @@ use crate::metrics::snapped;
 
 const GRIP: Pixels = px(12.);
 const GRIP_INSET: Pixels = px(-6.);
-const GRIP_CLEARANCE: Pixels = px(4.);
 const GRIP_PRIORITY: usize = 0;
 
 type Resize = Box<dyn Fn(&Pixels, &mut Window, &mut App) + 'static>;
@@ -37,7 +36,6 @@ pub struct Panel {
     max: Pixels,
     reach: Option<Pixels>,
     fill: bool,
-    clearance: bool,
     /// How far above the panel's foot the resize grip ends.
     grip_bottom: Pixels,
     resize: Option<Resize>,
@@ -57,7 +55,6 @@ impl Panel {
             max: Pixels::MAX,
             reach: None,
             fill: false,
-            clearance: false,
             grip_bottom: Pixels::ZERO,
             resize: None,
             children: Vec::new(),
@@ -77,11 +74,6 @@ impl Panel {
 
     pub fn fill(mut self, fill: bool) -> Self {
         self.fill = fill;
-        self
-    }
-
-    pub fn clears_scrollbar(mut self) -> Self {
-        self.clearance = true;
         self
     }
 
@@ -129,7 +121,6 @@ impl RenderOnce for Panel {
             max,
             reach,
             fill,
-            clearance,
             grip_bottom,
             resize,
             children,
@@ -137,16 +128,7 @@ impl RenderOnce for Panel {
         let overrides = std::mem::take(base.style());
         let width = width.clamp(min, max);
         let handle = (!fill).then_some(resize).flatten().map(|resize| {
-            grip(
-                key,
-                side,
-                width,
-                min,
-                reach.unwrap_or(max),
-                clearance,
-                resize,
-            )
-            .bottom(grip_bottom)
+            grip(key, side, width, min, reach.unwrap_or(max), resize).bottom(grip_bottom)
         });
         let handle = handle.map(|handle| deferred(handle).with_priority(GRIP_PRIORITY));
 
@@ -175,14 +157,9 @@ fn grip(
     width: Pixels,
     min: Pixels,
     max: Pixels,
-    clearance: bool,
     resize: Resize,
 ) -> Stateful<Div> {
     let dragged = key.clone();
-    let clearance = match clearance {
-        true => GRIP_CLEARANCE,
-        false => Pixels::ZERO,
-    };
 
     div()
         .id("panel-grip")
@@ -192,8 +169,8 @@ fn grip(
         .w(GRIP)
         .cursor_col_resize()
         .map(|handle| match side {
-            Side::Left => handle.right(GRIP_INSET - clearance),
-            Side::Right => handle.left(GRIP_INSET + clearance),
+            Side::Left => handle.right(GRIP_INSET),
+            Side::Right => handle.left(GRIP_INSET),
         })
         .on_drag_move(move |event: &DragMoveEvent<Grab>, window, cx| {
             let grab = event.drag(cx);

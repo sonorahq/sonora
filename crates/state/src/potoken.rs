@@ -129,7 +129,7 @@ impl PoToken {
         };
         match webview::Page::open(target) {
             Ok(page) => {
-                log::debug!("potoken: minting for {binding}");
+                log::debug!("potoken: minting a token");
                 let now = Instant::now();
                 self.open = Some(Open {
                     page,
@@ -206,10 +206,7 @@ impl PoToken {
         match outcome {
             Outcome::Waiting => {}
             Outcome::Minted(token) => {
-                log::debug!(
-                    "potoken: minted a token for {binding} in {:?}",
-                    asked.elapsed()
-                );
+                log::debug!("potoken: minted a token in {:?}", asked.elapsed());
                 open.warm = true;
                 open.asked = None;
                 open.used = Instant::now();

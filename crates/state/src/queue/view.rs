@@ -146,10 +146,19 @@ impl QueueView {
         }
     }
 
-    pub fn origin<'a>(&'a self, cx: &'a App) -> Option<&'a Origin> {
+    pub fn origin(&self, cx: &App) -> Option<Origin> {
         match &self.source {
-            Source::Local(queue) => queue.read(cx).origin(),
-            Source::Remote(_) => None,
+            Source::Local(queue) => queue.read(cx).origin().cloned(),
+            Source::Remote(devices) => devices.read(cx).origin(cx),
+        }
+    }
+
+    /// Why the track at `position` is in the queue, when the source knows. A queue steered
+    /// on another device only says so for its upcoming tracks.
+    pub fn kind(&self, position: QueuePosition, cx: &App) -> Option<QueueKind> {
+        match &self.source {
+            Source::Local(queue) => queue.read(cx).kind(position),
+            Source::Remote(_) => self.sections.kind(position),
         }
     }
 

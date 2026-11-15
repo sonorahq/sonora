@@ -85,6 +85,7 @@ column-index = #
 column-title = Název
 column-artist = Interpret
 column-album = Album
+column-genre = Žánr
 column-date-added = Datum přidání
 column-added-by = Přidáno uživatelem
 column-modified = Změněno
@@ -142,11 +143,8 @@ menu-play-tracks-last = { $count ->
     [few] Přehrát { $count } skladby jako poslední
    *[other] Přehrát { $count } skladeb jako poslední
 }
-menu-go-to = Přejít na
-menu-artist = Interpret
-menu-album = Album
-menu-radio = Rádio
-menu-details = Podrobnosti
+menu-song-radio = Přejít na rádio skladby
+menu-go-to-album = Přejít na album
 menu-go-to-artist = Přejít na interpreta
 menu-view-details = Zobrazit podrobnosti
 menu-copy-link = Kopírovat odkaz
@@ -286,7 +284,6 @@ filter-reset = Resetovat filtry
 filter-duration = Délka
 filter-year = Rok
 filter-hide-explicit = Skrýt explicitní
-filter-playable = Jen přehratelné
 filter-favorites = Jen oblíbené
 filter-downloaded = Stažené
 filter-owned = Vytvořené tebou
@@ -635,7 +632,6 @@ settings-font-detail = Základní velikost textu, vše ostatní se podle ní mě
 settings-font-value = { $size } px
 settings-startup = Zobrazit při startu
 settings-startup-detail = Obrazovka, kterou Sonora otevře po spuštění
-settings-startup-no-guest = Nedostupné v režimu hosta
 settings-entries = Položky postranního panelu
 settings-entries-detail = Sekce uvedené v postranním panelu
 settings-entries-pick = Vyber položky
@@ -946,6 +942,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kan.
 }
+settings-lyrics = Zobrazovat texty písní
+settings-lyrics-detail = Vypnutím skryjete texty písní všude a přestanou se vyhledávat
 settings-panel-lyrics-size = Velikost textu (panel)
 settings-panel-lyrics-size-detail = Velikost textu písně v postranním panelu nad základní velikostí písma
 settings-fullscreen-lyrics-size = Velikost textu (celá obrazovka)

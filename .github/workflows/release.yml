@@ -11,6 +11,10 @@ on:
       nightly:
         type: string
         required: true
+      reuse:
+        description: Stable tag supplying the executables for a nightly refresh
+        type: string
+        default: ""
 
 concurrency:
   group: release-${{ github.ref }}
@@ -64,7 +68,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: system dependencies
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !inputs.reuse
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -75,11 +79,14 @@ jobs:
             libvulkan-dev libdbus-1-dev
 
       - uses: dtolnay/rust-toolchain@stable
+        if: ${{ !inputs.reuse }}
         with:
           targets: ${{ matrix.target }}
 
       - uses: mozilla-actions/sccache-action@v0.0.9
+        if: ${{ !inputs.reuse }}
       - uses: Swatinem/rust-cache@v2
+        if: ${{ !inputs.reuse }}
         with:
           key: ${{ matrix.target }}
           cache-targets: false
@@ -87,19 +94,37 @@ jobs:
       # A nightly compiles its label in as the version the app shows. Other builds leave the
       # variable unset, since an empty one would still count as set.
       - name: build
+        if: ${{ !inputs.reuse }}
         shell: bash
         env:
           NIGHTLY: ${{ inputs.nightly }}
           TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          if [ -n "$NIGHTLY" ]; then export SONORA_VERSION="$NIGHTLY"; fi
+          if [ -n "$NIGHTLY" ]; then
+            export SONORA_VERSION="$NIGHTLY" SONORA_CHANNEL=nightly
+          fi
           cargo build --release --locked --package sonora --target "$TARGET"
 
+      - name: reuse the released executable
+        if: inputs.reuse && runner.os != 'macOS'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.reuse }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          suffix=""
+          if [ "$RUNNER_OS" = Windows ]; then suffix=.exe; fi
+          bash scripts/download-release-asset.sh "$TAG" "sonora-$TAG-$TARGET$suffix" \
+            "target/$TARGET/release/sonora$suffix"
+
       - name: sccache stats
-        if: always()
+        if: always() && !inputs.reuse
         run: sccache --show-stats
       - name: stage the executable
+        if: ${{ !inputs.reuse || runner.os != 'macOS' }}
         shell: bash
         env:
           VERSION: ${{ steps.meta.outputs.version }}
@@ -147,11 +172,15 @@ jobs:
             $number = "0.0.0"
           }
           $env:SONORA_VERSION = $number
+          $channel = if ($env:NIGHTLY) { "nightly" } else { "stable" }
+          @{ version = $number; channel = $channel } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM build.json
+          $env:SONORA_BUILD_METADATA = (Resolve-Path build.json).Path
           $env:SONORA_EXE = (Resolve-Path "target/$env:TARGET/release/sonora.exe").Path
           $env:SONORA_DIST = (Resolve-Path "dist").Path
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "scripts/windows/sonora.iss"
 
       - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.reuse || runner.os != 'macOS' }}
         with:
           name: "${{ runner.os == 'macOS' && format('darwin-{0}', matrix.target) || format('release-{0}', matrix.target) }}"
           path: dist/*
@@ -190,12 +219,14 @@ jobs:
           echo "number=$number" >> "$GITHUB_OUTPUT"
 
       - uses: actions/download-artifact@v4
+        if: ${{ !inputs.reuse }}
         with:
           pattern: darwin-*
           path: darwin
           merge-multiple: true
 
       - name: assemble the bundle
+        if: ${{ !inputs.reuse }}
         shell: bash
         env:
           NUMBER: ${{ steps.meta.outputs.number }}
@@ -215,6 +246,7 @@ jobs:
 
           cp \
             assets/macos/sonora.icns \
+            assets/macos/Assets.car \
             Sonora.app/Contents/Resources/
 
           cp \
@@ -242,6 +274,30 @@ jobs:
             > Sonora.app/Contents/Info.plist
 
           plutil -lint Sonora.app/Contents/Info.plist
+
+      - name: reuse the released bundle
+        if: inputs.reuse
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.reuse }}
+        run: |
+          set -euo pipefail
+          bash scripts/download-release-asset.sh "$TAG" "sonora-$TAG-macos.dmg" release.dmg
+          mkdir mounted
+          hdiutil attach -readonly -nobrowse -mountpoint "$PWD/mounted" release.dmg
+          cp -R mounted/Sonora.app .
+          hdiutil detach "$PWD/mounted"
+
+      - name: record the bundle's channel
+        env:
+          NIGHTLY: ${{ inputs.nightly }}
+          NUMBER: ${{ steps.meta.outputs.number }}
+        run: |
+          version="${NIGHTLY:-$NUMBER}"
+          channel=stable
+          if [ -n "$NIGHTLY" ]; then channel=nightly; fi
+          jq -n --arg version "$version" --arg channel "$channel" \
+            '{version: $version, channel: $channel}' > Sonora.app/Contents/Resources/sonora-build.json
 
       - name: sign the bundle
         shell: bash
@@ -378,6 +434,7 @@ jobs:
           VERSION: ${{ steps.meta.outputs.version }}
           NUMBER: ${{ steps.meta.outputs.number }}
           UPDATE: ${{ steps.meta.outputs.update }}
+          NIGHTLY: ${{ inputs.nightly }}
           TARGET: ${{ matrix.variant.target }}
         run: |
           set -euo pipefail
@@ -385,9 +442,12 @@ jobs:
           mkdir -p AppDir/usr/bin
           cp "staged/sonora-$VERSION-$TARGET" AppDir/usr/bin/sonora
           chmod +x AppDir/usr/bin/sonora
+          channel=stable
+          if [ -n "$NIGHTLY" ]; then channel=nightly; fi
+          jq -n --arg version "$NUMBER" --arg channel "$channel" \
+            '{version: $version, channel: $channel}' > AppDir/usr/bin/sonora-build.json
 
-          # Every asset is compiled into the executable, so the AppDir carries the desktop entry
-          # and the icons for the host's launcher and nothing else.
+          # Artwork is compiled into the executable. The AppDir supplies launcher integration.
           mkdir -p AppDir/usr/share/icons
           cp -R assets/linux/icons/hicolor AppDir/usr/share/icons/
 
@@ -688,30 +748,21 @@ jobs:
       - name: stage the licenses
         run: ./scripts/licenses-tarball.sh dist/sonora-nightly-licenses.tar.gz
 
-      - name: checksums
-        run: cd dist && shasum -a 256 * > SHA256SUMS
-
-      - name: record the assets for the flake
+      - name: record portable build metadata
         env:
           NIGHTLY: ${{ inputs.nightly }}
         run: |
-          set -euo pipefail
-          sri() { echo "sha256-$(openssl dgst -sha256 -binary "dist/$1" | base64 -w0)"; }
-          jq -n \
-            --arg version "$NIGHTLY" \
-            --arg x86_64_linux "$(sri sonora-nightly-x86_64-unknown-linux-gnu)" \
-            --arg aarch64_linux "$(sri sonora-nightly-aarch64-unknown-linux-gnu)" \
-            --arg aarch64_darwin "$(sri sonora-nightly-macos.dmg)" \
-            '{
-              version: $version,
-              tag: "nightly",
-              assets: {
-                "x86_64-linux": { target: "x86_64-unknown-linux-gnu", hash: $x86_64_linux },
-                "aarch64-linux": { target: "aarch64-unknown-linux-gnu", hash: $aarch64_linux },
-                "aarch64-darwin": { target: "macos", hash: $aarch64_darwin }
-              }
-            }' > nix/nightly.json
-          cat nix/nightly.json
+          jq -n --arg version "$NIGHTLY" \
+            '{version: $version, channel: "nightly"}' > dist/sonora-build.json
+
+      - name: checksums
+        run: cd dist && shasum -a 256 * > SHA256SUMS
+
+      - name: record the version for the flake
+        env:
+          NIGHTLY: ${{ inputs.nightly }}
+        run: |
+          jq -n --arg version "$NIGHTLY" '{version: $version}' > nix/nightly.json
 
       - name: move the nightly tag
         env:
@@ -731,13 +782,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NIGHTLY: ${{ inputs.nightly }}
+          REUSED: ${{ inputs.reuse }}
         run: |
           set -euo pipefail
           commit="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
           {
             printf 'Sonora %s, built from [`%s`](%s) on `main`.\n\n' "$NIGHTLY" "${GITHUB_SHA:0:7}" "$commit"
-            printf 'A nightly build has not been through the testing a release gets. '
-            printf 'Report what breaks in the issues and mention that it is the nightly.\n'
+            if [ -n "$REUSED" ]; then
+              printf 'This nightly uses the executables from stable release %s.\n' "$REUSED"
+            else
+              printf 'A nightly build has not been through the testing a release gets. '
+              printf 'Report what breaks in the issues and mention that it is the nightly.\n'
+            fi
+            printf '\nFor a portable executable, keep sonora-build.json beside it to preserve its nightly version and update channel.\n'
           } > notes.md
           if gh release view nightly > /dev/null 2>&1; then
             gh release upload nightly dist/* --clobber
@@ -751,6 +808,34 @@ jobs:
               --notes-file notes.md
           fi
 
+  # Caches the tag's Nix build and only then moves the `stable` branch, the flake ref of the
+  # stable channel, to it.
+  nix-stable:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')
+    permissions:
+      contents: write
+    uses: ./.github/workflows/nix.yml
+    with:
+      ref: ${{ github.ref_name }}
+      branch: stable
+    secrets:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+  # Caches the Nix build of the nightly tag, the flake ref of the nightly channel. It grants what
+  # nix.yml's promote job asks for, since GitHub refuses to start a reusable workflow that asks for
+  # more than its caller grants, even for a job that never runs.
+  nix-nightly:
+    needs: nightly
+    if: ${{ inputs.nightly }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/nix.yml
+    with:
+      ref: nightly
+    secrets:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
   announce:
     needs: release
     if: startsWith(github.ref, 'refs/tags/')
@@ -759,8 +844,7 @@ jobs:
     with:
       tag: ${{ github.ref_name }}
 
-  # The nightly built before a release still carries the previous version number.
-  # Building the nightly again right away keeps nightly users from running behind the release.
+  # Refreshes nightly from the published executables when main still matches the release.
   refresh-nightly:
     needs: release
     if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')
@@ -771,7 +855,8 @@ jobs:
       - name: dispatch the nightly
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run nightly.yml --repo "$GITHUB_REPOSITORY" --ref main
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh workflow run nightly.yml --repo "$GITHUB_REPOSITORY" --ref main -f release_tag="$RELEASE_TAG"
 
   # sonora-bin is rendered from aur/sonora-bin/PKGBUILD on every stable release, so the AUR
   # repository only ever holds what this job pushed. It needs AUR_SSH_KEY, the key nightly.yml

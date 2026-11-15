@@ -320,6 +320,28 @@ fn places() -> Vec<Place> {
 fn places() -> Vec<Place> {
     let component = component();
     let mut places = Vec::new();
+    let workspace = objc2_app_kit::NSWorkspace::sharedWorkspace();
+    for (identifier, framework) in [
+        ("com.google.Chrome", "Google Chrome Framework"),
+        ("com.google.Chrome.beta", "Google Chrome Framework"),
+        ("com.google.Chrome.canary", "Google Chrome Framework"),
+        ("org.chromium.Chromium", "Chromium Framework"),
+        ("com.brave.Browser", "Brave Browser Framework"),
+        ("com.microsoft.edgemac", "Microsoft Edge Framework"),
+        ("com.vivaldi.Vivaldi", "Vivaldi Framework"),
+        ("com.operasoftware.Opera", "Opera Framework"),
+        ("company.thebrowser.Browser", "ArcCore"),
+    ] {
+        let identifier = objc2_foundation::NSString::from_str(identifier);
+        if let Some(path) = workspace
+            .URLForApplicationWithBundleIdentifier(&identifier)
+            .and_then(|url| url.path())
+        {
+            places.push(Place::Exact(PathBuf::from(path.to_string()).join(format!(
+                "Contents/Frameworks/{framework}.framework/Libraries/WidevineCdm/{component}"
+            ))));
+        }
+    }
     let bundles = [
         "Google Chrome",
         "Google Chrome Beta",

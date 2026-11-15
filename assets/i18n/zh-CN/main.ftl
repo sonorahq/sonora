@@ -85,6 +85,7 @@ column-index = #
 column-title = 标题
 column-artist = 歌手
 column-album = 专辑
+column-genre = 流派
 column-date-added = 添加日期
 column-added-by = 添加者
 column-modified = 修改时间
@@ -133,11 +134,8 @@ menu-play-tracks-last = { $count ->
     [one] 最后播放 { $count } 首歌曲
    *[other] 最后播放 { $count } 首歌曲
 }
-menu-go-to = 前往
-menu-artist = 歌手
-menu-album = 专辑
-menu-radio = 电台
-menu-details = 详情
+menu-song-radio = 前往歌曲电台
+menu-go-to-album = 前往专辑
 menu-go-to-artist = 前往歌手
 menu-view-details = 查看详情
 menu-copy-link = 复制链接
@@ -270,7 +268,6 @@ filter-reset = 重置筛选
 filter-duration = 时长
 filter-year = 年份
 filter-hide-explicit = 隐藏露骨内容
-filter-playable = 仅播放
 filter-favorites = 仅收藏
 filter-downloaded = 已下载
 filter-owned = 由你拥有
@@ -611,7 +608,6 @@ settings-font-detail = 基础文字大小，其他所有内容随之缩放
 settings-font-value = { $size } px
 settings-startup = 欢迎页
 settings-startup-detail = Sonora 启动时打开的页面
-settings-startup-no-guest = 访客模式下不可用
 settings-entries = 侧边栏项
 settings-entries-detail = 侧边栏中显示的项
 settings-entries-pick = 选择项
@@ -920,6 +916,8 @@ equalizer-status-channels = { $from ->
     [2] 立体声
    *[other] { $to } 声道
 }
+settings-lyrics = 显示歌词
+settings-lyrics-detail = 关闭后将在所有位置隐藏歌词，并停止查找歌词
 settings-panel-lyrics-size = 歌词大小（面板）
 settings-panel-lyrics-size-detail = 侧边面板中歌词文字的大小，基于基础字体大小
 settings-fullscreen-lyrics-size = 歌词大小（全屏）

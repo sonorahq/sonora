@@ -24,12 +24,18 @@
 //! or the audio out of the process. The vault keeps kept tracks from playing outside Sonora for
 //! anyone without the master key, and nothing more.
 //!
+//! A provider whose bytes carry no protection of their own, such as the listener's own Subsonic
+//! server, keeps its downloads as plain audio files instead, named after the track and playable
+//! in any other player. [`Shelf::plain`] turns that on. A plain download says which file holds
+//! it in a small index file under [`INDEX`], so it is found without the key. The cache is sealed
+//! whatever the provider.
+//!
 //! An entry is the file's random salt, then the track in sealed chunks of [`CHUNK`] bytes, then
 //! the provider's facts about the track sealed on their own, then the length of that last block.
 //! Every chunk's nonce carries its index and whether it is the last, so a truncated, reordered or
 //! swapped entry fails to open rather than playing wrong.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::fmt;
 use std::fs::{self, File, FileTimes, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -42,7 +48,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use bytes::Bytes;
 use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
 use ring::rand::{SecureRandom as _, SystemRandom};
-use ring::{hkdf, hmac};
+use ring::{digest, hkdf, hmac};
 use tokio::sync::watch;
 
 use crate::stream::Source;
@@ -64,6 +70,13 @@ const SHARE: u64 = 4;
 const FOREIGN: &str = "players";
 /// How long a half-written entry left by a crash stays before a sweep removes it.
 const ABANDONED: Duration = Duration::from_secs(24 * 60 * 60);
+/// The hidden folder beside a provider's plain downloads holding one index file per track,
+/// which names the audio file and carries the provider's facts.
+const INDEX: &str = ".index";
+/// The most bytes of a plain download's file name before its extension.
+const NAME_BYTES: usize = 120;
+/// How much of a plain download's start is held to tell its format by.
+const HEAD: usize = 64;
 /// How long a lookup made before the vault has its key waits for it. Reading the keychain takes
 /// milliseconds, so this only runs out while the keychain is prompting or stuck.
 const UNLOCK_WAIT: Duration = Duration::from_secs(5);
@@ -116,9 +129,9 @@ pub struct Vault {
     settled: watch::Sender<bool>,
     /// What the cache takes on disk, once a sweep has counted it.
     used: Mutex<Option<u64>>,
-    /// The tracks being downloaded, by shelf and id. Whatever arrives for one of them goes to
-    /// the downloads rather than the cache.
-    wanted: Mutex<HashSet<(&'static str, String)>>,
+    /// The tracks being downloaded, by shelf and id, with what to call a plain download's file.
+    /// Whatever arrives for one of them goes to the downloads rather than the cache.
+    wanted: Mutex<HashMap<(&'static str, String), Option<String>>>,
 }
 
 impl fmt::Debug for Vault {
@@ -143,7 +156,7 @@ impl Vault {
             keys: OnceLock::new(),
             settled: watch::Sender::new(false),
             used: Mutex::new(None),
-            wanted: Mutex::new(HashSet::new()),
+            wanted: Mutex::new(HashMap::new()),
         }
     }
 
@@ -269,6 +282,7 @@ impl Vault {
             vault: self.clone(),
             provider,
             scope: String::new(),
+            plain: false,
         }
     }
 
@@ -295,14 +309,24 @@ impl Vault {
         *self.used.lock().unwrap_or_else(|held| held.into_inner()) = None;
     }
 
+    /// The folder `provider` keeps its downloads in, made readable by the owner alone when it
+    /// does not exist yet, for opening it in a file manager.
+    pub fn downloads_of(&self, provider: &str) -> Result<PathBuf> {
+        let folder = self.pinned.join(provider);
+        create_private(&self.pinned)?;
+        create_private(&folder)?;
+        Ok(folder)
+    }
+
     /// What the cache and the downloads take on disk, in bytes, the cache counting the files
     /// players keep for themselves. It walks both folders, so call it off the main thread.
     pub fn usage(&self) -> (u64, u64) {
         (footprint(&self.root), footprint(&self.pinned))
     }
 
-    /// Whether any download is on disk, whatever key it was sealed under. It walks the downloads
-    /// folder, so call it off the main thread.
+    /// Whether any sealed download is on disk, whatever key it was sealed under. Plain downloads
+    /// need no key, so they do not count. It walks the downloads folder, so call it off the main
+    /// thread.
     pub fn holds_downloads(&self) -> bool {
         fs::read_dir(&self.pinned)
             .into_iter()
@@ -313,7 +337,7 @@ impl Vault {
                     .into_iter()
                     .flatten()
                     .flatten()
-                    .any(|item| !item.file_name().to_string_lossy().starts_with('.'))
+                    .any(|item| sealed_name(&item.file_name().to_string_lossy()))
             })
     }
 
@@ -333,7 +357,7 @@ impl Vault {
         }
     }
 
-    fn wanted(&self) -> std::sync::MutexGuard<'_, HashSet<(&'static str, String)>> {
+    fn wanted(&self) -> std::sync::MutexGuard<'_, HashMap<(&'static str, String), Option<String>>> {
         self.wanted.lock().unwrap_or_else(|held| held.into_inner())
     }
 
@@ -378,6 +402,8 @@ pub struct Shelf {
     provider: &'static str,
     /// What else tells two tracks with one id apart, such as the server a Subsonic id is from.
     scope: String,
+    /// Whether downloads may be kept as plain files, see [`Shelf::plain`].
+    plain: bool,
 }
 
 impl fmt::Debug for Shelf {
@@ -395,6 +421,19 @@ impl Shelf {
         self
     }
 
+    /// The same shelf with downloads kept as plain audio files another player opens. Only for a
+    /// provider whose bytes carry no protection of their own, since a plain download is exactly
+    /// what the provider sent.
+    pub(crate) fn plain(mut self) -> Self {
+        self.plain = true;
+        self
+    }
+
+    /// Whether downloads on this shelf are kept as plain files.
+    pub(crate) fn keeps_plain(&self) -> bool {
+        self.plain
+    }
+
     /// The kept copy of track `id`, a download first and then a cached copy as `variant`
     /// describes it, when there is a whole one. An entry that fails to open is removed, so a
     /// damaged file costs one download and no more. A cached copy of a track being downloaded
@@ -404,6 +443,9 @@ impl Shelf {
     /// A download is found whatever the variant, since the listener asked for that copy. A
     /// lookup made while the vault is still unlocking waits for it, up to [`UNLOCK_WAIT`].
     pub(crate) async fn find(&self, id: &str, variant: &str) -> Option<Kept> {
+        if let Some(kept) = self.find_plain(id) {
+            return Some(kept);
+        }
         let prk = self.vault.ready().await?;
         if let Some(kept) = self.find_in(prk, Place::Pinned, id, variant) {
             return Some(kept);
@@ -473,15 +515,17 @@ impl Shelf {
 
     /// The download of track `id`, ready to be read anywhere in it, for a player that seeks in
     /// the file itself.
-    pub(crate) fn open_pinned(&self, id: &str) -> Option<(Vec<u8>, SealedReader)> {
-        let prk = self.vault.keys.get()?;
-        let kept = self.find_in(prk, Place::Pinned, id, "")?;
+    pub(crate) fn open_pinned(&self, id: &str) -> Option<(Vec<u8>, StoredReader)> {
+        let kept = self.find_download(id)?;
         Some((kept.facts, kept.source.into_reader(kept.length)))
     }
 
     /// Marks track `id` as being downloaded, so the next fetch of it is kept as a download.
-    pub(crate) fn want(&self, id: &str) {
-        self.vault.wanted().insert((self.provider, id.to_owned()));
+    /// `label` names the file when the download is plain, and `None` names it after a hash.
+    pub(crate) fn want(&self, id: &str, label: Option<String>) {
+        self.vault
+            .wanted()
+            .insert((self.provider, id.to_owned()), label);
     }
 
     /// Ends what [`want`](Self::want) started.
@@ -492,11 +536,50 @@ impl Shelf {
     /// Whether track `id` has been downloaded. It answers no while the vault is still unlocking,
     /// so an engine calls [`settle`](Self::settle) first.
     pub(crate) fn holds(&self, id: &str) -> bool {
+        self.plain_file(id).is_some() || self.holds_sealed(id)
+    }
+
+    fn holds_sealed(&self, id: &str) -> bool {
         let Some(prk) = self.vault.keys.get() else {
             return false;
         };
         self.spot(prk, Place::Pinned, id, "")
             .is_some_and(|(_, path)| path.is_file())
+    }
+
+    /// Whether track `id` is still sealed on a shelf that keeps plain files, as a download made
+    /// before the shelf did is, so [`unseal`](Self::unseal) has something to do. It answers no
+    /// while the vault is locked.
+    pub(crate) fn sealed_download(&self, id: &str) -> bool {
+        self.plain && self.holds_sealed(id)
+    }
+
+    /// Rewrites a sealed download of track `id` as a plain file named after `label`, and removes
+    /// the sealed copy once the plain one is in place. It reads and writes the whole track, so it
+    /// runs on a blocking thread.
+    pub(crate) fn unseal(&self, id: &str, label: Option<String>) -> Result<()> {
+        if !self.plain {
+            return Ok(());
+        }
+        let prk = self.vault.keys.get().context("the vault is locked")?;
+        let Some(kept) = self.find_in(prk, Place::Pinned, id, "") else {
+            return Ok(());
+        };
+        let old = kept.source.path.clone();
+        let facts = kept.facts.clone();
+        let mut pending = self
+            .begin(Place::Pinned, id, "", Box::new(move || Some(facts)))?
+            .context("the vault is locked")?;
+        if let Some(label) = label {
+            pending.label(label);
+        }
+        copy(kept, pending)?;
+        fs::remove_file(old).ok();
+        log::debug!(
+            "vault: rewrote a sealed {} download as a file",
+            self.provider
+        );
+        Ok(())
     }
 
     /// Whether track `id` has been downloaded, or may have been since the vault is still
@@ -512,6 +595,7 @@ impl Shelf {
 
     /// Removes the download of track `id`.
     pub(crate) fn discard(&self, id: &str) {
+        self.discard_plain(id);
         let Some(prk) = self.vault.keys.get() else {
             return;
         };
@@ -528,7 +612,7 @@ impl Shelf {
     fn is_wanted(&self, id: &str) -> bool {
         self.vault
             .wanted()
-            .contains(&(self.provider, id.to_owned()))
+            .contains_key(&(self.provider, id.to_owned()))
     }
 
     fn find_in(&self, prk: &hkdf::Prk, place: Place, id: &str, variant: &str) -> Option<Kept> {
@@ -563,25 +647,110 @@ impl Shelf {
         }
     }
 
-    /// Seals a cached copy again as a download and removes the cached one. It reads and writes
+    /// Writes a cached copy again as a download and removes the cached one. It reads and writes
     /// the whole track, so it runs on a blocking thread rather than an engine's.
-    fn promote(&self, id: &str, mut kept: Kept) -> Result<Kept> {
-        let prk = self.vault.keys.get().context("the vault is locked")?;
+    fn promote(&self, id: &str, kept: Kept) -> Result<Kept> {
         let facts = kept.facts.clone();
-        let mut pending = self
+        let cached = kept.source.path.clone();
+        let pending = self
             .begin(Place::Pinned, id, "", Box::new(move || Some(facts)))?
             .context("the vault is locked")?;
-        while let Some(bytes) = kept.source.open_next()? {
-            pending.write(&bytes)?;
-        }
-        pending.commit()?;
-        fs::remove_file(&kept.source.path).ok();
+        copy(kept, pending)?;
+        fs::remove_file(cached).ok();
         log::debug!(
             "vault: moved a cached {} track to the downloads",
             self.provider
         );
+        self.find_download(id).context("the download does not open")
+    }
+
+    /// The download of track `id`, plain or sealed.
+    fn find_download(&self, id: &str) -> Option<Kept> {
+        if let Some(kept) = self.find_plain(id) {
+            return Some(kept);
+        }
+        let prk = self.vault.keys.get()?;
         self.find_in(prk, Place::Pinned, id, "")
-            .context("the download does not open")
+    }
+
+    /// The index file of a plain download of track `id`. Its name is a plain hash of the id,
+    /// since a plain download is found without the key.
+    fn index_path(&self, id: &str) -> PathBuf {
+        let mut context = digest::Context::new(&digest::SHA256);
+        for part in [self.provider, id, &self.scope] {
+            context.update(part.as_bytes());
+            context.update(&[0]);
+        }
+        let name = hex(&context.finish().as_ref()[..16]);
+        self.folder(Place::Pinned).join(INDEX).join(name)
+    }
+
+    /// The audio file of a plain download of track `id` and the facts its index carries, or
+    /// `None` when there is none. An index whose file is gone is removed.
+    fn plain_file(&self, id: &str) -> Option<(PathBuf, Vec<u8>)> {
+        if !self.plain {
+            return None;
+        }
+        let index = self.index_path(id);
+        let read = fs::read(&index).ok()?;
+        let at = read.iter().position(|byte| *byte == b'\n')?;
+        let name = std::str::from_utf8(&read[..at]).ok()?;
+        if name.is_empty() || name.starts_with('.') || name.contains(['/', '\\']) {
+            log::warn!("vault: a {} index names no usable file", self.provider);
+            return None;
+        }
+        let path = self.folder(Place::Pinned).join(name);
+        if !path.is_file() {
+            fs::remove_file(&index).ok();
+            return None;
+        }
+        Some((path, read[at + 1..].to_vec()))
+    }
+
+    /// The plain download of track `id`, ready to play.
+    fn find_plain(&self, id: &str) -> Option<Kept> {
+        let (path, facts) = self.plain_file(id)?;
+        let file = File::open(&path)
+            .inspect_err(|error| log::warn!("vault: cannot open a plain download: {error}"))
+            .ok()?;
+        let length = file.metadata().ok()?.len();
+        Some(Kept {
+            facts,
+            length,
+            source: Stored {
+                file,
+                key: None,
+                name: String::new(),
+                path,
+                index: 0,
+                left: length,
+                buffer: Vec::with_capacity(CHUNK),
+            },
+        })
+    }
+
+    /// Removes the plain download of track `id` and its index.
+    fn discard_plain(&self, id: &str) {
+        let Some((path, _)) = self.plain_file(id) else {
+            return;
+        };
+        match fs::remove_file(&path) {
+            Ok(()) => log::debug!("vault: removed a plain {} download", self.provider),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                log::warn!(
+                    "vault: cannot remove a plain {} download: {error}",
+                    self.provider
+                );
+                return;
+            }
+        }
+        fs::remove_file(self.index_path(id)).ok();
+    }
+
+    /// The folder this shelf keeps its entries in within `place`.
+    fn folder(&self, place: Place) -> PathBuf {
+        self.vault.base(place).join(self.provider)
     }
 
     /// The file name and path of a track in `place`. The name is a keyed hash that says nothing
@@ -607,7 +776,7 @@ impl Shelf {
             Place::Pinned => context.update(&[1]),
         }
         let name = hex(&context.sign().as_ref()[..16]);
-        let path = self.vault.base(place).join(self.provider).join(&name);
+        let path = self.folder(place).join(&name);
         Some((name, path))
     }
 
@@ -621,7 +790,8 @@ impl Shelf {
     }
 
     /// Opens a temporary file for a new entry in `place`, or answers `None` while the vault is
-    /// locked.
+    /// locked and the entry would be sealed. A download on a plain shelf is a plain file, and
+    /// anything cached is sealed.
     fn begin(
         &self,
         place: Place,
@@ -629,6 +799,9 @@ impl Shelf {
         variant: &str,
         facts: Describe,
     ) -> Result<Option<Pending>> {
+        if place == Place::Pinned && self.plain {
+            return self.begin_plain(id, facts).map(Some);
+        }
         let Some(prk) = self.vault.keys.get() else {
             return Ok(None);
         };
@@ -636,7 +809,7 @@ impl Shelf {
             .spot(prk, place, id, variant)
             .context("cannot name the entry")?;
         let base = self.vault.base(place);
-        let folder = base.join(self.provider);
+        let folder = self.folder(place);
         create_private(base)?;
         create_private(&folder)?;
         let mut salt = [0; SALT];
@@ -661,13 +834,58 @@ impl Shelf {
             temporary,
             name,
             file,
-            key,
+            key: Some(key),
+            plain: None,
             facts: Some(facts),
             buffer: Vec::with_capacity(CHUNK + TAG),
             index: 0,
             written: SALT as u64,
             ceiling,
         }))
+    }
+
+    /// Opens a temporary file for a plain download of track `id`. Its file name and extension
+    /// are settled when it is kept, once the label and the format are known.
+    fn begin_plain(&self, id: &str, facts: Describe) -> Result<Pending> {
+        let index = self.index_path(id);
+        let folder = self.folder(Place::Pinned);
+        create_private(self.vault.base(Place::Pinned))?;
+        create_private(&folder)?;
+        create_private(&folder.join(INDEX))?;
+        let name = index
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let temporary = folder.join(format!(
+            ".{name}.{}.{}",
+            std::process::id(),
+            WRITES.fetch_add(1, Ordering::Relaxed)
+        ));
+        let file = private_file(&temporary)?;
+        let label = self
+            .vault
+            .wanted()
+            .get(&(self.provider, id.to_owned()))
+            .cloned()
+            .flatten();
+        Ok(Pending {
+            cache: None,
+            path: folder,
+            temporary,
+            name,
+            file,
+            key: None,
+            plain: Some(Plain {
+                index,
+                label,
+                head: Vec::with_capacity(HEAD),
+            }),
+            facts: Some(facts),
+            buffer: Vec::new(),
+            index: 0,
+            written: 0,
+            ceiling: u64::MAX,
+        })
     }
 
     /// Reads the salt and the facts of an entry, and leaves a source at its first chunk.
@@ -700,9 +918,9 @@ impl Shelf {
         Ok(Kept {
             facts,
             length,
-            source: Sealed {
+            source: Stored {
                 file,
-                key,
+                key: Some(key),
                 name: name.to_owned(),
                 path: path.to_owned(),
                 index: 0,
@@ -720,42 +938,46 @@ pub(crate) struct Kept {
     /// The length of the track as the provider sent it.
     pub(crate) length: u64,
     /// The track, chunk by chunk, as the provider sent it.
-    pub(crate) source: Sealed,
+    pub(crate) source: Stored,
 }
 
-/// The bytes of a kept track, opened a chunk at a time as the stream asks for them. A chunk
-/// that fails to open removes the entry, so the next play downloads the track again.
-pub(crate) struct Sealed {
+/// The bytes of a kept track, read a chunk at a time as the stream asks for them. A sealed
+/// chunk that fails to open removes the entry, so the next play downloads the track again. A
+/// plain download is read as it lies and never removed here.
+pub(crate) struct Stored {
     file: File,
-    key: LessSafeKey,
+    /// What opens each chunk, or `None` for a plain download.
+    key: Option<LessSafeKey>,
     name: String,
     /// Where the entry lies, so a chunk that fails to open can take the entry with it.
     path: PathBuf,
     index: u64,
-    /// The sealed bytes still to read.
+    /// The stored bytes still to read.
     left: u64,
     buffer: Vec<u8>,
 }
 
-impl Source for Sealed {
+impl Source for Stored {
     async fn chunk(&mut self) -> Result<Option<Bytes>> {
         let chunk = self.open_next();
         if let Err(error) = &chunk {
-            log::warn!("vault: dropping a damaged track: {error:#}");
-            fs::remove_file(&self.path).ok();
+            log::warn!("vault: cannot read a kept track: {error:#}");
+            if self.key.is_some() {
+                fs::remove_file(&self.path).ok();
+            }
         }
         chunk
     }
 }
 
-impl Sealed {
+impl Stored {
     /// The same bytes read anywhere in them. `length` is how long the track is.
-    pub(crate) fn into_reader(self, length: u64) -> SealedReader {
-        SealedReader {
+    pub(crate) fn into_reader(self, length: u64) -> StoredReader {
+        StoredReader {
             file: self.file,
             key: self.key,
             name: self.name,
-            sealed: self.left,
+            stored: self.left,
             length,
             position: 0,
             opened: None,
@@ -767,17 +989,21 @@ impl Sealed {
         if self.left == 0 {
             return Ok(None);
         }
-        let take = self.left.min((CHUNK + TAG) as u64) as usize;
+        let tag = self.key.as_ref().map_or(0, |_| TAG);
+        let take = self.left.min((CHUNK + tag) as u64) as usize;
         self.buffer.resize(take, 0);
         self.file
             .read_exact(&mut self.buffer)
             .context("cannot read a kept track")?;
         self.left -= take as u64;
+        let Some(key) = &self.key else {
+            return Ok(Some(Bytes::copy_from_slice(&self.buffer)));
+        };
         let block = match self.left {
             0 => Block::Last,
             _ => Block::Chunk,
         };
-        let opened = open(&self.key, &self.name, block, self.index, &mut self.buffer)?;
+        let opened = open(key, &self.name, block, self.index, &mut self.buffer)?;
         self.index += 1;
         Ok(Some(Bytes::copy_from_slice(opened)))
     }
@@ -785,19 +1011,20 @@ impl Sealed {
 
 /// A kept track read anywhere in it. Every chunk but the last holds [`CHUNK`] bytes, so a
 /// position names its chunk directly, and the chunk last opened is held for the reads after it.
-pub(crate) struct SealedReader {
+pub(crate) struct StoredReader {
     file: File,
-    key: LessSafeKey,
+    /// What opens each chunk, or `None` for a plain download.
+    key: Option<LessSafeKey>,
     name: String,
-    /// The bytes of sealed chunks after the salt.
-    sealed: u64,
+    /// The bytes of stored chunks, after the salt of a sealed entry.
+    stored: u64,
     /// The bytes of the track.
     length: u64,
     position: u64,
     opened: Option<(u64, Vec<u8>)>,
 }
 
-impl SealedReader {
+impl StoredReader {
     /// How long the track is.
     pub(crate) fn length(&self) -> u64 {
         self.length
@@ -806,19 +1033,28 @@ impl SealedReader {
     /// The plain bytes of chunk `index`.
     fn chunk(&mut self, index: u64) -> io::Result<&[u8]> {
         if self.opened.as_ref().is_none_or(|(held, _)| *held != index) {
-            let stride = (CHUNK + TAG) as u64;
-            let start = index * stride;
-            let size = stride.min(self.sealed.saturating_sub(start)) as usize;
-            let block = match start + size as u64 >= self.sealed {
-                true => Block::Last,
-                false => Block::Chunk,
+            let (tag, salt) = match self.key {
+                Some(_) => (TAG, SALT),
+                None => (0, 0),
             };
+            let stride = (CHUNK + tag) as u64;
+            let start = index * stride;
+            let size = stride.min(self.stored.saturating_sub(start)) as usize;
             let mut buffer = vec![0; size];
-            self.file.seek(SeekFrom::Start(SALT as u64 + start))?;
+            self.file.seek(SeekFrom::Start(salt as u64 + start))?;
             self.file.read_exact(&mut buffer)?;
-            let plain = open(&self.key, &self.name, block, index, &mut buffer)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
-                .to_vec();
+            let plain = match &self.key {
+                Some(key) => {
+                    let block = match start + size as u64 >= self.stored {
+                        true => Block::Last,
+                        false => Block::Chunk,
+                    };
+                    open(key, &self.name, block, index, &mut buffer)
+                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
+                        .to_vec()
+                }
+                None => buffer,
+            };
             self.opened = Some((index, plain));
         }
         Ok(self
@@ -828,7 +1064,7 @@ impl SealedReader {
     }
 }
 
-impl Read for SealedReader {
+impl Read for StoredReader {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         if self.position >= self.length || out.is_empty() {
             return Ok(0);
@@ -843,7 +1079,7 @@ impl Read for SealedReader {
     }
 }
 
-impl Seek for SealedReader {
+impl Seek for StoredReader {
     fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
         let target = match to {
             SeekFrom::Start(at) => Some(at),
@@ -896,11 +1132,15 @@ impl<S: Source> Source for Recording<S> {
 struct Pending {
     /// The vault whose cache the entry counts against, or `None` for a download.
     cache: Option<Arc<Vault>>,
+    /// Where a sealed entry goes, or the folder a plain download goes into.
     path: PathBuf,
     temporary: PathBuf,
     name: String,
     file: File,
-    key: LessSafeKey,
+    /// Seals every chunk and the facts, or `None` for a plain download.
+    key: Option<LessSafeKey>,
+    /// What only a plain download needs.
+    plain: Option<Plain>,
     /// Answers the provider's facts once the whole track is in. Taken when the entry is kept.
     facts: Option<Describe>,
     /// What has arrived since the last sealed chunk, and the room to seal it in.
@@ -912,13 +1152,38 @@ struct Pending {
     ceiling: u64,
 }
 
+/// What a plain download needs beyond what every entry has.
+struct Plain {
+    /// The index file that will name the audio file.
+    index: PathBuf,
+    /// What to call the audio file, or `None` to name it after a hash of the id.
+    label: Option<String>,
+    /// The first bytes of the track, which tell its format.
+    head: Vec<u8>,
+}
+
 impl Pending {
+    /// Sets what a plain download's file is called. A sealed entry has no name to give.
+    fn label(&mut self, label: String) {
+        if let Some(plain) = &mut self.plain {
+            plain.label = Some(label);
+        }
+    }
+
     /// Seals every whole chunk that has built up. One is always held back, so the last chunk
-    /// sealed is never empty unless the whole track is.
+    /// sealed is never empty unless the whole track is. A plain download is written as it comes.
     fn write(&mut self, bytes: &[u8]) -> Result<()> {
         self.written += bytes.len() as u64;
         if self.written > self.ceiling {
             bail!("the track is larger than one entry may be");
+        }
+        if let Some(plain) = &mut self.plain {
+            let room = HEAD.saturating_sub(plain.head.len()).min(bytes.len());
+            plain.head.extend_from_slice(&bytes[..room]);
+            return self
+                .file
+                .write_all(bytes)
+                .context("cannot write a download");
         }
         let mut bytes = bytes;
         while !bytes.is_empty() {
@@ -942,12 +1207,17 @@ impl Pending {
             .take()
             .and_then(|facts| facts())
             .context("the provider cannot vouch for the whole track")?;
+        if let Some(plain) = self.plain.take() {
+            return self.commit_plain(plain, told);
+        }
         let length = self.written - SALT as u64;
         self.seal(Block::Last)?;
         let mut facts = Vec::with_capacity(8 + told.len() + TAG);
         facts.extend_from_slice(&length.to_le_bytes());
         facts.extend_from_slice(&told);
         self.key
+            .as_ref()
+            .context("a plain download has no key")?
             .seal_in_place_append_tag(
                 nonce(Block::Facts, 0),
                 Aad::from(self.name.as_bytes()),
@@ -970,8 +1240,65 @@ impl Pending {
         Ok(())
     }
 
+    /// Moves a plain download into place under a free name after its label, then writes the
+    /// index that finds it, and removes any older file the index named.
+    fn commit_plain(mut self, plain: Plain, told: Vec<u8>) -> Result<()> {
+        self.file.flush()?;
+        let stem = plain
+            .label
+            .map(|label| file_stem(&label))
+            .filter(|stem| !stem.is_empty())
+            .unwrap_or_else(|| self.name.clone());
+        let extension = extension(&plain.head);
+        let older = fs::read(&plain.index).ok().and_then(|read| {
+            let at = read.iter().position(|byte| *byte == b'\n')?;
+            String::from_utf8(read[..at].to_vec()).ok()
+        });
+        let path = (1..)
+            .map(|count| match count {
+                1 => self.path.join(format!("{stem}.{extension}")),
+                _ => self.path.join(format!("{stem} ({count}).{extension}")),
+            })
+            .find(|path| !path.exists())
+            .context("there is no free name for the download")?;
+        fs::rename(&self.temporary, &path).context("cannot move the download into place")?;
+        let file_name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mut index = Vec::with_capacity(file_name.len() + 1 + told.len());
+        index.extend_from_slice(file_name.as_bytes());
+        index.push(b'\n');
+        index.extend_from_slice(&told);
+        let temporary = plain.index.with_extension(format!(
+            "{}.{}",
+            std::process::id(),
+            WRITES.fetch_add(1, Ordering::Relaxed)
+        ));
+        let written = private_file(&temporary)
+            .and_then(|mut file| file.write_all(&index).context("cannot write the index"))
+            .and_then(|()| {
+                fs::rename(&temporary, &plain.index).context("cannot move the index into place")
+            });
+        if let Err(error) = written {
+            fs::remove_file(&temporary).ok();
+            fs::remove_file(&path).ok();
+            return Err(error);
+        }
+        if let Some(older) = older.filter(|older| *older != file_name && !older.contains('/')) {
+            fs::remove_file(self.path.join(older)).ok();
+        }
+        log::debug!(
+            "vault: kept a plain download, {:.1} MiB",
+            self.written as f64 / (1024.0 * 1024.0)
+        );
+        Ok(())
+    }
+
     fn seal(&mut self, block: Block) -> Result<()> {
         self.key
+            .as_ref()
+            .context("a plain download has no key")?
             .seal_in_place_append_tag(
                 nonce(block, self.index),
                 Aad::from(self.name.as_bytes()),
@@ -1017,6 +1344,83 @@ fn open<'a>(
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Whether a name in a shelf folder is a sealed entry, whose name is 32 hex digits, rather than
+/// a plain download, an index or a half-written file.
+fn sealed_name(name: &str) -> bool {
+    name.len() == 32 && name.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Copies a kept track into a new entry and keeps it.
+fn copy(mut kept: Kept, mut pending: Pending) -> Result<()> {
+    while let Some(bytes) = kept.source.open_next()? {
+        pending.write(&bytes)?;
+    }
+    pending.commit()
+}
+
+/// A label as a file name every desktop accepts: no path separators, no characters Windows
+/// refuses, no leading dot and at most [`NAME_BYTES`] bytes.
+fn file_stem(label: &str) -> String {
+    let cleaned = label
+        .chars()
+        .map(|letter| match letter {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            letter if letter.is_control() => ' ',
+            letter => letter,
+        })
+        .collect::<String>();
+    let mut stem = cleaned
+        .trim()
+        .trim_start_matches('.')
+        .trim_end_matches(['.', ' '])
+        .to_owned();
+    if stem.len() > NAME_BYTES {
+        let mut cut = NAME_BYTES;
+        while !stem.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        stem.truncate(cut);
+        stem = stem.trim_end_matches(['.', ' ']).to_owned();
+    }
+    stem
+}
+
+/// The file extension the start of an audio file calls for, by the signature it opens with.
+fn extension(head: &[u8]) -> &'static str {
+    let at = |offset: usize, signature: &[u8]| {
+        head.get(offset..offset + signature.len()) == Some(signature)
+    };
+    let sync = |mask: u8, value: u8| head.len() >= 2 && head[0] == 0xff && head[1] & mask == value;
+    if at(0, b"fLaC") {
+        "flac"
+    } else if at(0, b"OggS") && at(28, b"OpusHead") {
+        "opus"
+    } else if at(0, b"OggS") {
+        "ogg"
+    } else if at(4, b"ftyp") {
+        "m4a"
+    } else if at(0, b"RIFF") && at(8, b"WAVE") {
+        "wav"
+    } else if at(0, b"FORM") && (at(8, b"AIFF") || at(8, b"AIFC")) {
+        "aiff"
+    } else if at(0, &[0x1a, 0x45, 0xdf, 0xa3]) {
+        "mka"
+    } else if at(0, b"MAC ") {
+        "ape"
+    } else if at(0, b"wvpk") {
+        "wv"
+    } else if at(0, b"ID3") {
+        "mp3"
+    } else if sync(0xf6, 0xf0) {
+        // An ADTS header has layer bits of zero, where MPEG audio has one, two or three.
+        "aac"
+    } else if sync(0xe0, 0xe0) {
+        "mp3"
+    } else {
+        "audio"
+    }
 }
 
 /// Creates `path` readable by the owner alone, or makes it so when another program created it
@@ -1139,6 +1543,9 @@ fn abandoned(root: &Path) -> Vec<(PathBuf, SystemTime, u64)> {
             let Ok(metadata) = item.metadata() else {
                 continue;
             };
+            if metadata.is_dir() {
+                continue;
+            }
             let used = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
             let partial = item.file_name().to_string_lossy().starts_with('.');
             if partial {

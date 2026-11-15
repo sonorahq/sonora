@@ -85,6 +85,7 @@ column-index = #
 column-title = タイトル
 column-artist = アーティスト
 column-album = アルバム
+column-genre = ジャンル
 column-date-added = 追加日
 column-added-by = 追加者
 column-modified = 更新日
@@ -120,11 +121,8 @@ menu-play-last = 最後に再生
 menu-play-tracks-last = { $count ->
    *[other] { $count }曲を最後に再生
 }
-menu-go-to = 移動
-menu-artist = アーティスト
-menu-album = アルバム
-menu-radio = ラジオ
-menu-details = 詳細
+menu-song-radio = 曲のラジオを開く
+menu-go-to-album = アルバムを表示
 menu-go-to-artist = アーティストを表示
 menu-view-details = 詳細を表示
 menu-copy-link = リンクをコピー
@@ -240,7 +238,6 @@ filter-reset = フィルターをリセット
 filter-duration = 長さ
 filter-year = 年
 filter-hide-explicit = 露骨な表現を含む曲を隠す
-filter-playable = 再生可能な曲のみ
 filter-favorites = お気に入りのみ
 filter-downloaded = ダウンロード済み
 filter-owned = 自分のもの
@@ -575,7 +572,6 @@ settings-font-detail = 基準の文字サイズ。他のすべてがこれに合
 settings-font-value = { $size } px
 settings-startup = 起動時に表示
 settings-startup-detail = 起動時に Sonora が開く画面
-settings-startup-no-guest = ゲストモードでは利用できません
 settings-entries = サイドバー項目
 settings-entries-detail = サイドバーに表示するセクション
 settings-entries-pick = 項目を選ぶ
@@ -881,6 +877,8 @@ equalizer-status-channels = { $from ->
     [2] ステレオ
    *[other] { $to }ch
 }
+settings-lyrics = 歌詞を表示
+settings-lyrics-detail = オフにすると、すべての場所で歌詞を非表示にし、歌詞の検索も停止します
 settings-panel-lyrics-size = 歌詞のサイズ（パネル）
 settings-panel-lyrics-size-detail = サイドパネルの歌詞の文字サイズ。基準のフォントサイズに対する倍率
 settings-fullscreen-lyrics-size = 歌詞のサイズ（フルスクリーン）

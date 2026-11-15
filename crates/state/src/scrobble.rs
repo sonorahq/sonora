@@ -114,6 +114,9 @@ impl Scrobbling {
         })
         .detach();
         cx.observe(&playback, |this, _, cx| this.tick(cx)).detach();
+        // a play is earned by the time listened, which moves on position reports
+        let ticks = playback.read(cx).ticks().clone();
+        cx.observe(&ticks, |this, _, cx| this.tick(cx)).detach();
 
         let rows = scrobble::services()
             .into_iter()
@@ -267,8 +270,9 @@ impl Scrobbling {
             return;
         };
 
+        let muted = self.muted(cx);
         for row in &self.rows {
-            if !row.live() {
+            if muted || !row.live() {
                 continue;
             }
             let (service, account, play) = (row.service.clone(), row.account.clone(), play.clone());
@@ -336,8 +340,9 @@ impl Scrobbling {
             });
         }
 
+        let muted = self.muted(cx);
         for row in &mut self.rows {
-            if row.sent || !row.live() {
+            if muted || row.sent || !row.live() {
                 continue;
             }
             row.sent = true;
@@ -355,6 +360,19 @@ impl Scrobbling {
                 }
             });
         }
+    }
+
+    /// Whether the current track came from the active provider and the user asked to keep that
+    /// provider's plays out of the linked services, usually because it scrobbles them on its own.
+    /// Local files always go through, and the provider itself still hears the play.
+    fn muted(&self, cx: &App) -> bool {
+        let Some(id) = self.current.as_deref() else {
+            return false;
+        };
+        let Some(provider) = self.session.read(cx).provider_slug() else {
+            return false;
+        };
+        !music::is_local_id(id) && !self.settings.read(cx).scrobbles(provider)
     }
 
     /// Sends the provider the current track's state at the last position heard.

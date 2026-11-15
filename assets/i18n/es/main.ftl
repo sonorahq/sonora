@@ -85,6 +85,7 @@ column-index = N.º
 column-title = Título
 column-artist = Artista
 column-album = Álbum
+column-genre = Género
 column-date-added = Fecha de adición
 column-added-by = Añadido por
 column-modified = Modificado
@@ -133,11 +134,8 @@ menu-play-tracks-last = { $count ->
     [one] Reproducir { $count } pista al final
    *[other] Reproducir { $count } pistas al final
 }
-menu-go-to = Ir a
-menu-artist = Artista
-menu-album = Álbum
-menu-radio = Radio
-menu-details = Detalles
+menu-song-radio = Ir a la radio de la canción
+menu-go-to-album = Ir al álbum
 menu-go-to-artist = Ir al artista
 menu-view-details = Ver detalles
 menu-copy-link = Copiar enlace
@@ -270,7 +268,6 @@ filter-reset = Restablecer los filtros
 filter-duration = Duración
 filter-year = Año
 filter-hide-explicit = Ocultar explícitas
-filter-playable = Solo reproducibles
 filter-favorites = Solo favoritos
 filter-downloaded = Descargadas
 filter-owned = Tuyas
@@ -611,7 +608,6 @@ settings-font-detail = Tamaño base del texto; todo lo demás se escala con él
 settings-font-value = { $size } px
 settings-startup = Mostrar al iniciar
 settings-startup-detail = La pantalla con la que se abre Sonora
-settings-startup-no-guest = No disponible en el modo invitado
 settings-entries = Secciones de la barra lateral
 settings-entries-detail = Las secciones que aparecen en la barra lateral
 settings-entries-pick = Elegir las secciones
@@ -920,6 +916,8 @@ equalizer-status-channels = { $from ->
     [2] estéreo
    *[other] { $to } can.
 }
+settings-lyrics = Mostrar letras
+settings-lyrics-detail = Desactívalo para ocultar las letras en todas partes y dejar de buscarlas
 settings-panel-lyrics-size = Tamaño del panel letra (panel)
 settings-panel-lyrics-size-detail = Tamaño del texto de la letra en el panel lateral comparado con el tamaño de fuente base
 settings-fullscreen-lyrics-size = Tamaño de la letra en pantalla completa

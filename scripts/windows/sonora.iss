@@ -4,6 +4,7 @@
 #define AppVersion GetEnv("SONORA_VERSION")
 #define SourceExe GetEnv("SONORA_EXE")
 #define OutputDir GetEnv("SONORA_DIST")
+#define BuildMetadata GetEnv("SONORA_BUILD_METADATA")
 ; x64compatible for the x64 build, arm64 for the ARM one
 #define Arch GetEnv("SONORA_ARCH")
 ; Sonora-Setup for the x64 build, Sonora-Setup-arm64 for the ARM one
@@ -35,8 +36,14 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Files]
 Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "{#AppExeName}"; Flags: ignoreversion
+#if BuildMetadata != ""
+Source: "{#BuildMetadata}"; DestDir: "{app}"; DestName: "sonora-build.json"; Flags: ignoreversion
+#endif
 Source: "..\..\COPYING"; DestDir: "{app}"; DestName: "LICENSE"; Flags: ignoreversion
 Source: "..\..\THIRD-PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
+
+[InstallDelete]
+Type: files; Name: "{app}\sonora-build.json"
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"

@@ -17,10 +17,12 @@ const SCHEMA: &str = "
         size INTEGER NOT NULL,
         track TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS local_folders (
+    DROP TABLE IF EXISTS local_folders;
+    CREATE TABLE IF NOT EXISTS local_dirs (
         path TEXT PRIMARY KEY,
         parent TEXT NOT NULL,
         mtime INTEGER NOT NULL,
+        cover TEXT,
         portrait TEXT
     );
     CREATE TABLE IF NOT EXISTS lyrics (

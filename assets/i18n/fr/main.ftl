@@ -85,6 +85,7 @@ column-index = #
 column-title = Titre
 column-artist = Artiste
 column-album = Album
+column-genre = Genre
 column-date-added = Date d'ajout
 column-added-by = Ajouté par
 column-modified = Modifié
@@ -136,11 +137,8 @@ menu-play-tracks-last = { $count ->
     [one] Lire { $count } titre en dernier
    *[other] Lire { $count } titres en dernier
 }
-menu-go-to = Aller à
-menu-artist = Artiste
-menu-album = Album
-menu-radio = Radio
-menu-details = Détails
+menu-song-radio = Ouvrir la radio du titre
+menu-go-to-album = Aller à l'album
 menu-go-to-artist = Aller à l'artiste
 menu-view-details = Voir les détails
 menu-copy-link = Copier le lien
@@ -273,7 +271,6 @@ filter-reset = Réinitialiser les filtres
 filter-duration = Durée
 filter-year = Année
 filter-hide-explicit = Masquer les explicites
-filter-playable = Lisibles uniquement
 filter-favorites = Favoris uniquement
 filter-downloaded = Téléchargés
 filter-owned = Par vous
@@ -615,7 +612,6 @@ settings-font-detail = Taille de base du texte, tout le reste s'y adapte
 settings-font-value = { $size } px
 settings-startup = Afficher au démarrage
 settings-startup-detail = L'écran sur lequel Sonora s'ouvre
-settings-startup-no-guest = Indisponible en mode invité
 settings-entries = Entrées de la barre latérale
 settings-entries-detail = Les sections affichées dans la barre latérale
 settings-entries-pick = Choisir les entrées
@@ -924,6 +920,8 @@ equalizer-status-channels = { $from ->
     [2] stéréo
    *[other] { $to } canaux
 }
+settings-lyrics = Afficher les paroles
+settings-lyrics-detail = Désactivez pour masquer les paroles partout et ne plus les rechercher
 settings-panel-lyrics-size = Taille des paroles (panneau)
 settings-panel-lyrics-size-detail = Taille du texte des paroles dans le panneau latéral, en plus de la taille de base
 settings-fullscreen-lyrics-size = Taille des paroles (plein écran)

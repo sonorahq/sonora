@@ -85,6 +85,7 @@ column-index = #
 column-title = Titulli
 column-artist = Artisti
 column-album = Albumi
+column-genre = Zhanri
 column-date-added = Data e shtimit
 column-added-by = Shtuar nga
 column-modified = Ndryshuar
@@ -133,11 +134,8 @@ menu-play-tracks-last = { $count ->
     [one] Luaj { $count } këngë të fundit
    *[other] Luaj { $count } këngë të fundit
 }
-menu-go-to = Shko te
-menu-artist = Artisti
-menu-album = Albumi
-menu-radio = Radio
-menu-details = Detajet
+menu-song-radio = Shko te radio e këngës
+menu-go-to-album = Shko te albumi
 menu-go-to-artist = Shko te artisti
 menu-view-details = Shiko detajet
 menu-copy-link = Kopjo lidhjen
@@ -270,7 +268,6 @@ filter-reset = Rivendos filtrat
 filter-duration = Kohëzgjatja
 filter-year = Viti
 filter-hide-explicit = Fshih eksplicitet
-filter-playable = Vetëm të luajtshme
 filter-favorites = Vetëm të preferuarat
 filter-downloaded = Të shkarkuara
 filter-owned = Nga ti
@@ -611,7 +608,6 @@ settings-font-detail = Madhësia bazë e tekstit; gjithçka tjetër shkallëzohe
 settings-font-value = { $size } px
 settings-startup = Shfaq në nisje
 settings-startup-detail = Ekrani që hap Sonora në nisje
-settings-startup-no-guest = Nuk disponohet në modalitetin mysafir
 settings-entries = Zërat e shiritit anësor
 settings-entries-detail = Seksionet e listuara në shiritin anësor
 settings-entries-pick = Zgjidh zërat
@@ -920,6 +916,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kan.
 }
+settings-lyrics = Shfaq tekstet
+settings-lyrics-detail = Çaktivizoje për t'i fshehur tekstet kudo dhe për të ndaluar kërkimin e tyre
 settings-panel-lyrics-size = Madhësia e teksteve (panel)
 settings-panel-lyrics-size-detail = Madhësia e tekstit të teksteve në panelin anësor, mbi madhësinë bazë të shkronjave
 settings-fullscreen-lyrics-size = Madhësia e teksteve (ekran i plotë)

@@ -85,6 +85,7 @@ column-index = #
 column-title = Tytuł
 column-artist = Wykonawca
 column-album = Album
+column-genre = Gatunek
 column-date-added = Data dodania
 column-added-by = Dodane przez
 column-modified = Zmodyfikowano
@@ -139,11 +140,8 @@ menu-play-tracks-last = { $count ->
     [few] Odtwórz { $count } utwory na końcu
    *[other] Odtwórz { $count } utworów na końcu
 }
-menu-go-to = Przejdź do
-menu-artist = Wykonawca
-menu-album = Album
-menu-radio = Radio
-menu-details = Szczegóły
+menu-song-radio = Radio utworu
+menu-go-to-album = Przejdź do albumu
 menu-go-to-artist = Przejdź do wykonawcy
 menu-view-details = Szczegóły
 menu-copy-link = Kopiuj link
@@ -283,7 +281,6 @@ filter-reset = Wyczyść filtry
 filter-duration = Czas trwania
 filter-year = Rok
 filter-hide-explicit = Ukryj z wulgaryzmami
-filter-playable = Tylko dostępne
 filter-favorites = Tylko ulubione
 filter-downloaded = Pobrane
 filter-owned = Moje
@@ -637,7 +634,6 @@ settings-font-detail = Bazowy rozmiar tekstu, reszta skaluje się razem z nim
 settings-font-value = { $size } px
 settings-startup = Pokaż przy uruchomieniu
 settings-startup-detail = Ekran otwierany przez Sonorę po uruchomieniu
-settings-startup-no-guest = Niedostępne w trybie gościa
 settings-entries = Sekcje paska bocznego
 settings-entries-detail = Sekcje widoczne na pasku bocznym
 settings-entries-pick = Wybierz sekcje
@@ -950,6 +946,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kan.
 }
+settings-lyrics = Pokazuj teksty utworów
+settings-lyrics-detail = Wyłącz, aby ukryć teksty utworów w całej aplikacji i przestać ich szukać
 settings-panel-lyrics-size = Rozmiar tekstu utworu (panel)
 settings-panel-lyrics-size-detail = Rozmiar wierszy tekstu utworu w panelu bocznym ponad bazowy rozmiar czcionki
 settings-fullscreen-lyrics-size = Rozmiar tekstu utworu (pełny ekran)
