@@ -103,6 +103,8 @@ enum Sub {
     Mute { switch: Option<SwitchArg> },
     /// Print shuffle, or switch it.
     Shuffle { switch: Option<SwitchArg> },
+    /// Print the current track's favorite state, or change it.
+    Like { switch: Option<SwitchArg> },
     /// Print repeat, or set it.
     Repeat { repeat: Option<RepeatArg> },
     /// Queue files or links after the tracks queued by hand.
@@ -306,6 +308,7 @@ fn into_command(args: Args, line: &mut Command) -> Result<CommandType, clap::Err
         Sub::Volume { level } => play(PlaybackCommand::Volume(level)),
         Sub::Mute { switch } => play(PlaybackCommand::Mute(switch.map(Switch::from))),
         Sub::Shuffle { switch } => play(PlaybackCommand::Shuffle(switch.map(Switch::from))),
+        Sub::Like { switch } => Request::Like(switch.map(Switch::from)),
         Sub::Repeat { repeat } => play(PlaybackCommand::Repeat(repeat.map(Repeat::from))),
         Sub::Add { items, searched } => Request::Queue(QueueCommand::Add(searched.or(items))),
         Sub::PlayNext { items, searched } => {
@@ -524,8 +527,43 @@ mod tests {
     }
 
     #[test]
+    fn like_reads_and_changes_the_current_favorite() {
+        for (args, request, format) in [
+            (&["like"][..], Request::Like(None), Format::Text),
+            (
+                &["like", "on"][..],
+                Request::Like(Some(Switch::On)),
+                Format::Text,
+            ),
+            (
+                &["like", "off"][..],
+                Request::Like(Some(Switch::Off)),
+                Format::Text,
+            ),
+            (
+                &["like", "toggle"][..],
+                Request::Like(Some(Switch::Toggle)),
+                Format::Text,
+            ),
+            (&["like", "--json"][..], Request::Like(None), Format::Json),
+        ] {
+            let CommandType::Remote(actual, actual_format) = parsed(args) else {
+                panic!("`sonora like` should ask the running Sonora");
+            };
+            assert_eq!(actual, request);
+            assert_eq!(actual_format, format);
+        }
+    }
+
+    #[test]
     fn mute_rejects_an_unknown_switch() {
         let args = ["sonora", "mute", "perhaps"].map(OsString::from);
+        assert!(parse(args.to_vec(), "0.0.0").is_err());
+    }
+
+    #[test]
+    fn like_rejects_an_unknown_switch() {
+        let args = ["sonora", "like", "perhaps"].map(OsString::from);
         assert!(parse(args.to_vec(), "0.0.0").is_err());
     }
 }

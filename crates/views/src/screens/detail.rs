@@ -253,6 +253,18 @@ impl DetailView {
             .detach();
         }
 
+        if section == "album" {
+            cx.subscribe(&detail, |_, _, event, cx| {
+                let state::DetailEvent::AlbumGone(id) = event;
+                if router::trail(cx).read(cx).current()
+                    == router::Destination::Album(id.clone().into())
+                {
+                    router::replace(router::Destination::Library(router::LibraryTab::Albums), cx);
+                }
+            })
+            .detach();
+        }
+
         // Progress only redraws the download button. A filtered table rebuilds when what it
         // shows may have changed, since a rebuild drops the open menu and the selection.
         let downloads = Sonora::global(cx).downloads.clone();
