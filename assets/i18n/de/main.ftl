@@ -10,7 +10,7 @@ common-not-available = Nicht verfügbar
 common-cancel = Abbrechen
 common-save = Speichern
 common-delete = Löschen
-common-play = Abspielen
+common-play = Spielen
 common-more = Mehr
 common-previous = Zurück
 common-next = Weiter
@@ -76,7 +76,7 @@ app-zoom = Zoomen
 
 # tray menu
 tray-show = Sonora anzeigen
-tray-play = Wiedergabe
+tray-play = Spielen
 tray-pause = Pause
 
 # table columns
@@ -151,7 +151,7 @@ menu-add-playlist-to-library = Zur Bibliothek hinzufügen
 menu-remove-playlist-from-library = Aus der Bibliothek entfernen
 menu-make-playlist-public = Öffentlich machen
 menu-make-playlist-private = Privat machen
-menu-play-artist = Künstler abspielen
+menu-play-artist = Künstler spielen
 
 # playlist editor
 playlist-name-placeholder = Name der Playlist
