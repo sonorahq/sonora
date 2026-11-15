@@ -823,6 +823,13 @@ pub fn prefetch(mut element: AnyElement, window: &mut Window, cx: &mut App) {
     PREFETCHING.set(outer);
 }
 
+/// Whether `prefetch` is laying out what is being built, which will not be drawn. An element
+/// that draws a view through `cached` has to render it plainly then, since a cached view is
+/// laid out without rendering and so would load no covers.
+pub fn prefetching() -> bool {
+    PREFETCHING.get()
+}
+
 /// Rows just past the edge of a list, laid out with `prefetch` while the list is, so their
 /// covers are loading when they scroll in. It takes no room and draws nothing.
 pub struct Prefetch {
