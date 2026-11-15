@@ -602,6 +602,9 @@ jobs:
           arch: ${{ matrix.variant.arch }}
           upload-artifact: true
           artifact-name: flatpak-${{ matrix.variant.arch }}
+          # Like the executables, the bundle builds from source and restores nothing from the
+          # Actions cache.
+          cache: false
 
   flatpak-repo:
     needs: flatpak
