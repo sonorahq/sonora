@@ -504,6 +504,8 @@ impl Detail {
         self.id = Some(id.to_owned());
         self.kind = Some(kind);
         self.header = known;
+        // a kept or cached copy holds the order from before moves still on their way
+        self.reload_after_order = self.library.read(cx).reordering(id);
 
         // With no network, or none allowed, a downloaded page opens from its kept copy.
         let offline = Network::lost(cx) && !music::is_local_id(id);

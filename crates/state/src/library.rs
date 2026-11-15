@@ -1254,7 +1254,7 @@ impl Library {
                 }
                 this.playlist_task = None;
                 this.relisting = None;
-                this.forget_reorders();
+                this.forget_reorders(cx);
                 this.pending.clear();
                 this.pending_albums.clear();
                 this.pending_artists.clear();
@@ -1286,7 +1286,7 @@ impl Library {
                 this.mosaics.clear();
                 this.playlist_task = None;
                 this.relisting = None;
-                this.forget_reorders();
+                this.forget_reorders(cx);
                 this.pending.clear();
                 this.pending_albums.clear();
                 this.pending_artists.clear();
@@ -2638,6 +2638,9 @@ impl Library {
         if !started && let Some(id) = self.writing_order.take() {
             self.reorders.remove(&id);
             cx.emit(LibraryEvent::ReorderFailed(id));
+            if !self.reorders.is_empty() && self.reorder_timer.is_none() {
+                self.arm_reorders(REORDER_RETRY, cx);
+            }
         }
     }
 
@@ -2669,11 +2672,27 @@ impl Library {
         }
     }
 
-    /// Drops every order not written yet, as the account they were made under goes away.
-    fn forget_reorders(&mut self) {
-        self.reorders.clear();
+    /// Drops the streaming orders not written yet, as the account they were made under goes
+    /// away, while local ones stay queued. The write in flight goes with the playlist task the
+    /// caller dropped, so its page loads again like the pages of the dropped orders.
+    fn forget_reorders(&mut self, cx: &mut Context<Self>) {
+        let dropped: Vec<String> = self
+            .reorders
+            .keys()
+            .filter(|id| !Shelf::of(id).local())
+            .cloned()
+            .collect();
+        for id in &dropped {
+            self.reorders.remove(id);
+        }
+        let cancelled = self.writing_order.take();
         self.reorder_timer = None;
-        self.writing_order = None;
+        for id in dropped.into_iter().chain(cancelled) {
+            cx.emit(LibraryEvent::ReorderFailed(id));
+        }
+        if !self.reorders.is_empty() {
+            self.arm_reorders(REORDER_RETRY, cx);
+        }
     }
 
     pub fn delete_playlist(&mut self, id: String, cx: &mut Context<Self>) {
