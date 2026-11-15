@@ -21,6 +21,7 @@ pub mod local;
 pub mod lrclib;
 pub mod lyrics;
 mod models;
+mod mp4;
 pub mod musixmatch;
 pub mod netease;
 pub mod output;
