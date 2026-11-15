@@ -31,6 +31,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - `sonora like` waits for the provider to confirm a favorite change and reports if it fails.
+- A song you favorite or unfavorite while the library is refreshing stays that way instead of flipping back.
 - The snap shows Sonora's tray icon instead of a generic placeholder.
 - On Windows, playback no longer crackles when you open apps or browser tabs, and the buffer setting under Settings, Sound works again.
 - Friends who join a Spotify Jam you host from Sonora hear the track you play instead of the first one of the album or playlist, see the same queue, and the songs they remove or move stay that way.

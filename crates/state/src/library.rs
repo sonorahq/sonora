@@ -90,6 +90,11 @@ struct Held {
     /// provider. The part's real rows replace them once they have all arrived.
     stale: HashSet<LibraryPart>,
     starred: Starred,
+    /// The favorite changes to tracks made while a load could still replace the favorites,
+    /// by track id: the track for a favorite, nothing for one taken back. The load puts them
+    /// back over the rows it reads, since the provider may have read its list before the
+    /// change took effect.
+    edits: HashMap<String, Option<Track>>,
     tasks: Vec<Task<()>>,
 }
 
@@ -102,7 +107,29 @@ impl Held {
             expected: HashMap::new(),
             stale: HashSet::new(),
             starred: Starred::default(),
+            edits: HashMap::new(),
             tasks: Vec::new(),
+        }
+    }
+
+    /// Lays the recorded favorite changes over the favorite tracks that a load has just
+    /// replaced, then forgets them. The shelf shows the change the listener made rather than
+    /// the provider's list from before it. Nothing happens while the favorites are not there
+    /// to amend, and the changes are dropped all the same, since a load that failed leaves
+    /// the cache as the optimistic change already left it.
+    fn reapply_edits(&mut self) {
+        let edits = std::mem::take(&mut self.edits);
+        let Some(favorites) = self.favorites_mut() else {
+            return;
+        };
+        for (id, edit) in edits {
+            let tracks = &mut *favorites.tracks;
+            let held = |track: &Track| track.id.as_deref() == Some(id.as_str());
+            match edit {
+                Some(track) if !tracks.iter().any(held) => tracks.push(track),
+                Some(_) => {}
+                None => tracks.retain(|track| !held(track)),
+            }
         }
     }
 
@@ -3053,7 +3080,9 @@ impl Library {
         let Some(id) = track.id.clone() else {
             return;
         };
-        let Some(favorites) = self.held_mut(Shelf::of(&id)).favorites_mut() else {
+        let held = self.held_mut(Shelf::of(&id));
+        held.edits.insert(id.clone(), saved.then(|| track.clone()));
+        let Some(favorites) = held.favorites_mut() else {
             return;
         };
         let tracks = favorites.tracks;
@@ -3174,8 +3203,12 @@ impl Library {
         };
         let shape = session.shape_of(shelf);
 
+        // a change whose request is still out may be missed by the read about to start; one
+        // the provider has answered is in what it reads
+        let asked: HashSet<String> = self.pending.keys().cloned().collect();
         let held = self.held_mut(shelf);
         held.shape = shape;
+        held.edits.retain(|id, _| asked.contains(id));
         held.awaited = LibraryPart::ALL.to_vec();
         match held.stale.is_empty() {
             true => {
@@ -3325,6 +3358,9 @@ impl Library {
                 held.expected.remove(&part);
                 shed(&mut held.state, &mut held.stale, part);
                 extend(&mut held.state, wrap(Ok(held_back)));
+                if part == LibraryPart::Tracks && held.shape == Shape::Saved {
+                    held.reapply_edits();
+                }
                 settle(&mut held.state, &mut held.awaited, part, shelf.fatal());
                 this.keep(shelf, Kind::Listed, part, cx);
                 cx.notify();
@@ -3357,6 +3393,9 @@ impl Library {
             shed(&mut held.state, &mut held.stale, part);
         }
         place(&mut held.state, &mut held.awaited, landed, shelf.fatal());
+        if part == LibraryPart::Tracks && held.shape == Shape::Saved {
+            held.reapply_edits();
+        }
         if arrived {
             self.keep(shelf, Kind::Listed, part, cx);
         }
@@ -3380,7 +3419,11 @@ impl Library {
 
     fn land_starred(&mut self, shelf: Shelf, landed: Landed, cx: &mut Context<Self>) {
         let part = landed.part();
-        if star(self.held_mut(shelf), landed) {
+        let held = self.held_mut(shelf);
+        if star(held, landed) {
+            if part == LibraryPart::Tracks && held.shape.is_catalog() {
+                held.reapply_edits();
+            }
             self.keep(shelf, Kind::Starred, part, cx);
         }
         cx.notify();
