@@ -85,6 +85,7 @@ column-index = #
 column-title = Título
 column-artist = Artista
 column-album = Álbum
+column-genre = Gênero
 column-date-added = Data de adição
 column-added-by = Adicionado por
 column-modified = Modificado
@@ -116,15 +117,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Excluir arquivo da faixa
 menu-delete-track-files = Excluir { $count } arquivos de faixa
 menu-download = Baixar
-menu-download-tracks = { $count ->
-    [one] Baixar { $count } faixa
-   *[other] Baixar { $count } faixas
-}
 menu-remove-download = Remover download
-menu-remove-downloads = { $count ->
-    [one] Remover { $count } download
-   *[other] Remover { $count } downloads
-}
 menu-downloading = Baixando. Clique para parar
 menu-play-next = Tocar a seguir
 menu-play-tracks-next = { $count ->
@@ -141,11 +134,8 @@ menu-play-tracks-last = { $count ->
     [one] Tocar { $count } faixa por último
    *[other] Tocar { $count } faixas por último
 }
-menu-go-to = Ir para
-menu-artist = Artista
-menu-album = Álbum
-menu-radio = Rádio
-menu-details = Detalhes
+menu-song-radio = Ir para a rádio da música
+menu-go-to-album = Ir para o álbum
 menu-go-to-artist = Ir para o artista
 menu-view-details = Ver detalhes
 menu-copy-link = Copiar link
@@ -278,7 +268,6 @@ filter-reset = Redefinir filtros
 filter-duration = Duração
 filter-year = Ano
 filter-hide-explicit = Ocultar explícitas
-filter-playable = Reproduzíveis apenas
 filter-favorites = Apenas favoritas
 filter-downloaded = Baixadas
 filter-owned = Suas
@@ -619,7 +608,6 @@ settings-font-detail = Tamanho base do texto, tudo o mais escala junto
 settings-font-value = { $size } px
 settings-startup = Mostrar na inicialização
 settings-startup-detail = A tela que o Sonora abre ao iniciar
-settings-startup-no-guest = Indisponível no modo convidado
 settings-entries = Itens da barra lateral
 settings-entries-detail = As seções listadas na barra lateral
 settings-entries-pick = Escolher itens
@@ -928,6 +916,8 @@ equalizer-status-channels = { $from ->
     [2] estéreo
    *[other] { $to } canais
 }
+settings-lyrics = Mostrar letras
+settings-lyrics-detail = Desative para ocultar as letras em todo lugar e parar de buscá-las
 settings-panel-lyrics-size = Tamanho da letra (painel)
 settings-panel-lyrics-size-detail = Tamanho do texto da letra no painel lateral, além do tamanho base da fonte
 settings-fullscreen-lyrics-size = Tamanho da letra (tela cheia)

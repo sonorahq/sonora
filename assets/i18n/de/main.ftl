@@ -85,6 +85,7 @@ column-index = #
 column-title = Titel
 column-artist = Künstler
 column-album = Album
+column-genre = Genre
 column-date-added = Hinzugefügt am
 column-added-by = Hinzugefügt von
 column-modified = Geändert
@@ -116,15 +117,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Titeldatei löschen
 menu-delete-track-files = { $count } Titeldateien löschen
 menu-download = Herunterladen
-menu-download-tracks = { $count ->
-    [one] { $count } Track herunterladen
-   *[other] { $count } Tracks herunterladen
-}
 menu-remove-download = Download entfernen
-menu-remove-downloads = { $count ->
-    [one] { $count } Download entfernen
-   *[other] { $count } Downloads entfernen
-}
 menu-downloading = Wird heruntergeladen. Zum Stoppen klicken
 menu-play-next = Als Nächstes spielen
 menu-play-tracks-next = { $count ->
@@ -141,11 +134,8 @@ menu-play-tracks-last = { $count ->
     [one] { $count } Track als Letztes spielen
    *[other] { $count } Tracks als Letztes spielen
 }
-menu-go-to = Gehe zu
-menu-artist = Künstler
-menu-album = Album
-menu-radio = Radio
-menu-details = Details
+menu-song-radio = Song-Radio öffnen
+menu-go-to-album = Zum Album
 menu-go-to-artist = Zum Künstler
 menu-view-details = Details anzeigen
 menu-copy-link = Link kopieren
@@ -278,7 +268,6 @@ filter-reset = Filter zurücksetzen
 filter-duration = Dauer
 filter-year = Jahr
 filter-hide-explicit = Explizite ausblenden
-filter-playable = Nur abspielbare
 filter-favorites = Nur Favoriten
 filter-downloaded = Heruntergeladen
 filter-owned = Von dir
@@ -619,7 +608,6 @@ settings-font-detail = Basisgröße des Textes, alles andere skaliert mit
 settings-font-value = { $size } px
 settings-startup = Beim Start anzeigen
 settings-startup-detail = Der Bildschirm, mit dem Sonora startet
-settings-startup-no-guest = Im Gastmodus nicht verfügbar
 settings-entries = Einträge der Seitenleiste
 settings-entries-detail = Die Bereiche, die in der Seitenleiste erscheinen
 settings-entries-pick = Einträge wählen
@@ -928,6 +916,8 @@ equalizer-status-channels = { $from ->
     [2] Stereo
    *[other] { $to } Kanäle
 }
+settings-lyrics = Lyrics anzeigen
+settings-lyrics-detail = Ausschalten, um Lyrics überall auszublenden und nicht mehr danach zu suchen
 settings-panel-lyrics-size = Lyricsgröße (panel)
 settings-panel-lyrics-size-detail = Größe des Lyrics-Textes in der Seitenleiste, auf der Basis der Basis-Schriftgröße
 settings-fullscreen-lyrics-size = Lyricsgröße (fullscreen)
@@ -937,6 +927,8 @@ settings-lyrics-for-local-files = Lyrics für lokale Dateien
 settings-lyrics-for-local-files-detail = Metadaten aus lokalen Dateien verwenden, um Lyrics vom Internet zu laden
 settings-artwork-for-local-files = Cover für lokale Dateien
 settings-artwork-for-local-files-detail = Metadaten aus lokalen Dateien verwenden, um für deinen Discord-Status ein Cover bei Deezer zu finden
+settings-discord-upload-covers = Cover hochladen
+settings-discord-upload-covers-detail = Das Cover deines Servers oder deiner lokalen Dateien für 3 Stunden auf uguu.se hochladen, damit dein Status genau dieses Bild zeigt statt eines online gefundenen
 settings-karaoke-lyrics = Karaoke-Songtext
 settings-karaoke-lyrics-detail = Den Songtext Wort für Wort hervorheben, wenn Timings vorliegen
 settings-blur-lyrics = Interaktive Lyrics verwischen

@@ -15,6 +15,7 @@ use gpui::{
 use i18n::t;
 use state::DiscordName;
 use ui::ActiveTheme as _;
+use ui::Glowing as _;
 use ui::{Artwork, tabular};
 
 use super::Tick;
@@ -82,8 +83,6 @@ const BUTTON_RADIUS: Pixels = px(8.);
 const BUTTON_GAP: Pixels = px(8.);
 /// How far through the track the card starts, as a share of its length, before it counts on.
 const START_SHARE: f32 = 0.3;
-/// How much of the card shows while Discord presence is disabled.
-const DIMMED: f32 = 0.4;
 /// What the status calls itself when the setting names Sonora, Discord's name for the app.
 const SONORA: &str = "Sonora";
 
@@ -159,6 +158,11 @@ pub(in crate::screens::settings) fn preview(
         DiscordName::Music => t!("settings-discord-preview-music"),
         DiscordName::Title => sample.title.clone(),
         DiscordName::Artist => sample.artist.clone(),
+        // an album with no artist named falls back the way the status itself does
+        DiscordName::AlbumArtist => match sample.album_artist.trim().is_empty() {
+            true => t!("settings-discord-preview-music"),
+            false => sample.album_artist.clone(),
+        },
         DiscordName::ArtistTitle => format!("{} - {}", sample.artist, sample.title).into(),
     };
     let elapsed = state.since.get().elapsed();
@@ -250,11 +254,11 @@ pub(in crate::screens::settings) fn preview(
                         .justify_center()
                         .rounded(BUTTON_RADIUS)
                         .bg(rgb(BUTTON))
-                        .hover(|style| style.bg(rgb(BUTTON_HOVER)))
                         .text_size(BUTTON_SIZE)
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(rgb(BUTTON_TEXT))
                         .child(label)
+                        .glowed(rgb(BUTTON_HOVER).into())
                 }),
             ))
         });
@@ -267,7 +271,7 @@ pub(in crate::screens::settings) fn preview(
                 .justify_center()
                 .p(SURFACE_PAD)
                 .bg(cx.theme().background)
-                .child(card.when(!on, |card| card.opacity(DIMMED))),
+                .child(card.when(!on, |card| card.opacity(super::DIMMED))),
             cx,
         )
         .into_any_element(),

@@ -13,7 +13,7 @@ pub use self::themes::{ThemeFamily, ThemeOffer, ThemeVariant};
 pub(crate) use self::themes::{is_own_link, read_link as read_theme_link};
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -42,7 +42,7 @@ use crate::equalizer::DeviceRule;
 use crate::pins::PinSort;
 use crate::queue::{Resume, gap_target};
 use crate::updates::{Channel, updates_itself};
-use crate::{Outcome, Repeat, Sonora, Toasts};
+use crate::{Hit, Outcome, Repeat, Sonora, Toasts};
 
 /// How Sonora is named on the device list of the provider's apps. `Both` is the app's name with
 /// the computer's in brackets, so two machines on one account tell apart.
@@ -79,8 +79,8 @@ impl ConnectName {
 }
 
 /// What the Discord status calls itself. `Provider` asks the provider the track came from, so
-/// local files say Local Music rather than the provider's own name. `ArtistTitle` shows as
-/// "Artist - Title".
+/// local files say Local Music rather than the provider's own name. `AlbumArtist` is who the
+/// album is credited to, and `ArtistTitle` shows as "Artist - Title".
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DiscordName {
@@ -90,16 +90,18 @@ pub enum DiscordName {
     Music,
     Title,
     Artist,
+    AlbumArtist,
     ArtistTitle,
 }
 
 impl DiscordName {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Sonora,
         Self::Provider,
         Self::Music,
         Self::Title,
         Self::Artist,
+        Self::AlbumArtist,
         Self::ArtistTitle,
     ];
 
@@ -110,6 +112,7 @@ impl DiscordName {
             Self::Music => "music",
             Self::Title => "title",
             Self::Artist => "artist",
+            Self::AlbumArtist => "album-artist",
             Self::ArtistTitle => "artist-title",
         }
     }
@@ -121,6 +124,7 @@ impl DiscordName {
             Self::Music => "settings-discord-name-music",
             Self::Title => "settings-discord-name-title",
             Self::Artist => "settings-discord-name-artist",
+            Self::AlbumArtist => "settings-discord-name-album-artist",
             Self::ArtistTitle => "settings-discord-name-artist-title",
         }
     }
@@ -233,6 +237,48 @@ impl Default for RomanizationScripts {
     }
 }
 
+/// The views of the fullscreen player the visualizer is drawn in. Only the cover has it by
+/// default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VisualizerScreens {
+    cover: bool,
+    lyrics: bool,
+    queue: bool,
+}
+
+impl VisualizerScreens {
+    /// Whether the visualizer is drawn while the fullscreen player shows `panel`, which is the
+    /// cover alone when there is none. The members panel never shows there.
+    pub fn contains(self, panel: Option<SideTab>) -> bool {
+        match panel {
+            None => self.cover,
+            Some(SideTab::Lyrics) => self.lyrics,
+            Some(SideTab::Queue) => self.queue,
+            Some(SideTab::Members) => false,
+        }
+    }
+
+    fn set(&mut self, panel: Option<SideTab>, shown: bool) {
+        match panel {
+            None => self.cover = shown,
+            Some(SideTab::Lyrics) => self.lyrics = shown,
+            Some(SideTab::Queue) => self.queue = shown,
+            Some(SideTab::Members) => {}
+        }
+    }
+}
+
+impl Default for VisualizerScreens {
+    fn default() -> Self {
+        Self {
+            cover: true,
+            lyrics: false,
+            queue: false,
+        }
+    }
+}
+
 /// A window's saved position and size in logical pixels, plus whether it was maximized.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -296,8 +342,8 @@ const RELOAD_RETRY_DELAY: Duration = Duration::from_secs(1);
 const RELOAD_RETRIES: usize = 3;
 const THEMES_DIRECTORY: &str = "themes";
 const DEFAULT_VOLUME: f32 = 0.7;
-/// How many past searches the history keeps.
-const SEARCHES: usize = 20;
+/// How many chosen search results the history keeps, across every provider.
+const PICKS: usize = 40;
 const DEFAULT_SIDEBAR_WIDTH: f32 = 195.;
 const DEFAULT_SIDEBAR_RIGHT_WIDTH: f32 = 254.;
 const DEFAULT_FONT_SIZE: f32 = 14.;
@@ -326,6 +372,13 @@ struct Held {
     slug: String,
     #[serde(flatten)]
     pin: Pin,
+}
+
+/// A search result the listener chose, with the provider it belongs to.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Picked {
+    slug: String,
+    hit: Hit,
 }
 
 /// Everything `settings.json` holds. Preferences a user sets on purpose, safe to edit by hand.
@@ -387,6 +440,7 @@ struct Values {
     discord_sonora_button: bool,
     discord_provider_button: bool,
     artwork_for_local_files: bool,
+    discord_upload_covers: bool,
     lyrics_for_local_files: bool,
     /// The output device to play on, as a cpal device id, or `None` to follow the system's
     /// default. Kept while the device is gone, so playback returns to it, and cleared once it is
@@ -415,10 +469,15 @@ struct Values {
     /// Set once Subsonic has been added to a list saved before it existed, so a user who turns it
     /// off afterwards is not given it back.
     subsonic_lyrics_offered: bool,
+    /// Whether lyrics show anywhere and are looked up at all.
+    lyrics_enabled: bool,
     lyrics_providers: Vec<String>,
     /// Every known lyrics source, the preferred one first. Lyrics of the same kind from two
     /// sources go to the one listed higher.
     lyrics_provider_priority: Vec<String>,
+    /// Whether lyrics timed word by word are shown ahead of any others, whatever source they
+    /// come from. The source order then only settles lyrics of the same kind.
+    lyrics_word_synced_first: bool,
     karaoke_lyrics: bool,
     blur_lyrics: bool,
     romanized_lyrics: bool,
@@ -433,8 +492,8 @@ struct Values {
     close_to_tray: bool,
     tray_icon: bool,
     stay_awake: bool,
-    /// Whether a file handed in by the OS goes straight to the fullscreen player.
-    fullscreen_on_file_open: bool,
+    /// Whether a file handed in by the OS goes straight to the now playing view.
+    now_playing_on_file_open: bool,
     language: String,
     #[serde(default = "system_font")]
     font: String,
@@ -443,11 +502,25 @@ struct Values {
     local_folders: Vec<PathBuf>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     hidden_nav: Vec<String>,
+    /// The optional sidebar rows the user added, which stay out of the sidebar otherwise.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    added_nav: Vec<String>,
     /// Missing system requirements the user asked never to hear about again.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     silenced_requirements: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     scrobbling: BTreeMap<String, Account>,
+    /// Providers, by slug, whose plays stay out of the linked scrobbling services. Some of them
+    /// scrobble to Last.fm on their own, and with both on every listen is counted twice.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    unscrobbled: BTreeSet<String>,
+    /// The keys the user chose for shortcuts under Settings, Keybinds, by shortcut id. A shortcut
+    /// missing here keeps its defaults, and an empty list leaves it without a key.
+    #[serde(
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "read_keybinds"
+    )]
+    keybinds: BTreeMap<String, Vec<String>>,
     appearance: Appearance,
 }
 
@@ -503,8 +576,12 @@ struct Appearance {
     visualizer_style: String,
     /// Whether the visualizer draws the track at its own level rather than at the volume.
     visualizer_absolute: bool,
+    visualizer_screens: VisualizerScreens,
     player_bar_layout: String,
     player_bar_transparent: bool,
+    /// Whether the player bar's right clock counts down what is left of the track instead of
+    /// showing its length.
+    player_bar_time_left: bool,
     icons: String,
     rounding: String,
     /// Whether the app paints its frosted treatments. The key kept its old name, which stood
@@ -609,6 +686,7 @@ impl Default for Values {
             discord_sonora_button: true,
             discord_provider_button: true,
             artwork_for_local_files: true,
+            discord_upload_covers: true,
             lyrics_for_local_files: true,
             output_device: None,
             output_rate: None,
@@ -619,12 +697,14 @@ impl Default for Values {
             stream_quality: Quality::default().id().to_owned(),
             local_lyrics_offered: false,
             subsonic_lyrics_offered: false,
+            lyrics_enabled: true,
             lyrics_provider_priority: lyrics_priority(&[]),
             // Kugou and NetEase, the last two, start switched off.
             lyrics_providers: LYRICS_SOURCES[..7]
                 .iter()
                 .map(|name| name.to_string())
                 .collect(),
+            lyrics_word_synced_first: false,
             karaoke_lyrics: true,
             blur_lyrics: true,
             romanized_lyrics: true,
@@ -637,14 +717,17 @@ impl Default for Values {
             close_to_tray: true,
             tray_icon: true,
             stay_awake: true,
-            fullscreen_on_file_open: false,
+            now_playing_on_file_open: false,
             language: i18n::AUTO.to_owned(),
             font: system_font(),
             startup: DEFAULT_STARTUP.to_owned(),
             local_folders: Vec::new(),
             hidden_nav: Vec::new(),
+            added_nav: Vec::new(),
             silenced_requirements: Vec::new(),
             scrobbling: BTreeMap::new(),
+            unscrobbled: BTreeSet::new(),
+            keybinds: BTreeMap::new(),
             appearance: Appearance::default(),
         }
     }
@@ -674,6 +757,7 @@ struct StateValues {
     volume: f32,
     sidebar_width: f32,
     sidebar_open: bool,
+    sidebar_rail: bool,
     sidebar_right_width: f32,
     sidebar_right_open: bool,
     sidebar_right_tab: SideTab,
@@ -696,8 +780,8 @@ struct StateValues {
     system_theme: String,
     /// The variant last chosen in each theme family, by family id.
     theme_variants: HashMap<String, String>,
-    /// What the search page was asked, newest first, without repeats.
-    searches: Vec<String>,
+    /// The search results the listener chose, newest first, without repeats.
+    picks: Vec<Picked>,
 }
 
 impl Default for StateValues {
@@ -706,6 +790,7 @@ impl Default for StateValues {
             volume: DEFAULT_VOLUME,
             sidebar_width: DEFAULT_SIDEBAR_WIDTH,
             sidebar_open: true,
+            sidebar_rail: false,
             sidebar_right_width: DEFAULT_SIDEBAR_RIGHT_WIDTH,
             sidebar_right_open: false,
             sidebar_right_tab: SideTab::Queue,
@@ -727,7 +812,7 @@ impl Default for StateValues {
             window: None,
             system_theme: ThemeKind::Dark.id().to_owned(),
             theme_variants: HashMap::new(),
-            searches: Vec::new(),
+            picks: Vec::new(),
         }
     }
 }
@@ -804,8 +889,10 @@ impl Default for Appearance {
             visualizer: true,
             visualizer_style: ui::VisualizerStyle::default().id().to_owned(),
             visualizer_absolute: false,
+            visualizer_screens: VisualizerScreens::default(),
             player_bar_layout: PlayerBarLayout::default().id().to_owned(),
             player_bar_transparent: true,
+            player_bar_time_left: false,
             icons: icons::BASE.to_owned(),
             rounding: Rounding::Rounded.id().to_owned(),
             blur: true,
@@ -1054,6 +1141,12 @@ impl AppSettings {
         self.values.artwork_for_local_files
     }
 
+    /// Whether a cover no public catalogue has may be fetched from the provider and uploaded to
+    /// a temporary public host, so the Discord status can show it. On unless the user turns it off.
+    pub fn discord_upload_covers(&self) -> bool {
+        self.values.discord_upload_covers
+    }
+
     pub fn lyrics_for_local_files(&self) -> bool {
         self.values.lyrics_for_local_files
     }
@@ -1093,6 +1186,10 @@ impl AppSettings {
         Quality::from_id(&self.values.stream_quality).unwrap_or_default()
     }
 
+    pub fn lyrics_enabled(&self) -> bool {
+        self.values.lyrics_enabled
+    }
+
     pub fn lyrics_providers(&self) -> &[String] {
         &self.values.lyrics_providers
     }
@@ -1119,6 +1216,11 @@ impl AppSettings {
         }
         self.values.lyrics_provider_priority = order;
         self.schedule_save(cx);
+    }
+
+    /// Whether lyrics timed word by word are shown ahead of any others, whatever their source.
+    pub fn lyrics_word_synced_first(&self) -> bool {
+        self.values.lyrics_word_synced_first
     }
 
     pub fn lyrics_provider_enabled(&self, provider: &str) -> bool {
@@ -1181,9 +1283,15 @@ impl AppSettings {
         self.values.stay_awake
     }
 
-    /// Whether a file opened from a file manager goes straight to the fullscreen player.
-    pub fn fullscreen_on_file_open(&self) -> bool {
-        self.values.fullscreen_on_file_open
+    /// Whether a file opened from a file manager goes straight to the now playing view.
+    pub fn now_playing_on_file_open(&self) -> bool {
+        self.values.now_playing_on_file_open
+    }
+
+    /// Whether plays from the provider with this slug are submitted to the linked scrobbling
+    /// services. The provider itself hears about them either way.
+    pub fn scrobbles(&self, provider: &str) -> bool {
+        !self.values.unscrobbled.contains(provider)
     }
 
     /// Every linked scrobbling account, keyed by its service slug.
@@ -1208,6 +1316,10 @@ impl AppSettings {
         self.state.sidebar_open
     }
 
+    pub fn sidebar_rail(&self) -> bool {
+        self.state.sidebar_rail
+    }
+
     pub fn sidebar_right_width(&self) -> f32 {
         self.state.sidebar_right_width
     }
@@ -1216,14 +1328,20 @@ impl AppSettings {
         self.state.sidebar_right_open
     }
 
+    /// The queue stands in for the lyrics while they are turned off.
     pub fn sidebar_right_tab(&self) -> SideTab {
-        self.state.sidebar_right_tab
+        match self.state.sidebar_right_tab {
+            SideTab::Lyrics if !self.lyrics_enabled() => SideTab::Queue,
+            tab => tab,
+        }
     }
 
     /// The panel the fullscreen view last showed beside the cover, or `None` when it showed the
-    /// artwork alone.
+    /// artwork alone, or while lyrics are turned off.
     pub fn fullscreen_tab(&self) -> Option<SideTab> {
-        self.state.fullscreen_tab
+        self.state
+            .fullscreen_tab
+            .filter(|tab| *tab != SideTab::Lyrics || self.lyrics_enabled())
     }
 
     pub fn shuffle(&self) -> bool {
@@ -1293,7 +1411,7 @@ impl AppSettings {
                     .iter()
                     .find(|variant| variant.is_light() == light)
             })
-            .or(family.variants.first())
+            .or_else(|| family.variants.first())
     }
 
     pub fn adaptive_theme(&self) -> bool {
@@ -1315,6 +1433,11 @@ impl AppSettings {
     /// UI as well, since without the blur the bar's text would sit on the bare page.
     pub fn player_bar_translucent(&self) -> bool {
         self.player_bar_transparent() && self.blur()
+    }
+
+    /// Whether the player bar shows the time left in the track where it would show its length.
+    pub fn player_bar_time_left(&self) -> bool {
+        self.values.appearance.player_bar_time_left
     }
 
     /// Whether fullscreen paints the ambient background sampled from the cover.
@@ -1347,6 +1470,11 @@ impl AppSettings {
     /// Whether the visualizer ignores Sonora's volume and draws the track at its own level.
     pub fn visualizer_absolute(&self) -> bool {
         self.values.appearance.visualizer_absolute
+    }
+
+    /// The views of the fullscreen player the visualizer is drawn in.
+    pub fn visualizer_screens(&self) -> VisualizerScreens {
+        self.values.appearance.visualizer_screens
     }
 
     pub fn fullscreen_controls_autohide(&self) -> FullscreenControlsAutohide {
@@ -1663,6 +1791,16 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    pub fn set_discord_upload_covers(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.discord_upload_covers = enabled;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_lyrics_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.lyrics_enabled = enabled;
+        self.schedule_save(cx);
+    }
+
     pub fn set_lyrics_for_local_files(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.values.lyrics_for_local_files = enabled;
         self.schedule_save(cx);
@@ -1705,6 +1843,11 @@ impl AppSettings {
             self.values.lyrics_providers.push(provider.to_owned());
         }
         self.values.lyrics_providers.sort();
+        self.schedule_save(cx);
+    }
+
+    pub fn set_lyrics_word_synced_first(&mut self, first: bool, cx: &mut Context<Self>) {
+        self.values.lyrics_word_synced_first = first;
         self.schedule_save(cx);
     }
 
@@ -1751,6 +1894,22 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    /// The keys the user chose for shortcuts, by shortcut id.
+    pub fn keybinds(&self) -> &BTreeMap<String, Vec<String>> {
+        &self.values.keybinds
+    }
+
+    /// Replaces the keys the user chose for shortcuts. The app binds them once observers hear
+    /// of the change.
+    pub fn set_keybinds(
+        &mut self,
+        keybinds: BTreeMap<String, Vec<String>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.values.keybinds = keybinds;
+        self.schedule_save(cx);
+    }
+
     pub fn set_update_channel(&mut self, channel: Channel, cx: &mut Context<Self>) {
         self.values.update_channel = channel.id().to_owned();
         self.schedule_save(cx);
@@ -1776,8 +1935,16 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
-    pub fn set_fullscreen_on_file_open(&mut self, fullscreen: bool, cx: &mut Context<Self>) {
-        self.values.fullscreen_on_file_open = fullscreen;
+    pub fn set_now_playing_on_file_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.values.now_playing_on_file_open = open;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_scrobbles(&mut self, provider: &str, enabled: bool, cx: &mut Context<Self>) {
+        match enabled {
+            true => self.values.unscrobbled.remove(provider),
+            false => self.values.unscrobbled.insert(provider.to_owned()),
+        };
         self.schedule_save(cx);
     }
 
@@ -1921,9 +2088,10 @@ impl AppSettings {
         self.schedule_state_save(cx);
     }
 
-    pub fn set_sidebar(&mut self, width: f32, open: bool, cx: &mut Context<Self>) {
+    pub fn set_sidebar(&mut self, width: f32, open: bool, rail: bool, cx: &mut Context<Self>) {
         self.state.sidebar_width = width;
         self.state.sidebar_open = open;
+        self.state.sidebar_rail = rail;
         self.schedule_state_save(cx);
     }
 
@@ -2024,32 +2192,40 @@ impl AppSettings {
         self.schedule_state_save(cx);
     }
 
-    /// The queries the search page was asked, newest first.
-    pub fn searches(&self) -> &[String] {
-        &self.state.searches
+    /// The search results chosen on the providers in `slugs`, newest first.
+    pub fn picks(&self, slugs: &[&str]) -> Vec<Hit> {
+        self.state
+            .picks
+            .iter()
+            .filter(|picked| slugs.contains(&picked.slug.as_str()))
+            .map(|picked| picked.hit.clone())
+            .collect()
     }
 
-    /// Puts `query` at the top of the search history, dropping an earlier copy that differs only
-    /// in case and the oldest entry past the cap. The save skips settings observers, so the
-    /// caller repaints what shows the history.
-    pub fn remember_search(&mut self, query: &str, cx: &mut Context<Self>) {
-        let query = query.trim();
-        if query.is_empty() {
-            return;
-        }
-        let searches = &mut self.state.searches;
-        let folded = query.to_lowercase();
-        searches.retain(|kept| kept.to_lowercase() != folded);
-        searches.insert(0, query.to_owned());
-        searches.truncate(SEARCHES);
+    /// Puts `hit` at the top of the search history, dropping an earlier copy and the oldest
+    /// entry past the cap. The save skips settings observers, so the caller repaints what shows
+    /// the history.
+    pub fn remember_pick(&mut self, slug: &str, hit: Hit, cx: &mut Context<Self>) {
+        let key = hit.key();
+        let picks = &mut self.state.picks;
+        picks.retain(|picked| picked.hit.key() != key);
+        picks.insert(
+            0,
+            Picked {
+                slug: slug.to_owned(),
+                hit,
+            },
+        );
+        picks.truncate(PICKS);
         self.save_state_quietly(cx);
     }
 
-    /// Drops `query` from the search history. Like `remember_search`, it wakes no observers.
-    pub fn forget_search(&mut self, query: &str, cx: &mut Context<Self>) {
-        let kept = self.state.searches.len();
-        self.state.searches.retain(|held| held != query);
-        if self.state.searches.len() != kept {
+    /// Drops the hit with `key` from the search history. Like `remember_pick`, it wakes no
+    /// observers.
+    pub fn forget_pick(&mut self, key: &str, cx: &mut Context<Self>) {
+        let kept = self.state.picks.len();
+        self.state.picks.retain(|picked| picked.hit.key() != key);
+        if self.state.picks.len() != kept {
             self.save_state_quietly(cx);
         }
     }
@@ -2090,6 +2266,22 @@ impl AppSettings {
         match shown {
             true => self.values.hidden_nav.retain(|hidden| hidden != entry),
             false => self.values.hidden_nav.push(entry.to_owned()),
+        }
+        self.schedule_save(cx);
+    }
+
+    /// Whether the user added the optional sidebar row `entry`. None is added on a first run.
+    pub fn nav_added(&self, entry: &str) -> bool {
+        self.values.added_nav.iter().any(|added| added == entry)
+    }
+
+    pub fn set_nav_added(&mut self, entry: &str, added: bool, cx: &mut Context<Self>) {
+        if self.nav_added(entry) == added {
+            return;
+        }
+        match added {
+            true => self.values.added_nav.push(entry.to_owned()),
+            false => self.values.added_nav.retain(|known| known != entry),
         }
         self.schedule_save(cx);
     }
@@ -2176,6 +2368,11 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    pub fn set_player_bar_time_left(&mut self, time_left: bool, cx: &mut Context<Self>) {
+        self.values.appearance.player_bar_time_left = time_left;
+        self.schedule_save(cx);
+    }
+
     pub fn set_ambient_motion(&mut self, motion: bool, cx: &mut Context<Self>) {
         self.values.appearance.ambient_motion = motion;
         self.schedule_save(cx);
@@ -2193,6 +2390,18 @@ impl AppSettings {
 
     pub fn set_visualizer_absolute(&mut self, absolute: bool, cx: &mut Context<Self>) {
         self.values.appearance.visualizer_absolute = absolute;
+        self.schedule_save(cx);
+    }
+
+    /// Draws the visualizer, or stops drawing it, while the fullscreen player shows `panel`,
+    /// which is the cover alone when there is none.
+    pub fn set_visualizer_screen(
+        &mut self,
+        panel: Option<SideTab>,
+        shown: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.values.appearance.visualizer_screens.set(panel, shown);
         self.schedule_save(cx);
     }
 
@@ -2983,6 +3192,35 @@ fn place(pinned: &mut Vec<Held>, slug: &str, pin: Pin, gap: Option<usize>, slugs
 
 /// The saved order with unknown and repeated names dropped and every source it lacks appended
 /// in the default order.
+/// Reads the `keybinds` map leniently: a shortcut saved as one string counts as a list of one, and
+/// any other value is dropped with a warning, so a hand edit never makes the file unreadable.
+fn read_keybinds<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Vec<String>>, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let Some(entries) = value.as_object() else {
+        log::warn!("settings: keybinds {value} is not an object, keeping the default shortcuts");
+        return Ok(BTreeMap::new());
+    };
+    Ok(entries
+        .iter()
+        .filter_map(|(id, keys)| {
+            let parsed = match keys {
+                serde_json::Value::String(key) => Some(vec![key.clone()]),
+                serde_json::Value::Array(list) => list
+                    .iter()
+                    .map(|key| key.as_str().map(str::to_owned))
+                    .collect::<Option<Vec<_>>>(),
+                _ => None,
+            };
+            if parsed.is_none() {
+                log::warn!("settings: keybind {id} is {keys}, keeping its default keys");
+            }
+            parsed.map(|parsed| (id.clone(), parsed))
+        })
+        .collect())
+}
+
 fn lyrics_priority(saved: &[String]) -> Vec<String> {
     let mut order: Vec<String> = Vec::new();
     for name in saved.iter().map(String::as_str).chain(LYRICS_SOURCES) {

@@ -6,10 +6,13 @@ use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis, RangeAxis, Unit};
 use gpui::{AnyElement, App, Entity, SharedString, TextAlign};
 use i18n::t;
 use music::Album;
-use state::{Collection, Library, LibraryPart, Network, Origin, Playback, Shelf, Sonora};
+use state::{
+    Collection, Library, LibraryPart, LibraryState, Network, Origin, Playback, Shelf, Sonora,
+};
 use ui::rank::{HANDY, NICE, SPARE, USEFUL};
 use ui::{Cell, ColumnSpec, Menu, Pin, Sort, TableSource, Width};
 
+use crate::shared::blend::{self, Joined, Reach};
 use crate::shared::cells::{self, DATE, NUMBER, TRAILING, YEAR};
 use crate::shared::menus::{ItemMenu, album_menu};
 use crate::shared::pins::Pinned as _;
@@ -95,7 +98,8 @@ pub(super) struct AlbumSource {
     playback: Entity<Playback>,
     /// The state of the row menu's Add to playlist submenu.
     menu: ItemMenu,
-    shelf: Shelf,
+    /// The shelf the Local only or Streaming only filter keeps the albums to.
+    reach: Reach,
     year_span: Option<(f32, f32)>,
     starred: bool,
     /// Keep only albums that were downloaded whole.
@@ -113,13 +117,12 @@ impl AlbumSource {
         library: Entity<Library>,
         playback: Entity<Playback>,
         menu: ItemMenu,
-        shelf: Shelf,
     ) -> Self {
         Self {
             library,
             playback,
             menu,
-            shelf,
+            reach: Reach::default(),
             year_span: None,
             starred: false,
             downloaded: false,
@@ -127,12 +130,16 @@ impl AlbumSource {
         }
     }
 
+    /// Whether the page badges its local albums, see `Reach::marks_local`.
+    pub(super) fn marks_local(&self, cx: &App) -> bool {
+        self.reach.marks_local(self.albums(cx).mixed())
+    }
+
     fn index_cell(&self, cell: &Cell<AlbumField>, album: &Album, cx: &App) -> AnyElement {
         let origin = Origin::album(album.id.clone()).named(album.name.clone());
         let playing = self.playback.read(cx).playing_from(&origin, cx);
-        let played = origin.clone();
         let press = cells::toggle(&self.playback, playing, move |playback, cx| {
-            playback.play_origin(played.clone(), cx)
+            playback.play_origin(origin.clone(), cx)
         });
 
         cells::index(cell, playing, true, None, None, press, cx)
@@ -142,7 +149,7 @@ impl AlbumSource {
         self.albums(cx).get(row).cloned()
     }
 
-    /// Every year the shelf holds, in order and without repeats. The stops deliberately ignore
+    /// Every year the library holds, in order and without repeats. The stops deliberately ignore
     /// the search and the other filters, so narrowing the grid to nothing still leaves the
     /// slider standing at its full span.
     pub(super) fn years(&self, cx: &App) -> Vec<f32> {
@@ -169,13 +176,30 @@ impl AlbumSource {
         years
     }
 
-    fn albums<'a>(&self, cx: &'a App) -> &'a [Album] {
-        self.library.read(cx).state(self.shelf).albums()
+    /// The albums of both shelves, the streaming ones first.
+    fn albums<'a>(&self, cx: &'a App) -> Joined<'a, Album> {
+        blend::joined(self.library.read(cx), LibraryState::albums)
     }
 
-    /// Whether the shelf lists more than the favorites, so a favorites filter has something to do.
+    /// Whether a shelf with albums listed lists more than the favorites, so a favorites filter
+    /// has something to do.
     fn catalog(&self, cx: &App) -> bool {
-        self.library.read(cx).shape(self.shelf).is_catalog()
+        let library = self.library.read(cx);
+        [Shelf::Streaming, Shelf::Local].into_iter().any(|shelf| {
+            library.shape(shelf).is_catalog() && !library.state(shelf).albums().is_empty()
+        })
+    }
+
+    /// Whether offline mode keeps every album to its downloads, which holds only while there
+    /// are no local ones.
+    fn downloads_only(&self, cx: &App) -> bool {
+        Network::downloads_only(Shelf::Streaming, cx)
+            && self
+                .library
+                .read(cx)
+                .state(Shelf::Local)
+                .albums()
+                .is_empty()
     }
 }
 
@@ -195,7 +219,10 @@ impl TableSource for AlbumSource {
             if self.starred && !self.library.read(cx).saved_album(&album.id) {
                 return false;
             }
-            if (self.downloaded || Network::downloads_only(self.shelf, cx))
+            if !self.reach.keeps(&album.id) {
+                return false;
+            }
+            if (self.downloaded || Network::downloads_only(Shelf::of(&album.id), cx))
                 && !downloaded(&album.id, cx)
             {
                 return false;
@@ -237,17 +264,21 @@ impl TableSource for AlbumSource {
         }
         // Offline mode already keeps the shelf to its downloads, so the filter would do nothing.
         let offered = self.downloaded || !Sonora::global(cx).downloads.read(cx).is_empty();
-        if offered && !Network::downloads_only(self.shelf, cx) {
+        if offered && !self.downloads_only(cx) {
             axes.push(Filter::Flag(FlagAxis {
                 key: "filter-downloaded",
                 label: t!("filter-downloaded"),
                 on: self.downloaded,
             }));
         }
+        axes.extend(self.reach.axes(self.albums(cx).mixed()));
         axes
     }
 
     fn filter(&mut self, change: FilterChange, _cx: &App) -> bool {
+        if self.reach.filter(&change) {
+            return true;
+        }
         match change {
             FilterChange::Range("filter-year", value) => {
                 self.year_span = Some(value);
@@ -265,6 +296,7 @@ impl TableSource for AlbumSource {
                 self.year_span = None;
                 self.starred = false;
                 self.downloaded = false;
+                self.reach = Reach::default();
                 true
             }
             _ => false,
@@ -272,7 +304,7 @@ impl TableSource for AlbumSource {
     }
 
     fn filtered(&self, _cx: &App) -> bool {
-        self.year_span.is_some() || self.starred || self.downloaded
+        self.year_span.is_some() || self.starred || self.downloaded || self.reach.active()
     }
 
     fn playing(&self, row: usize, cx: &App) -> bool {
@@ -283,9 +315,7 @@ impl TableSource for AlbumSource {
     }
 
     fn is_loading(&self, cx: &App) -> bool {
-        self.library
-            .read(cx)
-            .waiting(self.shelf, LibraryPart::Albums, cx)
+        blend::waiting(self.library.read(cx), LibraryPart::Albums, cx)
     }
 
     fn pin(&self, row: usize, cx: &App) -> Option<Pin> {
@@ -323,7 +353,12 @@ impl TableSource for AlbumSource {
 
         match cell.field {
             AlbumField::Cover => cells::artwork(&cell, album.cover.clone()),
-            AlbumField::Name => cells::dim(&cell, album.name.clone(), theme.foreground),
+            AlbumField::Name => cells::name(
+                &cell,
+                album.name.clone(),
+                theme.foreground,
+                self.marks_local(cx) && Shelf::of(&album.id).local(),
+            ),
             AlbumField::Artists => cells::artists(
                 &cell,
                 album.artist_refs.clone(),

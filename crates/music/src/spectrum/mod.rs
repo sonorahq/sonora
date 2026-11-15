@@ -36,8 +36,16 @@ const IDLE_POLL: Duration = Duration::from_millis(4);
 const QUIET_POLL: Duration = Duration::from_millis(50);
 const QUIET_AFTER: u32 = 250;
 /// How long the ring stays empty before the bands start to fall. It is longer than a device's
-/// buffer, so the gaps between its pulls never count.
+/// buffer, so the gaps between its pulls never count. A ring that empties after `HUSHED_FRAMES`
+/// of silence falls at once instead.
 const SILENT_AFTER: Duration = Duration::from_millis(250);
+/// The level under which a sample counts as silence. An equalizer rings out below it within a few
+/// milliseconds of a pause.
+const HUSH: f32 = 1e-4;
+/// How many silent frames in a row end a stretch of sound. A paused player sends silence until
+/// its stream stops, at least four device buffers of it, so an empty ring after this many is a
+/// pause rather than a gap between pulls.
+const HUSHED_FRAMES: usize = 256;
 /// How often a band falls by `DECAY` while nothing is heard. One window lasts about this long
 /// at 48 kHz, so a paused track falls as fast as silence would.
 const FALL_STEP: Duration = Duration::from_millis(43);
@@ -259,6 +267,8 @@ fn analyze(mut listener: Listener, spectrum: Spectrum) {
     // while a track is paused, so without them the last levels would hold.
     let mut silent: Option<Instant> = None;
     let mut fallen = 0u128;
+    // How many frames in a row at the end of what was heard were silent.
+    let mut hushed = 0usize;
 
     loop {
         let Some(heard) = listener.next() else {
@@ -268,7 +278,11 @@ fn analyze(mut listener: Listener, spectrum: Spectrum) {
             empty = empty.saturating_add(1);
             let now = Instant::now();
             let quiet = now.duration_since(*silent.get_or_insert(now));
-            let due = quiet.saturating_sub(SILENT_AFTER).as_millis() / FALL_STEP.as_millis();
+            let hold = match hushed >= HUSHED_FRAMES {
+                true => Duration::ZERO,
+                false => SILENT_AFTER,
+            };
+            let due = quiet.saturating_sub(hold).as_millis() / FALL_STEP.as_millis();
             while fallen < due {
                 fallen += 1;
                 sides.iter_mut().for_each(Side::fall);
@@ -290,6 +304,10 @@ fn analyze(mut listener: Listener, spectrum: Spectrum) {
         empty = 0;
         silent = None;
         fallen = 0;
+        hushed = match frame.iter().all(|sample| sample.abs() <= HUSH) {
+            true => hushed.saturating_add(1),
+            false => 0,
+        };
 
         for (index, side) in sides.iter_mut().enumerate() {
             let mut sum = 0.;

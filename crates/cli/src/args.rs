@@ -89,6 +89,10 @@ enum Sub {
         #[arg(long)]
         position: bool,
     },
+    /// Print the queue: what played, what plays and what follows, without changing it.
+    Queue,
+    /// Print the lyrics of the current track, without looking any up.
+    Lyrics,
     /// Print the volume, or set it: `50`, `+5`, `-5`.
     Volume {
         /// A level from 0 to 100, or a step from the current one.
@@ -294,6 +298,8 @@ fn into_command(args: Args, line: &mut Command) -> Result<CommandType, clap::Err
         Sub::Prev => play(PlaybackCommand::Previous),
         Sub::Seek { point } => play(point),
         Sub::Current => play(PlaybackCommand::CurrentTrack),
+        Sub::Queue => Request::Queue(QueueCommand::Snapshot),
+        Sub::Lyrics => Request::Lyrics,
         Sub::Watch { position } => Request::Watch(Watch { position }),
         Sub::Volume { level } => play(PlaybackCommand::Volume(level)),
         Sub::Shuffle { switch } => play(PlaybackCommand::Shuffle(switch.map(Switch::from))),
@@ -446,4 +452,54 @@ fn queued(text: &str) -> Result<Item, String> {
 /// that names no file here and is no address.
 fn is_typo(item: &str) -> bool {
     !item.contains(['/', '\\', ':', '.']) && !Path::new(item).exists()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parsed(args: &[&str]) -> CommandType {
+        let args: Vec<OsString> = std::iter::once("sonora")
+            .chain(args.iter().copied())
+            .map(OsString::from)
+            .collect();
+        match parse(args, "0.0.0") {
+            Ok(command) => command,
+            Err(_) => panic!("arguments should parse"),
+        }
+    }
+
+    #[test]
+    fn queue_reads_as_a_snapshot_request() {
+        let CommandType::Remote(request, format) = parsed(&["queue"]) else {
+            panic!("`sonora queue` should ask the running Sonora");
+        };
+        assert_eq!(request, Request::Queue(QueueCommand::Snapshot));
+        assert_eq!(format, Format::Text);
+        assert!(!request.streams());
+    }
+
+    #[test]
+    fn queue_json_keeps_the_snapshot_request() {
+        let CommandType::Remote(request, format) = parsed(&["queue", "--json"]) else {
+            panic!("`sonora queue --json` should ask the running Sonora");
+        };
+        assert_eq!(request, Request::Queue(QueueCommand::Snapshot));
+        assert_eq!(format, Format::Json);
+    }
+
+    #[test]
+    fn lyrics_reads_as_a_read_only_request_in_both_formats() {
+        for (args, expected) in [
+            (&["lyrics"][..], Format::Text),
+            (&["lyrics", "--json"], Format::Json),
+        ] {
+            let CommandType::Remote(request, format) = parsed(args) else {
+                panic!("`sonora lyrics` should ask the running Sonora");
+            };
+            assert_eq!(request, Request::Lyrics);
+            assert_eq!(format, expected);
+            assert!(!request.streams());
+        }
+    }
 }

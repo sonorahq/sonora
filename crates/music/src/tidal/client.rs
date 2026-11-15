@@ -195,6 +195,8 @@ pub struct Playback {
     pub quality: String,
     pub duration: Option<Duration>,
     pub loudness: Option<Loudness>,
+    /// How the granted stream is encoded, when Tidal said enough to tell.
+    pub encoding: Option<Encoding>,
 }
 
 impl std::fmt::Display for Stale {
@@ -800,6 +802,23 @@ impl TidalClient {
         wire::text(&bio, "text").map(wire::plain_bio)
     }
 
+    /// How many accounts follow the artist, which the web player shows as fans. The v1 artist
+    /// detail leaves it out, so it comes from the openapi artist. A failed read or a zero is no count.
+    async fn followers(&self, artist_id: &str) -> Option<u64> {
+        let artist = self
+            .read(
+                OPENAPI,
+                &format!("/artists/{}", escape::component(artist_id)),
+                &[],
+            )
+            .await
+            .ok()?;
+        artist
+            .pointer("/data/attributes/numberOfFollowers")
+            .and_then(Value::as_u64)
+            .filter(|count| *count > 0)
+    }
+
     /// Up to `SUGGESTIONS` artists Tidal lists as similar.
     async fn similar_artists(&self, artist_id: &str) -> Result<Vec<SavedArtist>> {
         let page = self
@@ -1043,11 +1062,13 @@ impl TidalClient {
             .and_then(|track| wire::number(&track, "duration"))
             .filter(|seconds| *seconds > 0)
             .map(Duration::from_secs);
+        let encoding = encoding(&answer, manifest.codec());
         Ok(Playback {
             manifest,
             quality,
             duration,
             loudness,
+            encoding,
         })
     }
 }
@@ -1116,19 +1137,21 @@ impl MusicApi for TidalClient {
     async fn artist(&self, artist_id: &str) -> Result<Artist> {
         let detail_path = format!("/artists/{}", escape::component(artist_id));
         let top_path = format!("{detail_path}/toptracks");
-        let (detail, top, albums, biography) = tokio::join!(
+        let (detail, top, albums, biography, followers) = tokio::join!(
             self.get(&detail_path, &[]),
             self.get(&top_path, &[("limit", "20")]),
             self.releases(artist_id, None, 50),
             self.biography(artist_id),
+            self.followers(artist_id),
         );
         let detail = detail.context("cannot load the artist")?;
         Ok(Artist {
             name: wire::text(&detail, "name").unwrap_or_default().to_owned(),
-            cover_large: wire::image(wire::text(&detail, "picture"), wire::PORTRAIT_LARGE),
+            cover_large: wire::portrait(&detail, wire::PORTRAIT_LARGE),
             banner: None,
             biography,
             monthly_listeners: None,
+            followers,
             top_tracks: top.map(|page| wire::track_list(&page)).unwrap_or_default(),
             albums: wire::distinct(albums.unwrap_or_default()),
         })
@@ -1167,7 +1190,7 @@ impl MusicApi for TidalClient {
         let detail = detail.context("cannot load the artist")?;
         Ok(ArtistProfile {
             name: wire::text(&detail, "name").unwrap_or_default().to_owned(),
-            cover_large: wire::image(wire::text(&detail, "picture"), wire::PORTRAIT_LARGE),
+            cover_large: wire::portrait(&detail, wire::PORTRAIT_LARGE),
             biography,
         })
     }
@@ -1194,7 +1217,7 @@ impl MusicApi for TidalClient {
                     .get(&format!("/artists/{}", escape::component(&id)), &[])
                     .await
                     .ok()?;
-                let cover = wire::image(wire::text(&detail, "picture"), wire::PORTRAIT)?;
+                let cover = wire::portrait(&detail, wire::PORTRAIT)?;
                 Some((id, cover))
             })
             .buffer_unordered(LOOKUPS)
@@ -1608,6 +1631,11 @@ impl MusicApi for TidalClient {
         Ok(wire::distinct(wire::release_list(&found)))
     }
 
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        let found = self.search_kind(query, "ARTISTS", "artists").await?;
+        Ok(wire::artist_list(&found))
+    }
+
     async fn search_playlists(&self, query: &str) -> Result<Vec<Playlist>> {
         let found = self.search_kind(query, "PLAYLISTS", "playlists").await?;
         let user_id = self.user_id().await;
@@ -1763,4 +1791,59 @@ pub(crate) fn http() -> Result<reqwest::Client> {
         .read_timeout(STALL)
         .build()
         .context("cannot build the tidal http client")
+}
+
+/// How a stream Tidal granted is encoded, from its codec and what the playback answer says of
+/// it: FLAC at the bit depth and rate it names, AAC at the bit rate of its quality level.
+fn encoding(answer: &Value, codec: &str) -> Option<Encoding> {
+    let codec = codec.to_ascii_lowercase();
+    if codec.starts_with("flac") {
+        return Some(Encoding::Flac {
+            depth: wire::count(answer, "bitDepth")?,
+            rate: wire::count(answer, "sampleRate")?,
+        });
+    }
+    if codec.starts_with("mp4a") {
+        let kbps = match wire::text(answer, "audioQuality")? {
+            "HIGH" => 320,
+            "LOW" => 96,
+            _ => return None,
+        };
+        return Some(Encoding::Aac { kbps });
+    }
+    Some(Encoding::Other)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{Encoding, encoding};
+
+    #[test]
+    fn flac_reports_the_depth_and_rate_tidal_names() {
+        let answer =
+            json!({"audioQuality": "HI_RES_LOSSLESS", "bitDepth": 24, "sampleRate": 96_000});
+        assert_eq!(
+            encoding(&answer, "flac"),
+            Some(Encoding::Flac {
+                depth: 24,
+                rate: 96_000
+            })
+        );
+        assert_eq!(encoding(&json!({"bitDepth": 16}), "FLAC"), None);
+    }
+
+    #[test]
+    fn aac_reports_the_bit_rate_of_its_level() {
+        let at = |level: &str| encoding(&json!({"audioQuality": level}), "mp4a.40.2");
+        assert_eq!(at("HIGH"), Some(Encoding::Aac { kbps: 320 }));
+        assert_eq!(at("LOW"), Some(Encoding::Aac { kbps: 96 }));
+        assert_eq!(at("LOSSLESS"), None);
+    }
+
+    #[test]
+    fn a_codec_with_no_name_here_is_other() {
+        assert_eq!(encoding(&json!({}), "eac3"), Some(Encoding::Other));
+    }
 }

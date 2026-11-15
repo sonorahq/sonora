@@ -85,6 +85,7 @@ column-index = #
 column-title = Назва
 column-artist = Виконавець
 column-album = Альбом
+column-genre = Жанр
 column-date-added = Дата додавання
 column-added-by = Додав
 column-modified = Змінено
@@ -101,19 +102,6 @@ menu-import-playlist = Імпортувати плейлист…
 menu-edit-tags = Змінити теги
 menu-no-playlists = Немає плейлистів
 menu-search-playlists = Пошук плейлиста
-menu-save-to = Зберегти в
-menu-save-tracks-to = { $count ->
-    [one] Зберегти { $count } трек в
-    [few] Зберегти { $count } треки в
-   *[other] Зберегти { $count } треків в
-}
-menu-saved-in = Збережено в
-menu-tracks-saved-in = { $count ->
-    [one] { $count } трек збережено в
-    [few] { $count } треки збережено в
-   *[other] { $count } треків збережено в
-}
-menu-save-favorites = Улюблене
 menu-save-library = Медіатека
 menu-add-to-library = До улюбленого
 menu-remove-from-library = Прибрати з улюбленого
@@ -132,17 +120,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Видалити файл треку
 menu-delete-track-files = Видалити файли треків: { $count }
 menu-download = Завантажити
-menu-download-tracks = { $count ->
-    [one] Завантажити { $count } трек
-    [few] Завантажити { $count } треки
-   *[other] Завантажити { $count } треків
-}
 menu-remove-download = Видалити завантаження
-menu-remove-downloads = { $count ->
-    [one] Видалити { $count } завантаження
-    [few] Видалити { $count } завантаження
-   *[other] Видалити { $count } завантажень
-}
 menu-downloading = Завантажується. Натисніть, щоб зупинити
 menu-play-next = Відтворити наступним
 menu-play-tracks-next = { $count ->
@@ -162,11 +140,8 @@ menu-play-tracks-last = { $count ->
     [few] Відтворити { $count } треки наприкінці
    *[other] Відтворити { $count } треків наприкінці
 }
-menu-go-to = Перейти
-menu-artist = Виконавець
-menu-album = Альбом
-menu-radio = Радіо
-menu-details = Докладніше
+menu-song-radio = Радіо за треком
+menu-go-to-album = Перейти до альбому
 menu-go-to-artist = Перейти до виконавця
 menu-view-details = Докладніше
 menu-copy-link = Копіювати посилання
@@ -306,7 +281,6 @@ filter-reset = Скинути фільтри
 filter-duration = Тривалість
 filter-year = Рік
 filter-hide-explicit = Приховати з ненормативною лексикою
-filter-playable = Лише доступні
 filter-favorites = Лише улюблене
 filter-downloaded = Завантажене
 filter-owned = Мої
@@ -660,7 +634,6 @@ settings-font-detail = Базовий розмір тексту, решта ма
 settings-font-value = { $size } px
 settings-startup = Показувати під час запуску
 settings-startup-detail = Екран, який Sonora відкриває на старті
-settings-startup-no-guest = Недоступно в гостьовому режимі
 settings-entries = Розділи бічної панелі
 settings-entries-detail = Розділи, які видно на бічній панелі
 settings-entries-pick = Обрати розділи
@@ -972,6 +945,8 @@ equalizer-status-channels = { $from ->
     [2] стерео
    *[other] { $to } кан.
 }
+settings-lyrics = Показувати тексти пісень
+settings-lyrics-detail = Вимкніть, щоб приховати тексти пісень усюди й припинити їх пошук
 settings-panel-lyrics-size = Розмір тексту пісні (панель)
 settings-panel-lyrics-size-detail = Розмір рядків тексту пісні на бічній панелі поверх базового розміру шрифту
 settings-fullscreen-lyrics-size = Розмір тексту пісні (повний екран)

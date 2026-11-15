@@ -46,13 +46,18 @@ use output_hog::Hog;
 #[cfg(target_os = "linux")]
 use output_host::host;
 
-/// The buffer asked of the device, in frames, as far as the device allows it, when none is
-/// chosen in settings. About 43 ms at 48 kHz, so the audio thread rides out a busy system.
+/// The buffer asked of the device, in frames at 48 kHz, as far as the device allows it, when
+/// none is chosen in settings. About 43 ms, so the audio thread rides out a busy system.
+/// `rate_scale` stretches it for faster devices so it lasts as long.
 const BUFFER_FRAMES: u32 = 2048;
 
-/// The buffers, in frames, that can be chosen in settings. Below the sound server's quantum the
-/// device underruns, and above it every pause and seek is heard late.
+/// The buffers, in frames at 48 kHz, that can be chosen in settings. Below the sound server's
+/// quantum the device underruns, and above it every pause and seek is heard late. `rate_scale`
+/// stretches them for faster devices.
 const BUFFERS: [u32; 6] = [128, 256, 512, 1024, 2048, 4096];
+
+/// The rate `BUFFER_FRAMES` and `BUFFERS` are counted at.
+const BUFFER_BASE_RATE: u32 = 48_000;
 
 /// How often an open stream checks that its device is still the one `resolve_device` names and
 /// still runs at the stream's rate, reads its sink again, and pauses once nothing plays on it.
@@ -132,7 +137,8 @@ pub struct DeviceOption {
 
 /// An output as device rules know it: its key, from `output_key`, and its name when it was seen,
 /// so a rule for an output that is not connected can still be shown.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct OutputId {
     pub id: String,
     pub name: String,
@@ -234,7 +240,8 @@ struct DeviceSelection {
     match_rate: bool,
     /// The rate the playing track asked the direct device for, or `None` before one has.
     track_rate: Option<u32>,
-    /// The buffer to ask a device for, in frames, or `None` for `BUFFER_FRAMES`.
+    /// The buffer to ask a device for, in frames, or `None` for `BUFFER_FRAMES` scaled to the
+    /// device's rate.
     buffer: Option<u32>,
     /// The devices that would not open, most recent last.
     failed: Vec<Failure>,
@@ -509,14 +516,12 @@ impl Device {
         let default = device
             .default_output_config()
             .map_err(|error| anyhow::Error::new(error).context("cannot read the output config"))?;
-        let (wanted, frames) = {
+        let (wanted, chosen) = {
             let selection = DeviceSelection::lock();
-            (
-                selection.wanted_rate(),
-                selection.buffer.unwrap_or(BUFFER_FRAMES),
-            )
+            (selection.wanted_rate(), selection.buffer)
         };
         let config = output_rate::config(&device, default, wanted);
+        let frames = chosen.unwrap_or_else(|| BUFFER_FRAMES * rate_scale(config.sample_rate()));
         let rates = output_rate::rates(&device, &config);
         let (name, _) = cpal_describe(&device);
         let failed = Arc::new(AtomicBool::new(false));
@@ -1224,8 +1229,8 @@ fn reopen_at_wanted() {
 }
 
 /// Asks devices for a buffer of `frames` from now on, as far as they allow it, or for
-/// `BUFFER_FRAMES` when `None`. A stream open with another buffer is retired, so every output on
-/// it reopens with the new one.
+/// `BUFFER_FRAMES` scaled to their rate when `None`. A stream open with another buffer is
+/// retired, so every output on it reopens with the new one.
 pub fn choose_buffer(frames: Option<u32>) {
     DeviceSelection::lock().buffer = frames;
     let open = ACTIVE_DEVICE
@@ -1505,11 +1510,13 @@ fn cpal_describe(device: &cpal::Device) -> (String, Option<String>) {
     (name.to_owned(), detail)
 }
 
-/// The buffers in `BUFFERS` that `config` allows, with `buffer`, the one the stream asked for,
-/// lowest first.
+/// The buffers in `BUFFERS`, scaled to `config`'s rate, that `config` allows, with `buffer`, the
+/// one the stream asked for, lowest first.
 fn buffers(config: &cpal::SupportedStreamConfig, buffer: u32) -> Vec<u32> {
+    let scale = rate_scale(config.sample_rate());
     let mut buffers: Vec<u32> = BUFFERS
         .into_iter()
+        .map(|frames| frames * scale)
         .filter(|frames| buffer_range(config).is_none_or(|(min, max)| (min..=max).contains(frames)))
         .collect();
     if !buffers.contains(&buffer) {
@@ -1519,11 +1526,25 @@ fn buffers(config: &cpal::SupportedStreamConfig, buffer: u32) -> Vec<u32> {
     buffers
 }
 
+/// How many times `BUFFER_BASE_RATE` a device at `rate` Hz runs, rounded up to a power of two, so
+/// a buffer counted at 48 kHz lasts about as long on it. 44.1 and 48 kHz keep the frames as
+/// they are, 384 kHz takes eight times as many.
+fn rate_scale(rate: u32) -> u32 {
+    rate.div_ceil(BUFFER_BASE_RATE).max(1).next_power_of_two()
+}
+
 /// The buffers `config` allows, in frames, as `(min, max)`, or `None` when the device does not
 /// say. An empty range says nothing either.
+///
+/// On Windows cpal reports a shared-mode device's period as both ends of the range, although
+/// shared mode takes any buffer and only the period between callbacks is fixed. Held to it, the
+/// stream gets a single 10 ms period and crackles whenever the system is busy, so a range that
+/// narrow there is read as no limit. A hardware-offloaded device reports a real, wider range.
 fn buffer_range(config: &cpal::SupportedStreamConfig) -> Option<(u32, u32)> {
     match *config.buffer_size() {
         cpal::SupportedBufferSize::Range { max: 0, .. } => None,
+        #[cfg(windows)]
+        cpal::SupportedBufferSize::Range { min, max } if min == max => None,
         cpal::SupportedBufferSize::Range { min, max } => Some((min, max.max(min))),
         cpal::SupportedBufferSize::Unknown => None,
     }

@@ -27,13 +27,15 @@ impl Binimum {
         }
     }
 
-    async fn find(&self, query: &LyricsQuery) -> Result<Vec<Match>> {
+    /// Searches the catalogue by title, artist and length, narrowed to `album` when given. The
+    /// catalogue may name an album edition differently, so a caller can retry without it.
+    async fn find(&self, query: &LyricsQuery, album: Option<&str>) -> Result<Vec<Match>> {
         let duration = query.duration.as_secs().to_string();
         let mut params = vec![
             ("track", query.title.as_str()),
             ("artist", query.artist.as_str()),
         ];
-        if let Some(album) = query.album.as_deref().filter(|album| !album.is_empty()) {
+        if let Some(album) = album {
             params.push(("album", album));
         }
         if !query.duration.is_zero() {
@@ -125,7 +127,15 @@ impl LyricsProvider for Binimum {
     }
 
     async fn search(&self, query: &LyricsQuery) -> Result<Vec<LyricsHit>> {
-        let mut found = self.find(query).await?;
+        let album = query.album.as_deref().filter(|album| !album.is_empty());
+        let mut found = self.find(query, album).await?;
+        if found.is_empty() && album.is_some() {
+            log::debug!(
+                "lyrics: apple catalogue found no album match for {}, retrying without the album",
+                query.title
+            );
+            found = self.find(query, None).await?;
+        }
         found.sort_by_key(|found| !found.worded());
         let Some((best, url)) = found
             .iter()

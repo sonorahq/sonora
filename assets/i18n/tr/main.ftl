@@ -85,6 +85,7 @@ column-index = #
 column-title = Başlık
 column-artist = Sanatçı
 column-album = Albüm
+column-genre = Tür
 column-date-added = Eklenme tarihi
 column-added-by = Ekleyen
 column-modified = Değiştirilme
@@ -110,13 +111,7 @@ menu-remove-tracks-from-history = { $count } parçayı geçmişten kaldır
 menu-delete-track-file = Parça dosyasını sil
 menu-delete-track-files = { $count } parça dosyasını sil
 menu-download = İndir
-menu-download-tracks = { $count ->
-   *[other] { $count } parçayı indir
-}
 menu-remove-download = İndirmeyi kaldır
-menu-remove-downloads = { $count ->
-   *[other] { $count } indirmeyi kaldır
-}
 menu-downloading = İndiriliyor. Durdurmak için tıkla
 menu-play-next = Sıradaki olarak çal
 menu-play-tracks-next = { $count } parçayı sıradaki olarak çal
@@ -126,11 +121,8 @@ menu-play-last = En son çal
 menu-play-tracks-last = { $count ->
    *[other] { $count } parçayı en son çal
 }
-menu-go-to = Git
-menu-artist = Sanatçı
-menu-album = Albüm
-menu-radio = Radyo
-menu-details = Ayrıntılar
+menu-song-radio = Şarkı radyosuna git
+menu-go-to-album = Albüme git
 menu-go-to-artist = Sanatçıya git
 menu-view-details = Ayrıntıları gör
 menu-copy-link = Bağlantıyı kopyala
@@ -268,7 +260,6 @@ filter-reset = Süzgeçleri sıfırla
 filter-duration = Süre
 filter-year = Yıl
 filter-hide-explicit = Müstehcenleri gizle
-filter-playable = Yalnızca çalınabilir
 filter-favorites = Yalnızca favoriler
 filter-downloaded = İndirilenler
 filter-owned = Senin
@@ -606,7 +597,6 @@ settings-font-detail = Temel metin boyutu, diğer her şey buna göre ölçeklen
 settings-font-value = { $size } px
 settings-startup = Açılışta göster
 settings-startup-detail = Sonora'nın açılışta gösterdiği ekran
-settings-startup-no-guest = Konuk modunda kullanılamaz
 settings-entries = Kenar çubuğu girdileri
 settings-entries-detail = Kenar çubuğunda listelenen bölümler
 settings-entries-pick = Girdileri seç
@@ -915,6 +905,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kanal
 }
+settings-lyrics = Şarkı sözlerini göster
+settings-lyrics-detail = Şarkı sözlerini her yerde gizlemek ve aramayı durdurmak için kapatın
 settings-panel-lyrics-size = Şarkı sözü boyutu (panel)
 settings-panel-lyrics-size-detail = Yan paneldeki şarkı sözü metninin, temel yazı boyutuna eklenen boyutu
 settings-fullscreen-lyrics-size = Şarkı sözü boyutu (tam ekran)

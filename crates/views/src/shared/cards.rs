@@ -23,10 +23,11 @@ pub(crate) fn album_card(
 ) -> Card {
     let cover = album.cover_large.clone().or_else(|| album.cover.clone());
     let origin = Origin::album(album.id.clone()).named(album.name.clone());
-    let playing = playback.read(cx).playing_from(&origin, cx) == Some(true);
+    let playing = playback.read(cx).engaged(&origin, cx);
     let pin = album.pin();
     let opened = SharedString::from(album.id.clone());
     let toggled = playback.clone();
+    let warmed = playback.clone();
 
     Card::new(id, SharedString::from(album.name.clone()))
         .aria_description(spoken_caption([
@@ -45,9 +46,13 @@ pub(crate) fn album_card(
             album.artists.clone(),
             cx.theme(),
         ))
-        .play(playing, move |_, _, cx| {
-            toggled.update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
+        .play(playing, {
+            let origin = origin.clone();
+            move |_, _, cx| {
+                toggled.update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
+            }
         })
+        .warm(move |_, cx| warmed.update(cx, |playback, cx| playback.warm_origin(&origin, cx)))
         .press(move |_, _, cx| navigate(Destination::Album(opened.clone()), cx))
         .menu(CardMenu::opener(
             Item::Album(album.clone()),
@@ -63,10 +68,11 @@ pub(crate) fn playlist_card(
     cx: &App,
 ) -> Card {
     let origin = Origin::playlist(playlist.id.clone()).named(playlist.name.clone());
-    let playing = playback.read(cx).playing_from(&origin, cx) == Some(true);
+    let playing = playback.read(cx).engaged(&origin, cx);
     let pin = playlist.pin();
     let opened = SharedString::from(playlist.id.clone());
     let toggled = playback.clone();
+    let warmed = playback.clone();
 
     Card::new(id, SharedString::from(playlist.name.clone()))
         .aria_description(SharedString::from(playlist.owner.clone()))
@@ -74,9 +80,13 @@ pub(crate) fn playlist_card(
         .weight(FontWeight::SEMIBOLD)
         .underline()
         .meta(SharedString::from(playlist.owner.clone()))
-        .play(playing, move |_, _, cx| {
-            toggled.update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
+        .play(playing, {
+            let origin = origin.clone();
+            move |_, _, cx| {
+                toggled.update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
+            }
         })
+        .warm(move |_, cx| warmed.update(cx, |playback, cx| playback.warm_origin(&origin, cx)))
         .press(move |_, _, cx| navigate(Destination::Playlist(opened.clone()), cx))
         .menu(CardMenu::opener(
             Item::Playlist(playlist.clone()),
@@ -412,6 +422,14 @@ fn track_caption(kind: Option<SharedString>, track: &Track) -> SharedString {
     )
 }
 
+/// Badges `card` as a local file when `local`, for a library page that mixes both shelves.
+pub(crate) fn marked_local(card: Card, local: bool) -> Card {
+    match local {
+        true => card.mark(crate::shared::blend::LOCAL_MARK, t!("song-local")),
+        false => card,
+    }
+}
+
 pub(crate) fn imported_playlist_card(
     id: impl Into<ElementId>,
     playlist: &Playlist,
@@ -432,10 +450,11 @@ pub(crate) fn artist_card(
     cx: &App,
 ) -> Card {
     let origin = Origin::artist(artist.id.clone()).named(artist.name.clone());
-    let playing = playback.read(cx).playing_from(&origin, cx) == Some(true);
+    let playing = playback.read(cx).engaged(&origin, cx);
     let pin = artist.pin();
     let opened = SharedString::from(artist.id.clone());
     let toggled = playback.clone();
+    let warmed = playback.clone();
 
     Card::new(id, SharedString::from(artist.name.clone()))
         .cover(artist.cover.clone())
@@ -444,9 +463,13 @@ pub(crate) fn artist_card(
         .weight(FontWeight::SEMIBOLD)
         .underline()
         .meta(i18n::lookup("artist-eyebrow", None))
-        .play(playing, move |_, _, cx| {
-            toggled.update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
+        .play(playing, {
+            let origin = origin.clone();
+            move |_, _, cx| {
+                toggled.update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
+            }
         })
+        .warm(move |_, cx| warmed.update(cx, |playback, cx| playback.warm_origin(&origin, cx)))
         .press(move |_, _, cx| navigate(Destination::Artist(opened.clone()), cx))
         .menu(CardMenu::opener(
             Item::Artist(artist.clone()),

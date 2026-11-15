@@ -98,11 +98,16 @@ impl Wake {
     }
 
     /// Works out what should be held now and hands it to the platform when it changed. Loading
-    /// counts as playing so a track change or a rebuffer does not drop the lock.
+    /// counts as playing only when play was asked for, so a track change or a rebuffer keeps
+    /// the lock while a restored track loading paused at launch never takes it.
     fn apply(&mut self, cx: &mut Context<Self>) {
-        let state = self.playback.read(cx).state();
+        let playback = self.playback.read(cx);
         let playing = self.settings.read(cx).stay_awake()
-            && matches!(state, PlaybackState::Playing | PlaybackState::Loading);
+            && match playback.state() {
+                PlaybackState::Playing => true,
+                PlaybackState::Loading => playback.wants_playing(),
+                _ => false,
+            };
         let want = Want {
             system: playing,
             display: playing && self.fullscreen && self.focused,
@@ -241,7 +246,6 @@ async fn acquire(
     want: Want,
 ) -> Result<ashpd::desktop::Request<()>, NotHeld> {
     use ashpd::desktop::inhibit::{InhibitFlags, InhibitOptions, InhibitProxy};
-    use ashpd::enumflags2::BitFlag;
 
     if proxy.is_none() {
         match InhibitProxy::new().await {
@@ -257,10 +261,10 @@ async fn acquire(
     };
     let mut flags = InhibitFlags::empty();
     if want.system {
-        flags.insert(InhibitFlags::Suspend);
+        flags |= InhibitFlags::SUSPEND;
     }
     if want.display {
-        flags.insert(InhibitFlags::Idle);
+        flags |= InhibitFlags::IDLE;
     }
     let reason = i18n::t!("wake-reason");
     let options = InhibitOptions::default().set_reason(reason.as_ref());

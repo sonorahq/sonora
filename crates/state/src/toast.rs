@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -28,7 +29,7 @@ pub enum Target {
     Album(SharedString),
     Artist(SharedString),
     Playlist(SharedString),
-    /// The Playback tab of settings, where the Widevine module is managed.
+    /// The Playback tab of settings, where the Widevine module and Soloist are managed.
     PlaybackSettings,
     /// The Providers tab of settings, where a provider is signed in again.
     ProviderSettings,
@@ -133,8 +134,14 @@ impl Toast {
         self
     }
 
+    /// Adds a second line. It goes through [`music::redact`] first, since the detail is often an
+    /// error that names the url it failed on, and people share screenshots of toasts.
     pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
-        self.detail = Some(detail.into());
+        let detail = detail.into();
+        self.detail = Some(match music::redact(&detail) {
+            Cow::Borrowed(_) => detail,
+            Cow::Owned(clean) => clean.into(),
+        });
         self
     }
 
@@ -170,6 +177,19 @@ impl Toast {
     /// Adds a button that opens the target's page.
     pub fn open(mut self, key: impl Into<SharedString>, target: Target) -> Self {
         let mut action = ToastAction::new(key, |_| {});
+        action.target = Some(target);
+        self.action = Some(action);
+        self
+    }
+
+    /// Adds a button that runs `run` and then opens the target's page.
+    pub fn lead(
+        mut self,
+        key: impl Into<SharedString>,
+        target: Target,
+        run: impl Fn(&mut App) + 'static,
+    ) -> Self {
+        let mut action = ToastAction::new(key, run);
         action.target = Some(target);
         self.action = Some(action);
         self

@@ -85,6 +85,7 @@ column-index = #
 column-title = Judul
 column-artist = Artis
 column-album = Album
+column-genre = Genre
 column-date-added = Tanggal Ditambahkan
 column-added-by = Ditambahkan Oleh
 column-modified = Diubah
@@ -116,15 +117,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Hapus file lagu
 menu-delete-track-files = Hapus { $count } file lagu
 menu-download = Unduh
-menu-download-tracks = { $count ->
-    [one] Unduh { $count } lagu
-   *[other] Unduh { $count } lagu
-}
 menu-remove-download = Hapus unduhan
-menu-remove-downloads = { $count ->
-    [one] Hapus { $count } unduhan
-   *[other] Hapus { $count } unduhan
-}
 menu-downloading = Mengunduh. Klik untuk berhenti
 menu-play-next = Putar berikutnya
 menu-play-tracks-next = { $count ->
@@ -141,11 +134,8 @@ menu-play-tracks-last = { $count ->
     [one] Putar { $count } lagu terakhir
    *[other] Putar { $count } lagu terakhir
 }
-menu-go-to = Buka
-menu-artist = Artis
-menu-album = Album
-menu-radio = Radio
-menu-details = Detail
+menu-song-radio = Buka radio lagu
+menu-go-to-album = Buka album
 menu-go-to-artist = Buka artis
 menu-view-details = Lihat detail
 menu-copy-link = Salin tautan
@@ -278,7 +268,6 @@ filter-reset = Reset filter
 filter-duration = Durasi
 filter-year = Tahun
 filter-hide-explicit = Sembunyikan eksplisit
-filter-playable = Hanya yang bisa diputar
 filter-favorites = Hanya favorit
 filter-downloaded = Diunduh
 filter-owned = Dibuat oleh Anda
@@ -619,7 +608,6 @@ settings-font-detail = Ukuran teks dasar, elemen antarmuka lainnya akan menyesua
 settings-font-value = { $size } px
 settings-startup = Buka saat memulai
 settings-startup-detail = Layar yang pertama dibuka saat Sonora dijalankan
-settings-startup-no-guest = Tidak tersedia di Mode Tamu
 settings-entries = Menu bilah sisi
 settings-entries-detail = Bagian-bagian yang ditampilkan di bilah sisi
 settings-entries-pick = Pilih menu
@@ -928,6 +916,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } ch
 }
+settings-lyrics = Tampilkan lirik
+settings-lyrics-detail = Matikan untuk menyembunyikan lirik di mana pun dan berhenti mencarinya
 settings-panel-lyrics-size = Ukuran lirik (panel)
 settings-panel-lyrics-size-detail = Ukuran teks lirik pada panel samping, di atas ukuran font dasar
 settings-fullscreen-lyrics-size = Ukuran lirik (layar penuh)

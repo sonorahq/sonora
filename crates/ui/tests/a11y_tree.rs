@@ -33,14 +33,14 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    App, AppContext as _, Context, Element, IntoElement, Render, RenderOnce, TestAppContext,
-    Window,
+    App, AppContext as _, Context, Element, InteractiveElement as _, IntoElement, Render,
+    RenderOnce, StatefulInteractiveElement as _, TestAppContext, Window,
     accesskit::{Action, Node, Role},
     div,
 };
 use ui::{
-    Button, Card, Checkbox, Input, OptionCard, OtpInput, Radio, RangeScrubber, RangeState,
-    Scrubber, ScrubberState, Theme, Toast,
+    Button, Card, Checkbox, Field, Form, Glowing as _, Input, OptionCard, OtpInput, Radio,
+    RangeScrubber, RangeState, Scrubber, ScrubberState, Theme, Toast,
 };
 
 /// Formats what the frame builder would put in the tree for `element`.
@@ -314,6 +314,49 @@ async fn toast_announces_status_with_message(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn form_reads_as_a_named_form(cx: &mut TestAppContext) {
+    let lines = open_probe(cx, |window, cx| {
+        let field = cx.new(|cx| Input::new("common-search", cx));
+        let element = Form::new("sign-in")
+            .name("Sign in")
+            .field(Field::new(&field, cx))
+            .render(window, cx)
+            .into_element();
+        snapshot("form", &element)
+    });
+    let lines = rendered(&lines, "form");
+    assert!(
+        lines.iter().any(|line| line.contains("role=Form")),
+        "form exposes no Role::Form, screen readers cannot tell its fields belong together: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("Sign in")),
+        "form exposes no accessible name: {lines:?}"
+    );
+}
+
+#[gpui::test]
+async fn labelled_field_reads_as_a_group_named_for_its_label(cx: &mut TestAppContext) {
+    let lines = open_probe(cx, |window, cx| {
+        let control = cx.new(|cx| Input::new("common-search", cx));
+        let element = Field::new(&control, cx)
+            .label("Server address")
+            .render(window, cx)
+            .into_element();
+        snapshot("field", &element)
+    });
+    let lines = rendered(&lines, "field");
+    assert!(
+        lines.iter().any(|line| line.contains("role=Group")),
+        "labelled field exposes no Role::Group, its label never reaches screen readers: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("Server address")),
+        "labelled field is not named for its label: {lines:?}"
+    );
+}
+
+#[gpui::test]
 async fn spoken_text_names_itself_from_its_value(cx: &mut TestAppContext) {
     let lines = open_probe(cx, |_, _| {
         let element = ui::spoken("version", "0.45.0").into_element();
@@ -484,6 +527,44 @@ async fn card_reads_its_description_and_choice(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn icon_button_with_trailing_tooltip_names_itself(cx: &mut TestAppContext) {
+    let lines = open_probe(cx, |window, cx| {
+        let element = Button::new("nav-home")
+            .icon("icons/house.svg")
+            .tooltip_trailing("nav-home")
+            .render(window, cx)
+            .into_element();
+        snapshot("rail-button", &element)
+    });
+    let lines = rendered(&lines, "rail-button");
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("role=Button") && line.contains("name=Some")),
+        "icon button with a tooltip beside it exposes no named Role::Button: {lines:?}"
+    );
+}
+
+#[gpui::test]
+async fn glance_card_keeps_its_title_as_name(cx: &mut TestAppContext) {
+    let lines = open_probe(cx, |window, cx| {
+        let element = Card::new("album", "Abbey Road")
+            .glance()
+            .press(|_, _, _| {})
+            .render(window, cx)
+            .into_element();
+        snapshot("glance-card", &element)
+    });
+    let lines = rendered(&lines, "glance-card");
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("role=Button") && line.contains("name=Some(\"Abbey Road\")")),
+        "a card showing only its cover loses its title for screen readers: {lines:?}"
+    );
+}
+
+#[gpui::test]
 async fn scrubber_names_itself_and_steps(cx: &mut TestAppContext) {
     let state = ScrubberState::new("volume");
     let lines = open_probe(cx, move |window, cx| {
@@ -635,5 +716,29 @@ async fn silent_radio_stays_out_of_the_tree(cx: &mut TestAppContext) {
     assert!(
         lines.iter().all(|line| line.contains("NO NODE")),
         "a silent radio still adds a nameless radio button beside the row that names it: {lines:?}"
+    );
+}
+
+#[gpui::test]
+async fn glowed_row_keeps_its_role_and_name(cx: &mut TestAppContext) {
+    let lines = open_probe(cx, |window, cx| {
+        let fill = cx.global::<Theme>().secondary_hover;
+        let element = div()
+            .id("member")
+            .role(Role::ListItem)
+            .aria_label("Ada")
+            .glowed(fill)
+            .render(window, cx)
+            .into_element();
+        snapshot("glowed-row", &element)
+    });
+    let lines = rendered(&lines, "glowed-row");
+    assert!(
+        lines.iter().any(|line| line.contains("role=ListItem")),
+        "a row that fades its hover drops out of the tree: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("name=Some(\"Ada\")")),
+        "a row that fades its hover loses its name: {lines:?}"
     );
 }

@@ -1,3 +1,24 @@
+/// Sets the Dock icon from the embedded family when Sonora runs outside an app bundle. A bundle
+/// keeps its own icon, because an image set here would replace the adaptive one in `Assets.car`.
+#[cfg(target_os = "macos")]
+pub fn install_icon() {
+    use objc2::{AnyThread as _, MainThreadMarker};
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::{NSBundle, NSData};
+
+    if NSBundle::mainBundle().bundleIdentifier().is_some() {
+        return;
+    }
+    let Some(mtm) = MainThreadMarker::new() else {
+        return log::warn!("dock: cannot set the app icon off the main thread");
+    };
+    let data = NSData::with_bytes(include_bytes!("../../../assets/macos/sonora.icns"));
+    let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) else {
+        return log::warn!("dock: cannot decode the app icon");
+    };
+    unsafe { NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&image)) };
+}
+
 #[cfg(target_os = "macos")]
 pub fn show(shown: bool) {
     use objc2::MainThreadMarker;
