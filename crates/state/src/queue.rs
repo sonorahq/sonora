@@ -882,22 +882,19 @@ impl Queue {
 
     /// Applies a remote queue window while keeping the current entry and playback position.
     /// `reach` says how much of this queue the window stands for, so what lies beyond it stays.
-    /// So do the suggestions made here, which are never reported, unless the window brings the
-    /// other device's own.
+    /// The suggestions are reported like any other song, so one the window no longer names is
+    /// gone like any other too.
     pub(crate) fn replace_remote(
         &mut self,
         past: Vec<(Track, QueueKind)>,
-        current: bool,
+        current: QueueKind,
         upcoming: Vec<(Track, QueueKind)>,
         reach: Reach,
         cx: &mut Context<Self>,
     ) {
         let origin = self.origin().or_else(|| self.context_origin()).cloned();
         let old_past = std::mem::take(&mut self.past);
-        let (suggested, old_upcoming): (Vec<_>, Vec<_>) = self
-            .upcoming
-            .drain(..)
-            .partition(|entry| entry.kind == QueueKind::Suggested);
+        let old_upcoming: Vec<_> = self.upcoming.drain(..).collect();
         let (earlier, left_past, mut known, left_upcoming, beyond) = match reach {
             Reach::Reported {
                 past: shown_past,
@@ -958,14 +955,6 @@ impl Queue {
             })
             .collect();
         let window: Vec<_> = entries.split_off(past_len);
-        // the other device's suggestions take the place of the ones made here
-        let suggested = match window
-            .iter()
-            .any(|entry| entry.kind == QueueKind::Suggested)
-        {
-            true => Vec::new(),
-            false => suggested,
-        };
         self.past = earlier
             .into_iter()
             .chain(left_past)
@@ -975,13 +964,9 @@ impl Queue {
             .into_iter()
             .chain(left_upcoming)
             .chain(beyond)
-            .chain(suggested)
             .collect();
         if let Some(entry) = self.current.as_mut() {
-            entry.kind = match current {
-                true => QueueKind::Queued,
-                false => QueueKind::Context,
-            };
+            entry.kind = current;
         }
         let queued: HashSet<_> = self
             .past

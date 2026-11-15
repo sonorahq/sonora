@@ -28,7 +28,7 @@ const REMOTE_TRACKS: usize = 25;
 /// How often the views are told that another device's playback moved on while it plays.
 const TICK: Duration = Duration::from_millis(500);
 /// The actual history and upcoming order supplied by another device.
-type RemoteWindow = (Vec<(Track, QueueKind)>, bool, Vec<(Track, QueueKind)>);
+type RemoteWindow = (Vec<(Track, QueueKind)>, QueueKind, Vec<(Track, QueueKind)>);
 
 /// A seek another device asked for while a song was loading, kept until that song plays.
 struct LateSeek {
@@ -1294,7 +1294,7 @@ async fn load(
             .collect();
         (
             past,
-            start.track.as_ref().is_some_and(|track| track.queued),
+            start.track.as_ref().map_or(QueueKind::Context, kind_of),
             next,
         )
     });
