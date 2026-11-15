@@ -29,12 +29,18 @@ use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 const PINS: &str = "sidebar-pins";
 
 /// The sidebar's navigation rows in order: the entry that can hide each, its icon and where it goes.
-/// The four library rows each open one page of the merged streaming and local library. History
-/// and Settings live in the account menu of the title bar and come back here only when added.
+/// History sits right under Search. The four library rows each open one page of the merged
+/// streaming and local library. Settings lives in the account menu of the title bar and comes
+/// back here only when added.
 /// Settings opens on the settings page last visited rather than on the one named here.
 pub(crate) const NAV: [(NavEntry, &str, Destination); 8] = [
     (NavEntry::Home, "icons/house.svg", Destination::Home),
     (NavEntry::Search, "icons/search.svg", Destination::Search),
+    (
+        NavEntry::History,
+        "icons/rotate-ccw-clock.svg",
+        Destination::History,
+    ),
     (
         NavEntry::Songs,
         LibraryTab::Songs.icon(),
@@ -54,11 +60,6 @@ pub(crate) const NAV: [(NavEntry, &str, Destination); 8] = [
         NavEntry::Playlists,
         LibraryTab::Playlists.icon(),
         Destination::Library(LibraryTab::Playlists),
-    ),
-    (
-        NavEntry::History,
-        "icons/rotate-ccw-clock.svg",
-        Destination::History,
     ),
     (
         NavEntry::Settings,
@@ -326,9 +327,9 @@ impl SidebarLeft {
                 .filter(|index| entry_shown(NAV[*index].0, self.settings.read(cx)))
                 .collect()
         };
-        let top = shown(0..2, cx);
-        let library = shown(2..6, cx);
-        let rest = shown(6..NAV.len(), cx);
+        let top = shown(0..3, cx);
+        let library = shown(3..7, cx);
+        let rest = shown(7..NAV.len(), cx);
         let mut rows = Vec::new();
         if self.folded() {
             for (group, indices) in [top, library, rest]
