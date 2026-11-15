@@ -2,12 +2,15 @@
 //! contract and fields come and go between endpoints, so every read goes through tolerant
 //! helpers rather than derived structs.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::{Album, ArtistRef, Genre, Playlist, ReleaseType, SavedArtist, Track, calendar};
+use crate::{
+    Album, ArtistRef, Genre, GenreItem, GenreSection, Playlist, ReleaseType, SavedArtist, Track,
+    calendar,
+};
 
 /// The cover size used in lists, and the one used on a page header.
 pub const COVER: u32 = 320;
@@ -336,6 +339,94 @@ pub fn genre(value: &Value) -> Option<Genre> {
     })
 }
 
+/// The path prefix of a genre that is one of Tidal's own pages, such as a mood or a decade from
+/// Explore. Its id is the page path, which `genre` opens it by.
+pub const PAGE: &str = "pages/";
+
+/// The page links on an Explore answer, as genres whose id is the page path. A card that leads
+/// anywhere other than a `pages/` path, such as a playlist, is left out.
+pub fn explore_links(page: &Value) -> Vec<Genre> {
+    modules(page)
+        .flat_map(|module| items(module.get("pagedList").unwrap_or(&Value::Null)))
+        .filter_map(page_link)
+        .collect()
+}
+
+/// The genres Browse lists: the `/genres` entries first, then the Explore page links after them,
+/// with each id kept once.
+pub fn with_explore(listed: Vec<Genre>, links: Vec<Genre>) -> Vec<Genre> {
+    let mut seen = HashSet::new();
+    listed
+        .into_iter()
+        .chain(links)
+        .filter(|genre| seen.insert(genre.id.clone()))
+        .collect()
+}
+
+/// The shelves of a Tidal page: each module that holds at least one card Sonora can draw, in the
+/// order Tidal lays them out. A module without a title takes the page's own title. A card that
+/// links to another `pages/` path becomes a genre, which opens the same way.
+pub fn page_sections(page: &Value, user_id: &str) -> Vec<GenreSection> {
+    let fallback = text(page, "title").unwrap_or_default();
+    modules(page)
+        .filter_map(|module| {
+            let kind = text(module, "type").unwrap_or_default();
+            let list = module.get("pagedList").unwrap_or(&Value::Null);
+            let cards: Vec<GenreItem> = items(list)
+                .iter()
+                .filter_map(|item| page_card(kind, item, user_id))
+                .collect();
+            let title = text(module, "title").unwrap_or(fallback).to_owned();
+            (!cards.is_empty()).then_some(GenreSection {
+                title,
+                items: cards,
+            })
+        })
+        .collect()
+}
+
+/// The modules of a `/pages/...` answer, which Tidal lays out as rows of them.
+fn modules(page: &Value) -> impl Iterator<Item = &Value> {
+    page.get("rows")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row.get("modules").and_then(Value::as_array))
+        .flatten()
+}
+
+/// One card of a page module. A page link is read first, whatever the module holds, and the
+/// rest are read as the kind of the module they sit in.
+fn page_card(kind: &str, item: &Value, user_id: &str) -> Option<GenreItem> {
+    if let Some(genre) = page_link(item) {
+        return Some(GenreItem::Genre(genre));
+    }
+    match kind {
+        "ALBUM_LIST" => album(item).map(GenreItem::Album),
+        "PLAYLIST_LIST" => playlist(item, user_id).map(GenreItem::Playlist),
+        "MIX_LIST" => mix(item).map(GenreItem::Playlist),
+        "TRACK_LIST" => track(item)
+            .filter(|track| track.playable)
+            .map(GenreItem::Track),
+        "ARTIST_LIST" => artist(item).map(GenreItem::Artist),
+        _ => None,
+    }
+}
+
+/// A card that links to another Tidal page, as a genre whose id is that path. Only a path under
+/// `pages/` counts, so a link to anything else is not a genre.
+fn page_link(item: &Value) -> Option<Genre> {
+    let path = text(item, "apiPath")?.trim_start_matches('/');
+    if !path.starts_with(PAGE) {
+        return None;
+    }
+    Some(Genre {
+        id: path.to_owned(),
+        name: text(item, "title")?.to_owned(),
+        cover: None,
+    })
+}
+
 /// A playlist out of a bare or wrapped playlist object. `user_id` decides whether the
 /// listener owns it. One of the listener's comes with no owner name, which [`credit`] fills.
 pub fn playlist(wrapper: &Value, user_id: &str) -> Option<Playlist> {
@@ -503,7 +594,79 @@ fn atmos_only(value: &Value) -> bool {
 mod tests {
     use serde_json::json;
 
-    use super::{PORTRAIT, PORTRAIT_LARGE, artist, portrait};
+    use super::{
+        PORTRAIT, PORTRAIT_LARGE, artist, explore_links, genre, page_sections, portrait,
+        with_explore,
+    };
+    use crate::GenreItem;
+
+    #[test]
+    fn explore_links_follow_the_genres_with_each_id_once() {
+        let listed =
+            vec![genre(&json!({"path": "rock", "name": "Rock", "image": "aa-bb"})).unwrap()];
+        let explore = json!({"rows": [{"modules": [
+            {"type": "PAGE_LINKS_CARD_LIST", "title": "Moods", "pagedList": {"items": [
+                {"type": "PAGE_LINK", "title": "Chill", "apiPath": "pages/explore_mood_chill"},
+                {"type": "PAGE_LINK", "title": "Party", "apiPath": "/pages/explore_mood_party"},
+                {"type": "PAGE_LINK", "title": "Chill", "apiPath": "pages/explore_mood_chill"},
+                {"type": "PLAYLIST", "title": "Not a page", "apiPath": "playlists/1"}
+            ]}},
+            {"type": "PAGE_LINKS_CARD_LIST", "title": "Decades", "pagedList": {"items": [
+                {"type": "PAGE_LINK", "title": "1990s", "apiPath": "pages/explore_decade_1990"}
+            ]}}
+        ]}]});
+        let genres = with_explore(listed, explore_links(&explore));
+        let ids: Vec<&str> = genres.iter().map(|genre| genre.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "rock",
+                "pages/explore_mood_chill",
+                "pages/explore_mood_party",
+                "pages/explore_decade_1990"
+            ]
+        );
+        assert_eq!(genres[1].name, "Chill");
+        assert_eq!(genres[1].cover, None);
+    }
+
+    #[test]
+    fn a_tidal_page_opens_as_shelves_with_its_links_as_genres() {
+        let page = json!({"title": "Chill", "rows": [{"modules": [
+            {"type": "PAGE_LINKS_CARD_LIST", "title": "Related", "pagedList": {"items": [
+                {"type": "PAGE_LINK", "title": "Focus", "apiPath": "pages/explore_mood_focus"}
+            ]}},
+            {"type": "ALBUM_LIST", "title": "New albums", "pagedList": {"items": [
+                {"id": 7, "title": "Quiet", "artists": [{"id": 1, "name": "A"}],
+                 "cover": "aa-bb", "releaseDate": "2026-01-02"}
+            ]}},
+            {"type": "TRACK_LIST", "title": "Tracks", "pagedList": {"items": [
+                {"id": 9, "title": "Hush", "duration": 200, "allowStreaming": true,
+                 "streamReady": true, "artists": [{"id": 1, "name": "A"}],
+                 "album": {"id": 7, "title": "Quiet", "cover": "aa-bb"}}
+            ]}},
+            {"type": "ALBUM_LIST", "pagedList": {"items": [
+                {"id": 8, "title": "Untitled", "artists": [{"id": 1, "name": "A"}]}
+            ]}},
+            {"type": "ALBUM_LIST", "title": "Empty", "pagedList": {"items": []}}
+        ]}]});
+        let sections = page_sections(&page, "");
+        let titles: Vec<&str> = sections
+            .iter()
+            .map(|section| section.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Related", "New albums", "Tracks", "Chill"]);
+        assert!(matches!(
+            sections[0].items.as_slice(),
+            [GenreItem::Genre(link)] if link.id == "pages/explore_mood_focus" && link.name == "Focus"
+        ));
+        assert!(
+            matches!(sections[1].items.as_slice(), [GenreItem::Album(album)] if album.id == "7")
+        );
+        assert!(
+            matches!(sections[2].items.as_slice(), [GenreItem::Track(track)] if track.playable)
+        );
+    }
 
     #[test]
     fn an_artist_without_a_portrait_is_drawn_with_the_cover_tidal_names() {

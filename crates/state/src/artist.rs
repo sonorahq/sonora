@@ -141,6 +141,11 @@ impl ArtistDetail {
         self.id = Some(id.to_owned());
 
         let Some(catalog) = self.session.read(cx).catalog(id) else {
+            if music::is_local_id(id) {
+                // No local library exists at all, so the page can never come.
+                self.clear();
+                cx.emit(ArtistDetailEvent::Gone(id.to_owned()));
+            }
             cx.notify();
             return;
         };

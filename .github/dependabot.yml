@@ -1,0 +1,13 @@
+# Third-party actions are pinned to a commit, so a moved tag cannot change what runs. This keeps
+# those pins current, in one pull request a week.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories: ["/", "/.github/actions/sign"]
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]

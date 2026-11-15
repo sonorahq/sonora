@@ -8,7 +8,7 @@ use gpui::{
     Window, div, px, relative, svg,
 };
 use i18n::t;
-use music::{AccountChoice, SignIn, SignInPrompt};
+use music::{AccountChoices, SignIn, SignInPrompt};
 use router::{Destination, SettingsPage, navigate};
 use state::{Failure, Io, Outcome, Scan, SessionState, Sonora, Toast, Toasts};
 use ui::{
@@ -1139,7 +1139,7 @@ impl SettingsView {
 
     pub(super) fn account_modal(
         &self,
-        accounts: Vec<AccountChoice>,
+        accounts: AccountChoices,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         AccountPicker::new(accounts)

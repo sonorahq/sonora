@@ -4,9 +4,6 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[features]
-bundled-sqlite = ["rusqlite/bundled"]
-
 [dependencies]
 anyhow.workspace = true
 dirs.workspace = true
