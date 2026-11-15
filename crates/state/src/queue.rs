@@ -1023,8 +1023,9 @@ impl Queue {
                 true => QueueKind::Queued,
                 false => QueueKind::Context,
             };
-            let uid = soloist_uid(&mut known, track.id.as_deref(), queued.uid, &reserved);
-            Entry::with_uid(uid, track, None, kind)
+            let (uid, origin) =
+                soloist_identity(&mut known, track.id.as_deref(), queued.uid, &reserved);
+            Entry::with_uid(uid, track, origin, kind)
         };
         self.past = previous.into_iter().map(&mut entry).collect();
         self.current = current.map(&mut entry);
@@ -1411,12 +1412,12 @@ fn queue_uid() -> String {
 }
 
 /// Keeps an anonymous Soloist occurrence stable across its next reported queue window.
-fn soloist_uid(
+fn soloist_identity(
     known: &mut Vec<Entry>,
     id: Option<&str>,
     uid: String,
     reserved: &HashSet<String>,
-) -> String {
+) -> (String, Option<Origin>) {
     let index = match uid.is_empty() {
         true => id.and_then(|id| {
             known
@@ -1426,9 +1427,12 @@ fn soloist_uid(
         false => known.iter().position(|entry| entry.uid == uid),
     };
     match index {
-        Some(index) => known.remove(index).uid,
-        None if !uid.is_empty() => uid,
-        None => queue_uid(),
+        Some(index) => {
+            let entry = known.remove(index);
+            (entry.uid, entry.origin)
+        }
+        None if !uid.is_empty() => (uid, None),
+        None => (queue_uid(), None),
     }
 }
 
@@ -1489,9 +1493,9 @@ mod tests {
     use music::{ArtistRef, Track};
 
     use super::{
-        Entry, gap_target, hydrate, in_order, local, move_item, record, restore,
-        retained_soloist_entries, scramble, select_past, select_upcoming, sift, soloist_uid, stub,
-        trim,
+        Entry, Origin, gap_target, hydrate, in_order, local, move_item, record, restore,
+        retained_soloist_entries, scramble, select_past, select_upcoming, sift, soloist_identity,
+        stub, trim,
     };
 
     fn track(id: &str) -> Track {
@@ -1565,20 +1569,20 @@ mod tests {
         );
         let mut known = vec![first, second];
 
-        let first = soloist_uid(
+        let first = soloist_identity(
             &mut known,
             Some("duplicate"),
             String::new(),
             &HashSet::new(),
         );
-        let second = soloist_uid(
+        let second = soloist_identity(
             &mut known,
             Some("duplicate"),
             String::new(),
             &HashSet::new(),
         );
 
-        assert_eq!([first, second], ["first", "second"]);
+        assert_eq!([first.0, second.0], ["first", "second"]);
     }
 
     #[test]
@@ -1598,10 +1602,30 @@ mod tests {
         let mut known = vec![explicit, anonymous];
         let reserved = HashSet::from(["remote".to_owned()]);
 
-        let anonymous = soloist_uid(&mut known, Some("duplicate"), String::new(), &reserved);
-        let explicit = soloist_uid(&mut known, Some("duplicate"), "remote".into(), &reserved);
+        let anonymous = soloist_identity(&mut known, Some("duplicate"), String::new(), &reserved);
+        let explicit = soloist_identity(&mut known, Some("duplicate"), "remote".into(), &reserved);
 
-        assert_eq!([anonymous, explicit], ["local", "remote"]);
+        assert_eq!([anonymous.0, explicit.0], ["local", "remote"]);
+    }
+
+    #[test]
+    fn matched_soloist_occurrence_keeps_its_origin() {
+        let origin = Origin::album("collection");
+        let known = Entry::with_uid(
+            "remote".into(),
+            track("track"),
+            Some(origin.clone()),
+            super::QueueKind::Context,
+        );
+
+        let (_, kept) = soloist_identity(
+            &mut vec![known],
+            Some("track"),
+            "remote".into(),
+            &HashSet::new(),
+        );
+
+        assert_eq!(kept, Some(origin));
     }
 
     #[test]

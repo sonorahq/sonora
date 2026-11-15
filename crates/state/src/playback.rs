@@ -624,6 +624,8 @@ pub struct Playback {
     enqueue: Option<Task<()>>,
     /// Reads tracks another Spotify app put on Soloist's queue.
     soloist_queue: Option<Task<()>>,
+    /// The current occurrence named by the Soloist snapshot being resolved.
+    soloist_queue_current: Option<String>,
     /// Rejects older queue snapshots that finish resolving after a newer one.
     soloist_queue_revision: SoloistQueueRevision,
     /// Reads a queued track Soloist moved to before Sonora knew its metadata.
@@ -813,6 +815,7 @@ impl Playback {
             warm: None,
             enqueue: None,
             soloist_queue: None,
+            soloist_queue_current: None,
             soloist_queue_revision: SoloistQueueRevision::default(),
             soloist_track: None,
             soloist_publish: None,
@@ -1108,7 +1111,12 @@ impl Playback {
         if self.engine_for(&id).is_none() {
             return;
         }
-        self.cancel_soloist_work();
+        if self.soloist_queue_current.as_deref() == Some(&id) {
+            self.soloist_track = None;
+            self.soloist_publish = None;
+        } else {
+            self.cancel_soloist_work();
+        }
         self.silence_other(&id);
         if !matches!(start, Start::Segue | Start::Retry) {
             self.failures = 0;
@@ -1297,6 +1305,7 @@ impl Playback {
     /// Cancels metadata work that belongs to an older Soloist selection or session.
     fn cancel_soloist_work(&mut self) {
         self.soloist_queue = None;
+        self.soloist_queue_current = None;
         self.soloist_queue_revision.next();
         self.soloist_track = None;
         self.soloist_publish = None;
@@ -1317,6 +1326,7 @@ impl Playback {
             return;
         };
         let previous_len = previous.len();
+        self.soloist_queue_current = current.as_ref().map(|entry| entry.id.clone());
         let entries: Vec<_> = previous.into_iter().chain(upcoming).collect();
         let revision = self.soloist_queue_revision.next();
         self.soloist_queue = Some(Io::global(cx).load(
@@ -1338,6 +1348,7 @@ impl Playback {
                     return;
                 }
                 this.soloist_queue = None;
+                this.soloist_queue_current = None;
                 match found {
                     Ok((current, entries, tracks)) => {
                         let (previous, upcoming) =
