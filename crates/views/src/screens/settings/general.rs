@@ -11,6 +11,7 @@ use crate::shared::nav::{entry_shown, set_entry_shown};
 use crate::shared::popups::matches_query;
 
 const STARTUP: &str = "startup";
+const PROVIDER: &str = "provider";
 const ENTRIES: &str = "entries";
 
 impl SettingsView {
@@ -18,6 +19,7 @@ impl SettingsView {
         vec![
             Group::new("settings-group-startup", "icons/house.svg").rows([
                 Slot::Startup,
+                Slot::Provider,
                 Slot::Entries,
                 Slot::Language,
             ]),
@@ -78,6 +80,58 @@ impl SettingsView {
         self.row(
             t!("settings-startup"),
             picker.name(t!("settings-startup")).into_any_element(),
+        )
+    }
+
+    pub(super) fn provider_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let configured = self.settings.read(cx).startup_provider().map(str::to_owned);
+        let providers: Vec<_> = self
+            .session
+            .read(cx)
+            .providers()
+            .map(|provider| (provider.slug, provider.name))
+            .collect();
+        let current = match configured.as_deref() {
+            None => t!("settings-provider-last-used"),
+            Some(slug) => providers
+                .iter()
+                .find(|(provider, _)| *provider == slug)
+                .map(|(_, name)| SharedString::from(*name))
+                .unwrap_or_else(|| t!("settings-provider-unavailable", name = slug)),
+        };
+
+        let mut picker = Picker::new(PROVIDER, &self.popovers, current)
+            .width(Picker::REGULAR)
+            .items([
+                MenuItem::new("provider-last-used", t!("settings-provider-last-used"))
+                    .selected(configured.is_none())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.settings.update(cx, |settings, cx| {
+                            settings.set_startup_provider(None, cx);
+                        });
+                        this.popovers.close();
+                        cx.notify();
+                    })),
+            ]);
+
+        for (slug, name) in providers {
+            let selected = configured.as_deref() == Some(slug);
+            picker = picker.item(
+                MenuItem::new(slug, SharedString::from(name))
+                    .selected(selected)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.settings.update(cx, |settings, cx| {
+                            settings.set_startup_provider(Some(slug), cx);
+                        });
+                        this.popovers.close();
+                        cx.notify();
+                    })),
+            );
+        }
+
+        self.row(
+            t!("settings-provider"),
+            picker.name(t!("settings-provider")).into_any_element(),
         )
     }
 

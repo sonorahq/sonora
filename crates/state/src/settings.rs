@@ -386,6 +386,9 @@ struct Picked {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 struct Values {
+    /// The provider to select on startup. Omit to restore the last-used provider.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<String>,
     normalisation: bool,
     gapless: bool,
     sponsorblock: bool,
@@ -659,6 +662,7 @@ enum SettingsSave {
 impl Default for Values {
     fn default() -> Self {
         Self {
+            provider: None,
             normalisation: false,
             gapless: true,
             sponsorblock: false,
@@ -1371,7 +1375,15 @@ impl AppSettings {
     }
 
     pub fn provider(&self) -> &str {
-        &self.state.provider
+        self.values
+            .provider
+            .as_deref()
+            .unwrap_or(&self.state.provider)
+    }
+
+    /// The provider explicitly selected for startup, or `None` to restore the last-used provider.
+    pub fn startup_provider(&self) -> Option<&str> {
+        self.values.provider.as_deref()
     }
 
     pub fn local_folders(&self) -> &[PathBuf] {
@@ -2328,6 +2340,16 @@ impl AppSettings {
         }
         self.state.provider = provider;
         self.schedule_state_save(cx);
+    }
+
+    /// Selects a provider for startup, or clears the preference to restore the last-used provider.
+    pub fn set_startup_provider(&mut self, provider: Option<&str>, cx: &mut Context<Self>) {
+        let provider = provider.map(str::to_owned);
+        if self.values.provider == provider {
+            return;
+        }
+        self.values.provider = provider;
+        self.schedule_save(cx);
     }
 
     /// Selects a built-in theme by its `ThemeKind` id or a theme file by its variant id, and
