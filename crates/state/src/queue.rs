@@ -1482,8 +1482,18 @@ mod tests {
 
     #[test]
     fn anonymous_soloist_occurrences_keep_their_ordered_identities() {
-        let first = Entry::with_uid("first".into(), track("duplicate"), None, super::QueueKind::Context);
-        let second = Entry::with_uid("second".into(), track("duplicate"), None, super::QueueKind::Context);
+        let first = Entry::with_uid(
+            "first".into(),
+            track("duplicate"),
+            None,
+            super::QueueKind::Context,
+        );
+        let second = Entry::with_uid(
+            "second".into(),
+            track("duplicate"),
+            None,
+            super::QueueKind::Context,
+        );
         let mut known = vec![first, second];
 
         let first = soloist_uid(&mut known, Some("duplicate"), String::new());
