@@ -179,6 +179,8 @@ impl VolumeHost for FullscreenView {
 impl FullscreenView {
     pub fn new(playback: Entity<Playback>, queue: Entity<Queue>, cx: &mut Context<Self>) -> Self {
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
+        let sponsorblock = Sonora::global(cx).sponsorblock.clone();
+        cx.observe(&sponsorblock, |_, _, cx| cx.notify()).detach();
         // the seek bar and the lyrics follow the position as it moves
         let ticks = playback.read(cx).ticks().clone();
         cx.observe(&ticks, |_, _, cx| cx.notify()).detach();
@@ -927,6 +929,10 @@ impl FullscreenView {
                         .name(t!("song-position"))
                         .value(clock(elapsed))
                         .colors(theme.progress_bar, empty, theme.foreground)
+                        .ranges(
+                            Sonora::global(cx).sponsorblock.read(cx).ranges(cx),
+                            theme.foreground.opacity(0.4),
+                        )
                         .enabled(seekable)
                         .when_some(bubble, |this, (at, text)| this.bubble(at, text))
                         .on_move(cx.listener(|this, fraction: &f32, _, cx| {

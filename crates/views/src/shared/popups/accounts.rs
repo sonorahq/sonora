@@ -4,7 +4,7 @@ use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{App, FontWeight, SharedString, Window, div, px};
 use i18n::t;
-use music::AccountChoice;
+use music::{AccountChoice, AccountChoices, AccountKind};
 use ui::{ActiveTheme as _, Button, Glowing as _, Initials, Modal, Text};
 
 const AVATAR: gpui::Pixels = px(32.);
@@ -12,17 +12,21 @@ const AVATAR: gpui::Pixels = px(32.);
 type Pick = Rc<dyn Fn(&SharedString, &mut Window, &mut App)>;
 type Cancel = Rc<dyn Fn(&(), &mut Window, &mut App)>;
 
+/// The modal a sign-in shows when it can go on as more than one account or profile. A pick
+/// hands the chosen id to `on_pick`.
 #[derive(IntoElement)]
 pub(crate) struct AccountPicker {
+    kind: AccountKind,
     accounts: Vec<AccountChoice>,
     pick: Option<Pick>,
     cancel: Option<Cancel>,
 }
 
 impl AccountPicker {
-    pub(crate) fn new(accounts: Vec<AccountChoice>) -> Self {
+    pub(crate) fn new(choices: AccountChoices) -> Self {
         Self {
-            accounts,
+            kind: choices.kind,
+            accounts: choices.accounts,
             pick: None,
             cancel: None,
         }
@@ -48,6 +52,7 @@ impl AccountPicker {
 impl RenderOnce for AccountPicker {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Self {
+            kind,
             accounts,
             pick,
             cancel,
@@ -55,9 +60,14 @@ impl RenderOnce for AccountPicker {
         let theme = *cx.theme();
         let dismissed = cancel.clone();
 
-        Modal::new("account-picker", t!("login-account-title"))
+        let (title, detail) = match kind {
+            AccountKind::Session => (t!("login-account-title"), t!("login-account-detail")),
+            AccountKind::Profile => (t!("login-profile-title"), t!("login-profile-detail")),
+        };
+
+        Modal::new("account-picker", title)
             .w(px(440.))
-            .detail(t!("login-account-detail"))
+            .detail(detail)
             .child(div().flex().flex_col().gap_2().children({
                 let total = accounts.len();
                 accounts

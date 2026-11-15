@@ -22,8 +22,8 @@ use ytmusic::YtMusic;
 use crate::youtube::playback::Factory;
 
 use crate::{
-    Capabilities, InputSource, MusicProvider, PlaybackFactory, PromptSink, ProviderSession, Shape,
-    SignIn, SignInPrompt, UserProfile, WebSignIn, credentials,
+    AccountChoices, AccountKind, Capabilities, InputSource, MusicProvider, PlaybackFactory,
+    PromptSink, ProviderSession, Shape, SignIn, SignInPrompt, UserProfile, WebSignIn, credentials,
 };
 pub use client::YouTubeClient;
 pub use lyrics::YouTubeLyrics;
@@ -303,9 +303,10 @@ async fn pick<'a>(
     prompt: &PromptSink,
     input: &mut InputSource,
 ) -> Result<&'a accounts::Account> {
-    prompt(SignInPrompt::Accounts(
-        found.iter().map(accounts::Account::choice).collect(),
-    ));
+    prompt(SignInPrompt::Accounts(AccountChoices {
+        kind: AccountKind::Session,
+        accounts: found.iter().map(accounts::Account::choice).collect(),
+    }));
     let picked = input.recv().await.context("sign-in was cancelled")?;
     found
         .iter()
