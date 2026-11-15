@@ -22,10 +22,11 @@ pub enum Language {
     ChineseSimplified,
     Turkish,
     Albanian,
+    Vietnamese,
 }
 
 impl Language {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::English,
         Self::German,
         Self::Spanish,
@@ -43,6 +44,7 @@ impl Language {
         Self::ChineseSimplified,
         Self::Turkish,
         Self::Albanian,
+        Self::Vietnamese,
     ];
 
     pub fn id(self) -> &'static str {
@@ -64,6 +66,7 @@ impl Language {
             Self::ChineseSimplified => "zh-CN",
             Self::Turkish => "tr",
             Self::Albanian => "sq",
+            Self::Vietnamese => "vi",
         }
     }
 
@@ -86,6 +89,7 @@ impl Language {
             Self::ChineseSimplified => "简体中文",
             Self::Turkish => "Türkçe",
             Self::Albanian => "Shqip",
+            Self::Vietnamese => "Tiếng Việt",
         }
     }
 
@@ -133,6 +137,7 @@ impl Language {
             Self::ChineseSimplified => langid!("zh-CN"),
             Self::Turkish => langid!("tr"),
             Self::Albanian => langid!("sq"),
+            Self::Vietnamese => langid!("vi"),
         }
     }
 
@@ -155,6 +160,7 @@ impl Language {
             Self::ChineseSimplified => include_str!("../../../assets/i18n/zh-CN/main.ftl"),
             Self::Turkish => include_str!("../../../assets/i18n/tr/main.ftl"),
             Self::Albanian => include_str!("../../../assets/i18n/sq/main.ftl"),
+            Self::Vietnamese => include_str!("../../../assets/i18n/vi/main.ftl"),
         }
     }
 }

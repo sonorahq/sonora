@@ -1,6 +1,7 @@
-//! The full-size view an album's cover opens: the cover flies out of the page into the middle
-//! of the window, the provider's original fades in over it when it lands, the wheel and the
-//! buttons zoom it, a drag pans it, and Escape or a click on the backdrop flies it back.
+//! The full-size view a page hero's cover opens, for an album, a playlist or an artist: the
+//! cover flies out of the page into the middle of the window, the provider's original fades in
+//! over it when it lands, the wheel and the buttons zoom it, a drag pans it, and Escape or a
+//! click on the backdrop flies it back.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -13,12 +14,16 @@ use gpui::{
     MouseUpEvent, Pixels, Point, Rems, Render, ScrollWheelEvent, SharedString, Size, WeakEntity,
     Window, anchored, canvas, deferred, div, point, px, rems, size,
 };
-use input::{COVER_VIEWER_CONTEXT, ZoomIn, ZoomOut, ZoomReset};
+use input::{COVER_VIEWER_CONTEXT, ToggleFullscreen, ZoomIn, ZoomOut, ZoomReset};
 use ui::{
     ActiveTheme as _, Artwork, Button, Dismiss, Flight, Motion, Shield, Springs, Sprung, Zoom,
     css_ease_out, snapped,
 };
 
+use music::is_local_id;
+use state::{SessionEvent, Sonora};
+
+use crate::chrome::Timeline;
 use crate::shared::hero::{COVER_FLIGHT, PageHero};
 
 /// How dark the window goes behind the artwork.
@@ -50,8 +55,14 @@ struct Drag {
 }
 
 struct Open {
+    /// The id of the page item the cover belongs to, which the viewer closes once the page shows
+    /// another.
+    owner: Option<String>,
     title: SharedString,
     large: SharedString,
+    /// Whether the page draws the cover as a circle, as an artist's portrait, so the flight
+    /// eases its corners from round.
+    round: bool,
     full: Option<SharedString>,
     /// When the large cover and the original were first decoded at the viewer's size, which
     /// starts each one fading in over the copy below it.
@@ -89,6 +100,10 @@ struct Stage {
     fit: Pixels,
     /// The centre of the unzoomed artwork, from the stage's top left corner.
     center: Point<Pixels>,
+    /// The top of the controls, from the stage's top.
+    controls: Pixels,
+    /// The seek line the controls were centred on, if the player bar had painted one.
+    line: Option<Pixels>,
 }
 
 impl Stage {
@@ -98,21 +113,28 @@ impl Stage {
         let viewport = window.viewport_size();
         let size = size(viewport.width, (viewport.height - top).max(Pixels::ZERO));
         let inset = metrics.inset;
-        let controls = metrics.control_small
+        let height = metrics.control_small
             + CONTROLS_PAD.to_pixels(window.rem_size()) * 2.
             + CONTROLS_BORDER * 2.;
-        // The fit runs from one inset below the title bar to one inset above the controls,
-        // which sit one inset above the bottom edge.
-        let bottom = controls + inset * 2.;
+        // The controls sit over the player bar's seek line, or one inset above the bottom edge
+        // before the bar has painted.
+        let line = Timeline::line(cx);
+        let middle = line
+            .unwrap_or(viewport.height - inset - height / 2.)
+            .min(viewport.height - height / 2.);
+        let controls = snapped(middle - height / 2. - top, window).max(Pixels::ZERO);
+        // The fit runs from one inset below the title bar to one inset above the controls.
         let fit = (size.width - inset * 2.)
-            .min(size.height - inset - bottom)
+            .min(controls - inset * 2.)
             .max(Pixels::ZERO);
-        let center = point(size.width / 2., (size.height + inset - bottom) / 2.);
+        let center = point(size.width / 2., controls / 2.);
         Self {
             top,
             size,
             fit,
             center,
+            controls,
+            line,
         }
     }
 
@@ -144,8 +166,8 @@ impl Stage {
     }
 }
 
-/// The album cover viewer above the detail page, scoped to the album the page shows rather
-/// than to whatever happens to be playing.
+/// The cover viewer above an album, playlist or artist page, scoped to the item the page shows
+/// rather than to whatever happens to be playing.
 pub(crate) struct CoverViewer {
     open: Option<Open>,
     /// How far the backdrop and the controls have faded in, from 0 to 1.
@@ -160,6 +182,21 @@ pub(crate) struct CoverViewer {
 
 impl CoverViewer {
     pub(crate) fn new(cx: &mut Context<Self>) -> Self {
+        let session = Sonora::global(cx).session.clone();
+        cx.subscribe(&session, |this, _, event, cx| {
+            // These sign events clear and reload a provider page under a new account, possibly
+            // within one frame, so the page's stale check can miss it. A local item's art does
+            // not depend on the account.
+            if matches!(event, SessionEvent::SignedOut | SessionEvent::SignedIn)
+                && this
+                    .open
+                    .as_ref()
+                    .is_some_and(|open| !open.owner.as_deref().is_some_and(is_local_id))
+            {
+                this.force_close(None, cx);
+            }
+        })
+        .detach();
         Self {
             open: None,
             shown: Sprung::at(0.),
@@ -170,22 +207,36 @@ impl CoverViewer {
         }
     }
 
-    /// Opens the viewer on the album's `large` cover, with the provider's original swapped in
-    /// once it loads. A provider that cannot name an original keeps the large cover. The cover
-    /// flies in from the page hero's.
+    /// Opens the viewer on the `large` cover of the page item `owner`, with the provider's
+    /// original swapped in once it loads. A provider that cannot name an original for the url
+    /// keeps the large cover, and a local item's cover already is the original. The cover flies
+    /// in from the page hero's, which is a circle when `round`.
     pub(crate) fn open(
         &mut self,
+        owner: Option<String>,
         title: SharedString,
-        large: SharedString,
-        full: Option<SharedString>,
+        large: String,
+        round: bool,
         cx: &mut Context<Self>,
     ) {
+        let session = Sonora::global(cx).session.read(cx);
+        let client = match owner.as_deref() {
+            Some(id) if is_local_id(id) => session.local_client(),
+            _ => session.client(),
+        };
+        let full = client
+            .and_then(|client| client.cover_original(&large))
+            .filter(|full| full != &large)
+            .map(SharedString::from);
+        let large = SharedString::from(large);
         if self.open.as_ref().is_none_or(|open| !open.closing) {
             self.shown = Sprung::at(0.);
         }
         self.open = Some(Open {
+            owner,
             title,
             large,
+            round,
             full,
             large_at: None,
             full_at: None,
@@ -209,7 +260,24 @@ impl CoverViewer {
         self.open.is_some()
     }
 
-    /// Drops the viewer at once, without flying the cover back, for a page whose album changed
+    /// Drops the viewer at once when the page under it no longer shows the item `owner` with the
+    /// cover `cover`, after navigation or a provider switch that signs the cover url anew.
+    pub(crate) fn close_if_stale(
+        &mut self,
+        owner: Option<&str>,
+        cover: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let stale = self.open.as_ref().is_some_and(|open| {
+            open.owner.as_deref() != owner || Some(open.large.as_ref()) != cover
+        });
+        if stale {
+            self.force_close(Some(window), cx);
+        }
+    }
+
+    /// Drops the viewer at once, without flying the cover back, for a page whose item changed
     /// under it. Focus goes back where it was when a `window` is at hand.
     pub(crate) fn force_close(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
         if self.open.is_none() {
@@ -315,10 +383,16 @@ impl CoverViewer {
     }
 
     /// Listens to the pointer across the whole window while the viewer is open, so a drag
-    /// keeps panning off the artwork and the wheel zooms wherever it turns over the stage.
-    fn tracker(viewer: WeakEntity<Self>) -> impl IntoElement {
+    /// keeps panning off the artwork and the wheel zooms wherever it turns. It also draws the
+    /// viewer again when the seek line its controls sit over has moved since `line`, since the
+    /// player bar paints after the page has laid the viewer out.
+    fn tracker(viewer: WeakEntity<Self>, line: Option<Pixels>) -> impl IntoElement {
         canvas(
-            |_, _, _| {},
+            move |_, window, cx| {
+                if Timeline::line(cx) != line {
+                    window.request_animation_frame();
+                }
+            },
             move |_, _, window, _| {
                 let moved = viewer.clone();
                 window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
@@ -336,8 +410,7 @@ impl CoverViewer {
                 });
                 let wheeled = viewer;
                 window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                    let stage = Stage::measure(window, cx);
-                    if phase == DispatchPhase::Capture && event.position.y >= stage.top {
+                    if phase == DispatchPhase::Capture {
                         cx.stop_propagation();
                         wheeled
                             .update(cx, |this, cx| this.wheel(event, window, cx))
@@ -402,7 +475,7 @@ impl Render for CoverViewer {
             });
             window.request_animation_frame();
         }
-        let tracker = (!closing).then(|| Self::tracker(cx.entity().downgrade()));
+        let tracker = (!closing).then(|| Self::tracker(cx.entity().downgrade(), stage.line));
         let Some(open) = self.open.as_mut() else {
             return div().into_any_element();
         };
@@ -426,7 +499,10 @@ impl Render for CoverViewer {
         );
         let side = stage.fit * drawn;
         let origin = stage.center + pan - point(side / 2., side / 2.);
-        let page = PageHero::cover_radius(&theme);
+        let page = match open.round {
+            true => theme.metrics.cover / 2.,
+            false => PageHero::cover_radius(&theme),
+        };
         let radius = match (open.landed, closing) {
             (true, false) => theme.radius,
             (false, false) => flight.radius(page, theme.radius),
@@ -511,7 +587,7 @@ impl Render for CoverViewer {
             .absolute()
             .left_0()
             .right_0()
-            .bottom(theme.metrics.inset)
+            .top(stage.controls)
             .flex()
             .justify_center()
             .opacity(shown)
@@ -557,12 +633,13 @@ impl Render for CoverViewer {
                     ),
             );
 
+        // The backdrop dims the whole window, title bar included. Once closing, the viewer only
+        // paints: the page under it scrolls and clicks while the cover is still in the air.
+        let viewport = window.viewport_size();
         let frame = div()
-            .w(stage.size.width)
-            .h(stage.size.height)
-            .overflow_hidden()
-            // Once closing, the viewer only paints: the page under it scrolls and clicks while
-            // the cover is still in the air.
+            .relative()
+            .w(viewport.width)
+            .h(viewport.height)
             .child(match closing {
                 false => Shield::new("cover-viewer-backdrop")
                     .absolute()
@@ -583,9 +660,18 @@ impl Render for CoverViewer {
                     .bg(theme.background.opacity(BACKDROP * shown))
                     .into_any_element(),
             })
-            .child(artwork)
-            .child(controls)
-            .children(tracker);
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(stage.top)
+                    .w(stage.size.width)
+                    .h(stage.size.height)
+                    .overflow_hidden()
+                    .child(artwork)
+                    .child(controls)
+                    .children(tracker),
+            );
 
         div()
             .id("cover-viewer")
@@ -611,11 +697,9 @@ impl Render for CoverViewer {
                 cx.stop_propagation();
                 this.zoom_to(1., None, window, cx);
             }))
-            .child(deferred(
-                anchored()
-                    .position(point(Pixels::ZERO, stage.top))
-                    .child(frame),
-            ))
+            // The fullscreen player would open under the viewer, so its key does nothing here.
+            .on_action(|_: &ToggleFullscreen, _, cx| cx.stop_propagation())
+            .child(deferred(anchored().position(Point::default()).child(frame)))
             .into_any_element()
     }
 }

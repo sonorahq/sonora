@@ -22,7 +22,7 @@ impl SettingsView {
                 Slot::Language,
             ]),
             Group::new("settings-group-window", "icons/panel-left-open.svg")
-                .rows([Slot::Tray, Slot::TrayIcon])
+                .rows([Slot::Tray, Slot::TrayIcon, Slot::NowPlayingOnFileOpen])
                 .rows(self.decoration_slots(cx)),
             Group::new("settings-group-motion", "icons/loader-circle.svg").rows([
                 Slot::Motion,
@@ -391,6 +391,22 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_tray_icon(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+
+    pub(super) fn now_playing_on_file_open_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).now_playing_on_file_open();
+
+        self.row(
+            t!("settings-now-playing-on-file-open"),
+            Switch::new("now-playing-on-file-open", on)
+                .name(t!("settings-now-playing-on-file-open"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_now_playing_on_file_open(!on, cx)
+                    });
                 }))
                 .into_any_element(),
         )
