@@ -51,7 +51,7 @@ jobs:
             arch: arm64
             setup: Sonora-Setup-arm64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: name the artifact
         id: meta
@@ -187,7 +187,7 @@ jobs:
           $env:SONORA_DIST = (Resolve-Path "dist").Path
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "scripts/windows/sonora.iss"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ !inputs.reuse || runner.os != 'macOS' }}
         with:
           name: "${{ runner.os == 'macOS' && format('darwin-{0}', matrix.target) || format('release-{0}', matrix.target) }}"
@@ -199,7 +199,7 @@ jobs:
     needs: build
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: name the artifact
         id: meta
@@ -226,7 +226,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "number=$number" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: ${{ !inputs.reuse }}
         with:
           pattern: darwin-*
@@ -341,7 +341,7 @@ jobs:
             -format UDZO \
             "dist/sonora-$VERSION-macos.dmg"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-macos
           path: dist/*
@@ -369,7 +369,7 @@ jobs:
       ARCH: ${{ matrix.variant.arch }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: name the artifact
         id: meta
@@ -411,7 +411,7 @@ jobs:
             echo "update=$update"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-${{ matrix.variant.target }}
           path: staged
@@ -543,7 +543,7 @@ jobs:
           ldd squashfs-root/usr/bin/sonora
           rm -rf squashfs-root
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-appimage-${{ matrix.variant.arch }}
           path: dist/*
@@ -573,7 +573,7 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: name the artifact
         id: meta
@@ -613,9 +613,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: flatpak-*
           path: bundles
@@ -677,7 +677,7 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: ./flatpak/export-bundles.sh site/repo "$VERSION" dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-flatpak
           path: dist/*
@@ -705,9 +705,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: dist
@@ -731,7 +731,7 @@ jobs:
             -f tag_name="$TAG" --jq .body > notes.md
           printf '\n[Code signing policy](https://github.com/%s#code-signing-policy)\n' "$GITHUB_REPOSITORY" >> notes.md
 
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           files: dist/*
           body_path: notes.md
@@ -748,9 +748,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: dist
@@ -885,7 +885,7 @@ jobs:
       - name: system dependencies
         run: pacman -Syu --noconfirm --needed git openssh
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: render and build the PKGBUILD
         env:
