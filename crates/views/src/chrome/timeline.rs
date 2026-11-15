@@ -2,7 +2,10 @@ use ui::ActiveTheme as _;
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{App, Context, Entity, MouseUpEvent, Pixels, Point, Render, SharedString, Window, div};
+use gpui::{
+    App, Context, Entity, Global, MouseUpEvent, Pixels, Point, Render, SharedString, Window,
+    canvas, div,
+};
 use i18n::t;
 use state::{AppSettings, Playback, Sonora};
 use ui::{Scrubber, ScrubberState, clock, tabular};
@@ -13,6 +16,12 @@ const CLOCK_SHORT: f32 = 3.4;
 const CLOCK_LONG: f32 = 5.4;
 /// The extra room both clocks take, in ems, while the right one leads with a minus sign.
 const CLOCK_SIGN: f32 = 0.6;
+
+/// The window y of the middle of the seek line as the player bar last painted it.
+#[derive(Default)]
+struct SeekLine(Option<Pixels>);
+
+impl Global for SeekLine {}
 
 /// The player bar's elapsed clock, seek bar and remaining or total clock. It follows the
 /// position on its own and redraws only when a clock reads differently or the bar would move by
@@ -107,6 +116,14 @@ impl Timeline {
     }
 }
 
+impl Timeline {
+    /// The window y of the middle of the seek line as it last painted, for an overlay that lines
+    /// its own controls up with it. None until the player bar has painted once.
+    pub(crate) fn line(cx: &App) -> Option<Pixels> {
+        cx.try_global::<SeekLine>().and_then(|line| line.0)
+    }
+}
+
 impl Render for Timeline {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.scale = window.scale_factor();
@@ -150,6 +167,7 @@ impl Render for Timeline {
             .id("player-seek")
             .role(Role::Group)
             .aria_label(t!("song-position"))
+            .relative()
             .flex()
             .items_center()
             .gap_2()
@@ -184,5 +202,13 @@ impl Render for Timeline {
                 }
                 false => clock_label("player-duration", clock(total), false),
             })
+            .child(
+                canvas(
+                    |bounds, _, cx| cx.default_global::<SeekLine>().0 = Some(bounds.center().y),
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
     }
 }
