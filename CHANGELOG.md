@@ -40,6 +40,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Nightly builds show the commit they were built from beside the version under Settings, About.
 - Skip sponsors, self-promotion and non-music sections on YouTube Music with SponsorBlock, with sections marked on the seek bar.
 - Subsonic lyrics provider can now read OpenSubsonic's enhanced cueLine data for karaoke lyrics.
+- Play or queue a local song, album, artist or playlist from the command line with `sonora play -s <name> --local`, or `add` and `play-next` with `--local`.
 
 ### Fixed
 
