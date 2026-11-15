@@ -135,8 +135,8 @@ fn sheet(entry: StructuredLyrics) -> Option<Lyrics> {
         let agents = entry.agents.as_ref();
         let main_agent: Option<&Agent> = agents.into_iter().flatten().find(|&a| a.role == "main");
 
-        if cue_lines.is_some_and(|l| !l.is_empty()) && main_agent.is_some() {
-            let groups: Vec<Vec<&CueLine>> = group_cues(cue_lines?, main_agent?, entry.line.len());
+        if let Some(cue_lines) = cue_lines.filter(|l| !l.is_empty()) {
+            let groups: Vec<Vec<&CueLine>> = group_cues(cue_lines, main_agent, entry.line.len());
 
             lines = entry
                 .line
@@ -166,10 +166,13 @@ fn sheet(entry: StructuredLyrics) -> Option<Lyrics> {
                             .to_owned(),
                         end: group[0].end.map(|end| shifted(end, offset)),
                         romanized: None,
-                        voice: get_agent(agents?, group[0].agent_id.as_deref())
-                            .filter(|a| a.role == "voice")
-                            .map_or(Voice::Lead, |_| Voice::Counter),
-                        words: Some(parse_cues(&group[0].cue, offset)),
+                        voice: get_agent(
+                            agents.map_or(&[], Vec::as_slice),
+                            group[0].agent_id.as_deref(),
+                        )
+                        .filter(|a| a.role == "voice")
+                        .map_or(Voice::Lead, |_| Voice::Counter),
+                        words: Some(parse_cues(&group[0].cue, offset)).filter(|w| !w.is_empty()),
                         secondary: parse_secondaries(group, offset),
                     })
                 })
@@ -223,8 +226,8 @@ fn legacy_sheet(text: &str) -> Option<Lyrics> {
     }
 }
 
-/// Sort the cues, placing the main cue line first.
-fn group_cues<'a>(lines: &'a [CueLine], main: &Agent, count: usize) -> Vec<Vec<&'a CueLine>> {
+/// Groups cue lines by line index, putting the main agent's cue line first in each group.
+fn group_cues<'a>(lines: &'a [CueLine], main: Option<&Agent>, count: usize) -> Vec<Vec<&'a CueLine>> {
     let mut groups: Vec<Vec<&CueLine>> = vec![Vec::new(); count];
 
     for line in lines {
@@ -239,7 +242,9 @@ fn group_cues<'a>(lines: &'a [CueLine], main: &Agent, count: usize) -> Vec<Vec<&
         group.push(line);
     }
 
-    // Ensure the first line is always the main agent
+    let Some(main) = main else {
+        return groups;
+    };
     for group in &mut groups {
         if group.len() > 1
             && let Some(pos) = group
@@ -253,6 +258,7 @@ fn group_cues<'a>(lines: &'a [CueLine], main: &Agent, count: usize) -> Vec<Vec<&
     groups
 }
 
+/// Finds the agent with the given id, if the cue line names one.
 fn get_agent<'a>(list: &'a [Agent], id: Option<&str>) -> Option<&'a Agent> {
     let target = id?;
     list.iter().find(|&agent| agent.id == target)
