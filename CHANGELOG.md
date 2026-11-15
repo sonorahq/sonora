@@ -45,6 +45,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Apple Music search no longer runs into "Too Many Requests" while you type.
 - A page that cannot load says so in a plain sentence instead of the raw error, and a busy service asks you to wait a minute.
 - A bare `sonora://` or `sonora://open` now brings Sonora to the front instead of showing an error toast.
+- The Spotify Jams submenu no longer comes up already open the next time you open the Sessions menu.
 
 ### Changed
 
