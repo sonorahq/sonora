@@ -91,7 +91,8 @@ pub struct Devices {
     seek_due: Option<LateSeek>,
     queuing: HashMap<String, Task<()>>,
     liking: HashMap<String, Task<()>>,
-    /// Notifies twice a second while another device plays, so its progress is redrawn.
+    /// Notifies `Playback::ticks` twice a second while another device plays, so its progress is
+    /// redrawn.
     ticking: Option<Task<()>>,
 }
 
@@ -118,6 +119,9 @@ impl Devices {
             this.publish(cx);
         })
         .detach();
+        // the report to the other devices also follows the position as it moves
+        let ticks = playback.read(cx).ticks().clone();
+        cx.observe(&ticks, |this, _, cx| this.publish(cx)).detach();
         cx.observe(&queue, |this, _, cx| this.publish(cx)).detach();
         cx.observe(&settings, |this, _, cx| this.apply(cx)).detach();
 
@@ -817,7 +821,8 @@ impl Devices {
         self.available() && self.elsewhere().is_some_and(|e| e.state.playing)
     }
 
-    /// Redraws a remote device's advancing clock until playback stops or moves here.
+    /// Redraws a remote device's advancing clock until playback stops or moves here. Only the
+    /// observers of `Playback::ticks` hear each tick.
     fn tick(&mut self, cx: &mut Context<Self>) {
         if !self.moving() {
             self.ticking = None;
@@ -826,7 +831,8 @@ impl Devices {
                 while this
                     .update(cx, |this, cx| {
                         if this.moving() {
-                            this.redraw(cx);
+                            let ticks = this.playback.read(cx).ticks().clone();
+                            ticks.update(cx, |_, cx| cx.notify());
                         } else {
                             this.ticking = None;
                         }
