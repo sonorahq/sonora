@@ -485,13 +485,22 @@ impl Origin {
     }
 
     /// Loads the collection once for playback or queue placement, retaining radio continuation.
-    pub(crate) async fn load(&self, client: &dyn MusicApi) -> Result<(Vec<Track>, Option<String>)> {
+    /// When `stations` is false the provider cannot seed a radio, so a song collection is just
+    /// the track itself.
+    pub(crate) async fn load(
+        &self,
+        client: &dyn MusicApi,
+        stations: bool,
+    ) -> Result<(Vec<Track>, Option<String>)> {
         let tracks = match self.whence {
             Whence::Album => client.album_tracks(&self.id).await?,
             Whence::Playlist => client.playlist_tracks(&self.id).await?,
             Whence::Artist => client.artist_tracks(&self.id).await?,
             Whence::Saved => client.saved_tracks().await?,
             Whence::Radio => {
+                if !stations {
+                    return Ok((vec![client.track(&self.id).await?], None));
+                }
                 let (mut tracks, next) = client.track_radio(&self.id, None).await?;
                 tracks.retain(|track| track.playable);
                 return Ok((tracks, next));
@@ -1789,10 +1798,14 @@ impl Playback {
         };
         let id = id.to_owned();
         let from = origin.clone();
+        let stations = self.stations(&id, cx);
         self.enqueue = Some(Io::global(cx).load(
             async move {
                 match from {
-                    Some(origin) => origin.load(&*client).await.map(|(tracks, _)| tracks),
+                    Some(origin) => origin
+                        .load(&*client, stations)
+                        .await
+                        .map(|(tracks, _)| tracks),
                     None => client.track(&id).await.map(|track| vec![track]),
                 }
             },
@@ -1880,12 +1893,14 @@ impl Playback {
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let io = Io::global(cx);
+        let stations = self.stations(&origin.id, cx);
         cx.spawn(async move |this, cx| {
             if !dwell.is_zero() {
                 cx.background_executor().timer(dwell).await;
             }
             let from = origin.clone();
-            let loaded = crate::join(io.spawn(async move { from.load(&*client).await })).await;
+            let loaded =
+                crate::join(io.spawn(async move { from.load(&*client, stations).await })).await;
             this.update(cx, |this, cx| this.collected(origin, loaded, cx))
                 .ok();
         })
