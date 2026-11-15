@@ -35,6 +35,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - See how much of the song is left on Sonora's taskbar button on Windows. The button fills as the song plays and turns yellow while it is paused.
 - Browse Tidal's moods and decades from Explore after the genres, and open each one to see its shelves.
 - Nightly builds show the commit they were built from beside the version under Settings, About.
+- Skip sponsors, self-promotion and non-music sections on YouTube Music with SponsorBlock, with sections marked on the seek bar.
 
 ### Fixed
 
@@ -59,7 +60,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A page that cannot load says so in a plain sentence instead of the raw error, and a busy service asks you to wait a minute.
 - A bare `sonora://` or `sonora://open` now brings Sonora to the front instead of showing an error toast.
 - The Spotify Jams submenu no longer comes up already open the next time you open the Sessions menu.
-- Skip sponsors, self-promotion and non-music sections on YouTube Music with SponsorBlock, with sections marked on the seek bar.
 
 ### Changed
 
