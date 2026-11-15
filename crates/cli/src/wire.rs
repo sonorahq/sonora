@@ -37,6 +37,7 @@ pub enum Reply {
 pub enum Value {
     Current(Option<Current>),
     Volume(u8),
+    Muted(bool),
     Shuffle(bool),
     Repeat(Repeat),
     Providers(Vec<Provider>),
@@ -441,6 +442,23 @@ mod tests {
             }
             other => panic!("expected a queue snapshot, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn mute_requests_and_answers_keep_the_typed_shape() {
+        let request = Request::Playback(crate::commands::PlaybackCommand::Mute(Some(
+            crate::commands::Switch::Toggle,
+        )));
+        let mut line = Vec::new();
+        send(&mut line, &request).unwrap();
+        let read: Request = receive(&mut BufReader::new(line.as_slice())).unwrap();
+        assert_eq!(read, request);
+
+        let reply = Reply::Value(Value::Muted(true));
+        let mut line = Vec::new();
+        send(&mut line, &reply).unwrap();
+        let read: Reply = receive(&mut BufReader::new(line.as_slice())).unwrap();
+        assert_eq!(read, reply);
     }
 
     #[test]

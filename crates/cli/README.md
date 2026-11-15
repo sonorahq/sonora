@@ -25,6 +25,7 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora lyrics` | Print the lyrics of the current track, without looking any up |
 | `sonora watch [--position]` | Print what plays again on every change, one line of JSON each, until stopped |
 | `sonora volume [N\|+N\|-N]` | Print the volume, set it from 0 to 100, or step it |
+| `sonora mute [on\|off\|toggle]` | Print or change whether playback is muted |
 | `sonora shuffle [on\|off\|toggle]` | Print shuffle, or switch it |
 | `sonora repeat [off\|all\|one]` | Print repeat, or set it |
 | `sonora add <file\|link>...` | Queue after the tracks queued by hand |
@@ -37,6 +38,9 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora -v` | Print the version |
 
 `TYPE` is `song`, `album`, `artist` or `playlist`; `-s` takes a song unless told otherwise. `sonora <command> --help` describes each one.
+
+`mute` prints `on` or `off`; `--json` prints a boolean. Muting remembers the current volume for
+unmute, and a volume change while muted clears that remembered level.
 
 Playback commands go to the device that has playback, so while Sonora steers another device over
 Spotify Connect, that device is the one that pauses or skips.
