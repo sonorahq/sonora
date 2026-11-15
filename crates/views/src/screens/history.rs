@@ -200,6 +200,7 @@ impl Render for HistoryView {
         let note = self.note(cx);
         let page = Scroller::new("history-page", &self.scrollbar)
             .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .px(crate::chrome::Chrome::margin(window, cx))
             .pt(inset)
             .pb(inset)
             .child(div().px(inset).child(self.header(cx)))

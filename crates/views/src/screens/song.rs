@@ -561,7 +561,7 @@ impl SongView {
 }
 
 impl Render for SongView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(failure) = self.failure(cx) {
             return div()
                 .id("song-failure")
@@ -584,7 +584,7 @@ impl Render for SongView {
             .child(
                 Scroller::new("song-page", &self.scrollbar)
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
-                    .px(theme.metrics.inset)
+                    .px(theme.metrics.inset + crate::chrome::Chrome::margin(window, cx))
                     .py(theme.metrics.inset)
                     .when(loading && track.is_none(), |this| {
                         this.child(self.loading(cx))

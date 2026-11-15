@@ -406,13 +406,20 @@ impl ArtistView {
             .into_any_element()
     }
 
-    /// The artist's banner behind the hero, `height` tall and bled past the page's `inset` to
-    /// its edges, with the hero's top `hero` below its own. It is dimmed throughout and stays sharp
-    /// above the hero, then blurs, darkens and fades harder until it is gone at its bottom.
+    /// The artist's banner behind the hero, `height` tall and bled `inset` up and `side` either
+    /// way to the content area's edges, with the hero's top `hero` below its own. It is dimmed
+    /// throughout and stays sharp above the hero, then blurs, darkens and fades harder until it is gone at its bottom.
     /// Without a banner the portrait stands in, blurred to a wash of its colours so it does not
     /// repeat the cover beside it. None when the artist has neither, or has only a portrait
     /// while blurs are off.
-    fn banner(&self, inset: Pixels, height: Pixels, hero: Pixels, cx: &App) -> Option<AnyElement> {
+    fn banner(
+        &self,
+        inset: Pixels,
+        side: Pixels,
+        height: Pixels,
+        hero: Pixels,
+        cx: &App,
+    ) -> Option<AnyElement> {
         let artist = self.detail.read(cx).artist()?;
         let (url, wash) = match &artist.banner {
             Some(banner) => (banner.clone(), None),
@@ -423,7 +430,7 @@ impl ArtistView {
         // frame later, so a window being resized would show the box's edge past the picture.
         // Everything is drawn a little wider than the box, centred in it, and the box clips the
         // rest.
-        let width = (self.width + inset * 2.) * (1. + BANNER_SLACK);
+        let width = (self.width + side * 2.) * (1. + BANNER_SLACK);
         let theme = cx.theme();
         let shade = div()
             .absolute()
@@ -492,8 +499,8 @@ impl ArtistView {
             div()
                 .absolute()
                 .top(-inset)
-                .left(-inset)
-                .right(-inset)
+                .left(-side)
+                .right(-side)
                 .h(height)
                 .overflow_hidden()
                 .fade_edges(Pixels::ZERO, below)
@@ -1311,7 +1318,8 @@ impl Render for ArtistView {
             false => cover * BANNER_RISE_WASH,
         };
         let rise = snapped(rise, window);
-        let banner = self.banner(inset, inset + rise + cover, inset + rise, cx);
+        let side = inset + crate::chrome::Chrome::margin(window, cx);
+        let banner = self.banner(inset, side, inset + rise + cover, inset + rise, cx);
         let tracks = match self.mode {
             Mode::Grid => self.popular(cx),
             Mode::List => self.listed(cx),
@@ -1332,7 +1340,7 @@ impl Render for ArtistView {
         let rails = self.recommended(window, &notify, cx);
         let page = Scroller::new("artist-page", &self.scrollbar)
             .bottom_inset(crate::chrome::Chrome::bottom(cx))
-            .px(inset)
+            .px(side)
             .pt(inset)
             .pb(inset)
             .on_scroll_wheel(cx.listener(Self::release_scroll))

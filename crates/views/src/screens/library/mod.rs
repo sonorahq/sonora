@@ -909,6 +909,7 @@ impl LibraryView {
 
         Scroller::new("library-cards", &self.card_scrollbar)
             .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .px(crate::chrome::Chrome::margin(window, cx))
             .py(inset)
             .child(
                 div()
@@ -992,6 +993,7 @@ impl LibraryView {
 
         Scroller::new("library-cards", &self.card_scrollbar)
             .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .px(crate::chrome::Chrome::margin(window, cx))
             .py(inset)
             .child(
                 Deck::new("library-deck")
@@ -1236,6 +1238,7 @@ impl Render for LibraryView {
             (section, Mode::List) if section.listing() => {
                 Scroller::new("library-page", &self.scrollbar)
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .px(crate::chrome::Chrome::margin(window, cx))
                     .pt(inset)
                     .pb(inset)
                     .child(div().px(inset).child(self.header(cx)))
@@ -1245,6 +1248,7 @@ impl Render for LibraryView {
             }
             (_, Mode::List) => Scroller::new("library-page", &self.scrollbar)
                 .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                .px(crate::chrome::Chrome::margin(window, cx))
                 .pb(inset)
                 .child(self.table(self.section).element())
                 .when_some(note, |this, note| this.child(note))
