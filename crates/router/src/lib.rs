@@ -46,11 +46,11 @@ impl NavEntry {
     pub const ALL: [Self; 9] = [
         Self::Home,
         Self::Search,
+        Self::History,
         Self::Songs,
         Self::Albums,
         Self::Artists,
         Self::Playlists,
-        Self::History,
         Self::Settings,
         Self::Pins,
     ];
@@ -86,7 +86,7 @@ impl NavEntry {
     /// Whether the row stays out of the sidebar until the listener adds it, rather than showing
     /// until hidden.
     pub fn optional(self) -> bool {
-        matches!(self, Self::History | Self::Settings)
+        matches!(self, Self::Settings)
     }
 }
 
