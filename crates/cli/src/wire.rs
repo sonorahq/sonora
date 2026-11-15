@@ -8,7 +8,7 @@ use serde_json::value::RawValue;
 use crate::commands::{Kind, Repeat, Request};
 
 /// The protocol both ends speak. Bump it on any change an older Sonora would misread.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 /// One line on the socket: the protocol version and the request or reply it carries. The body
 /// is decoded only once the version matches, so a newer request never half-parses into a wrong
@@ -37,6 +37,7 @@ pub enum Reply {
 pub enum Value {
     Current(Option<Current>),
     Volume(u8),
+    Muted(bool),
     Shuffle(bool),
     Repeat(Repeat),
     Providers(Vec<Provider>),
@@ -50,6 +51,8 @@ pub enum Value {
     Queue(QueueSnapshot),
     /// The lyrics of the current track as Sonora holds them, as `sonora lyrics` prints them.
     Lyrics(LyricsSnapshot),
+    /// Whether the current track is a favorite, as `sonora like` prints it.
+    Liked(bool),
 }
 
 /// At most this many lines of lyrics are reported, from the start, so a very long text never
@@ -325,6 +328,10 @@ pub enum Failure {
     Unsupported,
     /// No provider is signed in to read a link with.
     SignedOut,
+    /// There is no current track to control.
+    NoCurrentTrack,
+    /// The current track has no provider id that can be favorited.
+    MissingTrackId,
     /// A link belongs to another provider than the current one. Both are named.
     OtherProvider { link: String, current: String },
     /// No provider reads this link, or it points at nothing that can be queued.
@@ -339,8 +346,10 @@ pub enum Failure {
     NoAccount(String),
     /// The provider, by name, did not sign in after the switch.
     SignInFailed(String),
-    /// A sign-in is already on its way, so the provider cannot change now.
+    /// A conflicting operation is still in progress.
     Busy,
+    /// The provider refused a favorite update.
+    FavoriteUpdateFailed,
     /// A search to queue the best hit of found nothing.
     NothingFound(String),
 }
@@ -441,6 +450,38 @@ mod tests {
             }
             other => panic!("expected a queue snapshot, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn mute_requests_and_answers_keep_the_typed_shape() {
+        let request = Request::Playback(crate::commands::PlaybackCommand::Mute(Some(
+            crate::commands::Switch::Toggle,
+        )));
+        let mut line = Vec::new();
+        send(&mut line, &request).unwrap();
+        let read: Request = receive(&mut BufReader::new(line.as_slice())).unwrap();
+        assert_eq!(read, request);
+
+        let reply = Reply::Value(Value::Muted(true));
+        let mut line = Vec::new();
+        send(&mut line, &reply).unwrap();
+        let read: Reply = receive(&mut BufReader::new(line.as_slice())).unwrap();
+        assert_eq!(read, reply);
+    }
+
+    #[test]
+    fn favorite_requests_and_answers_keep_the_typed_shape() {
+        let request = Request::Like(Some(crate::commands::Switch::On));
+        let mut line = Vec::new();
+        send(&mut line, &request).unwrap();
+        let read: Request = receive(&mut BufReader::new(line.as_slice())).unwrap();
+        assert_eq!(read, request);
+
+        let reply = Reply::Value(Value::Liked(true));
+        let mut line = Vec::new();
+        send(&mut line, &reply).unwrap();
+        let read: Reply = receive(&mut BufReader::new(line.as_slice())).unwrap();
+        assert_eq!(read, reply);
     }
 
     #[test]

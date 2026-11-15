@@ -91,7 +91,8 @@ pub struct Devices {
     seek_due: Option<LateSeek>,
     queuing: HashMap<String, Task<()>>,
     liking: HashMap<String, Task<()>>,
-    /// Notifies twice a second while another device plays, so its progress is redrawn.
+    /// Notifies `Playback::ticks` twice a second while another device plays, so its progress is
+    /// redrawn.
     ticking: Option<Task<()>>,
 }
 
@@ -118,6 +119,9 @@ impl Devices {
             this.publish(cx);
         })
         .detach();
+        // the report to the other devices also follows the position as it moves
+        let ticks = playback.read(cx).ticks().clone();
+        cx.observe(&ticks, |this, _, cx| this.publish(cx)).detach();
         cx.observe(&queue, |this, _, cx| this.publish(cx)).detach();
         cx.observe(&settings, |this, _, cx| this.apply(cx)).detach();
 
@@ -656,6 +660,15 @@ impl Devices {
     }
 
     fn set_roster(&mut self, roster: Roster, cx: &mut Context<Self>) {
+        let reported_volume = match (self.roster.elsewhere.as_ref(), roster.elsewhere.as_ref()) {
+            (Some(had), Some(wanted))
+                if had.device.id == wanted.device.id
+                    && had.device.volume != wanted.device.volume =>
+            {
+                Some((wanted.device.id.clone(), wanted.device.volume))
+            }
+            _ => None,
+        };
         let wanted = roster
             .elsewhere
             .as_ref()
@@ -675,6 +688,11 @@ impl Devices {
                 .as_ref()
                 .is_some_and(|e| e.state.playing);
         self.roster = roster;
+        if let Some((device, level)) = reported_volume {
+            self.playback.update(cx, |playback, _| {
+                playback.reported_steered_volume(&device, level)
+            });
+        }
         // playback taken for a local file is never reported, so the network never releases it,
         // and another device starting to play is what takes it back
         if started && self.claimed && self.sent.is_none() {
@@ -817,7 +835,8 @@ impl Devices {
         self.available() && self.elsewhere().is_some_and(|e| e.state.playing)
     }
 
-    /// Redraws a remote device's advancing clock until playback stops or moves here.
+    /// Redraws a remote device's advancing clock until playback stops or moves here. Only the
+    /// observers of `Playback::ticks` hear each tick.
     fn tick(&mut self, cx: &mut Context<Self>) {
         if !self.moving() {
             self.ticking = None;
@@ -826,7 +845,8 @@ impl Devices {
                 while this
                     .update(cx, |this, cx| {
                         if this.moving() {
-                            this.redraw(cx);
+                            let ticks = this.playback.read(cx).ticks().clone();
+                            ticks.update(cx, |_, cx| cx.notify());
                         } else {
                             this.ticking = None;
                         }

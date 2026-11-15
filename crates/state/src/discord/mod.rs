@@ -182,6 +182,9 @@ impl Discord {
 
         cx.observe(&playback, |this, _, cx| this.publish(cx))
             .detach();
+        // the start time shown is measured from the position, which can drift from the clock
+        let ticks = playback.read(cx).ticks().clone();
+        cx.observe(&ticks, |this, _, cx| this.publish(cx)).detach();
         cx.observe(&settings, |this, _, cx| this.publish(cx))
             .detach();
         cx.observe(&cover, |this, _, cx| this.publish(cx)).detach();

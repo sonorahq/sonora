@@ -177,7 +177,7 @@ Discord is the primary one, but we do have a Matrix bridge.
 | Italiano (`it`) | 1104/1341 | 82% |
 | Bahasa Indonesia (`id`) | 1104/1341 | 82% |
 | 日本語 (`ja`) | 1104/1341 | 82% |
-| 한국어 (`ko`) | 1323/1341 | 99% |
+| 한국어 (`ko`) | 1339/1341 | 100% |
 | Русский (`ru`) | 1214/1341 | 91% |
 | Українська (`uk`) | 1106/1341 | 82% |
 | Polski (`pl`) | 1106/1341 | 82% |
@@ -187,6 +187,7 @@ Discord is the primary one, but we do have a Matrix bridge.
 | 简体中文 (`zh-CN`) | 1104/1341 | 82% |
 | Türkçe (`tr`) | 1104/1341 | 82% |
 | Shqip (`sq`) | 1104/1341 | 82% |
+| Tiếng Việt (`vi`) | 1339/1341 | 100% |
 
 <!-- i18n:end -->
 

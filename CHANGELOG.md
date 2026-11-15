@@ -10,6 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Use Sonora in European Portuguese. A system set to Portuguese from Portugal picks it on its own.
+- Use Sonora in Vietnamese. A system set to Vietnamese picks it on its own.
 - Open an album's cover from its page to see the original artwork full size, zoom in with the wheel or the buttons and drag it around.
 - Press Ctrl+K (⌘K on macOS) anywhere to search. Enter plays a song right away, Ctrl+Enter opens its page, and the artist and album under a result open theirs.
 - Scrobble to your own ListenBrainz server or to multi-scrobbler by filling in the server address when you connect ListenBrainz.
@@ -20,6 +21,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Show the time left in the song instead of its length in the player bar, under Settings, Player bar.
 - `sonora queue` prints what played, what plays and what follows, and `sonora queue --json` gives the same queue to a script, without changing playback.
 - `sonora lyrics` prints the lyrics of the current track with their times, and `sonora lyrics --json` also gives a script the line sung now and the next one.
+- `sonora like` reads or changes whether the current track is a favorite.
+- `sonora mute` reads or changes playback mute and restores the previous volume when unmuted.
 - Rebind keyboard shortcuts under Settings, Keybinds, and give shuffle, repeat, the queue and lyrics shortcuts of their own.
 - Move between the fields of a dialog with Tab and Shift+Tab.
 - Use Sonora in Korean.
@@ -29,9 +32,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - See Sonora's similar tracks on your other Spotify devices under their recommended tracks, and Spotify's recommendations from another device apart from what is up next in Sonora.
 - Opening a file from a file manager can now switch to the now playing view automatically, if enabled in Settings > General.
 - Sonora supports drag-and-drop from other programs, like file managers, into the queue. The line shows the place in the queue where the files will land, the same one in-app drops use.
+- See how much of the song is left on Sonora's taskbar button on Windows. The button fills as the song plays and turns yellow while it is paused.
 
 ### Fixed
 
+- `sonora like` waits for the provider to confirm a favorite change and reports if it fails.
+- A song you favorite or unfavorite while the library is refreshing stays that way instead of flipping back.
+- Unmuting now respects volume changes made on another device.
 - The snap shows Sonora's tray icon instead of a generic placeholder.
 - On Windows, playback no longer crackles when you open apps or browser tabs, and the buffer setting under Settings, Sound works again.
 - Friends who join a Spotify Jam you host from Sonora hear the track you play instead of the first one of the album or playlist, see the same queue, and the songs they remove or move stay that way.
