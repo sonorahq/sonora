@@ -28,7 +28,7 @@ const REMOTE_TRACKS: usize = 25;
 /// How often the views are told that another device's playback moved on while it plays.
 const TICK: Duration = Duration::from_millis(500);
 /// The actual history and upcoming order supplied by another device.
-type RemoteWindow = (Vec<(Track, bool)>, bool, Vec<(Track, bool)>);
+type RemoteWindow = (Vec<(Track, QueueKind)>, QueueKind, Vec<(Track, QueueKind)>);
 
 /// A seek another device asked for while a song was loading, kept until that song plays.
 struct LateSeek {
@@ -334,10 +334,7 @@ impl Devices {
                 .upcoming
                 .iter()
                 .take_while(|row| self.readable(&row.id))
-                .map(|row| match row.queued {
-                    true => QueueKind::Queued,
-                    false => QueueKind::Context,
-                }),
+                .map(kind_of),
         )
     }
 
@@ -1285,7 +1282,7 @@ async fn load(
             .by_ref()
             .take(start.previous.len())
             .zip(&start.previous)
-            .filter_map(|(track, listed)| Some((track?, listed.queued)))
+            .filter_map(|(track, listed)| Some((track?, kind_of(listed))))
             .collect();
         // The current song has its own slot in the resolver, outside history and upcoming.
         if start.track.is_some() {
@@ -1293,11 +1290,11 @@ async fn load(
         }
         let next = resolved
             .zip(&start.upcoming)
-            .filter_map(|(track, listed)| Some((track?, listed.queued)))
+            .filter_map(|(track, listed)| Some((track?, kind_of(listed))))
             .collect();
         (
             past,
-            start.track.as_ref().is_some_and(|track| track.queued),
+            start.track.as_ref().map_or(QueueKind::Context, kind_of),
             next,
         )
     });
@@ -1330,6 +1327,16 @@ async fn resolve_queue(
         }
     }
     ids.iter().map(|id| known.get(id).cloned()).collect()
+}
+
+/// Why a track another device lists is in its play order: queued by hand, picked by the
+/// provider to follow the collection, or part of the collection itself.
+fn kind_of(row: &QueuedTrack) -> QueueKind {
+    match (row.queued, row.suggested) {
+        (true, _) => QueueKind::Queued,
+        (false, true) => QueueKind::Suggested,
+        (false, false) => QueueKind::Context,
+    }
 }
 
 /// Whether two reports show the same queue around the same song, whatever their clocks say.

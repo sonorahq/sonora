@@ -47,6 +47,9 @@ pub struct QueuedTrack {
     pub id: String,
     pub uid: String,
     pub queued: bool,
+    /// Whether the provider or the app picked the track itself, to follow what the listener
+    /// chose once that runs out.
+    pub suggested: bool,
     pub added_by: Option<String>,
 }
 
@@ -55,6 +58,7 @@ impl QueuedTrack {
         Self {
             id,
             queued,
+            suggested: false,
             uid: String::new(),
             added_by: None,
         }
