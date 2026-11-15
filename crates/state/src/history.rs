@@ -11,7 +11,8 @@ use storage::Database;
 use crate::playback::PlaybackEvent;
 use crate::{Io, Outcome, Playback, Session, SessionEvent, SessionState, Toast, Toasts, join};
 
-const LOCAL_LIMIT: usize = 500;
+/// How many plays of one account the history keeps, on disk and in the list.
+const LOCAL_LIMIT: usize = 5000;
 /// Every column of `plays`, in the order a [`Row`] holds them.
 const COLUMNS: &str = "scope, provider, track_id, played_at, name, playable, artists, \
                        artist_refs, album, album_id, cover, duration_ms, explicit";
