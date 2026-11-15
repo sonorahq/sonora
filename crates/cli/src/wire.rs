@@ -8,7 +8,7 @@ use serde_json::value::RawValue;
 use crate::commands::{Kind, Repeat, Request};
 
 /// The protocol both ends speak. Bump it on any change an older Sonora would misread.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 /// One line on the socket: the protocol version and the request or reply it carries. The body
 /// is decoded only once the version matches, so a newer request never half-parses into a wrong
@@ -345,8 +345,10 @@ pub enum Failure {
     NoAccount(String),
     /// The provider, by name, did not sign in after the switch.
     SignInFailed(String),
-    /// A sign-in is already on its way, so the provider cannot change now.
+    /// A conflicting operation is still in progress.
     Busy,
+    /// The provider refused a favorite update.
+    FavoriteUpdateFailed,
     /// A search to queue the best hit of found nothing.
     NothingFound(String),
 }

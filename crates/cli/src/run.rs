@@ -315,7 +315,10 @@ fn describe(failure: &Failure) -> String {
         }
         Failure::NoAccount(name) => format!("{name} has no account to switch to; sign in first"),
         Failure::SignInFailed(name) => format!("{name} did not sign in"),
-        Failure::Busy => "a sign-in is already on its way; try again in a moment".to_owned(),
+        Failure::Busy => "Sonora is busy; try again in a moment".to_owned(),
+        Failure::FavoriteUpdateFailed => {
+            "could not update the current track's favorite state".to_owned()
+        }
         Failure::NothingFound(query) => format!("nothing found for '{query}'"),
     }
 }

@@ -19,8 +19,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::search::{self, Catalog};
 use crate::{
-    Hit, Io, Library, LyricsState, Origin, Playback, PlaybackState, QueueKind, QueuePlacement,
-    QueuePosition, Repeat, Session, SessionState, Shelf, Sonora, Whence, join, noted,
+    Hit, Io, Library, LibraryPart, LyricsState, Origin, Playback, PlaybackState, QueueKind,
+    QueuePlacement, QueuePosition, Repeat, Session, SessionState, Shelf, Sonora, Whence, join,
+    noted,
 };
 
 /// What `sonora current` calls the provider of a local file, the slug `sonora providers` gives it.
@@ -185,7 +186,7 @@ impl Control {
             Request::Search(query) => return self.search(query, reply, cx),
             Request::Session(command) => session(command, cx),
             Request::Lyrics => Reply::Value(Value::Lyrics(lyrics(self.playback.read(cx), cx))),
-            Request::Like(switch) => self.like(switch, cx),
+            Request::Like(switch) => return self.like(switch, reply, cx),
             // a watch is answered as a stream, by `watch`, and never reaches here
             Request::Watch(_) => Reply::Failed(Failure::Malformed),
         };
@@ -193,27 +194,63 @@ impl Control {
     }
 
     /// Reads or changes the favorite state of the track shown by the active playback device.
-    fn like(&mut self, switch: Option<Switch>, cx: &mut Context<Self>) -> Reply {
+    fn like(
+        &mut self,
+        switch: Option<Switch>,
+        reply: oneshot::Sender<Reply>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(track) = self.playback.read(cx).shown_track(cx) else {
-            return Reply::Failed(Failure::NoCurrentTrack);
+            reply.send(Reply::Failed(Failure::NoCurrentTrack)).ok();
+            return;
         };
         let Some(id) = track.id.as_deref() else {
-            return Reply::Failed(Failure::MissingTrackId);
+            reply.send(Reply::Failed(Failure::MissingTrackId)).ok();
+            return;
         };
-        if self.session.read(cx).client_of(Shelf::of(id)).is_none() {
-            return Reply::Failed(Failure::Unsupported);
+        let shelf = Shelf::of(id);
+        if self.session.read(cx).client_of(shelf).is_none() {
+            reply.send(Reply::Failed(Failure::Unsupported)).ok();
+            return;
         }
-        let saved = self.library.read(cx).saved(id);
+        let saved = {
+            let library = self.library.read(cx);
+            if library.loading(shelf, LibraryPart::Tracks) || library.pending(id) {
+                reply.send(Reply::Failed(Failure::Busy)).ok();
+                return;
+            }
+            library.saved(id)
+        };
         let Some(switch) = switch else {
-            return Reply::Value(Value::Liked(saved));
+            reply.send(Reply::Value(Value::Liked(saved))).ok();
+            return;
         };
         let wanted = favorite_target(saved, switch);
-        if wanted != saved {
-            self.library.update(cx, |library, cx| {
-                library.save_tracks(vec![track], wanted, cx)
-            });
+        if wanted == saved {
+            reply.send(Reply::Done).ok();
+            return;
         }
-        Reply::Done
+        let completed = self
+            .library
+            .update(cx, |library, cx| library.save_track(track, wanted, cx));
+        let key = self.issued;
+        self.issued += 1;
+        let task = cx.spawn(async move |this, cx| {
+            let answer = match completed.await {
+                Ok(true) => Reply::Done,
+                Ok(false) => Reply::Failed(Failure::FavoriteUpdateFailed),
+                Err(error) => {
+                    log::warn!("control: favorite update ended before it completed: {error}");
+                    Reply::Failed(Failure::FavoriteUpdateFailed)
+                }
+            };
+            this.update(cx, |this, _| {
+                reply.send(answer).ok();
+                this.pending.remove(&key);
+            })
+            .ok();
+        });
+        self.pending.insert(key, task);
     }
 
     /// Queues the items of `command`, or the best hit of the search it carries, which first has
