@@ -470,6 +470,28 @@ struct Station {
     next: String,
 }
 
+/// Where files dropped on the queue go: `gap` upcoming tracks in, before the track whose queue
+/// uid is `before`. The uid wins once the files are read, since the queue may have moved on.
+struct DropAt {
+    gap: usize,
+    before: Option<String>,
+}
+
+impl DropAt {
+    /// The gap to use now. Files dropped before a track that has since started or played go to
+    /// the front of what is upcoming, and the recorded gap stands when the track is gone.
+    fn resolve(&self, queue: &Queue) -> usize {
+        let Some(before) = &self.before else {
+            return self.gap;
+        };
+        match queue.position(before) {
+            Some(crate::QueuePosition::Upcoming(at)) => at,
+            Some(crate::QueuePosition::Current | crate::QueuePosition::Past(_)) => 0,
+            None => self.gap,
+        }
+    }
+}
+
 /// A file handed in from the OS that could not be read as a track.
 struct Unread {
     name: String,
@@ -612,6 +634,9 @@ pub struct Playback {
     sleep_task: Option<Task<()>>,
     /// The task still reading files, which the next batch waits for.
     pending_open: Option<Task<()>>,
+    /// Set while the files of an open have not yet started anything, so the first readable
+    /// batch of the burst plays even when it arrives as a tail.
+    opening: bool,
     /// The device network, asked whether another device has playback to steer.
     devices: Option<WeakEntity<Devices>>,
     /// Whether the call being carried out is this app's own doing, which never steers.
@@ -772,6 +797,7 @@ impl Playback {
             sleep: None,
             sleep_task: None,
             pending_open: None,
+            opening: false,
             devices: None,
             local: false,
             seeks: 0,
@@ -1328,7 +1354,8 @@ impl Playback {
 
     /// Opens paths handed in from the OS (a file-association launch or hand-off). They join the
     /// end of the manual queue in the order they were given. The first batch of a burst starts
-    /// playing at once and skips what was queued by hand before it, a `tail` batch only joins.
+    /// playing at once and skips what was queued by hand before it. A `tail` batch only joins,
+    /// unless no batch of the burst has started anything yet or nothing is playing.
     pub fn open_paths(&mut self, paths: Vec<PathBuf>, tail: bool, cx: &mut Context<Self>) {
         if paths.is_empty() {
             return;
@@ -1346,7 +1373,13 @@ impl Playback {
         if paths.is_empty() {
             return;
         }
-        self.resolve_paths(paths, Some(gap.unwrap_or(usize::MAX)), false, cx);
+        let gap = gap.unwrap_or(usize::MAX);
+        let before = self
+            .queue
+            .read(cx)
+            .uid(crate::QueuePosition::Upcoming(gap))
+            .map(str::to_owned);
+        self.resolve_paths(paths, Some(DropAt { gap, before }), false, cx);
     }
 
     /// Reads the files on the tokio runtime and plays what it could read. A later batch waits for
@@ -1355,7 +1388,7 @@ impl Playback {
     fn resolve_paths(
         &mut self,
         paths: Vec<PathBuf>,
-        gap: Option<usize>,
+        drop: Option<DropAt>,
         tail: bool,
         cx: &mut Context<Self>,
     ) {
@@ -1381,20 +1414,27 @@ impl Playback {
             },
             move |this, loaded, cx| match loaded {
                 Ok((tracks, unread)) => {
+                    if drop.is_none() && !tail {
+                        this.opening = true;
+                    }
                     report_unread(&unread, tracks.is_empty(), cx);
                     if tracks.is_empty() {
                         return;
                     }
-                    match gap {
-                        Some(gap) => this.insert_all(tracks, gap, None, cx),
+                    match drop {
+                        Some(drop) => {
+                            let gap = drop.resolve(this.queue.read(cx));
+                            this.insert_all(tracks, gap, None, cx);
+                        }
                         None => this.locally(cx, |this, cx| {
-                            let play = !tail || this.queue.read(cx).current().is_none();
+                            let play = this.opening || this.track.is_none();
                             let at = this.queue.read(cx).manual_end();
                             let first = tracks.iter().position(|track| track.playable);
                             this.queue.update(cx, |queue, cx| {
                                 queue.insert(tracks, None, QueuePlacement::End, cx)
                             });
                             if play && let Some(first) = first {
+                                this.opening = false;
                                 this.fetch = None;
                                 let track = this.queue.update(cx, |queue, cx| {
                                     queue.select(crate::QueuePosition::Upcoming(at + first), cx)
