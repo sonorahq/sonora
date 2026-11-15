@@ -30,6 +30,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Library pages that list both local and streaming music mark local files with a file icon beside their names.
 - Tidal artist pages show how many people follow the artist, beside the listener count.
 - See Sonora's similar tracks on your other Spotify devices under their recommended tracks, and Spotify's recommendations from another device apart from what is up next in Sonora.
+- Opening a file from a file manager can now switch to the now playing view automatically, if enabled in Settings > General.
+- Sonora supports drag-and-drop from other programs, like file managers, into the queue. The line shows the place in the queue where the files will land, the same one in-app drops use.
 - See how much of the song is left on Sonora's taskbar button on Windows. The button fills as the song plays and turns yellow while it is paused.
 
 ### Fixed
@@ -72,6 +74,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Songs, Albums, Artists and Playlists are rows of their own in the sidebar under a Library heading, and the icon-only sidebar shows them as icons too.
 - Import an M3U playlist from the Create playlist dialog, which replaces the import button in the Playlists toolbar.
 - History and Settings moved from the sidebar to the account menu at the top right, which also switches between your connected services and opens Manage accounts. Add them back to the sidebar under Settings, General, Sidebar entries.
+- Opening tracks from a file manager now starts the first one with no delay, then queues the rest.
 
 ## [0.49.1] - 2026-11-13
 
