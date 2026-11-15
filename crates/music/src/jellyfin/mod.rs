@@ -1,32 +1,46 @@
-//! A Jellyfin server as a music source: browse, search and play the user's own library.
-//!
-//! The first version only reads. Favorites, playlist changes, play reporting, stations and
-//! downloads are left out, and their capabilities are off so the app offers none of them.
+//! A Jellyfin server as a music source: the user's own library to browse, search, play, keep
+//! and edit, with favorites, playlists, instant mixes and the server's lyrics.
 
 pub(crate) mod auth;
 mod client;
+mod lyrics;
 mod playback;
+mod session;
 mod wire;
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use reqwest::header::AUTHORIZATION;
 
 pub use client::JellyfinClient;
+pub use lyrics::JellyfinLyrics;
 
 use crate::jellyfin::playback::Factory;
 use crate::{
-    Capabilities, Catalog, MusicApi as _, MusicProvider, ProviderSession, Shape, SignIn,
-    SignInFailure, SignInProblem,
+    Capabilities, Catalog, MusicApi as _, MusicProvider, PlaybackFactory, PromptSink,
+    ProviderSession, Shape, SignIn, SignInFailure, SignInProblem, SignInPrompt,
 };
 
-/// The name the provider goes by. It is saved in settings, so it must not change.
+/// The name the provider and its lyrics source go by. It is saved in settings and in the lyrics
+/// cache, so it must not change.
 pub(crate) const NAME: &str = "Jellyfin";
 
-/// What the first version offers: listing and playing, with nothing that writes to the server
-/// or keeps tracks on disk.
-const CAPABILITIES: Capabilities = Capabilities::NONE;
+/// Everything a streaming service offers, with the server converting on request and keeping
+/// playlist pictures of its own, and downloads as plain files.
+const CAPABILITIES: Capabilities = Capabilities {
+    transcode: true,
+    playlist_covers: true,
+    plain_downloads: true,
+    ..Capabilities::ALL
+};
+/// How often a Quick Connect sign-in asks whether the code was approved, and for how long.
+const QUICK_CONNECT_POLL: Duration = Duration::from_secs(3);
+const QUICK_CONNECT_PATIENCE: Duration = Duration::from_secs(5 * 60);
+/// How long a sign-out waits for the server to revoke the token.
+const LOG_OUT_PATIENCE: Duration = Duration::from_secs(5);
 
 pub struct JellyfinProvider;
 
@@ -39,16 +53,18 @@ impl JellyfinProvider {
         server: String,
         username: String,
         password: String,
+        prompt: PromptSink,
     ) -> Result<ProviderSession> {
         let server = auth::normalize_server(&server)?;
-        let credentials = client::authenticate(
-            &server,
-            username.trim(),
-            &password,
-            &auth::device_name(),
-            &auth::device_id(),
-        )
-        .await?;
+        let device = auth::device_name();
+        let device_id = auth::device_id();
+        let credentials = match username.trim().is_empty() && password.is_empty() {
+            true => quick_connect(&server, &device, &device_id, prompt).await?,
+            false => {
+                client::authenticate(&server, username.trim(), &password, &device, &device_id)
+                    .await?
+            }
+        };
         let client = JellyfinClient::new(&credentials);
         let profile = client.profile().await?;
         auth::store(&credentials)?;
@@ -120,14 +136,22 @@ impl MusicProvider for JellyfinProvider {
         (!host.is_empty()).then(|| host.to_owned())
     }
 
+    /// Kept tracks are plain files, so they play from the stored sign-in alone.
+    fn offline_playback(&self) -> Option<Arc<dyn PlaybackFactory>> {
+        let credentials = auth::load()?;
+        Some(Arc::new(Factory::new(JellyfinClient::new(&credentials))))
+    }
+
     async fn restore(&self) -> Result<Option<ProviderSession>> {
         Self::restore_stored().await
     }
 
+    /// Signs in with a username and password, or by Quick Connect when both are left empty:
+    /// the server hands out a code that the user approves from a Jellyfin app already signed in.
     async fn sign_in(
         &self,
         method: SignIn,
-        _prompt: crate::PromptSink,
+        prompt: PromptSink,
         _input: crate::InputSource,
     ) -> Result<ProviderSession> {
         let SignIn::Credentials {
@@ -138,14 +162,55 @@ impl MusicProvider for JellyfinProvider {
         else {
             anyhow::bail!("jellyfin signs in with a server address, username and password")
         };
-        if username.trim().is_empty() {
+        if username.trim().is_empty() && !password.is_empty() {
             anyhow::bail!("the jellyfin username is empty");
         }
-        Self::connect(server, username, password).await
+        Self::connect(server, username, password, prompt).await
     }
 
+    /// Forgets the sign-in and, on a thread of its own, tells the server to revoke the token, so
+    /// the device leaves the server's device list. A server out of reach keeps the token until
+    /// it expires there.
     fn sign_out(&self) {
+        if let Some(credentials) = auth::load() {
+            std::thread::spawn(move || log_out(credentials));
+        }
         auth::forget();
+    }
+}
+
+/// Revokes the token by `POST /Sessions/Logout`. It runs outside the app's runtime, since a
+/// sign-out comes from the interface thread, and gives up after a few seconds.
+fn log_out(credentials: auth::Credentials) {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            log::warn!("jellyfin: cannot start the sign-out: {error}");
+            return;
+        }
+    };
+    let client = JellyfinClient::new(&credentials);
+    let sent = runtime.block_on(async {
+        tokio::time::timeout(LOG_OUT_PATIENCE, async {
+            client
+                .http
+                .post(format!("{}/Sessions/Logout", credentials.server))
+                .header(AUTHORIZATION, &client.header)
+                .send()
+                .await
+        })
+        .await
+    });
+    match sent {
+        Ok(Ok(response)) => log::info!(
+            "jellyfin: the server ended the session, {}",
+            response.status()
+        ),
+        Ok(Err(error)) => log::warn!("jellyfin: cannot end the session on the server: {error}"),
+        Err(_) => log::warn!("jellyfin: the server did not answer the sign-out in time"),
     }
 }
 
@@ -158,4 +223,82 @@ fn session(client: JellyfinClient, profile: crate::UserProfile) -> ProviderSessi
         authenticated: true,
         capabilities: CAPABILITIES,
     }
+}
+
+/// Signs in by Quick Connect. The server hands out a code, the sign-in page shows it with the
+/// address of the server's Quick Connect page, and once the user approves it from a signed-in
+/// Jellyfin app the secret buys an access token. Gives up after five minutes.
+async fn quick_connect(
+    server: &str,
+    device: &str,
+    device_id: &str,
+    prompt: PromptSink,
+) -> Result<auth::Credentials> {
+    let http = reqwest::Client::new();
+    let header = auth::header(device, device_id, None);
+    let enabled: bool = http
+        .get(format!("{server}/QuickConnect/Enabled"))
+        .header(AUTHORIZATION, &header)
+        .send()
+        .await
+        .map_err(client::lost)?
+        .json()
+        .await
+        .unwrap_or(false);
+    if !enabled {
+        anyhow::bail!("quick connect is turned off on this jellyfin server");
+    }
+    let started: wire::QuickConnect = http
+        .post(format!("{server}/QuickConnect/Initiate"))
+        .header(AUTHORIZATION, &header)
+        .send()
+        .await
+        .map_err(client::lost)?
+        .error_for_status()
+        .context("the jellyfin server refused to start quick connect")?
+        .json()
+        .await
+        .context("cannot read the quick connect code")?;
+    prompt(SignInPrompt::Code {
+        code: started.code.clone(),
+        url: format!("{server}/web/#/quickconnect"),
+    });
+    let waited = tokio::time::timeout(QUICK_CONNECT_PATIENCE, async {
+        loop {
+            tokio::time::sleep(QUICK_CONNECT_POLL).await;
+            let state: wire::QuickConnect = http
+                .get(format!("{server}/QuickConnect/Connect"))
+                .query(&[("secret", started.secret.as_str())])
+                .header(AUTHORIZATION, &header)
+                .send()
+                .await
+                .map_err(client::lost)?
+                .error_for_status()
+                .context("the jellyfin server forgot the quick connect code")?
+                .json()
+                .await
+                .context("cannot read the quick connect state")?;
+            if state.authenticated {
+                return anyhow::Ok(());
+            }
+        }
+    })
+    .await;
+    match waited {
+        Ok(result) => result?,
+        Err(_) => anyhow::bail!("the quick connect code was not approved in time"),
+    }
+    let answer: wire::Authentication = http
+        .post(format!("{server}/Users/AuthenticateWithQuickConnect"))
+        .header(AUTHORIZATION, &header)
+        .json(&serde_json::json!({ "Secret": started.secret }))
+        .send()
+        .await
+        .map_err(client::lost)?
+        .error_for_status()
+        .context("the jellyfin server refused the approved quick connect code")?
+        .json()
+        .await
+        .context("the quick connect sign-in answered something other than an account")?;
+    client::account(server, answer, "", device_id)
 }

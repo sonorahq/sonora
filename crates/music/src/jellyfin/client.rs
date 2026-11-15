@@ -1,55 +1,92 @@
-use std::collections::HashMap;
-use std::time::Duration;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use reqwest::StatusCode;
-use reqwest::header::AUTHORIZATION;
+use base64::Engine as _;
+use futures::{StreamExt as _, stream};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 
+use crate::cover::{self, CoverLimits};
 use crate::engine::Loudness;
 use crate::escape;
 use crate::jellyfin::auth::{self, Credentials};
-use crate::jellyfin::wire::{self, Covers, Item, Items};
+use crate::jellyfin::session::{self, Session};
+use crate::jellyfin::wire::{self, Covers, Item, Items, Permission, PlaylistInfo};
 use crate::{
-    Album, AlbumDetail, Artist, ArtistProfile, MediaKind, MusicApi, Page, Pages, Playlist,
-    PlaylistDetail, SavedArtist, SignInFailure, SignInProblem, Track, UserProfile, distinct_covers,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Codec, CoverSize,
+    Encoding, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Page,
+    Pages, Playlist, PlaylistDetail, Report, SUGGESTIONS, SavedArtist, SignInFailure,
+    SignInProblem, Track, Transcode, UserProfile, distinct_covers,
 };
 
 /// How many items one library request asks for, so a large library arrives in pages.
 const LIBRARY_PAGE: usize = 500;
-/// How many tracks, albums and playlists a search lists.
+/// How many tracks, albums, artists and playlists a search lists.
 const SEARCH_TRACKS: usize = 50;
 const SEARCH_OTHERS: usize = 30;
 /// The fields every listing asks for beyond what Jellyfin sends anyway.
-const FIELDS: &str = "ChildCount,DateCreated";
+const FIELDS: &str = "ChildCount,DateCreated,Genres";
+/// The fields of a single track, which add who wrote it and what its file holds.
+const TRACK_FIELDS: &str = "ChildCount,DateCreated,Genres,People,MediaStreams";
+/// The fields of an album page, which add the label.
+const ALBUM_FIELDS: &str = "ChildCount,DateCreated,Genres,Studios";
 /// The fields an artist page asks for, which add the biography.
 const ARTIST_FIELDS: &str = "ChildCount,DateCreated,Overview";
-/// What a refused write says. The first version only reads the library.
-const READ_ONLY: &str = "jellyfin is read-only in this version of sonora";
+/// The disc and track order an album is heard in.
+const ALBUM_ORDER: &str = "ParentIndexNumber,IndexNumber,SortName";
+/// The order the songs list and an artist's songs come in.
+const SONG_ORDER: &str = "AlbumArtist,Album,ParentIndexNumber,IndexNumber,SortName";
+/// How many popular songs an artist page leads with.
+const TOP_TRACKS: usize = 10;
+/// How long a station is. Jellyfin's instant mix is one list, so this is the whole of it.
+const RADIO_COUNT: usize = 50;
+/// How many recently played tracks the history keeps.
+const RECENT: usize = 50;
+/// How many cards a home shelf holds, and how many songs the quick picks hold.
+const HOME_SHELF: usize = 15;
+const HOME_SONGS: usize = 25;
+/// How many playlists have their permissions read at once.
+const PERMISSION_READS: usize = 8;
+/// A picture Jellyfin keeps as a playlist cover. It shows covers no larger than this.
+const PLAYLIST_COVER: CoverLimits = CoverLimits {
+    side: 1500,
+    bytes: 4 * 1024 * 1024,
+};
+/// What every converted stream may decode to when the bitrate alone is capped: Jellyfin sends
+/// the original when it fits under the cap and converts to Opus only when it does not.
+const DECODABLE: &str = "flac,mp3,ogg,opus,m4a,mp4,aac,wav";
 
 /// A signed-in Jellyfin account. Every request carries the `MediaBrowser` authorization header
 /// with the access token, and none puts the token in a url.
 #[derive(Clone)]
 pub struct JellyfinClient {
-    http: reqwest::Client,
+    pub(crate) http: reqwest::Client,
     /// The server address with no trailing slash.
     server: String,
     user_id: String,
     username: String,
     /// The whole `Authorization` header, token included.
-    header: String,
+    pub(crate) header: String,
     covers: Covers,
+    /// What this device last told the server it plays, shared by every clone.
+    session: Session,
 }
 
 /// What the server records about a track that playback wants before the decoder can tell.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Details {
     pub duration: Option<Duration>,
     pub loudness: Option<Loudness>,
+    pub encoding: Option<Encoding>,
+    /// "Artist - Title", what a plain download is named after.
+    pub label: Option<String>,
 }
 
-/// One `GET /Users/{userId}/Items` request, as its query parameters.
+/// One item listing request, as its query parameters.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Query(Vec<(&'static str, String)>);
 
@@ -63,7 +100,7 @@ impl Query {
         ])
     }
 
-    /// Whatever sits directly under `parent`: an album's tracks or a playlist's entries.
+    /// Whatever sits directly under `parent`, such as an album's tracks.
     fn children(parent: &str) -> Self {
         Self(vec![
             ("ParentId", parent.to_owned()),
@@ -84,6 +121,18 @@ impl Query {
 
     fn sorted(self, by: &str) -> Self {
         self.with("SortBy", by).with("SortOrder", "Ascending")
+    }
+
+    fn newest(self, by: &str) -> Self {
+        self.with("SortBy", by).with("SortOrder", "Descending")
+    }
+
+    fn favorites(self) -> Self {
+        self.with("Filters", "IsFavorite")
+    }
+
+    fn limit(self, limit: usize) -> Self {
+        self.with("Limit", limit.to_string())
     }
 
     fn page(self, start: usize, limit: usize) -> Self {
@@ -121,6 +170,17 @@ pub async fn authenticate(
         .json()
         .await
         .context("the jellyfin sign-in answered something other than an account")?;
+    account(server, answer, username, device_id)
+}
+
+/// The account a sign-in answered with, as it is kept. Fails when the answer lacks the user id
+/// or the token, rather than keeping an account that cannot ask for anything.
+pub(crate) fn account(
+    server: &str,
+    answer: wire::Authentication,
+    username: &str,
+    device_id: &str,
+) -> Result<Credentials> {
     let user = answer.user.unwrap_or_default();
     let (Some(user_id), Some(token)) = (
         user.id.filter(|id| !id.is_empty()),
@@ -143,6 +203,7 @@ impl JellyfinClient {
         Self {
             http: reqwest::Client::new(),
             covers: Covers::new(&server),
+            session: Session::default(),
             server,
             user_id: credentials.user_id.clone(),
             username: credentials.username.clone(),
@@ -160,23 +221,50 @@ impl JellyfinClient {
         format!("{}@{}", self.user_id, self.server)
     }
 
-    /// Where a track's original file streams from: `GET /Audio/{itemId}/stream` with
-    /// `static=true`, so the server sends the file as it is rather than converting it. The token
-    /// goes in the header that `open_stream` sends, never in this url.
-    pub fn stream_url(&self, track_id: &str) -> String {
-        format!(
-            "{}/Audio/{}/stream?static=true",
-            self.server,
-            escape::component(track_id)
-        )
+    /// Where a track's audio streams from. With nothing to convert it is `GET
+    /// /Audio/{itemId}/stream` with `static=true`, the file as it is. A chosen format converts
+    /// to it at the chosen bitrate, and a bitrate alone goes through `universal`, which sends
+    /// the original when it fits under the cap. The token goes in the header that
+    /// `open_stream` sends, never in this url.
+    pub fn stream_url(&self, track_id: &str, transcode: Transcode) -> String {
+        let id = escape::component(track_id);
+        let bits = transcode.bitrate.map(|kbps| kbps * 1000);
+        match (transcode.codec, bits) {
+            (None, None) => format!("{}/Audio/{id}/stream?static=true", self.server),
+            (Some(codec), bits) => {
+                let (extension, name) = match codec {
+                    Codec::Mp3 => ("mp3", "mp3"),
+                    Codec::Opus => ("ogg", "opus"),
+                    Codec::Aac => ("aac", "aac"),
+                };
+                let mut url = format!(
+                    "{}/Audio/{id}/stream.{extension}?audioCodec={name}",
+                    self.server
+                );
+                if let Some(bits) = bits {
+                    url.push_str(&format!("&audioBitRate={bits}"));
+                }
+                url
+            }
+            (None, Some(bits)) => format!(
+                "{}/Audio/{id}/universal?userId={}&container={DECODABLE}&maxStreamingBitrate={bits}\
+                 &transcodingContainer=ogg&audioCodec=opus&transcodingProtocol=http",
+                self.server,
+                escape::component(&self.user_id),
+            ),
+        }
     }
 
-    /// Opens the audio of a track and answers once the response headers are in. The body is
-    /// still on its way.
-    pub async fn open_stream(&self, track_id: &str) -> Result<reqwest::Response> {
+    /// Opens the audio of a track, converted as `transcode` asks, and answers once the response
+    /// headers are in. The body is still on its way.
+    pub async fn open_stream(
+        &self,
+        track_id: &str,
+        transcode: Transcode,
+    ) -> Result<reqwest::Response> {
         let response = self
             .http
-            .get(self.stream_url(track_id))
+            .get(self.stream_url(track_id, transcode))
             .header(AUTHORIZATION, &self.header)
             .send()
             .await
@@ -184,20 +272,52 @@ impl JellyfinClient {
         checked(response, "the stream")
     }
 
-    /// The length and loudness the server records for a track. Jellyfin's normalization gain is
-    /// measured against -18 LUFS, the same reference as ReplayGain, so it reads as one.
+    /// The length, loudness and encoding the server records for a track. Jellyfin's
+    /// normalization gain is measured against -18 LUFS, the same reference as ReplayGain, so it
+    /// reads as one.
     pub async fn details(&self, track_id: &str) -> Details {
-        let Ok(Some(item)) = self.item(track_id).await else {
+        let query = Query::ids(track_id).with("Fields", TRACK_FIELDS);
+        let Ok(Some(item)) = self
+            .items(&query)
+            .await
+            .map(|found| found.items.into_iter().next())
+        else {
             return Details::default();
         };
+        let title = item.name.clone().unwrap_or_default();
+        let label = match item.artists.first().map(|artist| artist.trim()) {
+            Some(artist) if !artist.is_empty() => format!("{artist} - {}", title.trim()),
+            _ => title.trim().to_owned(),
+        };
         Details {
-            duration: item
-                .run_time_ticks
-                .map(|ticks| Duration::from_micros(ticks / 10)),
+            duration: item.run_time_ticks.map(wire::ticks),
             loudness: item
                 .normalization_gain
                 .map(|gain| Loudness::replay_gain(gain, None)),
+            encoding: item.encoding(),
+            label: Some(label),
         }
+    }
+
+    /// The lyrics the server keeps for a track, from a sidecar file, the file's tags or a
+    /// lyrics plugin. A track with none answers 404, which reads as `None`.
+    pub(crate) async fn lyrics(&self, track_id: &str) -> Result<Option<wire::LyricsAnswer>> {
+        let path = format!("/Audio/{}/Lyrics", escape::component(track_id));
+        let response = self
+            .http
+            .get(format!("{}{path}", self.server))
+            .header(AUTHORIZATION, &self.header)
+            .send()
+            .await
+            .map_err(lost)?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let answer = checked(response, &path)?
+            .json()
+            .await
+            .context("cannot read the jellyfin lyrics")?;
+        Ok(Some(answer))
     }
 
     /// Sends a `GET` with the token and reads the json it answers with.
@@ -216,25 +336,53 @@ impl JellyfinClient {
             .with_context(|| format!("cannot read what jellyfin answered for {path}"))
     }
 
-    /// One page of `GET /Users/{userId}/Items`.
-    pub(crate) async fn items(&self, query: &Query) -> Result<Items> {
-        let path = format!("/Users/{}/Items", escape::component(&self.user_id));
-        self.get(&path, query).await
+    /// Sends a request that changes something, with an optional json body, and reads nothing
+    /// back.
+    async fn send(
+        &self,
+        method: Method,
+        path: &str,
+        query: &Query,
+        body: Option<serde_json::Value>,
+    ) -> Result<reqwest::Response> {
+        let mut request = self
+            .http
+            .request(method, format!("{}{path}", self.server))
+            .query(&query.0)
+            .header(AUTHORIZATION, &self.header);
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        checked(request.send().await.map_err(lost)?, path)
     }
 
-    /// Every item a query matches, a page at a time, as they arrive. The first page tells how
-    /// many there are, and the listing ends at that count or at the first short page.
-    pub(crate) fn pages<T, F>(&self, query: Query, convert: F) -> Pages<T>
+    /// The user id every per-user listing is asked for.
+    fn user(&self) -> Query {
+        Query::default().with("userId", self.user_id.clone())
+    }
+
+    /// One page of `GET /Items` for the signed-in user.
+    pub(crate) async fn items(&self, query: &Query) -> Result<Items> {
+        let query = query.clone().with("userId", self.user_id.clone());
+        self.get("/Items", &query).await
+    }
+
+    /// Every item a query matches on `path`, a page at a time, as they arrive. The first page
+    /// tells how many there are, and the listing ends at that count or at the first short page.
+    fn pages_of<T, F>(&self, path: &'static str, query: Query, convert: F) -> Pages<T>
     where
         T: Send + 'static,
         F: Fn(&Covers, Item) -> Option<T> + Send + 'static,
     {
         let (sender, receiver) = tokio::sync::mpsc::channel(2);
         let client = self.clone();
+        let query = query.with("userId", self.user_id.clone());
         tokio::spawn(async move {
             let mut start = 0;
             loop {
-                let page = client.items(&query.clone().page(start, LIBRARY_PAGE)).await;
+                let page: Result<Items> = client
+                    .get(path, &query.clone().page(start, LIBRARY_PAGE))
+                    .await;
                 let page = match page {
                     Ok(page) => page,
                     Err(error) => {
@@ -262,13 +410,17 @@ impl JellyfinClient {
         receiver
     }
 
-    /// Every item a query matches, gathered from all of its pages.
-    async fn all<T, F>(&self, query: Query, convert: F) -> Result<Vec<T>>
+    /// Every item of `GET /Items` a query matches, a page at a time.
+    pub(crate) fn pages<T, F>(&self, query: Query, convert: F) -> Pages<T>
     where
         T: Send + 'static,
         F: Fn(&Covers, Item) -> Option<T> + Send + 'static,
     {
-        let mut pages = self.pages(query, convert);
+        self.pages_of("/Items", query, convert)
+    }
+
+    /// Every item a paged listing holds, gathered from all of its pages.
+    async fn gather<T: Send + 'static>(mut pages: Pages<T>) -> Result<Vec<T>> {
         let mut all = Vec::new();
         while let Some(page) = pages.recv().await {
             all.extend(page?.items);
@@ -276,42 +428,232 @@ impl JellyfinClient {
         Ok(all)
     }
 
+    /// Every item of `GET /Items` a query matches, gathered from all of its pages.
+    async fn all<T, F>(&self, query: Query, convert: F) -> Result<Vec<T>>
+    where
+        T: Send + 'static,
+        F: Fn(&Covers, Item) -> Option<T> + Send + 'static,
+    {
+        Self::gather(self.pages(query, convert)).await
+    }
+
+    /// A short list of items of `GET /Items`, in one request.
+    async fn list(&self, query: Query) -> Result<Vec<Item>> {
+        Ok(self.items(&query).await?.items)
+    }
+
     /// One item by its id, or `None` when the server knows no such item for this user.
     async fn item(&self, id: &str) -> Result<Option<Item>> {
         Ok(self.items(&Query::ids(id)).await?.items.into_iter().next())
     }
 
-    /// The tracks directly under an album or playlist, in the order the server keeps them, or
-    /// in disc and track order when `sort` asks for it.
-    async fn tracks_under(&self, parent: &str, sort: bool) -> Result<Vec<Track>> {
-        let query = match sort {
-            true => Query::children(parent).sorted("ParentIndexNumber,IndexNumber,SortName"),
-            false => Query::children(parent),
-        };
-        self.all(query, |covers, item| {
-            item.is_audio().then(|| covers.track(item))
-        })
+    /// One item with extra fields, which must exist.
+    async fn item_with(&self, id: &str, fields: &str, what: &str) -> Result<Item> {
+        self.items(&Query::ids(id).with("Fields", fields))
+            .await
+            .with_context(|| format!("cannot load the {what} {id}"))?
+            .items
+            .into_iter()
+            .next()
+            .with_context(|| format!("jellyfin has no {what} {id}"))
+    }
+
+    /// The tracks of an album in disc and track order.
+    async fn album_songs(&self, album: &str) -> Result<Vec<Track>> {
+        self.all(
+            Query::children(album).sorted(ALBUM_ORDER),
+            |covers, item| item.is_audio().then(|| covers.track(item)),
+        )
         .await
+    }
+
+    /// The entries of a playlist in the playlist's own order. Jellyfin dates an entry by when its
+    /// file joined the library rather than the playlist, so the entries carry no date.
+    async fn playlist_entries(&self, playlist: &str) -> Result<Vec<Item>> {
+        let path = format!("/Playlists/{}/Items", escape::component(playlist));
+        let found: Items = self.get(&path, &self.user().with("Fields", FIELDS)).await?;
+        Ok(found
+            .items
+            .into_iter()
+            .filter(Item::is_audio)
+            .map(|mut item| {
+                item.date_created = None;
+                item
+            })
+            .collect())
+    }
+
+    /// Who may change a playlist: the owner and any user it is shared with for editing. A
+    /// playlist the server will not say anything about is read-only to this account.
+    async fn playlist_rights(&self, mut playlist: Playlist) -> Playlist {
+        let id = escape::component(&playlist.id);
+        let user = escape::component(&self.user_id);
+        let (info_path, permission_path) = (
+            format!("/Playlists/{id}"),
+            format!("/Playlists/{id}/Users/{user}"),
+        );
+        let none = Query::default();
+        let (info, permission) = tokio::join!(
+            self.get::<PlaylistInfo>(&info_path, &none),
+            self.get::<Permission>(&permission_path, &none),
+        );
+        let info = info.unwrap_or_default();
+        let editable = permission.is_ok_and(|permission| permission.can_edit);
+        let shared = info
+            .shares
+            .iter()
+            .any(|share| share.user_id.as_deref() == Some(self.user_id.as_str()));
+        playlist.public = info.open_access;
+        playlist.owned = editable && !shared;
+        playlist.collaborative = editable && shared;
+        // Jellyfin has no user pages to link an owner to, so the owner is a name alone.
+        if playlist.owned {
+            playlist.owner = self.username.clone();
+        }
+        playlist
     }
 
     /// Items of one kind whose names match `query`, by the server's own search.
     async fn search_kind(&self, kind: &str, query: &str, limit: usize) -> Result<Vec<Item>> {
-        let found = self
-            .items(
-                &Query::kind(kind)
-                    .with("SearchTerm", query)
-                    .with("Limit", limit.to_string()),
-            )
+        self.list(Query::kind(kind).with("SearchTerm", query).limit(limit))
             .await
-            .with_context(|| format!("cannot search jellyfin for {}", kind.to_lowercase()))?;
-        Ok(found.items)
+            .with_context(|| format!("cannot search jellyfin for {}", kind.to_lowercase()))
+    }
+
+    /// Marks an item a favorite of the user's, or takes the mark off.
+    async fn favorite(&self, id: &str, favorite: bool) -> Result<()> {
+        let method = match favorite {
+            true => Method::POST,
+            false => Method::DELETE,
+        };
+        let path = format!("/UserFavoriteItems/{}", escape::component(id));
+        self.send(method, &path, &self.user(), None)
+            .await
+            .with_context(|| format!("cannot change the favorite mark of {id}"))?;
+        Ok(())
+    }
+
+    /// The album artists of the library, which is what Jellyfin's own client lists as artists.
+    fn album_artists(&self, query: Query) -> Pages<SavedArtist> {
+        self.pages_of("/Artists/AlbumArtists", query, |covers, item| {
+            Some(covers.artist(item))
+        })
+    }
+
+    /// Albums an artist is credited with, by album artist or as a contributor.
+    async fn albums_by(&self, key: &'static str, artist_id: &str) -> Result<Vec<Album>> {
+        self.all(
+            Query::kind("MusicAlbum")
+                .with(key, artist_id)
+                .with("Fields", ALBUM_FIELDS)
+                .newest("ProductionYear,PremiereDate,SortName"),
+            |covers, item| Some(covers.album(item)),
+        )
+        .await
+    }
+
+    /// The artist's songs the user plays most, ranked by the server's play counts.
+    async fn top_songs(&self, artist_id: &str) -> Result<Vec<Track>> {
+        let found = self
+            .list(
+                Query::kind("Audio")
+                    .with("ArtistIds", artist_id)
+                    .newest("PlayCount,CommunityRating,SortName")
+                    .limit(TOP_TRACKS),
+            )
+            .await?;
+        Ok(found
+            .into_iter()
+            .map(|item| self.covers.track(item))
+            .collect())
+    }
+
+    /// The artists the server finds similar, from shared genres and tags.
+    async fn similar_artists(&self, artist_id: &str) -> Result<Vec<SavedArtist>> {
+        let path = format!("/Artists/{}/Similar", escape::component(artist_id));
+        let found: Items = self.get(&path, &self.user().limit(SUGGESTIONS + 1)).await?;
+        Ok(found
+            .items
+            .into_iter()
+            .map(|item| self.covers.artist(item))
+            .filter(|artist| !wire::is_various(&artist.name))
+            .take(SUGGESTIONS)
+            .collect())
+    }
+
+    /// The albums the server finds similar to one album.
+    async fn similar_albums(&self, album_id: &str) -> Result<Vec<Album>> {
+        let path = format!("/Items/{}/Similar", escape::component(album_id));
+        let found: Items = self.get(&path, &self.user().limit(SUGGESTIONS)).await?;
+        Ok(found
+            .items
+            .into_iter()
+            .map(|item| self.covers.album(item))
+            .collect())
+    }
+
+    /// The albums of `tracks`, once each and in the order their tracks come. Jellyfin marks an
+    /// album played only once every track of it is, so the albums of the most played songs are
+    /// what the user plays most.
+    async fn albums_of(&self, tracks: &[Track]) -> Vec<GenreItem> {
+        let mut ids: Vec<&str> = Vec::new();
+        for id in tracks.iter().filter_map(|track| track.album_id.as_deref()) {
+            if !ids.contains(&id) && ids.len() < HOME_SHELF {
+                ids.push(id);
+            }
+        }
+        if ids.is_empty() {
+            return Vec::new();
+        }
+        let found = self
+            .list(Query::ids(&ids.join(",")))
+            .await
+            .unwrap_or_default();
+        let mut albums: HashMap<String, Album> = found
+            .into_iter()
+            .map(|item| (item.id.clone(), self.covers.album(item)))
+            .collect();
+        ids.into_iter()
+            .filter_map(|id| albums.remove(id))
+            .map(GenreItem::Album)
+            .collect()
+    }
+
+    /// The newest albums in the library, by `GET /Items/Latest`.
+    async fn latest_albums(&self) -> Result<Vec<Album>> {
+        let found: Vec<Item> = self
+            .get(
+                "/Items/Latest",
+                &self
+                    .user()
+                    .with("IncludeItemTypes", "MusicAlbum")
+                    .limit(HOME_SHELF),
+            )
+            .await?;
+        Ok(found
+            .into_iter()
+            .map(|item| self.covers.album(item))
+            .collect())
     }
 }
 
 #[async_trait]
 impl MusicApi for JellyfinClient {
-    fn share_url(&self, _kind: MediaKind, _id: &str) -> Option<String> {
-        None
+    fn cover_at(&self, cover: &str, size: CoverSize) -> Option<String> {
+        self.covers.resized(cover, size)
+    }
+
+    fn cover_original(&self, cover: &str) -> Option<String> {
+        self.covers.resized(cover, CoverSize::Full)
+    }
+
+    /// The item's page in Jellyfin's web client on this server.
+    fn share_url(&self, _kind: MediaKind, id: &str) -> Option<String> {
+        Some(format!(
+            "{}/web/#/details?id={}",
+            self.server,
+            escape::component(id)
+        ))
     }
 
     /// Asks the server who the token belongs to, which is also how a stored sign-in is checked.
@@ -321,47 +663,78 @@ impl MusicApi for JellyfinClient {
             .await
             .context("cannot reach the jellyfin account")?;
         let name = user.name.unwrap_or_else(|| self.username.clone());
-        Ok(wire::profile(&self.user_id, &name))
+        let avatar = self
+            .covers
+            .avatar(&self.user_id, user.primary_image_tag.as_deref());
+        Ok(wire::profile(&self.user_id, &name, avatar))
     }
 
     async fn artist(&self, artist_id: &str) -> Result<Artist> {
-        let artist = self
-            .items(&Query::ids(artist_id).with("Fields", ARTIST_FIELDS))
-            .await
-            .with_context(|| format!("cannot load the artist {artist_id}"))?
-            .items
-            .into_iter()
-            .next()
-            .with_context(|| format!("jellyfin has no artist {artist_id}"))?;
-        let albums = self
-            .all(
-                Query::kind("MusicAlbum")
-                    .with("ArtistIds", artist_id)
-                    .sorted("ProductionYear,SortName"),
-                |covers, item| Some(covers.album(item)),
-            )
-            .await
-            .with_context(|| format!("cannot load the albums of {artist_id}"))?;
+        let (artist, albums, top) = tokio::join!(
+            self.item_with(artist_id, ARTIST_FIELDS, "artist"),
+            self.albums_by("AlbumArtistIds", artist_id),
+            self.top_songs(artist_id),
+        );
+        let artist = artist?;
+        let albums = albums.with_context(|| format!("cannot load the albums of {artist_id}"))?;
+        let top_tracks = top.unwrap_or_else(|error| {
+            log::warn!("jellyfin: cannot rank the songs of {artist_id}: {error:#}");
+            Vec::new()
+        });
         Ok(Artist {
             cover_large: self.covers.artist_large(&artist),
             biography: artist.overview.clone().filter(|bio| !bio.trim().is_empty()),
             name: artist.name.unwrap_or_default(),
             banner: None,
             monthly_listeners: None,
-            top_tracks: Vec::new(),
+            followers: None,
+            top_tracks,
             albums,
         })
     }
 
-    async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
-        let artist = self
-            .items(&Query::ids(artist_id).with("Fields", ARTIST_FIELDS))
-            .await
-            .with_context(|| format!("cannot load the artist {artist_id}"))?
-            .items
+    /// The albums the artist only guests on, apart from the ones credited to them.
+    async fn artist_catalogue(&self, artist_id: &str, _known: &[Track]) -> Result<ArtistCatalogue> {
+        let (own, guest) = tokio::join!(
+            self.albums_by("AlbumArtistIds", artist_id),
+            self.albums_by("ContributingArtistIds", artist_id),
+        );
+        let own = own?;
+        let mine: HashSet<String> = own.iter().map(|album| album.id.clone()).collect();
+        let appears_on = guest
+            .unwrap_or_default()
             .into_iter()
-            .next()
-            .with_context(|| format!("jellyfin has no artist {artist_id}"))?;
+            .filter(|album| !mine.contains(&album.id))
+            .collect();
+        Ok(ArtistCatalogue {
+            albums: Vec::new(),
+            top_tracks: Vec::new(),
+            appears_on,
+        })
+    }
+
+    /// Popular songs first, then every other song of the artist's albums, newest album first.
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        let (top, all) = tokio::join!(
+            self.top_songs(artist_id),
+            self.all(
+                Query::kind("Audio")
+                    .with("ArtistIds", artist_id)
+                    .newest("ProductionYear,Album")
+                    .with(
+                        "SortBy",
+                        "ProductionYear,Album,ParentIndexNumber,IndexNumber"
+                    ),
+                |covers, item| Some(covers.track(item)),
+            ),
+        );
+        let mut tracks = top.unwrap_or_default();
+        tracks.extend(all.with_context(|| format!("cannot load the songs of {artist_id}"))?);
+        Ok(crate::artist_songs(tracks, artist_id))
+    }
+
+    async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
+        let artist = self.item_with(artist_id, ARTIST_FIELDS, "artist").await?;
         Ok(ArtistProfile {
             cover_large: self.covers.artist_large(&artist),
             biography: artist.overview.filter(|bio| !bio.trim().is_empty()),
@@ -387,37 +760,39 @@ impl MusicApi for JellyfinClient {
             .collect())
     }
 
-    /// Favorites are left for a later version, so there are none to draw.
     async fn saved_tracks(&self) -> Result<Vec<Track>> {
-        Ok(Vec::new())
+        Self::gather(self.saved_tracks_paged().await?)
+            .await
+            .context("cannot load the favorite songs")
     }
 
-    async fn all_tracks(&self) -> Result<Vec<Track>> {
-        self.all(
-            Query::kind("Audio").sorted("AlbumArtist,Album,ParentIndexNumber,IndexNumber"),
-            |covers, item| Some(covers.track(item)),
-        )
-        .await
-        .context("cannot load the jellyfin songs")
-    }
-
-    async fn all_tracks_paged(&self) -> Result<Pages<Track>> {
+    async fn saved_tracks_paged(&self) -> Result<Pages<Track>> {
         Ok(self.pages(
-            Query::kind("Audio").sorted("AlbumArtist,Album,ParentIndexNumber,IndexNumber"),
+            Query::kind("Audio").favorites().sorted(SONG_ORDER),
             |covers, item| Some(covers.track(item)),
         ))
     }
 
-    async fn set_track_saved(&self, _track_id: &str, _saved: bool) -> Result<()> {
-        anyhow::bail!(READ_ONLY)
+    async fn all_tracks(&self) -> Result<Vec<Track>> {
+        Self::gather(self.all_tracks_paged().await?)
+            .await
+            .context("cannot load the jellyfin songs")
+    }
+
+    async fn all_tracks_paged(&self) -> Result<Pages<Track>> {
+        Ok(
+            self.pages(Query::kind("Audio").sorted(SONG_ORDER), |covers, item| {
+                Some(covers.track(item))
+            }),
+        )
+    }
+
+    async fn set_track_saved(&self, track_id: &str, saved: bool) -> Result<()> {
+        self.favorite(track_id, saved).await
     }
 
     async fn track(&self, track_id: &str) -> Result<Track> {
-        let item = self
-            .item(track_id)
-            .await
-            .with_context(|| format!("cannot load the song {track_id}"))?
-            .with_context(|| format!("jellyfin has no song {track_id}"))?;
+        let item = self.item_with(track_id, TRACK_FIELDS, "song").await?;
         Ok(self.covers.track(item))
     }
 
@@ -425,27 +800,101 @@ impl MusicApi for JellyfinClient {
         Ok(self.track(track_id).await?.playcount)
     }
 
+    /// Tells the server what plays, through the session reports every Jellyfin client sends.
+    /// The dashboard shows it as this device's now playing, and the server counts a song as
+    /// played when it stops.
+    async fn report(&self, track_id: &str, report: Report, position: Duration) -> Result<()> {
+        let client = self.clone();
+        let send: session::Sender = Arc::new(move |method, path, body| {
+            let client = client.clone();
+            Box::pin(async move {
+                client
+                    .send(method, path, &Query::default(), Some(body))
+                    .await
+                    .map(drop)
+            })
+        });
+        self.session
+            .report(send, track_id, report, position)
+            .await
+            .with_context(|| format!("cannot report {track_id} to jellyfin"))
+    }
+
+    /// Jellyfin counts a song as played when its session report stops, so a second count from
+    /// here would play every song twice. Nothing is sent.
+    async fn played(&self, _track_id: &str, _at: SystemTime) -> Result<()> {
+        Ok(())
+    }
+
+    async fn recently_played(&self) -> Result<Vec<Track>> {
+        let found = self
+            .list(
+                Query::kind("Audio")
+                    .with("Filters", "IsPlayed")
+                    .newest("DatePlayed")
+                    .limit(RECENT),
+            )
+            .await
+            .context("cannot load the recently played songs")?;
+        Ok(found
+            .into_iter()
+            .map(|item| self.covers.track(item))
+            .collect())
+    }
+
     async fn playlists(&self) -> Result<Vec<Playlist>> {
-        self.all(
-            Query::kind("Playlist")
-                .with("MediaTypes", "Audio")
-                .sorted("SortName"),
-            |covers, item| Some(covers.playlist(item)),
+        let listed = self
+            .all(
+                Query::kind("Playlist")
+                    .with("MediaTypes", "Audio")
+                    .sorted("SortName"),
+                |covers, item| Some(covers.playlist(item)),
+            )
+            .await
+            .context("cannot load the jellyfin playlists")?;
+        Ok(stream::iter(listed)
+            .map(|playlist| self.playlist_rights(playlist))
+            .buffered(PERMISSION_READS)
+            .collect()
+            .await)
+    }
+
+    async fn create_playlist(&self, name: &str) -> Result<String> {
+        let body = serde_json::json!({
+            "Name": name,
+            "UserId": self.user_id,
+            "MediaType": "Audio",
+            "IsPublic": false,
+        });
+        let created: wire::Created = self
+            .send(Method::POST, "/Playlists", &Query::default(), Some(body))
+            .await
+            .context("cannot create the playlist")?
+            .json()
+            .await
+            .context("cannot read the new playlist")?;
+        Ok(created.id)
+    }
+
+    async fn rename_playlist(&self, playlist_id: &str, name: &str) -> Result<()> {
+        let path = format!("/Playlists/{}", escape::component(playlist_id));
+        self.send(
+            Method::POST,
+            &path,
+            &Query::default(),
+            Some(serde_json::json!({ "Name": name })),
         )
         .await
-        .context("cannot load the jellyfin playlists")
+        .context("cannot rename the playlist")?;
+        Ok(())
     }
 
-    async fn create_playlist(&self, _name: &str) -> Result<String> {
-        anyhow::bail!(READ_ONLY)
-    }
-
-    async fn rename_playlist(&self, _playlist_id: &str, _name: &str) -> Result<()> {
-        anyhow::bail!(READ_ONLY)
-    }
-
-    async fn delete_playlist(&self, _playlist_id: &str) -> Result<()> {
-        anyhow::bail!(READ_ONLY)
+    async fn delete_playlist(&self, playlist_id: &str) -> Result<()> {
+        let path = format!("/Items/{}", escape::component(playlist_id));
+        self.send(Method::DELETE, &path, &Query::default(), None)
+            .await
+            .context("cannot delete the playlist")?;
+        Ok(())
     }
 
     async fn remove_playlist_from_library(&self, _playlist_id: &str) -> Result<()> {
@@ -456,29 +905,106 @@ impl MusicApi for JellyfinClient {
         Ok(())
     }
 
-    async fn set_playlist_public(&self, _playlist_id: &str, _public: bool) -> Result<()> {
-        anyhow::bail!(READ_ONLY)
+    /// A public playlist is open to every user of the server.
+    async fn set_playlist_public(&self, playlist_id: &str, public: bool) -> Result<()> {
+        let path = format!("/Playlists/{}", escape::component(playlist_id));
+        self.send(
+            Method::POST,
+            &path,
+            &Query::default(),
+            Some(serde_json::json!({ "IsPublic": public })),
+        )
+        .await
+        .context("cannot change the playlist visibility")?;
+        Ok(())
     }
 
-    async fn add_track_to_playlist(&self, _playlist_id: &str, _track_id: &str) -> Result<()> {
-        anyhow::bail!(READ_ONLY)
+    /// Uploads the picture as the playlist's primary image, base64 in the body as Jellyfin
+    /// takes it. Taking it off brings back the collage Jellyfin draws from the tracks.
+    async fn set_playlist_cover(&self, playlist_id: &str, image: Option<&[u8]>) -> Result<()> {
+        let path = format!("/Items/{}/Images/Primary", escape::component(playlist_id));
+        let url = format!("{}{path}", self.server);
+        let request = match image {
+            Some(image) => {
+                let jpeg = cover::square_jpeg(image, PLAYLIST_COVER)?;
+                self.http
+                    .post(url)
+                    .header(CONTENT_TYPE, "image/jpeg")
+                    .body(base64::engine::general_purpose::STANDARD.encode(jpeg))
+            }
+            None => self.http.delete(url),
+        };
+        let response = request
+            .header(AUTHORIZATION, &self.header)
+            .send()
+            .await
+            .map_err(lost)?;
+        checked(response, &path).context("cannot change the playlist cover")?;
+        Ok(())
     }
 
-    async fn remove_track_from_playlist(&self, _playlist_id: &str, _track_id: &str) -> Result<()> {
-        anyhow::bail!(READ_ONLY)
+    async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
+        self.add_tracks_to_playlist(playlist_id, &[track_id.to_owned()])
+            .await
+    }
+
+    async fn add_tracks_to_playlist(&self, playlist_id: &str, track_ids: &[String]) -> Result<()> {
+        if track_ids.is_empty() {
+            return Ok(());
+        }
+        let path = format!("/Playlists/{}/Items", escape::component(playlist_id));
+        self.send(
+            Method::POST,
+            &path,
+            &self.user().with("ids", track_ids.join(",")),
+            None,
+        )
+        .await
+        .context("cannot add to the playlist")?;
+        Ok(())
+    }
+
+    /// Removes the track by its entry in the playlist. Jellyfin names an entry after the track
+    /// it holds, so a track the playlist holds twice leaves it entirely.
+    async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
+        let entries = self
+            .playlist_entries(playlist_id)
+            .await
+            .context("cannot load the playlist")?;
+        let entry = entries
+            .iter()
+            .find(|item| item.id == track_id)
+            .and_then(|item| item.playlist_item_id.clone())
+            .unwrap_or_else(|| track_id.to_owned());
+        let path = format!("/Playlists/{}/Items", escape::component(playlist_id));
+        self.send(
+            Method::DELETE,
+            &path,
+            &Query::default().with("entryIds", entry),
+            None,
+        )
+        .await
+        .context("cannot remove the track from the playlist")?;
+        Ok(())
     }
 
     async fn saved_albums(&self) -> Result<Vec<Album>> {
-        Ok(Vec::new())
+        Self::gather(self.saved_albums_paged().await?)
+            .await
+            .context("cannot load the favorite albums")
+    }
+
+    async fn saved_albums_paged(&self) -> Result<Pages<Album>> {
+        Ok(self.pages(
+            Query::kind("MusicAlbum").favorites().sorted("SortName"),
+            |covers, item| Some(covers.album(item)),
+        ))
     }
 
     async fn all_albums(&self) -> Result<Vec<Album>> {
-        self.all(
-            Query::kind("MusicAlbum").sorted("SortName"),
-            |covers, item| Some(covers.album(item)),
-        )
-        .await
-        .context("cannot load the jellyfin albums")
+        Self::gather(self.all_albums_paged().await?)
+            .await
+            .context("cannot load the jellyfin albums")
     }
 
     async fn all_albums_paged(&self) -> Result<Pages<Album>> {
@@ -488,41 +1014,49 @@ impl MusicApi for JellyfinClient {
         ))
     }
 
-    async fn set_album_saved(&self, _album_id: &str, _saved: bool) -> Result<()> {
-        anyhow::bail!(READ_ONLY)
+    async fn set_album_saved(&self, album_id: &str, saved: bool) -> Result<()> {
+        self.favorite(album_id, saved).await
     }
 
     async fn saved_artists(&self) -> Result<Vec<SavedArtist>> {
-        Ok(Vec::new())
+        Self::gather(self.saved_artists_paged().await?)
+            .await
+            .context("cannot load the favorite artists")
     }
 
-    async fn all_artists(&self) -> Result<Vec<SavedArtist>> {
-        self.all(
-            Query::kind("MusicArtist").sorted("SortName"),
-            |covers, item| Some(covers.artist(item)),
-        )
-        .await
-        .context("cannot load the jellyfin artists")
-    }
-
-    async fn all_artists_paged(&self) -> Result<Pages<SavedArtist>> {
-        Ok(self.pages(
-            Query::kind("MusicArtist").sorted("SortName"),
+    /// Favorite artists come from every artist, not only album artists, since a favorite may
+    /// be one the user only heard as a guest.
+    async fn saved_artists_paged(&self) -> Result<Pages<SavedArtist>> {
+        Ok(self.pages_of(
+            "/Artists",
+            Query::default()
+                .with("isFavorite", "true")
+                .sorted("SortName"),
             |covers, item| Some(covers.artist(item)),
         ))
     }
 
-    async fn set_artist_saved(&self, _artist_id: &str, _saved: bool) -> Result<()> {
-        anyhow::bail!(READ_ONLY)
+    async fn all_artists(&self) -> Result<Vec<SavedArtist>> {
+        Self::gather(self.all_artists_paged().await?)
+            .await
+            .context("cannot load the jellyfin artists")
+    }
+
+    async fn all_artists_paged(&self) -> Result<Pages<SavedArtist>> {
+        Ok(self.album_artists(Query::default().sorted("SortName")))
+    }
+
+    async fn set_artist_saved(&self, artist_id: &str, saved: bool) -> Result<()> {
+        self.favorite(artist_id, saved).await
     }
 
     async fn album(&self, album_id: &str) -> Result<AlbumDetail> {
-        let (album, tracks) = tokio::join!(self.item(album_id), self.tracks_under(album_id, true));
-        let album = album
-            .with_context(|| format!("cannot load the album {album_id}"))?
-            .with_context(|| format!("jellyfin has no album {album_id}"))?;
+        let (album, tracks) = tokio::join!(
+            self.item_with(album_id, ALBUM_FIELDS, "album"),
+            self.album_songs(album_id)
+        );
         let tracks = tracks.with_context(|| format!("cannot load the songs of {album_id}"))?;
-        let mut album = self.covers.album(album);
+        let mut album = self.covers.album(album?);
         if album.track_count == 0 {
             album.track_count = tracks.len() as u32;
         }
@@ -530,21 +1064,62 @@ impl MusicApi for JellyfinClient {
     }
 
     async fn album_tracks(&self, album_id: &str) -> Result<Vec<Track>> {
-        self.tracks_under(album_id, true)
+        self.album_songs(album_id)
             .await
             .with_context(|| format!("cannot load the songs of {album_id}"))
     }
 
-    async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail> {
-        let (playlist, tracks) = tokio::join!(
-            self.item(playlist_id),
-            self.tracks_under(playlist_id, false)
+    /// More from the album's artist first, then what the server finds similar, and the
+    /// similar artists beside them.
+    async fn album_catalogue(
+        &self,
+        album_id: &str,
+        artist_id: Option<&str>,
+    ) -> Result<AlbumCatalogue> {
+        let (more_by, similar_albums, similar) = tokio::join!(
+            async {
+                match artist_id {
+                    Some(artist) => self.albums_by("AlbumArtistIds", artist).await,
+                    None => Ok(Vec::new()),
+                }
+            },
+            self.similar_albums(album_id),
+            async {
+                match artist_id {
+                    Some(artist) => self.similar_artists(artist).await,
+                    None => Ok(Vec::new()),
+                }
+            },
         );
+        if let (Err(error), Err(_)) = (&more_by, &similar_albums) {
+            return Err(anyhow::anyhow!("{error:#}").context("cannot read any recommendations"));
+        }
+        let mut seen = HashSet::from([album_id.to_owned()]);
+        let also_like = more_by
+            .unwrap_or_default()
+            .into_iter()
+            .chain(similar_albums.unwrap_or_default())
+            .filter(|album| seen.insert(album.id.clone()))
+            .take(SUGGESTIONS)
+            .collect();
+        Ok(AlbumCatalogue {
+            also_like,
+            similar: similar.unwrap_or_default(),
+        })
+    }
+
+    async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail> {
+        let (playlist, entries) =
+            tokio::join!(self.item(playlist_id), self.playlist_entries(playlist_id));
         let playlist = playlist
             .with_context(|| format!("cannot load the playlist {playlist_id}"))?
             .with_context(|| format!("jellyfin has no playlist {playlist_id}"))?;
-        let tracks = tracks.with_context(|| format!("cannot load the songs of {playlist_id}"))?;
-        let mut playlist = self.covers.playlist(playlist);
+        let tracks: Vec<Track> = entries
+            .with_context(|| format!("cannot load the songs of {playlist_id}"))?
+            .into_iter()
+            .map(|item| self.covers.track(item))
+            .collect();
+        let mut playlist = self.playlist_rights(self.covers.playlist(playlist)).await;
         playlist.track_count = tracks.len() as u32;
         if playlist.cover.is_none() {
             playlist.cover = tracks.iter().find_map(|track| track.cover.clone());
@@ -557,9 +1132,14 @@ impl MusicApi for JellyfinClient {
     }
 
     async fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>> {
-        self.tracks_under(playlist_id, false)
+        let entries = self
+            .playlist_entries(playlist_id)
             .await
-            .with_context(|| format!("cannot load the songs of {playlist_id}"))
+            .with_context(|| format!("cannot load the songs of {playlist_id}"))?;
+        Ok(entries
+            .into_iter()
+            .map(|item| self.covers.track(item))
+            .collect())
     }
 
     async fn playlist_covers(&self, playlist_id: &str, wanted: usize) -> Result<Vec<String>> {
@@ -567,13 +1147,30 @@ impl MusicApi for JellyfinClient {
         Ok(distinct_covers(&tracks, wanted))
     }
 
-    /// Stations are left for a later version, and the capability is off, so this is never asked.
+    /// Jellyfin's instant mix: songs that share the seed's genres, artists and album. It comes
+    /// in one list, so there is never a continuation.
     async fn track_radio(
         &self,
-        _track_id: &str,
+        track_id: &str,
         _from: Option<&str>,
     ) -> Result<(Vec<Track>, Option<String>)> {
-        Ok((Vec::new(), None))
+        let path = format!("/Items/{}/InstantMix", escape::component(track_id));
+        let found: Items = self
+            .get(
+                &path,
+                &self.user().with("Fields", FIELDS).limit(RADIO_COUNT),
+            )
+            .await
+            .context("cannot load the instant mix")?;
+        Ok((
+            found
+                .items
+                .into_iter()
+                .filter(|item| item.id != track_id)
+                .map(|item| self.covers.track(item))
+                .collect(),
+            None,
+        ))
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>> {
@@ -599,6 +1196,202 @@ impl MusicApi for JellyfinClient {
             .map(|item| self.covers.playlist(item))
             .collect())
     }
+
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        let found: Items = self
+            .get(
+                "/Artists",
+                &self.user().with("searchTerm", query).limit(SEARCH_OTHERS),
+            )
+            .await
+            .context("cannot search jellyfin for artists")?;
+        Ok(found
+            .items
+            .into_iter()
+            .map(|item| self.covers.artist(item))
+            .collect())
+    }
+
+    /// What the user played lately, songs picked from what they play most and at random, and
+    /// shelves of new, favorite and most played albums and their playlists.
+    async fn home(&self) -> Result<HomeFeed> {
+        let songs = |query: Query| async move {
+            self.list(query)
+                .await
+                .map(|items| {
+                    items
+                        .into_iter()
+                        .map(|item| self.covers.track(item))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        let albums = |query: Query| async move {
+            self.list(query)
+                .await
+                .map(|items| {
+                    items
+                        .into_iter()
+                        .map(|item| GenreItem::Album(self.covers.album(item)))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        let (recent, frequent, random, latest, favorites, playlists) = tokio::join!(
+            songs(
+                Query::kind("Audio")
+                    .with("Filters", "IsPlayed")
+                    .newest("DatePlayed")
+                    .limit(HOME_SHELF)
+            ),
+            songs(
+                Query::kind("Audio")
+                    .with("Filters", "IsPlayed")
+                    .newest("PlayCount")
+                    .limit(HOME_SONGS)
+            ),
+            songs(
+                Query::kind("Audio")
+                    .with("SortBy", "Random")
+                    .limit(HOME_SONGS)
+            ),
+            self.latest_albums(),
+            albums(
+                Query::kind("MusicAlbum")
+                    .favorites()
+                    .with("SortBy", "Random")
+                    .limit(HOME_SHELF)
+            ),
+            self.playlists(),
+        );
+        let most_played = self.albums_of(&frequent).await;
+        let mut picks: Vec<Track> = frequent.into_iter().take(HOME_SONGS / 2).collect();
+        let mut seen: HashSet<Option<String>> =
+            picks.iter().map(|track| track.id.clone()).collect();
+        picks.extend(
+            random
+                .into_iter()
+                .filter(|track| seen.insert(track.id.clone())),
+        );
+        picks.truncate(HOME_SONGS);
+        fastrand::shuffle(&mut picks);
+
+        let shelf = |title: &str, items: Vec<GenreItem>| {
+            (!items.is_empty()).then(|| GenreSection {
+                title: title.to_owned(),
+                items,
+            })
+        };
+        let latest = latest
+            .unwrap_or_default()
+            .into_iter()
+            .map(GenreItem::Album)
+            .collect();
+        let playlists = playlists
+            .unwrap_or_default()
+            .into_iter()
+            .take(HOME_SHELF)
+            .map(GenreItem::Playlist)
+            .collect();
+        let sections = [
+            shelf("home-recently-added", latest),
+            shelf("home-most-played", most_played),
+            shelf("home-favorite-albums", favorites),
+            shelf("home-playlists", playlists),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        Ok(HomeFeed {
+            listen_again: recent.into_iter().map(GenreItem::Track).collect(),
+            quick_picks: Some(picks),
+            sections,
+        })
+    }
+
+    /// The genres that hold songs. Jellyfin also lists genres it read for an artist from online
+    /// metadata, which have nothing in them to play.
+    async fn genres(&self) -> Result<Vec<Genre>> {
+        let found: Items = self
+            .get(
+                "/MusicGenres",
+                &self.user().with("Fields", "ItemCounts").sorted("SortName"),
+            )
+            .await
+            .context("cannot load the genres")?;
+        Ok(found
+            .items
+            .into_iter()
+            .filter(|item| item.song_count != Some(0))
+            .map(|item| self.covers.genre(item))
+            .collect())
+    }
+
+    /// The genre's albums, most played first, and a shelf of its songs to start from.
+    async fn genre(&self, genre_id: &str) -> Result<GenreDetail> {
+        let (genre, albums, songs) = tokio::join!(
+            self.item(genre_id),
+            self.list(
+                Query::kind("MusicAlbum")
+                    .with("GenreIds", genre_id)
+                    .newest("PlayCount,ProductionYear,SortName")
+                    .limit(SEARCH_TRACKS)
+            ),
+            self.list(
+                Query::kind("Audio")
+                    .with("GenreIds", genre_id)
+                    .with("SortBy", "Random")
+                    .limit(HOME_SHELF)
+            ),
+        );
+        let name = genre
+            .ok()
+            .flatten()
+            .and_then(|genre| genre.name)
+            .unwrap_or_else(|| genre_id.to_owned());
+        let albums: Vec<GenreItem> = albums
+            .with_context(|| format!("cannot load the genre {genre_id}"))?
+            .into_iter()
+            .map(|item| GenreItem::Album(self.covers.album(item)))
+            .collect();
+        let songs: Vec<GenreItem> = songs
+            .unwrap_or_default()
+            .into_iter()
+            .map(|item| GenreItem::Track(self.covers.track(item)))
+            .collect();
+        let sections = [
+            ("nav-albums".to_owned(), albums),
+            ("home-quick-picks".to_owned(), songs),
+        ]
+        .into_iter()
+        .filter(|(_, items)| !items.is_empty())
+        .map(|(title, items)| GenreSection { title, items })
+        .collect();
+        Ok(GenreDetail { name, sections })
+    }
+
+    /// The genre's own picture when it has one, else the cover of its most played album.
+    async fn genre_cover(&self, genre_id: &str) -> Result<Option<String>> {
+        if let Some(cover) = self
+            .item(genre_id)
+            .await?
+            .and_then(|genre| self.covers.genre(genre).cover)
+        {
+            return Ok(Some(cover));
+        }
+        let found = self
+            .list(
+                Query::kind("MusicAlbum")
+                    .with("GenreIds", genre_id)
+                    .newest("PlayCount")
+                    .limit(1),
+            )
+            .await
+            .with_context(|| format!("cannot load the genre {genre_id}"))?;
+        Ok(found
+            .into_iter()
+            .find_map(|item| self.covers.album(item).cover))
+    }
 }
 
 /// Passes a successful response on and turns any other into an error. A 401 is the server
@@ -621,8 +1414,8 @@ fn checked(response: reqwest::Response, what: &str) -> Result<reqwest::Response>
 
 /// The error for a request that never reached the server. Its wording is one the session
 /// reads as a lost connection, which the app offers to try again.
-fn lost(error: reqwest::Error) -> anyhow::Error {
-    anyhow::Error::new(error).context("could not reach the jellyfin server")
+pub(crate) fn lost(error: reqwest::Error) -> anyhow::Error {
+    anyhow::Error::new(error.without_url()).context("could not reach the jellyfin server")
 }
 
 #[cfg(test)]
@@ -885,7 +1678,7 @@ mod tests {
             artists[0].cover.as_deref(),
             Some(
                 format!(
-                    "{}/Items/a1/Images/Primary?maxWidth=300&maxHeight=300&tag=t1",
+                    "{}/Items/a1/Images/Primary?tag=t1&maxWidth=300&maxHeight=300",
                     mock.base
                 )
                 .as_str()
@@ -894,9 +1687,8 @@ mod tests {
         assert_eq!(artists[1].cover, None);
         let seen = mock.seen();
         assert_eq!(seen[0].method, "GET");
-        assert_eq!(seen[0].path, "/Users/user-1/Items");
-        assert_eq!(seen[0].query["IncludeItemTypes"], "MusicArtist");
-        assert_eq!(seen[0].query["Recursive"], "true");
+        assert_eq!(seen[0].path, "/Artists/AlbumArtists");
+        assert_eq!(seen[0].query["userId"], "user-1");
         assert_eq!(seen[0].query["StartIndex"], "0");
         assert_eq!(seen[0].query["Limit"], LIBRARY_PAGE.to_string());
         assert!(seen[0].authorization.contains("Token=\"secret-token\""));
@@ -1026,7 +1818,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_artist_lists_its_albums_by_artist_id() {
+    async fn an_artist_lists_the_albums_credited_to_it() {
         crypto();
         let mock = Mock::start(|seen| match seen.query.contains_key("Ids") {
             true => (
@@ -1051,9 +1843,9 @@ mod tests {
         let albums = mock
             .seen()
             .into_iter()
-            .find(|seen| seen.query.contains_key("ArtistIds"))
+            .find(|seen| seen.query.contains_key("AlbumArtistIds"))
             .unwrap();
-        assert_eq!(albums.query["ArtistIds"], "a1");
+        assert_eq!(albums.query["AlbumArtistIds"], "a1");
         assert_eq!(albums.query["IncludeItemTypes"], "MusicAlbum");
         assert_eq!(albums.query["Recursive"], "true");
     }
@@ -1124,8 +1916,11 @@ mod tests {
         let mock = Mock::start(|_| (200, "audio".to_owned())).await;
         let client = mock.client();
 
-        let url = client.stream_url("t 1");
-        let response = client.open_stream("t1").await.unwrap();
+        let url = client.stream_url("t 1", Transcode::default());
+        let response = client
+            .open_stream("t1", Transcode::default())
+            .await
+            .unwrap();
 
         assert_eq!(url, format!("{}/Audio/t%201/stream?static=true", mock.base));
         assert!(!url.contains("secret-token"));
