@@ -13,8 +13,8 @@ use i18n::t;
 use music::connect::{Jam, JamMember};
 use state::{Devices, Outcome, Sonora, Toasts};
 use ui::{
-    ActiveTheme as _, Avatar, Button, Dismiss, FORM_CONTEXT, Input, Modal, Qr, Submit, Text, Theme,
-    single_line, snapped,
+    ActiveTheme as _, Avatar, Button, Dismiss, FORM_CONTEXT, Field, Form, Input, Modal, Qr, Submit,
+    Text, Theme, single_line, snapped,
 };
 
 /// The side of the Jam's QR code. It does not scale with the theme, since a code has to stay a
@@ -241,12 +241,8 @@ impl Render for JamJoin {
                     .w(theme.metrics.cover * JOIN_WIDTH)
                     .detail(t!("devices-jam-join-detail"))
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(div().flex_1().min_w_0().child(self.link.clone()))
-                            .child(
+                        Form::new("jam-join-form").field(
+                            Field::new(&self.link, cx).end(
                                 // as tall as the field beside it, so the two read as one row
                                 Button::new("jam-paste")
                                     .secondary()
@@ -265,6 +261,7 @@ impl Render for JamJoin {
                                         });
                                     }),
                             ),
+                        ),
                     )
                     .action(
                         Button::new("cancel-jam-join")

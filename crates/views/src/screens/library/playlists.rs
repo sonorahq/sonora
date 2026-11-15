@@ -5,10 +5,13 @@ use gpui::{AnyElement, App, Entity, TextAlign};
 use i18n::t;
 use music::Playlist;
 use router::Destination;
-use state::{Collection, Library, LibraryPart, Network, Origin, Playback, Shelf, Sonora};
+use state::{
+    Collection, Library, LibraryPart, LibraryState, Network, Origin, Playback, Shelf, Sonora,
+};
 use ui::rank::{ESSENTIAL, HANDY, NICE, SPARE};
 use ui::{Cell, ColumnSpec, Menu, Pin, TableSource, Width};
 
+use crate::shared::blend::{self, Joined, Reach};
 use crate::shared::cells::{self, DATE, NUMBER, TRAILING};
 use crate::shared::menus::playlist_menu;
 use crate::shared::pins::Pinned as _;
@@ -73,25 +76,27 @@ pub(super) const COLUMNS: &[ColumnSpec<PlaylistField>] =
 pub(super) struct PlaylistSource {
     library: Entity<Library>,
     playback: Entity<Playback>,
-    shelf: Shelf,
     owned: bool,
     /// Keep only playlists that were downloaded whole.
     downloaded: bool,
+    /// The shelf the Local only or Streaming only filter keeps the playlists to.
+    reach: Reach,
 }
 
 impl PlaylistSource {
-    pub(super) fn shelved(
-        library: Entity<Library>,
-        playback: Entity<Playback>,
-        shelf: Shelf,
-    ) -> Self {
+    pub(super) fn shelved(library: Entity<Library>, playback: Entity<Playback>) -> Self {
         Self {
             library,
             playback,
-            shelf,
             owned: false,
             downloaded: false,
+            reach: Reach::default(),
         }
+    }
+
+    /// Whether the page badges its local playlists, see `Reach::marks_local`.
+    pub(super) fn marks_local(&self, cx: &App) -> bool {
+        self.reach.marks_local(self.playlists(cx).mixed())
     }
 
     fn index_cell(&self, cell: &Cell<PlaylistField>, playlist: &Playlist, cx: &App) -> AnyElement {
@@ -108,8 +113,21 @@ impl PlaylistSource {
         self.playlists(cx).get(row).cloned()
     }
 
-    fn playlists<'a>(&self, cx: &'a App) -> &'a [Playlist] {
-        self.library.read(cx).state(self.shelf).playlists()
+    /// The playlists of both shelves, the streaming ones first.
+    fn playlists<'a>(&self, cx: &'a App) -> Joined<'a, Playlist> {
+        blend::joined(self.library.read(cx), LibraryState::playlists)
+    }
+
+    /// Whether offline mode keeps every playlist to its downloads, which holds only while there
+    /// are no local ones.
+    fn downloads_only(&self, cx: &App) -> bool {
+        Network::downloads_only(Shelf::Streaming, cx)
+            && self
+                .library
+                .read(cx)
+                .state(Shelf::Local)
+                .playlists()
+                .is_empty()
     }
 }
 
@@ -127,7 +145,8 @@ impl TableSource for PlaylistSource {
     fn matches(&self, row: usize, query: &str, cx: &App) -> bool {
         self.playlists(cx).get(row).is_some_and(|playlist| {
             (!self.owned || playlist.owned)
-                && (!(self.downloaded || Network::downloads_only(self.shelf, cx))
+                && self.reach.keeps(&playlist.id)
+                && (!(self.downloaded || Network::downloads_only(Shelf::of(&playlist.id), cx))
                     || downloaded(&playlist.id, cx))
                 && (holds(&playlist.name, query) || holds(&playlist.owner, query))
         })
@@ -141,17 +160,21 @@ impl TableSource for PlaylistSource {
         })];
         // Offline mode already keeps the shelf to its downloads, so the filter would do nothing.
         let offered = self.downloaded || !Sonora::global(cx).downloads.read(cx).is_empty();
-        if offered && !Network::downloads_only(self.shelf, cx) {
+        if offered && !self.downloads_only(cx) {
             axes.push(Filter::Flag(FlagAxis {
                 key: "filter-downloaded",
                 label: t!("filter-downloaded"),
                 on: self.downloaded,
             }));
         }
+        axes.extend(self.reach.axes(self.playlists(cx).mixed()));
         axes
     }
 
     fn filter(&mut self, change: FilterChange, _cx: &App) -> bool {
+        if self.reach.filter(&change) {
+            return true;
+        }
         match change {
             FilterChange::Flag("filter-owned", value) => {
                 self.owned = value;
@@ -164,6 +187,7 @@ impl TableSource for PlaylistSource {
             FilterChange::Reset => {
                 self.owned = false;
                 self.downloaded = false;
+                self.reach = Reach::default();
                 true
             }
             _ => false,
@@ -171,7 +195,7 @@ impl TableSource for PlaylistSource {
     }
 
     fn filtered(&self, _cx: &App) -> bool {
-        self.owned || self.downloaded
+        self.owned || self.downloaded || self.reach.active()
     }
 
     fn playing(&self, row: usize, cx: &App) -> bool {
@@ -182,9 +206,7 @@ impl TableSource for PlaylistSource {
     }
 
     fn is_loading(&self, cx: &App) -> bool {
-        self.library
-            .read(cx)
-            .waiting(self.shelf, LibraryPart::Playlists, cx)
+        blend::waiting(self.library.read(cx), LibraryPart::Playlists, cx)
     }
 
     fn pin(&self, row: usize, cx: &App) -> Option<Pin> {
@@ -217,7 +239,12 @@ impl TableSource for PlaylistSource {
 
         match cell.field {
             PlaylistField::Cover => cells::artwork(&cell, playlist.cover.clone()),
-            PlaylistField::Name => cells::dim(&cell, playlist.name.clone(), theme.foreground),
+            PlaylistField::Name => cells::name(
+                &cell,
+                playlist.name.clone(),
+                theme.foreground,
+                self.marks_local(cx) && Shelf::of(&playlist.id).local(),
+            ),
             PlaylistField::Owner => match playlist.owner_id.is_empty() {
                 true => cells::dim(&cell, playlist.owner.clone(), muted),
                 false => cells::link(

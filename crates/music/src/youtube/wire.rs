@@ -161,6 +161,7 @@ pub fn artist(source: ytmusic::Artist) -> Artist {
         banner: None,
         biography: source.description,
         monthly_listeners: None,
+        followers: None,
         top_tracks,
         albums,
     }

@@ -27,9 +27,9 @@ use crate::apple::recommend;
 use crate::apple::wire::{self, Resource};
 use crate::engine::Loudness;
 use crate::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Genre, GenreDetail,
-    GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Page, Pages, PinOutcome, PinTarget,
-    PinTargetKind, Playlist, PlaylistDetail, SavedArtist, Track, UserProfile, escape,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Found, Genre,
+    GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Page, Pages, PinOutcome,
+    PinTarget, PinTargetKind, Playlist, PlaylistDetail, SavedArtist, Track, UserProfile, escape,
 };
 
 /// The API the web player calls.
@@ -1236,6 +1236,56 @@ impl MusicApi for AppleClient {
             .iter()
             .filter_map(wire::playlist)
             .collect())
+    }
+
+    /// Every kind in one catalog request. Apple counts requests against the web player's token,
+    /// and four searches per query were enough to draw a 429 while typing.
+    async fn search_all(&self, query: &str) -> Found {
+        let limit = HITS.to_string();
+        let body = self
+            .get(
+                &self.catalog("/search"),
+                &[
+                    ("term", query),
+                    ("types", "songs,albums,playlists,artists"),
+                    ("limit", &limit),
+                    ("include[songs]", "artists,albums"),
+                    ALBUM_ARTISTS,
+                ],
+            )
+            .await;
+        let body = match body {
+            Ok(body) => body,
+            Err(error) => return Found::failed(error),
+        };
+        let answered: wire::Answer<wire::Search> = wire::answer(&body);
+        let results = &answered.results;
+        Found {
+            tracks: Ok(results
+                .songs
+                .rows()
+                .iter()
+                .filter_map(|row| wire::song(row, &self.root_genre))
+                .collect()),
+            albums: Ok(results
+                .albums
+                .rows()
+                .iter()
+                .filter_map(wire::album)
+                .collect()),
+            playlists: Ok(results
+                .playlists
+                .rows()
+                .iter()
+                .filter_map(wire::playlist)
+                .collect()),
+            artists: Ok(results
+                .artists
+                .rows()
+                .iter()
+                .filter_map(wire::similar_artist)
+                .collect()),
+        }
     }
 
     /// A catalog song, with its artists and album so both are somewhere to go.

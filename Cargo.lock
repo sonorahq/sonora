@@ -530,6 +530,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-tungstenite"
+version = "0.33.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3b465d66478a9bb84abed46695c44a58e34f3e8d0abfb2e958218d420969049"
+dependencies = [
+ "atomic-waker",
+ "futures-core",
+ "futures-io",
+ "futures-task",
+ "futures-util",
+ "log",
+ "pin-project-lite",
+ "tungstenite 0.28.0",
+]
+
+[[package]]
 name = "atomic"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1198,7 +1214,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "gpui_util",
  "indexmap",
@@ -1283,6 +1299,27 @@ dependencies = [
  "getrandom 0.2.17",
  "once_cell",
  "tiny-keccak",
+]
+
+[[package]]
+name = "const_format"
+version = "0.2.37"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3decb4d6965448659923544a634a0571ba44cede4e11ef15a5a317126840454"
+dependencies = [
+ "const_format_proc_macros",
+ "konst",
+]
+
+[[package]]
+name = "const_format_proc_macros"
+version = "0.2.37"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "941b570269a642506f08cb5b688c04bfa6cfd41a26f8bcdc49db8fd00c0ab659"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-xid",
 ]
 
 [[package]]
@@ -1792,7 +1829,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1829,6 +1866,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "dioxus-cli-config"
+version = "0.7.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "322d10f47effebd85ee0662a2cb083ff920d40dd6295a4afd8cfa4f9bc2e05c6"
+
+[[package]]
+name = "dioxus-core"
+version = "0.7.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b232228ada232c0adc151e41ebd9ef70cc04683db097fa0dc6015979fa01722"
+dependencies = [
+ "anyhow",
+ "const_format",
+ "dioxus-core-types",
+ "futures-channel",
+ "futures-util",
+ "generational-box",
+ "longest-increasing-subsequence",
+ "rustc-hash 2.1.3",
+ "rustversion",
+ "serde",
+ "slab",
+ "slotmap",
+ "subsecond",
+ "tracing",
+]
+
+[[package]]
+name = "dioxus-core-types"
+version = "0.7.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96007ed6cbad951dfed82d83c581aabd95bc591f351f5666d454ddbe7845b324"
+
+[[package]]
+name = "dioxus-devtools-types"
+version = "0.7.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dfd6f3475e38c93be245a664a9ce11679a8f2b99832620705cf7837f42aa39ce"
+dependencies = [
+ "dioxus-core",
+ "serde",
+ "subsecond-types",
+]
+
+[[package]]
 name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1855,7 +1937,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2113,7 +2195,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2536,6 +2618,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "generational-box"
+version = "0.7.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8b2dc9b873cd1a8adb80aa5dcef9a8205f781a8a313d5ffb867248cb3bcb764"
+dependencies = [
+ "parking_lot",
+ "tracing",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2680,18 +2772,21 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "accesskit",
  "anyhow",
  "async-channel",
  "async-task",
+ "async-tungstenite",
  "backtrace",
  "bitflags 2.13.2",
  "chrono",
  "collections",
  "ctor",
  "derive_more",
+ "dioxus-cli-config",
+ "dioxus-devtools-types",
  "embed-resource",
  "etagere",
  "futures",
@@ -2732,8 +2827,10 @@ dependencies = [
  "serde_json",
  "slotmap",
  "smallvec",
+ "smol",
  "spin 0.10.1",
  "strum",
+ "subsecond",
  "sum_tree",
  "taffy",
  "thiserror 2.0.21",
@@ -2750,7 +2847,7 @@ dependencies = [
 [[package]]
 name = "gpui_apple"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "anyhow",
  "async-task",
@@ -2791,7 +2888,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2835,7 +2932,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2874,7 +2971,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2885,7 +2982,7 @@ dependencies = [
 [[package]]
 name = "gpui_platform"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "anyhow",
  "gpui",
@@ -2897,7 +2994,7 @@ dependencies = [
 [[package]]
 name = "gpui_shared_string"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "schemars",
  "serde",
@@ -2907,7 +3004,7 @@ dependencies = [
 [[package]]
 name = "gpui_util"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "anyhow",
  "log",
@@ -2917,7 +3014,7 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2944,7 +3041,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -3202,7 +3299,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3877,6 +3974,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
+name = "konst"
+version = "0.2.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "128133ed7824fcd73d6e7b17957c5eb7bacb885649bd8c69708b2331a10bcefb"
+dependencies = [
+ "konst_macro_rules",
+]
+
+[[package]]
+name = "konst_macro_rules"
+version = "0.2.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4933f3f57a8e9d9da04db23fb153356ecaf00cbd14aee46279c33dc80925c37"
+
+[[package]]
 name = "kqueue"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4228,6 +4340,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "longest-increasing-subsequence"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3bd0dd2cd90571056fdb71f6275fada10131182f84899f4b2a916e565d81d86"
+
+[[package]]
 name = "loop9"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4383,6 +4501,15 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "memfd"
+version = "0.6.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57804b2c9b69967f1536a56f86297e367a33b19e98852ed624b84551cdbc0d90"
+dependencies = [
+ "rustix 1.1.6",
+]
 
 [[package]]
 name = "memmap2"
@@ -4573,6 +4700,7 @@ dependencies = [
  "serde",
  "serde-saphyr",
  "serde_json",
+ "sha1 0.11.0",
  "storage",
  "symphonia",
  "tempfile",
@@ -6107,7 +6235,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6429,7 +6557,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "derive_refineable",
 ]
@@ -6831,7 +6959,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6925,7 +7053,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7026,7 +7154,7 @@ dependencies = [
 [[package]]
 name = "scheduler"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "async-task",
  "backtrace",
@@ -7458,6 +7586,7 @@ version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bdd58c3c93c3d278ca835519292445cb4b0d4dc59ccfdf7ceadaab3f8aeb4038"
 dependencies = [
+ "serde",
  "version_check",
 ]
 
@@ -7730,6 +7859,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "subsecond"
+version = "0.7.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d350d5788fa94d560d92269266a50efc77b036bfca6675e420b64df7b3211f37"
+dependencies = [
+ "js-sys",
+ "libc",
+ "libloading",
+ "memfd",
+ "memmap2",
+ "serde",
+ "subsecond-types",
+ "thiserror 2.0.21",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "subsecond-types"
+version = "0.7.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dcf32d66269b5fbb8558334e8d22b657b2f7af0dd2ef56c231541099a862e464"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7738,7 +7895,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "heapless",
  "rayon",
@@ -8116,7 +8273,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.6",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8827,6 +8984,12 @@ name = "unicode-width"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca718471876992059f251e33aafc334346ada08042b7661dd1fe313a9bced557"
+
+[[package]]
+name = "unicode-xid"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
 name = "untrusted"
@@ -9637,7 +9800,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10056,7 +10219,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
 dependencies = [
  "cfg-if",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10620,7 +10783,7 @@ dependencies = [
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 dependencies = [
  "tracing",
  "ztracing_macro",
@@ -10629,7 +10792,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=8ddac49c8b5a079149b33b4581e03f74e05237e0#8ddac49c8b5a079149b33b4581e03f74e05237e0"
+source = "git+https://github.com/sonorahq/gpui?rev=3ec4f44657ed326f284bbf63ba77271529ab8a2f#3ec4f44657ed326f284bbf63ba77271529ab8a2f"
 
 [[package]]
 name = "zune-core"

@@ -1,9 +1,14 @@
 use std::path::{self, PathBuf};
 
 /// Whether a launch argument is an address rather than a path, so one no provider reads is
-/// never tried as a file.
+/// never tried as a file. Sonora's own scheme is case-insensitive and has no `//` when bare.
 pub fn is_address(item: &str) -> bool {
-    !item.starts_with("file://") && (item.contains("://") || item.starts_with("spotify:"))
+    !item.starts_with("file://")
+        && (item.contains("://")
+            || item.starts_with("spotify:")
+            || item
+                .get(.."sonora:".len())
+                .is_some_and(|scheme| scheme.eq_ignore_ascii_case("sonora:")))
 }
 
 /// An item as the running Sonora should read it. A path is made absolute against this
@@ -73,6 +78,14 @@ fn percent_decode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bare_sonora_link_is_an_address() {
+        assert!(is_address("sonora:"));
+        assert!(is_address("SONORA:"));
+        assert!(is_address("sonora://"));
+        assert!(!is_address("/music/sonora:"));
+    }
 
     #[test]
     fn a_percent_before_a_multibyte_letter_stays_in_the_path() {

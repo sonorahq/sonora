@@ -12,6 +12,7 @@ use ui::{
 };
 
 use crate::chrome::{Searchable, Toolbar, Tooled};
+use crate::shared::blend::Joined;
 use crate::shared::cells;
 use crate::shared::hero::{HeroMetaStrip, PageHero};
 use crate::shared::page;
@@ -20,8 +21,8 @@ use crate::shared::tracks::{HISTORY_COLUMNS, TrackSource, Tracks, drop_picked};
 struct HistoryTracks(Entity<History>);
 
 impl Tracks for HistoryTracks {
-    fn tracks<'a>(&self, cx: &'a App) -> &'a [Track] {
-        self.0.read(cx).tracks()
+    fn tracks<'a>(&self, cx: &'a App) -> Joined<'a, Track> {
+        self.0.read(cx).tracks().into()
     }
 
     fn is_loading(&self, cx: &App) -> bool {
@@ -66,6 +67,8 @@ impl HistoryView {
             TableState::new(TableDelegate::new(source, width, cx), cx).follow(scroll)
         });
 
+        let chrome = crate::chrome::Chrome::entity(cx);
+        cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
         cx.observe(&history, |this, _, cx| {
             this.table.rebuild(cx);
             cx.notify();
@@ -199,6 +202,7 @@ impl Render for HistoryView {
         let note = self.note(cx);
         let page = Scroller::new("history-page", &self.scrollbar)
             .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .px(crate::chrome::Chrome::margin(window, cx))
             .pt(inset)
             .pb(inset)
             .child(div().px(inset).child(self.header(cx)))

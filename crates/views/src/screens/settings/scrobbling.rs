@@ -3,7 +3,7 @@ use gpui::{AnyElement, App, Context, SharedString, div, px};
 use i18n::t;
 use music::scrobble::{Link, Secret};
 use state::ScrobbleState;
-use ui::{ActiveTheme as _, Button, Modal, Switch, Text};
+use ui::{ActiveTheme as _, Button, Form, Modal, Switch, Text};
 
 use super::{Group, SettingsView, Slot};
 
@@ -287,12 +287,11 @@ impl SettingsView {
         .w(px(560.))
         .detail(i18n::lookup(&format!("settings-{service}-detail"), None))
         .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(self.scrobble_first.clone())
-                .child(self.scrobble_second.clone()),
+            Form::new("settings-scrobble-form")
+                .field(ui::Field::new(&self.scrobble_first, cx))
+                .field(ui::Field::new(&self.scrobble_second, cx))
+                .on_submit(cx.listener(move |this, _, _, cx| this.link_scrobble(service, link, cx)))
+                .on_dismiss(cx.listener(|this, _, _, cx| this.close_scrobble(cx))),
         )
         .when_some(signup, |this, url| {
             this.action(

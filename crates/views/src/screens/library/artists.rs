@@ -6,10 +6,11 @@ use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis};
 use gpui::{AnyElement, App, Entity, SharedString};
 use i18n::t;
 use music::SavedArtist;
-use state::{Library, LibraryPart, Network, Origin, Playback, Shelf, Sonora};
+use state::{Library, LibraryPart, LibraryState, Network, Origin, Playback, Shelf, Sonora};
 use ui::rank::{ESSENTIAL, HANDY};
 use ui::{Cell, ColumnSpec, Menu, Pin, Sort, TableSource, Width};
 
+use crate::shared::blend::{self, Joined, Reach};
 use crate::shared::cells::{self, DATE, NUMBER};
 use crate::shared::menus::artist_menu;
 use crate::shared::pins::Pinned as _;
@@ -53,12 +54,13 @@ pub(super) const COLUMNS: &[ColumnSpec<ArtistField>] = &[INDEX, COVER, NAME, ADD
 pub(super) struct ArtistSource {
     library: Entity<Library>,
     playback: Entity<Playback>,
-    shelf: Shelf,
     starred: bool,
+    /// The shelf the Local only or Streaming only filter keeps the artists to.
+    reach: Reach,
     heard: RefCell<Option<Heard>>,
 }
 
-/// The artists there is downloaded music of, worked out again only when the shelf's songs or the
+/// The artists there is downloaded music of, worked out again only when the library's songs or the
 /// downloads change in number.
 struct Heard {
     stamp: (usize, usize),
@@ -66,18 +68,19 @@ struct Heard {
 }
 
 impl ArtistSource {
-    pub(super) fn shelved(
-        library: Entity<Library>,
-        playback: Entity<Playback>,
-        shelf: Shelf,
-    ) -> Self {
+    pub(super) fn shelved(library: Entity<Library>, playback: Entity<Playback>) -> Self {
         Self {
             library,
             playback,
-            shelf,
             starred: false,
+            reach: Reach::default(),
             heard: RefCell::new(None),
         }
+    }
+
+    /// Whether the page badges its local artists, see `Reach::marks_local`.
+    pub(super) fn marks_local(&self, cx: &App) -> bool {
+        self.reach.marks_local(self.artists(cx).mixed())
     }
 
     fn index_cell(&self, cell: &Cell<ArtistField>, artist: &SavedArtist, cx: &App) -> AnyElement {
@@ -94,14 +97,15 @@ impl ArtistSource {
         self.artists(cx).get(row).cloned()
     }
 
-    fn artists<'a>(&self, cx: &'a App) -> &'a [SavedArtist] {
-        self.library.read(cx).state(self.shelf).artists()
+    /// The artists of both shelves, the streaming ones first.
+    fn artists<'a>(&self, cx: &'a App) -> Joined<'a, SavedArtist> {
+        blend::joined(self.library.read(cx), LibraryState::artists)
     }
 
     /// Whether there is downloaded music of an artist, on a downloaded album or playlist or in
-    /// a downloaded song of the shelf. This is what offline mode keeps the list to.
+    /// a downloaded song of the streaming shelf. This is what offline mode keeps its artists to.
     fn downloaded(&self, id: &str, cx: &App) -> bool {
-        let tracks = self.library.read(cx).state(self.shelf).tracks();
+        let tracks = self.library.read(cx).state(Shelf::Streaming).tracks();
         let downloads = Sonora::global(cx).downloads.read(cx);
         let stamp = (tracks.len(), downloads.len());
         let mut heard = self.heard.borrow_mut();
@@ -123,9 +127,13 @@ impl ArtistSource {
             .is_some_and(|heard| heard.artists.contains(id))
     }
 
-    /// Whether the shelf lists more than the favorites, so a favorites filter has something to do.
+    /// Whether a shelf with artists listed lists more than the favorites, so a favorites filter
+    /// has something to do.
     fn catalog(&self, cx: &App) -> bool {
-        self.library.read(cx).shape(self.shelf).is_catalog()
+        let library = self.library.read(cx);
+        [Shelf::Streaming, Shelf::Local].into_iter().any(|shelf| {
+            library.shape(shelf).is_catalog() && !library.state(shelf).artists().is_empty()
+        })
     }
 }
 
@@ -145,7 +153,12 @@ impl TableSource for ArtistSource {
             if self.starred && !self.library.read(cx).saved_artist(&artist.id) {
                 return false;
             }
-            if Network::downloads_only(self.shelf, cx) && !self.downloaded(&artist.id, cx) {
+            if !self.reach.keeps(&artist.id) {
+                return false;
+            }
+            if Network::downloads_only(Shelf::of(&artist.id), cx)
+                && !self.downloaded(&artist.id, cx)
+            {
                 return false;
             }
             holds(&artist.name, query)
@@ -153,17 +166,22 @@ impl TableSource for ArtistSource {
     }
 
     fn filter_axes(&self, cx: &App) -> Vec<Filter> {
-        match self.catalog(cx) {
-            true => vec![Filter::Flag(FlagAxis {
+        let mut axes = Vec::new();
+        if self.catalog(cx) {
+            axes.push(Filter::Flag(FlagAxis {
                 key: "filter-favorites",
                 label: t!("filter-favorites"),
                 on: self.starred,
-            })],
-            false => Vec::new(),
+            }));
         }
+        axes.extend(self.reach.axes(self.artists(cx).mixed()));
+        axes
     }
 
     fn filter(&mut self, change: FilterChange, _cx: &App) -> bool {
+        if self.reach.filter(&change) {
+            return true;
+        }
         match change {
             FilterChange::Flag("filter-favorites", value) => {
                 self.starred = value;
@@ -171,6 +189,7 @@ impl TableSource for ArtistSource {
             }
             FilterChange::Reset => {
                 self.starred = false;
+                self.reach = Reach::default();
                 true
             }
             _ => false,
@@ -178,7 +197,7 @@ impl TableSource for ArtistSource {
     }
 
     fn filtered(&self, _cx: &App) -> bool {
-        self.starred
+        self.starred || self.reach.active()
     }
 
     fn playing(&self, row: usize, cx: &App) -> bool {
@@ -189,9 +208,7 @@ impl TableSource for ArtistSource {
     }
 
     fn is_loading(&self, cx: &App) -> bool {
-        self.library
-            .read(cx)
-            .waiting(self.shelf, LibraryPart::Artists, cx)
+        blend::waiting(self.library.read(cx), LibraryPart::Artists, cx)
     }
 
     fn pin(&self, row: usize, cx: &App) -> Option<Pin> {
@@ -225,7 +242,12 @@ impl TableSource for ArtistSource {
 
         match cell.field {
             ArtistField::Cover => cells::avatar(&cell, artist.cover.clone()),
-            ArtistField::Name => cells::dim(&cell, artist.name.clone(), theme.foreground),
+            ArtistField::Name => cells::name(
+                &cell,
+                artist.name.clone(),
+                theme.foreground,
+                self.marks_local(cx) && Shelf::of(&artist.id).local(),
+            ),
             ArtistField::AddedAt => cells::dim(&cell, cells::stamp(artist.added_at), muted),
             ArtistField::Index => cells::blank(&cell),
         }

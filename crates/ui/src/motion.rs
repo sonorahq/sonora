@@ -22,10 +22,6 @@ pub(crate) const ENTRANCE_ZOOM: f32 = 0.01;
 
 /// How long a hover highlight takes to fade out, before the listener's pace stretches it.
 const DIM: Duration = Duration::from_millis(100);
-/// How much of a lit row's fill the pointer alone brings up, so the row under the pointer
-/// reads as lighter than the one that marks where the app is.
-pub const LIT_HOVER: f32 = 0.5;
-
 /// How far a pressed control shrinks.
 pub const PRESS_SCALE: f32 = 0.96;
 /// How far a pressed card or tile shrinks; larger things move less.
@@ -802,6 +798,11 @@ impl Sprung {
     /// start of a motion that springs from there.
     pub fn jump(&mut self, position: f32) {
         *self = Self::at(position);
+    }
+
+    /// Moves where the spring stands by `delta`, keeping its velocity.
+    pub fn shift(&mut self, delta: f32) {
+        self.state.position += delta;
     }
 
     /// Steps the spring towards `target` on `config` and answers where it stands. It asks for the

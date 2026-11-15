@@ -16,7 +16,7 @@
 use std::time::Instant;
 
 use gpui::prelude::*;
-use gpui::{App, Context, Hsla, Pixels, Render, Rgba, Task, Window, div};
+use gpui::{App, Context, Hsla, Pixels, Render, Rgba, Task, Window, div, px};
 use state::Sonora;
 use ui::{ActiveTheme as _, CoverPalette, Theme};
 
@@ -35,6 +35,17 @@ const WASH: f32 = 0.8;
 /// stretched back over it. Nothing in it is sharper than a heavy blur, so the stretch does not show,
 /// and the shader runs on a sixteenth of the pixels.
 const FIELD_SHRINK: f32 = 4.;
+/// How many ticks of the shared 120 Hz clock pass between drift frames once the colours have
+/// settled, which makes 10 Hz. The brightest channel of the field moves about ten 8 bit steps a
+/// second, so a frame moves it by one step and the drift shows no stepping. Each drift frame
+/// redraws all of fullscreen, which is what an integrated GPU pays for.
+const DRIFT_TICKS: u32 = 12;
+/// How many ticks pass between frames while the colours still wash onto a new cover, which makes
+/// 30 Hz. The wash moves far faster than the drift and steps visibly at the drift's pace.
+const WASH_TICKS: u32 = 4;
+/// How close every channel of the painted colours has to sit to its target before the wash
+/// counts as done.
+const SETTLED: f32 = 1. / 255.;
 
 /// The flowing colour field. One sits behind the whole window in fullscreen, and a preview can
 /// hold another of its own made with `Ambient::framed`.
@@ -42,6 +53,9 @@ pub(crate) struct Ambient {
     started: Instant,
     stepped: Instant,
     painted: Option<[Hsla; COLORS]>,
+    /// Whether the painted colours are still easing toward the theme's, which keeps the faster
+    /// frame pace.
+    washing: bool,
     /// Whether a wait for the next drift frame is already running.
     pacing: Option<Task<()>>,
     /// The palette of the cover a framed field follows, `None` for the one behind the window.
@@ -68,6 +82,7 @@ impl Ambient {
             started: now,
             stepped: now,
             painted: None,
+            washing: false,
             pacing: None,
             framed: None,
         }
@@ -122,11 +137,17 @@ impl Ambient {
     }
 
     /// Schedules the next drift update without keeping display callbacks pending between updates.
+    /// It comes at the wash's pace while the colours still ease and at the drift's once they
+    /// settle, so `wash` has to run first in a frame.
     fn pace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.pacing.is_some() {
             return;
         }
-        let timer = super::animation::next(4, cx);
+        let ticks = match self.washing {
+            true => WASH_TICKS,
+            false => DRIFT_TICKS,
+        };
+        let timer = super::animation::next(ticks, cx);
         let handle = window.window_handle();
         self.pacing = Some(cx.spawn(async move |this, cx| {
             timer.await;
@@ -162,6 +183,7 @@ impl Ambient {
             }
             _ => target,
         };
+        self.washing = !settled(painted, target);
         self.painted = Some(painted);
         painted
     }
@@ -237,6 +259,7 @@ impl Render for Ambient {
         // or the setting of its own is enough to stop it.
         let animates =
             ui::motion::animates(cx) && Sonora::global(cx).settings.read(cx).ambient_motion();
+        let colors = self.wash(Self::colors(&theme), animates);
         let elapsed = match animates {
             true => {
                 self.pace(window, cx);
@@ -244,7 +267,6 @@ impl Render for Ambient {
             }
             false => 0.,
         };
-        let colors = self.wash(Self::colors(&theme), animates);
         // The field stands in for the page rather than sitting on it, so it carries the
         // window's own opacity and `Root` paints no background beneath it.
         let clarity = match theme.transparent {
@@ -275,13 +297,14 @@ impl Render for Ambient {
                 Some(_) => this.child(waves),
                 None => {
                     let viewport = window.viewport_size();
+                    let scale = window.scale_factor();
                     this.child(
                         div()
                             .absolute()
                             .top_0()
                             .left_0()
-                            .w((viewport.width / FIELD_SHRINK).ceil())
-                            .h((viewport.height / FIELD_SHRINK).ceil())
+                            .w(field_side(viewport.width, scale))
+                            .h(field_side(viewport.height, scale))
                             .layer_scale(FIELD_SHRINK)
                             .layer_scale_origin(gpui::point(0., 0.))
                             .child(waves.when_some(
@@ -334,6 +357,21 @@ fn shaded(color: Hsla) -> Hsla {
     })
 }
 
+/// Whether every channel of `painted` sits within `SETTLED` of `target`.
+fn settled(painted: [Hsla; COLORS], target: [Hsla; COLORS]) -> bool {
+    painted.iter().zip(target.iter()).all(|(painted, target)| {
+        let (painted, target) = (Rgba::from(*painted), Rgba::from(*target));
+        [
+            painted.r - target.r,
+            painted.g - target.g,
+            painted.b - target.b,
+            painted.a - target.a,
+        ]
+        .iter()
+        .all(|gap| gap.abs() <= SETTLED)
+    })
+}
+
 /// Straight-line blend between two colours through RGB, so a wash between two
 /// unrelated hues passes through grey rather than through every hue between
 /// them.
@@ -347,6 +385,14 @@ fn blend(from: Hsla, to: Hsla, delta: f32) -> Hsla {
         b: channel(from.b, to.b),
         a: channel(from.a, to.a),
     })
+}
+
+/// The logical length of one side of the shrunken field, a whole number of device pixels that
+/// reaches the window's own `side` once stretched by `FIELD_SHRINK`. A plain logical quarter can
+/// snap below that and leave a line of whatever lies behind the window along its bottom or right.
+fn field_side(side: Pixels, scale: f32) -> Pixels {
+    let device = (f32::from(side) * scale).round();
+    px((device / FIELD_SHRINK).ceil() / scale)
 }
 
 #[cfg(test)]
