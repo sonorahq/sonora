@@ -162,7 +162,6 @@ jobs:
     env:
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
-      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -240,19 +239,6 @@ jobs:
         if: always()
         run: sccache --show-stats
 
-      # A manual run checks the SignPath setup with the self-signed test certificate. Pushes skip
-      # it, since a test signature is worth nothing to anyone downloading the build. Like the
-      # upload below, a failure here must not turn the build red.
-      - name: sign the executable
-        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && env.SIGNPATH_API_TOKEN != ''
-        continue-on-error: true
-        uses: ./.github/actions/sign
-        with:
-          file: target/${{ matrix.target }}/release/sonora.exe
-          artifact: unsigned-exe-${{ matrix.target }}
-          policy: test-signing
-          api-token: ${{ env.SIGNPATH_API_TOKEN }}
-
       - name: stage the executable
         shell: bash
         env:
@@ -282,16 +268,6 @@ jobs:
           $env:SONORA_EXE = (Resolve-Path "target/$env:TARGET/release/sonora.exe").Path
           $env:SONORA_DIST = (Resolve-Path "dist").Path
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "scripts/windows/sonora.iss"
-
-      - name: sign the installer
-        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && env.SIGNPATH_API_TOKEN != ''
-        continue-on-error: true
-        uses: ./.github/actions/sign
-        with:
-          file: dist/${{ matrix.setup }}.exe
-          artifact: unsigned-setup-${{ matrix.target }}
-          policy: test-signing
-          api-token: ${{ env.SIGNPATH_API_TOKEN }}
 
       # A convenience binary, not a release artefact: GitHub's artifact service times out often
       # enough that it must not be what turns a green build red.
