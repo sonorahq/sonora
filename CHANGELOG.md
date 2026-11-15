@@ -28,6 +28,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Library pages that list both local and streaming music mark local files with a file icon beside their names.
 - Tidal artist pages show how many people follow the artist, beside the listener count.
 - See Sonora's similar tracks on your other Spotify devices under their recommended tracks, and Spotify's recommendations from another device apart from what is up next in Sonora.
+- See how much of the song is left on Sonora's taskbar button on Windows. The button fills as the song plays and turns yellow while it is paused.
 
 ### Fixed
 
