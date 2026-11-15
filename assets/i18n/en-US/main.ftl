@@ -1229,6 +1229,8 @@ settings-scan-progress = { $percent }%
 settings-scan-done = Done in { $seconds }s
 settings-version = Version
 settings-version-detail = The build of sonora you are running
+# A nightly's version followed by the shortened hash of the commit it was built from.
+settings-version-commit = { $version } ({ $commit })
 settings-license = License
 settings-license-detail = GNU General Public License version 3 or later
 settings-source = Source code
