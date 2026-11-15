@@ -27,6 +27,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `sonora mute` reads or changes playback mute and restores the previous volume when unmuted.
 - Rebind keyboard shortcuts under Settings, Keybinds, and give shuffle, repeat, the queue and lyrics shortcuts of their own.
 - Move between the fields of a dialog with Tab and Shift+Tab.
+- Up and Down change the volume, and Left and Right skip back or forward 5 seconds, unless a list, menu or text field is using the arrow keys.
 - Use Sonora in Korean.
 - Open a music folder in your file manager from Settings, Music folders.
 - Library pages that list both local and streaming music mark local files with a file icon beside their names.
