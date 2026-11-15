@@ -50,6 +50,8 @@ pub enum Value {
     Queue(QueueSnapshot),
     /// The lyrics of the current track as Sonora holds them, as `sonora lyrics` prints them.
     Lyrics(LyricsSnapshot),
+    /// Whether the current track is a favorite, as `sonora like` prints it.
+    Liked(bool),
 }
 
 /// At most this many lines of lyrics are reported, from the start, so a very long text never
@@ -325,6 +327,10 @@ pub enum Failure {
     Unsupported,
     /// No provider is signed in to read a link with.
     SignedOut,
+    /// There is no current track to control.
+    NoCurrentTrack,
+    /// The current track has no provider id that can be favorited.
+    MissingTrackId,
     /// A link belongs to another provider than the current one. Both are named.
     OtherProvider { link: String, current: String },
     /// No provider reads this link, or it points at nothing that can be queued.
@@ -441,6 +447,21 @@ mod tests {
             }
             other => panic!("expected a queue snapshot, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn favorite_requests_and_answers_keep_the_typed_shape() {
+        let request = Request::Like(Some(crate::commands::Switch::On));
+        let mut line = Vec::new();
+        send(&mut line, &request).unwrap();
+        let read: Request = receive(&mut BufReader::new(line.as_slice())).unwrap();
+        assert_eq!(read, request);
+
+        let reply = Reply::Value(Value::Liked(true));
+        let mut line = Vec::new();
+        send(&mut line, &reply).unwrap();
+        let read: Reply = receive(&mut BufReader::new(line.as_slice())).unwrap();
+        assert_eq!(read, reply);
     }
 
     #[test]

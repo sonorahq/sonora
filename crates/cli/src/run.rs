@@ -142,6 +142,10 @@ fn show(value: &Value) -> String {
         ),
         Value::Queue(queue) => show_queue(queue),
         Value::Lyrics(lyrics) => show_lyrics(lyrics),
+        Value::Liked(liked) => match liked {
+            true => "on".to_owned(),
+            false => "off".to_owned(),
+        },
         Value::Session(None) => String::new(),
         Value::Session(Some(session)) => format!(
             "{} on {}{}\n{}",
@@ -249,6 +253,7 @@ fn json(value: &Value) -> String {
         Value::Session(session) => serde_json::to_string(session),
         Value::Queue(queue) => serde_json::to_string(queue),
         Value::Lyrics(lyrics) => serde_json::to_string(lyrics),
+        Value::Liked(liked) => serde_json::to_string(liked),
     };
     printed.unwrap_or_default()
 }
@@ -297,6 +302,8 @@ fn describe(failure: &Failure) -> String {
         }
         Failure::Unsupported => "this command is not supported yet".to_owned(),
         Failure::SignedOut => "no provider is signed in".to_owned(),
+        Failure::NoCurrentTrack => "there is no current track".to_owned(),
+        Failure::MissingTrackId => "the current track has no provider id".to_owned(),
         Failure::OtherProvider { link, current } => {
             format!("the link is for {link}, but {current} is the current provider")
         }
@@ -409,5 +416,13 @@ mod tests {
             wire::LyricsSnapshot::without(LyricsStatus::Ready).bounded(false, lines, None),
         );
         assert_eq!(show(&value), "one\ntwo");
+    }
+
+    #[test]
+    fn favorite_state_prints_as_on_off_or_json_boolean() {
+        assert_eq!(show(&Value::Liked(true)), "on");
+        assert_eq!(show(&Value::Liked(false)), "off");
+        assert_eq!(json(&Value::Liked(true)), "true");
+        assert_eq!(json(&Value::Liked(false)), "false");
     }
 }

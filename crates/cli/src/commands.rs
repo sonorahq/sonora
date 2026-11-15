@@ -49,6 +49,8 @@ pub enum Request {
     /// The lyrics of the current track, as already held, without looking any up. Stands for
     /// `sonora lyrics`
     Lyrics,
+    /// Reads or changes whether the current track is a favorite. Stands for `sonora like`
+    Like(Option<Switch>),
 }
 
 impl Request {

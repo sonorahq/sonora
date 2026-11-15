@@ -185,10 +185,35 @@ impl Control {
             Request::Search(query) => return self.search(query, reply, cx),
             Request::Session(command) => session(command, cx),
             Request::Lyrics => Reply::Value(Value::Lyrics(lyrics(self.playback.read(cx), cx))),
+            Request::Like(switch) => self.like(switch, cx),
             // a watch is answered as a stream, by `watch`, and never reaches here
             Request::Watch(_) => Reply::Failed(Failure::Malformed),
         };
         reply.send(answer).ok();
+    }
+
+    /// Reads or changes the favorite state of the track shown by the active playback device.
+    fn like(&mut self, switch: Option<Switch>, cx: &mut Context<Self>) -> Reply {
+        let Some(track) = self.playback.read(cx).shown_track(cx) else {
+            return Reply::Failed(Failure::NoCurrentTrack);
+        };
+        let Some(id) = track.id.as_deref() else {
+            return Reply::Failed(Failure::MissingTrackId);
+        };
+        if self.session.read(cx).client_of(Shelf::of(id)).is_none() {
+            return Reply::Failed(Failure::Unsupported);
+        }
+        let saved = self.library.read(cx).saved(id);
+        let Some(switch) = switch else {
+            return Reply::Value(Value::Liked(saved));
+        };
+        let wanted = favorite_target(saved, switch);
+        if wanted != saved {
+            self.library.update(cx, |library, cx| {
+                library.save_tracks(vec![track], wanted, cx)
+            });
+        }
+        Reply::Done
     }
 
     /// Queues the items of `command`, or the best hit of the search it carries, which first has
@@ -520,6 +545,15 @@ impl Control {
             }
             Place::Queue(placement) => playback.enqueue_tracks(tracks, origin, placement, cx),
         });
+    }
+}
+
+/// Resolves an explicit or relative favorite command to the state it asks for.
+fn favorite_target(saved: bool, switch: Switch) -> bool {
+    match switch {
+        Switch::On => true,
+        Switch::Off => false,
+        Switch::Toggle => !saved,
     }
 }
 
@@ -1075,5 +1109,15 @@ mod tests {
             lines,
             [("さよなら", Some("sayonara")), ("", None), ("bye", None)]
         );
+    }
+
+    #[test]
+    fn explicit_favorite_commands_are_idempotent() {
+        assert!(favorite_target(false, Switch::On));
+        assert!(favorite_target(true, Switch::On));
+        assert!(!favorite_target(false, Switch::Off));
+        assert!(!favorite_target(true, Switch::Off));
+        assert!(favorite_target(false, Switch::Toggle));
+        assert!(!favorite_target(true, Switch::Toggle));
     }
 }

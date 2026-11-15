@@ -23,6 +23,7 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora current` | Print what plays now as JSON, or `null` when nothing is loaded |
 | `sonora queue` | Print the queue: what played, what plays and what follows, without changing it |
 | `sonora lyrics` | Print the lyrics of the current track, without looking any up |
+| `sonora like [on\|off\|toggle]` | Print or change whether the current track is a favorite |
 | `sonora watch [--position]` | Print what plays again on every change, one line of JSON each, until stopped |
 | `sonora volume [N\|+N\|-N]` | Print the volume, set it from 0 to 100, or step it |
 | `sonora shuffle [on\|off\|toggle]` | Print shuffle, or switch it |
@@ -37,6 +38,10 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora -v` | Print the version |
 
 `TYPE` is `song`, `album`, `artist` or `playlist`; `-s` takes a song unless told otherwise. `sonora <command> --help` describes each one.
+
+`like` prints `on` or `off`; `--json` prints the state as a boolean. `on` and `off` are
+idempotent, and `toggle` flips the current track's favorite state. The same state appears in
+`sonora current` as `liked`.
 
 Playback commands go to the device that has playback, so while Sonora steers another device over
 Spotify Connect, that device is the one that pauses or skips.
