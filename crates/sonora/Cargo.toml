@@ -7,6 +7,8 @@ license.workspace = true
 [features]
 # the gpui frame overlay and repaint wash, off in normal builds
 profiler = ["gpui/profiler"]
+# patch running debug builds from `dx serve --hot-patch`, see CONTRIBUTING.md
+hot-reload = ["gpui/hot-reload"]
 bundled-sqlite = ["state/bundled-sqlite"]
 
 [dependencies]
@@ -50,15 +52,20 @@ block2.workspace = true
 libc.workspace = true
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = [
-  "block2",
-  "NSEvent",
-  "NSImage",
-  "NSImageRep",
-  "NSToolbar",
-  "NSView",
-  "NSWindow",
+    "block2",
+    "NSEvent",
+    "NSImage",
+    "NSImageRep",
+    "NSToolbar",
+    "NSView",
+    "NSWindow",
 ] }
-objc2-foundation = { workspace = true, features = ["NSData", "NSGeometry", "NSString"] }
+objc2-foundation = { workspace = true, features = [
+    "NSBundle",
+    "NSData",
+    "NSGeometry",
+    "NSString",
+] }
 raw-window-handle.workspace = true
 
 [target.'cfg(windows)'.dependencies]
@@ -68,13 +75,16 @@ state = { workspace = true, features = ["bundled-sqlite"] }
 widestring.workspace = true
 windows.workspace = true
 windows-sys = { workspace = true, features = [
-  "Win32_Foundation",
-  "Win32_Security",
-  "Win32_Security_Authorization",
-  "Win32_System_Console",
-  "Win32_System_Threading",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Console",
+    "Win32_System_Threading",
 ] }
 
 [build-dependencies]
 embed.workspace = true
 winresource.workspace = true
+
+[lints]
+workspace = true

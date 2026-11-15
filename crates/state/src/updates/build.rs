@@ -38,7 +38,9 @@ impl Build {
     }
 }
 
-/// Searches beside the executable and under its installation prefix for package metadata.
+/// Searches beside the executable, in a macOS bundle's `Resources` and under the installation
+/// prefix for package metadata. The bundle keeps it out of `Contents/MacOS` because `codesign`
+/// rejects anything there that is not signed code.
 fn metadata() -> Vec<PathBuf> {
     let Ok(exe) = std::env::current_exe() else {
         return Vec::new();
@@ -48,6 +50,7 @@ fn metadata() -> Vec<PathBuf> {
     };
     let mut paths = vec![directory.join("sonora-build.json")];
     if let Some(prefix) = directory.parent() {
+        paths.push(prefix.join("Resources/sonora-build.json"));
         paths.push(prefix.join("lib/sonora/build.json"));
     }
     paths

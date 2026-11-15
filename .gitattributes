@@ -3,4 +3,5 @@
 *.png binary
 *.ico binary
 *.icns binary
+*.car binary
 *.ttf binary

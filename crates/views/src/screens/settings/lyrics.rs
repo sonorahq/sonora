@@ -64,9 +64,26 @@ impl SettingsView {
 
     pub(super) fn lyrics_sources_groups(&self) -> Vec<Group> {
         vec![
+            Group::untitled().rows([Slot::WordSyncedFirst]),
             Group::new("settings-group-lyrics-order", "icons/arrow-up-down.svg")
                 .rows([Slot::LyricsPriority]),
         ]
+    }
+
+    pub(super) fn word_synced_first_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).lyrics_word_synced_first();
+
+        self.row(
+            t!("settings-lyrics-word-synced-first"),
+            Switch::new("lyrics-word-synced-first", on)
+                .name(t!("settings-lyrics-word-synced-first"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_lyrics_word_synced_first(!on, cx)
+                    });
+                }))
+                .into_any_element(),
+        )
     }
 
     pub(super) fn panel_lyrics_size_row(&self, cx: &mut Context<Self>) -> AnyElement {

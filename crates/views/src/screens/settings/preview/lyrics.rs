@@ -91,7 +91,7 @@ pub(in crate::screens::settings) fn preview(
         .h(height)
         .bg(theme.background)
         .children(field)
-        .child(lines(look, sizes, height, theme))
+        .child(lines(look, sizes, height, &theme))
         .when(!on, |sheet| sheet.opacity(super::DIMMED));
 
     Some(super::framed(sheet, cx).into_any_element())
@@ -100,7 +100,7 @@ pub(in crate::screens::settings) fn preview(
 /// The sample lines around the one being sung, drawn the way the sheet draws them at the verse
 /// and lane sizes in `sizes`, over the whole of a parent `height` tall. The one being sung starts
 /// at `ANCHOR` of the height whatever the sizes, so a large text size never pushes it out of view.
-fn lines(look: Look, sizes: (Pixels, Pixels), height: Pixels, theme: Theme) -> Div {
+fn lines(look: Look, sizes: (Pixels, Pixels), height: Pixels, theme: &Theme) -> Div {
     let lines = sample();
     let (size, lane) = sizes;
     let gap = verse_gap(size);

@@ -1,7 +1,7 @@
 use crate::metrics::snapped;
 use crate::palette::{CoverPalette, of_image};
 use crate::skeleton::Skeleton;
-use crate::theme::ActiveTheme as _;
+use crate::theme::{ActiveTheme as _, legible};
 use futures::AsyncReadExt as _;
 use futures::channel::oneshot;
 use gpui::prelude::*;
@@ -823,6 +823,13 @@ pub fn prefetch(mut element: AnyElement, window: &mut Window, cx: &mut App) {
     PREFETCHING.set(outer);
 }
 
+/// Whether `prefetch` is laying out what is being built, which will not be drawn. An element
+/// that draws a view through `cached` has to render it plainly then, since a cached view is
+/// laid out without rendering and so would load no covers.
+pub fn prefetching() -> bool {
+    PREFETCHING.get()
+}
+
 /// Rows just past the edge of a list, laid out with `prefetch` while the list is, so their
 /// covers are loading when they scroll in. It takes no room and draws nothing.
 pub struct Prefetch {
@@ -948,6 +955,9 @@ pub struct Artwork {
     accent: bool,
     soft: bool,
     overlay: bool,
+    fit: ObjectFit,
+    /// The size the image is decoded for, when it differs from the size it is drawn at.
+    sample: Option<Pixels>,
     interactivity: Interactivity,
 }
 
@@ -964,6 +974,8 @@ impl Artwork {
             overlay: false,
             fallback: FALLBACK_ICON.into(),
             accent: false,
+            fit: ObjectFit::Cover,
+            sample: None,
             interactivity: Interactivity::new(),
         }
     }
@@ -990,6 +1002,11 @@ impl Artwork {
         self
     }
 
+    /// The corner radius a cover takes when it is given none.
+    pub fn rounding(cx: &App) -> Pixels {
+        cx.theme().radius.min(ROUNDED)
+    }
+
     pub fn corner_radius(mut self, radius: Pixels) -> Self {
         self.radius = Some(radius);
         self
@@ -1003,6 +1020,28 @@ impl Artwork {
     pub fn soft(mut self, soft: bool) -> Self {
         self.soft = soft;
         self
+    }
+
+    /// Keeps the whole image inside the square instead of cropping it to fill, for art whose
+    /// edges matter, as in the full-size cover view.
+    pub fn contain(mut self) -> Self {
+        self.fit = ObjectFit::Contain;
+        self
+    }
+
+    /// Decodes the image for drawing at `size` and stretches that decode to the drawn size, so a
+    /// large copy can reuse the decode a smaller one already holds while its own loads.
+    pub fn sampled_at(mut self, size: Pixels) -> Self {
+        self.sample = Some(size);
+        self
+    }
+
+    /// Whether the artwork cache holds `url` decoded for drawing at `size`, or near enough to
+    /// stand in for it, for an overlay that fades in only once it has something to show.
+    pub fn decoded(url: &str, size: Pixels, window: &Window, cx: &mut App) -> bool {
+        let cache = ArtworkCache::entity(cx);
+        let edge = sample_edge(snapped(size, window), window);
+        cache.read(cx).holds(&resource(url.to_owned()), edge, false)
     }
 
     /// Draws nothing while the image loads or after it fails, for a cover stacked over another
@@ -1042,12 +1081,14 @@ impl RenderOnce for Artwork {
             accent,
             soft,
             overlay,
+            fit,
+            sample,
             interactivity,
         } = self;
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
         let glyph = match accent {
-            true => theme.tint.unwrap_or(theme.primary),
+            true => legible(theme.tint.unwrap_or(theme.primary), theme.background),
             false => muted.opacity(0.5),
         };
         let size = snapped(size, window);
@@ -1056,7 +1097,7 @@ impl RenderOnce for Artwork {
         let rounded = match (circle, radius) {
             (true, _) => size / 2.,
             (false, Some(radius)) => radius,
-            (false, None) => cx.theme().radius.min(ROUNDED),
+            (false, None) => Self::rounding(cx),
         };
         let placeholder = {
             let fallback = fallback.clone();
@@ -1072,9 +1113,10 @@ impl RenderOnce for Artwork {
             Some(url) => {
                 let cache = ArtworkCache::entity(cx);
                 let resource = resource(url);
+                let sampled = sample.map_or(size, |sample| snapped(sample, window));
                 let edge = match wide {
-                    true => sample_edge(size, window) | WIDE,
-                    false => sample_edge(size, window),
+                    true => sample_edge(sampled, window) | WIDE,
+                    false => sample_edge(sampled, window),
                 };
                 if PREFETCHING.get() {
                     cache.update(cx, |cache, cx| cache.load_at(&resource, edge, window, cx));
@@ -1130,7 +1172,7 @@ impl RenderOnce for Artwork {
                                 .image_cache(&cache)
                                 .w(size)
                                 .h(tall)
-                                .object_fit(ObjectFit::Cover)
+                                .object_fit(fit)
                                 .rounded(rounded)
                                 .with_fallback(placeholder),
                         ),

@@ -28,7 +28,7 @@ use crate::tidal::client::TidalClient;
 use crate::tidal::lock;
 use crate::tidal::manifest::Manifest;
 use crate::vault::{Recording, Shelf};
-use crate::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Quality};
+use crate::{Encoding, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Quality};
 
 /// How long one part keeps being asked for, with the wait between asks doubling from
 /// `FIRST_WAIT` up to `LONGEST_WAIT`. A track is a hundred or so requests, so one that fails
@@ -224,6 +224,7 @@ pub struct Loaded {
     reach: Option<Arc<Reach>>,
     duration: Option<Duration>,
     loudness: Option<Loudness>,
+    encoding: Option<Encoding>,
 }
 
 /// Starts a playback engine for a signed-in session, which is what a [`crate::ProviderSession`]
@@ -252,6 +253,8 @@ struct Facts {
     duration_ms: Option<u64>,
     lufs: Option<f32>,
     peak: Option<f32>,
+    /// How the kept stream is encoded. Missing from what an older Sonora kept.
+    encoding: Option<Encoding>,
     /// When each media segment starts in the music, in nanoseconds. Empty for one file.
     starts_ns: Vec<u64>,
     /// Where each part starts in the stream, the init segment first. Empty for one file.
@@ -620,6 +623,7 @@ impl Tidal {
                 lufs,
                 peak: facts.peak,
             }),
+            encoding: facts.encoding,
         })
     }
 
@@ -716,6 +720,7 @@ impl Tidal {
             })),
             duration: None,
             loudness: None,
+            encoding: None,
         })
     }
 
@@ -982,6 +987,7 @@ impl Fetch for Tidal {
                 .map(|duration| duration.as_millis() as u64),
             lufs: playback.loudness.map(|loudness| loudness.lufs),
             peak: playback.loudness.and_then(|loudness| loudness.peak),
+            encoding: playback.encoding,
             starts_ns: Vec::new(),
             offsets: Vec::new(),
         };
@@ -992,6 +998,7 @@ impl Fetch for Tidal {
         Ok(Loaded {
             duration: playback.duration,
             loudness: playback.loudness,
+            encoding: playback.encoding,
             ..loaded
         })
     }
@@ -1002,6 +1009,10 @@ impl Fetch for Tidal {
 
     fn loudness(&self, loaded: &Loaded) -> Option<Loudness> {
         loaded.loudness
+    }
+
+    fn encoding(&self, loaded: &Loaded) -> Option<Encoding> {
+        loaded.encoding
     }
 
     /// A track that failed because Tidal refused the session is the listener having to sign

@@ -336,6 +336,7 @@ fn card_artists(runs: &[Value]) -> Vec<ytmusic::ArtistRef> {
         .map(|text| ytmusic::ArtistRef {
             name: text.to_owned(),
             id: None,
+            channel: false,
         })
         .collect()
 }

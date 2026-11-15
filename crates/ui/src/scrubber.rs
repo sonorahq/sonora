@@ -63,10 +63,16 @@ impl ScrubberState {
             .then(|| self.fraction_at(position.x, pad))
     }
 
+    /// How far the thumb of a horizontal scrubber moves from one end to the other, as last
+    /// drawn. It is zero before the first paint.
+    pub fn travel(&self, pad: Pixels) -> Pixels {
+        (self.bounds.get().size.width - thumb(pad)).max(px(0.))
+    }
+
     fn fraction_at(&self, x: Pixels, pad: Pixels) -> f32 {
         let bounds = self.bounds.get();
         let pin = thumb(pad);
-        let travel = bounds.size.width - pin;
+        let travel = self.travel(pad);
         if travel <= px(0.) {
             return 0.;
         }
@@ -246,7 +252,6 @@ impl RenderOnce for Scrubber {
         };
 
         let dragged = {
-            let state = state.clone();
             let on_move = on_move.clone();
             let mine = id.clone();
             move |event: &DragMoveEvent<Grab>, window: &mut Window, cx: &mut App| {
