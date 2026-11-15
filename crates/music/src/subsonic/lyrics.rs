@@ -227,7 +227,11 @@ fn legacy_sheet(text: &str) -> Option<Lyrics> {
 }
 
 /// Groups cue lines by line index, putting the main agent's cue line first in each group.
-fn group_cues<'a>(lines: &'a [CueLine], main: Option<&Agent>, count: usize) -> Vec<Vec<&'a CueLine>> {
+fn group_cues<'a>(
+    lines: &'a [CueLine],
+    main: Option<&Agent>,
+    count: usize,
+) -> Vec<Vec<&'a CueLine>> {
     let mut groups: Vec<Vec<&CueLine>> = vec![Vec::new(); count];
 
     for line in lines {

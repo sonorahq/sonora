@@ -81,15 +81,15 @@ impl Icon {
         }));
         TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
             let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
+                button,
+                button_state,
                 ..
             } = event
             else {
                 return;
             };
-            if !MENU_ON_CLICK {
-                sender.send(Event::Show).ok();
+            if let Some(event) = click(button, button_state) {
+                sender.send(event).ok();
             }
         }));
 
@@ -265,6 +265,15 @@ fn keep_cover(icon: &TrayIcon) {
     unsafe { msg_send![&*caption, setPreferredImageVisibility: VISIBLE] }
 }
 
+/// What a click on the icon asks for. A left button release toggles the window, except where the
+/// icon opens its menu on a left click, and every other click is left to the system.
+fn click(button: MouseButton, state: MouseButtonState) -> Option<Event> {
+    match (button, state, MENU_ON_CLICK) {
+        (MouseButton::Left, MouseButtonState::Up, false) => Some(Event::Window),
+        _ => None,
+    }
+}
+
 fn translate(id: &MenuId) -> Option<Event> {
     Some(match id.0.as_str() {
         "caption" => Event::Song,
@@ -277,4 +286,29 @@ fn translate(id: &MenuId) -> Option<Event> {
         "quit" => Event::Quit,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn left_release_toggles_the_window() {
+        let asked = click(MouseButton::Left, MouseButtonState::Up);
+        assert_eq!(
+            asked,
+            match MENU_ON_CLICK {
+                true => None,
+                false => Some(Event::Window),
+            }
+        );
+    }
+
+    #[test]
+    fn other_clicks_are_left_alone() {
+        assert_eq!(click(MouseButton::Left, MouseButtonState::Down), None);
+        assert_eq!(click(MouseButton::Right, MouseButtonState::Up), None);
+        assert_eq!(click(MouseButton::Right, MouseButtonState::Down), None);
+        assert_eq!(click(MouseButton::Middle, MouseButtonState::Up), None);
+    }
 }

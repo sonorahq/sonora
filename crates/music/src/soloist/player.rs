@@ -22,6 +22,7 @@
 //! position report lands near it. And the end of a track arrives as whichever of three things
 //! the daemon feels like: another track, `idle`, or a pause nobody asked for.
 
+use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -39,8 +40,10 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use super::daemon::{RUNNING, follow, launch, stop};
 use super::wire::{self, Event, Playback, Status};
 use super::{QUALITIES, binary, data, key, paired_account, prefs, recheck};
+use crate::connect::QueuedTrack;
 use crate::{
-    Encoding, Normalisation, PlaybackConfig, PlaybackEvent, PlaybackEvents, Quality, TrackSignal,
+    Encoding, Normalisation, PlaybackConfig, PlaybackEvent, PlaybackEvents, Quality, QueueAppend,
+    TrackSignal,
 };
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -54,6 +57,8 @@ const WS_PORT: &str = "ws.port";
 /// What the daemon decodes every track to.
 const RATE: u32 = 44_100;
 const CHANNELS: u16 = 2;
+/// Queue additions held only while one daemon is signing in.
+const PENDING_ENQUEUES: usize = 64;
 
 /// How long the daemon gets to open its WebSocket.
 const STARTUP: Duration = Duration::from_secs(30);
@@ -73,9 +78,10 @@ const TAIL: Duration = Duration::from_secs(10);
 const OVERRUN: Duration = Duration::from_secs(3);
 /// How long before the end of a track the next one goes on the daemon's queue.
 const FEED_LEAD: Duration = Duration::from_secs(8);
-/// How long a track the daemon went on to by itself may play before Sonora has to have asked
-/// for it. Past that it is stopped, as at the end of Sonora's queue.
-const ADOPT_PATIENCE: Duration = Duration::from_secs(2);
+/// How long a remotely playing track may wait for state to adopt it before it is stopped.
+const ADOPT_PATIENCE: Duration = Duration::from_secs(10);
+/// How long to wait for the queue snapshot that identifies an externally queued track.
+const QUEUE_PATIENCE: Duration = Duration::from_secs(1);
 /// How long the daemon gets to acknowledge the command that starts a track before its reports
 /// are trusted without one.
 const ACK_PATIENCE: Duration = Duration::from_secs(3);
@@ -118,6 +124,14 @@ impl Engine {
     /// Names the track that follows the current one, which a gapless engine joins to it.
     pub(crate) fn line_up(&self, track_id: &str) {
         self.ask(Command::Next(track_id.to_owned()));
+    }
+
+    /// Appends a track through Soloist so Spotify Connect owns the shared queue.
+    pub(crate) fn append_to_queue(&self, track_id: &str, append: QueueAppend) {
+        self.ask(Command::Enqueue {
+            id: track_id.to_owned(),
+            append,
+        });
     }
 
     pub(crate) fn set_gain(&self, gain: f32) {
@@ -183,6 +197,16 @@ enum Command {
     Seek(Duration),
     Volume(u8),
     Next(String),
+    Enqueue {
+        id: String,
+        append: QueueAppend,
+    },
+}
+
+/// An `add_to_queue` command awaiting Soloist's FIFO result.
+enum SentEnqueue {
+    Feed,
+    Append { id: String, append: QueueAppend },
 }
 
 /// What a daemon is started with, beyond the key.
@@ -290,6 +314,10 @@ struct Brain {
     link: Option<Link>,
     /// Whether the daemon is signed in, before which it takes no command.
     signed_in: bool,
+    /// Queue additions waiting for this daemon's initial sign-in.
+    pending_enqueues: VecDeque<(String, QueueAppend)>,
+    /// Queue additions accepted by the daemon, in command-result order.
+    sent_enqueues: VecDeque<SentEnqueue>,
     /// Sonora's volume, from 0 to 100.
     volume: u8,
     /// Whether the daemon's volume is held at zero while an opening seek lands, so the start of
@@ -304,6 +332,8 @@ struct Brain {
     /// The tracks on the daemon's queue as it last listed them. The account's own queued
     /// tracks are among them, and those are not Sonora's to move or skip.
     queue: Vec<String>,
+    /// A changed track waiting for a queue snapshot to say whether Spotify queued it.
+    unexpected: Option<(String, Instant)>,
     /// The queued track the daemon went on to, and when, until Sonora asks for it.
     adopted: Option<(String, Instant)>,
     /// When progress was last reported.
@@ -323,6 +353,8 @@ impl Brain {
             events,
             link: None,
             signed_in: false,
+            pending_enqueues: VecDeque::new(),
+            sent_enqueues: VecDeque::new(),
             volume,
             muted: false,
             track: None,
@@ -330,6 +362,7 @@ impl Brain {
             next: None,
             fed: None,
             queue: Vec::new(),
+            unexpected: None,
             adopted: None,
             reported: Instant::now(),
             refusals: 0,
@@ -375,6 +408,7 @@ impl Brain {
                     self.feed();
                 }
             }
+            Command::Enqueue { id, append } => self.enqueue(id, append),
         }
     }
 
@@ -385,8 +419,7 @@ impl Brain {
         let uri = format!("{TRACK_PREFIX}{id}");
         let adopted = self.adopted.take().map(|(adopted, _)| adopted);
         // the daemon went on to this very track from its queue and is playing it already
-        let joined =
-            play && at <= OPENING && adopted.as_ref() == Some(&uri) && self.heard.uri == uri;
+        let joined = play && adopted.as_ref() == Some(&uri) && self.heard.uri == uri;
         let sounding = adopted.is_some() || self.track.as_ref().is_some_and(|track| track.started);
         let duration = self
             .heard
@@ -395,6 +428,7 @@ impl Brain {
             .filter(|(known, _)| *known == uri)
             .map(|(_, duration)| *duration);
         self.next = None;
+        self.unexpected = None;
         self.unmute();
         self.report(PlaybackEvent::Loading {
             id: Some(id.clone()),
@@ -426,6 +460,7 @@ impl Brain {
             duration,
         });
         if joined {
+            self.send("activate", json!({}));
             if duration.is_none() {
                 self.send("get_state", json!({}));
             }
@@ -505,9 +540,13 @@ impl Brain {
             return;
         };
         log::debug!("soloist: queueing the next track on the daemon");
-        self.send("add_to_queue", json!({ "uri": next }));
-        self.send("get_queue", json!({}));
-        self.fed = Some(next);
+        if self.send("add_to_queue", json!({ "uri": next })) {
+            self.sent_enqueues.push_back(SentEnqueue::Feed);
+            self.send("get_queue", json!({}));
+            self.fed = Some(next);
+        } else {
+            self.next = Some(next);
+        }
     }
 
     fn play(&mut self) {
@@ -517,7 +556,9 @@ impl Brain {
         track.held = false;
         track.parked = false;
         match track.started {
-            true => self.send("play", json!({})),
+            true => {
+                self.send("play", json!({}));
+            }
             false => self.advance(),
         }
     }
@@ -528,7 +569,8 @@ impl Brain {
         };
         track.held = true;
         if track.started {
-            return self.send("pause", json!({}));
+            self.send("pause", json!({}));
+            return;
         }
         if !track.sent {
             track.parked = true;
@@ -574,6 +616,15 @@ impl Brain {
             log::debug!("soloist: nothing asked for the queued track, stopping it");
             self.adopted = None;
             self.send("pause", json!({}));
+        }
+        if self
+            .unexpected
+            .as_ref()
+            .is_some_and(|(_, since)| now.duration_since(*since) > QUEUE_PATIENCE)
+        {
+            log::debug!("soloist: the queue did not confirm the changed track");
+            self.unexpected = None;
+            self.finish();
         }
         let Some(track) = self.track.as_mut() else {
             return;
@@ -627,6 +678,7 @@ impl Brain {
                 if logged_in && !was {
                     self.refusals = 0;
                     self.settle();
+                    self.flush_enqueues();
                     self.advance();
                 }
             }
@@ -637,6 +689,8 @@ impl Brain {
                 if let Some(item) = item.filter(|item| !item.uri.is_empty()) {
                     self.learn_length(&item);
                     self.heard.uri = item.uri;
+                    // The matching position sync can arrive later than the new track name.
+                    self.heard.position = Duration::ZERO;
                     self.observe(true);
                 }
             }
@@ -644,13 +698,19 @@ impl Brain {
                 self.heard.position = position.at();
                 self.follow_position();
             }
-            Event::QueueChanged { upcoming } => {
+            Event::QueueChanged { previous, upcoming } => {
                 self.queue = upcoming
-                    .into_iter()
+                    .iter()
                     .filter(|entry| entry.queued())
-                    .filter_map(|entry| entry.item)
-                    .map(|item| item.uri)
+                    .filter_map(|entry| entry.item.as_ref())
+                    .map(|item| item.uri.clone())
                     .collect();
+                self.report(PlaybackEvent::QueueChanged {
+                    current: track_id(&self.heard.uri).map(|id| QueuedTrack::new(id, false)),
+                    previous: queued_tracks(previous),
+                    upcoming: queued_tracks(upcoming),
+                });
+                self.reconcile_queue();
             }
             Event::VolumeChanged { volume } => self.hold_volume(volume),
             Event::OptionsChanged { options } => {
@@ -658,13 +718,20 @@ impl Brain {
                     self.settle_options();
                 }
             }
-            Event::DeviceChanged { is_active } => {
-                if !is_active {
-                    self.taken();
+            Event::DeviceChanged { is_active } => match is_active {
+                true => {
+                    self.send("get_state", json!({}));
+                    self.send("get_queue", json!({}));
+                }
+                false => self.taken(),
+            },
+            Event::CommandResult { command } => {
+                self.acknowledged(&command);
+                if command == "add_to_queue" {
+                    self.queue_result(true);
                 }
             }
-            Event::CommandResult { command } => self.acknowledged(&command),
-            Event::Error { message } => {
+            Event::Error { message, command } => {
                 // a seek is turned down while the track loads, and is simply sent again
                 let seeking = self
                     .track
@@ -672,7 +739,16 @@ impl Brain {
                     .is_some_and(|track| track.seek.is_some());
                 match seeking && message.starts_with("seek failed") {
                     true => log::debug!("soloist: the daemon is not ready to seek: {message}"),
-                    false => log::warn!("soloist: the daemon turned a command down: {message}"),
+                    false => {
+                        log::warn!("soloist: the daemon turned a command down: {message}");
+                        if command == "add_to_queue" {
+                            self.queue_result(false);
+                        } else if command.is_empty() {
+                            // shortcut: older Soloist errors omit the command, so retain queue
+                            // work rather than reject an unrelated append; upgrade with IDs.
+                            log::debug!("soloist: cannot attribute the command rejection");
+                        }
+                    }
                 }
             }
             Event::Other => {}
@@ -746,14 +822,28 @@ impl Brain {
     /// just named the track it moved to, which counts as playing it even before a status says so.
     fn observe(&mut self, announced: bool) {
         let Some(track) = self.track.as_mut() else {
-            // Something was started on the daemon from one of Spotify's apps. Sonora shows
-            // none of it, so it does not get to play. A track the daemon went on to from its
-            // queue is Sonora's own, and waits for the load that asks for it.
-            if self.adopted.is_none() && self.heard.status == Status::Playing {
-                self.send("pause", json!({}));
+            // A Spotify app can begin playing on Soloist before Sonora has loaded a track.
+            // Adopt it here; the queue snapshot that follows supplies the rest of the window.
+            let changed = self
+                .adopted
+                .as_ref()
+                .is_none_or(|(uri, _)| uri != &self.heard.uri);
+            if changed && active(self.heard.status) {
+                if let Some(id) = track_id(&self.heard.uri) {
+                    self.adopted = Some((self.heard.uri.clone(), Instant::now()));
+                    self.report(PlaybackEvent::QueuedTrack {
+                        id,
+                        at: self.heard.position,
+                    });
+                } else {
+                    self.send("pause", json!({}));
+                }
             }
             return;
         };
+        if follows_remote(track.parked, &track.uri, &self.heard) {
+            return self.wait_for_queue();
+        }
         if !track.sent || !track.accepted {
             return;
         }
@@ -788,7 +878,8 @@ impl Brain {
                         opening: true,
                     });
                 }
-                return self.send("seek", json!({ "position_ms": millis(start) }));
+                self.send("seek", json!({ "position_ms": millis(start) }));
+                return;
             }
             self.unmute();
             if !held {
@@ -804,11 +895,8 @@ impl Brain {
         if !same {
             return match self.fed.as_ref() == Some(&self.heard.uri) {
                 true => self.hand_over(),
-                false => {
-                    // past the one track it was given the daemon went on by itself
-                    log::debug!("soloist: the daemon moved on to another track");
-                    self.finish()
-                }
+                false if self.queue.contains(&self.heard.uri) => self.follow_remote(),
+                false => self.wait_for_queue(),
             };
         }
         match self.heard.status {
@@ -895,11 +983,62 @@ impl Brain {
         self.report(PlaybackEvent::Ended { id: Some(track.id) });
     }
 
+    /// Lets state take over a track another Spotify app started on Soloist.
+    fn follow_remote(&mut self) {
+        let Some(track) = self.track.take() else {
+            return;
+        };
+        log::debug!("soloist: following remote track {}", self.heard.uri);
+        let Some(id) = track_id(&self.heard.uri) else {
+            self.track = Some(track);
+            return self.finish();
+        };
+        self.next = None;
+        self.unexpected = None;
+        self.unmute();
+        self.adopted = Some((self.heard.uri.clone(), Instant::now()));
+        self.report(PlaybackEvent::QueuedTrack {
+            id,
+            at: self.heard.position,
+        });
+    }
+
+    /// Waits for the queue snapshot that follows a changed track before rejecting it.
+    fn wait_for_queue(&mut self) {
+        if self
+            .unexpected
+            .as_ref()
+            .is_some_and(|(uri, _)| uri == &self.heard.uri)
+        {
+            return;
+        }
+        self.unexpected = Some((self.heard.uri.clone(), Instant::now()));
+        self.send("get_queue", json!({}));
+    }
+
+    /// Adopts the track still playing once Soloist has sent its queue snapshot.
+    fn reconcile_queue(&mut self) {
+        let Some((uri, _)) = self.unexpected.take() else {
+            return;
+        };
+        log::debug!(
+            "soloist: reconciling remote track {uri} with status {:?}",
+            self.heard.status
+        );
+        if uri == self.heard.uri && active(self.heard.status) {
+            self.follow_remote();
+        } else {
+            log::debug!("soloist: the daemon moved on to another track");
+            self.finish();
+        }
+    }
+
     /// Ends the wanted track and stops whatever the daemon went on to.
     fn finish(&mut self) {
         let Some(track) = self.track.take() else {
             return;
         };
+        self.unexpected = None;
         self.next = None;
         self.unmute();
         if self.heard.status == Status::Playing {
@@ -948,6 +1087,7 @@ impl Brain {
     }
 
     fn gone(&mut self, end: End) {
+        self.reject_enqueues();
         self.link = None;
         self.signed_in = false;
         self.muted = false;
@@ -997,6 +1137,7 @@ impl Brain {
 
     /// Stops the daemon without waiting for it.
     fn hang_up(&mut self) {
+        self.reject_enqueues();
         self.signed_in = false;
         self.muted = false;
         if let Some(link) = self.link.take() {
@@ -1009,7 +1150,72 @@ impl Brain {
         self.settle_options();
         let volume = self.volume;
         self.send("set_volume", json!({ "volume": volume }));
+        self.send("get_state", json!({}));
         self.send("get_queue", json!({}));
+    }
+
+    /// Adds a track now, or holds it only while this daemon completes its first sign-in.
+    fn enqueue(&mut self, id: String, append: QueueAppend) {
+        if self.signed_in {
+            return self.send_enqueue(id, append);
+        }
+        if self.link.is_some() && self.pending_enqueues.len() < PENDING_ENQUEUES {
+            self.pending_enqueues.push_back((id, append));
+        } else {
+            self.report(PlaybackEvent::QueueRejected { id, append });
+        }
+    }
+
+    /// Sends all additions that belong to the daemon which just signed in.
+    fn flush_enqueues(&mut self) {
+        while let Some((id, append)) = self.pending_enqueues.pop_front() {
+            self.send_enqueue(id, append);
+        }
+    }
+
+    /// Sends one queue addition and reports a failure instead of claiming it was accepted.
+    fn send_enqueue(&mut self, id: String, append: QueueAppend) {
+        if !self.send(
+            "add_to_queue",
+            json!({ "uri": format!("{TRACK_PREFIX}{id}") }),
+        ) {
+            return self.report(PlaybackEvent::QueueRejected { id, append });
+        }
+        self.sent_enqueues
+            .push_back(SentEnqueue::Append { id, append });
+        self.send("get_queue", json!({}));
+    }
+
+    /// Discards work that cannot safely cross a daemon disconnect or session teardown.
+    fn reject_enqueues(&mut self) {
+        let pending: Vec<_> = self.pending_enqueues.drain(..).collect();
+        let sent: Vec<_> = self.sent_enqueues.drain(..).collect();
+        for (id, append) in pending {
+            self.report(PlaybackEvent::QueueRejected { id, append });
+        }
+        for queued in sent {
+            if let SentEnqueue::Append { id, append } = queued {
+                self.report(PlaybackEvent::QueueRejected { id, append });
+            }
+        }
+    }
+
+    /// Reports the result of the earliest queue command without confusing gapless feed with a
+    /// user-requested append.
+    fn queue_result(&mut self, accepted: bool) {
+        let Some(queued) = self.sent_enqueues.pop_front() else {
+            return;
+        };
+        match (accepted, queued) {
+            (true, SentEnqueue::Append { id, append }) => {
+                self.report(PlaybackEvent::QueueAppended { id, append })
+            }
+            (false, SentEnqueue::Append { id, append }) => {
+                self.report(PlaybackEvent::QueueRejected { id, append })
+            }
+            (false, SentEnqueue::Feed) => self.fed = None,
+            (true, SentEnqueue::Feed) => {}
+        }
     }
 
     /// The daemon restores the account's shuffle and repeat, either of which would have it play
@@ -1062,10 +1268,11 @@ impl Brain {
     }
 
     /// Sends a command, which the daemon only takes once it is signed in.
-    fn send(&self, name: &str, fields: Value) {
+    fn send(&self, name: &str, fields: Value) -> bool {
         if let Some(link) = self.link.as_ref().filter(|_| self.signed_in) {
-            link.outgoing.send(wire::command(name, fields)).ok();
+            return link.outgoing.send(wire::command(name, fields)).is_ok();
         }
+        false
     }
 
     fn report(&self, event: PlaybackEvent) {
@@ -1321,6 +1528,41 @@ fn millis(position: Duration) -> u64 {
     u64::try_from(position.as_millis()).unwrap_or(u64::MAX)
 }
 
+fn active(status: Status) -> bool {
+    matches!(status, Status::Playing | Status::Buffering)
+}
+
+fn follows_remote(parked: bool, wanted: &str, heard: &Heard) -> bool {
+    parked && wanted != heard.uri && active(heard.status)
+}
+
+/// Reads a Spotify track id from a daemon queue URI.
+fn track_id(uri: &str) -> Option<String> {
+    uri.strip_prefix(TRACK_PREFIX)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+}
+
+/// Keeps the remote queue order and whether each entry was queued by hand.
+fn queued_tracks(entries: Vec<wire::Queued>) -> Vec<QueuedTrack> {
+    entries
+        .into_iter()
+        .filter_map(|entry| {
+            let queued = entry.queued();
+            let uid = entry.uid;
+            let item = entry.item?;
+            let id = track_id(&item.uri)?;
+            Some(QueuedTrack {
+                uid,
+                id,
+                queued,
+                suggested: false,
+                added_by: None,
+            })
+        })
+        .collect()
+}
+
 /// The encoding of the offer the daemon is asked for at a level.
 fn offered(quality: Quality) -> Option<Encoding> {
     let level = quality.within(QUALITIES);
@@ -1328,4 +1570,112 @@ fn offered(quality: Quality) -> Option<Encoding> {
         .iter()
         .find(|offer| offer.quality == level)
         .map(|offer| offer.encoding)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn brain() -> (Brain, UnboundedReceiver<PlaybackEvent>) {
+        let (events, receiver) = unbounded_channel();
+        (
+            Brain::new(
+                Setup {
+                    normalise: false,
+                    gapless: false,
+                    quality: Quality::default(),
+                    interval: Duration::ZERO,
+                },
+                100,
+                events,
+            ),
+            receiver,
+        )
+    }
+
+    #[test]
+    fn active_statuses_follow_a_remote_track() {
+        assert!(active(Status::Playing));
+        assert!(active(Status::Buffering));
+        assert!(!active(Status::Paused));
+    }
+
+    #[test]
+    fn a_parked_restore_follows_an_active_remote_track() {
+        let heard = Heard {
+            uri: "spotify:track:remote".into(),
+            status: Status::Playing,
+            ..Default::default()
+        };
+        assert!(follows_remote(true, "spotify:track:restored", &heard));
+        assert!(!follows_remote(false, "spotify:track:restored", &heard));
+        assert!(!follows_remote(true, "spotify:track:remote", &heard));
+    }
+
+    #[test]
+    fn disconnect_rejects_pending_enqueues() {
+        let (mut brain, mut events) = brain();
+        brain
+            .pending_enqueues
+            .push_back(("pending".into(), QueueAppend::User));
+
+        brain.gone(End::Failed);
+
+        assert!(brain.pending_enqueues.is_empty());
+        assert!(matches!(
+            events.try_recv(),
+            Ok(PlaybackEvent::QueueRejected { id, .. }) if id == "pending"
+        ));
+    }
+
+    #[test]
+    fn feed_result_does_not_report_the_next_user_append() {
+        let (mut brain, mut events) = brain();
+        brain.sent_enqueues.push_back(SentEnqueue::Feed);
+        brain.sent_enqueues.push_back(SentEnqueue::Append {
+            id: "user".into(),
+            append: QueueAppend::User,
+        });
+
+        brain.queue_result(true);
+        assert!(events.try_recv().is_err());
+
+        brain.queue_result(false);
+        assert!(matches!(
+            events.try_recv(),
+            Ok(PlaybackEvent::QueueRejected { id, .. }) if id == "user"
+        ));
+    }
+
+    #[test]
+    fn changed_remote_track_replaces_an_unloaded_adoption() {
+        let (mut brain, mut events) = brain();
+        brain.adopted = Some(("spotify:track:older".into(), Instant::now()));
+        brain.heard = Heard {
+            uri: "spotify:track:newer".into(),
+            status: Status::Playing,
+            ..Default::default()
+        };
+
+        brain.observe(false);
+
+        assert!(matches!(
+            events.try_recv(),
+            Ok(PlaybackEvent::QueuedTrack { id, .. }) if id == "newer"
+        ));
+    }
+
+    #[test]
+    fn anonymous_queue_entries_keep_empty_uids() {
+        let entries = serde_json::from_value(serde_json::json!([
+            { "item": { "uri": "spotify:track:duplicate" } },
+            { "item": { "uri": "spotify:track:duplicate" } }
+        ]))
+        .expect("the Soloist queue frame parses");
+
+        let tracks = queued_tracks(entries);
+
+        assert_eq!(tracks.len(), 2);
+        assert!(tracks.iter().all(|track| track.uid.is_empty()));
+    }
 }

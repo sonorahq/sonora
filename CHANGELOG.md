@@ -14,6 +14,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Use Sonora in Vietnamese. A system set to Vietnamese picks it on its own.
 - Open the cover of an album or a playlist, or an artist's photo, from its page to see the original artwork full size, zoom in with the wheel or the buttons and drag it around.
 - Press Ctrl+K (⌘K on macOS) anywhere to search. Enter plays a song right away, Ctrl+Enter opens its page, and the artist and album under a result open theirs.
+- Click the tray icon on Windows to show Sonora's window, or to hide it when it is already open.
 - Scrobble to your own ListenBrainz server or to multi-scrobbler by filling in the server address when you connect ListenBrainz.
 - Name your Discord status after the album artist under Settings, Discord, Status name.
 - Hover a cut-off track title in the player bar to read it in full.
@@ -26,6 +27,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `sonora mute` reads or changes playback mute and restores the previous volume when unmuted.
 - Rebind keyboard shortcuts under Settings, Keybinds, and give shuffle, repeat, the queue and lyrics shortcuts of their own.
 - Move between the fields of a dialog with Tab and Shift+Tab.
+- Up and Down change the volume, and Left and Right skip back or forward 5 seconds, unless a list, menu or text field is using the arrow keys.
 - Use Sonora in Korean.
 - Open a music folder in your file manager from Settings, Music folders.
 - Library pages that list both local and streaming music mark local files with a file icon beside their names.
@@ -39,6 +41,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Nightly builds show the commit they were built from beside the version under Settings, About.
 - Skip sponsors, self-promotion and non-music sections on YouTube Music with SponsorBlock, with sections marked on the seek bar.
 - Subsonic lyrics provider can now read OpenSubsonic's enhanced cueLine data for karaoke lyrics.
+- Play or queue a local song, album, artist or playlist from the command line with `sonora play -s <name> --local`, or `add` and `play-next` with `--local`.
 
 ### Fixed
 
@@ -53,6 +56,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A friend editing the queue of your Spotify Jam no longer clears your listening history in Sonora.
 - Seeking from another device while a track is still loading no longer leaves Sonora showing it as loading.
 - The Flatpak shows your Discord status in Vesktop and in Discord installed from Flathub.
+- Tracks queued from another Spotify app now appear in Sonora's queue and play when selected on that app while using Soloist.
 - On Linux with WebKitGTK 2.54 or newer, signing in to Apple Music no longer fills all your memory and crashes Sonora before the sign-in page loads.
 - Tidal artists with no portrait show the album cover Tidal draws them with, instead of an empty picture.
 - Releases tagged with the label `[no label]` no longer show a copyright line crediting it.
