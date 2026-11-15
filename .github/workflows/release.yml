@@ -24,8 +24,6 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_PROFILE_RELEASE_STRIP: symbols
   RUST_BACKTRACE: 1
-  RUSTC_WRAPPER: sccache
-  SCCACHE_GHA_ENABLED: "true"
 
 jobs:
   build:
@@ -71,7 +69,7 @@ jobs:
       # Cargo on the runner's NTFS drive spends much of its time in the filesystem and Defender.
       # A ReFS Dev Drive takes the target directory instead, through a junction, so every path
       # below stays the same.
-      - uses: samypr100/setup-dev-drive@v4
+      - uses: samypr100/setup-dev-drive@562171fe8df7401fdf582d766cd3b6ab80d5b1a0 # v4.1.0
         if: runner.os == 'Windows' && !inputs.reuse
         with:
           drive-size: 40GB
@@ -100,14 +98,10 @@ jobs:
         shell: bash
         run: rustup toolchain install && rustup target add ${{ matrix.target }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
-        if: ${{ !inputs.reuse }}
-      - uses: Swatinem/rust-cache@v2
-        if: ${{ !inputs.reuse }}
-        with:
-          key: ${{ matrix.target }}
-          cache-targets: false
-          cache-on-failure: true
+      # Nightlies and releases reach users, so they compile from source and restore nothing from
+      # the Actions cache: anything that runs code in a job on main can write that cache, and a
+      # poisoned entry would end up in a signed binary.
+      #
       # A nightly compiles its label and commit in as the version the app shows. Other builds leave
       # the variables unset, since an empty one would still count as set.
       - name: build
@@ -137,9 +131,6 @@ jobs:
           bash scripts/download-release-asset.sh "$TAG" "sonora-$TAG-$TARGET$suffix" \
             "target/$TARGET/release/sonora$suffix"
 
-      - name: sccache stats
-        if: always() && !inputs.reuse
-        run: sccache --show-stats
       - name: stage the executable
         if: ${{ !inputs.reuse || runner.os != 'macOS' }}
         shell: bash
@@ -604,13 +595,16 @@ jobs:
           ./flatpak/generate-sources.sh
 
       - name: Build Flatpak Bundle
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6.8
         with:
           manifest-path: flatpak/flatpak-builder.yaml
           bundle: sonora-${{ steps.meta.outputs.version }}-${{ matrix.variant.arch }}.flatpak
           arch: ${{ matrix.variant.arch }}
           upload-artifact: true
           artifact-name: flatpak-${{ matrix.variant.arch }}
+          # Like the executables, the bundle builds from source and restores nothing from the
+          # Actions cache.
+          cache: false
 
   flatpak-repo:
     needs: flatpak
@@ -737,7 +731,7 @@ jobs:
             -f tag_name="$TAG" --jq .body > notes.md
           printf '\n[Code signing policy](https://github.com/%s#code-signing-policy)\n' "$GITHUB_REPOSITORY" >> notes.md
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: dist/*
           body_path: notes.md
