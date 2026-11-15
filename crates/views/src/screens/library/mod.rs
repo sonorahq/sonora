@@ -2,7 +2,7 @@ mod albums;
 mod artists;
 mod playlists;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -31,7 +31,7 @@ use ui::{
     Vacancy, Viewport, heading, quantize, runtime, scrolled, snapped, table,
 };
 
-use crate::shared::album_grid::{AlbumGrid, CardGrid};
+use crate::shared::album_grid::{AlbumTiles, CardGrid, TileLook};
 use crate::shared::blend::{self, Joined};
 use crate::shared::hero::{HeroMetaStrip, HeroPlayButton, PageHero};
 use crate::shared::pins::Pinned as _;
@@ -200,6 +200,8 @@ pub struct LibraryView {
     card_heading: Pixels,
     card_rows: Rc<[DeckRow]>,
     cards_dirty: bool,
+    /// The album cards drawn as views of their own, shared with the deck that draws them.
+    album_tiles: Rc<RefCell<AlbumTiles>>,
     card_scrollbar: Entity<Scrollbar>,
     scrollbar: Entity<Scrollbar>,
     songs: Entity<TableState<TrackSource>>,
@@ -426,6 +428,7 @@ impl LibraryView {
             card_heading: Pixels::ZERO,
             card_rows: Rc::from([]),
             cards_dirty: true,
+            album_tiles: Rc::new(RefCell::new(AlbumTiles::new("library-album"))),
             card_scrollbar,
             scrollbar,
             songs,
@@ -990,6 +993,8 @@ impl LibraryView {
         let rows = self.card_rows.clone();
         let section = self.section;
         let view = self.me.clone();
+        let tiles = self.album_tiles.clone();
+        let playback = self.playback.clone();
 
         Scroller::new("library-cards", &self.card_scrollbar)
             .bottom_inset(crate::chrome::Chrome::bottom(cx))
@@ -1006,10 +1011,10 @@ impl LibraryView {
                         let Some(view) = view.upgrade() else {
                             return div().into_any_element();
                         };
-                        let view = view.read(cx);
 
                         match row {
                             DeckRow::Heading(display) => {
+                                let view = view.read(cx);
                                 let label = match section {
                                     Section::Songs => {
                                         view.songs.read(cx).delegate().group(*display, cx)
@@ -1034,20 +1039,24 @@ impl LibraryView {
                                 let row = match section {
                                     Section::Songs => CardGrid::new(room)
                                         .children(cards.iter().filter_map(|&(display, row)| {
-                                            view.track_card(display, row, card, cx)
+                                            view.read(cx).track_card(display, row, card, cx)
                                         }))
                                         .into_any_element(),
                                     Section::Albums => {
-                                        view.album_grid(cards, room, cx).into_any_element()
+                                        let looks = view.read(cx).album_looks(cards, card, cx);
+                                        tiles
+                                            .borrow_mut()
+                                            .row(room, tile, looks, &playback, cx)
+                                            .into_any_element()
                                     }
                                     Section::Playlists => CardGrid::new(room)
                                         .children(cards.iter().filter_map(|&(display, row)| {
-                                            view.playlist_card(display, row, card, cx)
+                                            view.read(cx).playlist_card(display, row, card, cx)
                                         }))
                                         .into_any_element(),
                                     Section::Artists => CardGrid::new(room)
                                         .children(cards.iter().filter_map(|&(display, row)| {
-                                            view.artist_card(display, row, card, cx)
+                                            view.read(cx).artist_card(display, row, card, cx)
                                         }))
                                         .into_any_element(),
                                 };
@@ -1125,19 +1134,28 @@ impl LibraryView {
         )
     }
 
-    fn album_grid(&self, cards: &[(usize, usize)], room: Pixels, cx: &App) -> AlbumGrid {
-        let albums = cards.iter().filter_map(|&(display, row)| {
-            self.albums
-                .read(cx)
-                .delegate()
-                .source()
-                .at(row, cx)
-                .map(|album| (display, album))
-        });
+    /// What each album card in a deck row shows, `width` wide. Whether one is playing is read
+    /// here, so the cards themselves never read `Playback`.
+    fn album_looks(&self, cards: &[(usize, usize)], width: Pixels, cx: &App) -> Vec<TileLook> {
+        let delegate = self.albums.read(cx).delegate();
+        let source = delegate.source();
+        let marks = source.marks_local(cx);
+        let count = delegate.row_count();
 
-        let marks = self.albums.read(cx).delegate().source().marks_local(cx);
-
-        AlbumGrid::new("library-album", room, albums, self.playback.clone()).marking(marks)
+        cards
+            .iter()
+            .filter_map(|&(display, row)| {
+                let album = source.at(row, cx)?;
+                Some(TileLook {
+                    playing: cards::album_playing(&album, &self.playback, cx),
+                    local: marks && Shelf::of(&album.id).local(),
+                    width,
+                    position: display,
+                    count,
+                    album,
+                })
+            })
+            .collect()
     }
 
     fn playlist_card(
@@ -1196,6 +1214,7 @@ impl LibraryView {
 impl Render for LibraryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.resize(window, cx);
+        self.album_tiles.borrow_mut().sweep();
 
         let theme = *cx.theme();
         let inset = theme.metrics.inset;

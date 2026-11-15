@@ -48,7 +48,7 @@ mod window_shape;
 pub use artist::{ArtistDetail, ArtistDetailEvent};
 pub use control::Control;
 pub use cover::Cover;
-pub use detail::{Collection, Detail, Header};
+pub use detail::{Collection, Detail, DetailEvent, Header};
 pub use devices::Devices;
 pub use downloads::{
     Active, Downloads, DownloadsChanged, Pending, Progress, Remaining, Subject, downloaded,
@@ -71,7 +71,7 @@ pub use network::{Network, Reconnected};
 pub use outputs::Outputs;
 pub use overload::OutputLevel;
 pub use pins::{PinSort, Pins};
-pub use playback::{Origin, Playback, PlaybackState, Sleep, Unreachable, Whence};
+pub use playback::{Origin, Playback, PlaybackState, PositionTick, Sleep, Unreachable, Whence};
 pub use profile::Profile;
 pub use queue::{
     Queue, QueueKind, QueuePlacement, QueuePosition, QueueSections, QueueSlot, QueueView, Resume,

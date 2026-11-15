@@ -21,9 +21,27 @@ pub(crate) fn album_card(
     playback: &Entity<Playback>,
     cx: &App,
 ) -> Card {
+    let playing = album_playing(album, playback, cx);
+
+    told_album_card(id, album, playing, playback, cx)
+}
+
+/// Whether `album` is the one playing, as its card shows it.
+pub(crate) fn album_playing(album: &Album, playback: &Entity<Playback>, cx: &App) -> bool {
+    playback.read(cx).engaged(&album_origin(album), cx)
+}
+
+/// The card `album_card` builds, told whether the album is playing rather than reading
+/// `playback`. A card drawn as a view of its own uses it, so playback changes do not redraw it.
+pub(crate) fn told_album_card(
+    id: impl Into<ElementId>,
+    album: &Album,
+    playing: bool,
+    playback: &Entity<Playback>,
+    cx: &App,
+) -> Card {
     let cover = album.cover_large.clone().or_else(|| album.cover.clone());
-    let origin = Origin::album(album.id.clone()).named(album.name.clone());
-    let playing = playback.read(cx).engaged(&origin, cx);
+    let origin = album_origin(album);
     let pin = album.pin();
     let opened = SharedString::from(album.id.clone());
     let toggled = playback.clone();
@@ -391,6 +409,11 @@ pub(crate) fn released(
                 .when(named, |this| this.child(div().flex_none().child(BULLET)))
         })
         .child(artists)
+}
+
+/// The origin playing an album starts from.
+fn album_origin(album: &Album) -> Origin {
+    Origin::album(album.id.clone()).named(album.name.clone())
 }
 
 /// What a release's caption leads with: its year, or its kind when the year is unknown.

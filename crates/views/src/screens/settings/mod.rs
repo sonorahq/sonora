@@ -145,6 +145,7 @@ enum Slot {
     Language,
     Tray,
     TrayIcon,
+    NowPlayingOnFileOpen,
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     ServerSideDecorations,
     #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
@@ -738,6 +739,10 @@ impl SettingsView {
                 t!("settings-close-to-tray-detail"),
             ),
             Slot::TrayIcon => (t!("settings-tray-icon"), t!("settings-tray-icon-detail")),
+            Slot::NowPlayingOnFileOpen => (
+                t!("settings-now-playing-on-file-open"),
+                t!("settings-now-playing-on-file-open-detail"),
+            ),
             Slot::Accounts => {
                 let detail = t!("settings-accounts-detail");
                 let names = self.account_words(cx);
@@ -1009,6 +1014,7 @@ impl SettingsView {
             Slot::Language => self.language_row(cx),
             Slot::Tray => self.tray_row(cx),
             Slot::TrayIcon => self.tray_icon_row(cx),
+            Slot::NowPlayingOnFileOpen => self.now_playing_on_file_open_row(cx),
             Slot::Accounts => div().into_any_element(),
             Slot::LocalFolder => self.local_folder_row(cx),
             Slot::Folders => self.folders(cx),

@@ -99,6 +99,10 @@ fn show(value: &Value) -> String {
     match value {
         Value::Current(current) => serde_json::to_string_pretty(current).unwrap_or_default(),
         Value::Volume(level) => level.to_string(),
+        Value::Muted(muted) => match muted {
+            true => "on".to_owned(),
+            false => "off".to_owned(),
+        },
         Value::Shuffle(on) => match on {
             true => "on".to_owned(),
             false => "off".to_owned(),
@@ -142,6 +146,10 @@ fn show(value: &Value) -> String {
         ),
         Value::Queue(queue) => show_queue(queue),
         Value::Lyrics(lyrics) => show_lyrics(lyrics),
+        Value::Liked(liked) => match liked {
+            true => "on".to_owned(),
+            false => "off".to_owned(),
+        },
         Value::Session(None) => String::new(),
         Value::Session(Some(session)) => format!(
             "{} on {}{}\n{}",
@@ -241,6 +249,7 @@ fn json(value: &Value) -> String {
     let printed = match value {
         Value::Current(current) => serde_json::to_string(current),
         Value::Volume(level) => serde_json::to_string(level),
+        Value::Muted(muted) => serde_json::to_string(muted),
         Value::Shuffle(on) => serde_json::to_string(on),
         Value::Repeat(repeat) => serde_json::to_string(repeat),
         Value::Providers(providers) => serde_json::to_string(providers),
@@ -249,6 +258,7 @@ fn json(value: &Value) -> String {
         Value::Session(session) => serde_json::to_string(session),
         Value::Queue(queue) => serde_json::to_string(queue),
         Value::Lyrics(lyrics) => serde_json::to_string(lyrics),
+        Value::Liked(liked) => serde_json::to_string(liked),
     };
     printed.unwrap_or_default()
 }
@@ -297,6 +307,8 @@ fn describe(failure: &Failure) -> String {
         }
         Failure::Unsupported => "this command is not supported yet".to_owned(),
         Failure::SignedOut => "no provider is signed in".to_owned(),
+        Failure::NoCurrentTrack => "there is no current track".to_owned(),
+        Failure::MissingTrackId => "the current track has no provider id".to_owned(),
         Failure::OtherProvider { link, current } => {
             format!("the link is for {link}, but {current} is the current provider")
         }
@@ -308,7 +320,10 @@ fn describe(failure: &Failure) -> String {
         }
         Failure::NoAccount(name) => format!("{name} has no account to switch to; sign in first"),
         Failure::SignInFailed(name) => format!("{name} did not sign in"),
-        Failure::Busy => "a sign-in is already on its way; try again in a moment".to_owned(),
+        Failure::Busy => "Sonora is busy; try again in a moment".to_owned(),
+        Failure::FavoriteUpdateFailed => {
+            "could not update the current track's favorite state".to_owned()
+        }
         Failure::NothingFound(query) => format!("nothing found for '{query}'"),
     }
 }
@@ -409,5 +424,21 @@ mod tests {
             wire::LyricsSnapshot::without(LyricsStatus::Ready).bounded(false, lines, None),
         );
         assert_eq!(show(&value), "one\ntwo");
+    }
+
+    #[test]
+    fn mute_state_prints_as_on_off_or_json_boolean() {
+        assert_eq!(show(&Value::Muted(true)), "on");
+        assert_eq!(show(&Value::Muted(false)), "off");
+        assert_eq!(json(&Value::Muted(true)), "true");
+        assert_eq!(json(&Value::Muted(false)), "false");
+    }
+
+    #[test]
+    fn favorite_state_prints_as_on_off_or_json_boolean() {
+        assert_eq!(show(&Value::Liked(true)), "on");
+        assert_eq!(show(&Value::Liked(false)), "off");
+        assert_eq!(json(&Value::Liked(true)), "true");
+        assert_eq!(json(&Value::Liked(false)), "false");
     }
 }

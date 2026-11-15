@@ -19,8 +19,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::search::{self, Catalog};
 use crate::{
-    Hit, Io, Library, LyricsState, Origin, Playback, PlaybackState, QueueKind, QueuePlacement,
-    QueuePosition, Repeat, Session, SessionState, Shelf, Sonora, Whence, join, noted,
+    Hit, Io, Library, LibraryPart, LyricsState, Origin, Playback, PlaybackState, QueueKind,
+    QueuePlacement, QueuePosition, Repeat, Session, SessionState, Shelf, Sonora, Whence, join,
+    noted,
 };
 
 /// What `sonora current` calls the provider of a local file, the slug `sonora providers` gives it.
@@ -45,7 +46,7 @@ pub struct Control {
     /// Command lines following what plays, as `sonora watch`.
     watchers: Vec<Watcher>,
     /// What keeps the watchers told, held only while there are any.
-    watching: Option<(Subscription, Task<()>)>,
+    watching: Option<([Subscription; 2], Task<()>)>,
     _session: Subscription,
 }
 
@@ -128,7 +129,11 @@ impl Control {
             told: None,
         });
         if self.watching.is_none() {
-            let observed = cx.observe(&self.playback, |this, _, cx| this.tell(cx));
+            let ticks = self.playback.read(cx).ticks().clone();
+            let observed = [
+                cx.observe(&self.playback, |this, _, cx| this.tell(cx)),
+                cx.observe(&ticks, |this, _, cx| this.tell(cx)),
+            ];
             let ticking = cx.spawn(async move |this, cx| {
                 loop {
                     cx.background_executor().timer(WATCH_TICK).await;
@@ -185,10 +190,71 @@ impl Control {
             Request::Search(query) => return self.search(query, reply, cx),
             Request::Session(command) => session(command, cx),
             Request::Lyrics => Reply::Value(Value::Lyrics(lyrics(self.playback.read(cx), cx))),
+            Request::Like(switch) => return self.like(switch, reply, cx),
             // a watch is answered as a stream, by `watch`, and never reaches here
             Request::Watch(_) => Reply::Failed(Failure::Malformed),
         };
         reply.send(answer).ok();
+    }
+
+    /// Reads or changes the favorite state of the track shown by the active playback device.
+    fn like(
+        &mut self,
+        switch: Option<Switch>,
+        reply: oneshot::Sender<Reply>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(track) = self.playback.read(cx).shown_track(cx) else {
+            reply.send(Reply::Failed(Failure::NoCurrentTrack)).ok();
+            return;
+        };
+        let Some(id) = track.id.as_deref() else {
+            reply.send(Reply::Failed(Failure::MissingTrackId)).ok();
+            return;
+        };
+        let shelf = Shelf::of(id);
+        if self.session.read(cx).client_of(shelf).is_none() {
+            reply.send(Reply::Failed(Failure::Unsupported)).ok();
+            return;
+        }
+        let saved = {
+            let library = self.library.read(cx);
+            if library.loading(shelf, LibraryPart::Tracks) || library.pending(id) {
+                reply.send(Reply::Failed(Failure::Busy)).ok();
+                return;
+            }
+            library.saved(id)
+        };
+        let Some(switch) = switch else {
+            reply.send(Reply::Value(Value::Liked(saved))).ok();
+            return;
+        };
+        let wanted = favorite_target(saved, switch);
+        if wanted == saved {
+            reply.send(Reply::Done).ok();
+            return;
+        }
+        let completed = self
+            .library
+            .update(cx, |library, cx| library.save_track(track, wanted, cx));
+        let key = self.issued;
+        self.issued += 1;
+        let task = cx.spawn(async move |this, cx| {
+            let answer = match completed.await {
+                Ok(true) => Reply::Done,
+                Ok(false) => Reply::Failed(Failure::FavoriteUpdateFailed),
+                Err(error) => {
+                    log::warn!("control: favorite update ended before it completed: {error}");
+                    Reply::Failed(Failure::FavoriteUpdateFailed)
+                }
+            };
+            this.update(cx, |this, _| {
+                reply.send(answer).ok();
+                this.pending.remove(&key);
+            })
+            .ok();
+        });
+        self.pending.insert(key, task);
     }
 
     /// Queues the items of `command`, or the best hit of the search it carries, which first has
@@ -523,6 +589,15 @@ impl Control {
     }
 }
 
+/// Resolves an explicit or relative favorite command to the state it asks for.
+fn favorite_target(saved: bool, switch: Switch) -> bool {
+    match switch {
+        Switch::On => true,
+        Switch::Off => false,
+        Switch::Toggle => !saved,
+    }
+}
+
 /// Starts, joins or leaves a Sonora Session, or says which one Sonora is in. A start or join
 /// answers before the server does, so `sonora session` tells whether it went through.
 fn session(command: SessionCommand, cx: &mut App) -> Reply {
@@ -583,6 +658,14 @@ fn play(playback: &mut Playback, command: PlaybackCommand, cx: &mut Context<Play
             };
             playback.set_volume(f32::from(target.clamp(0, 100)) / 100., cx);
         }
+        PlaybackCommand::Mute(None) => {
+            return Reply::Value(Value::Muted(playback.muted(cx)));
+        }
+        PlaybackCommand::Mute(Some(switch)) => match switch {
+            Switch::On => playback.set_muted(true, cx),
+            Switch::Off => playback.set_muted(false, cx),
+            Switch::Toggle => playback.toggle_muted(cx),
+        },
         PlaybackCommand::Shuffle(None) => {
             return Reply::Value(Value::Shuffle(playback.shown_shuffle(cx)));
         }
@@ -1075,5 +1158,15 @@ mod tests {
             lines,
             [("さよなら", Some("sayonara")), ("", None), ("bye", None)]
         );
+    }
+
+    #[test]
+    fn explicit_favorite_commands_are_idempotent() {
+        assert!(favorite_target(false, Switch::On));
+        assert!(favorite_target(true, Switch::On));
+        assert!(!favorite_target(false, Switch::Off));
+        assert!(!favorite_target(true, Switch::Off));
+        assert!(favorite_target(false, Switch::Toggle));
+        assert!(!favorite_target(true, Switch::Toggle));
     }
 }
