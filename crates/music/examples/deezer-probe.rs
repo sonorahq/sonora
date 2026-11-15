@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
 
     let profile = client.profile().await?;
     println!("profile: {} ({})", profile.display_name, profile.id);
-    for member in client.profiles().await {
+    for member in client.profiles().await? {
         println!(
             "family profile: {} ({}) {:?}",
             member.name, member.id, member.detail

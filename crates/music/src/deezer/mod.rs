@@ -55,7 +55,7 @@ impl DeezerProvider {
             .await
             .context("cannot reach deezer with that session")?;
         let signed_in = client.profile().await?.id;
-        let profiles = client.profiles().await;
+        let profiles = client.profiles().await?;
         let picked = match profiles.len() {
             0 | 1 => None,
             _ => Some(pick(profiles, prompt, input).await?),
@@ -78,15 +78,6 @@ impl DeezerProvider {
         };
         match DeezerClient::connect(&remembered.arl, remembered.profile.as_deref()).await {
             Ok(client) => {
-                let arl = client.arl().await;
-                if arl != remembered.arl
-                    && let Err(error) = auth::store(&auth::Credentials {
-                        arl,
-                        profile: remembered.profile,
-                    })
-                {
-                    log::warn!("deezer: cannot store the renewed session: {error:#}");
-                }
                 let profile = client.profile().await?;
                 Ok(Some(session(client, profile)))
             }

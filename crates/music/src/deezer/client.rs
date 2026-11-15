@@ -317,22 +317,20 @@ impl DeezerClient {
     }
 
     /// The family profiles this session can switch to, the signed-in one among them, in
-    /// Deezer's order. Empty when the account has no family plan or the list cannot be read.
-    pub async fn profiles(&self) -> Vec<AccountChoice> {
+    /// Deezer's order. Empty when the account has no family plan, and an error when it has one
+    /// but the list cannot be read.
+    pub async fn profiles(&self) -> Result<Vec<AccountChoice>> {
         let (family, current) = {
             let session = self.inner.session.read().await;
             (session.family, session.profile.clone())
         };
         if !family {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        let results = match self.gw("deezer.getChildAccounts", json!({})).await {
-            Ok(results) => results,
-            Err(error) => {
-                log::warn!("deezer: cannot list the family profiles: {error:#}");
-                return Vec::new();
-            }
-        };
+        let results = self
+            .gw("deezer.getChildAccounts", json!({}))
+            .await
+            .context("cannot list the deezer family profiles")?;
         let members = results
             .as_array()
             .or_else(|| results["data"].as_array())
@@ -353,7 +351,7 @@ impl DeezerClient {
                 },
             );
         }
-        profiles
+        Ok(profiles)
     }
 
     /// Moves the session to the family profile `id` the way the web player does, then reloads
@@ -546,7 +544,8 @@ impl DeezerClient {
     }
 
     /// Takes the `arl` and `sid` cookies a gateway answer sets, so the calls after it carry
-    /// them. An arl that does not look like one, such as a deleted cookie, is ignored.
+    /// them. A new arl also replaces the stored one when that one belongs to this session. An
+    /// arl that does not look like one, such as a deleted cookie, is ignored.
     async fn adopt_cookies(&self, headers: &reqwest::header::HeaderMap) {
         let mut arl = None;
         let mut sid = None;
@@ -575,6 +574,15 @@ impl DeezerClient {
             && arl != session.arl
         {
             log::debug!("deezer: the gateway handed out a new arl");
+            if let Some(stored) = auth::load()
+                && stored.arl == session.arl
+                && let Err(error) = auth::store(&auth::Credentials {
+                    arl: arl.clone(),
+                    profile: stored.profile,
+                })
+            {
+                log::warn!("deezer: cannot store the renewed session: {error:#}");
+            }
             session.arl = arl;
         }
         if let Some(sid) = sid {
