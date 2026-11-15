@@ -17,8 +17,6 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_PROFILE_RELEASE_STRIP: symbols
   RUST_BACKTRACE: 1
-  RUSTC_WRAPPER: sccache
-  SCCACHE_GHA_ENABLED: "true"
 
 jobs:
   # A release branch only moves the version and the changelog over code main already checked,
@@ -47,11 +45,14 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      # The check and lint jobs cache their whole target directory, so sccache would only
+      # duplicate it. Only main saves that cache: a pull request's cache is visible to that pull
+      # request alone, and would only push main's out of the repository's quota.
       - uses: Swatinem/rust-cache@v2
         with:
           key: ci-check
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: rustfmt
         run: cargo fmt --all --check
@@ -59,21 +60,25 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      # The dev profile optimises ui, views and music for a usable debug build, which makes
+      # compiling them for the tests take three times as long. The tests do not need it.
       - name: tests
-        run: cargo test --workspace --locked
-
-      - name: sccache stats
-        if: always()
-        run: sccache --show-stats
+        run: >-
+          cargo test --workspace --locked
+          --config 'profile.dev.debug="line-tables-only"'
+          --config 'profile.dev.package.ui.opt-level=0'
+          --config 'profile.dev.package.views.opt-level=0'
+          --config 'profile.dev.package.music.opt-level=0'
 
   # The check job only ever sees the Linux side of a cfg. These two lint the other two
   # platforms' code without paying for codegen, linking or an installer, which is the whole
   # cost of a release build. A tag still builds every target for real through release.yml.
+  # A push to main runs them too, only to save the cache every pull request starts from.
   platforms:
     name: clippy on ${{ matrix.target }}
     if: >-
-      (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
-      !startsWith(github.head_ref, 'release/')
+      !startsWith(github.head_ref, 'release/') &&
+      !contains(github.event.head_commit.message, 'from sonorahq/release/')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -91,18 +96,14 @@ jobs:
           targets: ${{ matrix.target }}
           components: clippy
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: Swatinem/rust-cache@v2
         with:
           key: lint-${{ matrix.target }}
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked --target ${{ matrix.target }} -- -D warnings
-
-      - name: sccache stats
-        if: always()
-        run: sccache --show-stats
 
   build:
     name: ${{ matrix.target }}
@@ -111,6 +112,8 @@ jobs:
       !contains(github.event.head_commit.message, 'from sonorahq/release/')
     runs-on: ${{ matrix.os }}
     env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
       SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
     strategy:
       fail-fast: false
