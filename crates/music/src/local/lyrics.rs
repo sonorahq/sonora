@@ -56,7 +56,7 @@ impl LyricsProvider for LocalLyrics {
 }
 
 /// A lyrics file of the same name wins, since someone put it there for this track; the tags are
-/// the fallback when there is none, or when it holds no line that decodes.
+/// the fallback when there is none, or when it holds no text.
 fn read(path: &Path) -> Result<Option<Lyrics>> {
     match sidecar(path) {
         Some(lyrics) => Ok(Some(lyrics)),
@@ -64,9 +64,9 @@ fn read(path: &Path) -> Result<Option<Lyrics>> {
     }
 }
 
-/// Lyrics from `Song.ttml` or `Song.lrc` beside `Song.flac`. A file that cannot be read or has no
-/// valid line is logged and skipped rather than failing the lookup, so the next file and then the
-/// tags still get their turn.
+/// Lyrics from `Song.ttml` or `Song.lrc` beside `Song.flac`. A file that cannot be read or holds no
+/// text is logged or skipped rather than failing the lookup, so the next file and then the tags
+/// still get their turn.
 fn sidecar(path: &Path) -> Option<Lyrics> {
     SIDECARS.iter().find_map(|extension| {
         let sidecar_path = path.with_extension(extension);
@@ -74,7 +74,7 @@ fn sidecar(path: &Path) -> Option<Lyrics> {
             Ok(text) if extension.eq_ignore_ascii_case("ttml") => {
                 tags::ttml_lyrics(&sidecar_path, &text)
             }
-            Ok(text) => lrc_lyrics(&sidecar_path, &text),
+            Ok(text) => lrc_lyrics(&text),
             Err(error) if error.kind() == ErrorKind::NotFound => None,
             Err(error) => {
                 log::warn!("lyrics: cannot read {}: {error}", sidecar_path.display());
@@ -84,16 +84,18 @@ fn sidecar(path: &Path) -> Option<Lyrics> {
     })
 }
 
-/// Timed lyrics from an `.lrc` file, or none when it holds no valid line.
-fn lrc_lyrics(lrc_path: &Path, text: &str) -> Option<Lyrics> {
-    let lines = lrc::parse(text.trim_start_matches('\u{feff}'));
-    if lines.is_empty() {
-        log::warn!("lyrics: {} holds no valid LRC line", lrc_path.display());
-        return None;
+/// Timed lyrics from an `.lrc` file. A file with no timed line is read as plain text, as the
+/// embedded tags are, and only a file with no text at all gives none.
+fn lrc_lyrics(text: &str) -> Option<Lyrics> {
+    let text = text.trim_start_matches('\u{feff}');
+    let lines = lrc::parse(text);
+    if !lines.is_empty() {
+        return Some(Lyrics::Synced {
+            lines: lines.into(),
+        });
     }
-    Some(Lyrics::Synced {
-        lines: lines.into(),
-    })
+    let plain = text.trim();
+    (!plain.is_empty()).then(|| Lyrics::plain(plain))
 }
 
 #[cfg(test)]
@@ -156,6 +158,56 @@ mod tests {
     fn a_ttml_file_without_lines_gives_nothing() {
         let path = track("sonora-local-ttml-empty", &[]);
         fs::write(path.with_extension("ttml"), "<tt><body></body></tt>").unwrap();
+
+        assert!(read(&path).unwrap().is_none());
+    }
+
+    fn assert_plain(lyrics: Option<Lyrics>, expected: &str) {
+        let Some(Lyrics::Plain { text, .. }) = lyrics else {
+            panic!("expected plain lyrics, got {lyrics:?}");
+        };
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn an_unsynced_lrc_parses_to_plain_lyrics() {
+        assert_plain(
+            lrc_lyrics("\u{feff}First line\nSecond line\n"),
+            "First line\nSecond line",
+        );
+    }
+
+    #[test]
+    fn a_synced_lrc_beside_the_track_is_unchanged() {
+        let path = track("sonora-local-lrc-synced", &[]);
+        fs::write(
+            path.with_extension("lrc"),
+            "[00:01.00]So here I am\n[00:03.50]Doing it again\n",
+        )
+        .unwrap();
+
+        assert_timed(read(&path).unwrap());
+    }
+
+    #[test]
+    fn an_unsynced_lrc_alone_shows_its_lyrics() {
+        let path = track("sonora-local-lrc-alone", &[]);
+        fs::write(path.with_extension("lrc"), "First line\nSecond line\n").unwrap();
+
+        assert_plain(read(&path).unwrap(), "First line\nSecond line");
+    }
+
+    #[test]
+    fn an_unsynced_lrc_beside_the_track_wins_over_the_tags() {
+        let path = track("sonora-local-lrc-priority", &["LYRICS=From the tags"]);
+        fs::write(path.with_extension("lrc"), "From the file\n").unwrap();
+
+        assert_plain(read(&path).unwrap(), "From the file");
+    }
+
+    #[test]
+    fn a_missing_lrc_gives_nothing() {
+        let path = track("sonora-local-lrc-missing", &[]);
 
         assert!(read(&path).unwrap().is_none());
     }

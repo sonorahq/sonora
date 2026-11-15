@@ -7,8 +7,8 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::{
-    Album, ArtistRef, Genre, GenreItem, GenreSection, Playlist, ReleaseType, SavedArtist, Track,
-    UserProfile, calendar,
+    AccountChoice, Album, ArtistRef, Genre, GenreItem, GenreSection, Playlist, ReleaseType,
+    SavedArtist, Track, UserProfile, calendar,
 };
 
 /// Sets a smart tracklist's id apart from a playlist's, so a later lookup knows to ask for
@@ -88,6 +88,18 @@ pub fn profile(user: &Value) -> UserProfile {
         display_name: text(user, &["BLOG_NAME"]).unwrap_or("Deezer").to_owned(),
         avatar: image("user", text(user, &["USER_PICTURE"]), 300),
     }
+}
+
+/// One member of `deezer.getChildAccounts` as a profile to pick, captioned the way the web
+/// player captions it. None for a member without an id.
+pub fn family_profile(member: &Value) -> Option<AccountChoice> {
+    Some(AccountChoice {
+        id: id(&member["USER_ID"])?,
+        name: text(member, &["BLOG_NAME"]).unwrap_or("Deezer").to_owned(),
+        detail: text(&member["EXTRA_FAMILY"], &["CAPTION"])
+            .filter(|caption| !caption.trim().is_empty())
+            .map(str::to_owned),
+    })
 }
 
 /// The `https://cdn-images.dzcdn.net/images/<kind>/<md5>/<size>x<size>-000000-80-0-0.jpg`
@@ -183,7 +195,8 @@ fn artists_of(value: &Value) -> (String, Vec<ArtistRef>) {
     (name.to_owned(), refs)
 }
 
-fn truthy(value: &Value, keys: &[&str]) -> bool {
+/// Whether the first field under any of `keys` is set, spelled as a bool, a number or a string.
+pub fn truthy(value: &Value, keys: &[&str]) -> bool {
     keys.iter()
         .find_map(|key| value.get(key))
         .map(|field| match field {
