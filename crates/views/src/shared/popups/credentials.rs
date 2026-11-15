@@ -1,11 +1,10 @@
 use std::rc::Rc;
 
-use gpui::accesskit::Role;
 use gpui::{
     App, AppContext as _, Entity, Focusable as _, IntoElement, RenderOnce, Window, div, prelude::*,
 };
 use i18n::t;
-use ui::{ActiveTheme as _, Button, Field, Form, Input, Modal, Text};
+use ui::{Button, Field, Form, Input, Modal};
 
 type Action = Rc<dyn Fn(&(), &mut Window, &mut App)>;
 
@@ -137,19 +136,10 @@ impl RenderOnce for CredentialsPrompt {
             submit,
             cancel,
         } = self;
-        let theme = cx.theme();
         let jellyfin = provider == "jellyfin";
-        let (title, detail, note) = match jellyfin {
-            true => (
-                t!("login-jellyfin-title"),
-                t!("login-jellyfin-detail"),
-                t!("login-jellyfin-note"),
-            ),
-            false => (
-                t!("login-server-title"),
-                t!("login-server-detail"),
-                t!("login-server-note"),
-            ),
+        let (title, detail) = match jellyfin {
+            true => (t!("login-jellyfin-title"), t!("login-jellyfin-detail")),
+            false => (t!("login-server-title"), t!("login-server-detail")),
         };
         // the sign-in itself, which needs the password everywhere but on Jellyfin
         let sign_in: Action = {
@@ -193,8 +183,6 @@ impl RenderOnce for CredentialsPrompt {
             }
         };
         let (submitted, clicked) = (sign_in.clone(), sign_in);
-        let muted = theme.muted_foreground;
-        let body = theme.text(Text::Body);
 
         Modal::new("server-prompt", title)
             .detail(detail)
@@ -231,17 +219,6 @@ impl RenderOnce for CredentialsPrompt {
                                 .on_click(quick_connect),
                         )
                     }),
-            )
-            .child(
-                div()
-                    .id("server-note")
-                    .role(Role::Paragraph)
-                    .aria_label(note.clone())
-                    .w_full()
-                    .text_center()
-                    .text_size(body)
-                    .text_color(muted)
-                    .child(note),
             )
             .on_dismiss(dismiss)
     }
