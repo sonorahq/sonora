@@ -37,6 +37,7 @@ mod signal;
 mod snapshot;
 mod soloist;
 mod song;
+mod sponsorblock;
 mod tags;
 mod toast;
 mod updates;
@@ -91,6 +92,7 @@ pub use settings::{
 pub use signal::{Change, Equalizing, FLOAT_BITS, Following, Signal, SignalPath};
 pub use soloist::{Soloist, SoloistProblem, SoloistState, SoloistStep, SoloistSwitched};
 pub use song::SongDetail;
+pub use sponsorblock::SponsorBlock;
 pub use tags::{TagState, Tags};
 pub use toast::{Outcome, Target, Toast, ToastAction, Toasts};
 pub use updates::{Channel, Release, UpdateState, Updates, commit, updates_itself, version};
@@ -236,6 +238,7 @@ pub struct Sonora {
     pub outputs: Entity<Outputs>,
     pub pins: Entity<Pins>,
     pub playback: Entity<Playback>,
+    pub sponsorblock: Entity<SponsorBlock>,
     /// The window that mints YouTube's proof-of-origin token. Nothing reads it; it is held so
     /// that it keeps ticking.
     pub potoken: Entity<potoken::PoToken>,
@@ -314,6 +317,15 @@ pub fn init(
         )
     });
     let outputs = cx.new(|cx| Outputs::new(settings.clone(), playback.clone(), cx));
+    let sponsorblock = cx.new(|cx| {
+        sponsorblock::SponsorBlock::new(
+            playback.clone(),
+            session.clone(),
+            settings.clone(),
+            &network,
+            cx,
+        )
+    });
     let downloads = cx.new(|cx| {
         Downloads::new(
             session.clone(),
@@ -420,6 +432,7 @@ pub fn init(
     );
 
     cx.set_global(Sonora {
+        sponsorblock,
         session,
         control,
         cover,
