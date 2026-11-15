@@ -429,6 +429,11 @@ impl Unread {
     }
 }
 
+/// Notified on every position report, from the engine here or from the device being steered,
+/// in place of `Playback`. It holds nothing; an observer reads the time from `Playback`, and
+/// anything that draws or counts the position observes both.
+pub struct PositionTick;
+
 /// Everything the UI knows about what is playing, and the only thing that drives an engine.
 /// Holds one engine for the streaming provider and one for local files, a `Queue` for what
 /// comes next, and a clock for the position between the engine's reports. Views act through
@@ -438,6 +443,8 @@ pub struct Playback {
     /// The last position the engine reported, or the one asked of it.
     position: Duration,
     clock: LiveClock,
+    /// Notified on each position report, which notifies nothing else.
+    ticks: Entity<PositionTick>,
     track: Option<Track>,
     engine: Option<Box<dyn Player>>,
     local_engine: Option<Box<dyn Player>>,
@@ -643,6 +650,7 @@ impl Playback {
             state: PlaybackState::Idle,
             position: Duration::ZERO,
             clock: LiveClock::new(),
+            ticks: cx.new(|_| PositionTick),
             track: None,
             engine: None,
             local_engine: None,
@@ -2439,6 +2447,17 @@ impl Playback {
         &self.state
     }
 
+    /// The entity notified on every position report, which `Playback` itself is not. Observe it
+    /// as well as `Playback` to follow the position as it moves.
+    pub fn ticks(&self) -> &Entity<PositionTick> {
+        &self.ticks
+    }
+
+    /// Tells the observers of `ticks` that the position moved.
+    fn tick(&self, cx: &mut App) {
+        self.ticks.update(cx, |_, cx| cx.notify());
+    }
+
     /// The position as last reported or asked for. It only moves on events.
     pub fn position(&self) -> Duration {
         self.position
@@ -3052,9 +3071,12 @@ impl Playback {
                 }
                 self.remember(false, cx);
                 self.preload_next(at, cx);
-                if failed {
-                    self.follow_up_seek(cx);
+                self.tick(cx);
+                // a report that only moves the clock reaches the observers of `ticks` alone
+                if !failed {
+                    return;
                 }
+                self.follow_up_seek(cx);
             }
             BackendEvent::Downloaded { .. } => self.preload_upcoming(false, cx),
             BackendEvent::Length { duration, .. } => {

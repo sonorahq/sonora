@@ -11,6 +11,7 @@ mod sidebar_left;
 mod sidebar_right;
 mod swipe_cue;
 mod theme_invite;
+mod timeline;
 mod title_bar;
 mod toasts;
 mod toolbar;
