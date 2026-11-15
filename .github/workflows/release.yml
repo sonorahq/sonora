@@ -418,12 +418,13 @@ jobs:
 
       # The libraries the executable links, so linuxdeploy can resolve and copy them. Its own
       # excludelist decides which of them stay behind and come from the host instead.
+      # libsqlite3-0 is only for an executable reused from a release that predates bundled SQLite.
       - name: system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             patchelf file desktop-file-utils \
-            libasound2 libfontconfig1 libfreetype6 \
+            libasound2 libfontconfig1 libfreetype6 libsqlite3-0 \
             libx11-6 libxcb1 libxcursor1 libxi6 \
             libxkbcommon0 libxkbcommon-x11-0 libwayland-client0 \
             libvulkan1 libdbus-1-3
