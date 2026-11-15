@@ -19,7 +19,7 @@ use gpui::{
     ScrollHandle, SharedString, WeakEntity, Window, div, point, px, relative,
 };
 use i18n::t;
-use music::{Shape, Track};
+use music::{Arrival, Shape, Track};
 use router::{Destination, LibraryTab, navigate};
 use state::{
     Addition, AppSettings, DownloadsChanged, Library, LibraryPart, LibraryState, Network, Origin,
@@ -176,6 +176,20 @@ impl Tracks for ShelfTracks {
 
     fn is_loading(&self, cx: &App) -> bool {
         loading(&self.library, Section::Songs, cx)
+    }
+
+    /// The streaming shelf's order, only while no local file shares the page, since a mixed page
+    /// has no one order to follow.
+    fn arrival(&self, cx: &App) -> Option<Arrival> {
+        let library = self.library.read(cx);
+        if !library.state(Shelf::Local).tracks().is_empty() {
+            return None;
+        }
+        Sonora::global(cx)
+            .session
+            .read(cx)
+            .capabilities_of(Shelf::Streaming)
+            .song_arrival
     }
 }
 

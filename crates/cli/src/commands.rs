@@ -174,6 +174,12 @@ pub enum Item {
         text: String,
         kind: Kind,
     },
+    /// The best match of this kind in the local library, ranked as the search page ranks it,
+    /// with no provider asked. It is queued alone. Stands for `sonora add -s <query> --local`
+    Local {
+        text: String,
+        kind: Kind,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

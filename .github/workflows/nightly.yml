@@ -30,7 +30,7 @@ jobs:
       tap: ${{ steps.decide.outputs.tap }}
       reuse: ${{ steps.decide.outputs.reuse }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: decide
         id: decide
@@ -107,7 +107,7 @@ jobs:
       - name: system dependencies
         run: pacman -Syu --noconfirm --needed git openssh
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: render the PKGBUILD
         env:

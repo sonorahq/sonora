@@ -193,18 +193,22 @@ struct Searched {
         requires = "search"
     )]
     kind: KindArg,
+    /// Search the local library instead of the current provider.
+    #[arg(short = 'l', long = "local", requires = "search")]
+    local: bool,
 }
 
 impl Searched {
     /// The items to play or queue: the search when one was given, else the files and links.
     fn or(self, items: Vec<Item>) -> Vec<Item> {
-        match self.search {
-            Some(words) => vec![Item::Search {
-                text: words.join(" "),
-                kind: self.kind.into(),
-            }],
-            None => items,
-        }
+        let Some(words) = self.search else {
+            return items;
+        };
+        let (text, kind) = (words.join(" "), self.kind.into());
+        vec![match self.local {
+            true => Item::Local { text, kind },
+            false => Item::Search { text, kind },
+        }]
     }
 }
 
@@ -564,6 +568,46 @@ mod tests {
     #[test]
     fn like_rejects_an_unknown_switch() {
         let args = ["sonora", "like", "perhaps"].map(OsString::from);
+        assert!(parse(args.to_vec(), "0.0.0").is_err());
+    }
+
+    #[test]
+    fn local_search_plays_or_queues_a_local_match() {
+        let local = |text: &str, kind| Item::Local {
+            text: text.to_owned(),
+            kind,
+        };
+        for (args, request) in [
+            (
+                &["play", "-s", "one", "more", "time", "--local"][..],
+                QueueCommand::Play(vec![local("one more time", Kind::Song)]),
+            ),
+            (
+                &["add", "-l", "-t", "album", "-s", "dark", "side"][..],
+                QueueCommand::Add(vec![local("dark side", Kind::Album)]),
+            ),
+            (
+                &["play-next", "--local", "-t", "playlist", "-s", "mix"][..],
+                QueueCommand::PlayNext(vec![local("mix", Kind::Playlist)]),
+            ),
+            (
+                &["play", "-t", "artist", "-s", "queen"][..],
+                QueueCommand::Play(vec![Item::Search {
+                    text: "queen".to_owned(),
+                    kind: Kind::Artist,
+                }]),
+            ),
+        ] {
+            let CommandType::Remote(actual, _) = parsed(args) else {
+                panic!("a search should ask the running Sonora");
+            };
+            assert_eq!(actual, Request::Queue(request));
+        }
+    }
+
+    #[test]
+    fn local_needs_a_search() {
+        let args = ["sonora", "play", "--local"].map(OsString::from);
         assert!(parse(args.to_vec(), "0.0.0").is_err());
     }
 }
