@@ -35,7 +35,7 @@ use crate::shared::trouble;
 const RAIL: Pixels = gpui::px(12.);
 /// How tall the band is where results fade out as they scroll up under what sits above them.
 const FADE: Pixels = gpui::px(12.);
-/// How many past searches the panel lists.
+/// How many entries of the search history the panel lists.
 const PAST: usize = 8;
 /// How many songs the panel suggests.
 const SUGGESTED: usize = 6;
@@ -49,13 +49,6 @@ const RELEASES: &[Kind] = &[Kind::Album, Kind::Playlist];
 use crate::shared::tracks::{PlaybackStatus, playback_status};
 
 type Play = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
-
-enum Press {
-    Song(Box<Track>),
-    Artist(String),
-    Album(String),
-    Playlist(String),
-}
 
 #[derive(Clone)]
 enum HitMenu {
@@ -77,11 +70,11 @@ impl HitMenu {
     }
 }
 
-/// One row of the panel under the search field: a past query while the field is empty, a
-/// suggested hit of any kind while something is typed.
+/// One row of the panel under the search field: something chosen out of an earlier search while
+/// the field is empty, a suggested hit of any kind while something is typed.
 #[derive(Clone)]
 enum Offer {
-    Past(String),
+    Recent(Box<Hit>),
     Link(String),
     Hit(Box<Hit>),
 }
@@ -90,18 +83,9 @@ impl Offer {
     /// What tells one row from another when the suggestions fill in under it.
     fn key(&self) -> String {
         match self {
-            Offer::Past(query) => format!("past:{query}"),
+            Offer::Recent(hit) => format!("recent:{}", hit.key()),
             Offer::Link(query) => format!("link:{query}"),
-            Offer::Hit(hit) => match &**hit {
-                Hit::Song(track) => {
-                    format!("song:{}", track.id.as_deref().unwrap_or(&track.name))
-                }
-                Hit::Artist(artist) => {
-                    format!("artist:{}", artist.id.as_deref().unwrap_or(&artist.name))
-                }
-                Hit::Album(album) => format!("album:{}", album.id),
-                Hit::Playlist(list) => format!("playlist:{}", list.id),
-            },
+            Offer::Hit(hit) => hit.key(),
         }
     }
 }
@@ -251,13 +235,14 @@ impl SearchView {
         }
     }
 
-    /// Puts the keyboard in the field when the page opens, without the panel, so the categories
-    /// stay in view until the listener clicks the field, presses Down or starts typing.
-    pub(crate) fn focus(&mut self, window: &mut Window, cx: &mut App) {
-        if !self.typing(window, cx) {
-            self.hush = true;
-        }
+    /// Puts the keyboard in the field when the page opens, with the panel open, so the search
+    /// history shows at once.
+    pub(crate) fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.hush = false;
+        self.dismissed = false;
+        self.pick = None;
         self.input.update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
     }
 
     /// Moves the keyboard back to the field without opening the panel, for the arrow keys and
@@ -271,18 +256,14 @@ impl SearchView {
         self.input.read(cx).focus_handle(cx).is_focused(window)
     }
 
-    /// The rows of the panel: past queries while the field is empty, the best suggested hits
-    /// once something is typed.
+    /// The rows of the panel: what earlier searches ended on while the field is empty, the best
+    /// suggested hits once something is typed.
     fn offers(&self, cx: &App) -> Vec<Offer> {
         if self.typed.trim().is_empty() {
-            return Sonora::global(cx)
-                .settings
-                .read(cx)
-                .searches()
-                .iter()
+            return Hit::recent(cx)
+                .into_iter()
                 .take(PAST)
-                .cloned()
-                .map(Offer::Past)
+                .map(|hit| Offer::Recent(Box::new(hit)))
                 .collect();
         }
         let suggestions = self.suggestions.read(cx);
@@ -360,9 +341,7 @@ impl SearchView {
         self.search_text(&query, cx);
     }
 
-    /// Runs a full search and records the submitted query in history.
     fn search_text(&mut self, query: &str, cx: &mut Context<Self>) {
-        remember(query, cx);
         self.search.update(cx, |search, cx| search.ask(query, cx));
         self.close_panel(cx);
     }
@@ -383,8 +362,8 @@ impl SearchView {
         }
     }
 
-    /// Acts on a panel row. A past query fills the field and runs again, and a hit opens the way
-    /// it does in the results, which files what was typed in the history as a search would.
+    /// Acts on a panel row. A hit, from the history or suggested, opens the way it does in the
+    /// results and moves to the top of the history.
     fn take(&mut self, offer: Offer, cx: &mut Context<Self>) {
         match offer {
             Offer::Link(query) => {
@@ -394,29 +373,15 @@ impl SearchView {
                     .update(cx, |links, cx| links.open(&query, cx));
                 self.close_panel(cx);
             }
-            Offer::Past(query) => {
-                // Set ahead of the field, so its observer does not take this for typing and
-                // open the panel again.
-                self.typed = query.clone();
-                self.input
-                    .update(cx, |input, cx| input.set_text(query.clone(), cx));
-                self.suggestions
-                    .update(cx, |suggestions, cx| suggestions.ask(&query, cx));
-                self.run(&query, cx);
-            }
-            Offer::Hit(hit) => {
-                remember(&self.typed, cx);
+            Offer::Recent(hit) | Offer::Hit(hit) => {
                 self.open_hit(*hit, cx);
                 self.close_panel(cx);
             }
         }
     }
 
-    fn forget(&mut self, query: &str, cx: &mut Context<Self>) {
-        Sonora::global(cx)
-            .settings
-            .clone()
-            .update(cx, |settings, cx| settings.forget_search(query, cx));
+    fn forget(&mut self, hit: &Hit, cx: &mut Context<Self>) {
+        hit.forget(cx);
         self.pick = None;
         cx.notify();
     }
@@ -444,8 +409,12 @@ impl SearchView {
         cx: &App,
     ) -> AnyElement {
         let chosen = self.pick == Some(at);
-        let query = match offer {
-            Offer::Hit(hit) => return self.row(hit, at, at, total, true, chosen, me, cx),
+        let hit = match offer {
+            Offer::Hit(hit) => {
+                return self
+                    .row(hit, at, at, total, true, chosen, me, cx)
+                    .into_any_element();
+            }
             Offer::Link(_) => {
                 let label = t!("search-open-link");
                 let taken = offer.clone();
@@ -464,18 +433,14 @@ impl SearchView {
                     .when(chosen, |card| card.aria_active_descendant())
                     .into_any_element();
             }
-            Offer::Past(query) => query,
+            Offer::Recent(hit) => hit,
         };
         let theme = *cx.theme();
-        let taken = offer.clone();
-        let forgotten = query.clone();
-        let take = me.clone();
+        let forgotten = (**hit).clone();
         let forget = me.clone();
 
-        Card::new(("search-past", at), query.clone())
-            .tucked()
-            .fallback("icons/rotate-ccw-clock.svg")
-            .action(
+        self.row(hit, at, at, total, true, chosen, me, cx)
+            .collapsed_action(
                 Button::new(("search-forget", at))
                     .ghost()
                     .small()
@@ -490,24 +455,30 @@ impl SearchView {
                             .ok();
                     }),
             )
-            .press(move |_, _, cx| {
-                take.update(cx, |this, cx| this.take(taken.clone(), cx))
-                    .ok();
-            })
-            .chosen(chosen)
-            .when(chosen, |card| card.aria_active_descendant())
             .into_any_element()
     }
 
-    /// The panel's rows, with placeholder rows while the first suggestions load. The heading only
-    /// names the list for screen readers.
+    /// The panel's rows, with placeholder rows while the first suggestions load. The search
+    /// history shows its heading above the rows, while the suggestions name theirs only for
+    /// screen readers.
     fn panel_rows(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
         let offers = self.offers(cx);
         let me = cx.entity().downgrade();
-        let heading = match self.typed.trim().is_empty() {
+        let recalling = self.typed.trim().is_empty();
+        let heading = match recalling {
             true => t!("search-recent"),
             false => t!("search-results"),
         };
+        let title = (recalling && !offers.is_empty()).then(|| {
+            eyebrow(heading.clone(), cx)
+                .id("search-recent-heading")
+                .role(Role::Heading)
+                .aria_level(2)
+                .aria_label(heading.clone())
+                .px(cx.theme().metrics.pad)
+                .pt_1()
+                .pb_2()
+        });
         let waiting = offers.is_empty().then(|| {
             (0..SUGGESTED_WAITING).map(|at| {
                 Card::skeleton(("search-offer-waiting", at))
@@ -527,18 +498,16 @@ impl SearchView {
             .flex()
             .flex_col()
             .gap_px()
-            // A hit opens through its own card, so the panel only files the query and goes away
+            // A hit opens and files itself through its own card, so the panel only goes away
             // once a click inside it has landed.
-            .on_click(cx.listener(|this, _, _, cx| {
-                remember(&this.typed, cx);
-                this.close_panel(cx);
-            }))
+            .on_click(cx.listener(|this, _, _, cx| this.close_panel(cx)))
             .children(waiting.into_iter().flatten())
             .children(offers.iter().enumerate().map(|(at, offer)| {
                 let level = self.cascade.level(&offer.key(), window, cx);
                 Cascade::surface(self.offer_row(offer, at, offers.len(), &me, cx), level)
             }));
-        self.unfold.wrap(list, false, window, cx).into_any_element()
+        let body = div().flex().flex_col().children(title).child(list);
+        self.unfold.wrap(body, false, window, cx).into_any_element()
     }
 
     /// The search field with its panel and the button that runs the full search. Once the page
@@ -727,8 +696,10 @@ impl SearchView {
     }
 
     /// What choosing a hit does: a song plays its radio, or pauses and resumes when it is the one
-    /// playing, and anything else opens its page.
+    /// playing, and anything else opens its page. Either way the hit moves to the top of the
+    /// search history.
     fn open_hit(&mut self, hit: Hit, cx: &mut Context<Self>) {
+        hit.remember(cx);
         match hit {
             Hit::Song(track) => {
                 let current = track.id.is_some() && track.id == self.playback_status.0;
@@ -846,45 +817,40 @@ impl SearchView {
         chosen: bool,
         me: &WeakEntity<Self>,
         cx: &App,
-    ) -> AnyElement {
+    ) -> Card {
         let current = match hit {
             Hit::Song(track) => track.id.is_some() && track.id == self.playback_status.0,
             _ => false,
         };
-        let card = hit_card(hit, place, compact, current, cx.theme());
-        let card = match hit {
-            Hit::Song(track) => card.press(pressed(Press::Song(track.clone()), me)),
-            Hit::Artist(artist) => match &artist.id {
-                Some(id) => card.press(pressed(Press::Artist(id.clone()), me)),
-                None => card,
-            },
-            Hit::Album(album) => card.press(pressed(Press::Album(album.id.clone()), me)),
-            Hit::Playlist(list) => card.press(pressed(Press::Playlist(list.id.clone()), me)),
-        };
 
-        card.when_some(self.transport(hit, me, cx), |card, (playing, play)| {
-            card.play(playing, play)
-        })
-        .when_some(HitMenu::of(hit), |card, target| card.menu(menu(target, me)))
-        .chosen(chosen)
-        // The keyboard cursor stays on the container, so the chosen card claims
-        // the active descendant while every card reports its seat in the list.
-        .aria_position_in_set(index + 1)
-        .aria_size_of_set(total)
-        .when(chosen, |card| {
-            card.aria_selected(true).aria_active_descendant()
-        })
-        .into_any_element()
+        hit_card(hit, place, compact, current, cx.theme())
+            .when(opens(hit), |card| card.press(pressed(hit, me)))
+            .when_some(self.transport(hit, me, cx), |card, (playing, play)| {
+                card.play(playing, play)
+            })
+            .when_some(HitMenu::of(hit), |card, target| card.menu(menu(target, me)))
+            .chosen(chosen)
+            // The keyboard cursor stays on the container, so the chosen card claims
+            // the active descendant while every card reports its seat in the list.
+            .aria_position_in_set(index + 1)
+            .aria_size_of_set(total)
+            .when(chosen, |card| {
+                card.aria_selected(true).aria_active_descendant()
+            })
     }
 
+    /// The play button of a hit. Playing from it files the hit in the search history, as opening
+    /// it would.
     fn transport(&self, hit: &Hit, me: &WeakEntity<Self>, cx: &App) -> Option<(bool, Play)> {
         let me = me.clone();
+        let chosen = hit.clone();
         let origin = match hit {
             Hit::Song(track) => {
                 let current = track.id.is_some() && track.id == self.playback_status.0;
                 let playing = current && self.playback_status.1 == Some(true);
                 let track = track.clone();
                 let play: Play = Box::new(move |_, _, cx| {
+                    chosen.remember(cx);
                     me.update(cx, |this, cx| {
                         this.playback.update(cx, |playback, cx| match current {
                             true => playback.toggle_play(cx),
@@ -905,6 +871,7 @@ impl SearchView {
         };
         let playing = self.playback.read(cx).engaged(&origin, cx);
         let play: Play = Box::new(move |_, _, cx| {
+            chosen.remember(cx);
             me.update(cx, |this, cx| {
                 this.playback
                     .update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
@@ -918,31 +885,11 @@ impl SearchView {
     fn best(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let theme = *cx.theme();
         let hit = self.search.read(cx).best()?;
-        let (kind, title, artists, target) = match hit {
-            Hit::Song(track) => (
-                Kind::Song,
-                track.name.clone(),
-                track.artist_refs.clone(),
-                Some(Press::Song(track.clone())),
-            ),
-            Hit::Artist(artist) => (
-                Kind::Artist,
-                artist.name.clone(),
-                Vec::new(),
-                artist.id.clone().map(Press::Artist),
-            ),
-            Hit::Album(album) => (
-                Kind::Album,
-                album.name.clone(),
-                album.artist_refs.clone(),
-                Some(Press::Album(album.id.clone())),
-            ),
-            Hit::Playlist(list) => (
-                Kind::Playlist,
-                list.name.clone(),
-                Vec::new(),
-                Some(Press::Playlist(list.id.clone())),
-            ),
+        let (kind, title, artists) = match hit {
+            Hit::Song(track) => (Kind::Song, track.name.clone(), track.artist_refs.clone()),
+            Hit::Artist(artist) => (Kind::Artist, artist.name.clone(), Vec::new()),
+            Hit::Album(album) => (Kind::Album, album.name.clone(), album.artist_refs.clone()),
+            Hit::Playlist(list) => (Kind::Playlist, list.name.clone(), Vec::new()),
         };
 
         let me = cx.entity().downgrade();
@@ -977,7 +924,7 @@ impl SearchView {
                 card.play(playing, play)
             })
             .when_some(hit.pin(), Pinnable::pin)
-            .when_some(target, |card, target| card.press(pressed(target, &me)))
+            .when(opens(hit), |card| card.press(pressed(hit, &me)))
             .when_some(HitMenu::of(hit), |card, target| {
                 card.on_mouse_down(MouseButton::Right, menu(target, &me))
             })
@@ -1250,6 +1197,7 @@ impl SearchView {
                     &view.downgrade(),
                     cx,
                 )
+                .into_any_element()
             });
 
         div()
@@ -1270,14 +1218,6 @@ impl SearchView {
             )
             .into_any_element()
     }
-}
-
-/// Files `query` at the top of the search history.
-fn remember(query: &str, cx: &mut App) {
-    Sonora::global(cx)
-        .settings
-        .clone()
-        .update(cx, |settings, cx| settings.remember_search(query, cx));
 }
 
 fn stacked(window: &Window, cx: &App) -> bool {
@@ -1318,20 +1258,34 @@ fn seat(kind: Kind) -> usize {
     }
 }
 
+/// Whether pressing the card of `hit` does anything. Only an artist the provider gave no id
+/// has no page to open.
+fn opens(hit: &Hit) -> bool {
+    !matches!(hit, Hit::Artist(artist) if artist.id.is_none())
+}
+
+/// What a press on the card of `hit` does: a song starts its radio and anything else opens its
+/// page. The hit moves to the top of the search history.
 fn pressed(
-    target: Press,
+    hit: &Hit,
     me: &WeakEntity<SearchView>,
 ) -> impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static {
     let me = me.clone();
+    let hit = hit.clone();
 
     move |_, _, cx| {
-        me.update(cx, |this, cx| match &target {
-            Press::Song(track) => this
+        hit.remember(cx);
+        me.update(cx, |this, cx| match &hit {
+            Hit::Song(track) => this
                 .playback
                 .update(cx, |playback, cx| playback.play_radio(track, cx)),
-            Press::Artist(id) => navigate(Destination::Artist(id.clone().into()), cx),
-            Press::Album(id) => navigate(Destination::Album(id.clone().into()), cx),
-            Press::Playlist(id) => navigate(Destination::Playlist(id.clone().into()), cx),
+            Hit::Artist(artist) => {
+                if let Some(id) = &artist.id {
+                    navigate(Destination::Artist(id.clone().into()), cx);
+                }
+            }
+            Hit::Album(album) => navigate(Destination::Album(album.id.clone().into()), cx),
+            Hit::Playlist(list) => navigate(Destination::Playlist(list.id.clone().into()), cx),
         })
         .ok();
     }
