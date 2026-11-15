@@ -227,17 +227,16 @@ pub async fn remove_track(session: &Session, playlist_id: &str, track_id: &str) 
     Ok(())
 }
 
-/// Moves the listed track `from` to `to` with one move on the revision it was read at, once
-/// that listing is confirmed to be the one the listener saw, so an edit made elsewhere before
-/// or after the read fails rather than moving the wrong row. The listing leaves
-/// out episodes and tracks with no metadata, as `tracks_from` does, so the move is counted
-/// among the listed tracks and placed among all the items.
-pub async fn move_track(
+/// Puts the listed tracks in the order `wanted` with one change on the revision it was read at,
+/// once that listing is confirmed to be the one the listener saw, so an edit made elsewhere
+/// before or after the read fails rather than moving the wrong rows. The listing leaves out
+/// episodes and tracks with no metadata, as `tracks_from` does, so the moves are counted among
+/// the listed tracks and placed among all the items.
+pub async fn reorder(
     session: &Session,
     playlist_id: &str,
     seen: &[String],
-    from: usize,
-    to: usize,
+    wanted: &[String],
 ) -> Result<()> {
     let content = snapshot(session, playlist_id).await?;
     let uris: Vec<String> = content
@@ -257,11 +256,14 @@ pub async fn move_track(
         .map(|(index, _)| index)
         .collect();
 
-    let op = move_op(&content, &held, seen, from, to)?;
-    let body = changes(content.revision.as_deref(), op);
+    let ops = move_ops(&content, &held, seen, wanted)?;
+    if ops.is_empty() {
+        return Ok(());
+    }
+    let body = changes_of(content.revision.as_deref(), ops);
     edit(session, playlist_id, &body)
         .await
-        .context("cannot move the track in the playlist")?;
+        .context("cannot reorder the playlist")?;
     Ok(())
 }
 
@@ -539,6 +541,12 @@ async fn post(session: &Session, endpoint: &str, body: &ListChanges) -> Result<V
 }
 
 fn changes(revision: Option<&[u8]>, op: Op) -> ListChanges {
+    changes_of(revision, vec![op])
+}
+
+/// One change that applies `ops` in turn on `revision`, or on whatever the list holds when
+/// there is none.
+fn changes_of(revision: Option<&[u8]>, ops: Vec<Op>) -> ListChanges {
     let mut source = SourceInfo::new();
     source.set_client(Client::CLIENT);
 
@@ -546,7 +554,7 @@ fn changes(revision: Option<&[u8]>, op: Op) -> ListChanges {
     info.source = MessageField::some(source);
 
     let mut delta = Delta::new();
-    delta.ops.push(op);
+    delta.ops = ops;
     delta.info = MessageField::some(info);
 
     let mut changes = ListChanges::new();
@@ -586,16 +594,15 @@ fn remove_op(uri: &str, index: i32) -> Op {
     op
 }
 
-/// A move of the listed row `from` to `to`, where `held` gives each listed row's index among
-/// the items. Spotify counts `to_index` in the items before the move, as the place the moved
-/// item goes in front of.
-fn move_op(
+/// The moves that put the listed rows in the order `wanted`, where `held` gives each listed
+/// row's index among the items. Spotify applies them in turn and counts each `to_index` in the
+/// items before that move, as the place the moved item goes in front of.
+fn move_ops(
     content: &SelectedListContent,
     held: &[usize],
     seen: &[String],
-    from: usize,
-    to: usize,
-) -> Result<Op> {
+    wanted: &[String],
+) -> Result<Vec<Op>> {
     let items = &content.contents.items;
     let listed: Vec<Option<&str>> = held
         .iter()
@@ -606,18 +613,23 @@ fn move_op(
         })
         .collect();
     order::confirm(&listed, seen)?;
-    let placement = order::placement(held, from, to)?;
+    let steps = order::moves(seen, wanted)?;
     let offset = content.contents.pos();
+    let ops = order::placements(items.len(), held, &steps)?
+        .into_iter()
+        .map(|placement| {
+            let mut mov = Mov::new();
+            mov.set_from_index(offset + placement.from as i32);
+            mov.set_length(1);
+            mov.set_to_index(offset + placement.before as i32);
 
-    let mut mov = Mov::new();
-    mov.set_from_index(offset + placement.from as i32);
-    mov.set_length(1);
-    mov.set_to_index(offset + placement.before as i32);
-
-    let mut op = Op::new();
-    op.set_kind(Kind::MOV);
-    op.mov = MessageField::some(mov);
-    Ok(op)
+            let mut op = Op::new();
+            op.set_kind(Kind::MOV);
+            op.mov = MessageField::some(mov);
+            op
+        })
+        .collect();
+    Ok(ops)
 }
 
 fn rename_op(name: &str) -> Op {
@@ -716,13 +728,21 @@ mod tests {
         let held = [0, 2, 3];
 
         let shown = ["a", "b", "c"].map(str::to_owned);
-        let down = move_op(&content, &held, &shown, 0, 2).expect("move");
+        let down =
+            move_ops(&content, &held, &shown, &["b", "c", "a"].map(str::to_owned)).expect("move");
+        let [down] = down.as_slice() else {
+            panic!("one move")
+        };
         assert_eq!(down.kind(), Kind::MOV);
         assert_eq!(down.mov.from_index(), 0);
         assert_eq!(down.mov.length(), 1);
         assert_eq!(down.mov.to_index(), 4);
 
-        let up = move_op(&content, &held, &shown, 2, 0).expect("move");
+        let up =
+            move_ops(&content, &held, &shown, &["c", "a", "b"].map(str::to_owned)).expect("move");
+        let [up] = up.as_slice() else {
+            panic!("one move")
+        };
         assert_eq!(up.mov.from_index(), 3);
         assert_eq!(up.mov.to_index(), 0);
     }
@@ -731,7 +751,8 @@ mod tests {
     fn a_move_refuses_a_listing_that_changed_elsewhere() {
         let content = listing(&["spotify:track:a", "spotify:track:b"], 0);
         let shown = ["b", "a"].map(str::to_owned);
-        assert!(move_op(&content, &[0, 1], &shown, 1, 0).is_err());
+        let wanted = ["a", "b"].map(str::to_owned);
+        assert!(move_ops(&content, &[0, 1], &shown, &wanted).is_err());
     }
 
     #[test]

@@ -282,17 +282,16 @@ pub trait MusicApi: Send + Sync {
     }
     async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()>;
 
-    /// Moves the playlist's row `from` to `to`, both counted in the tracks `playlist` answers
-    /// and `to` after the move. `seen` is the id of every track the listener saw, in order,
-    /// and a provider whose listing is no longer exactly that refuses, rather than land the
-    /// track somewhere the listener did not drop it. Only a provider whose capabilities list
+    /// Puts the playlist's tracks in the order `wanted`, the tracks `playlist` answers in a new
+    /// order. `seen` is the id of every track the listener saw before they moved any, in order,
+    /// and a provider whose listing is no longer exactly that refuses, rather than land a track
+    /// somewhere the listener did not drop it. Only a provider whose capabilities list
     /// `playlist_order` answers.
-    async fn move_playlist_track(
+    async fn reorder_playlist(
         &self,
         _playlist_id: &str,
         _seen: &[String],
-        _from: usize,
-        _to: usize,
+        _wanted: &[String],
     ) -> Result<()> {
         anyhow::bail!("this provider cannot reorder a playlist")
     }
@@ -877,7 +876,7 @@ pub struct Capabilities {
     /// The listener can give an owned playlist a cover of their own through
     /// `set_playlist_cover`, and take it off again.
     pub playlist_covers: bool,
-    /// The listener can move tracks within an owned playlist through `move_playlist_track`,
+    /// The listener can move tracks within an owned playlist through `reorder_playlist`,
     /// and the provider keeps the new order.
     pub playlist_order: bool,
     /// Played tracks can be kept in the [`vault`], so playing one again downloads nothing.

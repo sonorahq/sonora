@@ -266,14 +266,13 @@ impl MusicApi for LibrespotClient {
         playlists::remove_track(&self.session, playlist_id, track_id).await
     }
 
-    async fn move_playlist_track(
+    async fn reorder_playlist(
         &self,
         playlist_id: &str,
         seen: &[String],
-        from: usize,
-        to: usize,
+        wanted: &[String],
     ) -> Result<()> {
-        playlists::move_track(&self.session, playlist_id, seen, from, to).await
+        playlists::reorder(&self.session, playlist_id, seen, wanted).await
     }
 
     async fn set_pinned(&self, uri: &str, pinned: bool) -> Result<crate::PinOutcome> {

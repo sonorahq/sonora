@@ -1,8 +1,11 @@
-//! Moving one track within a playlist's order, for the providers that let the listener reorder.
+//! Putting a playlist in a new order, for the providers that let the listener reorder.
 //!
-//! The listener moves a row of the listing a provider answered, which can leave out entries
-//! the provider still keeps, such as a missing file or an episode. A provider maps the move
-//! onto its own full order with [`placement`] before it writes it.
+//! The listener moves rows of the listing a provider answered, which can leave out entries
+//! the provider still keeps, such as a missing file or an episode. A provider turns the new
+//! order into single moves with [`moves`] and maps them onto its own full order with
+//! [`placements`] before it writes them.
+
+use std::collections::{HashMap, VecDeque};
 
 use anyhow::{Result, bail};
 
@@ -59,6 +62,78 @@ pub fn placement(listed: &[usize], from: usize, to: usize) -> Result<Placement> 
     })
 }
 
+/// The single moves, each counted as [`move_item`] counts it, that turn `seen` into `wanted`
+/// when applied in turn. The rows that already keep their relative order stay put, so a batch
+/// of moves comes out as few moves as it can. Fails when `wanted` is not `seen` in another order.
+pub fn moves(seen: &[String], wanted: &[String]) -> Result<Vec<(usize, usize)>> {
+    if seen.len() != wanted.len() {
+        bail!("the new order does not hold the tracks the playlist holds");
+    }
+    let mut free: HashMap<&str, VecDeque<usize>> = HashMap::new();
+    for (index, id) in seen.iter().enumerate() {
+        free.entry(id.as_str()).or_default().push_back(index);
+    }
+    let targets = wanted
+        .iter()
+        .map(|id| free.get_mut(id.as_str()).and_then(VecDeque::pop_front))
+        .collect::<Option<Vec<usize>>>()
+        .ok_or_else(|| anyhow::anyhow!("the new order names a track the playlist does not hold"))?;
+    let stay = longest_rising(&targets);
+    let mut current: Vec<usize> = (0..seen.len()).collect();
+    let mut steps = Vec::new();
+    for (place, &row) in targets.iter().enumerate() {
+        if stay[place] {
+            continue;
+        }
+        let from = current
+            .iter()
+            .position(|&held| held == row)
+            .unwrap_or_default();
+        current.remove(from);
+        let to = match place {
+            0 => 0,
+            _ => {
+                let previous = targets[place - 1];
+                current
+                    .iter()
+                    .position(|&held| held == previous)
+                    .unwrap_or_default()
+                    + 1
+            }
+        };
+        current.insert(to, row);
+        if from != to {
+            steps.push((from, to));
+        }
+    }
+    Ok(steps)
+}
+
+/// Maps listed moves made one after another onto the full order of `total` entries, where
+/// `listed` holds each listed row's index in that order. Each placement is counted in the order
+/// as the moves before it left it, which is how a provider applies a run of moves.
+pub fn placements(
+    total: usize,
+    listed: &[usize],
+    steps: &[(usize, usize)],
+) -> Result<Vec<Placement>> {
+    let mut full: Vec<usize> = (0..total).collect();
+    let mut rows: Vec<usize> = listed.to_vec();
+    let mut found = Vec::with_capacity(steps.len());
+    for &(from, to) in steps {
+        let mut at = vec![0; total];
+        for (index, &entry) in full.iter().enumerate() {
+            at[entry] = index;
+        }
+        let positions: Vec<usize> = rows.iter().map(|&entry| at[entry]).collect();
+        let placement = placement(&positions, from, to)?;
+        move_item(&mut full, placement.from, placement.to());
+        move_item(&mut rows, from, to);
+        found.push(placement);
+    }
+    Ok(found)
+}
+
 /// Checks that the provider still lists exactly the tracks the listener saw, in the same
 /// order. A move counts places in what the listener saw, so a playlist that gained, lost or
 /// reordered a track elsewhere moves nothing rather than landing the track somewhere else.
@@ -72,6 +147,28 @@ pub fn confirm(listed: &[Option<&str>], seen: &[String]) -> Result<()> {
         true => Ok(()),
         false => bail!("the playlist changed before the move"),
     }
+}
+
+/// Marks the values that make up one longest strictly rising run through `values`, which
+/// must all differ.
+fn longest_rising(values: &[usize]) -> Vec<bool> {
+    let mut tails: Vec<usize> = Vec::new();
+    let mut before: Vec<Option<usize>> = vec![None; values.len()];
+    for (index, &value) in values.iter().enumerate() {
+        let length = tails.partition_point(|&tail| values[tail] < value);
+        before[index] = length.checked_sub(1).map(|previous| tails[previous]);
+        match tails.get_mut(length) {
+            Some(tail) => *tail = index,
+            None => tails.push(index),
+        }
+    }
+    let mut kept = vec![false; values.len()];
+    let mut next = tails.last().copied();
+    while let Some(index) = next {
+        kept[index] = true;
+        next = before[index];
+    }
+    kept
 }
 
 #[cfg(test)]

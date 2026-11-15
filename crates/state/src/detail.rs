@@ -100,6 +100,9 @@ pub struct Detail {
     fill: Option<Task<()>>,
     filling_request: Option<AbortHandle>,
     mosaic: Option<Task<()>>,
+    /// Whether a load of the playlist was put off while its new order waits to be written, so it
+    /// runs once the order is written.
+    reload_after_order: bool,
 }
 
 impl EventEmitter<DetailEvent> for Detail {}
@@ -157,12 +160,29 @@ impl Detail {
         })
         .detach();
 
-        cx.subscribe(&library, |this, _, event, cx| match event {
+        cx.subscribe(&library, |this, library, event, cx| match event {
             LibraryEvent::PlaylistGone(id) if this.id.as_deref() == Some(id.as_str()) => {
                 this.clear();
                 cx.notify();
             }
             LibraryEvent::TrackAdded { playlist } | LibraryEvent::PlaylistChanged(playlist)
+                if this.id.as_deref() == Some(playlist.as_str()) =>
+            {
+                // a load now would show the order the provider kept over the moves still on
+                // their way, so it waits for them
+                match library.read(cx).reordering(playlist) {
+                    true => this.reload_after_order = true,
+                    false => this.load(Collection::Playlist, playlist.clone(), false, cx),
+                }
+            }
+            LibraryEvent::PlaylistReordered(playlist)
+                if this.id.as_deref() == Some(playlist.as_str())
+                    && this.reload_after_order
+                    && !library.read(cx).reordering(playlist) =>
+            {
+                this.load(Collection::Playlist, playlist.clone(), false, cx);
+            }
+            LibraryEvent::ReorderFailed(playlist)
                 if this.id.as_deref() == Some(playlist.as_str()) =>
             {
                 this.load(Collection::Playlist, playlist.clone(), false, cx);
@@ -228,6 +248,7 @@ impl Detail {
             fill: None,
             filling_request: None,
             mosaic: None,
+            reload_after_order: false,
         }
     }
 
@@ -351,10 +372,11 @@ impl Detail {
         Reorder::of(self.playlist.as_ref(), capabilities, whole)
     }
 
-    /// Moves the playlist's row `from` to `to`, counted after the move, at once on the page
-    /// and then on the provider, and answers whether it started. The page reloads once the
-    /// provider answers, so a move it refused falls back to the order it kept. A page with a
-    /// row that has no id cannot name what it shows, so it moves nothing.
+    /// Moves the playlist's row `from` to `to`, counted after the move, at once on the page,
+    /// and answers whether it moved. The library writes the new order once the listener pauses,
+    /// so several moves go to the provider as one change, and the page loads again if the
+    /// provider refuses it. A page with a row that has no id cannot name what it shows, so it
+    /// moves nothing.
     pub fn move_track(&mut self, from: usize, to: usize, cx: &mut Context<Self>) -> bool {
         let len = self.tracks.len();
         if self.reorder(cx) != Reorder::On || from >= len || to >= len || from == to {
@@ -371,12 +393,11 @@ impl Detail {
         else {
             return false;
         };
-        let started = self.library.update(cx, |library, cx| {
-            library.move_in_playlist(playlist_id, seen, (from, to), cx)
+        let mut wanted = seen.clone();
+        music::order::move_item(&mut wanted, from, to);
+        self.library.update(cx, |library, cx| {
+            library.reorder_playlist(playlist_id, seen, wanted, cx);
         });
-        if !started {
-            return false;
-        }
         music::order::move_item(&mut self.tracks, from, to);
         cx.notify();
         true
@@ -524,6 +545,7 @@ impl Detail {
             cx.notify();
             return;
         };
+        self.reload_after_order = self.library.read(cx).reordering(&id);
 
         self.loading = true;
         self.error = None;

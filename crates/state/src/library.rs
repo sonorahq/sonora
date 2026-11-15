@@ -25,6 +25,10 @@ const FATAL: [LibraryPart; 3] = [
 const FATAL_LOCAL: [LibraryPart; 2] = [LibraryPart::Tracks, LibraryPart::Albums];
 /// How often the pins are read again from a provider that does not say when they change.
 const PIN_POLL: Duration = Duration::from_secs(60);
+/// How long the listener can pause between moves in a playlist before its new order is written.
+const REORDER_PAUSE: Duration = Duration::from_millis(1200);
+/// How soon a new order waiting on another playlist change tries again.
+const REORDER_RETRY: Duration = Duration::from_millis(300);
 
 /// Lets a few playlists have their contents or mosaic covers read at a time. A library asks for
 /// all of its playlists at once. Each read holds every track of its playlist until it is cut down,
@@ -332,6 +336,14 @@ struct PlaylistMutation {
     /// The playlists whose cached pages the change makes stale. All of them sit on `shelf`.
     invalidated: Vec<String>,
     shelf: Shelf,
+}
+
+/// A new order the listener gave a playlist that is not written yet. The page shows it already.
+struct PendingOrder {
+    /// The order the provider is known to hold, which the write is checked against.
+    base: Vec<String>,
+    /// The order the listener left the page in.
+    wanted: Vec<String>,
 }
 
 /// What the edit dialog does to a playlist's cover.
@@ -1040,6 +1052,11 @@ pub enum LibraryEvent {
     /// A playlist a failed change may have altered in part, or whose cover changed, so a page
     /// showing it loads it again.
     PlaylistChanged(String),
+    /// A playlist's new order was written, so a page that put off loading it again can do it now.
+    PlaylistReordered(String),
+    /// Writing a playlist's new order failed, so a page showing it loads the order the provider
+    /// kept.
+    ReorderFailed(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1196,6 +1213,12 @@ pub struct Library {
     raised: HashMap<Family, Raised>,
     /// The row removals whose toast is up, by playlist id.
     raised_rows: HashMap<String, RowsRaised>,
+    /// The new orders not written yet, by playlist id.
+    reorders: HashMap<String, PendingOrder>,
+    /// Waits out a pause in the listener's moves before the next order is written.
+    reorder_timer: Option<Task<()>>,
+    /// The playlist whose new order is being written now.
+    writing_order: Option<String>,
 }
 
 impl Library {
@@ -1218,6 +1241,7 @@ impl Library {
                 }
                 this.playlist_task = None;
                 this.relisting = None;
+                this.forget_reorders();
                 this.pending.clear();
                 this.pending_albums.clear();
                 this.pending_artists.clear();
@@ -1249,6 +1273,7 @@ impl Library {
                 this.mosaics.clear();
                 this.playlist_task = None;
                 this.relisting = None;
+                this.forget_reorders();
                 this.pending.clear();
                 this.pending_albums.clear();
                 this.pending_artists.clear();
@@ -1312,6 +1337,9 @@ impl Library {
             next_sweep: 0,
             raised: HashMap::new(),
             raised_rows: HashMap::new(),
+            reorders: HashMap::new(),
+            reorder_timer: None,
+            writing_order: None,
         };
         library.held_mut(Shelf::Streaming).state = LibraryState::Loading;
         library.prime(Shelf::Streaming, cx);
@@ -2518,35 +2546,116 @@ impl Library {
         );
     }
 
-    /// Moves the playlist's row `from` to `to` on the provider, and answers whether the move
-    /// started. `seen` is the id of every row the page showed, which the provider checks its
-    /// own listing against. The page reloads once it is done either way, so it shows the order the
-    /// provider kept rather than the one it asked for.
-    pub fn move_in_playlist(
+    /// Takes the order the listener left a playlist's page in. `seen` is the order the page
+    /// showed before this move, and only the first one taken since the last write counts, since
+    /// the provider has not seen the moves after it. Moves made close together are written as
+    /// one change once the listener pauses. A failure emits `ReorderFailed` and a success
+    /// `PlaylistReordered`.
+    pub fn reorder_playlist(
         &mut self,
         playlist_id: String,
         seen: Vec<String>,
-        (from, to): (usize, usize),
+        wanted: Vec<String>,
         cx: &mut Context<Self>,
-    ) -> bool {
-        let changed = playlist_id.clone();
-        self.mutate_playlist(
+    ) {
+        self.reorders
+            .entry(playlist_id)
+            .and_modify(|pending| pending.wanted.clone_from(&wanted))
+            .or_insert(PendingOrder { base: seen, wanted });
+        self.arm_reorders(REORDER_PAUSE, cx);
+    }
+
+    /// Whether the playlist has a new order that is not written yet, or is being written.
+    pub fn reordering(&self, playlist_id: &str) -> bool {
+        self.reorders.contains_key(playlist_id)
+            || self.writing_order.as_deref() == Some(playlist_id)
+    }
+
+    /// Writes the next pending order after `after`, replacing any write already waiting.
+    fn arm_reorders(&mut self, after: Duration, cx: &mut Context<Self>) {
+        self.reorder_timer = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(after).await;
+            this.update(cx, |this, cx| {
+                this.reorder_timer = None;
+                this.write_reorder(cx);
+            })
+            .ok();
+        }));
+    }
+
+    /// Writes one playlist's pending order, or tries again shortly when another change runs.
+    fn write_reorder(&mut self, cx: &mut Context<Self>) {
+        if self.playlist_task.is_some() {
+            self.arm_reorders(REORDER_RETRY, cx);
+            return;
+        }
+        let Some(id) = self.reorders.keys().next().cloned() else {
+            return;
+        };
+        let Some(PendingOrder { base, wanted }) = self.reorders.remove(&id) else {
+            return;
+        };
+        if base == wanted {
+            self.reordered(id, Ok(wanted), cx);
+            return;
+        }
+        let changed = id.clone();
+        self.writing_order = Some(id.clone());
+        let started = self.mutate_playlist(
             PlaylistMutation {
-                action: "move a track in a playlist",
+                action: "reorder a playlist",
                 done: None,
                 name: None,
                 target: None,
-                shelf: Shelf::of(&playlist_id),
-                invalidated: vec![playlist_id.clone()],
+                shelf: Shelf::of(&id),
+                invalidated: vec![id.clone()],
             },
             move |client| async move {
-                client
-                    .move_playlist_track(&playlist_id, &seen, from, to)
-                    .await
+                let written = client.reorder_playlist(&id, &base, &wanted).await;
+                Ok(written.map(|()| wanted))
             },
-            move |_, (), cx| cx.emit(LibraryEvent::PlaylistChanged(changed)),
+            move |this, written, cx| this.reordered(changed, written, cx),
             cx,
-        )
+        );
+        if !started && let Some(id) = self.writing_order.take() {
+            self.reorders.remove(&id);
+            cx.emit(LibraryEvent::ReorderFailed(id));
+        }
+    }
+
+    /// Settles a written order. The next order of the same playlist builds on what was written,
+    /// while a failure drops it too, since it was counted from an order the provider never took.
+    fn reordered(
+        &mut self,
+        id: String,
+        written: anyhow::Result<Vec<String>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.writing_order = None;
+        match written {
+            Ok(order) => {
+                if let Some(next) = self.reorders.get_mut(&id) {
+                    next.base = order;
+                }
+                cx.emit(LibraryEvent::PlaylistReordered(id));
+            }
+            Err(error) => {
+                log::warn!("library: cannot reorder a playlist: {error:#}");
+                Toasts::show(Outcome::Failed, "toast-playlist-failed", cx);
+                self.reorders.remove(&id);
+                cx.emit(LibraryEvent::ReorderFailed(id));
+            }
+        }
+        if !self.reorders.is_empty() && self.reorder_timer.is_none() {
+            self.arm_reorders(REORDER_RETRY, cx);
+        }
+    }
+
+    /// Drops every order not written yet, as the account they were made under goes away.
+    fn forget_reorders(&mut self) {
+        self.reorders.clear();
+        self.reorder_timer = None;
+        self.writing_order = None;
     }
 
     pub fn delete_playlist(&mut self, id: String, cx: &mut Context<Self>) {
@@ -2963,8 +3072,9 @@ impl Library {
             .map(|ready| &mut ready.playlists)
     }
 
-    /// Runs one playlist change on the provider, and answers whether it started: another
-    /// change still running, or no account to make it with, turns it away with a toast.
+    /// Runs one playlist change on the provider, and answers whether it started. Another change
+    /// still running, a new order of the playlist not written yet, or no account to make it with
+    /// turns it away with a toast. A waiting order is then written at once, so a retry works.
     fn mutate_playlist<F, R, T, A>(
         &mut self,
         mutation_info: PlaylistMutation,
@@ -2989,6 +3099,12 @@ impl Library {
         if self.playlist_task.is_some() {
             log::warn!("library: cannot {action} while another change is running");
             Toasts::show(Outcome::Failed, "toast-playlist-busy", cx);
+            return false;
+        }
+        if invalidated.iter().any(|id| self.reorders.contains_key(id)) {
+            log::warn!("library: cannot {action} before the new order of the playlist is written");
+            Toasts::show(Outcome::Failed, "toast-playlist-busy", cx);
+            self.arm_reorders(Duration::ZERO, cx);
             return false;
         }
         let Some(client) = self.session.read(cx).client_of(shelf) else {

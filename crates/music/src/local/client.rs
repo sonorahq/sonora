@@ -451,14 +451,13 @@ impl MusicApi for LocalClient {
         self.store.remove(playlist_id, track_id)
     }
 
-    /// Counts the move in the tracks the library still holds, so a stored track whose file has
+    /// Counts the moves in the tracks the library still holds, so a stored track whose file has
     /// gone keeps its place among the others.
-    async fn move_playlist_track(
+    async fn reorder_playlist(
         &self,
         playlist_id: &str,
         seen: &[String],
-        from: usize,
-        to: usize,
+        wanted: &[String],
     ) -> Result<()> {
         let mut stored = self.store.tracks(playlist_id)?;
         let held = self.held(&stored);
@@ -467,8 +466,10 @@ impl MusicApi for LocalClient {
             .map(|&index| Some(stored[index].as_str()))
             .collect();
         order::confirm(&listed, seen)?;
-        let placement = order::placement(&held, from, to)?;
-        order::move_item(&mut stored, placement.from, placement.to());
+        let steps = order::moves(seen, wanted)?;
+        for placement in order::placements(stored.len(), &held, &steps)? {
+            order::move_item(&mut stored, placement.from, placement.to());
+        }
         self.store.reorder(playlist_id, &stored)
     }
 
@@ -935,15 +936,26 @@ mod tests {
                 .collect()
         };
 
+        let moved = |shown: &[String], from: usize, to: usize| {
+            let mut wanted = shown.to_vec();
+            order::move_item(&mut wanted, from, to);
+            wanted
+        };
         let shown = listed(&client).await;
-        client.move_playlist_track(&id, &shown, 0, 2).await.unwrap();
+        client
+            .reorder_playlist(&id, &shown, &moved(&shown, 0, 2))
+            .await
+            .unwrap();
         assert_eq!(
             listed(&client).await,
             ["local:1", "local:2", "local:0", "local:3"]
         );
 
         let shown = listed(&client).await;
-        client.move_playlist_track(&id, &shown, 3, 0).await.unwrap();
+        client
+            .reorder_playlist(&id, &shown, &moved(&shown, 3, 0))
+            .await
+            .unwrap();
         assert_eq!(
             listed(&client).await,
             ["local:3", "local:1", "local:2", "local:0"]
@@ -956,7 +968,12 @@ mod tests {
 
         // a listing that changed since the listener saw it moves nothing
         let stale = ["local:1", "local:2", "local:0", "local:3"].map(str::to_owned);
-        assert!(client.move_playlist_track(&id, &stale, 1, 0).await.is_err());
+        assert!(
+            client
+                .reorder_playlist(&id, &stale, &moved(&stale, 1, 0))
+                .await
+                .is_err()
+        );
         assert_eq!(
             listed(&client).await,
             ["local:3", "local:1", "local:2", "local:0"]
