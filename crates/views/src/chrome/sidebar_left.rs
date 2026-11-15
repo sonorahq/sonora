@@ -29,10 +29,10 @@ use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 const PINS: &str = "sidebar-pins";
 
 /// The sidebar's navigation rows in order: the entry that can hide each, its icon and where it goes.
-/// History sits right under Search. The four library rows each open one page of the merged
-/// streaming and local library. Settings lives in the account menu of the title bar and comes
-/// back here only when added.
-/// Settings opens on the settings page last visited rather than on the one named here.
+/// Recents and then Settings sit right under Search, and the four library rows after them each
+/// open one page of the merged streaming and local library. Settings lives in the account menu of
+/// the title bar and shows here only when added. It opens on the settings page last visited
+/// rather than on the one named here.
 pub(crate) const NAV: [(NavEntry, &str, Destination); 8] = [
     (NavEntry::Home, "icons/house.svg", Destination::Home),
     (NavEntry::Search, "icons/search.svg", Destination::Search),
@@ -40,6 +40,11 @@ pub(crate) const NAV: [(NavEntry, &str, Destination); 8] = [
         NavEntry::History,
         "icons/rotate-ccw-clock.svg",
         Destination::History,
+    ),
+    (
+        NavEntry::Settings,
+        "icons/settings.svg",
+        Destination::Settings(SettingsPage::Providers),
     ),
     (
         NavEntry::Songs,
@@ -60,11 +65,6 @@ pub(crate) const NAV: [(NavEntry, &str, Destination); 8] = [
         NavEntry::Playlists,
         LibraryTab::Playlists.icon(),
         Destination::Library(LibraryTab::Playlists),
-    ),
-    (
-        NavEntry::Settings,
-        "icons/settings.svg",
-        Destination::Settings(SettingsPage::Providers),
     ),
 ];
 
@@ -327,12 +327,11 @@ impl SidebarLeft {
                 .filter(|index| entry_shown(NAV[*index].0, self.settings.read(cx)))
                 .collect()
         };
-        let top = shown(0..3, cx);
-        let library = shown(3..7, cx);
-        let rest = shown(7..NAV.len(), cx);
+        let top = shown(0..4, cx);
+        let library = shown(4..NAV.len(), cx);
         let mut rows = Vec::new();
         if self.folded() {
-            for (group, indices) in [top, library, rest]
+            for (group, indices) in [top, library]
                 .into_iter()
                 .filter(|indices| !indices.is_empty())
                 .enumerate()
@@ -356,9 +355,6 @@ impl SidebarLeft {
             }
             rows.push(self.gap(cx));
         }
-        for index in rest {
-            rows.push(self.nav(index, cx));
-        }
         rows
     }
 
@@ -378,7 +374,7 @@ impl SidebarLeft {
             .into_any_element()
     }
 
-    /// The space between the library rows and the entries after them.
+    /// The space between the library rows and the pinned section under them.
     fn gap(&self, cx: &App) -> AnyElement {
         div().h(cx.theme().metrics.pad).into_any_element()
     }

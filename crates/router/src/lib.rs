@@ -47,11 +47,11 @@ impl NavEntry {
         Self::Home,
         Self::Search,
         Self::History,
+        Self::Settings,
         Self::Songs,
         Self::Albums,
         Self::Artists,
         Self::Playlists,
-        Self::Settings,
         Self::Pins,
     ];
 
