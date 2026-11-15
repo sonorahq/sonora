@@ -11,8 +11,7 @@ use tokio::task::AbortHandle;
 use crate::{Io, Library, Network, Session, SessionEvent, Shelf, Sonora, join};
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
-/// How many hits the search page lists, and how many local matches a queue takes at most.
-pub(crate) const LIMIT: usize = 20;
+const LIMIT: usize = 20;
 const EXACT: u32 = 100;
 const PREFIX: u32 = 80;
 const WORD: u32 = 60;
@@ -594,8 +593,8 @@ pub(crate) fn rank(
 }
 
 /// The hits of `kind` for `asked` in the local library alone, best first and at most `take` of
-/// them. `play local` and `queue local` ask this, so they find what the search page finds on
-/// the local library, with no provider searched.
+/// them. `sonora play -s --local` and its siblings ask this, so they find what the search page
+/// finds on the local library, with no provider searched.
 pub(crate) fn matching(
     tracks: &[Track],
     albums: &[Album],

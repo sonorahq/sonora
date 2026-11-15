@@ -174,9 +174,8 @@ pub enum Item {
         text: String,
         kind: Kind,
     },
-    /// The matches of this kind in the local library, the ones `sonora play local` and
-    /// `sonora queue local` find. `play` takes the top one, `queue` takes them all, up to the
-    /// number a search page lists. Stands for `sonora play local -s <query> [-t TYPE]`
+    /// The best match of this kind in the local library, ranked as the search page ranks it,
+    /// with no provider asked. It is queued alone. Stands for `sonora add -s <query> --local`
     Local {
         text: String,
         kind: Kind,

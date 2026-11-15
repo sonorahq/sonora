@@ -18,7 +18,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Hover a cut-off track title in the player bar to read it in full.
 - YouTube Music artist pages list the artist's music videos after their popular songs, and song search finds music videos too.
 - Show a local file's own cover on the Discord status, uploaded for 3 hours to uguu.se like Subsonic covers. Turn it off under Settings, Discord.
-- Play or queue a local album, artist or song from the command line with `sonora play local -t album -s <name>` and `sonora queue local`.
 - Show the time left in the song instead of its length in the player bar, under Settings, Player bar.
 - `sonora queue` prints what played, what plays and what follows, and `sonora queue --json` gives the same queue to a script, without changing playback.
 - `sonora lyrics` prints the lyrics of the current track with their times, and `sonora lyrics --json` also gives a script the line sung now and the next one.
@@ -32,6 +31,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Tidal artist pages show how many people follow the artist, beside the listener count.
 - See Sonora's similar tracks on your other Spotify devices under their recommended tracks, and Spotify's recommendations from another device apart from what is up next in Sonora.
 - See how much of the song is left on Sonora's taskbar button on Windows. The button fills as the song plays and turns yellow while it is paused.
+- Play or queue a local song, album, artist or playlist from the command line with `sonora play -s <name> --local`, or `add` and `play-next` with `--local`.
 
 ### Fixed
 

@@ -307,9 +307,8 @@ impl Control {
         });
     }
 
-    /// Plays or queues the local library's matches of `text` and `kind`, ranked as the search page
-    /// ranks them. Play takes the top match and queue takes every one found, up to the search
-    /// page's limit. With nothing found, nothing is fetched or played.
+    /// Plays or queues the best match of `text` and `kind` in the local library, ranked as the
+    /// search page ranks it. With nothing found, nothing is fetched or played.
     fn local(
         &mut self,
         text: String,
@@ -318,10 +317,6 @@ impl Control {
         reply: oneshot::Sender<Reply>,
         cx: &mut Context<Self>,
     ) {
-        let take = match placement {
-            Place::Now => 1,
-            Place::Queue(_) => search::LIMIT,
-        };
         let sources: Vec<Source> = {
             let library = self.library.read(cx).state(Shelf::Local);
             search::matching(
@@ -330,19 +325,18 @@ impl Control {
                 library.playlists(),
                 &text,
                 search_kind(kind),
-                take,
+                1,
             )
             .into_iter()
             .filter_map(local_source)
             .collect()
         };
-        let client = self.session.read(cx).local_client();
-        match (sources.is_empty(), client) {
-            (false, Some(client)) => self.fetch_into(sources, Some(client), placement, reply, cx),
-            _ => {
-                reply.send(Reply::Failed(Failure::NothingFound(text))).ok();
-            }
+        if sources.is_empty() {
+            reply.send(Reply::Failed(Failure::NothingFound(text))).ok();
+            return;
         }
+        let client = self.session.read(cx).local_client();
+        self.fetch_into(sources, client, placement, reply, cx);
     }
 
     /// Fetches every item at once and queues them together, in the order they were given. One
@@ -1043,14 +1037,14 @@ fn search_kind(kind: Kind) -> search::Kind {
     }
 }
 
-/// What a local match plays or queues: a song as it is, an album or artist fetched from the
-/// local provider. A playlist is no local match, so it has nothing to play.
+/// What a local match plays or queues: a song as it is, an album, artist or playlist fetched
+/// from the local provider. An artist without an id has nothing to fetch.
 fn local_source(hit: Hit) -> Option<Source> {
     match hit {
         Hit::Song(track) => Some(Source::Track(track)),
         Hit::Album(album) => Some(Source::Link(album.name, Linked::Album(album.id))),
         Hit::Artist(artist) => Some(Source::Link(artist.name, Linked::Artist(artist.id?))),
-        Hit::Playlist(_) => None,
+        Hit::Playlist(playlist) => Some(Source::Link(playlist.name, Linked::Playlist(playlist.id))),
     }
 }
 
