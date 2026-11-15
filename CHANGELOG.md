@@ -20,6 +20,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Show the time left in the song instead of its length in the player bar, under Settings, Player bar.
 - `sonora queue` prints what played, what plays and what follows, and `sonora queue --json` gives the same queue to a script, without changing playback.
 - `sonora lyrics` prints the lyrics of the current track with their times, and `sonora lyrics --json` also gives a script the line sung now and the next one.
+- `sonora like` reads or changes whether the current track is a favorite.
 - `sonora mute` reads or changes playback mute and restores the previous volume when unmuted.
 - Rebind keyboard shortcuts under Settings, Keybinds, and give shuffle, repeat, the queue and lyrics shortcuts of their own.
 - Move between the fields of a dialog with Tab and Shift+Tab.
@@ -32,6 +33,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `sonora like` waits for the provider to confirm a favorite change and reports if it fails.
+- A song you favorite or unfavorite while the library is refreshing stays that way instead of flipping back.
 - Unmuting now respects volume changes made on another device.
 - The snap shows Sonora's tray icon instead of a generic placeholder.
 - On Windows, playback no longer crackles when you open apps or browser tabs, and the buffer setting under Settings, Sound works again.
