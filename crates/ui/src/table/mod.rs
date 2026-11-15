@@ -904,51 +904,6 @@ impl<S: TableSource> TableState<S> {
         self.reveal(to, window, cx);
     }
 
-    /// Ends a row's context menu with Move up and Move down, for a single row of a table whose
-    /// rows move. A row whose key another row shares is left without them, since a menu kept
-    /// over a rebuild finds its row by key and could land on the other copy.
-    fn with_moves(&self, menu: Menu, rows: &[usize], cx: &mut Context<Self>) -> Menu {
-        let [row] = rows else {
-            return menu;
-        };
-        let row = *row;
-        if self.row_moves(cx) != RowMoves::On {
-            return menu;
-        }
-        let source = &self.delegate.source;
-        let key = source.row_key(row, cx);
-        let shared = key.is_some()
-            && (0..source.rows(cx)).any(|other| other != row && source.row_key(other, cx) == key);
-        if shared {
-            return menu;
-        }
-        let last = self.delegate.row_count().saturating_sub(1);
-        let table = cx.weak_entity();
-        let step = move |delta: isize| {
-            let table = table.clone();
-            move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
-                table
-                    .update(cx, |table, cx| {
-                        table.delegate.pick(row, false, false);
-                        table.shift_row(delta, window, cx);
-                    })
-                    .ok();
-            }
-        };
-        let up = MenuItem::new("move-row-up", t!("menu-move-up")).icon("icons/chevron-up.svg");
-        let down =
-            MenuItem::new("move-row-down", t!("menu-move-down")).icon("icons/chevron-down.svg");
-        menu.item(MenuItem::separator("move-row-section"))
-            .item(match row {
-                0 => up.disabled(),
-                _ => up.on_click(step(-1)),
-            })
-            .item(match row == last {
-                true => down.disabled(),
-                false => down.on_click(step(1)),
-            })
-    }
-
     fn fire_activate(&mut self, cx: &mut Context<Self>) {
         if self.delegate.picked().len() != 1 {
             return;
@@ -1705,7 +1660,6 @@ impl<S: TableSource> Render for TableState<S> {
             self.delegate
                 .source
                 .context_menu(&open.rows, &visible, cx)
-                .map(|menu| self.with_moves(menu, &open.rows, cx))
                 .map(|menu| {
                     Popup::new(open.at, menu).on_close(cx.listener(|this, _, _, cx| {
                         this.context_menu = None;
