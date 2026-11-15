@@ -536,7 +536,9 @@ impl Brain {
         track.held = false;
         track.parked = false;
         match track.started {
-            true => self.send("play", json!({})),
+            true => {
+                self.send("play", json!({}));
+            }
             false => self.advance(),
         }
     }
@@ -547,7 +549,8 @@ impl Brain {
         };
         track.held = true;
         if track.started {
-            return self.send("pause", json!({}));
+            self.send("pause", json!({}));
+            return;
         }
         if !track.sent {
             track.parked = true;
@@ -837,7 +840,8 @@ impl Brain {
                         opening: true,
                     });
                 }
-                return self.send("seek", json!({ "position_ms": millis(start) }));
+                self.send("seek", json!({ "position_ms": millis(start) }));
+                return;
             }
             self.unmute();
             if !held {
