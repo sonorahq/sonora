@@ -33,7 +33,25 @@ pub fn spoken(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Statef
 }
 
 pub fn eyebrow(label: impl Into<SharedString>, cx: &App) -> Div {
-    faint(cx).child(upper(label))
+    faint(cx).child(label.into())
+}
+
+/// An eyebrow with `icon` before it, the heading of a settings group.
+pub fn eyebrow_with(icon: Option<&'static str>, label: impl Into<SharedString>, cx: &App) -> Div {
+    let theme = cx.theme();
+
+    faint(cx)
+        .flex()
+        .items_center()
+        .gap_2()
+        .children(icon.map(|icon| {
+            gpui::svg()
+                .path(icons::path(icon))
+                .size(theme.text(Text::Small))
+                .flex_none()
+                .text_color(theme.muted_foreground)
+        }))
+        .child(label.into())
 }
 
 pub fn faint(cx: &App) -> Div {
@@ -44,10 +62,6 @@ pub fn faint(cx: &App) -> Div {
         .text_size(theme.text(Text::Small))
         .text_color(theme.muted_foreground)
         .font_weight(FontWeight::SEMIBOLD)
-}
-
-pub fn upper(label: impl Into<SharedString>) -> SharedString {
-    label.into().to_uppercase().into()
 }
 
 pub fn vacant(label: impl Into<SharedString>, cx: &App) -> Div {

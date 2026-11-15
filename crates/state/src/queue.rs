@@ -48,6 +48,8 @@ pub struct Stub {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) credited: Vec<ArtistRef>,
     pub(crate) album: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub(crate) album_artist: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) album_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -190,6 +192,7 @@ fn stub(track: &Track) -> Option<Stub> {
         artists: track.artists.clone(),
         credited: track.artist_refs.clone(),
         album: track.album.clone(),
+        album_artist: track.album_artist.clone(),
         album_id: track.album_id.clone(),
         cover: track.cover.clone(),
         seconds: track.duration.as_secs_f32(),
@@ -207,19 +210,12 @@ fn hydrate(stub: Stub) -> Track {
         artists: stub.artists,
         artist_refs: stub.credited,
         album: stub.album,
+        album_artist: stub.album_artist,
         album_id: stub.album_id,
         cover: stub.cover,
         duration: Duration::from_secs_f32(stub.seconds.max(0.)),
-        added_at: None,
-        added_by: None,
-        playcount: None,
-        popularity: 0,
         explicit: stub.explicit,
-        track_number: 0,
-        disc_number: 0,
-        tags: Vec::new(),
-        languages: Vec::new(),
-        credits: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -641,13 +637,10 @@ impl Queue {
         self.past.iter().filter_map(connect_entry)
     }
 
-    /// The upcoming play order reported to other clients. Local files and suggestions stay out,
-    /// since the suggestions are this app's own and change whenever the radio refills.
+    /// The upcoming play order reported to other clients, the suggestions with it, so another
+    /// device shows what plays on here once the collection runs out. Local files stay out.
     pub(crate) fn connect_upcoming(&self) -> impl Iterator<Item = QueuedTrack> + '_ {
-        self.upcoming
-            .iter()
-            .filter(|entry| entry.kind != QueueKind::Suggested)
-            .filter_map(connect_entry)
+        self.upcoming.iter().filter_map(connect_entry)
     }
 
     /// Every track the queue holds, for reading a remote queue without asking the provider
@@ -888,22 +881,20 @@ impl Queue {
     }
 
     /// Applies a remote queue window while keeping the current entry and playback position.
-    /// `reach` says how much of this queue the window stands for, so what lies beyond it stays,
-    /// and so do the suggestions, which are never reported.
+    /// `reach` says how much of this queue the window stands for, so what lies beyond it stays.
+    /// The suggestions are reported like any other song, so one the window no longer names is
+    /// gone like any other too.
     pub(crate) fn replace_remote(
         &mut self,
-        past: Vec<(Track, bool)>,
-        current: bool,
-        upcoming: Vec<(Track, bool)>,
+        past: Vec<(Track, QueueKind)>,
+        current: QueueKind,
+        upcoming: Vec<(Track, QueueKind)>,
         reach: Reach,
         cx: &mut Context<Self>,
     ) {
         let origin = self.origin().or_else(|| self.context_origin()).cloned();
         let old_past = std::mem::take(&mut self.past);
-        let (suggested, old_upcoming): (Vec<_>, Vec<_>) = self
-            .upcoming
-            .drain(..)
-            .partition(|entry| entry.kind == QueueKind::Suggested);
+        let old_upcoming: Vec<_> = self.upcoming.drain(..).collect();
         let (earlier, left_past, mut known, left_upcoming, beyond) = match reach {
             Reach::Reported {
                 past: shown_past,
@@ -943,26 +934,30 @@ impl Queue {
                 (earlier, Vec::new(), known, Vec::new(), beyond)
             }
         };
-        let mut identity =
-            |track: &Track| match known.iter().position(|entry| entry.track.id == track.id) {
-                Some(index) => known.remove(index).uid,
-                None => queue_uid(),
-            };
+        // the occurrence a track of the window stands for here, when the queue has one
+        let mut matched = |track: &Track| {
+            let index = known.iter().position(|entry| entry.track.id == track.id)?;
+            Some(known.remove(index))
+        };
         let past_len = past.len();
         let mut entries: Vec<_> = past
             .into_iter()
             .chain(upcoming)
-            .map(|(track, queued)| {
-                let kind = match queued {
-                    true => QueueKind::Queued,
-                    false => QueueKind::Context,
+            .map(|(track, kind)| {
+                let before = matched(&track);
+                let from = match kind {
+                    QueueKind::Queued => None,
+                    QueueKind::Context => origin.clone(),
+                    // a suggestion keeps the radio it came from, which the collection that
+                    // plays is not
+                    QueueKind::Suggested => before
+                        .as_ref()
+                        .filter(|before| before.kind == QueueKind::Suggested)
+                        .and_then(|before| before.origin.clone())
+                        .or_else(|| origin.clone()),
                 };
-                Entry::with_uid(
-                    identity(&track),
-                    track,
-                    (!queued).then(|| origin.clone()).flatten(),
-                    kind,
-                )
+                let uid = before.map_or_else(queue_uid, |before| before.uid);
+                Entry::with_uid(uid, track, from, kind)
             })
             .collect();
         let window: Vec<_> = entries.split_off(past_len);
@@ -975,23 +970,21 @@ impl Queue {
             .into_iter()
             .chain(left_upcoming)
             .chain(beyond)
-            .chain(suggested)
             .collect();
         if let Some(entry) = self.current.as_mut() {
-            entry.kind = match current {
-                true => QueueKind::Queued,
-                false => QueueKind::Context,
-            };
+            entry.kind = current;
         }
-        let queued: HashSet<_> = self
+        // only the collection's own songs belong in its order, or a shuffle would deal a queued
+        // or a suggested one in a second time
+        let apart: HashSet<_> = self
             .past
             .iter()
             .chain(&self.current)
             .chain(&self.upcoming)
-            .filter(|entry| entry.kind == QueueKind::Queued)
+            .filter(|entry| entry.kind != QueueKind::Context)
             .map(|entry| &entry.uid)
             .collect();
-        self.source.retain(|entry| !queued.contains(&entry.uid));
+        self.source.retain(|entry| !apart.contains(&entry.uid));
         self.suggested += 1;
         self.changed(cx);
     }
@@ -1357,6 +1350,7 @@ fn connect_entry(entry: &Entry) -> Option<QueuedTrack> {
         id: id.to_owned(),
         uid: entry.uid.clone(),
         queued: entry.kind == QueueKind::Queued,
+        suggested: entry.kind == QueueKind::Suggested,
         added_by: entry
             .track
             .added_by
@@ -1383,22 +1377,8 @@ mod tests {
             id: Some(id.to_owned()),
             name: id.to_owned(),
             playable: true,
-            artists: String::new(),
-            artist_refs: Vec::new(),
-            album: String::new(),
-            album_id: None,
-            cover: None,
             duration: Duration::from_secs(180),
-            added_at: None,
-            added_by: None,
-            playcount: None,
-            popularity: 0,
-            explicit: false,
-            track_number: 0,
-            disc_number: 0,
-            tags: Vec::new(),
-            languages: Vec::new(),
-            credits: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -1635,10 +1615,12 @@ mod tests {
             ArtistRef {
                 name: "One".to_owned(),
                 id: Some("a1".to_owned()),
+                channel: false,
             },
             ArtistRef {
                 name: "Two".to_owned(),
                 id: None,
+                channel: false,
             },
         ];
         source.album = "Album".to_owned();

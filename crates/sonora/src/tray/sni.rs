@@ -8,7 +8,6 @@ use super::{Art, Event, Shown};
 
 const ID: &str = "sonora";
 const ICON_NAME: &str = "sonora";
-const PNG: &[u8] = include_bytes!("../../../../assets/tray/sonora.png");
 /// Flatpak writes this file into every sandbox it starts.
 const FLATPAK_INFO: &str = "/.flatpak-info";
 const WATCHER: &str = "org.kde.StatusNotifierWatcher";
@@ -22,25 +21,29 @@ pub struct Icon {
 
 impl Icon {
     pub fn new(sender: UnboundedSender<Event>) -> Option<Self> {
-        let pixmap = match image::load_from_memory(PNG) {
-            Ok(image) => {
-                let image = image.into_rgba8();
-                let (width, height) = image.dimensions();
-                let mut data = image.into_raw();
-                for pixel in data.as_chunks_mut::<4>().0 {
-                    pixel.rotate_right(1);
+        let pixmap = crate::assets::LINUX_ICONS
+            .iter()
+            .filter(|(size, _)| *size <= 64)
+            .filter_map(|(_, png)| match image::load_from_memory(png) {
+                Ok(image) => {
+                    let image = image.into_rgba8();
+                    let (width, height) = image.dimensions();
+                    let mut data = image.into_raw();
+                    for pixel in data.as_chunks_mut::<4>().0 {
+                        pixel.rotate_right(1);
+                    }
+                    Some(ksni::Icon {
+                        width: width as i32,
+                        height: height as i32,
+                        data,
+                    })
                 }
-                vec![ksni::Icon {
-                    width: width as i32,
-                    height: height as i32,
-                    data,
-                }]
-            }
-            Err(error) => {
-                log::warn!("tray: cannot decode the tray icon: {error:#}");
-                Vec::new()
-            }
-        };
+                Err(error) => {
+                    log::warn!("tray: cannot decode the tray icon: {error:#}");
+                    None
+                }
+            })
+            .collect();
         let item = Item {
             sender,
             pixmap,
@@ -196,12 +199,22 @@ impl ksni::Tray for Item {
 }
 
 fn watched() -> Result<bool> {
-    let bus = zbus::blocking::Connection::session().context("cannot reach the session bus")?;
     let name = zbus::names::BusName::try_from(WATCHER).context("cannot name the watcher")?;
-    zbus::blocking::fdo::DBusProxy::new(&bus)
-        .context("cannot reach the bus daemon")?
-        .name_has_owner(name)
-        .context("cannot ask for the watcher")
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("cannot start the bus runtime")?
+        .block_on(async {
+            let bus = zbus::Connection::session()
+                .await
+                .context("cannot reach the session bus")?;
+            zbus::fdo::DBusProxy::new(&bus)
+                .await
+                .context("cannot reach the bus daemon")?
+                .name_has_owner(name)
+                .await
+                .context("cannot ask for the watcher")
+        })
 }
 
 fn sandboxed() -> bool {
@@ -209,10 +222,11 @@ fn sandboxed() -> bool {
 }
 
 /// The themed icon to ask the host for, or none when the host's theme cannot be counted on to
-/// have it. A Flatpak or AppImage install puts no `sonora` icon where the host looks, and hosts
+/// have it. A Flatpak, AppImage or Snap install puts no `sonora` icon where the host looks, and hosts
 /// such as Quickshell draw a placeholder for a name they cannot find rather than the pixmap.
 fn icon_name(sandboxed: bool) -> String {
-    let packaged = sandboxed || std::env::var_os("APPIMAGE").is_some();
+    let packaged =
+        sandboxed || std::env::var_os("APPIMAGE").is_some() || std::env::var_os("SNAP").is_some();
     match packaged {
         true => String::new(),
         false => ICON_NAME.to_owned(),

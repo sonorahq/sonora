@@ -40,8 +40,10 @@ pub(super) struct Found {
 pub(super) struct Folder {
     pub path: PathBuf,
     pub mtime: i64,
-    /// Whether the index was trusted for its contents, which also settles its portrait.
+    /// Whether the index was trusted for its contents, which also settles its art.
     pub known: bool,
+    /// The files in it named like album art or a portrait. Only a folder listed from disk has them.
+    pub images: Vec<PathBuf>,
 }
 
 /// One track as this scan has it, beside what the index should record for its file.
@@ -55,10 +57,11 @@ pub(super) struct Reading {
     pub fresh: bool,
 }
 
-/// What a folder answered about an artist portrait.
+/// What a folder answered about its album art and an artist portrait.
 pub(super) struct Look {
     pub path: PathBuf,
     pub mtime: i64,
+    pub cover: Option<String>,
     pub portrait: Option<String>,
     pub fresh: bool,
 }
@@ -102,12 +105,14 @@ pub fn scan(roots: &[PathBuf], cache_dir: &Path, index: &Index) -> Scanned {
         return scanned;
     }
 
-    let looks = look_for_portraits(&folders, &remembered, &readings, &progress);
+    let looks = look_at_folders(&folders, &remembered, &readings, &progress);
     if !progress.live() {
         return scanned;
     }
 
     let changes = Changes::between(&remembered, &readings, &looks, &reached);
+    let mut readings = readings;
+    hang_folder_art(&mut readings, &looks, cache_dir);
     let opened = readings.iter().filter(|reading| reading.fresh).count();
     scanned.portraits = name_portraits(&looks, &readings);
     let parsed: Vec<Tagged> = readings.into_iter().map(|reading| reading.tagged).collect();
@@ -222,11 +227,11 @@ where
     })
 }
 
-/// Asks every folder named after an artist whether it holds a portrait. A folder the index was
-/// trusted for answers from the index; the rest are stats on disk, so they are spread over
-/// threads like the tag reads. A folder matching no artist is recorded without one, so a folder
-/// that only becomes an artist's later needs a thorough Rescan to be looked at again.
-fn look_for_portraits(
+/// Settles every folder's album art and, for a folder named after an artist, its portrait. A
+/// folder the index was trusted for answers from the index. The rest answer from the images the
+/// walk saw while listing them, so this touches no disk. A folder matching no artist is recorded
+/// without a portrait, so a folder that only becomes an artist's later needs a thorough Rescan.
+fn look_at_folders(
     folders: &[Folder],
     remembered: &Remembered,
     readings: &[Reading],
@@ -238,26 +243,60 @@ fn look_for_portraits(
         .map(|artist| wire::artist_id(&artist.name))
         .collect();
 
-    spread(folders, progress, |folder| {
-        let known = folder
-            .known
-            .then(|| remembered.folders.get(&folder.path))
-            .flatten();
-        let portrait = match known {
-            Some(seen) => seen.portrait.clone(),
-            None => named
-                .contains(&wire::artist_id(&folder_name(&folder.path)))
-                .then(|| wire::artist_cover(&folder.path))
-                .flatten(),
-        };
-        progress.read();
-        Some(Look {
-            path: folder.path.clone(),
-            mtime: folder.mtime,
-            portrait,
-            fresh: known.is_none(),
+    folders
+        .iter()
+        .map(|folder| {
+            let known = folder
+                .known
+                .then(|| remembered.folders.get(&folder.path))
+                .flatten();
+            let (cover, portrait) = match known {
+                Some(seen) => (seen.cover.clone(), seen.portrait.clone()),
+                None => (
+                    wire::cover_among(&folder.images),
+                    named
+                        .contains(&wire::artist_id(&folder_name(&folder.path)))
+                        .then(|| wire::portrait_among(&folder.images))
+                        .flatten(),
+                ),
+            };
+            progress.read();
+            Look {
+                path: folder.path.clone(),
+                mtime: folder.mtime,
+                cover,
+                portrait,
+                fresh: known.is_none(),
+            }
         })
-    })
+        .collect()
+}
+
+/// Gives every track without a picture of its own the art of its folder, or of the album folder
+/// above a disc folder. This runs on every scan rather than once per file, because adding or
+/// renaming a cover moves the folder's time but not the time of the tracks in it.
+fn hang_folder_art(readings: &mut [Reading], looks: &[Look], cache_dir: &Path) {
+    let art: HashMap<&Path, &String> = looks
+        .iter()
+        .filter_map(|look| Some((look.path.as_path(), look.cover.as_ref()?)))
+        .collect();
+    for reading in readings {
+        let track = &mut reading.tagged.track;
+        if track
+            .cover
+            .as_deref()
+            .is_some_and(|cover| wire::is_embedded(cover, cache_dir))
+        {
+            continue;
+        }
+        let album = wire::album_folder(&reading.path);
+        track.cover = reading
+            .path
+            .parent()
+            .and_then(|dir| art.get(dir))
+            .or_else(|| art.get(album))
+            .map(|cover| (*cover).clone());
+    }
 }
 
 /// Files each portrait under the artist its folder is named after, first one in walk order.
@@ -434,10 +473,12 @@ fn walk(
         return;
     };
     let known = remembered.unchanged(dir, mtime);
+    let at = folders.len();
     folders.push(Folder {
         path: dir.to_path_buf(),
         mtime,
         known,
+        images: Vec::new(),
     });
 
     match known {
@@ -446,6 +487,9 @@ fn walk(
                 return;
             };
             for path in &children.files {
+                if !is_audio_file(path) {
+                    continue;
+                }
                 let found = match remembered.files.get(path) {
                     Some(known) => Found {
                         path: path.clone(),
@@ -487,6 +531,11 @@ fn walk(
                 })
                 .collect();
             here.sort();
+            folders[at].images = here
+                .iter()
+                .filter(|(path, folder)| !folder && path.file_name().is_some_and(wire::is_art))
+                .map(|(path, _)| path.clone())
+                .collect();
             for (path, folder) in here {
                 if !progress.live() {
                     return;
@@ -606,6 +655,13 @@ fn folder_name(dir: &Path) -> String {
 }
 
 fn is_audio_file(path: &Path) -> bool {
+    if path
+        .file_name()
+        .is_some_and(|name| name.as_encoded_bytes().starts_with(b"._"))
+    {
+        return false;
+    }
+
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
@@ -640,6 +696,67 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_file(&database);
         (dir, Index::new(storage::Cache::at(database)))
+    }
+
+    #[test]
+    fn audio_files_exclude_appledouble_sidecars() {
+        for (name, expected) in [
+            ("track.mp3", true),
+            ("._track.mp3", false),
+            ("._track.flac", false),
+            (".hidden.mp3", true),
+            ("track._demo.mp3", true),
+            ("notes.txt", false),
+            ("track.FLAC", true),
+            ("._folder/track.mp3", true),
+        ] {
+            assert_eq!(is_audio_file(Path::new(name)), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn scans_ignore_new_and_previously_indexed_appledouble_files() {
+        let _scanning = alone();
+        let name = "sonora-scan-test-appledouble";
+        let (dir, index) = scratch(name);
+        let track = dir.join("track.flac");
+        let sidecar = dir.join("._track.flac");
+        touch(&sidecar);
+        super::super::tags::tests::flac(&track, &["TITLE=Track"]);
+
+        let roots = std::slice::from_ref(&dir);
+        let first = scan(roots, &dir, &index);
+        assert_eq!(first.tracks.len(), 1);
+        assert!(index.load().files.contains_key(&track));
+        assert!(!index.load().files.contains_key(&sidecar));
+
+        // Seed a row from the old scanner without changing the folder's modification time.
+        let database = std::env::temp_dir().join(format!("{name}-index.sqlite"));
+        let connection = rusqlite::Connection::open(&database).unwrap();
+        connection
+            .execute(
+                "INSERT INTO local_files (path, parent, mtime, size, track)
+                 SELECT ?, parent, mtime, size, track FROM local_files WHERE path = ?",
+                rusqlite::params![sidecar.to_string_lossy(), track.to_string_lossy()],
+            )
+            .unwrap();
+        let remembered = index.load();
+        assert!(remembered.files.contains_key(&sidecar));
+        assert!(remembered.unchanged(&dir, stat(&dir).unwrap().0));
+
+        let cached = scan(roots, &dir, &index);
+        assert_eq!(cached.tracks.len(), 1);
+        assert_eq!(cached.tracks[0].id, first.tracks[0].id);
+        let remembered = index.load();
+        assert!(remembered.files.contains_key(&track));
+        assert!(!remembered.files.contains_key(&sidecar));
+
+        index.distrust();
+        let rescanned = scan(roots, &dir, &index);
+        assert_eq!(rescanned.tracks.len(), 1);
+        assert_eq!(rescanned.tracks[0].id, first.tracks[0].id);
+        assert!(sidecar.exists());
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

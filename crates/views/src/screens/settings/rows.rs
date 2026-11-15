@@ -3,6 +3,7 @@ use std::rc::Rc;
 use gpui::accesskit::{Role, Toggled};
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Div, ElementId, SharedString, Window, div};
+use i18n::t;
 use ui::{ActiveTheme as _, Button, OptionCard, Room, TabBar};
 
 use super::SettingsView;
@@ -41,7 +42,8 @@ impl Row {
         self
     }
 
-    /// Adds a muted explanation below the label, wrapping within the space beside the control.
+    /// Adds a muted explanation below the label. It wraps well short of the control, so a long
+    /// one never runs up against a switch or picker.
     pub(crate) fn detail(mut self, detail: SharedString) -> Self {
         self.detail = Some(detail);
         self
@@ -93,6 +95,7 @@ impl RenderOnce for Row {
                             .id(SharedString::from(format!("settings-row-detail-{title}")))
                             .role(Role::Paragraph)
                             .aria_label(detail.clone())
+                            .pr_8()
                             .text_size(theme.text(ui::Text::Small))
                             .text_color(theme.muted_foreground)
                             .child(detail)
@@ -110,6 +113,35 @@ impl RenderOnce for Row {
 }
 
 impl SettingsView {
+    /// Whether Soloist plays Spotify right now, which takes some settings out of use.
+    pub(super) fn soloist_plays(&self, cx: &App) -> bool {
+        self.soloist.read(cx).plays(cx)
+    }
+
+    /// The note under a setting of Sonora's own sound path, which Soloist goes around. While
+    /// Soloist plays Spotify such a setting still reaches local files, so it stays in use and
+    /// says so. `None` while Soloist does not play.
+    pub(super) fn local_only(&self, cx: &App) -> Option<SharedString> {
+        self.soloist_plays(cx)
+            .then(|| t!("settings-soloist-local-only"))
+    }
+
+    /// A row for a setting Soloist takes out of use: muted, with the reason under its label,
+    /// while `unavailable`. The caller disables the control.
+    pub(super) fn soloist_row_for(
+        &self,
+        title: SharedString,
+        control: AnyElement,
+        unavailable: bool,
+    ) -> AnyElement {
+        let row = Row::new(title, control).disabled(unavailable);
+        match unavailable {
+            true => row.detail(t!("settings-soloist-unavailable")),
+            false => row,
+        }
+        .into_any_element()
+    }
+
     /// A plain row: the label and the control.
     pub(super) fn row(&self, title: SharedString, control: AnyElement) -> AnyElement {
         Row::new(title, control).into_any_element()

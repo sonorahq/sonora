@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: list the pull requests that would close, change nothing
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -68,3 +73,54 @@ jobs:
             it back is enough to have it reopened.
           days-before-pr-stale: -1
           days-before-pr-close: -1
+
+  # A pull request open for more than a month has drifted too far from main to review as it
+  # stands. The owner's own, anything labelled `keep`, and anything its author pushed to in the
+  # last week stay open.
+  pulls:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/create-github-app-token@v3
+        id: buddy
+        if: vars.SONORA_BUDDY_APP_ID != ''
+        with:
+          app-id: ${{ vars.SONORA_BUDDY_APP_ID }}
+          private-key: ${{ secrets.SONORA_BUDDY_KEY }}
+
+      - name: close pull requests open for more than a month
+        env:
+          GH_TOKEN: ${{ steps.buddy.outputs.token || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+          MESSAGE: >-
+            Closing this because it has been open for over a month and main has moved a long
+            way since, so it no longer merges as it is. It is not a judgement on the change. If
+            you still want it in, rebase it onto main and open a new pull request.
+        run: |
+          set -euo pipefail
+          opened_before="$(date -u -d '30 days ago' +%FT%TZ)"
+          pushed_before="$(date -u -d '7 days ago' +%FT%TZ)"
+
+          gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" --jq "
+            .[]
+            | select(.created_at < \"$opened_before\")
+            | select(.author_association != \"OWNER\")
+            | select([.labels[].name] | index(\"keep\") | not)
+            | \"\(.number) \(.head.sha)\"" |
+          while read -r number sha; do
+            pushed="$(gh api "repos/$REPO/commits/$sha" --jq .commit.committer.date)"
+            if [[ "$pushed" > "$pushed_before" ]]; then
+              echo "#$number: last push $pushed, left open"
+              continue
+            fi
+            echo "#$number: last push $pushed, closing"
+            if [ -z "$DRY_RUN" ]; then
+              gh pr close "$number" --repo "$REPO" --comment "$MESSAGE"
+            fi
+          done

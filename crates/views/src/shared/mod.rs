@@ -2,10 +2,14 @@ pub(crate) mod about;
 pub(crate) mod adaptive;
 pub(crate) mod album_grid;
 pub(crate) mod ambient;
+pub(crate) mod animation;
+pub(crate) mod blend;
 pub(crate) mod cards;
 pub(crate) mod cells;
 pub(crate) mod confirm;
+pub(crate) mod cover_viewer;
 pub(crate) mod device_code;
+pub(crate) mod device_menu;
 pub(crate) mod equalizer;
 pub(crate) mod hero;
 pub(crate) mod local;
@@ -16,7 +20,9 @@ pub(crate) mod picks;
 pub(crate) mod pins;
 pub(crate) mod playlist_editor;
 pub(crate) mod popups;
+pub(crate) mod powerbar;
 pub(crate) mod shelves;
+pub(crate) mod soloist;
 pub(crate) mod steps;
 pub(crate) mod tag_editor;
 pub(crate) mod text;
@@ -26,6 +32,7 @@ pub(crate) mod tracks;
 pub(crate) mod transport;
 pub(crate) mod trouble;
 pub(crate) mod visualizer;
+pub(crate) mod volume;
 pub(crate) mod widevine;
 
 pub(crate) use ui::effects;
@@ -49,15 +56,6 @@ pub(crate) fn provider_logo(slug: &str) -> &'static str {
         "apple" => "icons/applemusic.svg",
         "tidal" => "icons/tidal.svg",
         _ => "icons/music.svg",
-    }
-}
-
-/// The Fluent keys of the title and explanation on provider `slug`'s server sign-in. Subsonic's
-/// text names the servers that speak its API, so a server with an API of its own says its own.
-pub(crate) fn server_prompt(slug: &str) -> (&'static str, &'static str) {
-    match slug {
-        "jellyfin" => ("login-jellyfin-title", "login-jellyfin-detail"),
-        _ => ("login-server-title", "login-server-detail"),
     }
 }
 

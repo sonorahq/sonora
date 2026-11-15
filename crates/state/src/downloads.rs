@@ -229,6 +229,10 @@ pub struct Downloads {
     /// Fetches the tracks of an album or playlist asked for from a menu, which has none to hand.
     fetching: HashMap<String, Task<()>>,
     restore: Option<Task<()>>,
+    /// The pass rewriting downloads made before their provider kept plain files.
+    unsealing: Option<Task<()>>,
+    /// Whether that pass is owed after a sign-in, once there is an engine to run it through.
+    unsealed: bool,
 }
 
 impl EventEmitter<DownloadsChanged> for Downloads {}
@@ -268,7 +272,11 @@ impl Downloads {
         })
         .detach();
         // The streaming engine starts a moment after sign-in, and the queue waits for it.
-        cx.observe(&playback, |this, _, cx| this.pump(cx)).detach();
+        cx.observe(&playback, |this, _, cx| {
+            this.pump(cx);
+            this.unseal(cx);
+        })
+        .detach();
         Self {
             session,
             playback,
@@ -293,6 +301,8 @@ impl Downloads {
             stalled: HashSet::new(),
             fetching: HashMap::new(),
             restore: None,
+            unsealing: None,
+            unsealed: false,
         }
     }
 
@@ -543,7 +553,7 @@ impl Downloads {
         Some(PlaylistDetail {
             playlist: playlist.clone(),
             tracks: set.tracks.clone(),
-            continuation: None,
+            ..Default::default()
         })
     }
 
@@ -1201,6 +1211,8 @@ impl Downloads {
                     }
                     Err(error) => log::warn!("downloads: cannot read the list: {error:#}"),
                 }
+                this.unsealed = this.session.read(cx).capabilities().plain_downloads;
+                this.unseal(cx);
                 this.pump(cx);
                 cx.emit(DownloadsChanged);
                 cx.notify();
@@ -1226,8 +1238,40 @@ impl Downloads {
         self.stalled.clear();
         self.fetching.clear();
         self.restore = None;
+        self.unsealing = None;
+        self.unsealed = false;
         cx.emit(DownloadsChanged);
         cx.notify();
+    }
+
+    /// Starts the pass that rewrites the finished downloads still sealed as plain files, when
+    /// one is owed and an engine is up to run it.
+    fn unseal(&mut self, cx: &mut Context<Self>) {
+        if !self.unsealed || self.unsealing.is_some() {
+            return;
+        }
+        let ids = self
+            .tracks
+            .iter()
+            .filter(|(_, entry)| entry.done)
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            self.unsealed = false;
+            return;
+        }
+        let Some(pass) = self.playback.read(cx).unseal(ids) else {
+            return;
+        };
+        self.unsealed = false;
+        let request = self.io.spawn(async move {
+            pass.await;
+            anyhow::Ok(())
+        });
+        self.unsealing = Some(cx.spawn(async move |this, cx| {
+            join(request).await.ok();
+            this.update(cx, |this, _| this.unsealing = None).ok();
+        }));
     }
 
     /// Runs one write on a blocking thread and logs what went wrong. The lists in memory are

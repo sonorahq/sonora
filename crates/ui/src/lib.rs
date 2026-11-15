@@ -9,6 +9,7 @@ mod drag;
 mod dropdown;
 mod explicit;
 mod filters;
+mod flight;
 mod form;
 mod glass;
 mod glide;
@@ -20,6 +21,7 @@ mod label;
 mod layout;
 mod lazy;
 mod level_meter;
+mod linger;
 mod menu;
 mod metrics;
 mod modal;
@@ -46,6 +48,7 @@ mod shader;
 mod shield;
 mod skeleton;
 mod spinner;
+mod swipe;
 mod switch;
 mod table;
 mod tabs;
@@ -54,6 +57,7 @@ mod time;
 mod toast;
 mod tooltip;
 mod traffic_light_controls;
+mod unfold;
 mod vacancy;
 mod veil;
 mod view;
@@ -62,7 +66,7 @@ mod waves;
 
 pub use arrow_ring::ArrowRing;
 pub use artwork::{
-    Artwork, Avatar, PREFETCH_REACH, Prefetch, artwork_usage, cover_palette, prefetch,
+    Artwork, Avatar, PREFETCH_REACH, Prefetch, artwork_usage, cover_palette, prefetch, prefetching,
 };
 pub use button::{Button, SMALL_INSET};
 pub use card::CARD_GROUP;
@@ -74,11 +78,12 @@ pub use controls::WindowFrame;
 pub use deck::Deck;
 pub use drag::{Edge, Ghost, drop_gap, drop_into, drop_marker, grip};
 pub use dropdown::Dropdown;
-pub use explicit::ExplicitBadge;
+pub use explicit::Badge;
 pub use filters::{
     Filter, FilterChange, FlagAxis, RangeAxis, RangeScrubber, RangeState, SortAxis, Unit,
 };
-pub use form::{FORM_CONTEXT, Submit};
+pub use flight::{Flight, Zoom};
+pub use form::{FORM_CONTEXT, Field, Form, NextField, PreviousField, Submit};
 pub use glass::{
     GLASS_BLUR, GLASS_FILL, bar_surface, blurring, frost, glass, popover_fill, popover_surface,
 };
@@ -89,23 +94,25 @@ pub use input::{
     Backspace, BackspaceToStart, BackspaceWord, Copy, Cut, Delete, DeleteToEnd, DeleteWord,
     Dismiss, End, Home, INPUT_CONTEXT, Input, Left, Paste, Right, SelectAll, SelectEnd, SelectHome,
     SelectLeft, SelectRight, SelectWordLeft, SelectWordRight, ShowCharacterPalette, Space,
-    WordLeft, WordRight, refresh_primary_paste,
+    WordLeft, WordRight, refresh_primary_paste, single_line,
 };
 pub use kbd::Kbd;
 pub use label::{
-    Tails, eyebrow, faint, heading, spoken, spoken_eyebrow, spoken_heading, spoken_vacant, upper,
-    vacant,
+    Tails, eyebrow, eyebrow_with, faint, heading, spoken, spoken_eyebrow, spoken_heading,
+    spoken_vacant, vacant,
 };
 pub use layout::{ALWAYS, MIN_CONTENT, ROOMY, Room, SNUG, VAST, WIDE};
 pub use lazy::Lazy;
 pub use level_meter::LevelMeter;
-pub use menu::{MENU_CONTEXT, Menu, MenuItem, MenuSearch, SubmenuState};
+pub use linger::{Linger, lingers};
+pub use menu::{MENU_CONTEXT, Menu, MenuItem, MenuSearch, SubmenuState, close_menu};
 pub use metrics::{LEADING, Metrics, Rounding, Text, snapped, tucked};
 pub use modal::{Modal, corners};
 pub use motion::{
-    Entrance, Fading, HoverFade, Motion, Motioned, Pace, Rising, Saver, Springs, Stillness,
-    css_ease, css_ease_out, ease_in_out_cubic, ease_in_out_expo, ease_out_cubic, ease_out_expo,
-    ease_out_quad, entering, entrance_span, mix, paced, veiled,
+    Entrance, Fading, Glow, Glowed, Glowing, HoverFade, Motion, Motioned, PRESS_SCALE,
+    PRESS_SCALE_CARD, Pace, Rising, Saver, Springs, Sprung, Stillness, css_ease, css_ease_out,
+    dim_span, ease_in_out_cubic, ease_in_out_expo, ease_out_cubic, ease_out_expo, ease_out_quad,
+    entering, entrance_span, glow_fill, glowing, mix, paced, pressing, spring, veiled,
 };
 pub use notice::Notice;
 pub use option_card::OptionCard;
@@ -133,6 +140,7 @@ pub use separator::Separator;
 pub use shield::Shield;
 pub use skeleton::{Initials, Skeleton};
 pub use spinner::{Spin, Spinner};
+pub use swipe::{hold_swipe, swipe_pull, swiped};
 pub use switch::Switch;
 pub use table::{
     Activate, Cell, ColumnSpec, Deselect, Layout, Listing, Pending, ROW_GROUP, Remove, SelectNext,
@@ -142,13 +150,14 @@ pub use table::{
 pub use tabs::{TabBar, Tabs};
 pub use theme::{
     ActiveTheme, BACKDROP_TRANSPARENCY, CoverFill, Look, MAX_FONT, MAX_LYRICS_SCALE,
-    MAX_TRANSPARENCY, MIN_FONT, MIN_LYRICS_SCALE, Theme, ThemeKind, ThemeOverrides, WINDOW_BLUR,
+    MAX_TRANSPARENCY, MIN_FONT, MIN_LYRICS_SCALE, Theme, ThemeKind, ThemeOverrides, WindowBlur,
     backdrop,
 };
 pub use time::{clock, runtime, tabular};
 pub use toast::Toast;
 pub use tooltip::{Perch, Tipped, Tooltip};
 pub use traffic_light_controls::TrafficLightControls;
+pub use unfold::{Cascade, Unfold};
 pub use vacancy::Vacancy;
 pub use veil::{VeilEdge, effects, veil};
 pub use view::Mode;

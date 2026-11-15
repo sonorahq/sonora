@@ -235,7 +235,7 @@ pub(in crate::screens::settings) fn preview(
                                         .truncate()
                                         .text_size(theme.text(Text::Small))
                                         .text_color(theme.muted_foreground)
-                                        .child(sample.artist.clone()),
+                                        .child(sample.artist),
                                 ),
                         ),
                 ),
