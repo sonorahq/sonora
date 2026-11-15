@@ -75,10 +75,19 @@ impl SettingsView {
         ]
     }
 
+    /// The version row, which for a nightly also names the commit it was built from.
     pub(super) fn version_row(&self) -> AnyElement {
+        let version: SharedString = match state::commit() {
+            Some(commit) => t!(
+                "settings-version-commit",
+                version = state::version(),
+                commit = commit
+            ),
+            None => state::version().into(),
+        };
         self.row(
             t!("settings-version"),
-            ui::spoken("settings-version-value", state::version()).into_any_element(),
+            ui::spoken("settings-version-value", version).into_any_element(),
         )
     }
 

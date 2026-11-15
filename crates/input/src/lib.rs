@@ -56,7 +56,7 @@ actions!(
 );
 
 pub const WORKSPACE_CONTEXT: &str = "Workspace";
-/// The context of the album cover viewer, open above the detail page.
+/// The context of the cover viewer, open above an album, playlist or artist page.
 pub const COVER_VIEWER_CONTEXT: &str = "CoverViewer";
 pub const SEARCH_CONTEXT: &str = "Search";
 pub const POWERBAR_CONTEXT: &str = "Powerbar";

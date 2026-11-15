@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use gpui::{App, Context, Entity, Task};
+use gpui::{App, Context, Entity, EventEmitter, Task};
 use music::{
     Album, AlbumCatalogue, AlbumDetail, ArtistRef, Contributor, Playlist, PlaylistDetail,
     ReleaseType, SavedArtist, Track,
@@ -39,6 +39,12 @@ pub struct Header {
     pub cover: Option<String>,
 }
 
+/// Signals that a local album no longer has a page after the library changes
+/// or that it never existed because the opened file is not in the library.
+pub enum DetailEvent {
+    AlbumGone(String),
+}
+
 pub struct Detail {
     id: Option<String>,
     header: Option<Header>,
@@ -63,6 +69,8 @@ pub struct Detail {
     filling_request: Option<AbortHandle>,
     mosaic: Option<Task<()>>,
 }
+
+impl EventEmitter<DetailEvent> for Detail {}
 
 impl Detail {
     pub fn new(
@@ -401,6 +409,12 @@ impl Detail {
         let Some(catalog) = catalog else {
             if let Some(kept) = kept(kind, id, cx) {
                 self.adopt(kept, cx);
+            } else if music::is_local_id(id) {
+                // No local library exists at all, so the page can never come.
+                self.clear();
+                cx.emit(DetailEvent::AlbumGone(id.to_owned()));
+                cx.notify();
+                return true;
             }
             // Signing back in reopens the page, so until then it reads as loading.
             let restoring = matches!(self.session.read(cx).state(), SessionState::Restoring);
@@ -434,22 +448,34 @@ impl Detail {
         self.error = None;
         cx.notify();
 
+        let local = music::is_local_id(&id)
+            .then(|| self.session.read(cx).local_client())
+            .flatten();
         let request = self.io.spawn({
             let id = id.clone();
             async move {
                 match kind {
                     Collection::Album => {
+                        if let Some(client) = local
+                            && !client
+                                .all_albums()
+                                .await?
+                                .iter()
+                                .any(|album| album.id == id)
+                        {
+                            return Ok(None);
+                        }
                         if fresh {
                             catalog.invalidate_album(&id).await;
                             catalog.invalidate_album_catalogue(&id).await;
                         }
-                        catalog.album(&id).await.map(Loaded::Album)
+                        catalog.album(&id).await.map(Loaded::Album).map(Some)
                     }
                     Collection::Playlist => {
                         if fresh {
                             catalog.invalidate_playlist(&id).await;
                         }
-                        catalog.playlist(&id).await.map(Loaded::Playlist)
+                        catalog.playlist(&id).await.map(Loaded::Playlist).map(Some)
                     }
                 }
             }
@@ -463,7 +489,11 @@ impl Detail {
                 this.loading = false;
                 this.request = None;
                 match crate::settled(loaded, cx) {
-                    Ok(detail) => this.adopt(detail, cx),
+                    Ok(Some(detail)) => this.adopt(detail, cx),
+                    Ok(None) => {
+                        this.clear();
+                        cx.emit(DetailEvent::AlbumGone(id));
+                    }
                     Err(reason) => match kept(kind, &id, cx) {
                         Some(kept) => this.adopt(kept, cx),
                         None => this.error = Some(reason),
