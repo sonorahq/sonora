@@ -26,7 +26,7 @@ rail-forward = Scroll forward
 number-group = { "," }
 
 # navigation
-nav-history = History
+nav-history = Recents
 nav-home = Home
 nav-search = Search
 nav-library = Your Library
@@ -40,6 +40,7 @@ nav-artists = Artists
 nav-local = Local Music
 nav-back = Back
 nav-forward = Forward
+nav-trail = Navigation history
 nav-sidebar = Toggle sidebar
 nav-sidebar-right = Show or hide lyrics and queue
 nav-pinned = Pinned
