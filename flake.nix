@@ -68,6 +68,7 @@
       nightly = lib.optionalAttrs (builtins.pathExists ./nix/nightly.json) (
         lib.importJSON ./nix/nightly.json
       );
+      toolchainChannel = (lib.importTOML ./rust-toolchain.toml).toolchain.channel;
     in
     {
       packages = forEachSystem (
@@ -95,6 +96,7 @@
               [ ];
 
           inherit (pkgs.stdenv.hostPlatform) system;
+          rustToolchain = pkgs.rust-bin.stable.${toolchainChannel}.minimal;
 
           # WebKit plays a page's media through GStreamer and aborts its web process when no
           # audio sink element exists. The Nix webkitgtk closure carries only core and base, and
@@ -129,9 +131,7 @@
 
           # The source build uses the toolchain the devShell and CI pin, not whatever rustc
           # nixpkgs carries that day.
-          craneLib = (crane.mkLib pkgs).overrideToolchain (
-            p: p.rust-bin.stable.${(lib.importTOML ./rust-toolchain.toml).toolchain.channel}.minimal
-          );
+          craneLib = (crane.mkLib pkgs).overrideToolchain (_: rustToolchain);
 
           # Points the Linux binary at its runtime libraries and environment, since webkitgtk and
           # the GPU and audio stacks are opened with dlopen and never show up as link-time
@@ -427,10 +427,25 @@
       };
 
       homeManagerModules = {
-        default = import ./nix/modules/hm-module.nix self;
-        sonora = import ./nix/modules/hm-module.nix self;
+        default =
+          { pkgs, lib, ... }:
+          {
+            imports = [ ./nix/home-manager.nix ];
+            programs.sonora.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+          };
+        sonora = self.homeManagerModules.default;
       };
 
       homeModules = self.homeManagerModules;
+
+      nixosModules = {
+        default =
+          { pkgs, lib, ... }:
+          {
+            imports = [ ./nix/nixos.nix ];
+            programs.sonora.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+          };
+        sonora = self.nixosModules.default;
+      };
     };
 }

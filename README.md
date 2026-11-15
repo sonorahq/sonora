@@ -135,7 +135,22 @@ nix.settings = {
 
 Building from source on macOS needs Xcode added to the Nix store, because the shaders compile with Apple's Metal compiler.
 
-Configuration with Home Manager is provided by the module under `programs.sonora`.
+Configuration with NixOS or Home Manager is provided by the module under `programs.sonora`.
+
+```nix
+{ inputs, ... }: {
+  imports = [ inputs.sonora.nixosModules.default ]; # NixOS
+  # imports = [ inputs.sonora.homeModules.default ]; # Home Manager
+  programs.sonora = {
+    enable = true;
+    settings = {
+      provider = "youtube";
+      gapless = true;
+      appearance.theme = "dark";
+    };
+  };
+}
+```
 
 ### Windows
 
