@@ -30,7 +30,9 @@ nav-history = 재생 기록
 nav-home = 홈
 nav-search = 검색
 nav-library = 내 라이브러리
+sidebar-library = 라이브러리
 nav-settings = 설정
+account-manage = 계정 관리
 nav-songs = 곡
 nav-albums = 앨범
 nav-playlists = 플레이리스트
@@ -38,6 +40,7 @@ nav-artists = 아티스트
 nav-local = 로컬 음악
 nav-back = 뒤로
 nav-forward = 앞으로
+nav-trail = 탐색 기록
 nav-sidebar = 사이드바 전환
 nav-sidebar-right = 가사 및 재생 목록 표시/숨기기
 nav-pinned = 고정됨
@@ -187,6 +190,13 @@ playlist-cover-remove = 커버 제거
 playlist-cover-unopenable = Sonora에서 이 파일을 열 수 없습니다.
 playlist-cover-too-large = 이 사진은 40 MB보다 큽니다.
 playlist-cover-not-a-picture = JPEG, PNG 또는 WebP 이미지 파일이 아닙니다.
+
+# cover viewer
+cover-view = 커버 보기
+cover-zoom-in = 확대
+cover-zoom-out = 축소
+cover-zoom-fit = 창에 맞추기
+
 playlist-delete-title = 플레이리스트 삭제
 playlist-delete-confirm = “{ $name }”을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
 playlist-again-title = 다시 추가하시겠습니까?
@@ -326,6 +336,8 @@ filter-hide-explicit = 성인용 콘텐츠 숨기기
 filter-favorites = 즐겨찾기만
 filter-downloaded = 다운로드됨
 filter-owned = 내가 만든 항목
+filter-local-only = 로컬 파일만
+filter-streaming-only = 스트리밍만
 
 # view
 view-list = 목록
@@ -334,6 +346,7 @@ view-cards = 그리드
 # toolbar
 tool-sort = 정렬
 tool-filters = 필터
+tool-account = 계정
 
 # login
 login-signed-out = 음악 라이브러리를 불러오려면 로그인하세요.
@@ -402,6 +415,10 @@ artist-eyebrow = 아티스트
 artist-monthly-listeners = { $count ->
     [one] 월별 리스너 { $value }명
    *[other] 월별 리스너 { $value }명
+}
+artist-followers = { $count ->
+    [one] 팔로워 { $value }명
+   *[other] 팔로워 { $value }명
 }
 artist-popular = 인기 곡
 artist-popular-eyebrow = 이 아티스트 둘러보기
@@ -509,6 +526,7 @@ song-genres = 장르
 song-language = 언어
 song-content = 콘텐츠 등급
 song-explicit = 성인용(Explicit)
+song-local = 로컬 파일
 song-clean = 일반(Clean)
 artist-about = 아티스트 소개
 artist-about-fallback = 아티스트의 인기 곡과 발매작을 둘러보세요.
@@ -1202,6 +1220,7 @@ settings-local-folder-empty = 구성되지 않음
 settings-choose-folder = 폴더 선택…
 settings-add-folder = 폴더 추가
 settings-remove-folder = 폴더 제거
+settings-open-folder = 폴더 열기
 settings-rescan = 다시 스캔
 settings-scan-walking = 스캔 중…
 settings-scan-progress = { $percent }%
@@ -1460,6 +1479,9 @@ trouble-offline = 연결 없음
 trouble-offline-detail = 인터넷 연결을 확인하고 다시 시도하세요.
 trouble-not-loaded = 불러올 수 없음
 trouble-retry = 다시 시도
+trouble-busy = 서비스가 혼잡합니다.
+trouble-busy-detail = 한 번에 너무 많은 요청이 전송되었습니다. 잠시 후 다시 시도하세요.
+trouble-failed-detail = 서비스 측에 문제가 발생했습니다. 잠시 후 다시 시도하세요.
 toast-offline = 인터넷에 연결되어 있지 않습니다. 다시 연결될 때까지 스트리밍되지 않습니다.
 toast-offline-unsupported = { $name }은(는) 온라인 상태일 때만 다운로드 항목을 재생합니다.
 toast-offline-mode = 오프라인 상태입니다. 이 곡을 스트리밍하려면 온라인으로 전환하세요.
