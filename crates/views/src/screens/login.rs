@@ -7,7 +7,7 @@ use gpui::{
     div, px, svg,
 };
 use i18n::t;
-use music::{AccountChoice, SignIn, SignInProblem, SignInPrompt};
+use music::{AccountChoices, SignIn, SignInProblem, SignInPrompt};
 use state::{Failure, Session, SessionState, Sonora, Usage};
 use ui::ActiveTheme as _;
 use ui::{Button, Checkbox, Input, TabBar, Text};
@@ -360,11 +360,7 @@ impl LoginView {
             })
     }
 
-    fn account_modal(
-        &self,
-        accounts: Vec<AccountChoice>,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn account_modal(&self, accounts: AccountChoices, cx: &mut Context<Self>) -> impl IntoElement {
         AccountPicker::new(accounts)
             .on_pick(cx.listener(|this, id: &SharedString, _, cx| {
                 this.acted(cx);
