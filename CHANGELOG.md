@@ -9,10 +9,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Songs, albums and artists uploaded to your Apple Music library through iTunes or the Music app can now be browsed and played.
 - Use Sonora in European Portuguese. A system set to Portuguese from Portugal picks it on its own.
 - Use Sonora in Vietnamese. A system set to Vietnamese picks it on its own.
-- Open an album's cover from its page to see the original artwork full size, zoom in with the wheel or the buttons and drag it around.
+- Open the cover of an album or a playlist, or an artist's photo, from its page to see the original artwork full size, zoom in with the wheel or the buttons and drag it around.
 - Press Ctrl+K (⌘K on macOS) anywhere to search. Enter plays a song right away, Ctrl+Enter opens its page, and the artist and album under a result open theirs.
+- Click the tray icon on Windows to show Sonora's window, or to hide it when it is already open.
 - Scrobble to your own ListenBrainz server or to multi-scrobbler by filling in the server address when you connect ListenBrainz.
 - Name your Discord status after the album artist under Settings, Discord, Status name.
 - Hover a cut-off track title in the player bar to read it in full.
@@ -28,12 +30,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Use Sonora in Korean.
 - Open a music folder in your file manager from Settings, Music folders.
 - Library pages that list both local and streaming music mark local files with a file icon beside their names.
+- Deezer plays in hi-res, up to 24-bit 192 kHz FLAC, on tracks that have it. Pick Hi-res under Settings, Playback.
 - Tidal artist pages show how many people follow the artist, beside the listener count.
 - See Sonora's similar tracks on your other Spotify devices under their recommended tracks, and Spotify's recommendations from another device apart from what is up next in Sonora.
 - Opening a file from a file manager can now switch to the now playing view automatically, if enabled in Settings > General.
 - Sonora supports drag-and-drop from other programs, like file managers, into the queue. The line shows the place in the queue where the files will land, the same one in-app drops use.
 - See how much of the song is left on Sonora's taskbar button on Windows. The button fills as the song plays and turns yellow while it is paused.
+- Browse Tidal's moods and decades from Explore after the genres, and open each one to see its shelves.
 - Nightly builds show the commit they were built from beside the version under Settings, About.
+- Skip sponsors, self-promotion and non-music sections on YouTube Music with SponsorBlock, with sections marked on the seek bar.
+- Subsonic lyrics provider can now read OpenSubsonic's enhanced cueLine data for karaoke lyrics.
+- Play or queue a local song, album, artist or playlist from the command line with `sonora play -s <name> --local`, or `add` and `play-next` with `--local`.
 
 ### Fixed
 
@@ -54,6 +61,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Releases tagged with the label `[no label]` no longer show a copyright line crediting it.
 - The fullscreen player's ambient background no longer leaves a light line along the right and bottom edges of the window.
 - The ambient background in fullscreen uses far less GPU, so laptops with integrated graphics stay cooler.
+- Unsynced lyrics in a `.lrc` file beside a song show in the lyrics panel, as embedded lyrics do.
 - The Nix package runs Soloist on NixOS without nix-ld.
 - Apple Music search no longer runs into "Too Many Requests" while you type.
 - A page that cannot load says so in a plain sentence instead of the raw error, and a busy service asks you to wait a minute.
@@ -167,6 +175,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to hardware, and picking one there keeps every other app off it.
 - Turn on Match sample rate in the sound settings to have a Direct to hardware device follow
   each track's own sample rate on Linux and macOS.
+- Genre pages on Subsonic and Navidrome show all of a genre's albums and songs along with credited
+  artists, not only the first 50 albums.
 - Swipe two fingers sideways on a touchpad to go back or forward a page.
 - A quick flick on a touchpad under Wayland keeps the page scrolling for a moment after your fingers lift.
 - An artist's page links to the songs of theirs you have in your Favorites, so you can see and play them together, and take one out with the X that appears when you point at it.

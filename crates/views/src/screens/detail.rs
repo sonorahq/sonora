@@ -8,11 +8,11 @@ use gpui::{
 use std::rc::Rc;
 
 use i18n::t;
-use music::{Album, AlbumDetail, Playlist, ReleaseType, Track, is_local_id};
+use music::{Album, AlbumDetail, Playlist, ReleaseType, Track};
 use router::{Destination, navigate};
 use state::{
     AppSettings, Collection, Detail, DownloadsChanged, LibraryEvent, Origin, Playback, Progress,
-    SessionEvent, Sonora,
+    Sonora,
 };
 use ui::{
     ActiveTheme as _, ArrowRing, Button, InlineLink, InlineLinks, Menu, MenuItem, Picker, Popovers,
@@ -112,8 +112,6 @@ pub(crate) struct DetailView {
     shown: Option<String>,
     context_menu: Option<Point<Pixels>>,
     cover_viewer: Entity<CoverViewer>,
-    viewer_for: Option<String>,
-    viewer_cover: Option<String>,
     toolbar: Entity<Toolbar>,
     popovers: Popovers,
     sliders: Sliders,
@@ -202,24 +200,6 @@ impl DetailView {
             this.retune(cx);
             this.rebuild(cx);
             cx.notify();
-        })
-        .detach();
-
-        let session = Sonora::global(cx).session.clone();
-        cx.subscribe(&session, |this, _, event, cx| match event {
-            SessionEvent::SignedOut | SessionEvent::SignedIn => {
-                // These sign events clear and reload a provider detail under a new account,
-                // possibly within one frame, so the render guard can miss it: close the
-                // viewer here. A local album's art does not depend on the account.
-                let local = this.detail.read(cx).id().is_some_and(is_local_id);
-                if !local {
-                    this.viewer_for = None;
-                    this.viewer_cover = None;
-                    this.cover_viewer
-                        .update(cx, |viewer, cx| viewer.force_close(None, cx));
-                }
-            }
-            _ => {}
         })
         .detach();
 
@@ -324,8 +304,6 @@ impl DetailView {
             shown: None,
             context_menu: None,
             cover_viewer,
-            viewer_for: None,
-            viewer_cover: None,
             toolbar,
             popovers: Popovers::default(),
             sliders: Sliders::default(),
@@ -520,19 +498,16 @@ impl DetailView {
         });
 
         let view = self.me.clone();
-        let view_cover = match kind {
-            Collection::Album => cover.clone().map(|cover| {
-                let view = self.me.clone();
-                let title = title.clone();
-                move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-                    view.update(cx, |this, cx| {
-                        this.open_cover_viewer(title.clone(), cover.clone(), cx);
-                    })
-                    .ok();
-                }
-            }),
-            Collection::Playlist => None,
-        };
+        let view_cover = cover.clone().map(|cover| {
+            let view = self.me.clone();
+            let title = title.clone();
+            move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                view.update(cx, |this, cx| {
+                    this.open_cover_viewer(title.clone(), cover.clone(), cx);
+                })
+                .ok();
+            }
+        });
         PageHero::new("detail-hero", title)
             .pending(header.is_none() && self.detail.read(cx).is_loading())
             .pin(pin)
@@ -553,28 +528,11 @@ impl DetailView {
             .into_any_element()
     }
 
-    /// Opens the album's cover in the viewer: the page's large cover at once, with the
-    /// provider's original over it when the provider can name one for this cover's url. The
-    /// local library's cover already is the original, so it is shown alone.
+    /// Opens the album's or the playlist's `large` cover in the viewer.
     fn open_cover_viewer(&mut self, title: SharedString, large: String, cx: &mut Context<Self>) {
-        let session = Sonora::global(cx).session.clone();
-        let session = session.read(cx);
-        let client = match self.detail.read(cx).id() {
-            Some(id) if is_local_id(id) => session.local_client(),
-            _ => session.client(),
-        };
-        let full = client
-            .and_then(|client| client.cover_original(&large))
-            .filter(|full| full != &large);
-        self.viewer_for = self.detail.read(cx).id().map(str::to_owned);
-        self.viewer_cover = Some(large.clone());
+        let owner = self.detail.read(cx).id().map(str::to_owned);
         self.cover_viewer.update(cx, |viewer, cx| {
-            viewer.open(
-                title,
-                SharedString::from(large),
-                full.map(SharedString::from),
-                cx,
-            );
+            viewer.open(owner, title, large, false, cx);
         });
     }
 
@@ -856,50 +814,43 @@ impl DetailView {
         let id = detail.id()?.to_owned();
         let header = detail.header()?;
 
-        Some(match header.kind {
+        let menu = match header.kind {
             Collection::Album => {
                 let menus = self.table.read(cx).delegate().source().menu();
-                let menu = album_menu(detail.album()?.clone(), self.playback.clone(), menus, cx);
-                match header.cover.clone() {
-                    Some(cover) => {
-                        let view = self.me.clone();
-                        let title = SharedString::from(header.title.clone());
-                        menu.lead([MenuItem::new("view-cover", t!("cover-view"))
-                            .icon("icons/image.svg")
-                            .on_click(move |_, _, cx| {
-                                view.update(cx, |this, cx| {
-                                    this.open_cover_viewer(title.clone(), cover.clone(), cx);
-                                })
-                                .ok();
-                            })])
-                    }
-                    None => menu,
-                }
+                album_menu(detail.album()?.clone(), self.playback.clone(), menus, cx)
             }
             Collection::Playlist => {
                 let saved = Sonora::global(cx).library.read(cx).playlist(&id).cloned();
                 let playlist = saved.or_else(|| detail.playlist().cloned())?;
                 playlist_menu(playlist, self.playback.clone(), cx)
             }
+        };
+        Some(match header.cover.clone() {
+            Some(cover) => {
+                let view = self.me.clone();
+                let title = SharedString::from(header.title.clone());
+                menu.lead([MenuItem::new("view-cover", t!("cover-view"))
+                    .icon("icons/image.svg")
+                    .on_click(move |_, _, cx| {
+                        view.update(cx, |this, cx| {
+                            this.open_cover_viewer(title.clone(), cover.clone(), cx);
+                        })
+                        .ok();
+                    })])
+            }
+            None => menu,
         })
     }
 }
 
 impl Render for DetailView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // The viewer belongs to the detail and cover it opened on: navigation or a provider
-        // switch (a new signed cover url) replaces them, and stale art must not linger.
-        let stale = {
-            let shown = self.detail.read(cx);
-            self.cover_viewer.read(cx).is_open()
-                && (self.viewer_for.as_deref() != shown.id()
-                    || self.viewer_cover.as_deref()
-                        != shown.header().and_then(|h| h.cover.as_deref()))
-        };
-        if stale {
-            self.cover_viewer
-                .update(cx, |viewer, cx| viewer.force_close(Some(window), cx));
-        }
+        let detail = self.detail.read(cx);
+        let owner = detail.id().map(str::to_owned);
+        let cover = detail.header().and_then(|header| header.cover.clone());
+        self.cover_viewer.update(cx, |viewer, cx| {
+            viewer.close_if_stale(owner.as_deref(), cover.as_deref(), window, cx)
+        });
         if let Some(failure) = self.failure(cx) {
             return div()
                 .id("detail-failure")
