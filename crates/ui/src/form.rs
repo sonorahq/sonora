@@ -4,8 +4,8 @@ use std::sync::Arc;
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, AnyView, App, Div, ElementId, Entity, FocusHandle, Focusable, SharedString,
-    StyleRefinement, Window, actions, div,
+    AnyElement, AnyView, App, Div, ElementId, Entity, FocusHandle, Focusable, FontWeight,
+    SharedString, StyleRefinement, Window, actions, div,
 };
 
 use crate::metrics::Text;
@@ -140,14 +140,16 @@ impl RenderOnce for Form {
                 .collect(),
         );
         let forward = order.clone();
-        let gap = theme.metrics.pad;
+        // fields stand well apart one under another and closer side by side
+        let gap = theme.metrics.inset;
+        let across = theme.metrics.pad * 2.;
 
         let lines = items.into_iter().map(|item| match item {
             Item::Field(field) => (*field).into_any_element(),
             Item::Row(fields) => div()
                 .flex()
                 .items_start()
-                .gap(gap)
+                .gap(across)
                 .children(
                     fields
                         .into_iter()
@@ -273,9 +275,10 @@ impl RenderOnce for Field {
         let theme = cx.theme();
         let overrides = std::mem::take(base.style());
         let owner = Arc::new(ElementId::from(&focus));
-        let small = theme.text(Text::Small);
+        let body = theme.text(Text::Body);
         let muted = theme.muted_foreground;
         let danger = theme.danger;
+        let foreground = theme.foreground;
 
         let named = label.clone();
         let whole = ElementId::NamedChild(owner.clone(), "field".into());
@@ -289,8 +292,10 @@ impl RenderOnce for Field {
                     div()
                         .min_w_0()
                         .truncate()
-                        .text_size(small)
-                        .text_color(muted)
+                        .text_size(body)
+                        .line_height(body)
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(foreground)
                         .child(label)
                 }))
                 .children(aside)
@@ -301,7 +306,7 @@ impl RenderOnce for Field {
                     .id(ElementId::NamedChild(owner, "field-error".into()))
                     .role(Role::Alert)
                     .aria_label(error.clone())
-                    .text_size(small)
+                    .text_size(body)
                     .text_color(danger)
                     .child(error)
                     .into_any_element(),
@@ -311,7 +316,7 @@ impl RenderOnce for Field {
                     .id(ElementId::NamedChild(owner, "field-note".into()))
                     .role(Role::Paragraph)
                     .aria_label(note.clone())
-                    .text_size(small)
+                    .text_size(body)
                     .text_color(muted)
                     .child(note)
                     .into_any_element()
@@ -325,7 +330,7 @@ impl RenderOnce for Field {
             })
             .flex()
             .flex_col()
-            .gap_1()
+            .gap_3()
             .min_w_0()
             .children(heading)
             .child(
