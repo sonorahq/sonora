@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 use futures::{StreamExt as _, stream};
@@ -77,6 +77,9 @@ pub struct Devices {
     events: Option<Task<()>>,
     /// The latest transfer or queue edit; a newer request cancels its predecessor.
     changing: Option<Task<()>>,
+    /// A seek another device asked for while the song was loading here, and when it asked. It is
+    /// made once the song plays.
+    seek_due: Option<(Duration, Instant)>,
     queuing: HashMap<String, Task<()>>,
     liking: HashMap<String, Task<()>>,
     /// Notifies twice a second while another device plays, so its progress is redrawn.
@@ -101,8 +104,11 @@ impl Devices {
             | SessionEvent::WentOffline => this.relink(cx),
         })
         .detach();
-        cx.observe(&playback, |this, _, cx| this.publish(cx))
-            .detach();
+        cx.observe(&playback, |this, _, cx| {
+            this.seek_late(cx);
+            this.publish(cx);
+        })
+        .detach();
         cx.observe(&queue, |this, _, cx| this.publish(cx)).detach();
         cx.observe(&settings, |this, _, cx| this.apply(cx)).detach();
 
@@ -134,6 +140,7 @@ impl Devices {
             sent: None,
             events: None,
             changing: None,
+            seek_due: None,
             queuing: HashMap::new(),
             liking: HashMap::new(),
             ticking: None,
@@ -400,6 +407,33 @@ impl Devices {
             elsewhere.device.volume = level;
         }
         cx.notify();
+    }
+
+    /// Seeks here as another device asked. A seek into a song that is still loading leaves
+    /// playback showing it as loading for good, so that one waits for the song to play.
+    fn seek(&mut self, at: Duration, cx: &mut Context<Self>) {
+        match self.playback.read(cx).is_loading() {
+            true => self.seek_due = Some((at, Instant::now())),
+            false => self.here(cx, |playback, cx| playback.seek(at, cx)),
+        }
+    }
+
+    /// Makes the seek that waited for the song to load, from as far on as the song it follows
+    /// has got since.
+    fn seek_late(&mut self, cx: &mut Context<Self>) {
+        let playback = self.playback.read(cx);
+        if self.seek_due.is_none() || playback.is_loading() {
+            return;
+        }
+        let playing = playback.wants_playing();
+        let Some((at, since)) = self.seek_due.take() else {
+            return;
+        };
+        let at = match playing {
+            true => at + since.elapsed(),
+            false => at,
+        };
+        self.here(cx, |playback, cx| playback.seek(at, cx));
     }
 
     /// Has playback act on this app's own engine, as another device asked, rather than steer
@@ -785,7 +819,7 @@ impl Devices {
             Command::Pause => self.here(cx, |playback, cx| playback.pause(cx)),
             Command::Next => self.here(cx, |playback, cx| playback.next(cx)),
             Command::Previous => self.here(cx, |playback, cx| playback.previous(cx)),
-            Command::Seek(at) => self.here(cx, |playback, cx| playback.seek(at, cx)),
+            Command::Seek(at) => self.seek(at, cx),
             Command::Volume(level) => self.here(cx, |playback, cx| playback.set_volume(level, cx)),
             Command::Shuffle(on) => self.queue.update(cx, |queue, cx| queue.set_shuffle(on, cx)),
             Command::Repeat(mode) => self.here(cx, |playback, cx| playback.set_repeat(mode, cx)),
