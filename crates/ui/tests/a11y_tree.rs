@@ -39,9 +39,9 @@ use gpui::{
     div,
 };
 use ui::{
-    Button, Card, Checkbox, DraggedPin, Field, Form, Glowing as _, Input, OptionCard, OtpInput, Pin,
-    PinKind, Pinnable as _, Radio, RangeScrubber, RangeState, Scrubber, ScrubberState, Spot, Theme,
-    Toast,
+    Button, Card, Checkbox, DraggedPin, Field, Form, Glowing as _, Input, OptionCard, OtpInput,
+    Pin, PinKind, Pinnable as _, Radio, RangeScrubber, RangeState, Scrubber, ScrubberState, Spot,
+    Theme, Toast,
 };
 
 /// Formats what the frame builder would put in the tree for `element`.
