@@ -24,12 +24,22 @@ jobs:
   # A release branch only moves the version and the changelog over code main already checked,
   # and release.yml builds its merge for the tag, so neither its pull request nor its merge runs
   # here.
+  # Lint and tests run as two jobs side by side, since they compile the workspace two different
+  # ways and share nothing but the setup.
   check:
-    name: fmt, clippy and tests
+    name: ${{ matrix.name }}
     if: >-
       !startsWith(github.head_ref, 'release/') &&
       !contains(github.event.head_commit.message, 'from sonorahq/release/')
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: fmt and clippy
+            task: lint
+          - name: tests
+            task: test
     steps:
       - uses: actions/checkout@v5
 
@@ -43,28 +53,31 @@ jobs:
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libvulkan-dev libdbus-1-dev
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      # rust-toolchain.toml pins the toolchain cargo runs, along with its components.
+      - name: rust toolchain
+        run: rustup toolchain install
 
       # The check and lint jobs cache their whole target directory, so sccache would only
       # duplicate it. Only main saves that cache: a pull request's cache is visible to that pull
       # request alone, and would only push main's out of the repository's quota.
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ci-check
+          key: ci-${{ matrix.task }}
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: rustfmt
+        if: matrix.task == 'lint'
         run: cargo fmt --all --check
 
       - name: clippy
+        if: matrix.task == 'lint'
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       # The dev profile optimises ui, views and music for a usable debug build, which makes
       # compiling them for the tests take three times as long. The tests do not need it.
       - name: tests
+        if: matrix.task == 'test'
         run: >-
           cargo test --workspace --locked
           --config 'profile.dev.debug="line-tables-only"'
@@ -93,10 +106,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-          components: clippy
+      - name: rust toolchain
+        run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -166,13 +177,11 @@ jobs:
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libvulkan-dev libdbus-1-dev
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      # rust-toolchain.toml pins the toolchain cargo actually runs, and it only comes with the
-      # host's standard library, so a cross-compiled target has to be added to it as well.
-      - name: add the target to the pinned toolchain
-        run: rustup target add ${{ matrix.target }}
+      # rust-toolchain.toml pins the toolchain cargo runs, and it only comes with the host's
+      # standard library, so a cross-compiled target has to be added to it.
+      - name: rust toolchain
+        shell: bash
+        run: rustup toolchain install && rustup target add ${{ matrix.target }}
 
       - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: Swatinem/rust-cache@v2

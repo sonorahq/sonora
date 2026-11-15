@@ -93,15 +93,12 @@ jobs:
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libvulkan-dev libdbus-1-dev
 
-      - uses: dtolnay/rust-toolchain@stable
+      # rust-toolchain.toml pins the toolchain cargo runs, and it only comes with the host's
+      # standard library, so a cross-compiled target has to be added to it.
+      - name: rust toolchain
         if: ${{ !inputs.reuse }}
-        with:
-          targets: ${{ matrix.target }}
-      # rust-toolchain.toml pins the toolchain cargo actually runs, and it only comes with the
-      # host's standard library, so a cross-compiled target has to be added to it as well.
-      - name: add the target to the pinned toolchain
-        if: ${{ !inputs.reuse }}
-        run: rustup target add ${{ matrix.target }}
+        shell: bash
+        run: rustup toolchain install && rustup target add ${{ matrix.target }}
 
       - uses: mozilla-actions/sccache-action@v0.0.9
         if: ${{ !inputs.reuse }}
