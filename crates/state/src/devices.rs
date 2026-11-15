@@ -30,6 +30,15 @@ const TICK: Duration = Duration::from_millis(500);
 /// The actual history and upcoming order supplied by another device.
 type RemoteWindow = (Vec<(Track, bool)>, bool, Vec<(Track, bool)>);
 
+/// A seek another device asked for while a song was loading, kept until that song plays.
+struct LateSeek {
+    /// The id of the song it was asked for.
+    track: Option<String>,
+    at: Duration,
+    /// When it was asked, since a song that plays has moved on by the time it loads.
+    asked: Instant,
+}
+
 /// The provider's device network as the app sees it: this app listed as a device, playback
 /// reported to the account's other apps, their commands carried out, and the account's other
 /// devices to hand playback to. Only a provider that has such a network gives it anything to do.
@@ -77,9 +86,9 @@ pub struct Devices {
     events: Option<Task<()>>,
     /// The latest transfer or queue edit; a newer request cancels its predecessor.
     changing: Option<Task<()>>,
-    /// A seek another device asked for while the song was loading here, and when it asked. It is
-    /// made once the song plays.
-    seek_due: Option<(Duration, Instant)>,
+    /// A seek another device asked for while the song was loading here. It is made once the
+    /// song plays, unless another song has taken its place by then.
+    seek_due: Option<LateSeek>,
     queuing: HashMap<String, Task<()>>,
     liking: HashMap<String, Task<()>>,
     /// Notifies twice a second while another device plays, so its progress is redrawn.
@@ -413,25 +422,47 @@ impl Devices {
     /// playback showing it as loading for good, so that one waits for the song to play.
     fn seek(&mut self, at: Duration, cx: &mut Context<Self>) {
         match self.playback.read(cx).is_loading() {
-            true => self.seek_due = Some((at, Instant::now())),
+            true => {
+                self.seek_due = Some(LateSeek {
+                    track: self.current_id(cx),
+                    at,
+                    asked: Instant::now(),
+                })
+            }
             false => self.here(cx, |playback, cx| playback.seek(at, cx)),
         }
+    }
+
+    /// The id of the song that plays or loads here.
+    fn current_id(&self, cx: &App) -> Option<String> {
+        self.queue
+            .read(cx)
+            .current()
+            .and_then(|track| track.id.clone())
     }
 
     /// Makes the seek that waited for the song to load, from as far on as the song it follows
     /// has got since.
     fn seek_late(&mut self, cx: &mut Context<Self>) {
+        let Some(due) = &self.seek_due else {
+            return;
+        };
+        // the seek was meant for the song that was loading, not for one that came after it
+        if due.track != self.current_id(cx) {
+            self.seek_due = None;
+            return;
+        }
         let playback = self.playback.read(cx);
-        if self.seek_due.is_none() || playback.is_loading() {
+        if playback.is_loading() {
             return;
         }
         let playing = playback.wants_playing();
-        let Some((at, since)) = self.seek_due.take() else {
+        let Some(due) = self.seek_due.take() else {
             return;
         };
         let at = match playing {
-            true => at + since.elapsed(),
-            false => at,
+            true => due.at + due.asked.elapsed(),
+            false => due.at,
         };
         self.here(cx, |playback, cx| playback.seek(at, cx));
     }

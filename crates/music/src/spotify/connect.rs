@@ -207,8 +207,8 @@ struct Worker {
     /// place, and a listener of a Jam then plays the collection from its top.
     uids: Uids,
     /// Where a collection's uids come back to once they are read, and where they are taken from.
-    learned: UnboundedSender<(String, Vec<(String, String)>)>,
-    learning: UnboundedReceiver<(String, Vec<(String, String)>)>,
+    learned: UnboundedSender<(String, Option<Listed>)>,
+    learning: UnboundedReceiver<(String, Option<Listed>)>,
     /// Whether this device hosts a Jam that others listen to, and how many are in it.
     hosting: bool,
     members: usize,
@@ -588,7 +588,12 @@ impl Worker {
         let members = jam.as_ref().map_or(0, |jam| jam.members.len());
         let joined = std::mem::replace(&mut self.members, members) < members;
         self.hosting = jam.as_ref().is_some_and(|jam| jam.owner && members > 1);
-        if let (false, Some(paused)) = (self.hosting, self.apart.take()) {
+        // while still hosting, the pause stays this device's own
+        let paused = match self.hosting {
+            true => None,
+            false => self.apart.take(),
+        };
+        if let Some(paused) = paused {
             self.now = Some(paused);
             self.advance_at = None;
             self.advancing = None;
@@ -862,12 +867,11 @@ impl Worker {
         let session = self.session.clone();
         let learned = self.learned.clone();
         self.session.spawn(async move {
-            match listed_uids(&session, &uri).await {
-                Ok(tracks) => {
-                    learned.send((uri, tracks)).ok();
-                }
-                Err(error) => log::warn!("connect: cannot read the uids of {uri}: {error}"),
-            }
+            let tracks = listed_uids(&session, &uri)
+                .await
+                .inspect_err(|error| log::warn!("connect: cannot read the uids of {uri}: {error}"))
+                .ok();
+            learned.send((uri, tracks)).ok();
         });
     }
 
@@ -886,10 +890,15 @@ impl Worker {
     }
 
     /// Keeps the uids read for `context` and reports the queue again under them.
-    async fn learn(&mut self, context: String, tracks: Vec<(String, String)>) {
+    async fn learn(&mut self, context: String, tracks: Option<Listed>) {
         if self.uids.context != context {
             return;
         }
+        let Some(tracks) = tracks else {
+            // forgetting the collection has the next report of it read the uids again
+            self.uids = Uids::default();
+            return;
+        };
         log::debug!("connect: read {} uids of {context}", tracks.len());
         self.uids.tracks = tracks;
         self.uids.read = true;
@@ -1384,8 +1393,8 @@ impl Worker {
     }
 
     /// What it takes to play as `start` says. A song that already plays here is not loaded again,
-    /// which would be heard: the queue after it is taken, and its place when that is audibly
-    /// off.
+    /// which would be heard: shuffle and repeat are taken, the queue after it, and its place
+    /// when that is audibly off.
     fn in_step(&mut self, start: Start) -> Vec<Command> {
         let wanted = &start.state;
         let Some(now) = self.now.as_ref().filter(|now| {
@@ -1396,6 +1405,15 @@ impl Worker {
             return vec![Command::Start(start)];
         };
         let mut commands = Vec::new();
+        if let Some(shuffle) = wanted
+            .shuffle
+            .filter(|shuffle| now.shuffle != Some(*shuffle))
+        {
+            commands.push(Command::Shuffle(shuffle));
+        }
+        if let Some(repeat) = wanted.repeat.filter(|repeat| now.repeat != Some(*repeat)) {
+            commands.push(Command::Repeat(repeat));
+        }
         let mut upcoming = wanted.upcoming.clone();
         if now.context.is_none() {
             keep_kinds(&mut upcoming, &now.upcoming);
@@ -1824,6 +1842,9 @@ fn kind(info: &DeviceInfo) -> DeviceKind {
     }
 }
 
+/// The uri and the uid of each track a collection lists, in its order.
+type Listed = Vec<(String, String)>;
+
 /// The uids Spotify gives the tracks of one collection, in the order it lists them.
 #[derive(Default)]
 struct Uids {
@@ -1831,7 +1852,7 @@ struct Uids {
     context: String,
     /// Each listed track's uri and uid. Empty until they are read, and it stays so for a
     /// collection that lists its tracks without uids, as an album does.
-    tracks: Vec<(String, String)>,
+    tracks: Listed,
     /// Whether the collection was read, which tells one without uids from one not read yet.
     read: bool,
 }
@@ -1902,7 +1923,7 @@ fn derived_uid(uri: &str) -> String {
 /// The uri and uid of every track `uri` lists that has a uid, in the order it lists them. A long
 /// collection comes in pages, each naming the next, and they are read one after another up to
 /// `UID_PAGES` of them.
-async fn listed_uids(session: &Session, uri: &str) -> Result<Vec<(String, String)>, Error> {
+async fn listed_uids(session: &Session, uri: &str) -> Result<Listed, Error> {
     let context = session.spclient().get_context(uri).await?;
     let mut tracks = Vec::new();
     let mut next = None;
