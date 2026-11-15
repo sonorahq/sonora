@@ -120,9 +120,11 @@ impl Held {
     /// replaced, then forgets them. The shelf shows the change the listener made rather than
     /// the provider's list from before it. Nothing happens while the favorites are not there
     /// to amend, and the changes are dropped all the same, since a load that failed leaves
-    /// the cache as the optimistic change already left it.
+    /// the cache as the optimistic change already left it. On a list without dates a song
+    /// favorited again moves to the newest end, even when the load still lists it where it was.
     fn reapply_edits(&mut self) {
-        let arrival = self.arrival.unwrap_or(Arrival::OldestFirst);
+        let undated = self.arrival;
+        let arrival = undated.unwrap_or(Arrival::OldestFirst);
         let edits = std::mem::take(&mut self.edits);
         let Some(favorites) = self.favorites_mut() else {
             return;
@@ -130,10 +132,14 @@ impl Held {
         for (id, edit) in edits {
             let tracks = &mut *favorites.tracks;
             let held = |track: &Track| track.id.as_deref() == Some(id.as_str());
-            match edit {
-                Some(track) if !tracks.iter().any(held) => arrival.admit(tracks, track),
-                Some(_) => {}
-                None => tracks.retain(|track| !held(track)),
+            match (edit, tracks.iter().position(held), undated) {
+                (Some(track), None, _) => arrival.admit(tracks, track),
+                (Some(_), Some(at), Some(arrival)) => {
+                    let row = tracks.remove(at);
+                    arrival.admit(tracks, row);
+                }
+                (Some(_), Some(_), None) => {}
+                (None, _, _) => tracks.retain(|track| !held(track)),
             }
         }
     }
