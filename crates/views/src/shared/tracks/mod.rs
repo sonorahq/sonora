@@ -650,18 +650,11 @@ impl TableSource for TrackSource {
         });
 
         let mut axes: Vec<Filter> = duration.into_iter().collect();
-        axes.extend([
-            Filter::Flag(FlagAxis {
-                key: "filter-hide-explicit",
-                label: t!("filter-hide-explicit"),
-                on: self.sieve.hide_explicit,
-            }),
-            Filter::Flag(FlagAxis {
-                key: "filter-playable",
-                label: t!("filter-playable"),
-                on: self.sieve.playable,
-            }),
-        ]);
+        axes.push(Filter::Flag(FlagAxis {
+            key: "filter-hide-explicit",
+            label: t!("filter-hide-explicit"),
+            on: self.sieve.hide_explicit,
+        }));
         if self.starrable(cx) {
             axes.push(Filter::Flag(FlagAxis {
                 key: "filter-favorites",
@@ -695,10 +688,6 @@ impl TableSource for TrackSource {
             }
             FilterChange::Flag("filter-hide-explicit", value) => {
                 self.sieve.hide_explicit = value;
-                true
-            }
-            FilterChange::Flag("filter-playable", value) => {
-                self.sieve.playable = value;
                 true
             }
             FilterChange::Flag("filter-favorites", value) => {

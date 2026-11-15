@@ -323,7 +323,6 @@ filter-reset = 필터 초기화
 filter-duration = 재생 시간
 filter-year = 연도
 filter-hide-explicit = 성인용 콘텐츠 숨기기
-filter-playable = 재생 가능한 곡만
 filter-favorites = 즐겨찾기만
 filter-downloaded = 다운로드됨
 filter-owned = 내가 만든 항목

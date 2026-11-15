@@ -312,7 +312,6 @@ filter-reset = Сбросить фильтры
 filter-duration = Длительность
 filter-year = Год
 filter-hide-explicit = Скрыть с ненормативной лексикой
-filter-playable = Только доступные
 filter-favorites = Только избранное
 filter-downloaded = Скачанное
 filter-owned = Ваши

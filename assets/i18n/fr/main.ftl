@@ -271,7 +271,6 @@ filter-reset = Réinitialiser les filtres
 filter-duration = Durée
 filter-year = Année
 filter-hide-explicit = Masquer les explicites
-filter-playable = Lisibles uniquement
 filter-favorites = Favoris uniquement
 filter-downloaded = Téléchargés
 filter-owned = Par vous

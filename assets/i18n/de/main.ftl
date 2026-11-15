@@ -268,7 +268,6 @@ filter-reset = Filter zurücksetzen
 filter-duration = Dauer
 filter-year = Jahr
 filter-hide-explicit = Explizite ausblenden
-filter-playable = Nur abspielbare
 filter-favorites = Nur Favoriten
 filter-downloaded = Heruntergeladen
 filter-owned = Von dir

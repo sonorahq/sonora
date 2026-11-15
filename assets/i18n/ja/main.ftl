@@ -238,7 +238,6 @@ filter-reset = フィルターをリセット
 filter-duration = 長さ
 filter-year = 年
 filter-hide-explicit = 露骨な表現を含む曲を隠す
-filter-playable = 再生可能な曲のみ
 filter-favorites = お気に入りのみ
 filter-downloaded = ダウンロード済み
 filter-owned = 自分のもの

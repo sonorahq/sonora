@@ -268,7 +268,6 @@ filter-reset = Rivendos filtrat
 filter-duration = Kohëzgjatja
 filter-year = Viti
 filter-hide-explicit = Fshih eksplicitet
-filter-playable = Vetëm të luajtshme
 filter-favorites = Vetëm të preferuarat
 filter-downloaded = Të shkarkuara
 filter-owned = Nga ti

@@ -260,7 +260,6 @@ filter-reset = Süzgeçleri sıfırla
 filter-duration = Süre
 filter-year = Yıl
 filter-hide-explicit = Müstehcenleri gizle
-filter-playable = Yalnızca çalınabilir
 filter-favorites = Yalnızca favoriler
 filter-downloaded = İndirilenler
 filter-owned = Senin
