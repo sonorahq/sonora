@@ -57,6 +57,10 @@ const ACK_DELAY: Duration = Duration::from_millis(600);
 /// How long after claiming playback a report of another active device is taken to be older than
 /// the claim.
 const CLAIM_GRACE: Duration = Duration::from_secs(3);
+/// How long the song playing is told as a pick of Spotify's after someone joins the Jam.
+const WELCOME: Duration = Duration::from_secs(5);
+/// How long a skip made for the Jam while paused may show as playing before its pause lands.
+const ADVANCING: Duration = Duration::from_secs(3);
 /// The most pages of a collection that are read for the uids of its tracks.
 const UID_PAGES: usize = 40;
 /// How many characters of the digest make the uid Spotify's apps give a track they find listed
@@ -205,8 +209,19 @@ struct Worker {
     /// Where a collection's uids come back to once they are read, and where they are taken from.
     learned: UnboundedSender<(String, Vec<(String, String)>)>,
     learning: UnboundedReceiver<(String, Vec<(String, String)>)>,
-    /// Whether this device hosts a Jam that others listen to.
+    /// Whether this device hosts a Jam that others listen to, and how many are in it.
     hosting: bool,
+    members: usize,
+    /// Until when the song playing is told as one Spotify picked rather than one queued by hand.
+    /// An app that joins a Jam while a queued song plays cannot place it: it starts the next song
+    /// of the collection, or the queued one from its top, and stays apart until the song ends.
+    /// Told as a pick, the song is taken as it is, and telling it as queued again afterwards
+    /// leaves everyone in step with the right songs to follow.
+    welcome: Option<Instant>,
+    /// When the song the Jam hears ends while this device is paused apart from it, and until
+    /// when the skip that follows it there may be seen playing before its pause lands.
+    advance_at: Option<Instant>,
+    advancing: Option<Instant>,
     /// What this device really plays while it is paused on its own in the Jam it hosts. A pause
     /// in a Jam is the listener's own: the others' music goes on, and Spotify hands the lead to
     /// whoever still plays once it hears of the pause, after which nothing this device does
@@ -256,6 +271,10 @@ impl Worker {
             learned,
             learning,
             hosting: false,
+            members: 0,
+            welcome: None,
+            advance_at: None,
+            advancing: None,
             apart: None,
             active_since: None,
             claimed_at: None,
@@ -293,6 +312,13 @@ impl Worker {
                     None => {}
                 },
                 Some((context, tracks)) = self.learning.recv() => self.learn(context, tracks).await,
+                () = acknowledge(self.welcome) => {
+                    self.welcome = None;
+                    if self.now.is_some() {
+                        self.want_put(PutStateReason::PLAYER_STATE_CHANGED).await;
+                    }
+                }
+                () = acknowledge(self.advance_at) => self.advance(),
                 () = acknowledge(self.rename_at) => {
                     self.rename_at = None;
                     if self.enabled && self.connected {
@@ -559,11 +585,18 @@ impl Worker {
     /// Reports the Jam this device is in, and notes whether it hosts one that others listen to.
     /// Once it no longer does, a pause it kept to itself is told like any other.
     fn tell_jam(&mut self, jam: Option<Jam>) {
-        self.hosting = jam
-            .as_ref()
-            .is_some_and(|jam| jam.owner && jam.members.len() > 1);
+        let members = jam.as_ref().map_or(0, |jam| jam.members.len());
+        let joined = std::mem::replace(&mut self.members, members) < members;
+        self.hosting = jam.as_ref().is_some_and(|jam| jam.owner && members > 1);
         if let (false, Some(paused)) = (self.hosting, self.apart.take()) {
             self.now = Some(paused);
+            self.advance_at = None;
+            self.advancing = None;
+            self.hold(PutStateReason::PLAYER_STATE_CHANGED);
+            self.flush_at.get_or_insert_with(Instant::now);
+        }
+        if self.hosting && joined {
+            self.welcome = Some(Instant::now() + WELCOME);
             self.hold(PutStateReason::PLAYER_STATE_CHANGED);
             self.flush_at.get_or_insert_with(Instant::now);
         }
@@ -755,6 +788,8 @@ impl Worker {
     fn heard(&mut self, now: Option<Arc<Snapshot>>) -> Option<Option<Arc<Snapshot>>> {
         let (Some(told), Some(real), true) = (self.now.clone(), now.clone(), self.hosting) else {
             self.apart = None;
+            self.advance_at = None;
+            self.advancing = None;
             return Some(now);
         };
         let same = told.track.as_ref().map(|track| &track.id)
@@ -764,6 +799,7 @@ impl Worker {
             (false, false) if told.playing && same => {
                 log::debug!("connect: pausing apart from the jam");
                 self.apart = Some(real);
+                self.advance_at = ends(&told);
                 None
             }
             (false, _) => Some(now),
@@ -777,13 +813,21 @@ impl Worker {
                         heard.stamp = told.stamp;
                     }
                     // another song starts for the Jam where it stands here
-                    false => heard.stamp = Some(SystemTime::now()),
+                    false => {
+                        heard.stamp = Some(SystemTime::now());
+                        self.advancing = None;
+                    }
                 }
                 self.apart = Some(real);
+                self.advance_at = ends(&heard);
                 Some(Some(Arc::new(heard)))
             }
+            // the song skipped to for the Jam plays for an instant before its pause lands
+            (true, true) if self.advancing.is_some_and(|until| Instant::now() < until) => None,
             (true, true) => {
                 self.apart = None;
+                self.advance_at = None;
+                self.advancing = None;
                 if !same {
                     return Some(now);
                 }
@@ -825,6 +869,20 @@ impl Worker {
                 Err(error) => log::warn!("connect: cannot read the uids of {uri}: {error}"),
             }
         });
+    }
+
+    /// Moves on to the next song without a sound, as the Jam does when the song it hears ends
+    /// while this device is paused apart from it. The skip starts the song and the pause that
+    /// follows stops it before anything is heard, and the Jam is told the song from its top.
+    fn advance(&mut self) {
+        self.advance_at = None;
+        if self.apart.is_none() {
+            return;
+        }
+        log::debug!("connect: moving on with the jam while paused");
+        self.advancing = Some(Instant::now() + ADVANCING);
+        self.out.send(Event::Command(Command::Next)).ok();
+        self.out.send(Event::Command(Command::Pause)).ok();
     }
 
     /// Keeps the uids read for `context` and reports the queue again under them.
@@ -1026,7 +1084,12 @@ impl Worker {
             // a song that is its own collection has nothing to read, and its apps name it alike
             false => Known::unlisted(),
         };
-        state.track = MessageField::some(provided(track, &uri, known.at(track, now.index)));
+        let mut current = provided(track, &uri, known.at(track, now.index));
+        if track.queued && self.welcome.is_some() {
+            current.provider = "autoplay".to_owned();
+            current.metadata.remove("is_queued");
+        }
+        state.track = MessageField::some(current);
         state.prev_tracks = now
             .previous
             .iter()
@@ -1883,6 +1946,12 @@ async fn listed_uids(session: &Session, uri: &str) -> Result<Vec<(String, String
         tracks.len()
     );
     Ok(tracks)
+}
+
+/// When the song `told` to the Jam plays out, when its length is known.
+fn ends(told: &Snapshot) -> Option<Instant> {
+    let left = told.duration.checked_sub(told.live_position())?;
+    (!told.duration.is_zero()).then(|| Instant::now() + left)
 }
 
 /// The state of a transfer librespot could not read. A Jam brings a listener who paused back in
