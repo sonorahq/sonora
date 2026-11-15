@@ -341,6 +341,16 @@ impl MuteMemory {
         self.forget();
     }
 
+    /// Forgets a mute restore level when its device reports a non-silent volume.
+    fn reported_volume(&mut self, device: &str, level: f32) {
+        if self.restore.is_some()
+            && self.target.as_deref() == Some(device)
+            && level > MUTE_THRESHOLD
+        {
+            self.forget();
+        }
+    }
+
     fn forget(&mut self) {
         self.restore = None;
         self.target = None;
@@ -2548,6 +2558,11 @@ impl Playback {
             return;
         };
         self.apply_volume(level, false, cx);
+    }
+
+    /// Updates mute memory when the steered device reports its volume.
+    pub(crate) fn reported_steered_volume(&mut self, device: &str, level: f32) {
+        self.mute.reported_volume(device, level);
     }
 
     /// The gain the volume applies, 1 at full volume.
