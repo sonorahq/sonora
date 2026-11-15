@@ -1424,7 +1424,11 @@ impl Worker {
                 .map(|track| (track.id.clone(), track.queued))
                 .collect()
         };
-        if listed(&upcoming) != listed(&now.upcoming) {
+        // switching shuffle reorders the queue here, so the order that came with it goes last
+        let reshuffled = commands
+            .iter()
+            .any(|command| matches!(command, Command::Shuffle(_)));
+        if reshuffled || listed(&upcoming) != listed(&now.upcoming) {
             commands.push(Command::SetQueue {
                 upcoming: upcoming.clone(),
             });
