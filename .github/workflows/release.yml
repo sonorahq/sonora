@@ -41,8 +41,9 @@ jobs:
             os: ubuntu-22.04-arm
           - target: aarch64-apple-darwin
             os: macos-15
+          # Apple silicon cross-compiles for Intel faster than GitHub's Intel runners build natively.
           - target: x86_64-apple-darwin
-            os: macos-15-intel
+            os: macos-15
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             arch: x64compatible

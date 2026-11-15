@@ -8,10 +8,12 @@ on:
 
 # A pull request event handled after the merge resolves github.ref to the base branch, so
 # grouping by ref would let a late PR run and a push to main cancel each other. The PR number
-# keeps the two apart.
+# keeps the two apart. A new push to a pull request supersedes its last run, but a push to main
+# never cancels one: main merges more often than its builds finish, so cancelling left nearly
+# every commit without its binaries. A run already queued behind still gives way to a newer one.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -111,7 +113,10 @@ jobs:
       github.event_name != 'pull_request' &&
       !contains(github.event.head_commit.message, 'from sonorahq/release/')
     runs-on: ${{ matrix.os }}
+    # These are convenience builds, so they trade the release profile's single codegen unit for
+    # a parallel compile. release.yml keeps it for nightlies and tagged releases.
     env:
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
       SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -125,8 +130,9 @@ jobs:
             os: ubuntu-22.04-arm
           - target: aarch64-apple-darwin
             os: macos-15
+          # Apple silicon cross-compiles for Intel faster than GitHub's Intel runners build natively.
           - target: x86_64-apple-darwin
-            os: macos-15-intel
+            os: macos-15
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             arch: x64compatible
@@ -137,6 +143,20 @@ jobs:
             setup: Sonora-Setup-arm64
     steps:
       - uses: actions/checkout@v5
+
+      # Cargo on the runner's NTFS drive spends much of its time in the filesystem and Defender.
+      # A ReFS Dev Drive takes the target directory instead, through a junction, so every path
+      # below stays the same.
+      - uses: samypr100/setup-dev-drive@v4
+        if: runner.os == 'Windows'
+        with:
+          drive-size: 40GB
+      - name: put the target directory on the Dev Drive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:DEV_DRIVE/target" | Out-Null
+          New-Item -ItemType Junction -Path target -Target "$env:DEV_DRIVE/target" | Out-Null
 
       - name: system dependencies
         if: runner.os == 'Linux'
