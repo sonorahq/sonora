@@ -37,7 +37,6 @@ nav-pinned = ピン留め
 nav-unpin = ピン留めを解除
 nav-pin-hint = ここにドロップしてピン留め
 library-liked-songs = お気に入り
-library-play-liked-songs = 再生
 library-no-songs = お気に入りはまだありません
 library-no-albums = 保存したアルバムはまだありません
 library-no-playlists = プレイリストはまだありません
@@ -86,6 +85,7 @@ column-index = #
 column-title = タイトル
 column-artist = アーティスト
 column-album = アルバム
+column-genre = ジャンル
 column-date-added = 追加日
 column-added-by = 追加者
 column-modified = 更新日
@@ -97,17 +97,13 @@ column-year = 年
 column-tracks = 曲数
 
 # track menu
-menu-add-to-playlist = プレイリストに追加
-menu-add-tracks-to-playlist = { $count }曲をプレイリストに追加
 menu-new-playlist = 新しいプレイリスト
 menu-import-playlist = プレイリストをインポート…
 menu-edit-tags = タグを編集
 menu-no-playlists = プレイリストがありません
 menu-search-playlists = プレイリストを検索
 menu-add-to-library = お気に入りに追加
-menu-add-tracks-to-library = { $count }曲をお気に入りに追加
 menu-remove-from-library = お気に入りから削除
-menu-remove-tracks-from-library = { $count }曲をお気に入りから削除
 menu-remove-from-playlist = プレイリストから削除
 menu-remove-tracks-from-playlist = { $count }曲をプレイリストから削除
 menu-remove-from-history = 履歴から削除
@@ -115,13 +111,7 @@ menu-remove-tracks-from-history = { $count }曲を履歴から削除
 menu-delete-track-file = 曲ファイルを削除
 menu-delete-track-files = { $count }個の曲ファイルを削除
 menu-download = ダウンロード
-menu-download-tracks = { $count ->
-   *[other] { $count }曲をダウンロード
-}
 menu-remove-download = ダウンロードを削除
-menu-remove-downloads = { $count ->
-   *[other] { $count }件のダウンロードを削除
-}
 menu-downloading = ダウンロード中。クリックで停止
 menu-play-next = 次に再生
 menu-play-tracks-next = { $count }曲を次に再生
@@ -146,14 +136,6 @@ menu-delete-playlist = プレイリストを削除
 menu-export-playlist = プレイリストをエクスポート…
 menu-add-playlist-to-library = ライブラリに追加
 menu-remove-playlist-from-library = ライブラリから削除
-menu-library-add = ライブラリに追加
-menu-library-add-tracks = { $count ->
-   *[other] { $count }曲をライブラリに追加
-}
-menu-library-remove = ライブラリから削除
-menu-library-remove-tracks = { $count ->
-   *[other] { $count }曲をライブラリから削除
-}
 menu-make-playlist-public = 公開する
 menu-make-playlist-private = 非公開にする
 menu-play-artist = アーティストを再生
@@ -217,10 +199,7 @@ player-previous = 前の曲
 player-next = 次の曲
 player-fullscreen = フルスクリーン
 player-fullscreen-leave = フルスクリーンを終了
-player-devices = デバイス
 devices-this-computer = このコンピューター
-devices-pause = 一時停止
-devices-resume = 再開
 devices-jam-join = Jam に参加…
 devices-jam-join-title = Jam に参加
 devices-jam-join-detail = フレンドから共有されたリンクを貼り付けてください
@@ -228,15 +207,12 @@ devices-jam-paste = 貼り付け
 devices-jam-link-hint = Jam のリンク
 devices-jam-start = Jam を開始
 devices-jam-copy = Jam のリンクをコピー
-devices-jam-code = QR コード
 devices-jam-code-menu = QR コードを表示
 devices-jam-code-title = スキャンして { $host } の Jam に参加
 devices-jam-code-title-anonymous = スキャンして Jam に参加
 devices-jam-code-close = 閉じる
 devices-jam-leave = Jam から退出
 devices-jam-end = Jam を終了
-devices-jam-banner = { $host } の Jam に参加中
-devices-jam-banner-anonymous = Jam に参加中
 devices-jam-more = +{ $count }
 devices-jam-host = ホスト
 devices-jam-you = あなた
@@ -247,8 +223,6 @@ devices-jam-invite-detail = { $count ->
    *[other] この Jam にはすでに{ $count }人が参加しています。
 }
 devices-jam-invite-join = 参加
-devices-elsewhere-banner = { $device } で再生中
-devices-elsewhere-here = ここで再生
 fullscreen-artwork = アートワーク
 
 # filters
@@ -264,7 +238,6 @@ filter-reset = フィルターをリセット
 filter-duration = 長さ
 filter-year = 年
 filter-hide-explicit = 露骨な表現を含む曲を隠す
-filter-playable = 再生可能な曲のみ
 filter-favorites = お気に入りのみ
 filter-downloaded = ダウンロード済み
 filter-owned = 自分のもの
@@ -329,8 +302,6 @@ login-choose-detail = { $provider } へのサインイン方法を選んでく�
 
 # album and playlist pages
 detail-playlist = プレイリスト
-detail-play-album = アルバムを再生
-detail-play-playlist = プレイリストを再生
 
 # play button
 play-pause = 一時停止
@@ -342,7 +313,6 @@ artist-eyebrow = アーティスト
 artist-monthly-listeners = { $count ->
    *[other] 月間リスナー { $value }人
 }
-artist-play = 今すぐ再生
 artist-popular = 人気の曲
 artist-popular-eyebrow = このアーティストを知る
 artist-popular-empty = このアーティストにはまだ再生できる曲がありません
@@ -385,6 +355,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = クイックピック
 home-quick-picks-empty = 何曲かお気に入りに追加するとここに表示されます
 home-recently-added = 最近追加した項目
+home-recently-played = 最近再生した項目
 home-playlists = プレイリスト
 home-favorite-albums = お気に入りのアルバム
 home-artists = アーティスト
@@ -393,6 +364,9 @@ home-collection-albums = コレクションのアルバム
 # search page
 search-placeholder = 何を聴きたいですか？
 search-browse = すべてのジャンル
+search-submit = 検索
+search-recent = 最近の検索
+search-forget = 履歴から削除
 genre-empty = ここにはまだ何もありません
 search-best-match = ベストマッチ
 search-no-matches = 一致する項目がありません
@@ -412,7 +386,6 @@ kind-playlist = プレイリスト
 
 # song page
 song-eyebrow = 曲
-song-play = 曲を再生
 song-view-album = アルバムを表示
 song-loading = 曲の情報を読み込んでいます…
 song-about = この曲について
@@ -599,7 +572,6 @@ settings-font-detail = 基準の文字サイズ。他のすべてがこれに合
 settings-font-value = { $size } px
 settings-startup = 起動時に表示
 settings-startup-detail = 起動時に Sonora が開く画面
-settings-startup-no-guest = ゲストモードでは利用できません
 settings-entries = サイドバー項目
 settings-entries-detail = サイドバーに表示するセクション
 settings-entries-pick = 項目を選ぶ
@@ -905,6 +877,8 @@ equalizer-status-channels = { $from ->
     [2] ステレオ
    *[other] { $to }ch
 }
+settings-lyrics = 歌詞を表示
+settings-lyrics-detail = オフにすると、すべての場所で歌詞を非表示にし、歌詞の検索も停止します
 settings-panel-lyrics-size = 歌詞のサイズ（パネル）
 settings-panel-lyrics-size-detail = サイドパネルの歌詞の文字サイズ。基準のフォントサイズに対する倍率
 settings-fullscreen-lyrics-size = 歌詞のサイズ（フルスクリーン）
@@ -1208,17 +1182,6 @@ toast-offline-mode = オフラインです。この曲をストリーミング�
 offline-title = オフラインです。
 offline-go-online = オンラインにする
 toast-download-failed = ダウンロードする曲の一覧を取得できませんでした。
-toast-downloading = { $name } をダウンロード中
-toast-downloading-songs = { $count ->
-   *[other] { $count }曲をダウンロード中
-}
-toast-downloaded = { $name } をダウンロードしました
-toast-downloaded-songs = { $count ->
-   *[other] { $count }曲をダウンロードしました
-}
-toast-download-set-failed = { $name } の一部の曲をダウンロードできませんでした
-toast-download-song-failed = { $name } をダウンロードできませんでした
-toast-download-songs-failed = 一部の曲をダウンロードできませんでした
 toast-percent = { $percent }%
 toast-download-cancelled = { $name } のダウンロードをキャンセルしました
 toast-downloads-cancelled = { $count ->

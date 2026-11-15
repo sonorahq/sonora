@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod actions;
+#[cfg(windows)]
+mod app_icon;
 mod assets;
 mod console;
 mod dock;
@@ -13,6 +15,8 @@ mod single;
 #[cfg(windows)]
 mod thumbbar;
 mod tray;
+#[cfg(target_os = "linux")]
+mod x11_icon;
 
 use std::path::PathBuf;
 use std::process::{ExitCode, exit};
@@ -60,7 +64,7 @@ fn main() -> ExitCode {
     let args = std::env::args_os()
         .filter(|arg| !arg.to_string_lossy().starts_with("-psn_"))
         .collect();
-    let command = cli::parse(args, state::VERSION);
+    let command = cli::parse(args, state::version());
     if !matches!(command, Ok(CommandType::Launch(_))) {
         console::attach();
     }
@@ -68,7 +72,7 @@ fn main() -> ExitCode {
         Ok(CommandType::Launch(items)) => items,
         Ok(CommandType::Local(local)) => return cli::local(local),
         Ok(CommandType::Remote(request, format)) => {
-            return match single::connect() {
+            return match single::connect(request.streams()) {
                 Ok(mut stream) => cli::run(&mut stream, &request, format),
                 Err(_) => cli::not_running(),
             };
@@ -84,9 +88,9 @@ fn main() -> ExitCode {
         single::Instance::Running => return ExitCode::SUCCESS,
         single::Instance::Failed => exit(1),
     }
-    // Two rustls backends are compiled in: librespot, oauth2 and ytmusic still ask for ring,
-    // while reqwest 0.13 and opensubsonic ask for aws-lc-rs. rustls refuses to guess between
-    // them, so one is picked here. A second install only means another crate got there first.
+    // reqwest is built without a crypto provider, and opensubsonic still compiles aws-lc-rs in
+    // beside ring, so rustls cannot pick one by itself. Every client uses ring from here on. A
+    // second install only means another crate got there first.
     rustls::crypto::ring::default_provider()
         .install_default()
         .ok();
@@ -109,6 +113,8 @@ fn main() -> ExitCode {
     app.on_reopen(show_window);
 
     app.run(move |cx: &mut App| {
+        #[cfg(target_os = "macos")]
+        dock::install_icon();
         if let Err(error) = assets::Assets.load_fonts(cx) {
             log::error!("sonora: cannot load bundled fonts: {error:#}");
         }
@@ -212,8 +218,11 @@ fn main() -> ExitCode {
         // Commands skip the open batching, since nothing arrives in bursts there.
         let control = Sonora::global(cx).control.clone();
         cx.spawn(async move |cx| {
-            while let Some((request, reply)) = commands.recv().await {
-                control.update(cx, |control, cx| control.answer(request, reply, cx));
+            while let Some(asked) = commands.recv().await {
+                control.update(cx, |control, cx| match asked {
+                    single::Asked::Once(request, reply) => control.answer(request, reply, cx),
+                    single::Asked::Watch(watch, sink) => control.watch(watch, sink, cx),
+                });
             }
         })
         .detach();
@@ -305,9 +314,11 @@ fn open_window(cx: &mut App) {
         devices: _,
         downloads: _,
         drm: _,
+        soloist: _,
         equalizer: _,
         library,
         links: _,
+        listening: _,
         history: _,
         lyrics: _,
         network: _,
@@ -365,13 +376,15 @@ fn open_window(cx: &mut App) {
             is_movable: true,
             is_resizable: true,
             app_owns_titlebar_drag: true,
-            app_id: Some("sonora".into()),
+            app_id: Some(assets::app_id().into()),
             window_min_size: Some(LEAST_SIZE),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             window_decorations: Some(decorations),
             ..Default::default()
         },
         |window, cx| {
+            #[cfg(target_os = "linux")]
+            x11_icon::install(window);
             window.set_rem_size(cx.theme().font_size);
             #[cfg(target_os = "windows")]
             set_corner_preference(
@@ -382,6 +395,7 @@ fn open_window(cx: &mut App) {
             state::attach_remote(handle, cx);
             #[cfg(windows)]
             if let Some(handle) = handle {
+                app_icon::install(handle);
                 thumbbar::install(window.window_handle().window_id(), handle, cx);
             }
             state::remember_window(window, cx);

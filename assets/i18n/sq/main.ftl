@@ -37,7 +37,6 @@ nav-pinned = Të fiksuara
 nav-unpin = Hiq fiksimin
 nav-pin-hint = Lësho këtu për ta fiksuar
 library-liked-songs = Të preferuarat
-library-play-liked-songs = Luaj
 library-no-songs = Ende asnjë e preferuar
 library-no-albums = Ende asnjë album i ruajtur
 library-no-playlists = Ende asnjë listë luajtjeje
@@ -86,6 +85,7 @@ column-index = #
 column-title = Titulli
 column-artist = Artisti
 column-album = Albumi
+column-genre = Zhanri
 column-date-added = Data e shtimit
 column-added-by = Shtuar nga
 column-modified = Ndryshuar
@@ -97,26 +97,13 @@ column-year = Viti
 column-tracks = Këngë
 
 # track menu
-menu-add-to-playlist = Shto te lista e luajtjes
-menu-add-tracks-to-playlist = { $count ->
-    [one] Shto { $count } këngë te lista e luajtjes
-   *[other] Shto { $count } këngë te lista e luajtjes
-}
 menu-new-playlist = Listë e re luajtjeje
 menu-import-playlist = Importo listë luajtjeje…
 menu-edit-tags = Ndrysho etiketat
 menu-no-playlists = Asnjë listë luajtjeje
 menu-search-playlists = Kërko një listë luajtjeje
 menu-add-to-library = Shto te të preferuarat
-menu-add-tracks-to-library = { $count ->
-    [one] Shto { $count } këngë te të preferuarat
-   *[other] Shto { $count } këngë te të preferuarat
-}
 menu-remove-from-library = Hiq nga të preferuarat
-menu-remove-tracks-from-library = { $count ->
-    [one] Hiq { $count } këngë nga të preferuarat
-   *[other] Hiq { $count } këngë nga të preferuarat
-}
 menu-remove-from-playlist = Hiq nga lista e luajtjes
 menu-remove-tracks-from-playlist = { $count ->
     [one] Hiq { $count } këngë nga lista e luajtjes
@@ -130,15 +117,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Fshi skedarin e këngës
 menu-delete-track-files = Fshi { $count } skedarë këngësh
 menu-download = Shkarko
-menu-download-tracks = { $count ->
-    [one] Shkarko { $count } këngë
-   *[other] Shkarko { $count } këngë
-}
 menu-remove-download = Hiq shkarkimin
-menu-remove-downloads = { $count ->
-    [one] Hiq { $count } shkarkim
-   *[other] Hiq { $count } shkarkime
-}
 menu-downloading = Duke shkarkuar. Kliko për ta ndalur
 menu-play-next = Luaj të radhës
 menu-play-tracks-next = { $count ->
@@ -170,16 +149,6 @@ menu-delete-playlist = Fshi listën e luajtjes
 menu-export-playlist = Eksporto listën e luajtjes…
 menu-add-playlist-to-library = Shto te Biblioteka
 menu-remove-playlist-from-library = Hiq nga Biblioteka
-menu-library-add = Shto te Biblioteka
-menu-library-add-tracks = { $count ->
-    [one] Shto { $count } këngë te Biblioteka
-   *[other] Shto { $count } këngë te Biblioteka
-}
-menu-library-remove = Hiq nga Biblioteka
-menu-library-remove-tracks = { $count ->
-    [one] Hiq { $count } këngë nga Biblioteka
-   *[other] Hiq { $count } këngë nga Biblioteka
-}
 menu-make-playlist-public = Bëje publike
 menu-make-playlist-private = Bëje private
 menu-play-artist = Luaj artistin
@@ -259,10 +228,7 @@ player-previous = Kënga e mëparshme
 player-next = Kënga e radhës
 player-fullscreen = Ekran i plotë
 player-fullscreen-leave = Dil nga ekrani i plotë
-player-devices = Pajisjet
 devices-this-computer = Ky kompjuter
-devices-pause = Pauzë
-devices-resume = Vazhdo
 devices-jam-join = Bashkohu në një Jam…
 devices-jam-join-title = Bashkohu në një Jam
 devices-jam-join-detail = Ngjit lidhjen që të ndau një mik
@@ -270,15 +236,12 @@ devices-jam-paste = Ngjit
 devices-jam-link-hint = Lidhja e Jam-it
 devices-jam-start = Nis një Jam
 devices-jam-copy = Kopjo lidhjen e Jam-it
-devices-jam-code = Kodi QR
 devices-jam-code-menu = Shfaq kodin QR
 devices-jam-code-title = Skano për t'u bashkuar në Jam-in e { $host }
 devices-jam-code-title-anonymous = Skano për t'u bashkuar në Jam
 devices-jam-code-close = Mbyll
 devices-jam-leave = Largohu nga Jam-i
 devices-jam-end = Përfundo Jam-in
-devices-jam-banner = Në Jam-in e { $host }
-devices-jam-banner-anonymous = Në një Jam
 devices-jam-more = +{ $count }
 devices-jam-host = Organizatori
 devices-jam-you = Ti
@@ -290,8 +253,6 @@ devices-jam-invite-detail = { $count ->
    *[other] { $count } persona janë tashmë në këtë Jam.
 }
 devices-jam-invite-join = Bashkohu
-devices-elsewhere-banner = Duke luajtur në { $device }
-devices-elsewhere-here = Luaj këtu
 fullscreen-artwork = Kopertina
 
 # filters
@@ -307,7 +268,6 @@ filter-reset = Rivendos filtrat
 filter-duration = Kohëzgjatja
 filter-year = Viti
 filter-hide-explicit = Fshih eksplicitet
-filter-playable = Vetëm të luajtshme
 filter-favorites = Vetëm të preferuarat
 filter-downloaded = Të shkarkuara
 filter-owned = Nga ti
@@ -372,8 +332,6 @@ login-choose-detail = Zgjidh se si të hysh te { $provider }.
 
 # album and playlist pages
 detail-playlist = Listë luajtjeje
-detail-play-album = Luaj albumin
-detail-play-playlist = Luaj listën e luajtjes
 
 # play button
 play-pause = Pauzë
@@ -386,7 +344,6 @@ artist-monthly-listeners = { $count ->
     [one] { $value } dëgjues mujor
    *[other] { $value } dëgjues mujorë
 }
-artist-play = Luaj tani
 artist-popular = Popullore
 artist-popular-eyebrow = Eksploro këtë artist
 artist-popular-empty = Ende asgjë për të luajtur nga ky artist
@@ -430,6 +387,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Zgjedhje të shpejta
 home-quick-picks-empty = Pëlqe disa këngë dhe ato do të shfaqen këtu
 home-recently-added = Shtuar së fundi
+home-recently-played = Luajtur së fundi
 home-playlists = Lista luajtjeje
 home-favorite-albums = Albumet e preferuara
 home-artists = Artistë
@@ -438,6 +396,9 @@ home-collection-albums = Albume nga koleksioni yt
 # search page
 search-placeholder = Çfarë do të dëgjosh?
 search-browse = Shfleto të gjitha
+search-submit = Kërko
+search-recent = Kërkimet e fundit
+search-forget = Hiqe nga historiku
 genre-empty = Ende asgjë për të shfaqur këtu
 search-best-match = Përputhja më e mirë
 search-no-matches = Asnjë përputhje
@@ -458,7 +419,6 @@ kind-playlist = Listë luajtjeje
 
 # song page
 song-eyebrow = Këngë
-song-play = Luaj këngën
 song-view-album = Shiko albumin
 song-loading = Duke ngarkuar informacionin e këngës…
 song-about = Rreth kësaj kënge
@@ -648,7 +608,6 @@ settings-font-detail = Madhësia bazë e tekstit; gjithçka tjetër shkallëzohe
 settings-font-value = { $size } px
 settings-startup = Shfaq në nisje
 settings-startup-detail = Ekrani që hap Sonora në nisje
-settings-startup-no-guest = Nuk disponohet në modalitetin mysafir
 settings-entries = Zërat e shiritit anësor
 settings-entries-detail = Seksionet e listuara në shiritin anësor
 settings-entries-pick = Zgjidh zërat
@@ -957,6 +916,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kan.
 }
+settings-lyrics = Shfaq tekstet
+settings-lyrics-detail = Çaktivizoje për t'i fshehur tekstet kudo dhe për të ndaluar kërkimin e tyre
 settings-panel-lyrics-size = Madhësia e teksteve (panel)
 settings-panel-lyrics-size-detail = Madhësia e tekstit të teksteve në panelin anësor, mbi madhësinë bazë të shkronjave
 settings-fullscreen-lyrics-size = Madhësia e teksteve (ekran i plotë)
@@ -1270,19 +1231,6 @@ toast-offline-mode = Je jashtë linje. Kalo në linjë për ta transmetuar kët�
 offline-title = Je jashtë linje.
 offline-go-online = Kalo në linjë
 toast-download-failed = Këngët për shkarkim nuk mund të listoheshin.
-toast-downloading = Duke shkarkuar { $name }
-toast-downloading-songs = { $count ->
-    [one] Duke shkarkuar { $count } këngë
-   *[other] Duke shkarkuar { $count } këngë
-}
-toast-downloaded = U shkarkua { $name }
-toast-downloaded-songs = { $count ->
-    [one] U shkarkua { $count } këngë
-   *[other] U shkarkuan { $count } këngë
-}
-toast-download-set-failed = Disa këngë të { $name } nuk mund të shkarkoheshin
-toast-download-song-failed = { $name } nuk mund të shkarkohej
-toast-download-songs-failed = Disa nga këngët nuk mund të shkarkoheshin
 toast-percent = { $percent }%
 toast-download-cancelled = Shkarkimi i { $name } u anulua
 toast-downloads-cancelled = { $count ->

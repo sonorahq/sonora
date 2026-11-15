@@ -1,0 +1,9 @@
+# Settings here merge onto the shared sonorahq/coderabbit configuration instead of replacing it.
+inheritance: true
+# CodeRabbit cancels its review when a pull request merges before it finishes, and GitHub
+# shows that cancelled check as a failure. On GitHub the `CodeRabbit` check run comes from
+# review_progress and the commit status from commit_status, so both stay off. Reviews still
+# arrive as comments.
+reviews:
+  review_progress: false
+  commit_status: false

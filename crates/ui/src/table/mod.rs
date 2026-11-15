@@ -2,7 +2,7 @@ mod layout;
 
 use std::cell::Cell as StdCell;
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use gpui::prelude::*;
@@ -17,9 +17,10 @@ use i18n::t;
 
 use crate::artwork::{PREFETCH_REACH, Prefetch};
 use crate::filters::FilterChange;
-use crate::glass::{blurring, popover_surface};
+use crate::glass::{bar_surface, blurring, popover_surface};
 use crate::menu::{Menu, MenuItem};
 use crate::metrics::{snapped, text_width};
+use crate::motion::Glowing as _;
 use crate::pin::{Pin, Pinnable};
 use crate::popup::Popup;
 use crate::skeleton::Skeleton;
@@ -118,6 +119,12 @@ pub trait TableSource: 'static {
 
     fn context_menu_will_open(&self, _rows: &[usize], _cx: &App) {}
 
+    /// A key naming the item on `row` across a rebuild, such as a track id. With one, an open
+    /// context menu survives a rebuild that still holds every item it was opened on.
+    fn row_key(&self, _row: usize, _cx: &App) -> Option<SharedString> {
+        None
+    }
+
     fn pin(&self, _row: usize, _cx: &App) -> Option<Pin> {
         None
     }
@@ -200,6 +207,7 @@ pub struct TableDelegate<S: TableSource> {
     sort: Option<(S::Field, Sort)>,
     query: String,
     order: Vec<usize>,
+    revision: u64,
     locked: Option<&'static [&'static str]>,
 }
 
@@ -228,6 +236,7 @@ impl<S: TableSource> TableDelegate<S> {
             sort: None,
             query: String::new(),
             order: Vec::new(),
+            revision: 0,
             locked: None,
         };
         delegate.reorder(cx);
@@ -455,7 +464,7 @@ impl<S: TableSource> TableDelegate<S> {
             .map(|spec| Toggle {
                 key: spec.key,
                 label: spec.label(),
-                visible: !self.layout.hides(spec.key),
+                visible: !self.layout.hides(spec),
             })
             .collect()
     }
@@ -524,6 +533,11 @@ impl<S: TableSource> TableDelegate<S> {
         &self.query
     }
 
+    /// Changes whenever rows are rebuilt, filtered or sorted, including updates to their data.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     fn reorder(&mut self, cx: &App) {
         let mut order: Vec<usize> = (0..self.source.rows(cx))
             .filter(|row| {
@@ -540,6 +554,7 @@ impl<S: TableSource> TableDelegate<S> {
         }
 
         self.order = order;
+        self.revision = self.revision.wrapping_add(1);
         self.prune_selection();
     }
 
@@ -641,13 +656,51 @@ struct Sizing {
     widths: Vec<Pixels>,
 }
 
+/// The context menu a table has open: the rows it was opened on, where, and the keys of those
+/// rows when the source names them.
+#[derive(Clone)]
+struct OpenMenu {
+    rows: Vec<usize>,
+    at: Point<Pixels>,
+    keys: Option<Vec<SharedString>>,
+}
+
+impl OpenMenu {
+    fn new<S: TableSource>(rows: Vec<usize>, at: Point<Pixels>, source: &S, cx: &App) -> Self {
+        let keys = rows.iter().map(|row| source.row_key(*row, cx)).collect();
+        Self { rows, at, keys }
+    }
+
+    /// The same menu over the rows that now hold its items, or `None` once one of them is gone
+    /// or the source names no rows.
+    fn kept<S: TableSource>(self, source: &S, cx: &App) -> Option<Self> {
+        let keys = self.keys?;
+        let wanted: HashSet<&SharedString> = keys.iter().collect();
+        let mut found: HashMap<SharedString, usize> = HashMap::with_capacity(keys.len());
+        for row in 0..source.rows(cx) {
+            if let Some(key) = source.row_key(row, cx).filter(|key| wanted.contains(key)) {
+                found.entry(key).or_insert(row);
+            }
+        }
+        let rows = keys
+            .iter()
+            .map(|key| found.get(key).copied())
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self {
+            rows,
+            at: self.at,
+            keys: Some(keys),
+        })
+    }
+}
+
 pub struct TableState<S: TableSource> {
     delegate: TableDelegate<S>,
     viewport: Viewport,
     corners: Corners<Pixels>,
     focus: FocusHandle,
     scroll: Option<ScrollHandle>,
-    context_menu: Option<(Vec<usize>, Point<Pixels>)>,
+    context_menu: Option<OpenMenu>,
     moving: Option<(usize, usize)>,
     sizing: Option<Sizing>,
     column_menu: Option<Point<Pixels>>,
@@ -870,9 +923,14 @@ impl<S: TableSource> TableState<S> {
         cx.notify();
     }
 
+    /// Reads the rows again after the source changed. An open context menu follows its items
+    /// to their new rows, and closes when the source names no rows or one of the items left.
     pub fn rebuild(&mut self, cx: &mut Context<Self>) {
-        self.context_menu = None;
         self.delegate.rebuild(cx);
+        self.context_menu = self
+            .context_menu
+            .take()
+            .and_then(|open| open.kept(&self.delegate.source, cx));
         cx.notify();
     }
 
@@ -943,8 +1001,12 @@ impl<S: TableSource> TableState<S> {
     }
 
     fn toggle_column(&mut self, key: &str, cx: &mut Context<Self>) {
+        let columns = self.delegate.source.columns();
+        let Some(spec) = columns.iter().find(|spec| spec.key == key) else {
+            return;
+        };
         let mut layout = self.delegate.layout.clone();
-        layout.toggle(key);
+        layout.toggle(spec);
         self.delegate.set_layout(layout, cx);
         cx.emit(TableEvent::LayoutChanged);
         cx.notify();
@@ -988,7 +1050,13 @@ impl<S: TableSource> TableState<S> {
         cx.notify();
     }
 
-    fn header(&self, head: Pixels, top: Corners<Pixels>, cx: &mut Context<Self>) -> Div {
+    fn header(
+        &self,
+        head: Pixels,
+        top: Corners<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let theme = *cx.theme();
         let table = cx.entity().downgrade();
         let last = self.delegate.columns.len().saturating_sub(1);
@@ -1039,7 +1107,12 @@ impl<S: TableSource> TableState<S> {
             .h(head)
             .when_else(
                 blurring(cx),
-                |this| popover_surface(this, cx),
+                // The menu material is nearly opaque, so a see-through window takes the
+                // player bar's thin fill instead and the head stays as clear as the page.
+                |this| match theme.transparent {
+                    true => bar_surface(this, cx),
+                    false => popover_surface(this, cx),
+                },
                 |this| this.bg(theme.table_head),
             )
             .rounded_tl(top.top_left)
@@ -1093,7 +1166,12 @@ impl<S: TableSource> TableState<S> {
                         .when(dragged, |this| this.bg(theme.table_active))
                         .when(sortable, |this| {
                             this.cursor_pointer()
-                                .hover(move |style| style.text_color(theme.foreground))
+                                .glow_text(
+                                    theme.table_head_foreground,
+                                    theme.foreground,
+                                    window,
+                                    cx,
+                                )
                                 .on_mouse_up(
                                     MouseButton::Left,
                                     cx.listener(move |this, _: &MouseUpEvent, _, cx| {
@@ -1166,7 +1244,13 @@ impl<S: TableSource> TableState<S> {
             })
     }
 
-    fn rows(&self, head: Pixels, row_height: Pixels, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn rows(
+        &self,
+        head: Pixels,
+        row_height: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         let theme = *cx.theme();
         let count = self.delegate.order.len();
         let first = self.viewport.first(head, row_height);
@@ -1226,9 +1310,7 @@ impl<S: TableSource> TableState<S> {
                     })
                     .when(playing, |this| this.bg(theme.muted))
                     .when(selected, |this| this.bg(theme.table_active))
-                    .when(!selected, |this| {
-                        this.hover(move |style| style.bg(theme.table_hover))
-                    })
+                    .when(!selected, |this| this.glow(theme.table_hover, window, cx))
                     .when_some(self.delegate.source.pin(row, cx), Pinnable::pin)
                     .when_some(self.delegate.source.tip(row, cx), |this, text| {
                         this.tip_label(text, Perch::Follow)
@@ -1267,7 +1349,12 @@ impl<S: TableSource> TableState<S> {
                                 window.prevent_default();
                                 cx.stop_propagation();
                                 this.column_menu = None;
-                                this.context_menu = Some((rows, event.position));
+                                this.context_menu = Some(OpenMenu::new(
+                                    rows,
+                                    event.position,
+                                    &this.delegate.source,
+                                    cx,
+                                ));
                                 cx.notify();
                             }
                         }),
@@ -1393,8 +1480,9 @@ impl<S: TableSource> Render for TableState<S> {
         let height = self.height(head, row, self.delegate.row_count().max(placeholders));
         let pinned = snapped(self.viewport.top.clamp(Pixels::ZERO, height - head), window);
         let top = unpinned(self.corners, pinned);
-        // With Blur UI on the rows pass behind the head and it frosts them in the material of a
-        // context menu. Without it nothing passes behind the head, so it needs nothing behind it
+        // With Blur UI on the rows pass behind the head and it frosts them, in the material of a
+        // context menu on an opaque window and the player bar's thin glass on a see-through one.
+        // Without it nothing passes behind the head, so it needs nothing behind it
         // either: on a see-through window it is the page plus its own tint, the same glass as
         // the rest. An opaque window keeps the page painted under it, which is what the
         // head's own alpha has always been mixed against.
@@ -1405,13 +1493,13 @@ impl<S: TableSource> Render for TableState<S> {
             false => pinned + head,
         };
         let column_menu = self.column_menu.map(|at| self.column_menu(at, cx));
-        let context_menu = self.context_menu.clone().and_then(|(rows, position)| {
+        let context_menu = self.context_menu.clone().and_then(|open| {
             let visible = self.delegate.visible();
             self.delegate
                 .source
-                .context_menu(&rows, &visible, cx)
+                .context_menu(&open.rows, &visible, cx)
                 .map(|menu| {
-                    Popup::new(position, menu).on_close(cx.listener(|this, _, _, cx| {
+                    Popup::new(open.at, menu).on_close(cx.listener(|this, _, _, cx| {
                         this.context_menu = None;
                         cx.notify();
                     }))
@@ -1467,7 +1555,7 @@ impl<S: TableSource> Render for TableState<S> {
                             .right_0()
                             .h(height)
                             .children(match placeholders {
-                                0 => self.rows(head, row, cx),
+                                0 => self.rows(head, row, window, cx),
                                 count => self.skeletons(head, row, count, cx),
                             }),
                     ),
@@ -1482,7 +1570,7 @@ impl<S: TableSource> Render for TableState<S> {
                     .when_some(backdrop, |this, backdrop| this.bg(backdrop))
                     .rounded_tl(top.top_left)
                     .rounded_tr(top.top_right)
-                    .child(self.header(head, top, cx)),
+                    .child(self.header(head, top, window, cx)),
             )
             .when_some(context_menu, |this, menu| this.child(menu))
             .when_some(column_menu, |this, menu| this.child(menu))

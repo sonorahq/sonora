@@ -1,30 +1,34 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use cli::commands::{
     self, Item, Kind, Level, PlaybackCommand, ProviderCommand, QueueCommand, Request, SearchQuery,
-    Switch,
+    SessionCommand, Switch, Time, Watch,
 };
-use cli::wire::{self, Current, Failure, Reply, State, Value};
+use cli::wire::{
+    self, Current, Failure, LyricsStatus, QueueEntry, QueueEntryKind, QueueSnapshot, Reply,
+    SessionInfo, State, Value,
+};
 use futures::future;
 use gpui::{App, Context, Entity, Subscription, Task};
 use music::link::Linked;
-use music::{Album, MediaKind, MusicApi, MusicProvider, Playlist, Track};
-use tokio::sync::oneshot;
+use music::{Found, Lyrics as Sheet, LyricsHit, MediaKind, MusicApi, MusicProvider, Track};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::search::{self, Catalog};
 use crate::{
-    Hit, Io, Library, Origin, Playback, PlaybackState, QueuePlacement, Repeat, Session,
-    SessionState, Shelf, Sonora, join, noted,
+    Hit, Io, Library, LyricsState, Origin, Playback, PlaybackState, QueueKind, QueuePlacement,
+    QueuePosition, Repeat, Session, SessionState, Shelf, Sonora, Whence, join, noted,
 };
 
-/// What the three searches of a query answered: songs, albums and playlists.
-type Found = (
-    anyhow::Result<Vec<Track>>,
-    anyhow::Result<Vec<Album>>,
-    anyhow::Result<Vec<Playlist>>,
-);
+/// What `sonora current` calls the provider of a local file, the slug `sonora providers` gives it.
+const LOCAL: &str = "local";
+
+/// How often a watch looks again on its own, for the position it reports and for a change made
+/// somewhere that does not go through `Playback`, such as the volume of a steered device.
+const WATCH_TICK: Duration = Duration::from_secs(1);
 
 /// Carries out what the command line asks of the running Sonora. Playback goes through
 /// `Playback`, so a device steered over Connect is the one that obeys. A command that fetches
@@ -38,7 +42,21 @@ pub struct Control {
     issued: u64,
     /// A provider switch waiting for the session to settle before it answers.
     switching: Option<Switching>,
+    /// Command lines following what plays, as `sonora watch`.
+    watchers: Vec<Watcher>,
+    /// What keeps the watchers told, held only while there are any.
+    watching: Option<([Subscription; 2], Task<()>)>,
     _session: Subscription,
+}
+
+/// A `sonora watch` and what it was last told.
+struct Watcher {
+    sink: mpsc::UnboundedSender<Reply>,
+    /// Whether a new position alone is worth a line.
+    position: bool,
+    /// The state last sent, with the position left out unless `position`; `None` before the
+    /// first line.
+    told: Option<Option<Current>>,
 }
 
 /// A switch to the provider `slug`, answered once the session lands somewhere.
@@ -90,7 +108,67 @@ impl Control {
             pending: HashMap::new(),
             issued: 0,
             switching: None,
+            watchers: Vec::new(),
+            watching: None,
             _session,
+        }
+    }
+
+    /// Follows what plays for a `sonora watch`: what plays now at once, then again on every
+    /// change, until the command line hangs up and `sink` closes.
+    pub fn watch(
+        &mut self,
+        watch: Watch,
+        sink: mpsc::UnboundedSender<Reply>,
+        cx: &mut Context<Self>,
+    ) {
+        self.watchers.push(Watcher {
+            sink,
+            position: watch.position,
+            told: None,
+        });
+        if self.watching.is_none() {
+            let ticks = self.playback.read(cx).ticks().clone();
+            let observed = [
+                cx.observe(&self.playback, |this, _, cx| this.tell(cx)),
+                cx.observe(&ticks, |this, _, cx| this.tell(cx)),
+            ];
+            let ticking = cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(WATCH_TICK).await;
+                    if this.update(cx, |this, cx| this.tell(cx)).is_err() {
+                        break;
+                    }
+                }
+            });
+            self.watching = Some((observed, ticking));
+        }
+        self.tell(cx);
+    }
+
+    /// Sends what plays to every watcher it changed for since its last line, and lets go of the
+    /// ones that hung up. With none left, nothing follows playback any more.
+    fn tell(&mut self, cx: &mut Context<Self>) {
+        let now = current(self.playback.read(cx), cx);
+        self.watchers.retain_mut(|watcher| {
+            let seen = match watcher.position {
+                true => now.clone(),
+                false => now.clone().map(|current| Current {
+                    position: 0,
+                    ..current
+                }),
+            };
+            if watcher.told.as_ref() == Some(&seen) {
+                return !watcher.sink.is_closed();
+            }
+            watcher.told = Some(seen);
+            watcher
+                .sink
+                .send(Reply::Value(Value::Current(now.clone())))
+                .is_ok()
+        });
+        if self.watchers.is_empty() {
+            self.watching = None;
         }
     }
 
@@ -109,6 +187,10 @@ impl Control {
             Request::Queue(command) => return self.queue(command, reply, cx),
             Request::Provider(command) => return self.provider(command, reply, cx),
             Request::Search(query) => return self.search(query, reply, cx),
+            Request::Session(command) => session(command, cx),
+            Request::Lyrics => Reply::Value(Value::Lyrics(lyrics(self.playback.read(cx), cx))),
+            // a watch is answered as a stream, by `watch`, and never reaches here
+            Request::Watch(_) => Reply::Failed(Failure::Malformed),
         };
         reply.send(answer).ok();
     }
@@ -122,6 +204,11 @@ impl Control {
         cx: &mut Context<Self>,
     ) {
         let (items, placement) = match command {
+            QueueCommand::Snapshot => {
+                let snapshot = queue_snapshot(self.playback.read(cx), cx);
+                reply.send(Reply::Value(Value::Queue(snapshot))).ok();
+                return;
+            }
             QueueCommand::Add(items) => (items, Place::Queue(QueuePlacement::End)),
             QueueCommand::PlayNext(items) => (items, Place::Queue(QueuePlacement::Next)),
             QueueCommand::Play(items) => (items, Place::Now),
@@ -240,16 +327,7 @@ impl Control {
         let fetch = {
             let client = client.clone();
             let asked = query.text.clone();
-            Io::global(cx).spawn(async move {
-                anyhow::Ok(
-                    future::join3(
-                        client.search(&asked),
-                        client.search_albums(&asked),
-                        client.search_playlists(&asked),
-                    )
-                    .await,
-                )
-            })
+            Io::global(cx).spawn(async move { anyhow::Ok(client.search_all(&asked).await) })
         };
         let key = self.issued;
         self.issued += 1;
@@ -277,19 +355,28 @@ impl Control {
     fn hits(
         &self,
         query: &SearchQuery,
-        (tracks, albums, playlists): Found,
+        found: Found,
         client: &dyn MusicApi,
         cx: &mut App,
     ) -> Result<Vec<wire::Hit>, Failure> {
-        if let (Err(error), Err(_), Err(_)) = (&tracks, &albums, &playlists) {
+        if found.is_failed()
+            && let Err(error) = &found.tracks
+        {
             log::warn!("control: cannot search: {error:#}");
             noted(error, cx);
             return Err(Failure::Unfetched(query.text.clone()));
         }
+        let Found {
+            tracks,
+            albums,
+            playlists,
+            artists,
+        } = found;
         let catalog = Catalog {
             tracks: tracks.unwrap_or_default(),
             albums: albums.unwrap_or_default(),
             playlists: playlists.unwrap_or_default(),
+            artists: artists.unwrap_or_default(),
         };
         let library = self.library.read(cx).state(Shelf::Streaming);
         let ranked = search::rank(
@@ -440,6 +527,41 @@ impl Control {
     }
 }
 
+/// Starts, joins or leaves a Sonora Session, or says which one Sonora is in. A start or join
+/// answers before the server does, so `sonora session` tells whether it went through.
+fn session(command: SessionCommand, cx: &mut App) -> Reply {
+    let listening = Sonora::global(cx).listening.clone();
+    match command {
+        SessionCommand::Status => {
+            let listening = listening.read(cx);
+            let info = listening.room().map(|room| SessionInfo {
+                code: room.code.clone(),
+                provider: room.provider.clone(),
+                hosting: room.hosting(),
+                members: room
+                    .host()
+                    .into_iter()
+                    .chain(room.members.iter().filter(|member| !member.host))
+                    .map(|member| member.name.clone())
+                    .collect(),
+            });
+            return Reply::Value(Value::Session(info));
+        }
+        SessionCommand::Start if !listening.read(cx).available(cx) => {
+            return Reply::Failed(Failure::SignedOut);
+        }
+        SessionCommand::Start => listening.update(cx, |listening, cx| listening.start(cx)),
+        SessionCommand::Join(Some(code)) => {
+            listening.update(cx, |listening, cx| listening.join(&code, cx))
+        }
+        SessionCommand::Join(None) => {
+            listening.update(cx, |listening, cx| listening.show_join(true, cx))
+        }
+        SessionCommand::Leave => listening.update(cx, |listening, cx| listening.leave(cx)),
+    }
+    Reply::Done
+}
+
 fn play(playback: &mut Playback, command: PlaybackCommand, cx: &mut Context<Playback>) -> Reply {
     match command {
         PlaybackCommand::Play => playback.resume(cx),
@@ -448,6 +570,10 @@ fn play(playback: &mut Playback, command: PlaybackCommand, cx: &mut Context<Play
         PlaybackCommand::Next => playback.next(cx),
         PlaybackCommand::Previous => playback.previous(cx),
         PlaybackCommand::Seek(percent) => playback.seek_fraction(f32::from(percent) / 100., cx),
+        PlaybackCommand::SeekTime(time) => {
+            let target = moment(playback, time, cx);
+            playback.seek(target, cx);
+        }
         PlaybackCommand::CurrentTrack => {
             return Reply::Value(Value::Current(current(playback, cx)));
         }
@@ -461,6 +587,14 @@ fn play(playback: &mut Playback, command: PlaybackCommand, cx: &mut Context<Play
             };
             playback.set_volume(f32::from(target.clamp(0, 100)) / 100., cx);
         }
+        PlaybackCommand::Mute(None) => {
+            return Reply::Value(Value::Muted(playback.muted(cx)));
+        }
+        PlaybackCommand::Mute(Some(switch)) => match switch {
+            Switch::On => playback.set_muted(true, cx),
+            Switch::Off => playback.set_muted(false, cx),
+            Switch::Toggle => playback.toggle_muted(cx),
+        },
         PlaybackCommand::Shuffle(None) => {
             return Reply::Value(Value::Shuffle(playback.shown_shuffle(cx)));
         }
@@ -540,6 +674,31 @@ fn settled_on(session: &Session, slug: &str) -> bool {
         )
 }
 
+/// Where a seek in time lands: the time asked for, or a step from where the track plays now,
+/// held inside the track on the steered device when there is one.
+fn moment(playback: &Playback, time: Time, cx: &App) -> Duration {
+    let (now, length) = match playback.steered(cx) {
+        Some(steered) => (steered.state.live_position(), steered.state.duration),
+        None => (
+            playback.live_position(),
+            playback
+                .track()
+                .map_or(Duration::ZERO, |track| track.duration),
+        ),
+    };
+    let target = match time {
+        Time::To(at) => Duration::from_secs(at),
+        Time::By(step) => match step < 0 {
+            true => now.saturating_sub(Duration::from_secs(step.unsigned_abs())),
+            false => now.saturating_add(Duration::from_secs(step.unsigned_abs())),
+        },
+    };
+    match length.is_zero() {
+        true => target,
+        false => target.min(length),
+    }
+}
+
 /// What plays now, on the steered device when there is one, or `None` when nothing is loaded.
 fn current(playback: &Playback, cx: &App) -> Option<Current> {
     let track = playback.shown_track(cx)?;
@@ -561,6 +720,12 @@ fn current(playback: &Playback, cx: &App) -> Option<Current> {
             (state, playback.live_position())
         }
     };
+    let sonora = Sonora::global(cx);
+    let id = track.id.as_deref();
+    let provider = match id.is_some_and(|id| Shelf::of(id).local()) {
+        true => Some(LOCAL.to_owned()),
+        false => sonora.session.read(cx).provider_slug().map(str::to_owned),
+    };
     Some(Current {
         state,
         track: wire_track(&track),
@@ -568,7 +733,145 @@ fn current(playback: &Playback, cx: &App) -> Option<Current> {
         volume: percent(playback.shown_volume(cx)),
         shuffle: playback.shown_shuffle(cx),
         repeat: wire_repeat(playback.shown_repeat(cx)),
+        provider,
+        liked: id.is_some_and(|id| sonora.library.read(cx).saved(id)),
+        origin: playback.origin(cx).map(wire_origin),
     })
+}
+
+/// A read-only snapshot of the queue as `sonora queue` prints it, in play order. It reads
+/// only what the queue already holds: on a steered device that is the metadata already read
+/// in, whose sections stop at the first track not read in yet, so nothing is fetched from a
+/// provider to answer. With nothing queued it is empty in every section.
+fn queue_snapshot(playback: &Playback, cx: &App) -> QueueSnapshot {
+    let view = playback.shown_queue(cx);
+    let entry = |position: QueuePosition| {
+        view.track(position, cx).map(|track| QueueEntry {
+            track: wire_track(&track),
+            kind: wire_kind(view.kind(position, cx)),
+        })
+    };
+    let previous = (0..view.sections.past)
+        .filter_map(|at| entry(QueuePosition::Past(at)))
+        .collect();
+    let current = match view.sections.current {
+        true => entry(QueuePosition::Current),
+        false => None,
+    };
+    let upcoming = (0..view.sections.upcoming)
+        .filter_map(|at| entry(QueuePosition::Upcoming(at)))
+        .collect();
+    QueueSnapshot::bounded(previous, current, upcoming)
+}
+
+/// The lyrics of the current track as `sonora lyrics` prints them. It reads only what `Lyrics`
+/// already holds for the track shown, on the steered device when there is one, and never asks
+/// a source for anything.
+fn lyrics(playback: &Playback, cx: &App) -> wire::LyricsSnapshot {
+    let sonora = Sonora::global(cx);
+    let held = sonora.lyrics.read(cx);
+    let at = match playback.steered(cx) {
+        Some(steered) => steered.state.live_position(),
+        None => playback.live_position(),
+    };
+    lyrics_snapshot(
+        held.state(),
+        sonora.settings.read(cx).lyrics_enabled(),
+        held.current(),
+        at,
+    )
+}
+
+/// What `state` and the lyrics on show say at `at` into the track. Lyrics that are not ready
+/// carry no lines, whatever `hit` still holds, and a synced text has the line sung at `at` and
+/// the one after it.
+fn lyrics_snapshot(
+    state: &LyricsState,
+    enabled: bool,
+    hit: Option<&LyricsHit>,
+    at: Duration,
+) -> wire::LyricsSnapshot {
+    let status = match (enabled, state) {
+        (false, _) => LyricsStatus::Disabled,
+        (true, LyricsState::Idle) => LyricsStatus::Idle,
+        (true, LyricsState::Loading) => LyricsStatus::Loading,
+        (true, LyricsState::Ready) => LyricsStatus::Ready,
+        (true, LyricsState::Instrumental) => LyricsStatus::Instrumental,
+        (true, LyricsState::Missing) => LyricsStatus::Missing,
+        (true, LyricsState::Failed(_)) => LyricsStatus::Failed,
+    };
+    let snapshot = wire::LyricsSnapshot::without(status);
+    let Some(hit) = hit.filter(|_| status == LyricsStatus::Ready) else {
+        return snapshot;
+    };
+    let snapshot = wire::LyricsSnapshot {
+        source: Some(hit.source.to_owned()),
+        instrumental: hit.instrumental,
+        ..snapshot
+    };
+    match &hit.lyrics {
+        Sheet::Plain { text, romanized } => {
+            let romanized: Vec<&str> = romanized
+                .iter()
+                .flat_map(|romanized| romanized.text.lines())
+                .collect();
+            let lines = text
+                .lines()
+                .enumerate()
+                .map(|(at, line)| wire::LyricsLine {
+                    start_ms: None,
+                    text: line.to_owned(),
+                    romanized: romanized.get(at).and_then(|line| romanization(line)),
+                })
+                .collect();
+            snapshot.bounded(false, lines, None)
+        }
+        Sheet::Synced { lines } => {
+            let active = music::lyrics::active(lines, at);
+            let lines = lines
+                .iter()
+                .map(|line| wire::LyricsLine {
+                    start_ms: Some(u64::try_from(line.start.as_millis()).unwrap_or(u64::MAX)),
+                    text: line.text.clone(),
+                    romanized: line
+                        .romanized
+                        .as_ref()
+                        .and_then(|romanized| romanization(&romanized.text)),
+                })
+                .collect();
+            snapshot.bounded(true, lines, active)
+        }
+    }
+}
+
+/// A romanized line, or `None` when it is blank because the line needs none.
+fn romanization(line: &str) -> Option<String> {
+    let line = line.trim();
+    (!line.is_empty()).then(|| line.to_owned())
+}
+
+fn wire_kind(kind: Option<QueueKind>) -> QueueEntryKind {
+    match kind {
+        Some(QueueKind::Queued) => QueueEntryKind::Queued,
+        Some(QueueKind::Suggested) => QueueEntryKind::Suggested,
+        Some(QueueKind::Context) | None => QueueEntryKind::Context,
+    }
+}
+
+fn wire_origin(origin: &Origin) -> wire::Origin {
+    let kind = match origin.whence {
+        Whence::Album => wire::OriginKind::Album,
+        Whence::Playlist => wire::OriginKind::Playlist,
+        Whence::Artist => wire::OriginKind::Artist,
+        Whence::Radio => wire::OriginKind::Radio,
+        Whence::Saved => wire::OriginKind::Liked,
+        Whence::Local => wire::OriginKind::Local,
+    };
+    wire::Origin {
+        kind,
+        id: origin.id.clone(),
+        name: origin.name.as_ref().map(ToString::to_string),
+    }
 }
 
 fn wire_track(track: &Track) -> wire::Track {
@@ -649,10 +952,20 @@ async fn fetch(
             tracks,
             origin: Some(Origin::playlist(id)),
         }),
-        Linked::Artist(id) => client.artist(&id).await.map(|artist| Batch {
-            tracks: artist.top_tracks,
-            origin: Some(Origin::artist(id).named(artist.name)),
-        }),
+        Linked::Artist(id) => {
+            let (profile, tracks) =
+                tokio::join!(client.artist_profile(&id), client.artist_tracks(&id));
+            tracks.map(|tracks| {
+                let origin = Origin::artist(id.clone());
+                Batch {
+                    tracks,
+                    origin: Some(match profile {
+                        Ok(profile) => origin.named(profile.name),
+                        Err(_) => origin,
+                    }),
+                }
+            })
+        }
         Linked::User(_) | Linked::Jam(_) | Linked::Short => {
             return Err(Missed {
                 failure: Failure::Unqueueable(link),
@@ -667,4 +980,112 @@ async fn fetch(
             error: Some(error),
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use music::{LyricsLine, RomanizedText};
+
+    use super::*;
+
+    fn hit(lyrics: Sheet) -> LyricsHit {
+        LyricsHit {
+            source: "test",
+            lyrics,
+            ..Default::default()
+        }
+    }
+
+    fn synced(starts: &[u64]) -> LyricsHit {
+        hit(Sheet::Synced {
+            lines: starts
+                .iter()
+                .map(|start| LyricsLine {
+                    start: Duration::from_secs(*start),
+                    text: start.to_string(),
+                    ..Default::default()
+                })
+                .collect(),
+        })
+    }
+
+    fn at(hit: &LyricsHit, seconds: u64) -> wire::LyricsSnapshot {
+        lyrics_snapshot(
+            &LyricsState::Ready,
+            true,
+            Some(hit),
+            Duration::from_secs(seconds),
+        )
+    }
+
+    #[test]
+    fn lyrics_that_are_not_ready_carry_no_lines() {
+        let held = synced(&[0, 5]);
+        for (state, enabled, expected) in [
+            (LyricsState::Missing, true, LyricsStatus::Missing),
+            (LyricsState::Loading, true, LyricsStatus::Loading),
+            (LyricsState::Idle, true, LyricsStatus::Idle),
+            (
+                LyricsState::Failed("x".to_owned()),
+                true,
+                LyricsStatus::Failed,
+            ),
+            (LyricsState::Instrumental, true, LyricsStatus::Instrumental),
+            (LyricsState::Ready, false, LyricsStatus::Disabled),
+        ] {
+            let snapshot = lyrics_snapshot(&state, enabled, Some(&held), Duration::ZERO);
+            assert_eq!(snapshot.state, expected);
+            assert!(snapshot.lines.is_empty() && snapshot.source.is_none());
+            assert!(snapshot.current.is_none() && snapshot.next.is_none());
+        }
+        let snapshot = lyrics_snapshot(&LyricsState::Instrumental, true, None, Duration::ZERO);
+        assert!(snapshot.instrumental);
+    }
+
+    #[test]
+    fn the_active_line_follows_the_position() {
+        let held = synced(&[2, 5, 9]);
+        let text = |line: Option<wire::LyricsLine>| line.map(|line| line.text);
+        let before = at(&held, 1);
+        assert_eq!(
+            (text(before.current), text(before.next)),
+            (None, Some("2".into()))
+        );
+        let during = at(&held, 5);
+        assert_eq!(
+            (text(during.current), text(during.next)),
+            (Some("5".into()), Some("9".into()))
+        );
+        let after = at(&held, 60);
+        assert_eq!(
+            (text(after.current), text(after.next)),
+            (Some("9".into()), None)
+        );
+        assert_eq!(after.source.as_deref(), Some("test"));
+        assert!(after.synced);
+        assert_eq!(after.lines[1].start_ms, Some(5000));
+    }
+
+    #[test]
+    fn plain_lyrics_keep_their_romanization_by_line() {
+        let held = hit(Sheet::Plain {
+            text: "さよなら\n\nbye".to_owned(),
+            romanized: Some(RomanizedText {
+                text: "sayonara\n\n".to_owned(),
+                ..Default::default()
+            }),
+        });
+        let snapshot = at(&held, 3);
+        assert!(!snapshot.synced);
+        assert_eq!((snapshot.current, snapshot.next), (None, None));
+        let lines: Vec<_> = snapshot
+            .lines
+            .iter()
+            .map(|line| (line.text.as_str(), line.romanized.as_deref()))
+            .collect();
+        assert_eq!(
+            lines,
+            [("さよなら", Some("sayonara")), ("", None), ("bye", None)]
+        );
+    }
 }

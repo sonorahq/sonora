@@ -1,27 +1,57 @@
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{Context, Entity, Task};
-use music::{Genre, GenreDetail, GenreItem, GenreSection};
+use music::{Genre, GenreDetail, GenreSection, MusicApi};
+use serde::Deserialize;
 use tokio::task::AbortHandle;
 
-use crate::{Io, Session, SessionEvent, join};
+use crate::{Io, Session, SessionEvent, join, trim_heap};
 
+/// How many bare genres get a picture fetched for them, which covers the first screens of tiles.
+const DRESSED: usize = 48;
+/// How many of those pictures are asked for at once.
+const AT_ONCE: usize = 4;
+/// How long the pictures found for a provider's genres are reused before they are looked up again.
+const KEEP_COVERS: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+/// The pictures found for a provider's genres by genre id, with `None` for a genre known to have
+/// none.
+type Covers = HashMap<String, Option<String>>;
+
+/// The genres the search page browses. Nothing is fetched until a screen calls `load`, and a
+/// sign-in fetches them again only after that.
 pub struct Genres {
     genres: Rc<Vec<Genre>>,
+    /// Whether a screen has asked for the genres, so a sign-in knows to fetch them.
+    wanted: bool,
     loading: bool,
     error: Option<String>,
     session: Entity<Session>,
     io: Io,
+    cache: storage::Cache,
     task: Option<Task<()>>,
+    /// Fetches the pictures of genres the provider listed without one.
+    dressing: Option<Task<()>>,
+}
+
+/// The pictures a provider's genres were last dressed with, as `cache.sqlite` keeps them.
+#[derive(Deserialize)]
+struct Stored {
+    saved: u64,
+    covers: Covers,
 }
 
 impl Genres {
     pub fn new(session: Entity<Session>, io: Io, cx: &mut Context<Self>) -> Self {
         cx.subscribe(&session, |this, _, event, cx| match event {
-            SessionEvent::SignedIn => this.load(cx),
+            SessionEvent::SignedIn if this.wanted => this.load(cx),
+            SessionEvent::SignedIn => {}
             SessionEvent::SignedOut => {
                 this.task = None;
+                this.dressing = None;
                 this.genres = Rc::new(Vec::new());
                 this.loading = false;
                 this.error = None;
@@ -33,11 +63,14 @@ impl Genres {
 
         Self {
             genres: Rc::new(Vec::new()),
+            wanted: false,
             loading: false,
             error: None,
             session,
             io,
+            cache: storage::Cache::standard(),
             task: None,
+            dressing: None,
         }
     }
 
@@ -76,7 +109,10 @@ impl Genres {
         self.error.as_deref()
     }
 
+    /// Fetches the genres unless they are loaded or loading. Before a sign-in it only marks them
+    /// wanted, and the sign-in fetches them.
     pub fn load(&mut self, cx: &mut Context<Self>) {
+        self.wanted = true;
         if self.loading || !self.genres.is_empty() {
             return;
         }
@@ -90,16 +126,101 @@ impl Genres {
 
         let io = self.io.clone();
         self.task = Some(cx.spawn(async move |this, cx| {
-            let loaded = join(io.spawn(async move { client.genres().await })).await;
+            let lister = client.clone();
+            let loaded = join(io.spawn(async move { lister.genres().await })).await;
 
             this.update(cx, |this, cx| {
                 this.loading = false;
                 match crate::settled(loaded, cx) {
-                    Ok(genres) => this.genres = Rc::new(genres),
+                    Ok(genres) => {
+                        this.genres = Rc::new(genres);
+                        this.dress(client, cx);
+                    }
                     Err(reason) => this.error = Some(reason),
                 }
                 cx.notify();
             })
+            .ok();
+        }));
+    }
+
+    /// Puts pictures on the first genres the provider listed without one. Pictures stored for this
+    /// provider within `KEEP_COVERS` go on at once, and the rest are fetched a few at a time and
+    /// stored for the next launch. A genre whose picture cannot be found keeps the placeholder.
+    fn dress(&mut self, client: Arc<dyn MusicApi>, cx: &mut Context<Self>) {
+        let listed: Vec<String> = self
+            .genres
+            .iter()
+            .filter(|genre| genre.cover.is_none())
+            .take(DRESSED)
+            .map(|genre| genre.id.clone())
+            .collect();
+        if listed.is_empty() {
+            return;
+        }
+
+        let slug = self.session.read(cx).provider_slug();
+        let cache = self.cache.clone();
+        let io = self.io.clone();
+        self.dressing = Some(cx.spawn(async move |this, cx| {
+            let stored = match slug {
+                Some(slug) => {
+                    let cache = cache.clone();
+                    io.spawn_blocking(move || remembered(&cache, slug))
+                        .await
+                        .unwrap_or_default()
+                }
+                None => Covers::new(),
+            };
+            let mut known: Covers = listed
+                .iter()
+                .filter_map(|id| Some((id.clone(), stored.get(id)?.clone())))
+                .collect();
+            let bare: Vec<String> = listed
+                .into_iter()
+                .filter(|id| !known.contains_key(id))
+                .collect();
+            let kept = this.update(cx, |this, cx| {
+                for (id, cover) in &known {
+                    this.adopt(id, cover.clone(), cx);
+                }
+            });
+            if kept.is_err() || bare.is_empty() {
+                return;
+            }
+
+            for batch in bare.chunks(AT_ONCE) {
+                let asked = batch.iter().map(|id| {
+                    let client = client.clone();
+                    let id = id.clone();
+                    join(io.spawn(async move { client.genre_cover(&id).await }))
+                });
+                let found = futures::future::join_all(asked).await;
+                let kept = this.update(cx, |this, cx| {
+                    for (id, cover) in batch.iter().zip(found) {
+                        match cover {
+                            Ok(cover) => {
+                                this.adopt(id, cover.clone(), cx);
+                                known.insert(id.clone(), cover);
+                            }
+                            Err(error) => log::debug!("genres: no picture for {id}: {error:#}"),
+                        }
+                    }
+                });
+                if kept.is_err() {
+                    return;
+                }
+            }
+
+            // A provider may answer with whole pages to find one picture each, and what parsing
+            // them freed would otherwise stay resident.
+            io.spawn_blocking(move || {
+                if let Some(slug) = slug {
+                    remember(&cache, slug, &known);
+                }
+                trim_heap();
+            })
+            .await
             .ok();
         }));
     }
@@ -246,7 +367,7 @@ impl GenreDetails {
     }
 
     fn adopt(&mut self, id: &str, detail: Arc<GenreDetail>, cx: &mut Context<Self>) {
-        let cover = pictured(&detail);
+        let cover = detail.cover();
         self.genres
             .update(cx, |genres, cx| match detail.sections.is_empty() {
                 true => genres.forget(id, cx),
@@ -269,17 +390,41 @@ impl GenreDetails {
     }
 }
 
-fn pictured(detail: &GenreDetail) -> Option<String> {
-    let items = || detail.sections.iter().flat_map(|section| &section.items);
-    let album = items().find_map(|item| match item {
-        GenreItem::Album(album) => album.cover.clone(),
-        _ => None,
+/// The genre pictures stored for the provider `slug`, or none when they are missing, unreadable
+/// or older than `KEEP_COVERS`. It blocks on sqlite.
+fn remembered(cache: &storage::Cache, slug: &str) -> Covers {
+    let stored = cache.read(&covers_key(slug), |text| {
+        serde_json::from_str::<Stored>(text).ok()
     });
+    match stored {
+        Ok(Some(Some(stored))) if now().saturating_sub(stored.saved) < KEEP_COVERS.as_secs() => {
+            stored.covers
+        }
+        Ok(_) => Covers::new(),
+        Err(error) => {
+            log::warn!("genres: {error:#}");
+            Covers::new()
+        }
+    }
+}
 
-    album.or_else(|| {
-        items().find_map(|item| match item {
-            GenreItem::Playlist(playlist) => playlist.cover.clone(),
-            _ => None,
-        })
-    })
+/// Stores the genre pictures found for the provider `slug`, replacing what was kept before. It
+/// blocks on sqlite.
+fn remember(cache: &storage::Cache, slug: &str, covers: &Covers) {
+    let saved = now();
+    let value = serde_json::json!({ "saved": saved, "covers": covers }).to_string();
+    if let Err(error) = cache.write(&covers_key(slug), &value, saved as i64) {
+        log::warn!("genres: {error:#}");
+    }
+}
+
+fn covers_key(slug: &str) -> String {
+    format!("genre-covers/{slug}")
+}
+
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }

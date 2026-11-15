@@ -16,10 +16,8 @@ use ui::{
 
 use super::SettingsView;
 use super::rows::Announced as _;
-use crate::shared::theme_miniature::{CARD, THUMB, sliced};
+use crate::shared::theme_miniature::{CARD, SLICES, THUMB, sliced};
 
-/// How many variants of a family its card shows side by side at most.
-const SLICES: usize = 4;
 /// The popover key of the variant menu, which one card at a time owns.
 const VARIANTS: &str = "theme-variants";
 /// The side of a variant's swatch in the menu.
@@ -70,7 +68,7 @@ impl SettingsView {
             .collect::<Vec<_>>();
 
         if missing {
-            let name = t!("theme-unavailable", name = selected.clone());
+            let name = t!("theme-unavailable", name = selected);
             cards.push(
                 OptionCard::new("unavailable-theme")
                     .choice(name.clone(), true, count - 1, count)

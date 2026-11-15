@@ -203,7 +203,8 @@ impl Render for UserView {
             .child(
                 Scroller::new("user-page", &self.scrollbar)
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
-                    .p(pad)
+                    .py(pad)
+                    .px(pad + crate::chrome::Chrome::margin(window, cx))
                     .child(
                         div()
                             .flex()

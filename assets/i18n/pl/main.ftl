@@ -37,7 +37,6 @@ nav-pinned = Przypięte
 nav-unpin = Odepnij
 nav-pin-hint = Upuść tutaj, aby przypiąć
 library-liked-songs = Ulubione
-library-play-liked-songs = Odtwórz
 library-no-songs = Brak ulubionych
 library-no-albums = Brak zapisanych albumów
 library-no-playlists = Brak playlist
@@ -86,6 +85,7 @@ column-index = #
 column-title = Tytuł
 column-artist = Wykonawca
 column-album = Album
+column-genre = Gatunek
 column-date-added = Data dodania
 column-added-by = Dodane przez
 column-modified = Zmodyfikowano
@@ -97,29 +97,14 @@ column-year = Rok
 column-tracks = Utwory
 
 # track menu
-menu-add-to-playlist = Dodaj do playlisty
-menu-add-tracks-to-playlist = { $count ->
-    [one] Dodaj { $count } utwór do playlisty
-    [few] Dodaj { $count } utwory do playlisty
-   *[other] Dodaj { $count } utworów do playlisty
-}
 menu-new-playlist = Nowa playlista
 menu-import-playlist = Importuj playlistę…
 menu-edit-tags = Edytuj tagi
 menu-no-playlists = Brak playlist
 menu-search-playlists = Szukaj playlisty
+menu-save-library = Biblioteka
 menu-add-to-library = Dodaj do ulubionych
-menu-add-tracks-to-library = { $count ->
-    [one] Dodaj { $count } utwór do ulubionych
-    [few] Dodaj { $count } utwory do ulubionych
-   *[other] Dodaj { $count } utworów do ulubionych
-}
 menu-remove-from-library = Usuń z ulubionych
-menu-remove-tracks-from-library = { $count ->
-    [one] Usuń { $count } utwór z ulubionych
-    [few] Usuń { $count } utwory z ulubionych
-   *[other] Usuń { $count } utworów z ulubionych
-}
 menu-remove-from-playlist = Usuń z playlisty
 menu-remove-tracks-from-playlist = { $count ->
     [one] Usuń { $count } utwór z playlisty
@@ -135,17 +120,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-delete-track-file = Usuń plik utworu
 menu-delete-track-files = Usuń pliki utworów ({ $count })
 menu-download = Pobierz
-menu-download-tracks = { $count ->
-    [one] Pobierz { $count } utwór
-    [few] Pobierz { $count } utwory
-   *[other] Pobierz { $count } utworów
-}
 menu-remove-download = Usuń z pobranych
-menu-remove-downloads = { $count ->
-    [one] Usuń { $count } utwór z pobranych
-    [few] Usuń { $count } utwory z pobranych
-   *[other] Usuń { $count } utworów z pobranych
-}
 menu-downloading = Pobieranie. Kliknij, aby zatrzymać
 menu-play-next = Odtwórz jako następny
 menu-play-tracks-next = { $count ->
@@ -180,18 +155,6 @@ menu-delete-playlist = Usuń playlistę
 menu-export-playlist = Eksportuj playlistę…
 menu-add-playlist-to-library = Dodaj do biblioteki
 menu-remove-playlist-from-library = Usuń z biblioteki
-menu-library-add = Dodaj do biblioteki
-menu-library-add-tracks = { $count ->
-    [one] Dodaj { $count } utwór do biblioteki
-    [few] Dodaj { $count } utwory do biblioteki
-   *[other] Dodaj { $count } utworów do biblioteki
-}
-menu-library-remove = Usuń z biblioteki
-menu-library-remove-tracks = { $count ->
-    [one] Usuń { $count } utwór z biblioteki
-    [few] Usuń { $count } utwory z biblioteki
-   *[other] Usuń { $count } utworów z biblioteki
-}
 menu-make-playlist-public = Ustaw jako publiczną
 menu-make-playlist-private = Ustaw jako prywatną
 menu-play-artist = Odtwórz wykonawcę
@@ -277,10 +240,7 @@ player-previous = Poprzedni utwór
 player-next = Następny utwór
 player-fullscreen = Pełny ekran
 player-fullscreen-leave = Wyjdź z trybu pełnoekranowego
-player-devices = Urządzenia
 devices-this-computer = Ten komputer
-devices-pause = Wstrzymaj
-devices-resume = Wznów
 devices-jam-join = Dołącz do Jamu…
 devices-jam-join-title = Dołącz do Jamu
 devices-jam-join-detail = Wklej link udostępniony przez znajomego
@@ -288,15 +248,12 @@ devices-jam-paste = Wklej
 devices-jam-link-hint = Link do Jamu
 devices-jam-start = Rozpocznij Jam
 devices-jam-copy = Kopiuj link do Jamu
-devices-jam-code = Kod QR
 devices-jam-code-menu = Pokaż kod QR
 devices-jam-code-title = Zeskanuj, aby dołączyć do Jamu użytkownika { $host }
 devices-jam-code-title-anonymous = Zeskanuj, aby dołączyć do Jamu
 devices-jam-code-close = Zamknij
 devices-jam-leave = Opuść Jam
 devices-jam-end = Zakończ Jam
-devices-jam-banner = W Jamie użytkownika { $host }
-devices-jam-banner-anonymous = W Jamie
 devices-jam-more = +{ $count }
 devices-jam-host = Gospodarz
 devices-jam-you = Ty
@@ -309,8 +266,6 @@ devices-jam-invite-detail = { $count ->
    *[other] { $count } osób jest już w tym Jamie.
 }
 devices-jam-invite-join = Dołącz
-devices-elsewhere-banner = Odtwarzanie na: { $device }
-devices-elsewhere-here = Odtwarzaj tutaj
 fullscreen-artwork = Okładka
 
 # filters
@@ -326,7 +281,6 @@ filter-reset = Wyczyść filtry
 filter-duration = Czas trwania
 filter-year = Rok
 filter-hide-explicit = Ukryj z wulgaryzmami
-filter-playable = Tylko dostępne
 filter-favorites = Tylko ulubione
 filter-downloaded = Pobrane
 filter-owned = Moje
@@ -391,8 +345,6 @@ login-choose-detail = Wybierz sposób logowania do { $provider }.
 
 # album and playlist pages
 detail-playlist = Playlista
-detail-play-album = Odtwórz album
-detail-play-playlist = Odtwórz playlistę
 
 # play button
 play-pause = Wstrzymaj
@@ -406,7 +358,6 @@ artist-monthly-listeners = { $count ->
     [few] { $value } słuchaczy miesięcznie
    *[other] { $value } słuchaczy miesięcznie
 }
-artist-play = Odtwórz
 artist-popular = Popularne
 artist-popular-eyebrow = Poznaj tego wykonawcę
 artist-popular-empty = Nie ma jeszcze czego odtworzyć u tego wykonawcy
@@ -453,6 +404,7 @@ release-meta = { $year } • { $kind }
 home-quick-picks = Szybki wybór
 home-quick-picks-empty = Polub kilka utworów, a pojawią się tutaj
 home-recently-added = Ostatnio dodane
+home-recently-played = Ostatnio odtwarzane
 home-playlists = Playlisty
 home-favorite-albums = Ulubione albumy
 home-artists = Wykonawcy
@@ -461,6 +413,9 @@ home-collection-albums = Albumy z Twojej kolekcji
 # search page
 search-placeholder = Czego chcesz posłuchać?
 search-browse = Przeglądaj
+search-submit = Szukaj
+search-recent = Ostatnie wyszukiwania
+search-forget = Usuń z historii
 genre-empty = Nie ma tu jeszcze nic
 search-best-match = Najlepszy wynik
 search-no-matches = Brak wyników
@@ -482,7 +437,6 @@ kind-playlist = Playlista
 
 # song page
 song-eyebrow = Utwór
-song-play = Odtwórz utwór
 song-view-album = Zobacz album
 song-loading = Wczytywanie informacji o utworze…
 song-about = O utworze
@@ -680,7 +634,6 @@ settings-font-detail = Bazowy rozmiar tekstu, reszta skaluje się razem z nim
 settings-font-value = { $size } px
 settings-startup = Pokaż przy uruchomieniu
 settings-startup-detail = Ekran otwierany przez Sonorę po uruchomieniu
-settings-startup-no-guest = Niedostępne w trybie gościa
 settings-entries = Sekcje paska bocznego
 settings-entries-detail = Sekcje widoczne na pasku bocznym
 settings-entries-pick = Wybierz sekcje
@@ -741,6 +694,7 @@ settings-discord-hide-on-connect-detail = Zostaw status samemu Spotify, gdy Sono
 settings-discord-buttons = Przyciski
 settings-discord-buttons-detail = Odnośniki pod statusem, które znajomi mogą otworzyć: do utworu w jego serwisie i do Sonory
 settings-discord-buttons-pick = Wybierz przyciski
+settings-discord-preview = Podgląd statusu Discord
 settings-discord-preview-listening = Słucha { $name }
 settings-discord-preview-music = Muzyka
 settings-discord-preview-elapsed = upłynęło { $time }
@@ -992,6 +946,8 @@ equalizer-status-channels = { $from ->
     [2] stereo
    *[other] { $to } kan.
 }
+settings-lyrics = Pokazuj teksty utworów
+settings-lyrics-detail = Wyłącz, aby ukryć teksty utworów w całej aplikacji i przestać ich szukać
 settings-panel-lyrics-size = Rozmiar tekstu utworu (panel)
 settings-panel-lyrics-size-detail = Rozmiar wierszy tekstu utworu w panelu bocznym ponad bazowy rozmiar czcionki
 settings-fullscreen-lyrics-size = Rozmiar tekstu utworu (pełny ekran)
@@ -1314,21 +1270,6 @@ toast-offline-mode = Jesteś offline. Przejdź do trybu online, aby streamować 
 offline-title = Jesteś offline.
 offline-go-online = Przejdź do trybu online
 toast-download-failed = Nie udało się ustalić listy utworów do pobrania.
-toast-downloading = Pobieranie { $name }
-toast-downloading-songs = { $count ->
-    [one] Pobieranie { $count } utworu
-    [few] Pobieranie { $count } utworów
-   *[other] Pobieranie { $count } utworów
-}
-toast-downloaded = Pobrano { $name }
-toast-downloaded-songs = { $count ->
-    [one] Pobrano { $count } utwór
-    [few] Pobrano { $count } utwory
-   *[other] Pobrano { $count } utworów
-}
-toast-download-set-failed = Nie udało się pobrać części utworów z { $name }
-toast-download-song-failed = Nie udało się pobrać { $name }
-toast-download-songs-failed = Nie udało się pobrać części utworów
 toast-percent = { $percent }%
 toast-download-cancelled = Anulowano pobieranie { $name }
 toast-downloads-cancelled = { $count ->

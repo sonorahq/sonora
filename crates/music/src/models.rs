@@ -12,7 +12,7 @@ pub enum CoverSize {
     Full,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UserProfile {
     pub id: String,
     pub display_name: String,
@@ -31,7 +31,8 @@ pub struct UserDetail {
     pub playlists: Vec<Playlist>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Contributor {
     pub id: String,
     pub name: String,
@@ -55,16 +56,24 @@ pub struct ArtistRef {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// True when the credit is a plain video channel and not an artist page, as for fan uploads
+    /// on YouTube. Search does not offer such a channel as an artist.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub channel: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Credit {
     pub name: String,
     pub role: String,
     pub id: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A song or episode as a provider lists it. The default is an unplayable track with no id, so a
+/// caller that builds one from `..Default::default()` sets `playable` itself.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Track {
     pub id: Option<String>,
     pub name: String,
@@ -72,6 +81,9 @@ pub struct Track {
     pub artists: String,
     pub artist_refs: Vec<ArtistRef>,
     pub album: String,
+    /// Who the album is credited to, as the provider names it. Empty when the provider does not
+    /// say, rather than the track's own artists.
+    pub album_artist: String,
     pub album_id: Option<String>,
     pub cover: Option<String>,
     pub duration: Duration,
@@ -87,7 +99,8 @@ pub struct Track {
     pub credits: Vec<Credit>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Playlist {
     pub id: String,
     pub name: String,
@@ -104,8 +117,9 @@ pub struct Playlist {
     pub modified_at: Option<i64>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReleaseType {
+    #[default]
     Album,
     Single,
     Compilation,
@@ -150,7 +164,8 @@ impl ReleaseType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Album {
     pub id: String,
     pub name: String,
@@ -177,9 +192,37 @@ impl Album {
         }
         self
     }
+
+    /// The record label to show, trimmed. `None` when the provider names no label or the
+    /// placeholder MusicBrainz tags a release with when it has none (`[no label]`).
+    pub fn label_name(&self) -> Option<&str> {
+        let label = self.label.trim();
+        match label.is_empty() || is_no_label(label) {
+            true => None,
+            false => Some(label),
+        }
+    }
+
+    /// The copyright lines to show: the provider's own, minus any that credit the `[no label]`
+    /// placeholder. Empty when the provider gives none.
+    pub fn copyright_lines(&self) -> Vec<&str> {
+        self.copyrights
+            .iter()
+            .map(String::as_str)
+            .filter(|line| !line.to_lowercase().contains(NO_LABEL))
+            .collect()
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The label MusicBrainz tags a release with when it has none.
+const NO_LABEL: &str = "[no label]";
+
+/// Whether `label` is the `[no label]` placeholder, in any letter case.
+fn is_no_label(label: &str) -> bool {
+    label.eq_ignore_ascii_case(NO_LABEL)
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AlbumDetail {
     pub album: Album,
     pub tracks: Vec<Track>,
@@ -202,7 +245,7 @@ impl AlbumCatalogue {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Genre {
     pub id: String,
     pub name: String,
@@ -220,10 +263,41 @@ pub enum GenreItem {
     Artist(SavedArtist),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GenreSection {
     pub title: String,
     pub items: Vec<GenreItem>,
+}
+
+/// What one search found for every kind it looks for. Each kind keeps its own outcome, so a
+/// part the provider refused leaves the others standing.
+#[derive(Debug)]
+pub struct Found {
+    pub tracks: anyhow::Result<Vec<Track>>,
+    pub albums: anyhow::Result<Vec<Album>>,
+    pub playlists: anyhow::Result<Vec<Playlist>>,
+    pub artists: anyhow::Result<Vec<SavedArtist>>,
+}
+
+impl Found {
+    /// Every kind failed with `error`, for a provider that asks for all of them in one request.
+    pub fn failed(error: anyhow::Error) -> Self {
+        let again = || anyhow::anyhow!("{error:#}");
+        Self {
+            albums: Err(again()),
+            playlists: Err(again()),
+            artists: Err(again()),
+            tracks: Err(error),
+        }
+    }
+
+    /// Whether no kind came back at all.
+    pub fn is_failed(&self) -> bool {
+        self.tracks.is_err()
+            && self.albums.is_err()
+            && self.playlists.is_err()
+            && self.artists.is_err()
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -241,8 +315,26 @@ pub struct GenreDetail {
     pub sections: Vec<GenreSection>,
 }
 
+impl GenreDetail {
+    /// The picture a tile for this genre wears: the first album cover on the page, else the
+    /// first playlist cover.
+    pub fn cover(&self) -> Option<String> {
+        let items = || self.sections.iter().flat_map(|section| &section.items);
+        let album = items().find_map(|item| match item {
+            GenreItem::Album(album) => album.cover.clone(),
+            _ => None,
+        });
+        album.or_else(|| {
+            items().find_map(|item| match item {
+                GenreItem::Playlist(playlist) => playlist.cover.clone(),
+                _ => None,
+            })
+        })
+    }
+}
+
 /// What reading a playlist file into the library came to.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ImportedPlaylist {
     /// The playlist made from the file, or `None` when none of its songs is in the library,
     /// in which case nothing was made.
@@ -273,7 +365,7 @@ pub struct TrackTags {
     pub lyrics: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PlaylistDetail {
     pub playlist: Playlist,
     pub tracks: Vec<Track>,
@@ -299,14 +391,15 @@ impl Arrival {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ArtistProfile {
     pub name: String,
     pub cover_large: Option<String>,
     pub biography: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SavedArtist {
     pub id: String,
     pub name: String,
@@ -314,12 +407,18 @@ pub struct SavedArtist {
     pub added_at: Option<i64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Artist {
     pub name: String,
     pub cover_large: Option<String>,
+    /// A wide picture for the top of the artist page, when the provider keeps one apart from
+    /// the portrait in `cover_large`.
+    pub banner: Option<String>,
     pub biography: Option<String>,
     pub monthly_listeners: Option<u64>,
+    /// How many accounts follow the artist, when the provider counts followers apart from
+    /// listeners. Left empty rather than zero when the provider does not say.
+    pub followers: Option<u64>,
     pub top_tracks: Vec<Track>,
     pub albums: Vec<Album>,
 }
@@ -351,6 +450,16 @@ pub enum Lyrics {
     Synced {
         lines: Arc<[LyricsLine]>,
     },
+}
+
+/// No lyrics at all, as empty plain text.
+impl Default for Lyrics {
+    fn default() -> Self {
+        Self::Plain {
+            text: String::new(),
+            romanized: None,
+        }
+    }
 }
 
 impl Lyrics {
@@ -389,7 +498,8 @@ impl Lyrics {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LyricsLine {
     pub start: Duration,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -426,7 +536,8 @@ impl LyricsLine {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LyricsLane {
     pub start: Duration,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -452,13 +563,14 @@ impl LyricsLane {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RomanizedText {
     pub text: String,
     pub writing_system: WritingSystem,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WritingSystem {
     Japanese,
     Chinese,
@@ -466,6 +578,7 @@ pub enum WritingSystem {
     Cyrillic,
     Greek,
     Arabic,
+    #[default]
     Other,
 }
 
@@ -494,20 +607,21 @@ impl Voice {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LyricsWord {
     pub start: Duration,
     pub end: Duration,
     pub text: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TrackKey {
     pub provider: &'static str,
     pub id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LyricsQuery {
     pub title: String,
     pub artist: String,
@@ -525,7 +639,7 @@ impl LyricsQuery {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LyricsHit {
     pub source: &'static str,
     pub trust: u32,
@@ -574,6 +688,44 @@ pub enum PinOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn labelled(label: &str, copyrights: &[&str]) -> Album {
+        Album {
+            label: label.to_owned(),
+            copyrights: copyrights.iter().map(|line| (*line).to_owned()).collect(),
+            ..Album::default()
+        }
+    }
+
+    #[test]
+    fn no_label_placeholder_shows_no_label_or_copyright() {
+        let album = labelled("[no label]", &["℗ 2020 [No Label]"]);
+        assert_eq!(album.label_name(), None);
+        assert!(album.copyright_lines().is_empty());
+        assert_eq!(labelled(" [NO LABEL] ", &[]).label_name(), None);
+    }
+
+    #[test]
+    fn real_label_and_copyrights_are_kept() {
+        let album = labelled(" Warp ", &["℗ 2020 Warp Records", "© 2020 Warp"]);
+        assert_eq!(album.label_name(), Some("Warp"));
+        assert_eq!(
+            album.copyright_lines(),
+            ["℗ 2020 Warp Records", "© 2020 Warp"]
+        );
+    }
+
+    #[test]
+    fn missing_label_is_unchanged() {
+        let album = labelled("", &[]);
+        assert_eq!(album.label_name(), None);
+        assert!(album.copyright_lines().is_empty());
+        assert_eq!(labelled("  ", &["© 2020 Someone"]).label_name(), None);
+        assert_eq!(
+            labelled("", &["© 2020 Someone"]).copyright_lines(),
+            ["© 2020 Someone"]
+        );
+    }
 
     #[test]
     fn musicbrainz_types_name_the_release() {

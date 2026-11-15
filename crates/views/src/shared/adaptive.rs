@@ -1,6 +1,6 @@
 use gpui::{App, Context, Entity, Task};
 use state::{AppSettings, Playback, QueuePosition, Reloaded, Sonora};
-use ui::{ActiveTheme as _, CoverPalette, Look, Theme, ThemeKind};
+use ui::{ActiveTheme as _, CoverPalette, Look, Theme, ThemeKind, ThemeOverrides};
 
 /// Drives the theme's tint from the playing track's cover, and keeps the next
 /// track's cover sampled ahead of time so a track change recolours on the frame
@@ -16,8 +16,9 @@ pub struct Adaptive {
     /// The palette the theme is wearing, so a change that is not a track change can be put
     /// back on without sampling the cover again.
     painted: CoverPalette,
-    /// The kind last applied from here, since the theme itself does not carry one.
-    worn: Option<ThemeKind>,
+    /// The kind last applied from here and whether the theme file's colours were left off,
+    /// since the theme itself carries neither.
+    worn: Option<(ThemeKind, bool)>,
     ahead: Option<Ahead>,
     task: Option<Task<()>>,
 }
@@ -125,45 +126,43 @@ impl Adaptive {
         self.look_ahead(cx);
     }
 
-    /// The theme to wear. Fullscreen with the ambient background on always wears a dark one:
-    /// the field behind the lyrics is dark whatever the cover gave it, and a light theme's
-    /// text would be lost on it. Every other theme is already dark, so only Light is swapped.
-    fn kind(&self, cx: &App) -> ThemeKind {
-        let settings = self.settings.read(cx);
-        let kind = settings.look().kind;
-        let darken = self.fullscreen && settings.ambient() && kind.resolved(cx) == ThemeKind::Light;
+    /// Whether the ambient background is up, which puts the plain adaptive Dark theme on. The
+    /// field behind the lyrics is dark whatever the cover gave it, so a light theme or a theme
+    /// file's own colours would lose their text on it.
+    fn plain(&self, cx: &App) -> bool {
+        self.fullscreen && self.settings.read(cx).ambient()
+    }
 
-        match darken {
-            true => ThemeKind::Dark,
-            false => kind,
+    /// The kind and overrides to wear. Under the ambient background only the theme file's
+    /// radius and font size survive, so the layout does not shift on the way in.
+    fn dress(&self, cx: &App) -> (ThemeKind, ThemeOverrides) {
+        let settings = self.settings.read(cx);
+        let overrides = settings.theme_overrides();
+        match self.plain(cx) {
+            true => (ThemeKind::Dark, stripped(overrides)),
+            false => (settings.look().kind, overrides),
         }
     }
 
-    /// Puts the palette and the kind on the theme, as a fade or as a swap on the spot.
+    /// Puts the palette and the dress on the theme, as a fade or as a swap on the spot.
     fn apply(&mut self, palette: CoverPalette, instant: bool, cx: &mut App) {
-        let kind = self.kind(cx);
+        let plain = self.plain(cx);
+        let (kind, overrides) = self.dress(cx);
         let theme = *cx.theme();
-        if self.worn == Some(kind)
+        if self.worn == Some((kind, plain))
             && theme.tint == palette.primary
             && theme.tint_secondary == palette.secondary
         {
             return;
         }
-        self.worn = Some(kind);
+        self.worn = Some((kind, plain));
         self.painted = palette;
 
-        let settings = Sonora::global(cx).settings.clone();
-        let (look, overrides) = {
-            let settings = settings.read(cx);
-            (
-                Look {
-                    kind,
-                    tint: palette.primary,
-                    tint_secondary: palette.secondary,
-                    ..settings.look()
-                },
-                settings.theme_overrides(),
-            )
+        let look = Look {
+            kind,
+            tint: palette.primary,
+            tint_secondary: palette.secondary,
+            ..self.settings.read(cx).look()
         };
 
         match instant {
@@ -227,5 +226,27 @@ impl Adaptive {
             palette: None,
             _task: task,
         });
+    }
+}
+
+/// The theme fullscreen wears over the ambient background for a cover's `palette`, for a preview
+/// that has to look like fullscreen while the app wears the chosen theme.
+pub(crate) fn stage(palette: CoverPalette, cx: &App) -> Theme {
+    let settings = Sonora::global(cx).settings.read(cx);
+    let look = Look {
+        kind: ThemeKind::Dark,
+        tint: palette.primary,
+        tint_secondary: palette.secondary,
+        ..settings.look()
+    };
+    Theme::for_look(look, &stripped(settings.theme_overrides()))
+}
+
+/// The overrides with every colour taken out, leaving the radius and font size.
+fn stripped(overrides: ThemeOverrides) -> ThemeOverrides {
+    ThemeOverrides {
+        radius: overrides.radius,
+        font_size: overrides.font_size,
+        ..ThemeOverrides::default()
     }
 }

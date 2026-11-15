@@ -1,14 +1,17 @@
-//! The question before a theme from a `sonora://theme/` link is installed, with the theme's
-//! name in the title, a miniature of the window in its colours, and Install or Cancel.
+//! The question before a theme or family from a `sonora://theme/` link is installed, with its
+//! name in the title, a miniature of the window cut into its variants, their names under it, and
+//! Install or Cancel.
 //! `state::Links` holds the offer and does the installing. This only draws it.
 
 use gpui::prelude::*;
 use gpui::{Context, Entity, FocusHandle, Pixels, Render, Window, div, px};
 use i18n::t;
 use state::{Links, Sonora};
-use ui::{ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Look, Modal, Submit, Theme, ThemeKind};
+use ui::{
+    ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Look, Modal, Submit, Text, Theme, ThemeKind,
+};
 
-use crate::shared::theme_miniature::{framed, sliced};
+use crate::shared::theme_miniature::{SLICES, framed, sliced};
 
 /// The modal panel's border, which counts toward its width.
 const BORDER: Pixels = px(1.);
@@ -71,11 +74,11 @@ impl ThemeInvite {
 
 impl Render for ThemeInvite {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(variant) = self
+        let Some(family) = self
             .links
             .read(cx)
             .theme_offer()
-            .map(|offer| offer.variant.clone())
+            .map(|offer| offer.family.clone())
         else {
             if self.shown {
                 self.release(window, cx);
@@ -90,16 +93,41 @@ impl Render for ThemeInvite {
 
         let theme = *cx.theme();
         let frame = framed(PREVIEW);
-        let preview = div().flex().justify_center().child(
-            div()
-                .flex_none()
-                .w(frame.width)
-                .h(frame.height)
-                .rounded(theme.radius)
-                .border_1()
-                .border_color(theme.border)
-                .child(sliced(&[variant.palette()], theme.radius, PREVIEW)),
-        );
+        let palettes = family
+            .variants
+            .iter()
+            .take(SLICES)
+            .map(|variant| variant.palette())
+            .collect::<Vec<_>>();
+        let names = family
+            .variants
+            .iter()
+            .map(|variant| variant.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let preview = div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(theme.metrics.pad)
+            .child(
+                div()
+                    .flex_none()
+                    .w(frame.width)
+                    .h(frame.height)
+                    .rounded(theme.radius)
+                    .border_1()
+                    .border_color(theme.border)
+                    .child(sliced(&palettes, theme.radius, PREVIEW)),
+            )
+            .when(family.variants.len() > 1, |preview| {
+                preview.child(
+                    div()
+                        .text_size(theme.text(Text::Small))
+                        .text_color(theme.muted_foreground)
+                        .child(names),
+                )
+            });
 
         div()
             .absolute()
@@ -117,7 +145,7 @@ impl Render for ThemeInvite {
             .child(
                 Modal::new(
                     "theme-install",
-                    t!("theme-install-title", name = &variant.title),
+                    t!("theme-install-title", name = &family.name),
                 )
                 // the modal pads its body by twice `pad` on each side, so the preview lines up with
                 // the title and the buttons
