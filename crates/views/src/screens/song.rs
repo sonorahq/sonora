@@ -78,6 +78,8 @@ impl SongView {
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         let library = Sonora::global(cx).library.clone();
         cx.observe(&library, |_, _, cx| cx.notify()).detach();
+        let chrome = crate::chrome::Chrome::entity(cx);
+        cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
         let me = cx.entity_id();
         let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(me));
 
@@ -186,8 +188,7 @@ impl SongView {
             false => release_date_label(&release),
         };
         let label = album
-            .map(|detail| detail.album.label.clone())
-            .filter(|value| !value.is_empty())
+            .and_then(|detail| detail.album.label_name().map(str::to_owned))
             .map(SharedString::from)
             .unwrap_or_else(|| t!("common-not-provided"));
         let number = match (track.disc_number, track.track_number) {
@@ -562,7 +563,7 @@ impl SongView {
 }
 
 impl Render for SongView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(failure) = self.failure(cx) {
             return div()
                 .id("song-failure")
@@ -585,7 +586,7 @@ impl Render for SongView {
             .child(
                 Scroller::new("song-page", &self.scrollbar)
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
-                    .px(theme.metrics.inset)
+                    .px(theme.metrics.inset + crate::chrome::Chrome::margin(window, cx))
                     .py(theme.metrics.inset)
                     .when(loading && track.is_none(), |this| {
                         this.child(self.loading(cx))
@@ -619,11 +620,13 @@ impl Render for SongView {
                                 this.child(div().pt_5().child(profile))
                             })
                             .when_some(
-                                self.detail
-                                    .read(cx)
-                                    .album()
-                                    .and_then(|album| album.album.copyrights.first())
-                                    .cloned(),
+                                self.detail.read(cx).album().and_then(|album| {
+                                    album
+                                        .album
+                                        .copyright_lines()
+                                        .first()
+                                        .map(|&line| line.to_owned())
+                                }),
                                 |this, copyright| {
                                     this.child(
                                         ui::spoken("song-copyright", copyright_notice(&copyright))

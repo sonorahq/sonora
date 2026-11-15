@@ -149,6 +149,8 @@ pub fn track(wrapper: &Value) -> Option<Track> {
         artists,
         artist_refs,
         album: text(album, "title").unwrap_or_default().to_owned(),
+        // the album a Tidal track carries has no artists
+        album_artist: String::new(),
         album_id: album.get("id").and_then(self::id),
         cover: image(text(album, "cover"), COVER),
         duration: Duration::from_secs(number(value, "duration").unwrap_or(0)),
@@ -294,13 +296,24 @@ pub fn distinct(releases: Vec<Release>) -> Vec<Album> {
     kept.into_iter().map(|release| release.album).collect()
 }
 
+/// An artist's portrait, or the album cover Tidal names in its place for an artist it keeps no
+/// portrait of, which is what its own players draw then. Tidal serves a cover at both portrait
+/// sizes.
+pub fn portrait(artist: &Value, size: u32) -> Option<String> {
+    let named = |key| text(artist, key).filter(|uuid| !uuid.is_empty());
+    image(
+        named("picture").or_else(|| named("selectedAlbumCoverFallback")),
+        size,
+    )
+}
+
 /// An artist out of a bare or wrapped artist object.
 pub fn artist(wrapper: &Value) -> Option<SavedArtist> {
     let value = unwrap(wrapper);
     Some(SavedArtist {
         id: value.get("id").and_then(id)?,
         name: text(value, "name")?.to_owned(),
-        cover: image(text(value, "picture"), PORTRAIT),
+        cover: portrait(value, PORTRAIT),
         added_at: added(wrapper),
     })
 }
@@ -452,6 +465,7 @@ fn artists_of(value: &Value) -> (String, Vec<ArtistRef>) {
             Some(ArtistRef {
                 name: text(artist, "name")?.to_owned(),
                 id: artist.get("id").and_then(id),
+                channel: false,
             })
         })
         .collect();
@@ -483,4 +497,33 @@ fn atmos_only(value: &Value) -> bool {
                     .iter()
                     .all(|mode| mode.as_str() == Some("DOLBY_ATMOS"))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{PORTRAIT, PORTRAIT_LARGE, artist, portrait};
+
+    #[test]
+    fn an_artist_without_a_portrait_is_drawn_with_the_cover_tidal_names() {
+        let both = json!({"id": 1, "name": "A", "picture": "aa-bb", "selectedAlbumCoverFallback": "cc-dd"});
+        assert_eq!(
+            portrait(&both, PORTRAIT).as_deref(),
+            Some("https://resources.tidal.com/images/aa/bb/320x320.jpg")
+        );
+        let unpictured =
+            json!({"id": 1, "name": "A", "picture": null, "selectedAlbumCoverFallback": "cc-dd"});
+        assert_eq!(
+            portrait(&unpictured, PORTRAIT_LARGE).as_deref(),
+            Some("https://resources.tidal.com/images/cc/dd/750x750.jpg")
+        );
+        assert_eq!(
+            artist(&unpictured)
+                .and_then(|artist| artist.cover)
+                .as_deref(),
+            Some("https://resources.tidal.com/images/cc/dd/320x320.jpg")
+        );
+        assert_eq!(portrait(&json!({"id": 1, "picture": ""}), PORTRAIT), None);
+    }
 }

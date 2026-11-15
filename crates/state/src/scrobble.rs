@@ -114,6 +114,9 @@ impl Scrobbling {
         })
         .detach();
         cx.observe(&playback, |this, _, cx| this.tick(cx)).detach();
+        // a play is earned by the time listened, which moves on position reports
+        let ticks = playback.read(cx).ticks().clone();
+        cx.observe(&ticks, |this, _, cx| this.tick(cx)).detach();
 
         let rows = scrobble::services()
             .into_iter()

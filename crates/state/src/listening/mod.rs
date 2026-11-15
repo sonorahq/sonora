@@ -140,6 +140,10 @@ impl Listening {
     ) -> Self {
         cx.observe(&playback, |this, _, cx| this.on_playback(cx))
             .detach();
+        // the session hears the position and is kept in step with it
+        let ticks = playback.read(cx).ticks().clone();
+        cx.observe(&ticks, |this, _, cx| this.on_playback(cx))
+            .detach();
         cx.observe(&queue, |this, _, cx| this.publish(cx)).detach();
         cx.subscribe(&session, |this, _, event, cx| this.on_session(event, cx))
             .detach();

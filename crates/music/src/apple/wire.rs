@@ -752,6 +752,7 @@ pub fn artist_refs(value: &Resource, attributes: &Attributes) -> Vec<ArtistRef> 
             Some(ArtistRef {
                 name: text(&artist.attributes.as_ref()?.name)?,
                 id: artist.id.as_str().map(str::to_owned),
+                channel: false,
             })
         })
         .collect();
@@ -759,6 +760,7 @@ pub fn artist_refs(value: &Resource, attributes: &Attributes) -> Vec<ArtistRef> 
         true => vec![ArtistRef {
             name: text(&attributes.artist_name).unwrap_or_default(),
             id: None,
+            channel: false,
         }],
         false => listed,
     }
@@ -952,6 +954,7 @@ pub fn artist(value: &Resource, root: &str) -> Option<Artist> {
             .or_else(|| text(&notes.standard))
             .or_else(|| text(&attributes.artist_bio)),
         monthly_listeners: None,
+        followers: None,
         top_tracks: view(value, "top-songs")
             .iter()
             .filter_map(|row| song(row, root))
@@ -1103,6 +1106,8 @@ fn song_as(value: &Resource, id: String, root: &str) -> Option<Track> {
         artists: text(&attributes.artist_name).unwrap_or_default(),
         artist_refs: artist_refs(value, attributes),
         album: text(&attributes.album_name).unwrap_or_default(),
+        // Apple lists a song's own artist only
+        album_artist: String::new(),
         album_id: value
             .relationships
             .albums

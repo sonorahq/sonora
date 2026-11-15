@@ -182,6 +182,9 @@ impl Discord {
 
         cx.observe(&playback, |this, _, cx| this.publish(cx))
             .detach();
+        // the start time shown is measured from the position, which can drift from the clock
+        let ticks = playback.read(cx).ticks().clone();
+        cx.observe(&ticks, |this, _, cx| this.publish(cx)).detach();
         cx.observe(&settings, |this, _, cx| this.publish(cx))
             .detach();
         cx.observe(&cover, |this, _, cx| this.publish(cx)).detach();
@@ -309,23 +312,7 @@ impl Discord {
         let provider = track.id.as_deref().and_then(|id| session.provider_for(id));
         let named = provider.map(|provider| Source {
             badge: settings.discord_badge().then(|| provider.slug()),
-            listening: match settings.discord_name() {
-                DiscordName::Sonora => None,
-                DiscordName::Provider => Some(provider.listening_to().to_owned()),
-                DiscordName::Music => Some(MUSIC.to_owned()),
-                DiscordName::Title => fit_text(&track.name).or_else(|| Some(MUSIC.to_owned())),
-                DiscordName::Artist => fit_text(&track.artists).or_else(|| Some(MUSIC.to_owned())),
-                DiscordName::ArtistTitle => {
-                    let artists = track.artists.trim();
-                    let title = track.name.trim();
-                    fit_text(&match (artists.is_empty(), title.is_empty()) {
-                        (false, false) => format!("{artists} - {title}"),
-                        (false, true) => artists.to_owned(),
-                        (true, false) => title.to_owned(),
-                        (true, true) => MUSIC.to_owned(),
-                    })
-                }
-            },
+            listening: listening(settings.discord_name(), track, provider.listening_to()),
             name: provider.name(),
         });
         if settings.discord_without_details() {
@@ -366,11 +353,11 @@ impl Discord {
 
     /// Cover art for the track. The provider's own art is used only when it is public, since
     /// Discord fetches the image through its own proxy, so a path on disk is unreachable and a
-    /// self-hosted url would hand over the credentials that fetch it. Without it, and when
-    /// `lookup` allows, the cover is the provider's own one uploaded to a temporary public host
-    /// when `upload` allows, since nothing else is sure to be the same picture, and otherwise, or
-    /// when the upload failed, one found by name. A search or upload not yet made is left in
-    /// `wanted` for `look_up`.
+    /// self-hosted url would hand over the credentials that fetch it. Without it, the cover is
+    /// the provider's own one or the local file's uploaded to a temporary public host when
+    /// `upload` allows, since nothing else is sure to be the same picture. Otherwise, or when the
+    /// upload failed, it is one found by name when `lookup` allows. A search or upload not yet
+    /// made is left in `wanted` for `look_up`.
     fn artwork(
         &mut self,
         track: &Track,
@@ -390,11 +377,14 @@ impl Discord {
                     .filter(|cover| cover.starts_with("https://"))
             })
             .flatten();
-        if own.is_some() || !lookup {
+        if own.is_some() {
             return own;
         }
         if upload && let Some(cover) = self.own_upload(track, cx) {
             return cover;
+        }
+        if !lookup {
+            return None;
         }
 
         let query = ArtworkQuery::for_track(track)?;
@@ -412,14 +402,18 @@ impl Discord {
     /// still to be made, and `None` when there is nothing to upload or the upload failed, so the
     /// search answers instead.
     fn own_upload(&mut self, track: &Track, cx: &App) -> Option<Option<String>> {
-        // the provider's own url, which never leaves the machine: only the picture is uploaded
+        // a provider url or a local file, neither of which leaves the machine, only the picture
         let source = track
             .album_id
             .as_deref()
             .and_then(|album| self.cover.read(cx).large_for(album))
             .map(str::to_owned)
             .or_else(|| track.cover.clone())
-            .filter(|source| source.starts_with("https://") || source.starts_with("http://"))?;
+            .filter(|source| {
+                ["https://", "http://", "file://"]
+                    .iter()
+                    .any(|scheme| source.starts_with(scheme))
+            })?;
         let key = track.album_id.clone().unwrap_or_else(|| source.clone());
         if let Some((url, at)) = self.uploaded.get(&key)
             && at.elapsed() < UPLOAD_FRESH
@@ -654,6 +648,32 @@ fn buttons(
     (!buttons.is_empty()).then_some(buttons)
 }
 
+/// What the status calls itself for `name`, or `None` to leave Discord's own name, which is
+/// Sonora. `provider` is what the provider the track came from calls listening to it. A value
+/// the track leaves empty, such as an album artist the provider does not name, says Music
+/// rather than borrowing another field.
+fn listening(name: DiscordName, track: &Track, provider: &str) -> Option<String> {
+    let music = || Some(MUSIC.to_owned());
+    match name {
+        DiscordName::Sonora => None,
+        DiscordName::Provider => Some(provider.to_owned()),
+        DiscordName::Music => music(),
+        DiscordName::Title => fit_text(&track.name).or_else(music),
+        DiscordName::Artist => fit_text(&track.artists).or_else(music),
+        DiscordName::AlbumArtist => fit_text(&track.album_artist).or_else(music),
+        DiscordName::ArtistTitle => {
+            let artists = track.artists.trim();
+            let title = track.name.trim();
+            fit_text(&match (artists.is_empty(), title.is_empty()) {
+                (false, false) => format!("{artists} - {title}"),
+                (false, true) => artists.to_owned(),
+                (true, false) => title.to_owned(),
+                (true, true) => MUSIC.to_owned(),
+            })
+        }
+    }
+}
+
 /// What the status says when the track is deliberately left out of it.
 fn anonymous_details() -> String {
     let text = "Listening to music".to_string();
@@ -690,4 +710,44 @@ fn unix_time() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(artists: &str, album_artist: &str) -> Track {
+        Track {
+            name: "Blue Monday".to_owned(),
+            artists: artists.to_owned(),
+            album_artist: album_artist.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_album_artist_names_the_status() {
+        let track = track("New Order, Arthur Baker", "New Order");
+        let name = listening(DiscordName::AlbumArtist, &track, "Spotify");
+        assert_eq!(name.as_deref(), Some("New Order"));
+    }
+
+    #[test]
+    fn a_missing_album_artist_says_music_rather_than_the_track_artists() {
+        let track = track("New Order, Arthur Baker", "  ");
+        let name = listening(DiscordName::AlbumArtist, &track, "Spotify");
+        assert_eq!(name.as_deref(), Some(MUSIC));
+    }
+
+    #[test]
+    fn the_track_artists_still_name_the_status() {
+        let track = track("New Order, Arthur Baker", "New Order");
+        let name = listening(DiscordName::Artist, &track, "Spotify");
+        assert_eq!(name.as_deref(), Some("New Order, Arthur Baker"));
+        let both = listening(DiscordName::ArtistTitle, &track, "Spotify");
+        assert_eq!(
+            both.as_deref(),
+            Some("New Order, Arthur Baker - Blue Monday")
+        );
+    }
 }

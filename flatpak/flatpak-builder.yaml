@@ -21,13 +21,18 @@ finish-args:
   - --filesystem=host:ro
   # Discord presence talks to Discord's IPC socket in the host runtime dir: a native Discord
   # puts it at discord-ipc-0, or discord-ipc-1 when Canary runs next to stable, a Flatpak
-  # Discord under app/<its id>, which has to be created from our side so the bind exists
-  # before Discord starts.
+  # Discord or Vesktop under app/<its id> or, on newer Flatpak, inside its private runtime dir
+  # .flatpak/<its id>/xdg-run. Each folder has to be created from our side so the bind exists
+  # before the client starts.
   - --filesystem=xdg-run/discord-ipc-0
   - --filesystem=xdg-run/discord-ipc-1
   - --filesystem=xdg-run/discord-ipc-2
   - --filesystem=xdg-run/app/com.discordapp.Discord:create
   - --filesystem=xdg-run/app/com.discordapp.DiscordCanary:create
+  - --filesystem=xdg-run/app/dev.vencord.Vesktop:create
+  - --filesystem=xdg-run/.flatpak/com.discordapp.Discord/xdg-run:create
+  - --filesystem=xdg-run/.flatpak/com.discordapp.DiscordCanary/xdg-run:create
+  - --filesystem=xdg-run/.flatpak/dev.vencord.Vesktop/xdg-run:create
 
   # Session Bus Permissions (Same as Spotify flatpak):
   - --talk-name=org.gnome.SettingsDaemon.MediaKeys

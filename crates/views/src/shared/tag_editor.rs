@@ -1,10 +1,13 @@
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{App, Context, Div, Entity, FocusHandle, Global, Render, SharedString, Window, div};
+use gpui::{App, Context, Entity, FocusHandle, Global, Render, SharedString, Window, div};
 use i18n::t;
 use music::{Track, TrackTags};
 use state::{Io, Sonora, TagState, Tags};
-use ui::{ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Input, Modal, Submit, TabBar, Text};
+use ui::{
+    ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Form, Input, Modal, NextField, Submit, TabBar,
+    Text,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Sheet {
@@ -295,68 +298,44 @@ impl TagEditor {
             }))
     }
 
-    fn rows(&self, cx: &Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .children(self.sheet.rows().iter().map(|row| {
-                match row {
-                    Row::Fields(fields) => div()
-                        .flex()
-                        .gap_3()
-                        .children(fields.iter().map(|field| {
-                            labelled(field.key(), cx)
-                                .flex_1()
-                                .min_w_0()
-                                .child(self.inputs[field.slot()].clone())
-                        }))
-                        .into_any_element(),
-                    Row::Artists => self.artist_rows(cx).into_any_element(),
-                }
-            }))
+    /// The fields of the sheet on show as one form, so Tab walks them in order. Enter and Escape go
+    /// on to the dialog around it.
+    fn form(&self, cx: &Context<Self>) -> Form {
+        self.sheet
+            .rows()
+            .iter()
+            .fold(Form::new("tag-editor-form"), |form, row| match row {
+                Row::Fields(fields) => form.row(fields.iter().map(|field| {
+                    ui::Field::new(&self.inputs[field.slot()], cx)
+                        .label(i18n::lookup(field.key(), None))
+                })),
+                Row::Artists => form.fields(self.artist_fields(cx)),
+            })
     }
 
     /// The artist fields, one per name, with a button to add another beside the label and one to
     /// remove each field while there is more than one.
-    fn artist_rows(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn artist_fields(&self, cx: &Context<Self>) -> Vec<ui::Field> {
         let removable = self.artists.len() > 1;
-        let theme = *cx.theme();
-
-        div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_size(theme.text(Text::Small))
-                            .text_color(theme.muted_foreground)
-                            .child(t!("tags-artists")),
-                    )
-                    .child(
-                        Button::new("tag-artist-add")
-                            .icon("icons/plus.svg")
-                            .tooltip("tags-add-artist")
-                            .small()
-                            .ghost()
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.add_artist(window, cx)),
-                            ),
-                    ),
-            )
-            .children(self.artists.iter().enumerate().map(|(slot, input)| {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .child(div().flex_1().min_w_0().child(input.clone()))
-                    .when(removable, |row| {
-                        row.child(
+        self.artists
+            .iter()
+            .enumerate()
+            .map(|(slot, input)| {
+                ui::Field::new(input, cx)
+                    .when(slot == 0, |field| {
+                        field.label(t!("tags-artists")).aside(
+                            Button::new("tag-artist-add")
+                                .icon("icons/plus.svg")
+                                .tooltip("tags-add-artist")
+                                .small()
+                                .ghost()
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.add_artist(window, cx)),
+                                ),
+                        )
+                    })
+                    .when(removable, |field| {
+                        field.end(
                             Button::new(("tag-artist-remove", slot))
                                 .icon("icons/x.svg")
                                 .tooltip("tags-remove-artist")
@@ -367,7 +346,21 @@ impl TagEditor {
                                 ),
                         )
                     })
-            }))
+            })
+            .collect()
+    }
+
+    /// Puts the caret in the first field of the sheet on show, for a Tab pressed while the dialog
+    /// itself holds the focus.
+    fn focus_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let first = match self.sheet.rows().first() {
+            Some(Row::Fields(fields)) => fields.first().map(|field| &self.inputs[field.slot()]),
+            Some(Row::Artists) => self.artists.first(),
+            None => None,
+        };
+        if let Some(first) = first {
+            first.update(cx, |input, cx| input.focus(window, cx));
+        }
     }
 }
 
@@ -411,13 +404,17 @@ impl Render for TagEditor {
                 cx.stop_propagation();
                 this.apply(cx);
             }))
+            .on_action(cx.listener(|this, _: &NextField, window, cx| {
+                cx.stop_propagation();
+                this.focus_first(window, cx);
+            }))
             .child(
                 Modal::new("tag-editor", t!("tags-edit-title"))
                     .w(theme.metrics.cover * 3.2)
                     .h(theme.metrics.cover * 3.6)
                     .detail(SharedString::from(track.name))
                     .when(ready, |modal| {
-                        modal.child(self.sheets(cx)).child(self.rows(cx))
+                        modal.child(self.sheets(cx)).child(self.form(cx))
                     })
                     .when_some(trouble, |modal, trouble| {
                         let trouble = SharedString::from(trouble);
@@ -452,15 +449,4 @@ impl Render for TagEditor {
 
 fn artist_input(cx: &mut Context<TagEditor>) -> Entity<Input> {
     cx.new(|cx| Input::new("tags-artist", cx))
-}
-
-/// A field's label above whatever the caller adds below it.
-fn labelled(key: &'static str, cx: &App) -> Div {
-    let theme = cx.theme();
-    div().flex().flex_col().gap_1().child(
-        div()
-            .text_size(theme.text(Text::Small))
-            .text_color(theme.muted_foreground)
-            .child(i18n::lookup(key, None)),
-    )
 }

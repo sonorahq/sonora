@@ -7,6 +7,15 @@ use crate::{
 };
 
 pub fn track(song: Child, cover: Option<String>) -> Track {
+    // only an OpenSubsonic server names the album's artists, so a plain one leaves this empty
+    let (album_artist, _) = artists_of(
+        None,
+        None,
+        song.album_artists.as_ref(),
+        // a blank display name would hide the listed album artists
+        song.display_album_artist
+            .filter(|name| !name.trim().is_empty()),
+    );
     let (artists, artist_refs) = artists_of(
         song.artist,
         song.artist_id,
@@ -20,6 +29,7 @@ pub fn track(song: Child, cover: Option<String>) -> Track {
         artists,
         artist_refs,
         album: song.album.unwrap_or_default(),
+        album_artist,
         album_id: song.album_id.filter(|id| !id.is_empty()),
         cover,
         duration: Duration::from_secs(song.duration.unwrap_or(0).max(0) as u64),
@@ -161,6 +171,7 @@ pub(crate) fn artists_of(
             .map(|item| ArtistRef {
                 name: item.name.clone(),
                 id: Some(item.id.clone()),
+                channel: false,
             })
             .collect();
         return match display {
@@ -182,7 +193,50 @@ pub(crate) fn artists_of(
         (false, id) => vec![ArtistRef {
             name: name.clone(),
             id,
+            channel: false,
         }],
     };
     (name, refs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn song(extra: serde_json::Value) -> Child {
+        let mut value = serde_json::json!({
+            "id": "1",
+            "isDir": false,
+            "title": "Blue Monday",
+            "artist": "New Order, Arthur Baker",
+        });
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn an_opensubsonic_song_names_its_album_artist() {
+        let shown = track(
+            song(serde_json::json!({ "displayAlbumArtist": "New Order" })),
+            None,
+        );
+        assert_eq!(shown.album_artist, "New Order");
+        let listed = serde_json::json!({ "albumArtists": [{ "id": "a", "name": "New Order" }] });
+        assert_eq!(track(song(listed), None).album_artist, "New Order");
+        let blank = serde_json::json!({
+            "displayAlbumArtist": " ",
+            "albumArtists": [{ "id": "a", "name": "New Order" }],
+        });
+        assert_eq!(track(song(blank), None).album_artist, "New Order");
+    }
+
+    #[test]
+    fn a_plain_subsonic_song_leaves_the_album_artist_empty() {
+        let plain = track(song(serde_json::json!({})), None);
+        assert_eq!(plain.album_artist, "");
+        assert_eq!(plain.artists, "New Order, Arthur Baker");
+    }
 }

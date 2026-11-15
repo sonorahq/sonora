@@ -1,8 +1,8 @@
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Div, ElementId, Entity, Focusable as _, Pixels, SharedString,
-    Stateful, Window, div,
+    AnyElement, App, Context, Div, ElementId, Entity, FocusHandle, Focusable as _, Pixels,
+    SharedString, Stateful, Window, div,
 };
 use i18n::t;
 use music::equalizer::{
@@ -91,6 +91,15 @@ impl EqualizerView {
             ]
         });
         std::iter::once((Field::Preamp, &self.preamp)).chain(rows)
+    }
+
+    /// The focus of every field of the filters shown, in the order Tab visits them.
+    pub(super) fn filter_focus(&self, cx: &App) -> Vec<FocusHandle> {
+        let count = self.equalizer.read(cx).curve().filters().len();
+        self.fields()
+            .filter(|(field, _)| matches!(field, Field::Filter(index, _) if *index < count))
+            .map(|(_, input)| input.read(cx).focus_handle(cx))
+            .collect()
     }
 
     fn input(&self, field: Field) -> &Entity<Input> {

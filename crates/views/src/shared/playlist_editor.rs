@@ -7,7 +7,7 @@ use i18n::t;
 use music::Playlist;
 use state::{Addition, CoverEdit, Leaving, Outcome, Shelf, Sonora, Toasts, cover_problem};
 use ui::{ActiveTheme as _, Artwork, Button, Modal, PinKind};
-use ui::{Dismiss, FORM_CONTEXT, Input, Submit};
+use ui::{Dismiss, FORM_CONTEXT, Field, Form, Input, Submit};
 
 #[derive(Clone)]
 pub(crate) enum Edit {
@@ -189,6 +189,11 @@ fn plain(edit: &Edit) -> bool {
 impl PlaylistEditor {
     /// The cover preview with its buttons beside the name field. The cover buttons show only
     /// where the provider takes a cover.
+    /// The playlist's name as a form of one field. Enter and Escape go on to the dialog around it.
+    fn name_form(&self, cx: &App) -> Form {
+        Form::new("playlist-name-form").field(Field::new(&self.name, cx))
+    }
+
     fn details(&self, playlist: &Playlist, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         let covers = Sonora::global(cx)
@@ -214,9 +219,7 @@ impl PlaylistEditor {
                     .flex_1()
                     .min_w_0()
                     .gap_2()
-                    // The field grows along its parent's main axis, so a row keeps it from
-                    // filling the column down to the cover's height.
-                    .child(div().flex().child(self.name.clone()))
+                    .child(self.name_form(cx))
                     .when(covers, |column| {
                         column.child(
                             div()
@@ -266,6 +269,19 @@ impl Render for PlaylistEditor {
             Edit::Delete(_) => t!("playlist-delete-title"),
             Edit::Again { .. } => t!("playlist-again-title"),
         };
+        // A blank new playlist can come from an M3U file instead, which the local shelf reads.
+        let import =
+            matches!(&edit, Edit::Create { addition, .. } if addition.is_empty()).then(|| {
+                Button::new("import-playlist")
+                    .ghost()
+                    .small()
+                    .icon("icons/file-music.svg")
+                    .label(t!("menu-import-playlist"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.close(window, cx);
+                        crate::shared::local::import_playlist(cx);
+                    }))
+            });
         let detail = match &edit {
             Edit::Delete(playlist) => Some(t!("playlist-delete-confirm", name = &playlist.name)),
             Edit::Again { playlist, .. } => {
@@ -291,10 +307,11 @@ impl Render for PlaylistEditor {
                 Modal::new("playlist-editor", title)
                     .w(theme.metrics.cover * 2.8)
                     .when_some(detail, Modal::detail)
+                    .when_some(import, Modal::trailing)
                     .map(|modal| match &edit {
                         Edit::Details(playlist) => modal.child(self.details(playlist, cx)),
                         _ if asking => modal,
-                        _ => modal.child(self.name.clone()),
+                        _ => modal.child(self.name_form(cx)),
                     })
                     .action(
                         Button::new("cancel-playlist-edit")

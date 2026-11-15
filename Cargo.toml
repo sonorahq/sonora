@@ -51,8 +51,8 @@ fastrand = "2.5"
 futures = "0.3"
 gethostname = "1.1"
 fluent-bundle = "0.16"
-gpui = { git = "https://github.com/sonorahq/gpui", rev = "8ddac49c8b5a079149b33b4581e03f74e05237e0" }
-gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "8ddac49c8b5a079149b33b4581e03f74e05237e0", features = [
+gpui = { git = "https://github.com/sonorahq/gpui", rev = "3ec4f44657ed326f284bbf63ba77271529ab8a2f" }
+gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "3ec4f44657ed326f284bbf63ba77271529ab8a2f", features = [
     "font-kit",
     "wayland",
     "x11",
@@ -183,6 +183,7 @@ serde_json = { version = "1.0", features = ["raw_value"] }
 serde-saphyr = { version = "2.1", default-features = false, features = [
     "deserialize",
 ] }
+sha1 = "0.11"
 sha2 = "0.11"
 smallvec = { version = "1.16", features = ["union"] }
 souvlaki = "0.9"
@@ -198,7 +199,7 @@ tray-icon = { version = "0.26", default-features = false }
 unic-langid = { version = "0.9", features = ["macros"] }
 unicode-bidi = "0.3"
 unicode-segmentation = "1.13"
-ytmusic = { git = "https://github.com/sonorahq/ytmusic-rs", rev = "db4ab87" }
+ytmusic = { git = "https://github.com/sonorahq/ytmusic-rs", rev = "99f7d14" }
 
 librespot-core = { version = "0.8.0", default-features = false, features = [
     "rustls-tls-native-roots",
