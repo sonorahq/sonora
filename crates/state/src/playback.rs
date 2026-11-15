@@ -2656,7 +2656,7 @@ impl Playback {
         }
         let at = match self.steered(cx) {
             Some(_) => shown,
-            None => self.live_position(),
+            None => self.seek_target.unwrap_or_else(|| self.live_position()),
         };
         self.seek(seek_target(at, total, forward), cx);
     }
