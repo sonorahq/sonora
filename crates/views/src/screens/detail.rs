@@ -939,6 +939,7 @@ impl Render for DetailView {
             .child(
                 Scroller::new("detail-page", &self.scrollbar)
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .px(crate::chrome::Chrome::margin(window, cx))
                     .pt(inset)
                     .pb(inset)
                     .child(div().px(inset).child(self.header(window, cx)))

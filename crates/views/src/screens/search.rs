@@ -1561,7 +1561,7 @@ impl Render for SearchView {
             }))
         });
 
-        let gutter = pad + inset;
+        let gutter = pad + inset + Chrome::margin(window, cx);
         let results = match self.failure(asked, gutter, cx) {
             Some(failure) => failure,
             None => match (asked, stacked) {

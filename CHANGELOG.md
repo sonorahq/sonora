@@ -48,6 +48,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- On a wide window pages stop growing at 1600 pixels and stay centred, while artist banners still reach the edges.
 - The fullscreen button now swaps in place when the fullscreen player opens or closes, instead of fading and zooming with it.
 - Your accounts now open Settings, General, and the separate Providers tab is gone.
 - Ctrl+F (⌘F on macOS) now opens search and / filters the page you are on, and shortcuts list Ctrl before Shift.
