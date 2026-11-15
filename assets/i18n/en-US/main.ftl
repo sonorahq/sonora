@@ -870,7 +870,6 @@ settings-stream-bitrate-value = { $kbps } kbps
 settings-stream-bitrate-hourly = About { $megabytes } MB an hour
 settings-stream-bitrate-unlimited-detail = Each file at its own bitrate
 settings-subsonic-library = Library
-settings-subsonic-library-detail = The library Sonora reads from this server. Other libraries stay on the server, untouched
 settings-subsonic-library-all = All libraries
 settings-subsonic-library-unnamed = Library { $id }
 settings-subsonic-library-unavailable = Not on this server anymore

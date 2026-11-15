@@ -781,10 +781,7 @@ impl SettingsView {
                     false => SharedString::default(),
                 },
             ),
-            Slot::SubsonicLibrary => (
-                t!("settings-subsonic-library"),
-                t!("settings-subsonic-library-detail"),
-            ),
+            Slot::SubsonicLibrary => (t!("settings-subsonic-library"), SharedString::default()),
             Slot::Theme => (t!("settings-theme"), t!("settings-theme-detail")),
             Slot::Adaptive => (t!("settings-adaptive"), t!("settings-adaptive-detail")),
             Slot::CommunityThemes => (

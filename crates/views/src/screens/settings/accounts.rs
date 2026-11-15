@@ -419,7 +419,6 @@ impl SettingsView {
         Modal::new("settings-subsonic-library", t!("settings-subsonic-library"))
             .w(px(420.))
             .close_button()
-            .detail(t!("settings-subsonic-library-detail"))
             .child(body)
             .on_dismiss(cx.listener(|this, _, _, cx| this.close_library_picker(cx)))
     }
