@@ -64,7 +64,7 @@ jobs:
         with:
           packages: >-
             build-essential pkg-config cmake mold
-            libasound2-dev libfontconfig1-dev libfreetype-dev libsqlite3-dev
+            libasound2-dev libfontconfig1-dev libfreetype-dev
             libx11-dev libxcb1-dev libxcursor-dev libxi-dev
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev
             libvulkan-dev libdbus-1-dev
@@ -200,7 +200,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config cmake mold \
-            libasound2-dev libfontconfig1-dev libfreetype-dev libsqlite3-dev \
+            libasound2-dev libfontconfig1-dev libfreetype-dev \
             libx11-dev libxcb1-dev libxcursor-dev libxi-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libvulkan-dev libdbus-1-dev

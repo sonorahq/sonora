@@ -86,7 +86,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config cmake mold \
-            libasound2-dev libfontconfig1-dev libfreetype-dev libsqlite3-dev \
+            libasound2-dev libfontconfig1-dev libfreetype-dev \
             libx11-dev libxcb1-dev libxcursor-dev libxi-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libvulkan-dev libdbus-1-dev
@@ -418,6 +418,7 @@ jobs:
 
       # The libraries the executable links, so linuxdeploy can resolve and copy them. Its own
       # excludelist decides which of them stay behind and come from the host instead.
+      # libsqlite3-0 is only for an executable reused from a release that predates bundled SQLite.
       - name: system dependencies
         run: |
           sudo apt-get update

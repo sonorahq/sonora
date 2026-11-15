@@ -88,7 +88,6 @@
                 freetype
                 alsa-lib
                 dbus
-                sqlite
                 webkitgtk_4_1
                 glib-networking
               ]
@@ -190,7 +189,6 @@
             buildInputs =
               with pkgs;
               lib.flatten [
-                sqlite
                 (lib.optionals stdenv.hostPlatform.isLinux [
                   dbus
                   fontconfig
@@ -342,7 +340,6 @@
                 freetype
                 alsa-lib
                 dbus
-                sqlite
                 openssl
                 webkitgtk_4_1
                 glib-networking
@@ -412,7 +409,7 @@
               # installed Xcode. Clang follows DEVELOPER_DIR too and then reads Xcode's C
               # headers beside the Nix libc++, which breaks any C++ a build script compiles,
               # so C++ compiles are pinned to the Nix SDK through CXXFLAGS. Only compiles: the
-              # link still has to see Xcode's SDK, which is where libsqlite3 comes from.
+              # link still goes through Xcode's SDK.
               + lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
                 # xcode-select echoes DEVELOPER_DIR back when it is set, so ask with it unset.
                 if xcode="$(env -u DEVELOPER_DIR /usr/bin/xcode-select -p 2>/dev/null)"; then

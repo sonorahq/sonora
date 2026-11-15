@@ -170,7 +170,7 @@ rodio = { version = "0.22", default-features = false, features = [
     "experimental",
 ] }
 rtrb = "0.4"
-rusqlite = { version = "0.40" }
+rusqlite = { version = "0.43", features = ["bundled"] }
 # Pinned exactly: a young crate, and the decoder every HE-AAC stream goes through.
 rusty_aac = { version = "=1.1.2", default-features = false }
 rustfft = "6.4"
