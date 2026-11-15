@@ -20,6 +20,7 @@ pub(crate) const VOLUME_BUBBLE_LIFT: Pixels = px(18.);
 const ZONE: f32 = 14.;
 /// The space between the button and the panel over it.
 const GAP: f32 = 2.;
+
 /// What a view keeps for a volume button whose slider rises over it while the pointer is on
 /// the button, the slider or the space between them.
 pub(crate) struct RisingVolume {
