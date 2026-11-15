@@ -8,7 +8,7 @@ use serde_json::value::RawValue;
 use crate::commands::{Kind, Repeat, Request};
 
 /// The protocol both ends speak. Bump it on any change an older Sonora would misread.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 /// One line on the socket: the protocol version and the request or reply it carries. The body
 /// is decoded only once the version matches, so a newer request never half-parses into a wrong
