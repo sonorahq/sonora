@@ -42,7 +42,7 @@ use crate::equalizer::DeviceRule;
 use crate::pins::PinSort;
 use crate::queue::{Resume, gap_target};
 use crate::updates::{Channel, updates_itself};
-use crate::{Outcome, Repeat, Sonora, Toasts};
+use crate::{Hit, Outcome, Repeat, Sonora, Toasts};
 
 /// How Sonora is named on the device list of the provider's apps. `Both` is the app's name with
 /// the computer's in brackets, so two machines on one account tell apart.
@@ -79,8 +79,8 @@ impl ConnectName {
 }
 
 /// What the Discord status calls itself. `Provider` asks the provider the track came from, so
-/// local files say Local Music rather than the provider's own name. `ArtistTitle` shows as
-/// "Artist - Title".
+/// local files say Local Music rather than the provider's own name. `AlbumArtist` is who the
+/// album is credited to, and `ArtistTitle` shows as "Artist - Title".
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DiscordName {
@@ -90,16 +90,18 @@ pub enum DiscordName {
     Music,
     Title,
     Artist,
+    AlbumArtist,
     ArtistTitle,
 }
 
 impl DiscordName {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Sonora,
         Self::Provider,
         Self::Music,
         Self::Title,
         Self::Artist,
+        Self::AlbumArtist,
         Self::ArtistTitle,
     ];
 
@@ -110,6 +112,7 @@ impl DiscordName {
             Self::Music => "music",
             Self::Title => "title",
             Self::Artist => "artist",
+            Self::AlbumArtist => "album-artist",
             Self::ArtistTitle => "artist-title",
         }
     }
@@ -121,6 +124,7 @@ impl DiscordName {
             Self::Music => "settings-discord-name-music",
             Self::Title => "settings-discord-name-title",
             Self::Artist => "settings-discord-name-artist",
+            Self::AlbumArtist => "settings-discord-name-album-artist",
             Self::ArtistTitle => "settings-discord-name-artist-title",
         }
     }
@@ -338,8 +342,8 @@ const RELOAD_RETRY_DELAY: Duration = Duration::from_secs(1);
 const RELOAD_RETRIES: usize = 3;
 const THEMES_DIRECTORY: &str = "themes";
 const DEFAULT_VOLUME: f32 = 0.7;
-/// How many past searches the history keeps.
-const SEARCHES: usize = 20;
+/// How many chosen search results the history keeps, across every provider.
+const PICKS: usize = 40;
 const DEFAULT_SIDEBAR_WIDTH: f32 = 195.;
 const DEFAULT_SIDEBAR_RIGHT_WIDTH: f32 = 254.;
 const DEFAULT_FONT_SIZE: f32 = 14.;
@@ -368,6 +372,13 @@ struct Held {
     slug: String,
     #[serde(flatten)]
     pin: Pin,
+}
+
+/// A search result the listener chose, with the provider it belongs to.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Picked {
+    slug: String,
+    hit: Hit,
 }
 
 /// Everything `settings.json` holds. Preferences a user sets on purpose, safe to edit by hand.
@@ -429,6 +440,7 @@ struct Values {
     discord_sonora_button: bool,
     discord_provider_button: bool,
     artwork_for_local_files: bool,
+    discord_upload_covers: bool,
     lyrics_for_local_files: bool,
     /// The output device to play on, as a cpal device id, or `None` to follow the system's
     /// default. Kept while the device is gone, so playback returns to it, and cleared once it is
@@ -488,6 +500,9 @@ struct Values {
     local_folders: Vec<PathBuf>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     hidden_nav: Vec<String>,
+    /// The optional sidebar rows the user added, which stay out of the sidebar otherwise.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    added_nav: Vec<String>,
     /// Missing system requirements the user asked never to hear about again.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     silenced_requirements: Vec<String>,
@@ -497,6 +512,13 @@ struct Values {
     /// scrobble to Last.fm on their own, and with both on every listen is counted twice.
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     unscrobbled: BTreeSet<String>,
+    /// The keys the user chose for shortcuts under Settings, Keybinds, by shortcut id. A shortcut
+    /// missing here keeps its defaults, and an empty list leaves it without a key.
+    #[serde(
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "read_keybinds"
+    )]
+    keybinds: BTreeMap<String, Vec<String>>,
     appearance: Appearance,
 }
 
@@ -555,6 +577,9 @@ struct Appearance {
     visualizer_screens: VisualizerScreens,
     player_bar_layout: String,
     player_bar_transparent: bool,
+    /// Whether the player bar's right clock counts down what is left of the track instead of
+    /// showing its length.
+    player_bar_time_left: bool,
     icons: String,
     rounding: String,
     /// Whether the app paints its frosted treatments. The key kept its old name, which stood
@@ -659,6 +684,7 @@ impl Default for Values {
             discord_sonora_button: true,
             discord_provider_button: true,
             artwork_for_local_files: true,
+            discord_upload_covers: true,
             lyrics_for_local_files: true,
             output_device: None,
             output_rate: None,
@@ -694,9 +720,11 @@ impl Default for Values {
             startup: DEFAULT_STARTUP.to_owned(),
             local_folders: Vec::new(),
             hidden_nav: Vec::new(),
+            added_nav: Vec::new(),
             silenced_requirements: Vec::new(),
             scrobbling: BTreeMap::new(),
             unscrobbled: BTreeSet::new(),
+            keybinds: BTreeMap::new(),
             appearance: Appearance::default(),
         }
     }
@@ -749,8 +777,8 @@ struct StateValues {
     system_theme: String,
     /// The variant last chosen in each theme family, by family id.
     theme_variants: HashMap<String, String>,
-    /// What the search page was asked, newest first, without repeats.
-    searches: Vec<String>,
+    /// The search results the listener chose, newest first, without repeats.
+    picks: Vec<Picked>,
 }
 
 impl Default for StateValues {
@@ -781,7 +809,7 @@ impl Default for StateValues {
             window: None,
             system_theme: ThemeKind::Dark.id().to_owned(),
             theme_variants: HashMap::new(),
-            searches: Vec::new(),
+            picks: Vec::new(),
         }
     }
 }
@@ -861,6 +889,7 @@ impl Default for Appearance {
             visualizer_screens: VisualizerScreens::default(),
             player_bar_layout: PlayerBarLayout::default().id().to_owned(),
             player_bar_transparent: true,
+            player_bar_time_left: false,
             icons: icons::BASE.to_owned(),
             rounding: Rounding::Rounded.id().to_owned(),
             blur: true,
@@ -1107,6 +1136,12 @@ impl AppSettings {
     /// for its Discord status. Streamed tracks are looked up regardless.
     pub fn artwork_for_local_files(&self) -> bool {
         self.values.artwork_for_local_files
+    }
+
+    /// Whether a cover no public catalogue has may be fetched from the provider and uploaded to
+    /// a temporary public host, so the Discord status can show it. On unless the user turns it off.
+    pub fn discord_upload_covers(&self) -> bool {
+        self.values.discord_upload_covers
     }
 
     pub fn lyrics_for_local_files(&self) -> bool {
@@ -1390,6 +1425,11 @@ impl AppSettings {
     /// UI as well, since without the blur the bar's text would sit on the bare page.
     pub fn player_bar_translucent(&self) -> bool {
         self.player_bar_transparent() && self.blur()
+    }
+
+    /// Whether the player bar shows the time left in the track where it would show its length.
+    pub fn player_bar_time_left(&self) -> bool {
+        self.values.appearance.player_bar_time_left
     }
 
     /// Whether fullscreen paints the ambient background sampled from the cover.
@@ -1743,6 +1783,11 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    pub fn set_discord_upload_covers(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.values.discord_upload_covers = enabled;
+        self.schedule_save(cx);
+    }
+
     pub fn set_lyrics_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.values.lyrics_enabled = enabled;
         self.schedule_save(cx);
@@ -1838,6 +1883,22 @@ impl AppSettings {
 
     pub fn set_adaptive_menu(&mut self, adaptive_menu: bool, cx: &mut Context<Self>) {
         self.values.adaptive_menu = adaptive_menu;
+        self.schedule_save(cx);
+    }
+
+    /// The keys the user chose for shortcuts, by shortcut id.
+    pub fn keybinds(&self) -> &BTreeMap<String, Vec<String>> {
+        &self.values.keybinds
+    }
+
+    /// Replaces the keys the user chose for shortcuts. The app binds them once observers hear
+    /// of the change.
+    pub fn set_keybinds(
+        &mut self,
+        keybinds: BTreeMap<String, Vec<String>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.values.keybinds = keybinds;
         self.schedule_save(cx);
     }
 
@@ -2118,32 +2179,40 @@ impl AppSettings {
         self.schedule_state_save(cx);
     }
 
-    /// The queries the search page was asked, newest first.
-    pub fn searches(&self) -> &[String] {
-        &self.state.searches
+    /// The search results chosen on the providers in `slugs`, newest first.
+    pub fn picks(&self, slugs: &[&str]) -> Vec<Hit> {
+        self.state
+            .picks
+            .iter()
+            .filter(|picked| slugs.contains(&picked.slug.as_str()))
+            .map(|picked| picked.hit.clone())
+            .collect()
     }
 
-    /// Puts `query` at the top of the search history, dropping an earlier copy that differs only
-    /// in case and the oldest entry past the cap. The save skips settings observers, so the
-    /// caller repaints what shows the history.
-    pub fn remember_search(&mut self, query: &str, cx: &mut Context<Self>) {
-        let query = query.trim();
-        if query.is_empty() {
-            return;
-        }
-        let searches = &mut self.state.searches;
-        let folded = query.to_lowercase();
-        searches.retain(|kept| kept.to_lowercase() != folded);
-        searches.insert(0, query.to_owned());
-        searches.truncate(SEARCHES);
+    /// Puts `hit` at the top of the search history, dropping an earlier copy and the oldest
+    /// entry past the cap. The save skips settings observers, so the caller repaints what shows
+    /// the history.
+    pub fn remember_pick(&mut self, slug: &str, hit: Hit, cx: &mut Context<Self>) {
+        let key = hit.key();
+        let picks = &mut self.state.picks;
+        picks.retain(|picked| picked.hit.key() != key);
+        picks.insert(
+            0,
+            Picked {
+                slug: slug.to_owned(),
+                hit,
+            },
+        );
+        picks.truncate(PICKS);
         self.save_state_quietly(cx);
     }
 
-    /// Drops `query` from the search history. Like `remember_search`, it wakes no observers.
-    pub fn forget_search(&mut self, query: &str, cx: &mut Context<Self>) {
-        let kept = self.state.searches.len();
-        self.state.searches.retain(|held| held != query);
-        if self.state.searches.len() != kept {
+    /// Drops the hit with `key` from the search history. Like `remember_pick`, it wakes no
+    /// observers.
+    pub fn forget_pick(&mut self, key: &str, cx: &mut Context<Self>) {
+        let kept = self.state.picks.len();
+        self.state.picks.retain(|picked| picked.hit.key() != key);
+        if self.state.picks.len() != kept {
             self.save_state_quietly(cx);
         }
     }
@@ -2184,6 +2253,22 @@ impl AppSettings {
         match shown {
             true => self.values.hidden_nav.retain(|hidden| hidden != entry),
             false => self.values.hidden_nav.push(entry.to_owned()),
+        }
+        self.schedule_save(cx);
+    }
+
+    /// Whether the user added the optional sidebar row `entry`. None is added on a first run.
+    pub fn nav_added(&self, entry: &str) -> bool {
+        self.values.added_nav.iter().any(|added| added == entry)
+    }
+
+    pub fn set_nav_added(&mut self, entry: &str, added: bool, cx: &mut Context<Self>) {
+        if self.nav_added(entry) == added {
+            return;
+        }
+        match added {
+            true => self.values.added_nav.push(entry.to_owned()),
+            false => self.values.added_nav.retain(|known| known != entry),
         }
         self.schedule_save(cx);
     }
@@ -2267,6 +2352,11 @@ impl AppSettings {
     /// Lets the page scroll under the player bar, or restores the solid bar below the page.
     pub fn set_player_bar_transparent(&mut self, transparent: bool, cx: &mut Context<Self>) {
         self.values.appearance.player_bar_transparent = transparent;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_player_bar_time_left(&mut self, time_left: bool, cx: &mut Context<Self>) {
+        self.values.appearance.player_bar_time_left = time_left;
         self.schedule_save(cx);
     }
 
@@ -3089,6 +3179,35 @@ fn place(pinned: &mut Vec<Held>, slug: &str, pin: Pin, gap: Option<usize>, slugs
 
 /// The saved order with unknown and repeated names dropped and every source it lacks appended
 /// in the default order.
+/// Reads the `keybinds` map leniently: a shortcut saved as one string counts as a list of one, and
+/// any other value is dropped with a warning, so a hand edit never makes the file unreadable.
+fn read_keybinds<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Vec<String>>, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let Some(entries) = value.as_object() else {
+        log::warn!("settings: keybinds {value} is not an object, keeping the default shortcuts");
+        return Ok(BTreeMap::new());
+    };
+    Ok(entries
+        .iter()
+        .filter_map(|(id, keys)| {
+            let parsed = match keys {
+                serde_json::Value::String(key) => Some(vec![key.clone()]),
+                serde_json::Value::Array(list) => list
+                    .iter()
+                    .map(|key| key.as_str().map(str::to_owned))
+                    .collect::<Option<Vec<_>>>(),
+                _ => None,
+            };
+            if parsed.is_none() {
+                log::warn!("settings: keybind {id} is {keys}, keeping its default keys");
+            }
+            parsed.map(|parsed| (id.clone(), parsed))
+        })
+        .collect())
+}
+
 fn lyrics_priority(saved: &[String]) -> Vec<String> {
     let mut order: Vec<String> = Vec::new();
     for name in saved.iter().map(String::as_str).chain(LYRICS_SOURCES) {

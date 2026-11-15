@@ -802,6 +802,23 @@ impl TidalClient {
         wire::text(&bio, "text").map(wire::plain_bio)
     }
 
+    /// How many accounts follow the artist, which the web player shows as fans. The v1 artist
+    /// detail leaves it out, so it comes from the openapi artist. A failed read or a zero is no count.
+    async fn followers(&self, artist_id: &str) -> Option<u64> {
+        let artist = self
+            .read(
+                OPENAPI,
+                &format!("/artists/{}", escape::component(artist_id)),
+                &[],
+            )
+            .await
+            .ok()?;
+        artist
+            .pointer("/data/attributes/numberOfFollowers")
+            .and_then(Value::as_u64)
+            .filter(|count| *count > 0)
+    }
+
     /// Up to `SUGGESTIONS` artists Tidal lists as similar.
     async fn similar_artists(&self, artist_id: &str) -> Result<Vec<SavedArtist>> {
         let page = self
@@ -1120,19 +1137,21 @@ impl MusicApi for TidalClient {
     async fn artist(&self, artist_id: &str) -> Result<Artist> {
         let detail_path = format!("/artists/{}", escape::component(artist_id));
         let top_path = format!("{detail_path}/toptracks");
-        let (detail, top, albums, biography) = tokio::join!(
+        let (detail, top, albums, biography, followers) = tokio::join!(
             self.get(&detail_path, &[]),
             self.get(&top_path, &[("limit", "20")]),
             self.releases(artist_id, None, 50),
             self.biography(artist_id),
+            self.followers(artist_id),
         );
         let detail = detail.context("cannot load the artist")?;
         Ok(Artist {
             name: wire::text(&detail, "name").unwrap_or_default().to_owned(),
-            cover_large: wire::image(wire::text(&detail, "picture"), wire::PORTRAIT_LARGE),
+            cover_large: wire::portrait(&detail, wire::PORTRAIT_LARGE),
             banner: None,
             biography,
             monthly_listeners: None,
+            followers,
             top_tracks: top.map(|page| wire::track_list(&page)).unwrap_or_default(),
             albums: wire::distinct(albums.unwrap_or_default()),
         })
@@ -1171,7 +1190,7 @@ impl MusicApi for TidalClient {
         let detail = detail.context("cannot load the artist")?;
         Ok(ArtistProfile {
             name: wire::text(&detail, "name").unwrap_or_default().to_owned(),
-            cover_large: wire::image(wire::text(&detail, "picture"), wire::PORTRAIT_LARGE),
+            cover_large: wire::portrait(&detail, wire::PORTRAIT_LARGE),
             biography,
         })
     }
@@ -1198,7 +1217,7 @@ impl MusicApi for TidalClient {
                     .get(&format!("/artists/{}", escape::component(&id)), &[])
                     .await
                     .ok()?;
-                let cover = wire::image(wire::text(&detail, "picture"), wire::PORTRAIT)?;
+                let cover = wire::portrait(&detail, wire::PORTRAIT)?;
                 Some((id, cover))
             })
             .buffer_unordered(LOOKUPS)

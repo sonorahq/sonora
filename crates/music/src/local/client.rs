@@ -255,6 +255,7 @@ impl MusicApi for LocalClient {
             banner: None,
             biography: None,
             monthly_listeners: None,
+            followers: None,
             top_tracks: scanned
                 .tracks
                 .iter()
@@ -822,8 +823,10 @@ mod tests {
             artist_refs: vec![ArtistRef {
                 name: artists.to_owned(),
                 id: None,
+                channel: false,
             }],
             album: album.to_owned(),
+            album_artist: String::new(),
             album_id: None,
             cover: None,
             duration: Duration::from_secs(180),

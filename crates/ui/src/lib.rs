@@ -57,6 +57,7 @@ mod time;
 mod toast;
 mod tooltip;
 mod traffic_light_controls;
+mod unfold;
 mod vacancy;
 mod veil;
 mod view;
@@ -65,7 +66,7 @@ mod waves;
 
 pub use arrow_ring::ArrowRing;
 pub use artwork::{
-    Artwork, Avatar, PREFETCH_REACH, Prefetch, artwork_usage, cover_palette, prefetch,
+    Artwork, Avatar, PREFETCH_REACH, Prefetch, artwork_usage, cover_palette, prefetch, prefetching,
 };
 pub use button::{Button, SMALL_INSET};
 pub use card::CARD_GROUP;
@@ -77,12 +78,12 @@ pub use controls::WindowFrame;
 pub use deck::Deck;
 pub use drag::{Edge, Ghost, drop_gap, drop_into, drop_marker, grip};
 pub use dropdown::Dropdown;
-pub use explicit::ExplicitBadge;
+pub use explicit::Badge;
 pub use filters::{
     Filter, FilterChange, FlagAxis, RangeAxis, RangeScrubber, RangeState, SortAxis, Unit,
 };
 pub use flight::{Flight, Zoom};
-pub use form::{FORM_CONTEXT, Submit};
+pub use form::{FORM_CONTEXT, Field, Form, NextField, PreviousField, Submit};
 pub use glass::{
     GLASS_BLUR, GLASS_FILL, bar_surface, blurring, frost, glass, popover_fill, popover_surface,
 };
@@ -97,8 +98,8 @@ pub use input::{
 };
 pub use kbd::Kbd;
 pub use label::{
-    Tails, eyebrow, faint, heading, spoken, spoken_eyebrow, spoken_heading, spoken_vacant, upper,
-    vacant,
+    Tails, eyebrow, eyebrow_with, faint, heading, spoken, spoken_eyebrow, spoken_heading,
+    spoken_vacant, vacant,
 };
 pub use layout::{ALWAYS, MIN_CONTENT, ROOMY, Room, SNUG, VAST, WIDE};
 pub use lazy::Lazy;
@@ -157,6 +158,7 @@ pub use time::{clock, runtime, tabular};
 pub use toast::Toast;
 pub use tooltip::{Perch, Tipped, Tooltip};
 pub use traffic_light_controls::TrafficLightControls;
+pub use unfold::{Cascade, Unfold};
 pub use vacancy::Vacancy;
 pub use veil::{VeilEdge, effects, veil};
 pub use view::Mode;

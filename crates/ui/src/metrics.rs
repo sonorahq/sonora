@@ -67,6 +67,9 @@ pub struct Metrics {
     pub list_row: Pixels,
     pub thumb: Pixels,
     pub cover: Pixels,
+    /// The widest a page grows, its side insets included. A wider content area centres the
+    /// page and gives what is left to its side margins.
+    pub page: Pixels,
 }
 
 impl Default for Metrics {
@@ -94,6 +97,7 @@ impl Metrics {
             list_row: roomy(52., 3.2),
             thumb: px(34.),
             cover: px(140.),
+            page: px(1600.),
         }
     }
 }

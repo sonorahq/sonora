@@ -166,6 +166,7 @@ pub fn artist_ref(name: &str) -> ArtistRef {
     ArtistRef {
         id: Some(artist_id(name)),
         name: name.to_owned(),
+        channel: false,
     }
 }
 
@@ -265,6 +266,18 @@ pub struct Tagged {
     /// read a row stored without this field as `None` instead of rejecting it, so the file would
     /// never be read again for its label.
     pub label: String,
+}
+
+impl Tagged {
+    /// The row as the index stored it, with the album artist copied onto the track when the
+    /// row was stored before tracks carried one, since such a row is never read from the file
+    /// again while the file stays the same.
+    pub fn restored(mut self) -> Self {
+        if self.track.album_artist.is_empty() {
+            self.track.album_artist = self.album_artist.clone().unwrap_or_default();
+        }
+        self
+    }
 }
 
 struct FallbackProbe {
@@ -647,6 +660,7 @@ pub fn track_from_file(
             artists: artist,
             artist_refs: track_artist_refs,
             album: album_name,
+            album_artist: album_artist.clone().unwrap_or_default(),
             album_id,
             cover,
             duration,
@@ -926,6 +940,21 @@ fn language_code(code: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_row_stored_before_the_track_named_its_album_artist_names_it_once_restored() {
+        let row = serde_json::json!({
+            "track": { "name": "Blue Monday", "artists": "New Order, Arthur Baker" },
+            "album_artist": "New Order",
+            "album_artists": [],
+            "year": null,
+            "release": null,
+            "label": "",
+        });
+        let tagged: Tagged = serde_json::from_value(row).unwrap();
+        assert_eq!(tagged.track.album_artist, "");
+        assert_eq!(tagged.restored().track.album_artist, "New Order");
+    }
     use lofty::tag::{ItemValue, TagItem, TagType};
 
     fn scratch(name: &str) -> std::path::PathBuf {

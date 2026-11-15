@@ -376,7 +376,9 @@ fn parse(rows: Vec<(String, String, i64, i64, String)>) -> Vec<Parsed> {
                 chunk
                     .iter()
                     .map(|(path, parent, mtime, size, track)| {
-                        let tagged = serde_json::from_str::<Tagged>(track).ok();
+                        let tagged = serde_json::from_str::<Tagged>(track)
+                            .ok()
+                            .map(Tagged::restored);
                         (path.clone(), parent.clone(), *mtime, *size, tagged)
                     })
                     .collect::<Vec<_>>()

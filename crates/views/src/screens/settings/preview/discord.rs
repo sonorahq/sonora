@@ -158,6 +158,11 @@ pub(in crate::screens::settings) fn preview(
         DiscordName::Music => t!("settings-discord-preview-music"),
         DiscordName::Title => sample.title.clone(),
         DiscordName::Artist => sample.artist.clone(),
+        // an album with no artist named falls back the way the status itself does
+        DiscordName::AlbumArtist => match sample.album_artist.trim().is_empty() {
+            true => t!("settings-discord-preview-music"),
+            false => sample.album_artist.clone(),
+        },
         DiscordName::ArtistTitle => format!("{} - {}", sample.artist, sample.title).into(),
     };
     let elapsed = state.since.get().elapsed();

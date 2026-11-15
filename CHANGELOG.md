@@ -9,6 +9,78 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Use Sonora in European Portuguese. A system set to Portuguese from Portugal picks it on its own.
+- Open an album's cover from its page to see the original artwork full size, zoom in with the wheel or the buttons and drag it around.
+- Press Ctrl+K (⌘K on macOS) anywhere to search. Enter plays a song right away, Ctrl+Enter opens its page, and the artist and album under a result open theirs.
+- Scrobble to your own ListenBrainz server or to multi-scrobbler by filling in the server address when you connect ListenBrainz.
+- Name your Discord status after the album artist under Settings, Discord, Status name.
+- Hover a cut-off track title in the player bar to read it in full.
+- YouTube Music artist pages list the artist's music videos after their popular songs, and song search finds music videos too.
+- Show a local file's own cover on the Discord status, uploaded for 3 hours to uguu.se like Subsonic covers. Turn it off under Settings, Discord.
+- Show the time left in the song instead of its length in the player bar, under Settings, Player bar.
+- `sonora queue` prints what played, what plays and what follows, and `sonora queue --json` gives the same queue to a script, without changing playback.
+- `sonora lyrics` prints the lyrics of the current track with their times, and `sonora lyrics --json` also gives a script the line sung now and the next one.
+- `sonora mute` reads or changes playback mute and restores the previous volume when unmuted.
+- Rebind keyboard shortcuts under Settings, Keybinds, and give shuffle, repeat, the queue and lyrics shortcuts of their own.
+- Move between the fields of a dialog with Tab and Shift+Tab.
+- Use Sonora in Korean.
+- Open a music folder in your file manager from Settings, Music folders.
+- Library pages that list both local and streaming music mark local files with a file icon beside their names.
+- Tidal artist pages show how many people follow the artist, beside the listener count.
+- See Sonora's similar tracks on your other Spotify devices under their recommended tracks, and Spotify's recommendations from another device apart from what is up next in Sonora.
+- See how much of the song is left on Sonora's taskbar button on Windows. The button fills as the song plays and turns yellow while it is paused.
+
+### Fixed
+
+- Unmuting now respects volume changes made on another device.
+- The snap shows Sonora's tray icon instead of a generic placeholder.
+- On Windows, playback no longer crackles when you open apps or browser tabs, and the buffer setting under Settings, Sound works again.
+- Friends who join a Spotify Jam you host from Sonora hear the track you play instead of the first one of the album or playlist, see the same queue, and the songs they remove or move stay that way.
+- Pausing while you host a Spotify Jam pauses it only for you, the way Spotify does: your friends keep listening, and resuming brings you back to where the Jam is.
+- A friend editing the queue of your Spotify Jam no longer clears your listening history in Sonora.
+- Seeking from another device while a track is still loading no longer leaves Sonora showing it as loading.
+- The Flatpak shows your Discord status in Vesktop and in Discord installed from Flathub.
+- On Linux with WebKitGTK 2.54 or newer, signing in to Apple Music no longer fills all your memory and crashes Sonora before the sign-in page loads.
+- Tidal artists with no portrait show the album cover Tidal draws them with, instead of an empty picture.
+- Releases tagged with the label `[no label]` no longer show a copyright line crediting it.
+- The fullscreen player's ambient background no longer leaves a light line along the right and bottom edges of the window.
+- The ambient background in fullscreen uses far less GPU, so laptops with integrated graphics stay cooler.
+- The Nix package runs Soloist on NixOS without nix-ld.
+- Apple Music search no longer runs into "Too Many Requests" while you type.
+- A page that cannot load says so in a plain sentence instead of the raw error, and a busy service asks you to wait a minute.
+- A bare `sonora://` or `sonora://open` now brings Sonora to the front instead of showing an error toast.
+- The Spotify Jams submenu no longer comes up already open the next time you open the Sessions menu.
+
+### Changed
+
+- On a wide window pages stop growing at 1600 pixels and stay centred, while artist banners still reach the edges.
+- The fullscreen button now swaps in place when the fullscreen player opens or closes, instead of fading and zooming with it.
+- Your accounts now open Settings, General, and the separate Providers tab is gone.
+- Ctrl+F (⌘F on macOS) now opens search and / filters the page you are on, and shortcuts list Ctrl before Shift.
+- Hovered rows share one fill in tables, cards and the sidebar, the softer one the sidebar used.
+- History is now called Recents and shows in the sidebar right under Search. Hide it again under Settings, General, Sidebar entries. Settings, once added there, sits right under Recents.
+- Recents keeps your last 5000 plays instead of 500.
+- Search history now lists the songs, artists, albums and playlists you opened or played from a search instead of the words you typed, and it shows as soon as you open search or press Ctrl+K (⌘K on macOS).
+- The track filter menu no longer offers "Playable only".
+- The song title and artist in the player bar sit closer together.
+- Section labels across the app, such as the settings group headings and Pinned in the sidebar, are no longer set in capitals.
+- Local files sit beside your streaming library in Songs, Albums, Artists and Playlists, and the separate Local Music section is gone. Filter a page to Local only or Streaming only.
+- Songs, Albums, Artists and Playlists are rows of their own in the sidebar under a Library heading, and the icon-only sidebar shows them as icons too.
+- Import an M3U playlist from the Create playlist dialog, which replaces the import button in the Playlists toolbar.
+- History and Settings moved from the sidebar to the account menu at the top right, which also switches between your connected services and opens Manage accounts. Add them back to the sidebar under Settings, General, Sidebar entries.
+
+## [0.49.1] - 2026-11-13
+
+### Changed
+
+- Subsonic downloads are now ordinary audio files named after the artist and title, which any other player opens. Downloads you already have are converted the next time you sign in, and Open downloads under Settings, Storage shows the folder.
+- Nix users pick the stable or nightly channel with `github:sonorahq/sonora/stable` or `github:sonorahq/sonora/nightly`, and both download ready-built from the sonora.cachix.org binary cache on x86_64 and aarch64 Linux. The flake no longer has `sonora-bin` or `sonora-src`.
+
+## [0.49.0] - 2026-11-13
+
+### Added
+
+- Show your Subsonic server's own cover on the Discord status, uploaded for 3 hours to uguu.se. Turn it off under Settings, Discord.
 - Open music links from the search field or send browser pages to Sonora with a bookmark.
 - Open YouTube handle links on their artist pages.
 - Preview music links in search suggestions and search by their titles or artist names.
@@ -24,6 +96,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- When a track's own cover cannot be shown on the Discord status, Sonora looks it up on Deezer, then iTunes, then MusicBrainz, so an album one of them lacks, or a service your network blocks, no longer leaves the status without a cover. A different edition of the album, with another cover, is never shown in its place.
 - Hover highlights fade out when the pointer leaves instead of cutting off.
 - The player bar keeps its playback buttons and seek bar centred as the window narrows: the volume slider shrinks first and folds into a button with a slider that rises on hover only when space runs out.
 - The left sidebar keeps its full width in narrower windows and folds to icons only when the page would get too cramped.
@@ -52,9 +125,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reduce redraw work when scrolling large Favorites collections.
 - Song durations stay aligned when hovering over an artist's favorite songs.
 - Reduce fullscreen visualizer redraws while keeping animation at up to 120 FPS.
-
 - Mixed English and Japanese lyrics no longer show duplicate English romanizations or misplaced spaces inside parentheses.
 - With Spotify, lyrics and the progress bar no longer run ahead of the music.
+- The icon on the Your Library and History covers stays visible when the adaptive theme takes a dark colour from the playing cover.
+- Lyrics in the sidebar keep their place after a long stay in the fullscreen player.
 
 ## [0.48.1] - 2026-11-08
 
@@ -126,6 +200,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - YouTube Music no longer loses its refreshed sign-in cookies when several requests finish together.
 - On Windows, the hidden YouTube playback page no longer shares cookies with the sign-in window.
 - Local libraries no longer list macOS AppleDouble metadata files as songs.
+- YouTube Music playlists made before the account had a channel show up in Add to playlist and can be edited.
 - Text pasted on several lines, into a field or the Jam link, shows on one line instead of leaving the field blank.
 - On Windows, playback no longer crackles while you open apps or browser tabs.
 - Sonora no longer downloads every genre page at launch to find their pictures, so it uses far less memory with YouTube Music.
@@ -2628,7 +2703,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.48.1...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.49.1...HEAD
+[0.49.1]: https://github.com/sonorahq/sonora/compare/v0.49.0...v0.49.1
+[0.49.0]: https://github.com/sonorahq/sonora/compare/v0.48.1...v0.49.0
 [0.48.1]: https://github.com/sonorahq/sonora/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/sonorahq/sonora/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/sonorahq/sonora/compare/v0.46.0...v0.47.0

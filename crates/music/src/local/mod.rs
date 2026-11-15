@@ -75,6 +75,7 @@ impl LocalProvider {
                 playlist_order: true,
                 keeps: false,
                 downloads: false,
+                plain_downloads: false,
                 qualities: &[],
                 download_gap: Duration::ZERO,
             },
