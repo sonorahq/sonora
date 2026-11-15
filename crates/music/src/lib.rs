@@ -691,6 +691,8 @@ pub enum PlaybackEvent {
         id: String,
         at: Duration,
     },
+    /// Soloist could not add a track to its shared queue.
+    QueueRejected,
 }
 
 impl PlaybackEvent {

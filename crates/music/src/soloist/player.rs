@@ -22,6 +22,7 @@
 //! position report lands near it. And the end of a track arrives as whichever of three things
 //! the daemon feels like: another track, `idle`, or a pause nobody asked for.
 
+use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -55,6 +56,8 @@ const WS_PORT: &str = "ws.port";
 /// What the daemon decodes every track to.
 const RATE: u32 = 44_100;
 const CHANNELS: u16 = 2;
+/// Queue additions held only while one daemon is signing in.
+const PENDING_ENQUEUES: usize = 64;
 
 /// How long the daemon gets to open its WebSocket.
 const STARTUP: Duration = Duration::from_secs(30);
@@ -298,6 +301,8 @@ struct Brain {
     link: Option<Link>,
     /// Whether the daemon is signed in, before which it takes no command.
     signed_in: bool,
+    /// Queue additions waiting for this daemon's initial sign-in.
+    pending_enqueues: VecDeque<String>,
     /// Sonora's volume, from 0 to 100.
     volume: u8,
     /// Whether the daemon's volume is held at zero while an opening seek lands, so the start of
@@ -333,6 +338,7 @@ impl Brain {
             events,
             link: None,
             signed_in: false,
+            pending_enqueues: VecDeque::new(),
             volume,
             muted: false,
             track: None,
@@ -386,13 +392,7 @@ impl Brain {
                     self.feed();
                 }
             }
-            Command::Enqueue(id) => {
-                self.send(
-                    "add_to_queue",
-                    json!({ "uri": format!("{TRACK_PREFIX}{id}") }),
-                );
-                self.send("get_queue", json!({}));
-            }
+            Command::Enqueue(id) => self.enqueue(id),
         }
     }
 
@@ -412,6 +412,7 @@ impl Brain {
             .filter(|(known, _)| *known == uri)
             .map(|(_, duration)| *duration);
         self.next = None;
+        self.unexpected = None;
         self.unmute();
         self.report(PlaybackEvent::Loading {
             id: Some(id.clone()),
@@ -654,6 +655,7 @@ impl Brain {
                 if logged_in && !was {
                     self.refusals = 0;
                     self.settle();
+                    self.flush_enqueues();
                     self.advance();
                 }
             }
@@ -1043,6 +1045,7 @@ impl Brain {
     }
 
     fn gone(&mut self, end: End) {
+        self.reject_enqueues();
         self.link = None;
         self.signed_in = false;
         self.muted = false;
@@ -1092,6 +1095,7 @@ impl Brain {
 
     /// Stops the daemon without waiting for it.
     fn hang_up(&mut self) {
+        self.reject_enqueues();
         self.signed_in = false;
         self.muted = false;
         if let Some(link) = self.link.take() {
@@ -1106,6 +1110,44 @@ impl Brain {
         self.send("set_volume", json!({ "volume": volume }));
         self.send("get_state", json!({}));
         self.send("get_queue", json!({}));
+    }
+
+    /// Adds a track now, or holds it only while this daemon completes its first sign-in.
+    fn enqueue(&mut self, id: String) {
+        if self.signed_in {
+            return self.send_enqueue(id);
+        }
+        if self.link.is_some() && self.pending_enqueues.len() < PENDING_ENQUEUES {
+            self.pending_enqueues.push_back(id);
+        } else {
+            self.report(PlaybackEvent::QueueRejected);
+        }
+    }
+
+    /// Sends all additions that belong to the daemon which just signed in.
+    fn flush_enqueues(&mut self) {
+        while let Some(id) = self.pending_enqueues.pop_front() {
+            self.send_enqueue(id);
+        }
+    }
+
+    /// Sends one queue addition and reports a failure instead of claiming it was accepted.
+    fn send_enqueue(&self, id: String) {
+        if !self.send(
+            "add_to_queue",
+            json!({ "uri": format!("{TRACK_PREFIX}{id}") }),
+        ) {
+            return self.report(PlaybackEvent::QueueRejected);
+        }
+        self.send("get_queue", json!({}));
+    }
+
+    /// Discards work that cannot safely cross a daemon disconnect or session teardown.
+    fn reject_enqueues(&mut self) {
+        if !self.pending_enqueues.is_empty() {
+            self.pending_enqueues.clear();
+            self.report(PlaybackEvent::QueueRejected);
+        }
     }
 
     /// The daemon restores the account's shuffle and repeat, either of which would have it play
@@ -1158,10 +1200,11 @@ impl Brain {
     }
 
     /// Sends a command, which the daemon only takes once it is signed in.
-    fn send(&self, name: &str, fields: Value) {
+    fn send(&self, name: &str, fields: Value) -> bool {
         if let Some(link) = self.link.as_ref().filter(|_| self.signed_in) {
-            link.outgoing.send(wire::command(name, fields)).ok();
+            return link.outgoing.send(wire::command(name, fields)).is_ok();
         }
+        false
     }
 
     fn report(&self, event: PlaybackEvent) {
@@ -1442,7 +1485,7 @@ fn queued_tracks(entries: Vec<wire::Queued>) -> Vec<QueuedTrack> {
             let item = entry.item?;
             let id = track_id(&item.uri)?;
             Some(QueuedTrack {
-                uid: if uid.is_empty() { item.uri } else { uid },
+                uid,
                 id,
                 queued,
                 added_by: None,
@@ -1464,6 +1507,23 @@ fn offered(quality: Quality) -> Option<Encoding> {
 mod tests {
     use super::*;
 
+    fn brain() -> (Brain, UnboundedReceiver<PlaybackEvent>) {
+        let (events, receiver) = unbounded_channel();
+        (
+            Brain::new(
+                Setup {
+                    normalise: false,
+                    gapless: false,
+                    quality: Quality::default(),
+                    interval: Duration::ZERO,
+                },
+                100,
+                events,
+            ),
+            receiver,
+        )
+    }
+
     #[test]
     fn active_statuses_follow_a_remote_track() {
         assert!(active(Status::Playing));
@@ -1481,5 +1541,33 @@ mod tests {
         assert!(follows_remote(true, "spotify:track:restored", &heard));
         assert!(!follows_remote(false, "spotify:track:restored", &heard));
         assert!(!follows_remote(true, "spotify:track:remote", &heard));
+    }
+
+    #[test]
+    fn disconnect_rejects_pending_enqueues() {
+        let (mut brain, mut events) = brain();
+        brain.pending_enqueues.push_back("pending".into());
+
+        brain.gone(End::Failed);
+
+        assert!(brain.pending_enqueues.is_empty());
+        assert!(matches!(
+            events.try_recv(),
+            Ok(PlaybackEvent::QueueRejected)
+        ));
+    }
+
+    #[test]
+    fn anonymous_queue_entries_keep_empty_uids() {
+        let entries = serde_json::from_value(serde_json::json!([
+            { "item": { "uri": "spotify:track:duplicate" } },
+            { "item": { "uri": "spotify:track:duplicate" } }
+        ]))
+        .expect("the Soloist queue frame parses");
+
+        let tracks = queued_tracks(entries);
+
+        assert_eq!(tracks.len(), 2);
+        assert!(tracks.iter().all(|track| track.uid.is_empty()));
     }
 }
