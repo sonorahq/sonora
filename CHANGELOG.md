@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Songs, albums and artists uploaded to your Apple Music library through iTunes or the Music app can now be browsed and played.
 - Use Sonora in European Portuguese. A system set to Portuguese from Portugal picks it on its own.
 - Use Sonora in Vietnamese. A system set to Vietnamese picks it on its own.
 - Open the cover of an album or a playlist, or an artist's photo, from its page to see the original artwork full size, zoom in with the wheel or the buttons and drag it around.
