@@ -1,5 +1,6 @@
 //! Links handed to the app from outside, by the system or on the command line, opened on the
-//! provider they belong to. Sonora's own `sonora:` links offer a theme to install instead.
+//! provider they belong to. Sonora's own `sonora:` links offer a theme to install, or name nothing
+//! and only bring the window forward.
 
 use gpui::{App, Context, Entity, EventEmitter, Task};
 use music::link::{self, Linked};
@@ -59,16 +60,24 @@ impl Links {
     }
 
     /// Opens provider links, browser handoffs and theme offers, returning whether the link was handled.
-    /// A recognized link cancels the previous resolution and waiting destination before opening.
+    /// A bare Sonora link opens nothing and leaves a pending link alone, since the caller raises the
+    /// window. Any other recognized link cancels the previous resolution and waiting destination.
     pub fn open(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
         if !self.recognizes(text, cx) {
             return false;
         }
+        // A bare link opens nothing, so it must not cancel a pending link.
+        if is_bare_own_link(text) {
+            return true;
+        }
         self.following = None;
         self.waiting = None;
-        if let Some(address) = link::address(text)
-            .filter(|address| address.scheme() == "sonora" && address.host_str() == Some("open"))
-        {
+        if let Some(address) = link::address(text).filter(|address| {
+            address.scheme() == "sonora"
+                && address
+                    .host_str()
+                    .is_some_and(|host| host.eq_ignore_ascii_case("open"))
+        }) {
             if let Some(target) = link::query(&address, "url")
                 && self.session.read(cx).read_link(&target).is_some()
             {
@@ -222,6 +231,54 @@ impl Links {
                 .update(cx, |devices, cx| devices.peek(&jam, cx)),
             Linked::Short => {}
             linked => cx.emit(Opened(linked)),
+        }
+    }
+}
+
+/// Whether a Sonora link names nothing to open: the bare scheme, or `sonora://open` without a `url`.
+fn is_bare_own_link(text: &str) -> bool {
+    if !is_own_link(text) {
+        return false;
+    }
+    let Some(address) = link::address(text) else {
+        return false;
+    };
+    let empty_path = matches!(address.path(), "" | "/");
+    match address.host_str() {
+        None | Some("") => empty_path && address.query().is_none_or(str::is_empty),
+        Some(host) => {
+            host.eq_ignore_ascii_case("open")
+                && empty_path
+                && link::query(&address, "url").is_none()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_sonora_link_with_nothing_to_open_is_bare() {
+        for link in [
+            "sonora:",
+            "sonora://",
+            "sonora:///",
+            "SONORA://",
+            "sonora://open",
+            "sonora://open?url=",
+            "SONORA://OPEN?url=",
+        ] {
+            assert!(is_bare_own_link(link), "{link}");
+            // `recognizes` must accept these, or `follow` treats them as files.
+            assert!(is_own_link(link), "{link}");
+        }
+        for link in [
+            "sonora://open?url=https%3A%2F%2Fopen.spotify.com%2Ftrack%2Fabc",
+            "sonora://theme/abc",
+            "sonora:open",
+        ] {
+            assert!(!is_bare_own_link(link), "{link}");
         }
     }
 }
