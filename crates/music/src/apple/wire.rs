@@ -1031,7 +1031,7 @@ pub fn artist(value: &Resource, root: &str) -> Option<Artist> {
 }
 
 /// A library artist page built from the albums and tracks the listener has by them.
-pub fn library_artist_page(value: &Resource) -> Option<Artist> {
+pub fn library_artist_page(value: &Resource, root: &str) -> Option<Artist> {
     let attributes = value.attributes.as_ref()?;
     let albums = newest_first(
         value
@@ -1048,7 +1048,7 @@ pub fn library_artist_page(value: &Resource) -> Option<Artist> {
         .rows()
         .iter()
         .flat_map(|album| album.relationships.tracks.rows())
-        .filter_map(library_song)
+        .filter_map(|row| library_song(row, root))
         .collect();
     let cover_large = artwork(attributes, HERO).or_else(|| {
         albums
@@ -1062,6 +1062,7 @@ pub fn library_artist_page(value: &Resource) -> Option<Artist> {
         banner: banner(attributes),
         biography: None,
         monthly_listeners: None,
+        followers: None,
         top_tracks,
         albums,
     })

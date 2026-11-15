@@ -1160,7 +1160,7 @@ impl AppleClient {
             .first()
             .with_context(|| format!("apple music has no artist {artist_id}"))?;
         let Some(catalog_id) = wire::catalog(found).and_then(|catalog| catalog.id.as_str()) else {
-            return wire::library_artist_page(found)
+            return wire::library_artist_page(found, &self.root_genre)
                 .with_context(|| format!("cannot read the apple artist {artist_id}"));
         };
         let library_albums: Vec<Album> = found
