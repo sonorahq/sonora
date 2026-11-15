@@ -178,11 +178,17 @@ impl Tracks for ShelfTracks {
         loading(&self.library, Section::Songs, cx)
     }
 
+    /// The streaming shelf's order, only while no local file shares the page, since a mixed page
+    /// has no one order to follow.
     fn arrival(&self, cx: &App) -> Option<Arrival> {
+        let library = self.library.read(cx);
+        if !library.state(Shelf::Local).tracks().is_empty() {
+            return None;
+        }
         Sonora::global(cx)
             .session
             .read(cx)
-            .capabilities_of(self.shelf)
+            .capabilities_of(Shelf::Streaming)
             .song_arrival
     }
 }
