@@ -42,7 +42,8 @@ use super::wire::{self, Event, Playback, Status};
 use super::{QUALITIES, binary, data, key, paired_account, prefs, recheck};
 use crate::connect::QueuedTrack;
 use crate::{
-    Encoding, Normalisation, PlaybackConfig, PlaybackEvent, PlaybackEvents, Quality, TrackSignal,
+    Encoding, Normalisation, PlaybackConfig, PlaybackEvent, PlaybackEvents, Quality, QueueAppend,
+    TrackSignal,
 };
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -126,8 +127,11 @@ impl Engine {
     }
 
     /// Appends a track through Soloist so Spotify Connect owns the shared queue.
-    pub(crate) fn append_to_queue(&self, track_id: &str) {
-        self.ask(Command::Enqueue(track_id.to_owned()));
+    pub(crate) fn append_to_queue(&self, track_id: &str, append: QueueAppend) {
+        self.ask(Command::Enqueue {
+            id: track_id.to_owned(),
+            append,
+        });
     }
 
     pub(crate) fn set_gain(&self, gain: f32) {
@@ -193,7 +197,16 @@ enum Command {
     Seek(Duration),
     Volume(u8),
     Next(String),
-    Enqueue(String),
+    Enqueue {
+        id: String,
+        append: QueueAppend,
+    },
+}
+
+/// An `add_to_queue` command awaiting Soloist's FIFO result.
+enum SentEnqueue {
+    Feed,
+    Append { id: String, append: QueueAppend },
 }
 
 /// What a daemon is started with, beyond the key.
@@ -302,9 +315,9 @@ struct Brain {
     /// Whether the daemon is signed in, before which it takes no command.
     signed_in: bool,
     /// Queue additions waiting for this daemon's initial sign-in.
-    pending_enqueues: VecDeque<String>,
+    pending_enqueues: VecDeque<(String, QueueAppend)>,
     /// Queue additions accepted by the daemon, in command-result order.
-    sent_enqueues: VecDeque<String>,
+    sent_enqueues: VecDeque<SentEnqueue>,
     /// Sonora's volume, from 0 to 100.
     volume: u8,
     /// Whether the daemon's volume is held at zero while an opening seek lands, so the start of
@@ -395,7 +408,7 @@ impl Brain {
                     self.feed();
                 }
             }
-            Command::Enqueue(id) => self.enqueue(id),
+            Command::Enqueue { id, append } => self.enqueue(id, append),
         }
     }
 
@@ -527,9 +540,13 @@ impl Brain {
             return;
         };
         log::debug!("soloist: queueing the next track on the daemon");
-        self.send("add_to_queue", json!({ "uri": next }));
-        self.send("get_queue", json!({}));
-        self.fed = Some(next);
+        if self.send("add_to_queue", json!({ "uri": next })) {
+            self.sent_enqueues.push_back(SentEnqueue::Feed);
+            self.send("get_queue", json!({}));
+            self.fed = Some(next);
+        } else {
+            self.next = Some(next);
+        }
     }
 
     fn play(&mut self) {
@@ -710,10 +727,8 @@ impl Brain {
             },
             Event::CommandResult { command } => {
                 self.acknowledged(&command);
-                if command == "add_to_queue"
-                    && let Some(id) = self.sent_enqueues.pop_front()
-                {
-                    self.report(PlaybackEvent::QueueAppended { id });
+                if command == "add_to_queue" {
+                    self.queue_result(true);
                 }
             }
             Event::Error { message, command } => {
@@ -727,9 +742,7 @@ impl Brain {
                     false => {
                         log::warn!("soloist: the daemon turned a command down: {message}");
                         if command == "add_to_queue" {
-                            if let Some(id) = self.sent_enqueues.pop_front() {
-                                self.report(PlaybackEvent::QueueRejected { id });
-                            }
+                            self.queue_result(false);
                         } else if command.is_empty() {
                             // shortcut: older Soloist errors omit the command, so retain queue
                             // work rather than reject an unrelated append; upgrade with IDs.
@@ -1142,45 +1155,66 @@ impl Brain {
     }
 
     /// Adds a track now, or holds it only while this daemon completes its first sign-in.
-    fn enqueue(&mut self, id: String) {
+    fn enqueue(&mut self, id: String, append: QueueAppend) {
         if self.signed_in {
-            return self.send_enqueue(id);
+            return self.send_enqueue(id, append);
         }
         if self.link.is_some() && self.pending_enqueues.len() < PENDING_ENQUEUES {
-            self.pending_enqueues.push_back(id);
+            self.pending_enqueues.push_back((id, append));
         } else {
-            self.report(PlaybackEvent::QueueRejected { id });
+            self.report(PlaybackEvent::QueueRejected { id, append });
         }
     }
 
     /// Sends all additions that belong to the daemon which just signed in.
     fn flush_enqueues(&mut self) {
-        while let Some(id) = self.pending_enqueues.pop_front() {
-            self.send_enqueue(id);
+        while let Some((id, append)) = self.pending_enqueues.pop_front() {
+            self.send_enqueue(id, append);
         }
     }
 
     /// Sends one queue addition and reports a failure instead of claiming it was accepted.
-    fn send_enqueue(&mut self, id: String) {
+    fn send_enqueue(&mut self, id: String, append: QueueAppend) {
         if !self.send(
             "add_to_queue",
             json!({ "uri": format!("{TRACK_PREFIX}{id}") }),
         ) {
-            return self.report(PlaybackEvent::QueueRejected { id });
+            return self.report(PlaybackEvent::QueueRejected { id, append });
         }
-        self.sent_enqueues.push_back(id);
+        self.sent_enqueues
+            .push_back(SentEnqueue::Append { id, append });
         self.send("get_queue", json!({}));
     }
 
     /// Discards work that cannot safely cross a daemon disconnect or session teardown.
     fn reject_enqueues(&mut self) {
-        let rejected: Vec<_> = self
-            .pending_enqueues
-            .drain(..)
-            .chain(self.sent_enqueues.drain(..))
-            .collect();
-        for id in rejected {
-            self.report(PlaybackEvent::QueueRejected { id });
+        let pending: Vec<_> = self.pending_enqueues.drain(..).collect();
+        let sent: Vec<_> = self.sent_enqueues.drain(..).collect();
+        for (id, append) in pending {
+            self.report(PlaybackEvent::QueueRejected { id, append });
+        }
+        for queued in sent {
+            if let SentEnqueue::Append { id, append } = queued {
+                self.report(PlaybackEvent::QueueRejected { id, append });
+            }
+        }
+    }
+
+    /// Reports the result of the earliest queue command without confusing gapless feed with a
+    /// user-requested append.
+    fn queue_result(&mut self, accepted: bool) {
+        let Some(queued) = self.sent_enqueues.pop_front() else {
+            return;
+        };
+        match (accepted, queued) {
+            (true, SentEnqueue::Append { id, append }) => {
+                self.report(PlaybackEvent::QueueAppended { id, append })
+            }
+            (false, SentEnqueue::Append { id, append }) => {
+                self.report(PlaybackEvent::QueueRejected { id, append })
+            }
+            (false, SentEnqueue::Feed) => self.fed = None,
+            (true, SentEnqueue::Feed) => {}
         }
     }
 
@@ -1581,14 +1615,35 @@ mod tests {
     #[test]
     fn disconnect_rejects_pending_enqueues() {
         let (mut brain, mut events) = brain();
-        brain.pending_enqueues.push_back("pending".into());
+        brain
+            .pending_enqueues
+            .push_back(("pending".into(), QueueAppend::User));
 
         brain.gone(End::Failed);
 
         assert!(brain.pending_enqueues.is_empty());
         assert!(matches!(
             events.try_recv(),
-            Ok(PlaybackEvent::QueueRejected { id }) if id == "pending"
+            Ok(PlaybackEvent::QueueRejected { id, .. }) if id == "pending"
+        ));
+    }
+
+    #[test]
+    fn feed_result_does_not_report_the_next_user_append() {
+        let (mut brain, mut events) = brain();
+        brain.sent_enqueues.push_back(SentEnqueue::Feed);
+        brain.sent_enqueues.push_back(SentEnqueue::Append {
+            id: "user".into(),
+            append: QueueAppend::User,
+        });
+
+        brain.queue_result(true);
+        assert!(events.try_recv().is_err());
+
+        brain.queue_result(false);
+        assert!(matches!(
+            events.try_recv(),
+            Ok(PlaybackEvent::QueueRejected { id, .. }) if id == "user"
         ));
     }
 

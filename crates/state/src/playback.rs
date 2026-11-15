@@ -10,7 +10,7 @@ use music::connect::{self, Command, Repeat};
 use music::vault::Vault;
 use music::{
     Analyzer, Meter, MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent, PlaybackEvents,
-    PlaybackFactory, Player, Quality, Spectrum, Track, TrackSignal, Transcode,
+    PlaybackFactory, Player, Quality, QueueAppend, Spectrum, Track, TrackSignal, Transcode,
 };
 use ui::{Pin, PinKind};
 
@@ -1356,6 +1356,10 @@ impl Playback {
         self.soloist_queue_current = current.as_ref().map(|entry| entry.id.clone());
         let entries: Vec<_> = previous.into_iter().chain(upcoming).collect();
         let revision = self.soloist_queue_revision.next();
+        let retained = self
+            .soloist_publish
+            .as_ref()
+            .map_or_else(Vec::new, SoloistPublish::retained);
         self.soloist_queue = Some(Io::global(cx).load(
             async move {
                 let current = match current {
@@ -1380,10 +1384,6 @@ impl Playback {
                     Ok((current, entries, tracks)) => {
                         let (previous, upcoming) =
                             split_soloist_window(entries, tracks, previous_len);
-                        let retained = this
-                            .soloist_publish
-                            .as_ref()
-                            .map_or_else(Vec::new, SoloistPublish::retained);
                         this.queue.update(cx, |queue, cx| {
                             queue.replace_soloist_remote(current, previous, upcoming, &retained, cx)
                         });
@@ -1454,7 +1454,7 @@ impl Playback {
             self.soloist_publish = None;
             return;
         };
-        match engine.append_to_queue(&id) {
+        match engine.append_to_queue(&id, QueueAppend::Publication) {
             Ok(true) => {}
             Ok(false) | Err(_) => {
                 self.soloist_publish = None;
@@ -1546,17 +1546,16 @@ impl Playback {
                 return None;
             }
             let sent = tracks.iter().all(|track| {
-                track
-                    .id
-                    .as_deref()
-                    .is_some_and(|id| match engine.append_to_queue(id) {
+                track.id.as_deref().is_some_and(|id| {
+                    match engine.append_to_queue(id, QueueAppend::User) {
                         Ok(true) => true,
                         Ok(false) => false,
                         Err(error) => {
                             log::warn!("playback: cannot append to Soloist queue: {error:#}");
                             false
                         }
-                    })
+                    }
+                })
             });
             return sent.then_some(QueuePlacement::End);
         }
@@ -3413,23 +3412,24 @@ impl Playback {
             self.learn_signal(id, track, cx);
             return;
         }
-        if let BackendEvent::QueueRejected { id } = event {
-            if self
-                .soloist_publish
-                .as_ref()
-                .is_some_and(|publish| publish.awaiting.as_deref() == Some(&id))
-            {
+        if let BackendEvent::QueueRejected { id, append } = event {
+            if self.soloist_publish.as_ref().is_some_and(|publish| {
+                append == QueueAppend::Publication && publish.awaiting.as_deref() == Some(&id)
+            }) {
                 self.soloist_publish = None;
+                self.soloist_queue = None;
+                self.soloist_queue_current = None;
+                self.soloist_queue_revision.next();
             }
             log::warn!("playback: Soloist rejected a shared queue addition");
             Toasts::show(Outcome::Failed, "toast-queue-failed", cx);
             return;
         }
-        if let BackendEvent::QueueAppended { id } = event {
+        if let BackendEvent::QueueAppended { id, append } = event {
             if self
                 .soloist_publish
                 .as_mut()
-                .is_some_and(|publish| publish.confirm(&id))
+                .is_some_and(|publish| append == QueueAppend::Publication && publish.confirm(&id))
             {
                 self.publish_soloist_collection(cx);
             }

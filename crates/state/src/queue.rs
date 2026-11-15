@@ -1030,13 +1030,7 @@ impl Queue {
         self.past = previous.into_iter().map(&mut entry).collect();
         self.current = current.map(&mut entry);
         let remote: Vec<_> = upcoming.into_iter().map(&mut entry).collect();
-        let remote_window: Vec<_> = self
-            .past
-            .iter()
-            .chain(self.current.iter())
-            .chain(&remote)
-            .cloned()
-            .collect();
+        let remote_window: Vec<_> = self.current.iter().chain(&remote).cloned().collect();
         let retained = retained_soloist_entries(&self.upcoming, &remote_window, retained);
         self.upcoming = remote
             .into_iter()
@@ -1442,13 +1436,13 @@ fn retained_soloist_entries(
     remote: &[Entry],
     retained: &[String],
 ) -> Vec<Entry> {
-    let mut remote_ids: HashMap<_, usize> = HashMap::new();
+    let mut published = 0;
     for entry in remote {
-        if let Some(id) = entry.id() {
-            *remote_ids.entry(id).or_default() += 1;
+        if entry.id() == retained.get(published).map(String::as_str) {
+            published += 1;
         }
     }
-    let mut wanted = retained.iter().map(String::as_str).peekable();
+    let mut wanted = retained[published..].iter().map(String::as_str).peekable();
     upcoming
         .iter()
         .filter_map(|entry| {
@@ -1457,13 +1451,7 @@ fn retained_soloist_entries(
                 return None;
             }
             wanted.next();
-            match remote_ids.get_mut(id) {
-                Some(count) if *count > 0 => {
-                    *count -= 1;
-                    None
-                }
-                _ => Some(entry.clone()),
-            }
+            Some(entry.clone())
         })
         .collect()
 }
@@ -1635,6 +1623,30 @@ mod tests {
         let retained = retained_soloist_entries(&upcoming, &remote, &["b".into(), "c".into()]);
 
         assert_eq!(ids(&retained.into()), ["c"]);
+    }
+
+    #[test]
+    fn remote_opener_does_not_consume_a_later_unpublished_duplicate() {
+        let upcoming = VecDeque::from([entry("b"), entry("a"), entry("c")]);
+        let retained = retained_soloist_entries(
+            &upcoming,
+            &[entry("a")],
+            &["b".into(), "a".into(), "c".into()],
+        );
+
+        assert_eq!(ids(&retained.into()), ["b", "a", "c"]);
+    }
+
+    #[test]
+    fn remote_history_does_not_consume_an_unpublished_tail() {
+        let upcoming = VecDeque::from([entry("b"), entry("c")]);
+        let retained = retained_soloist_entries(
+            &upcoming,
+            &[entry("a"), entry("remote")],
+            &["b".into(), "c".into()],
+        );
+
+        assert_eq!(ids(&retained.into()), ["b", "c"]);
     }
 
     #[test]

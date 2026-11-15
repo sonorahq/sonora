@@ -356,9 +356,9 @@ impl MusicPlayer for Official {
         Ok(())
     }
 
-    fn append_to_queue(&self, track_id: &str) -> Result<bool> {
+    fn append_to_queue(&self, track_id: &str, append: crate::QueueAppend) -> Result<bool> {
         track_uri(track_id)?;
-        self.engine.append_to_queue(track_id);
+        self.engine.append_to_queue(track_id, append);
         Ok(true)
     }
 

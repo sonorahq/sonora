@@ -694,11 +694,22 @@ pub enum PlaybackEvent {
     /// Soloist could not add this track to its shared queue.
     QueueRejected {
         id: String,
+        append: QueueAppend,
     },
     /// Soloist confirmed a track was added to its shared queue.
     QueueAppended {
         id: String,
+        append: QueueAppend,
     },
+}
+
+/// Why Sonora added a track to a shared player queue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueueAppend {
+    /// The listener explicitly added a track to the queue.
+    User,
+    /// The tail of a collection Sonora is publishing to the shared queue.
+    Publication,
 }
 
 impl PlaybackEvent {
@@ -735,7 +746,7 @@ pub trait Player: Send + Sync {
     fn preload(&self, track_id: &str, segue: bool) -> Result<()>;
 
     /// Adds a track to the engine's own shared queue. `false` keeps queue ownership local.
-    fn append_to_queue(&self, _track_id: &str) -> Result<bool> {
+    fn append_to_queue(&self, _track_id: &str, _append: QueueAppend) -> Result<bool> {
         Ok(false)
     }
 
