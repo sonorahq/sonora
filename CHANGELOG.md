@@ -88,6 +88,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Import an M3U playlist from the Create playlist dialog, which replaces the import button in the Playlists toolbar.
 - History and Settings moved from the sidebar to the account menu at the top right, which also switches between your connected services and opens Manage accounts. Add them back to the sidebar under Settings, General, Sidebar entries.
 - Opening tracks from a file manager now starts the first one with no delay, then queues the rest.
+- Date added sorts Apple Music, YouTube Music and local playlists in the order you added songs.
 
 ## [0.49.1] - 2026-11-13
 

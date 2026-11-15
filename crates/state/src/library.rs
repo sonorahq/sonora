@@ -7,8 +7,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{App, Context, Entity, SharedString, Task};
 use music::{
-    Album, Catalog, ImportedPlaylist, MediaKind, MusicApi, Page, Pages, Playlist, SavedArtist,
-    Shape, Track,
+    Album, Arrival, Catalog, ImportedPlaylist, MediaKind, MusicApi, Page, Pages, Playlist,
+    SavedArtist, Shape, Track,
 };
 use tokio::sync::{Semaphore, oneshot};
 
@@ -81,6 +81,9 @@ impl Shelf {
 /// carries the favorites beside them.
 struct Held {
     shape: Shape,
+    /// Which end of the provider's song list holds the latest addition, when that list has no
+    /// dates. A song added here goes in at that end, so it sits where a reload would put it.
+    arrival: Option<Arrival>,
     state: LibraryState,
     awaited: Vec<LibraryPart>,
     /// How many rows each part will have once it has all arrived, for the parts whose
@@ -90,11 +93,11 @@ struct Held {
     /// provider. The part's real rows replace them once they have all arrived.
     stale: HashSet<LibraryPart>,
     starred: Starred,
-    /// The favorite changes to tracks made while a load could still replace the favorites,
-    /// by track id: the track for a favorite, nothing for one taken back. The load puts them
-    /// back over the rows it reads, since the provider may have read its list before the
-    /// change took effect.
-    edits: HashMap<String, Option<Track>>,
+    /// The favorite changes to tracks made while a load could still replace the favorites, in
+    /// the order they were made: the track for a favorite, nothing for one taken back. Each
+    /// track keeps only its latest change. The load puts them back over the rows it reads in
+    /// that order, since the provider may have read its list before the change took effect.
+    edits: Vec<(String, Option<Track>)>,
     tasks: Vec<Task<()>>,
 }
 
@@ -102,12 +105,13 @@ impl Held {
     fn empty(shape: Shape) -> Self {
         Self {
             shape,
+            arrival: None,
             state: LibraryState::Empty,
             awaited: Vec::new(),
             expected: HashMap::new(),
             stale: HashSet::new(),
             starred: Starred::default(),
-            edits: HashMap::new(),
+            edits: Vec::new(),
             tasks: Vec::new(),
         }
     }
@@ -116,8 +120,11 @@ impl Held {
     /// replaced, then forgets them. The shelf shows the change the listener made rather than
     /// the provider's list from before it. Nothing happens while the favorites are not there
     /// to amend, and the changes are dropped all the same, since a load that failed leaves
-    /// the cache as the optimistic change already left it.
+    /// the cache as the optimistic change already left it. On a list without dates a song
+    /// favorited again moves to the newest end, even when the load still lists it where it was.
     fn reapply_edits(&mut self) {
+        let undated = self.arrival;
+        let arrival = undated.unwrap_or(Arrival::OldestFirst);
         let edits = std::mem::take(&mut self.edits);
         let Some(favorites) = self.favorites_mut() else {
             return;
@@ -125,10 +132,14 @@ impl Held {
         for (id, edit) in edits {
             let tracks = &mut *favorites.tracks;
             let held = |track: &Track| track.id.as_deref() == Some(id.as_str());
-            match edit {
-                Some(track) if !tracks.iter().any(held) => tracks.push(track),
-                Some(_) => {}
-                None => tracks.retain(|track| !held(track)),
+            match (edit, tracks.iter().position(held), undated) {
+                (Some(track), None, _) => arrival.admit(tracks, track),
+                (Some(_), Some(at), Some(arrival)) => {
+                    let row = tracks.remove(at);
+                    arrival.admit(tracks, row);
+                }
+                (Some(_), Some(_), None) => {}
+                (None, _, _) => tracks.retain(|track| !held(track)),
             }
         }
     }
@@ -910,7 +921,7 @@ impl Savable for Track {
 
     /// Puts the track onto the shelf's own pages where the library is a set apart from the
     /// favorites. Apple Music, the one such provider, adds a favorited song to the library
-    /// itself, so the Songs page lists it without a reload.
+    /// itself, so the Songs page lists it without a reload, at the end Apple will list it.
     fn admit(library: &mut Library, track: Self, cx: &mut Context<Library>) {
         let Some(id) = track.id.clone() else {
             return;
@@ -919,13 +930,15 @@ impl Savable for Track {
         if !library.session.read(cx).shape_of(shelf).editable() {
             return;
         }
-        let Some(ready) = library.held_mut(shelf).ready_mut() else {
+        let held = library.held_mut(shelf);
+        let arrival = held.arrival.unwrap_or(Arrival::NewestFirst);
+        let Some(ready) = held.ready_mut() else {
             return;
         };
         if ready.tracks.iter().any(|known| known.id == track.id) {
             return;
         }
-        ready.tracks.insert(0, track);
+        arrival.admit(&mut ready.tracks, track);
     }
 
     async fn ask(client: Arc<dyn MusicApi>, id: String, saved: bool) -> anyhow::Result<()> {
@@ -1778,12 +1791,17 @@ impl Library {
         cx: &mut Context<Self>,
     ) {
         let gone = Gone::LibraryTrack(track.clone());
+        let arrival = track
+            .id
+            .as_deref()
+            .and_then(|id| self.held(Shelf::of(id)).arrival)
+            .unwrap_or(Arrival::NewestFirst);
         track.stamp_added();
         self.set_in_library(MediaKind::Track, present, gone, cx, move |this, shelf| {
             if let Some(ready) = this.held_mut(shelf).ready_mut() {
                 ready.tracks.retain(|known| known.id != track.id);
                 if present {
-                    ready.tracks.insert(0, track);
+                    arrival.admit(&mut ready.tracks, track);
                     return;
                 }
             }
@@ -3084,14 +3102,16 @@ impl Library {
             return;
         };
         let held = self.held_mut(Shelf::of(&id));
-        held.edits.insert(id.clone(), saved.then(|| track.clone()));
+        let arrival = held.arrival.unwrap_or(Arrival::OldestFirst);
+        held.edits.retain(|(edited, _)| *edited != id);
+        held.edits.push((id.clone(), saved.then(|| track.clone())));
         let Some(favorites) = held.favorites_mut() else {
             return;
         };
         let tracks = favorites.tracks;
         let same = |held: &Track| held.id.as_deref() == Some(id.as_str());
         match saved {
-            true if !tracks.iter().any(same) => tracks.push(track),
+            true if !tracks.iter().any(same) => arrival.admit(tracks, track),
             false => tracks.retain(|held| !same(held)),
             _ => {}
         }
@@ -3205,13 +3225,15 @@ impl Library {
             return;
         };
         let shape = session.shape_of(shelf);
+        let arrival = session.capabilities_of(shelf).song_arrival;
 
         // a change whose request is still out may be missed by the read about to start; one
         // the provider has answered is in what it reads
         let asked: HashSet<String> = self.pending.keys().cloned().collect();
         let held = self.held_mut(shelf);
         held.shape = shape;
-        held.edits.retain(|id, _| asked.contains(id));
+        held.arrival = arrival;
+        held.edits.retain(|(id, _)| asked.contains(id));
         held.awaited = LibraryPart::ALL.to_vec();
         match held.stale.is_empty() {
             true => {
