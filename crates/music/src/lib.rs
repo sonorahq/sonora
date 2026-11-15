@@ -30,6 +30,7 @@ pub mod scrobble;
 mod sink;
 pub mod soloist;
 mod spectrum;
+mod sponsorblock;
 pub mod spotify;
 mod stream;
 pub mod subsonic;
@@ -60,6 +61,7 @@ pub use models::{
 pub use output::{Server as SoundServer, missing_bridge};
 pub use redact::redact;
 pub use spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
+pub use sponsorblock::{SkipSegment, SponsorBlock};
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";
 pub const LOCAL_ALBUM_PREFIX: &str = "local-album:";
@@ -680,6 +682,36 @@ pub enum PlaybackEvent {
         id: String,
         track: TrackSignal,
     },
+    /// The queue window Soloist currently holds, in play order around the current track.
+    QueueChanged {
+        current: Option<connect::QueuedTrack>,
+        previous: Vec<connect::QueuedTrack>,
+        upcoming: Vec<connect::QueuedTrack>,
+    },
+    /// Soloist moved to a track another Spotify app queued.
+    QueuedTrack {
+        id: String,
+        at: Duration,
+    },
+    /// Soloist could not add this track to its shared queue.
+    QueueRejected {
+        id: String,
+        append: QueueAppend,
+    },
+    /// Soloist confirmed a track was added to its shared queue.
+    QueueAppended {
+        id: String,
+        append: QueueAppend,
+    },
+}
+
+/// Why Sonora added a track to a shared player queue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueueAppend {
+    /// The listener explicitly added a track to the queue.
+    User,
+    /// The tail of a collection Sonora is publishing to the shared queue.
+    Publication,
 }
 
 impl PlaybackEvent {
@@ -714,6 +746,17 @@ pub trait Player: Send + Sync {
     /// Fetches a track ahead of time so a later `load` starts at once. `segue` marks the next
     /// queue item, which a gapless engine may already line up behind the current one.
     fn preload(&self, track_id: &str, segue: bool) -> Result<()>;
+
+    /// Adds a track to the engine's own shared queue. `false` keeps queue ownership local.
+    fn append_to_queue(&self, _track_id: &str, _append: QueueAppend) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// Whether the engine can honour ordered local queue placements.
+    fn can_order_queue(&self) -> bool {
+        true
+    }
+
     fn play(&self);
     fn pause(&self);
 
@@ -979,6 +1022,8 @@ impl std::fmt::Display for SignInFailure {
 
 impl std::error::Error for SignInFailure {}
 
+/// One account or profile a sign-in can go on as. The picked `id` comes back on the prompt's
+/// input.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AccountChoice {
     pub id: String,
@@ -986,9 +1031,25 @@ pub struct AccountChoice {
     pub detail: Option<String>,
 }
 
+/// What the choices in a `SignInPrompt::Accounts` are, which decides how the picker asks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AccountKind {
+    /// Separate accounts that one browser session is signed in to at once.
+    Session,
+    /// Profiles inside one account, such as the members of a family plan.
+    Profile,
+}
+
+/// The accounts a sign-in asks the user to pick from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AccountChoices {
+    pub kind: AccountKind,
+    pub accounts: Vec<AccountChoice>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SignInPrompt {
-    Accounts(Vec<AccountChoice>),
+    Accounts(AccountChoices),
     Code { code: String, url: String },
     Url(String),
     Secret,

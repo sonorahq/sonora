@@ -19,8 +19,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::search::{self, Catalog};
 use crate::{
-    Hit, Io, Library, LyricsState, Origin, Playback, PlaybackState, QueueKind, QueuePlacement,
-    QueuePosition, Repeat, Session, SessionState, Shelf, Sonora, Whence, join, noted,
+    Hit, Io, Library, LibraryPart, LyricsState, Origin, Playback, PlaybackState, QueueKind,
+    QueuePlacement, QueuePosition, Repeat, Session, SessionState, Shelf, Sonora, Whence, join,
+    noted,
 };
 
 /// What `sonora current` calls the provider of a local file, the slug `sonora providers` gives it.
@@ -77,7 +78,10 @@ enum Place {
 /// An item to queue, checked on the main thread and fetched on tokio.
 enum Source {
     Path(PathBuf),
-    /// The link as typed, for the failure that names it, and what it points at.
+    /// A track already read from the local library, which needs no fetch.
+    Track(Box<Track>),
+    /// The link as typed, or a name for a local match, for the failure that names it, and what
+    /// it points at.
     Link(String, Linked),
 }
 
@@ -189,10 +193,71 @@ impl Control {
             Request::Search(query) => return self.search(query, reply, cx),
             Request::Session(command) => session(command, cx),
             Request::Lyrics => Reply::Value(Value::Lyrics(lyrics(self.playback.read(cx), cx))),
+            Request::Like(switch) => return self.like(switch, reply, cx),
             // a watch is answered as a stream, by `watch`, and never reaches here
             Request::Watch(_) => Reply::Failed(Failure::Malformed),
         };
         reply.send(answer).ok();
+    }
+
+    /// Reads or changes the favorite state of the track shown by the active playback device.
+    fn like(
+        &mut self,
+        switch: Option<Switch>,
+        reply: oneshot::Sender<Reply>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(track) = self.playback.read(cx).shown_track(cx) else {
+            reply.send(Reply::Failed(Failure::NoCurrentTrack)).ok();
+            return;
+        };
+        let Some(id) = track.id.as_deref() else {
+            reply.send(Reply::Failed(Failure::MissingTrackId)).ok();
+            return;
+        };
+        let shelf = Shelf::of(id);
+        if self.session.read(cx).client_of(shelf).is_none() {
+            reply.send(Reply::Failed(Failure::Unsupported)).ok();
+            return;
+        }
+        let saved = {
+            let library = self.library.read(cx);
+            if library.loading(shelf, LibraryPart::Tracks) || library.pending(id) {
+                reply.send(Reply::Failed(Failure::Busy)).ok();
+                return;
+            }
+            library.saved(id)
+        };
+        let Some(switch) = switch else {
+            reply.send(Reply::Value(Value::Liked(saved))).ok();
+            return;
+        };
+        let wanted = favorite_target(saved, switch);
+        if wanted == saved {
+            reply.send(Reply::Done).ok();
+            return;
+        }
+        let completed = self
+            .library
+            .update(cx, |library, cx| library.save_track(track, wanted, cx));
+        let key = self.issued;
+        self.issued += 1;
+        let task = cx.spawn(async move |this, cx| {
+            let answer = match completed.await {
+                Ok(true) => Reply::Done,
+                Ok(false) => Reply::Failed(Failure::FavoriteUpdateFailed),
+                Err(error) => {
+                    log::warn!("control: favorite update ended before it completed: {error}");
+                    Reply::Failed(Failure::FavoriteUpdateFailed)
+                }
+            };
+            this.update(cx, |this, _| {
+                reply.send(answer).ok();
+                this.pending.remove(&key);
+            })
+            .ok();
+        });
+        self.pending.insert(key, task);
     }
 
     /// Queues the items of `command`, or the best hit of the search it carries, which first has
@@ -213,6 +278,10 @@ impl Control {
             QueueCommand::PlayNext(items) => (items, Place::Queue(QueuePlacement::Next)),
             QueueCommand::Play(items) => (items, Place::Now),
         };
+        if let [Item::Local { text, kind }] = items.as_slice() {
+            let (text, kind) = (text.clone(), *kind);
+            return self.local(text, kind, placement, reply, cx);
+        }
         if !items.iter().any(|item| matches!(item, Item::Search { .. })) {
             return self.enqueue(items, placement, reply, cx);
         }
@@ -238,6 +307,38 @@ impl Control {
         });
     }
 
+    /// Plays or queues the best match of `text` and `kind` in the local library, ranked as the
+    /// search page ranks it. With nothing found, nothing is fetched or played.
+    fn local(
+        &mut self,
+        text: String,
+        kind: Kind,
+        placement: Place,
+        reply: oneshot::Sender<Reply>,
+        cx: &mut Context<Self>,
+    ) {
+        let sources: Vec<Source> = {
+            let library = self.library.read(cx).state(Shelf::Local);
+            search::matching(
+                library.tracks(),
+                library.albums(),
+                library.playlists(),
+                &text,
+                search_kind(kind),
+                1,
+            )
+            .into_iter()
+            .filter_map(local_source)
+            .collect()
+        };
+        if sources.is_empty() {
+            reply.send(Reply::Failed(Failure::NothingFound(text))).ok();
+            return;
+        }
+        let client = self.session.read(cx).local_client();
+        self.fetch_into(sources, client, placement, reply, cx);
+    }
+
     /// Fetches every item at once and queues them together, in the order they were given. One
     /// that fails refuses the whole command, so nothing is queued half.
     fn enqueue(
@@ -258,10 +359,21 @@ impl Control {
                 return;
             }
         };
+        let client = self.session.read(cx).client();
+        self.fetch_into(sources, client, placement, reply, cx);
+    }
 
-        let session = self.session.read(cx);
-        let local = session.local_provider();
-        let client = session.client();
+    /// Fetches what `sources` stand for, links through `client`, then places the tracks together
+    /// and answers. One that fails refuses the whole command, so nothing is queued half.
+    fn fetch_into(
+        &mut self,
+        sources: Vec<Source>,
+        client: Option<Arc<dyn MusicApi>>,
+        placement: Place,
+        reply: oneshot::Sender<Reply>,
+        cx: &mut Context<Self>,
+    ) {
+        let local = self.session.read(cx).local_provider();
         let fetch = Io::global(cx).spawn(async move {
             let fetches = sources
                 .into_iter()
@@ -472,8 +584,8 @@ impl Control {
         let link = match item {
             Item::Path(path) => return Ok(Source::Path(path)),
             Item::Link(link) => link,
-            // `queue` finds a search before anything reaches here
-            Item::Search { .. } => return Err(Failure::Malformed),
+            // `queue` finds a search or local matches before anything reaches here
+            Item::Search { .. } | Item::Local { .. } => return Err(Failure::Malformed),
         };
         let session = self.session.read(cx);
         let Some((slug, linked)) = session.read_link(&link) else {
@@ -524,6 +636,15 @@ impl Control {
             }
             Place::Queue(placement) => playback.enqueue_tracks(tracks, origin, placement, cx),
         });
+    }
+}
+
+/// Resolves an explicit or relative favorite command to the state it asks for.
+fn favorite_target(saved: bool, switch: Switch) -> bool {
+    match switch {
+        Switch::On => true,
+        Switch::Off => false,
+        Switch::Toggle => !saved,
     }
 }
 
@@ -906,6 +1027,27 @@ fn percent(level: f32) -> u8 {
     (level.clamp(0., 1.) * 100.).round() as u8
 }
 
+/// The search kind a command-line kind names.
+fn search_kind(kind: Kind) -> search::Kind {
+    match kind {
+        Kind::Song => search::Kind::Song,
+        Kind::Album => search::Kind::Album,
+        Kind::Artist => search::Kind::Artist,
+        Kind::Playlist => search::Kind::Playlist,
+    }
+}
+
+/// What a local match plays or queues: a song as it is, an album, artist or playlist fetched
+/// from the local provider. An artist without an id has nothing to fetch.
+fn local_source(hit: Hit) -> Option<Source> {
+    match hit {
+        Hit::Song(track) => Some(Source::Track(track)),
+        Hit::Album(album) => Some(Source::Link(album.name, Linked::Album(album.id))),
+        Hit::Artist(artist) => Some(Source::Link(artist.name, Linked::Artist(artist.id?))),
+        Hit::Playlist(playlist) => Some(Source::Link(playlist.name, Linked::Playlist(playlist.id))),
+    }
+}
+
 /// The tracks a checked item stands for. A file is read by the local provider, a link
 /// fetched from the provider it belongs to.
 async fn fetch(
@@ -921,6 +1063,12 @@ async fn fetch(
             })?;
             return Ok(Batch {
                 tracks: vec![track],
+                origin: None,
+            });
+        }
+        Source::Track(track) => {
+            return Ok(Batch {
+                tracks: vec![*track],
                 origin: None,
             });
         }
@@ -1087,5 +1235,15 @@ mod tests {
             lines,
             [("さよなら", Some("sayonara")), ("", None), ("bye", None)]
         );
+    }
+
+    #[test]
+    fn explicit_favorite_commands_are_idempotent() {
+        assert!(favorite_target(false, Switch::On));
+        assert!(favorite_target(true, Switch::On));
+        assert!(!favorite_target(false, Switch::Off));
+        assert!(!favorite_target(true, Switch::Off));
+        assert!(favorite_target(false, Switch::Toggle));
+        assert!(!favorite_target(true, Switch::Toggle));
     }
 }

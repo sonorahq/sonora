@@ -15,6 +15,10 @@ pub(crate) const PROOF: &[&str] = &["arl"];
 pub(crate) struct Credentials {
     /// The `arl` cookie value alone, not the whole header.
     pub arl: String,
+    /// The user id of the family profile picked at sign-in, which every connect switches to.
+    /// None for an account without family profiles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 fn path() -> PathBuf {

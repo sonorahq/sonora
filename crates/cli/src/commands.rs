@@ -49,6 +49,8 @@ pub enum Request {
     /// The lyrics of the current track, as already held, without looking any up. Stands for
     /// `sonora lyrics`
     Lyrics,
+    /// Reads or changes whether the current track is a favorite. Stands for `sonora like`
+    Like(Option<Switch>),
 }
 
 impl Request {
@@ -169,6 +171,12 @@ pub enum Item {
     /// The best hit of this kind for a search on the current provider, the one `sonora search`
     /// lists first. It is queued alone. Stands for `sonora add -s <query>`
     Search {
+        text: String,
+        kind: Kind,
+    },
+    /// The best match of this kind in the local library, ranked as the search page ranks it,
+    /// with no provider asked. It is queued alone. Stands for `sonora add -s <query> --local`
+    Local {
         text: String,
         kind: Kind,
     },

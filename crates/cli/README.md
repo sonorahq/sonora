@@ -23,6 +23,7 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora current` | Print what plays now as JSON, or `null` when nothing is loaded |
 | `sonora queue` | Print the queue: what played, what plays and what follows, without changing it |
 | `sonora lyrics` | Print the lyrics of the current track, without looking any up |
+| `sonora like [on\|off\|toggle]` | Print or change whether the current track is a favorite |
 | `sonora watch [--position]` | Print what plays again on every change, one line of JSON each, until stopped |
 | `sonora volume [N\|+N\|-N]` | Print the volume, set it from 0 to 100, or step it |
 | `sonora mute [on\|off\|toggle]` | Print or change whether playback is muted |
@@ -31,6 +32,7 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora add <file\|link>...` | Queue after the tracks queued by hand |
 | `sonora play-next <file\|link>...` | Queue right after the current track |
 | `sonora add -s <query> [-t TYPE]` | Queue the best hit of a search, the one `search` lists first |
+| `sonora play -s <query> --local` | Search the local library instead of the current provider; `add` and `play-next` take `--local` too |
 | `sonora search <query> [-t TYPE] [-n N]` | Search the current provider |
 | `sonora providers` | List the providers and which one is current |
 | `sonora provider [slug]` | Print the current provider, or switch to one that has an account |
@@ -38,6 +40,12 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora -v` | Print the version |
 
 `TYPE` is `song`, `album`, `artist` or `playlist`; `-s` takes a song unless told otherwise. `sonora <command> --help` describes each one.
+
+`--local` (`-l`) finds the best match in the local library with the same ranking the search page uses, and asks no provider. An album, artist or playlist queues all of its local songs. With no match, the command prints `nothing found for '<query>'`, exits with 1 and leaves playback as it is.
+
+`like` prints `on` or `off`; `--json` prints the state as a boolean. `on` and `off` are
+idempotent, and `toggle` flips the current track's favorite state. The same state appears in
+`sonora current` as `liked`.
 
 `mute` prints `on` or `off`; `--json` prints a boolean. Muting remembers the current volume for
 unmute, and a volume change while muted clears that remembered level.
