@@ -166,9 +166,9 @@ impl PlayerBar {
         let theme = *cx.theme();
         let empty = theme.muted_foreground.opacity(0.3);
         let level = self.playback.read(cx).shown_volume(cx);
+        let muted = self.playback.read(cx).muted(cx);
         let showing = self.over_volume.is_some() || self.rising.held;
         let bubble = showing.then(|| (level, percent(level)));
-        let restore = self.rising.muted.unwrap_or(0.7);
 
         div()
             .id("player-volume")
@@ -184,22 +184,14 @@ impl PlayerBar {
                     .ghost()
                     .small()
                     .icon(volume_icon(level))
-                    .tooltip_above(match level <= 0.001 {
+                    .tooltip_above(match muted {
                         true => "player-unmute",
                         false => "player-mute",
                     })
                     .tint(theme.muted_foreground)
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        let wanted = match level <= 0.001 {
-                            true => restore,
-                            false => 0.,
-                        };
-                        this.rising.muted = match wanted {
-                            0. => Some(level),
-                            _ => None,
-                        };
                         this.playback
-                            .update(cx, |playback, cx| playback.set_volume(wanted, cx));
+                            .update(cx, |playback, cx| playback.toggle_muted(cx));
                     })),
             )
             .child(
@@ -212,7 +204,6 @@ impl PlayerBar {
                         .on_move(cx.listener(|this, fraction: &f32, _, cx| {
                             let level = *fraction;
                             this.rising.held = true;
-                            this.rising.muted = None;
                             this.playback
                                 .update(cx, |playback, cx| playback.slide_volume(level, cx));
                             cx.notify();

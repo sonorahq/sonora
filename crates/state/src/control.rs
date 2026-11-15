@@ -587,6 +587,14 @@ fn play(playback: &mut Playback, command: PlaybackCommand, cx: &mut Context<Play
             };
             playback.set_volume(f32::from(target.clamp(0, 100)) / 100., cx);
         }
+        PlaybackCommand::Mute(None) => {
+            return Reply::Value(Value::Muted(playback.muted(cx)));
+        }
+        PlaybackCommand::Mute(Some(switch)) => match switch {
+            Switch::On => playback.set_muted(true, cx),
+            Switch::Off => playback.set_muted(false, cx),
+            Switch::Toggle => playback.toggle_muted(cx),
+        },
         PlaybackCommand::Shuffle(None) => {
             return Reply::Value(Value::Shuffle(playback.shown_shuffle(cx)));
         }

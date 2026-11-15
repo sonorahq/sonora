@@ -660,6 +660,15 @@ impl Devices {
     }
 
     fn set_roster(&mut self, roster: Roster, cx: &mut Context<Self>) {
+        let reported_volume = match (self.roster.elsewhere.as_ref(), roster.elsewhere.as_ref()) {
+            (Some(had), Some(wanted))
+                if had.device.id == wanted.device.id
+                    && had.device.volume != wanted.device.volume =>
+            {
+                Some((wanted.device.id.clone(), wanted.device.volume))
+            }
+            _ => None,
+        };
         let wanted = roster
             .elsewhere
             .as_ref()
@@ -679,6 +688,11 @@ impl Devices {
                 .as_ref()
                 .is_some_and(|e| e.state.playing);
         self.roster = roster;
+        if let Some((device, level)) = reported_volume {
+            self.playback.update(cx, |playback, _| {
+                playback.reported_steered_volume(&device, level)
+            });
+        }
         // playback taken for a local file is never reported, so the network never releases it,
         // and another device starting to play is what takes it back
         if started && self.claimed && self.sent.is_none() {

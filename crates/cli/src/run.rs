@@ -99,6 +99,10 @@ fn show(value: &Value) -> String {
     match value {
         Value::Current(current) => serde_json::to_string_pretty(current).unwrap_or_default(),
         Value::Volume(level) => level.to_string(),
+        Value::Muted(muted) => match muted {
+            true => "on".to_owned(),
+            false => "off".to_owned(),
+        },
         Value::Shuffle(on) => match on {
             true => "on".to_owned(),
             false => "off".to_owned(),
@@ -241,6 +245,7 @@ fn json(value: &Value) -> String {
     let printed = match value {
         Value::Current(current) => serde_json::to_string(current),
         Value::Volume(level) => serde_json::to_string(level),
+        Value::Muted(muted) => serde_json::to_string(muted),
         Value::Shuffle(on) => serde_json::to_string(on),
         Value::Repeat(repeat) => serde_json::to_string(repeat),
         Value::Providers(providers) => serde_json::to_string(providers),
@@ -409,5 +414,13 @@ mod tests {
             wire::LyricsSnapshot::without(LyricsStatus::Ready).bounded(false, lines, None),
         );
         assert_eq!(show(&value), "one\ntwo");
+    }
+
+    #[test]
+    fn mute_state_prints_as_on_off_or_json_boolean() {
+        assert_eq!(show(&Value::Muted(true)), "on");
+        assert_eq!(show(&Value::Muted(false)), "off");
+        assert_eq!(json(&Value::Muted(true)), "true");
+        assert_eq!(json(&Value::Muted(false)), "false");
     }
 }
