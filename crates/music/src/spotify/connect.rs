@@ -1393,24 +1393,22 @@ impl Worker {
     }
 
     /// What it takes to play as `start` says. A song that already plays here is not loaded again,
-    /// which would be heard: shuffle and repeat are taken, the queue after it, and its place
-    /// when that is audibly off.
+    /// which would be heard: repeat is taken, the queue after the song, and its place when that
+    /// is audibly off. Another shuffle reorders the whole queue, more of it than a report
+    /// shows, so that is started over like another song.
     fn in_step(&mut self, start: Start) -> Vec<Command> {
         let wanted = &start.state;
         let Some(now) = self.now.as_ref().filter(|now| {
             now.track.as_ref().map(|track| &track.id)
                 == wanted.track.as_ref().map(|track| &track.id)
                 && now.playing == wanted.playing
+                && wanted
+                    .shuffle
+                    .is_none_or(|shuffle| now.shuffle == Some(shuffle))
         }) else {
             return vec![Command::Start(start)];
         };
         let mut commands = Vec::new();
-        if let Some(shuffle) = wanted
-            .shuffle
-            .filter(|shuffle| now.shuffle != Some(*shuffle))
-        {
-            commands.push(Command::Shuffle(shuffle));
-        }
         if let Some(repeat) = wanted.repeat.filter(|repeat| now.repeat != Some(*repeat)) {
             commands.push(Command::Repeat(repeat));
         }
@@ -1424,25 +1422,10 @@ impl Worker {
                 .map(|track| (track.id.clone(), track.queued))
                 .collect()
         };
-        let reshuffled = commands
-            .iter()
-            .any(|command| matches!(command, Command::Shuffle(_)));
-        match (reshuffled, listed(&upcoming) != listed(&now.upcoming)) {
-            // Switching shuffle reorders the queue here, so the order that came with it goes
-            // last. It is the Jam's own and not an edit of what this device reported, and an
-            // edit would be dropped for meeting a queue the last report does not show.
-            (true, _) => commands.push(Command::Start(Start {
-                state: Arc::new(Snapshot {
-                    upcoming: upcoming.clone(),
-                    ..(**now).clone()
-                }),
-                preserve_queue: true,
-                restart: false,
-            })),
-            (false, true) => commands.push(Command::SetQueue {
+        if listed(&upcoming) != listed(&now.upcoming) {
+            commands.push(Command::SetQueue {
                 upcoming: upcoming.clone(),
-            }),
-            (false, false) => {}
+            });
         }
         let at = wanted.live_position();
         if at.abs_diff(now.live_position()) > JAM_SLACK {
