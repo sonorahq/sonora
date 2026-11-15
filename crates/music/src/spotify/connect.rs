@@ -1424,14 +1424,25 @@ impl Worker {
                 .map(|track| (track.id.clone(), track.queued))
                 .collect()
         };
-        // switching shuffle reorders the queue here, so the order that came with it goes last
         let reshuffled = commands
             .iter()
             .any(|command| matches!(command, Command::Shuffle(_)));
-        if reshuffled || listed(&upcoming) != listed(&now.upcoming) {
-            commands.push(Command::SetQueue {
+        match (reshuffled, listed(&upcoming) != listed(&now.upcoming)) {
+            // Switching shuffle reorders the queue here, so the order that came with it goes
+            // last. It is the Jam's own and not an edit of what this device reported, and an
+            // edit would be dropped for meeting a queue the last report does not show.
+            (true, _) => commands.push(Command::Start(Start {
+                state: Arc::new(Snapshot {
+                    upcoming: upcoming.clone(),
+                    ..(**now).clone()
+                }),
+                preserve_queue: true,
+                restart: false,
+            })),
+            (false, true) => commands.push(Command::SetQueue {
                 upcoming: upcoming.clone(),
-            });
+            }),
+            (false, false) => {}
         }
         let at = wanted.live_position();
         if at.abs_diff(now.live_position()) > JAM_SLACK {
