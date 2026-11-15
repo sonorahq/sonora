@@ -49,7 +49,7 @@ mod window_shape;
 pub use artist::{ArtistDetail, ArtistDetailEvent};
 pub use control::Control;
 pub use cover::Cover;
-pub use detail::{Collection, Detail, Header};
+pub use detail::{Collection, Detail, DetailEvent, Header};
 pub use devices::Devices;
 pub use downloads::{
     Active, Downloads, DownloadsChanged, Pending, Progress, Remaining, Subject, downloaded,
@@ -95,7 +95,7 @@ pub use song::SongDetail;
 pub use sponsorblock::SponsorBlock;
 pub use tags::{TagState, Tags};
 pub use toast::{Outcome, Target, Toast, ToastAction, Toasts};
-pub use updates::{Channel, Release, UpdateState, Updates, updates_itself, version};
+pub use updates::{Channel, Release, UpdateState, Updates, commit, updates_itself, version};
 pub use usage::Usage;
 pub use vault::CACHE_GB_RANGE;
 pub use wake::Wake;

@@ -493,6 +493,8 @@ struct Values {
     close_to_tray: bool,
     tray_icon: bool,
     stay_awake: bool,
+    /// Whether a file handed in by the OS goes straight to the now playing view.
+    now_playing_on_file_open: bool,
     language: String,
     #[serde(default = "system_font")]
     font: String,
@@ -717,6 +719,7 @@ impl Default for Values {
             close_to_tray: true,
             tray_icon: true,
             stay_awake: true,
+            now_playing_on_file_open: true,
             language: i18n::AUTO.to_owned(),
             font: system_font(),
             startup: DEFAULT_STARTUP.to_owned(),
@@ -1284,6 +1287,11 @@ impl AppSettings {
     /// Whether music keeps the system awake and, in fullscreen, the display.
     pub fn stay_awake(&self) -> bool {
         self.values.stay_awake
+    }
+
+    /// Whether a file opened from a file manager goes straight to the now playing view.
+    pub fn now_playing_on_file_open(&self) -> bool {
+        self.values.now_playing_on_file_open
     }
 
     /// Whether plays from the provider with this slug are submitted to the linked scrobbling
@@ -1935,6 +1943,11 @@ impl AppSettings {
 
     pub fn set_stay_awake(&mut self, stay_awake: bool, cx: &mut Context<Self>) {
         self.values.stay_awake = stay_awake;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_now_playing_on_file_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.values.now_playing_on_file_open = open;
         self.schedule_save(cx);
     }
 
