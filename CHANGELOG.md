@@ -17,6 +17,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The account menu no longer lists YouTube Music when you are signed in elsewhere and only used guest mode before. Guest mode shows there under its own name while you use it.
 - Clicking outside a text field takes the cursor out of it, so typing stops there.
 - The Cut, Copy, Paste and Select all menu of the quick search field is drawn at the usual size.
+- Moving through a track list with the arrow keys keeps the selected row above the player bar.
 
 ## [0.50.0] - 2026-11-16
 
