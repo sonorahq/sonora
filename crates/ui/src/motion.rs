@@ -1048,6 +1048,15 @@ mod system {
     }
 }
 
+/// The scale a press of `depth` reaches on an element whose longer side is `length`: `depth`
+/// itself up to `PRESS_REACH`, and past it the scale that takes off as many pixels.
+fn sized_depth(depth: f32, length: Pixels) -> f32 {
+    match length > PRESS_REACH {
+        true => 1. - (1. - depth) * (PRESS_REACH / length),
+        false => depth,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1072,14 +1081,5 @@ mod tests {
             assert!(value >= previous);
             previous = value;
         }
-    }
-}
-
-/// The scale a press of `depth` reaches on an element whose longer side is `length`: `depth`
-/// itself up to `PRESS_REACH`, and past it the scale that takes off as many pixels.
-fn sized_depth(depth: f32, length: Pixels) -> f32 {
-    match length > PRESS_REACH {
-        true => 1. - (1. - depth) * (PRESS_REACH / length),
-        false => depth,
     }
 }

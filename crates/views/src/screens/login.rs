@@ -5,8 +5,8 @@ use crate::shared::popups::{AccountPicker, CookiePrompt, Credentials, Credential
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, BoxShadow, ClipboardItem, Context, Entity, FontWeight, Hsla, IntoElement,
-    Pixels, Point, Render, SharedString, Task, Window, div, hsla, img, point, px, relative, svg,
+    AnyElement, App, ClipboardItem, Context, Entity, FontWeight, Hsla, IntoElement, Pixels, Point,
+    Render, SharedString, Task, Window, div, hsla, img, point, px, relative, svg,
 };
 use i18n::t;
 use music::{AccountChoices, SignIn, SignInPrompt};
@@ -682,13 +682,7 @@ impl Render for LoginView {
             .border_color(theme.border.opacity(0.7))
             .bg(theme.background.opacity(0.62))
             .backdrop_blur(FROST)
-            .shadow(vec![BoxShadow {
-                color: hsla(0., 0., 0., 0.35),
-                offset: point(px(0.), px(24.)),
-                blur_radius: px(64.),
-                spread_radius: px(-12.),
-                inset: false,
-            }])
+            .shadow_lg()
             .child(
                 div()
                     .flex()
