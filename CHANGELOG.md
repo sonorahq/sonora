@@ -25,6 +25,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A local album shows the cover.jpg in its folder as its art, even when its first track has a different cover embedded.
 - Apple Music no longer lists an album whose songs were all removed from your library as a blank album with no artist or cover.
 - Long Opus and Ogg files from Navidrome, Subsonic or Jellyfin start playing right away instead of after the whole file has downloaded.
+- Sorting your Apple Music songs by Date added puts your latest additions first instead of ordering them by title.
 
 ## [0.50.0] - 2026-11-16
 
