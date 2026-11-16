@@ -31,6 +31,7 @@ pub mod progress;
 mod redact;
 pub mod scrobble;
 mod sink;
+pub mod smart;
 pub mod soloist;
 mod spectrum;
 mod sponsorblock;
@@ -63,6 +64,10 @@ pub use models::{
 };
 pub use output::{Server as SoundServer, missing_bridge};
 pub use redact::redact;
+pub use smart::{
+    Condition, FieldKind, Operand, OperandShape, Operator, Problem, Rule, RuleGroup, RuleProblem,
+    SmartPlaylist, SmartPlaylistUpdate, SmartRules, field_kind, parse_number,
+};
 pub use spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
 pub use sponsorblock::{SkipSegment, SponsorBlock};
 
@@ -272,6 +277,29 @@ pub trait MusicApi: Send + Sync {
     /// Only a provider whose capabilities list `playlist_covers` answers.
     async fn set_playlist_cover(&self, _playlist_id: &str, _image: Option<&[u8]>) -> Result<()> {
         anyhow::bail!("this provider cannot change a playlist's cover")
+    }
+
+    /// Reads one playlist's smart rules and edit bookkeeping. Only a provider whose
+    /// capabilities list `smart_playlists` answers.
+    async fn smart_playlist(&self, _playlist_id: &str) -> Result<SmartPlaylist> {
+        anyhow::bail!("this provider has no smart playlists")
+    }
+
+    /// Creates a smart playlist called `name` from `rules` and answers its id. Only a
+    /// provider whose capabilities list `smart_playlists` answers.
+    async fn create_smart_playlist(&self, _name: &str, _rules: &SmartRules) -> Result<String> {
+        anyhow::bail!("this provider has no smart playlists")
+    }
+
+    /// Writes the fields `update` names to the smart playlist and answers how it reads after
+    /// the write; fields the update leaves as `None` keep their values. Only a provider whose
+    /// capabilities list `smart_playlists` answers.
+    async fn update_smart_playlist(
+        &self,
+        _playlist_id: &str,
+        _update: SmartPlaylistUpdate,
+    ) -> Result<SmartPlaylist> {
+        anyhow::bail!("this provider has no smart playlists")
     }
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()>;
 
@@ -921,6 +949,10 @@ pub struct Capabilities {
     /// The listener can give an owned playlist a cover of their own through
     /// `set_playlist_cover`, and take it off again.
     pub playlist_covers: bool,
+    /// The listener can create a smart playlist and change an owned one's rules, through
+    /// `create_smart_playlist` and `update_smart_playlist`. Off, the rule editor stays
+    /// hidden rather than saving nowhere.
+    pub smart_playlists: bool,
     /// The listener can move tracks within an owned playlist through `reorder_playlist`,
     /// and the provider keeps the new order.
     pub playlist_order: bool,
@@ -952,7 +984,8 @@ pub struct Capabilities {
 impl Capabilities {
     /// What a full streaming service offers. Pins of the provider's own are not among them,
     /// since only Spotify and Apple Music keep any. Converting on request is not either, since
-    /// only Subsonic does it. Playlist covers and order are left for each provider to turn on.
+    /// only Subsonic does it. Playlist covers, order and smart playlists are left for each
+    /// provider to turn on.
     pub const ALL: Self = Self {
         follow_artists: true,
         radio: true,
@@ -960,6 +993,7 @@ impl Capabilities {
         pins: false,
         transcode: false,
         playlist_covers: false,
+        smart_playlists: false,
         playlist_order: false,
         keeps: true,
         downloads: true,
@@ -978,6 +1012,7 @@ impl Capabilities {
         pins: false,
         transcode: false,
         playlist_covers: false,
+        smart_playlists: false,
         playlist_order: false,
         keeps: false,
         downloads: false,

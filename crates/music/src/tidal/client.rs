@@ -937,6 +937,7 @@ impl TidalClient {
                 cover: None,
                 track_count: 0,
                 modified_at: None,
+                read_only: false,
             });
         playlist.track_count = u32::try_from(tracks.len()).unwrap_or(u32::MAX);
         if playlist.cover.is_none() {

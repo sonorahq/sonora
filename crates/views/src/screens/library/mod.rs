@@ -668,11 +668,11 @@ impl LibraryView {
 
     /// The viewport of a table that opens the page with no header above it. `lead` is the space
     /// the page leaves above the table.
-    fn viewport(scroll: &ScrollHandle, lead: Pixels, window: &Window) -> Viewport {
+    fn viewport(scroll: &ScrollHandle, lead: Pixels, window: &Window, cx: &App) -> Viewport {
         quantize(scroll, window);
         let visible = scroll.bounds().size.height;
 
-        Viewport::measured(scrolled(scroll) - lead, visible, window)
+        Viewport::measured(scrolled(scroll) - lead, visible, window).covered(Chrome::bottom(cx))
     }
 
     /// The shown section's table, framed like the artist page's when `framed` is true.
@@ -1266,10 +1266,10 @@ impl Render for LibraryView {
             self.table(self.section).claim(cx);
             let scroll = self.scrollbar.read(cx).scroll().clone();
             let viewport = match (self.section.listing(), framed) {
-                (true, true) => page::past_border(page::viewport(&scroll, inset, window)),
-                (true, false) => page::viewport(&scroll, inset, window),
-                (false, true) => page::past_border(Self::viewport(&scroll, inset, window)),
-                (false, false) => Self::viewport(&scroll, Pixels::ZERO, window),
+                (true, true) => page::past_border(page::viewport(&scroll, inset, window, cx)),
+                (true, false) => page::viewport(&scroll, inset, window, cx),
+                (false, true) => page::past_border(Self::viewport(&scroll, inset, window, cx)),
+                (false, false) => Self::viewport(&scroll, Pixels::ZERO, window, cx),
             };
             self.table(self.section).set_viewport(viewport, cx);
         }
@@ -1284,9 +1284,13 @@ impl Render for LibraryView {
                     .menu()
                     .for_track(&track, cx),
                 LibraryMenu::Liked => liked_menu(self.playback.clone(), cx),
-                LibraryMenu::Background => new_playlist_menu(cx.listener(|this, _, window, cx| {
-                    this.create_playlist(window, cx);
-                })),
+                LibraryMenu::Background => new_playlist_menu(
+                    self.lead(cx),
+                    cx.listener(|this, _, window, cx| {
+                        this.create_playlist(window, cx);
+                    }),
+                    cx,
+                ),
             };
             Popup::new(position, menu).on_close(cx.listener(|this, _, _, cx| {
                 this.context_menu = None;

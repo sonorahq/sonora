@@ -167,8 +167,8 @@ impl RenderOnce for Form {
             .flex()
             .flex_col()
             .gap(gap)
-            .on_action(move |_: &NextField, window, cx| step(&forward, 1, window, cx))
-            .on_action(move |_: &PreviousField, window, cx| step(&order, -1, window, cx))
+            .on_action(move |_: &NextField, window, cx| step_focus(&forward, 1, window, cx))
+            .on_action(move |_: &PreviousField, window, cx| step_focus(&order, -1, window, cx))
             .on_action(move |_: &Submit, window, cx| match &submit {
                 Some(submit) => {
                     cx.stop_propagation();
@@ -349,7 +349,10 @@ impl RenderOnce for Field {
 
 /// Moves the focus `by` fields along `order` from the one that holds it, wrapping round at either
 /// end. With none of them focused it goes to the first, or the last going backwards.
-fn step(order: &[FocusHandle], by: isize, window: &mut Window, cx: &mut App) {
+/// Moves the focus `by` places along `order`, wrapping round at either end, for a form that
+/// answers Tab itself. With nothing in `order` focused it starts at the first or the last field,
+/// and an empty `order` lets the key go on.
+pub fn step_focus(order: &[FocusHandle], by: isize, window: &mut Window, cx: &mut App) {
     let count = order.len() as isize;
     if count == 0 {
         cx.propagate();

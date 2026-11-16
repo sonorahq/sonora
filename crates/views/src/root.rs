@@ -28,7 +28,8 @@ use crate::screens::settings::SettingsHeader;
 use crate::shared::ambient::{self, Ambient};
 use crate::shared::confirm::Confirm;
 use crate::shared::playlist_editor::PlaylistEditor;
-use crate::shared::powerbar::Powerbar;
+use crate::shared::powerbar::{Powerbar, PowerbarEvent};
+use crate::shared::smart_playlist::SmartPlaylistEditor;
 use crate::shared::soloist::SoloistSetup;
 use crate::shared::tag_editor::TagEditor;
 use crate::shared::tracks::{LIBRARY_COLUMNS, album_columns};
@@ -87,6 +88,7 @@ struct Shells {
 /// shell is up, so one raised from the fullscreen player opens there.
 struct Dialogs {
     playlist_editor: Entity<PlaylistEditor>,
+    smart_playlist_editor: Entity<SmartPlaylistEditor>,
     tag_editor: Entity<TagEditor>,
     confirm: Entity<Confirm>,
     widevine: Entity<WidevinePrompt>,
@@ -101,6 +103,7 @@ impl Dialogs {
     fn new(cx: &mut App) -> Self {
         Self {
             playlist_editor: PlaylistEditor::entity(cx),
+            smart_playlist_editor: SmartPlaylistEditor::entity(cx),
             tag_editor: TagEditor::entity(cx),
             confirm: Confirm::entity(cx),
             widevine: cx.new(WidevinePrompt::new),
@@ -112,9 +115,10 @@ impl Dialogs {
         }
     }
 
-    fn views(&self) -> [AnyView; 9] {
+    fn views(&self) -> [AnyView; 10] {
         [
             self.playlist_editor.clone().into(),
+            self.smart_playlist_editor.clone().into(),
             self.tag_editor.clone().into(),
             self.confirm.clone().into(),
             self.widevine.clone().into(),
@@ -264,6 +268,10 @@ impl Root {
         // The quick search asks on its own, so typing in it leaves the search screen as it was.
         let quick = cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
         let powerbar = Powerbar::entity(quick, playback.clone(), cx);
+        cx.subscribe(&powerbar, |this, _, event, cx| match event {
+            PowerbarEvent::Search(query) => this.search_for(query, cx),
+        })
+        .detach();
         let genres = cx.new(|cx| Genres::new(session.clone(), io.clone(), cx));
         let search = cx.new(|cx| {
             SearchView::new(
@@ -526,6 +534,17 @@ impl Root {
         navigate(Destination::Search, cx);
         self.pending = Some(Focus::Search);
         cx.notify();
+    }
+
+    /// Opens the search page with the full results for `query`. An empty query opens the page as
+    /// it was left.
+    fn search_for(&mut self, query: &str, cx: &mut Context<Self>) {
+        if !query.is_empty() {
+            self.screens
+                .search
+                .update(cx, |search, cx| search.search_for(query, cx));
+        }
+        self.open_search(cx);
     }
 
     /// Focuses the filter of the page on show. In settings that is the settings search.

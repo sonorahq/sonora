@@ -200,7 +200,13 @@ pub(crate) fn past_border(viewport: Viewport) -> Viewport {
     }
 }
 
-pub(crate) fn viewport(scroll: &ScrollHandle, inset: Pixels, window: &Window) -> Viewport {
+/// The viewport of a table below the page hero, with the band the player bar covers marked.
+pub(crate) fn viewport(
+    scroll: &ScrollHandle,
+    inset: Pixels,
+    window: &Window,
+    cx: &App,
+) -> Viewport {
     quantize(scroll, window);
     let hero = scroll
         .bounds_for_item(0)
@@ -208,5 +214,5 @@ pub(crate) fn viewport(scroll: &ScrollHandle, inset: Pixels, window: &Window) ->
         .unwrap_or_default();
     let visible = scroll.bounds().size.height;
 
-    Viewport::measured(scrolled(scroll) - inset - hero, visible, window)
+    Viewport::measured(scrolled(scroll) - inset - hero, visible, window).covered(Chrome::bottom(cx))
 }

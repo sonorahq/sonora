@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Create Navidrome smart playlists and edit their rules from the playlists menu.
+- The quick search marks its first result as the one Enter acts on. Press Up off it, or Enter before results arrive, to open the search page for what you typed.
 - A sparkle in the queue and the player bar marks the songs that Spotify's smart shuffle
   recommends.
 
@@ -19,6 +21,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Playback handed over from another device through Spotify Connect starts at once, and songs
   Sonora has not read yet join the queue as soon as they load.
 - The account menu no longer lists YouTube Music when you are signed in elsewhere and only used guest mode before. Guest mode shows there under its own name while you use it.
+- Clicking outside a text field takes the cursor out of it, so typing stops there.
+- The Cut, Copy, Paste and Select all menu of the quick search field is drawn at the usual size.
+- Moving through a track list with the arrow keys keeps the selected row above the player bar.
 
 ## [0.50.0] - 2026-11-16
 

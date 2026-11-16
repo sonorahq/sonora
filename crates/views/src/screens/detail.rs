@@ -12,7 +12,7 @@ use music::{Album, AlbumDetail, Arrival, Playlist, ReleaseType, Track};
 use router::{Destination, navigate};
 use state::{
     AppSettings, Collection, Detail, DownloadsChanged, LibraryEvent, Origin, Outcome, Playback,
-    Progress, Shelf, Sonora, Toasts,
+    Progress, Reorder, Shelf, Sonora, Toasts,
 };
 use ui::{
     ActiveTheme as _, ArrowRing, Button, InlineLink, InlineLinks, Menu, Picker, Popovers, Popup,
@@ -300,7 +300,11 @@ impl DetailView {
             TableEvent::Removed => drop_picked(&this.table, cx),
             TableEvent::Moved { from, to } => this.move_track(*from, *to, cx),
             TableEvent::MoveRefused => {
-                Toasts::show(Outcome::Info, "toast-playlist-reorder-unsupported", cx)
+                let key = match this.detail.read(cx).reorder(cx) {
+                    Reorder::Ruled => "toast-playlist-reorder-ruled",
+                    _ => "toast-playlist-reorder-unsupported",
+                };
+                Toasts::show(Outcome::Info, key, cx)
             }
             _ => this.persist(cx),
         })
@@ -914,8 +918,8 @@ impl Render for DetailView {
 
         let scroll = self.scrollbar.read(cx).scroll().clone();
         let viewport = match framed {
-            true => page::past_border(page::viewport(&scroll, inset, window)),
-            false => page::viewport(&scroll, inset, window),
+            true => page::past_border(page::viewport(&scroll, inset, window, cx)),
+            false => page::viewport(&scroll, inset, window, cx),
         };
         self.table
             .update(cx, |table, _| table.set_viewport(viewport));

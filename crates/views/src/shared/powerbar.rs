@@ -1,8 +1,9 @@
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Entity, FocusHandle, Global, MouseButton, Pixels, Render,
-    ScrollHandle, SharedString, SpringConfig, Window, anchored, deferred, div, point, px,
+    AnyElement, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Global, MouseButton,
+    Pixels, Render, ScrollHandle, SharedString, SpringConfig, Window, anchored, deferred, div,
+    point, px,
 };
 use i18n::t;
 use input::{POWERBAR_CONTEXT, PowerbarDetails};
@@ -56,7 +57,7 @@ pub(crate) struct Powerbar {
     playback: Entity<Playback>,
     playback_status: PlaybackStatus,
     hits: Vec<Hit>,
-    selected: Option<usize>,
+    cursor: Cursor,
     restore: Option<FocusHandle>,
     scroll: ScrollHandle,
     /// How far the panel has arrived, 0 gone and 1 in place. The panel stays drawn while this
@@ -68,8 +69,28 @@ pub(crate) struct Powerbar {
     cascade: Cascade,
 }
 
+/// Where the keyboard cursor rests, which is what Enter acts on.
+#[derive(Clone, Copy)]
+enum Cursor {
+    /// On whichever result is first, as the list fills and reorders. Every new query starts here.
+    First,
+    /// On a result the arrow keys moved to, following it as the list reorders.
+    On(usize),
+    /// Off the list and in the field, where Enter opens the search page for what is typed.
+    Field,
+}
+
+/// What the quick search asks of the window around it.
+pub(crate) enum PowerbarEvent {
+    /// Open the search page with the full results for this query, or as it was left when the
+    /// query is empty.
+    Search(String),
+}
+
 struct Installed(Entity<Powerbar>);
 impl Global for Installed {}
+
+impl EventEmitter<PowerbarEvent> for Powerbar {}
 
 impl Powerbar {
     pub fn entity(
@@ -95,7 +116,7 @@ impl Powerbar {
                     if this.search.read(cx).query() == query.trim() {
                         return;
                     }
-                    this.selected = None;
+                    this.cursor = Cursor::First;
                     this.scroll.set_offset(point(Pixels::ZERO, Pixels::ZERO));
                     this.search.update(cx, |search, cx| search.ask(&query, cx));
                     // An emptied field goes back to the search history, which no answer brings.
@@ -138,7 +159,7 @@ impl Powerbar {
                     playback,
                     playback_status: current_status,
                     hits: Vec::new(),
-                    selected: None,
+                    cursor: Cursor::First,
                     restore: None,
                     scroll: ScrollHandle::new(),
                     shown: Sprung::at(0.),
@@ -169,7 +190,7 @@ impl Powerbar {
     fn show(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.restore = window.focused(cx);
         self.open = true;
-        self.selected = None;
+        self.cursor = Cursor::First;
         // Results from the last time stay only for the lift away. Search may have been reset
         // since, sign-outs included, and an empty query does not notify.
         self.hits = recent(cx);
@@ -207,27 +228,34 @@ impl Powerbar {
             false => search.hits().iter().take(MAX_HITS).cloned().collect(),
         };
 
-        // The keyboard cursor stays on the result it was on as a new answer reorders the list,
-        // and on the same place when that result is gone.
-        let picked = self
-            .selected
-            .and_then(|idx| self.hits.get(idx))
-            .map(Hit::key);
-        self.selected = self.selected.and_then(|idx| {
+        // A result the arrow keys moved to keeps the cursor as a new answer reorders the list,
+        // and its place does when that result is gone.
+        if let Cursor::On(idx) = self.cursor {
+            let picked = self.hits.get(idx).map(Hit::key);
             let found = picked.and_then(|key| hits.iter().position(|hit| hit.key() == key));
-            found.or_else(|| hits.len().checked_sub(1).map(|last| idx.min(last)))
-        });
-        self.hits = hits;
-        if let Some(idx) = self.selected {
-            self.scroll.scroll_to_item(idx);
+            let kept = found.or_else(|| hits.len().checked_sub(1).map(|last| idx.min(last)));
+            self.cursor = kept.map_or(Cursor::First, Cursor::On);
+            if let Some(idx) = kept {
+                self.scroll.scroll_to_item(idx);
+            }
         }
+        self.hits = hits;
         cx.notify();
+    }
+
+    /// The row under the keyboard cursor, if there is one.
+    fn selected(&self) -> Option<usize> {
+        match self.cursor {
+            Cursor::First => (!self.hits.is_empty()).then_some(0),
+            Cursor::On(idx) => Some(idx),
+            Cursor::Field => None,
+        }
     }
 
     /// Moves the keyboard cursor to the result at `idx` and scrolls it into view. The keyboard
     /// itself stays in the field, so typing goes on refining the query.
     fn choose(&mut self, idx: usize, cx: &mut Context<Self>) {
-        self.selected = Some(idx);
+        self.cursor = Cursor::On(idx);
         self.scroll.scroll_to_item(idx);
         cx.notify();
     }
@@ -237,7 +265,7 @@ impl Powerbar {
         if total == 0 {
             return;
         }
-        let idx = match self.selected {
+        let idx = match self.selected() {
             None => 0,
             Some(i) => (i + 1).min(total - 1),
         };
@@ -250,23 +278,28 @@ impl Powerbar {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(current) = self.selected else {
+        let Some(current) = self.selected() else {
             return;
         };
         // Up from the first result lets go of the list, the keyboard staying in the field.
         match current.checked_sub(1) {
             Some(idx) => self.choose(idx, cx),
             None => {
-                self.selected = None;
+                self.cursor = Cursor::Field;
                 cx.notify();
             }
         }
     }
 
-    /// Enter: plays the chosen song at once and opens anything else.
+    /// Enter: plays the chosen song at once and opens anything else. With no result chosen it
+    /// opens the search page for what is typed.
     fn activate(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(hit) = self.target() {
-            enter_hit(&hit, &self.playback, cx);
+        match self.target() {
+            Some(hit) => enter_hit(&hit, &self.playback, cx),
+            None => {
+                let query = self.input.read(cx).text().trim().to_owned();
+                cx.emit(PowerbarEvent::Search(query));
+            }
         }
         self.close(window, cx);
     }
@@ -291,12 +324,9 @@ impl Powerbar {
         self.rebuild_items(cx);
     }
 
-    /// The result the keys act on: the one under the keyboard cursor, or the first.
+    /// The result the keys act on, the one under the keyboard cursor.
     fn target(&self) -> Option<Hit> {
-        self.selected
-            .and_then(|idx| self.hits.get(idx))
-            .or_else(|| self.hits.first())
-            .cloned()
+        self.selected().and_then(|idx| self.hits.get(idx)).cloned()
     }
 
     /// Whether `hit` is what plays right now, which turns its play button into pause.
@@ -322,7 +352,7 @@ impl Powerbar {
         on_play: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
         cx: &App,
     ) -> Card {
-        let chosen = self.selected == Some(item_idx);
+        let chosen = self.selected() == Some(item_idx);
         let current = match hit {
             Hit::Song(track) => track.id.is_some() && track.id == self.playback_status.0,
             _ => false,
@@ -428,14 +458,17 @@ impl Powerbar {
     }
 
     /// The row of key hints along the foot of the panel.
-    /// The Enter hint names what Enter does to the result it would act on, and the Ctrl+Enter
-    /// hint shows only for a song, since for anything else Enter already opens it.
+    /// The Enter hint names what Enter does to the result it would act on, or says it searches
+    /// when the cursor is in the field. The Ctrl+Enter hint shows only for a song, since for
+    /// anything else Enter already opens it.
     fn hints(&self, cx: &App) -> impl IntoElement {
         let theme = cx.theme();
-        let song = matches!(self.target(), Some(Hit::Song(_)));
-        let enter = match song {
-            true => t!("common-play"),
-            false => t!("powerbar-open"),
+        let target = self.target();
+        let song = matches!(target, Some(Hit::Song(_)));
+        let enter = match target {
+            Some(Hit::Song(_)) => t!("common-play"),
+            Some(_) => t!("powerbar-open"),
+            None => t!("search-submit"),
         };
         let hint = |id: &'static str, keystroke: &'static str, label: SharedString| {
             div()
