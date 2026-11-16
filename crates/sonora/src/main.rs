@@ -15,6 +15,8 @@ mod single;
 #[cfg(windows)]
 mod thumbbar;
 mod tray;
+#[cfg(windows)]
+mod window_title;
 #[cfg(target_os = "linux")]
 mod x11_icon;
 
@@ -421,6 +423,8 @@ fn open_window(cx: &mut App) {
                 app_icon::install(handle);
                 thumbbar::install(window.window_handle().window_id(), handle, cx);
             }
+            #[cfg(windows)]
+            window_title::install(window.window_handle(), cx);
             state::remember_window(window, cx);
             cx.new(|cx| Root::new(session, library, playback, queue, window, cx))
         },
