@@ -18,6 +18,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Clicking outside a text field takes the cursor out of it, so typing stops there.
 - The Cut, Copy, Paste and Select all menu of the quick search field is drawn at the usual size.
 - Moving through a track list with the arrow keys keeps the selected row above the player bar.
+- The cover no longer stutters as it flies into or out of the fullscreen player, most noticeably on Macs.
 
 ## [0.50.0] - 2026-11-16
 
