@@ -12,37 +12,17 @@ use ui::{
 };
 
 use crate::chrome::{
-    AppNotice, Chrome, JamCode, JamJoin, PlayerBar, SessionCode, SessionJoin, SidebarLeft,
-    SidebarRight, SwipeCue, TitleBarOptions, ToastStack,
+    AppNotice, Chrome, PlayerBar, SidebarLeft, SidebarRight, SwipeCue, TitleBarOptions,
 };
-use crate::shared::confirm::Confirm;
 use crate::shared::menus::CardMenu;
-use crate::shared::playlist_editor::PlaylistEditor;
-use crate::shared::soloist::SoloistSetup;
-use crate::shared::tag_editor::TagEditor;
-use crate::shared::widevine::WidevinePrompt;
 use crate::shells::Shell;
-
-/// The paint layer toasts take. Dialogs paint at 0 and menus at 1, so a toast shows over an
-/// open dialog and a menu opened after it still shows over the toast.
-const TOAST_LAYER: usize = 1;
 
 pub(crate) struct Workspace {
     sidebar: Entity<SidebarLeft>,
     player_bar: Entity<PlayerBar>,
     settings: Entity<AppSettings>,
     sidebar_right: Entity<SidebarRight>,
-    playlist_editor: Entity<PlaylistEditor>,
-    tag_editor: Entity<TagEditor>,
-    confirm: Entity<Confirm>,
     card_menu: Entity<CardMenu>,
-    widevine: Entity<WidevinePrompt>,
-    soloist: Entity<SoloistSetup>,
-    jam_join: Entity<JamJoin>,
-    jam_code: Entity<JamCode>,
-    session_join: Entity<SessionJoin>,
-    session_code: Entity<SessionCode>,
-    toasts: Entity<ToastStack>,
     notice: Entity<AppNotice>,
     swipe_cue: Entity<SwipeCue>,
     content: AnyView,
@@ -75,17 +55,7 @@ impl Workspace {
             player_bar,
             settings,
             sidebar_right,
-            playlist_editor: PlaylistEditor::entity(cx),
-            tag_editor: TagEditor::entity(cx),
-            confirm: Confirm::entity(cx),
             card_menu: CardMenu::entity(cx),
-            widevine: cx.new(WidevinePrompt::new),
-            soloist: cx.new(SoloistSetup::new),
-            jam_join: cx.new(JamJoin::new),
-            jam_code: cx.new(JamCode::new),
-            session_join: cx.new(SessionJoin::new),
-            session_code: cx.new(SessionCode::new),
-            toasts: cx.new(ToastStack::new),
             notice: cx.new(AppNotice::new),
             swipe_cue: cx.new(SwipeCue::new),
             content,
@@ -381,23 +351,11 @@ impl Render for Workspace {
                         self.player_bar
                             .clone()
                             .cached(StyleRefinement::default().w_full().h(bar_height)),
-                    )
-                    // Deferred above the dialogs, which are deferred too, so a toast raised
-                    // while one is open shows over it and its backdrop.
-                    .child(deferred(self.toasts.clone()).with_priority(TOAST_LAYER)),
+                    ),
             )
-            // deferred so the cards sit above the sidebars' resize grips, and ahead of the
-            // dialogs so those still cover them
+            // Deferred so the cards sit above the sidebars' resize grips. The root draws the
+            // dialogs after the shell, so those still cover them.
             .child(deferred(self.notice.clone()))
             .child(self.card_menu.clone())
-            .child(self.playlist_editor.clone())
-            .child(self.tag_editor.clone())
-            .child(self.confirm.clone())
-            .child(self.widevine.clone())
-            .child(self.soloist.clone())
-            .child(self.jam_join.clone())
-            .child(self.jam_code.clone())
-            .child(self.session_join.clone())
-            .child(self.session_code.clone())
     }
 }

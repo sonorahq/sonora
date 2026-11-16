@@ -49,6 +49,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Tag editing, deleting a track file and other dialogs opened from the fullscreen player now show over it, and so do toasts.
 - Resizing the window or a sidebar keeps the cards, rails and lyrics you were looking at in view on Home, provider pages, album and playlist pages and search, instead of jumping elsewhere.
 - Signing in to a Deezer Family account asks which profile to use instead of always picking the account owner's, so each member sees their own playlists.
 - `sonora like` waits for the provider to confirm a favorite change and reports if it fails.
