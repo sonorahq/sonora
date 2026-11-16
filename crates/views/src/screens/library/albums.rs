@@ -28,6 +28,7 @@ pub(super) enum AlbumField {
     Year,
     TrackCount,
     AddedAt,
+    LikedAt,
 }
 
 const COLUMN: ColumnSpec<AlbumField> = ColumnSpec::filling(AlbumField::Index);
@@ -83,6 +84,16 @@ const ADDED_AT: ColumnSpec<AlbumField> = ColumnSpec {
     ..COLUMN
 };
 
+/// The day a favorite was made, for a shelf that lists its whole catalog and so dates each row by
+/// when it joined. It stays off until the listener turns it on, and sorts from the sort menu.
+const LIKED_AT: ColumnSpec<AlbumField> = ColumnSpec {
+    field: AlbumField::LikedAt,
+    key: "liked-at",
+    header: "column-date-liked",
+    optional: true,
+    ..ADDED_AT
+};
+
 pub(super) const COLUMNS: &[ColumnSpec<AlbumField>] = &[
     INDEX,
     COVER,
@@ -90,6 +101,7 @@ pub(super) const COLUMNS: &[ColumnSpec<AlbumField>] = &[
     ARTISTS,
     RELEASE_YEAR,
     ADDED_AT,
+    LIKED_AT,
     TRACK_COUNT,
 ];
 
@@ -188,6 +200,13 @@ impl AlbumSource {
         [Shelf::Streaming, Shelf::Local].into_iter().any(|shelf| {
             library.shape(shelf).is_catalog() && !library.state(shelf).albums().is_empty()
         })
+    }
+
+    /// The day the listener favorited an album, when a catalog shelf knows it.
+    fn liked_at(&self, album: &Album, cx: &App) -> Option<i64> {
+        self.library
+            .read(cx)
+            .liked_at(LibraryPart::Albums, &album.id)
     }
 
     /// Whether offline mode keeps every album to its downloads, which holds only while there
@@ -339,6 +358,13 @@ impl TableSource for AlbumSource {
         self.menu.reset(cx);
     }
 
+    fn populated(&self, field: AlbumField, cx: &App) -> bool {
+        match field {
+            AlbumField::LikedAt => self.library.read(cx).dates_likes(LibraryPart::Albums),
+            _ => true,
+        }
+    }
+
     fn cell(&self, cell: Cell<AlbumField>, cx: &mut App) -> AnyElement {
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
@@ -368,6 +394,7 @@ impl TableSource for AlbumSource {
             AlbumField::Year => cells::dim(&cell, year(album), muted),
             AlbumField::TrackCount => cells::dim(&cell, format!("{}", album.track_count), muted),
             AlbumField::AddedAt => cells::dim(&cell, cells::stamp(album.added_at), muted),
+            AlbumField::LikedAt => cells::dim(&cell, cells::stamp(self.liked_at(album, cx)), muted),
             AlbumField::Index => cells::blank(&cell),
         }
     }
@@ -396,6 +423,10 @@ impl TableSource for AlbumSource {
                 .get(a)
                 .map(|album| album.added_at)
                 .cmp(&albums.get(b).map(|album| album.added_at)),
+            AlbumField::LikedAt => {
+                let at = |index| albums.get(index).and_then(|album| self.liked_at(album, cx));
+                at(a).cmp(&at(b))
+            }
             AlbumField::Index | AlbumField::Cover => a.cmp(&b),
         }
     }

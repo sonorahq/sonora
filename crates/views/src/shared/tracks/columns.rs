@@ -13,6 +13,7 @@ pub(crate) enum TrackField {
     Album,
     Genre,
     AddedAt,
+    LikedAt,
     AddedBy,
     PlayedAt,
     Plays,
@@ -81,6 +82,16 @@ const ADDED_AT: ColumnSpec<TrackField> = ColumnSpec {
     ..COLUMN
 };
 
+/// The day a favorite was made, for a shelf that lists its whole catalog and so dates each row by
+/// when it joined. It stays off until the listener turns it on, and sorts from the sort menu.
+const LIKED_AT: ColumnSpec<TrackField> = ColumnSpec {
+    field: TrackField::LikedAt,
+    key: "liked-at",
+    header: "column-date-liked",
+    optional: true,
+    ..ADDED_AT
+};
+
 const ADDED_BY: ColumnSpec<TrackField> = ColumnSpec {
     field: TrackField::AddedBy,
     key: "added-by",
@@ -145,6 +156,11 @@ const ALBUM_DURATION: ColumnSpec<TrackField> = ColumnSpec {
 
 pub(crate) const LIBRARY_COLUMNS: &[ColumnSpec<TrackField>] = &[
     INDEX, COVER, TITLE, ARTISTS, ALBUM, GENRE, ADDED_AT, DURATION,
+];
+
+/// The songs of the library page, which alone can date the favorites apart from the catalog.
+pub(crate) const SONGS_COLUMNS: &[ColumnSpec<TrackField>] = &[
+    INDEX, COVER, TITLE, ARTISTS, ALBUM, GENRE, ADDED_AT, LIKED_AT, DURATION,
 ];
 
 pub(crate) const PLAYLIST_COLUMNS_SHARED: &[ColumnSpec<TrackField>] = &[

@@ -23,6 +23,7 @@ pub(super) enum ArtistField {
     Cover,
     Name,
     AddedAt,
+    LikedAt,
 }
 
 const COLUMN: ColumnSpec<ArtistField> = ColumnSpec::filling(ArtistField::Index);
@@ -49,7 +50,17 @@ const ADDED_AT: ColumnSpec<ArtistField> = ColumnSpec {
     ..COLUMN
 };
 
-pub(super) const COLUMNS: &[ColumnSpec<ArtistField>] = &[INDEX, COVER, NAME, ADDED_AT];
+/// The day a favorite was made, for a shelf that lists its whole catalog and so dates each row by
+/// when it joined. It stays off until the listener turns it on, and sorts from the sort menu.
+const LIKED_AT: ColumnSpec<ArtistField> = ColumnSpec {
+    field: ArtistField::LikedAt,
+    key: "liked-at",
+    header: "column-date-liked",
+    optional: true,
+    ..ADDED_AT
+};
+
+pub(super) const COLUMNS: &[ColumnSpec<ArtistField>] = &[INDEX, COVER, NAME, ADDED_AT, LIKED_AT];
 
 pub(super) struct ArtistSource {
     library: Entity<Library>,
@@ -134,6 +145,13 @@ impl ArtistSource {
         [Shelf::Streaming, Shelf::Local].into_iter().any(|shelf| {
             library.shape(shelf).is_catalog() && !library.state(shelf).artists().is_empty()
         })
+    }
+
+    /// The day the listener favorited an artist, when a catalog shelf knows it.
+    fn liked_at(&self, artist: &SavedArtist, cx: &App) -> Option<i64> {
+        self.library
+            .read(cx)
+            .liked_at(LibraryPart::Artists, &artist.id)
     }
 }
 
@@ -228,6 +246,13 @@ impl TableSource for ArtistSource {
         ))
     }
 
+    fn populated(&self, field: ArtistField, cx: &App) -> bool {
+        match field {
+            ArtistField::LikedAt => self.library.read(cx).dates_likes(LibraryPart::Artists),
+            _ => true,
+        }
+    }
+
     fn cell(&self, cell: Cell<ArtistField>, cx: &mut App) -> AnyElement {
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
@@ -249,6 +274,9 @@ impl TableSource for ArtistSource {
                 self.marks_local(cx) && Shelf::of(&artist.id).local(),
             ),
             ArtistField::AddedAt => cells::dim(&cell, cells::stamp(artist.added_at), muted),
+            ArtistField::LikedAt => {
+                cells::dim(&cell, cells::stamp(self.liked_at(artist, cx)), muted)
+            }
             ArtistField::Index => cells::blank(&cell),
         }
     }
@@ -265,6 +293,10 @@ impl TableSource for ArtistSource {
             ArtistField::AddedAt => at(a)
                 .map(|artist| artist.added_at)
                 .cmp(&at(b).map(|artist| artist.added_at)),
+            ArtistField::LikedAt => {
+                let liked = |index| at(index).and_then(|artist| self.liked_at(artist, cx));
+                liked(a).cmp(&liked(b))
+            }
             ArtistField::Index | ArtistField::Cover => a.cmp(&b),
         }
     }

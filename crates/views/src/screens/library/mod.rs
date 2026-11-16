@@ -36,7 +36,7 @@ use crate::shared::blend::{self, Joined};
 use crate::shared::hero::{HeroMetaStrip, HeroPlayButton, PageHero};
 use crate::shared::pins::Pinned as _;
 use crate::shared::tracks::{
-    self, LIBRARY_COLUMNS, PlaybackStatus, TrackField, TrackSource, Tracks, playback_status,
+    self, PlaybackStatus, SONGS_COLUMNS, TrackField, TrackSource, Tracks, playback_status,
 };
 use crate::shared::{cards, cells, local, page, trouble};
 use albums::{AlbumField, AlbumSource};
@@ -259,7 +259,7 @@ impl LibraryView {
             let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(id));
             crate::shared::tracks::follow_downloads(cx);
             let source = TrackSource::new(
-                LIBRARY_COLUMNS,
+                SONGS_COLUMNS,
                 ShelfTracks {
                     library: library.clone(),
                 },
