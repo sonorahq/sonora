@@ -339,10 +339,7 @@ impl Render for Input {
                             })),
                     ),
             )
-            .on_close(cx.listener(|this, _, _, cx| {
-                this.context_menu = None;
-                cx.notify();
-            }))
+            .on_close(cx.listener(|this, _, window, cx| this.context_menu_closed(window, cx)))
         });
 
         div()

@@ -282,6 +282,9 @@ pub struct Input {
     selecting: bool,
     selected_word: Option<Range<usize>>,
     context_menu: Option<Point<Pixels>>,
+    /// A press landed outside the field while its context menu was open. If the menu then closes
+    /// without an item picked, that press dismissed it and the field lets go of the focus.
+    pressed_out: bool,
 }
 
 impl Input {
@@ -311,6 +314,7 @@ impl Input {
             selecting: false,
             selected_word: None,
             context_menu: None,
+            pressed_out: false,
         }
     }
 
@@ -717,6 +721,7 @@ impl Input {
         cx: &mut Context<Self>,
     ) {
         cx.stop_propagation();
+        self.pressed_out = false;
         self.focus(window, cx);
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         if event.button == MouseButton::Middle {
@@ -752,18 +757,36 @@ impl Input {
 
     /// Lets go of the focus when a press lands outside the field, so a click on the page around
     /// it stops the typing. Whatever focusable thing the press hit still takes the focus, since
-    /// this runs first. A field with its context menu open keeps the focus for the menu's items.
+    /// this runs first. With the context menu open the press may pick one of its items, so the
+    /// decision waits for `context_menu_closed`.
     fn on_mouse_down_out(
         &mut self,
         _: &MouseDownEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.context_menu.is_some() || !self.focus_handle.is_focused(window) {
+        if self.context_menu.is_some() {
+            self.pressed_out = true;
+            return;
+        }
+        if !self.focus_handle.is_focused(window) {
             return;
         }
         self.selecting = false;
         window.blur(cx);
+        cx.notify();
+    }
+
+    /// Closes the context menu. A pick clears the menu before this runs, so a menu still open
+    /// here was dismissed, and one dismissed by a press outside takes the focus with it. Escape
+    /// leaves the focus in the field.
+    fn context_menu_closed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let dismissed = self.context_menu.take().is_some();
+        let pressed_out = std::mem::take(&mut self.pressed_out);
+        if dismissed && pressed_out && self.focus_handle.is_focused(window) {
+            self.selecting = false;
+            window.blur(cx);
+        }
         cx.notify();
     }
 
