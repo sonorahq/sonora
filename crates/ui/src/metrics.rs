@@ -97,7 +97,7 @@ impl Metrics {
             list_row: roomy(52., 3.2),
             thumb: px(34.),
             cover: px(140.),
-            page: px(1600.),
+            page: px(1280.),
         }
     }
 }

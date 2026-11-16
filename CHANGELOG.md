@@ -14,6 +14,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Songs, albums and artists uploaded to your Apple Music library through iTunes or the Music app can now be browsed and played.
 - Use Sonora in European Portuguese. A system set to Portuguese from Portugal picks it on its own.
 - Use Sonora in Vietnamese. A system set to Vietnamese picks it on its own.
+- Pick which Navidrome library a Subsonic account browses from the account's settings.
 - Open the cover of an album or a playlist, or an artist's photo, from its page to see the original artwork full size, zoom in with the wheel or the buttons and drag it around.
 - Press Ctrl+K (⌘K on macOS) anywhere to search. Enter plays a song right away, Ctrl+Enter opens its page, and the artist and album under a result open theirs.
 - Click the tray icon on Windows to show Sonora's window, or to hide it when it is already open.
@@ -47,6 +48,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Resizing the window or a sidebar keeps the cards, rails and lyrics you were looking at in view on Home, provider pages, album and playlist pages and search, instead of jumping elsewhere.
 - Signing in to a Deezer Family account asks which profile to use instead of always picking the account owner's, so each member sees their own playlists.
 - `sonora like` waits for the provider to confirm a favorite change and reports if it fails.
 - A song you favorite or unfavorite while the library is refreshing stays that way instead of flipping back.
@@ -75,7 +77,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Dialogs have roomier fields and full-height buttons, and the field you type in wears a soft ring.
-- On a wide window pages stop growing at 1600 pixels and stay centred, while artist banners still reach the edges.
+- On a wide window pages stop growing at 1280 pixels and stay centred, while artist banners still reach the edges. Song tables then sit in a bordered frame like the one on artist pages.
 - The fullscreen button now swaps in place when the fullscreen player opens or closes, instead of fading and zooming with it.
 - Your accounts now open Settings, General, and the separate Providers tab is gone.
 - Play buttons and menus say «Играть» in Russian and «Spielen» in German.

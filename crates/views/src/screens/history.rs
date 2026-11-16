@@ -13,7 +13,6 @@ use ui::{
 
 use crate::chrome::{Searchable, Toolbar, Tooled};
 use crate::shared::blend::Joined;
-use crate::shared::cells;
 use crate::shared::hero::{HeroMetaStrip, PageHero};
 use crate::shared::page;
 use crate::shared::tracks::{HISTORY_COLUMNS, TrackSource, Tracks, drop_picked};
@@ -47,7 +46,7 @@ impl HistoryView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let width = cells::content_width(window, Pixels::ZERO, cx);
+        let width = page::bleed_width(window, cx);
         let id = cx.entity_id();
         let scrollbar = cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(id));
         let scroll = scrollbar.read(cx).scroll().clone();
@@ -188,14 +187,18 @@ impl Render for HistoryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.table.claim(cx);
         let inset = cx.theme().metrics.inset;
-        let width = cells::content_width(window, Pixels::ZERO, cx);
+        let framed = page::framed(window, cx);
+        let width = page::bleed_width(window, cx);
         if (width - self.width).abs() >= gpui::px(0.5) {
             self.width = width;
             self.table.set_width(width, cx);
         }
 
         let scroll = self.scrollbar.read(cx).scroll().clone();
-        let viewport = page::viewport(&scroll, inset, window);
+        let viewport = match framed {
+            true => page::past_border(page::viewport(&scroll, inset, window)),
+            false => page::viewport(&scroll, inset, window),
+        };
         self.table
             .update(cx, |table, _| table.set_viewport(viewport));
 
@@ -206,7 +209,7 @@ impl Render for HistoryView {
             .pt(inset)
             .pb(inset)
             .child(div().px(inset).child(self.header(cx)))
-            .child(table(&self.table))
+            .child(page::bleed(table(&self.table), framed, cx))
             .when_some(note, |this, note| {
                 this.child(
                     div()

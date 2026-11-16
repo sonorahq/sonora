@@ -7,8 +7,8 @@ use gpui::{Context, Entity, EventEmitter, Task};
 use i18n::t;
 use music::link::Linked;
 use music::{
-    Capabilities, Catalog, MusicApi, MusicProvider, PlaybackFactory, PromptSink, ProviderSession,
-    Shape, SignIn, SignInFailure, SignInProblem, SignInPrompt, UserProfile,
+    Capabilities, Catalog, Library, MusicApi, MusicProvider, PlaybackFactory, PromptSink,
+    ProviderSession, Shape, SignIn, SignInFailure, SignInProblem, SignInPrompt, UserProfile,
 };
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -143,6 +143,10 @@ pub struct Session {
     reconnect: Option<Task<()>>,
     reconnecting: bool,
     attempt: usize,
+    /// The server libraries the library picker lists, or why they could not be read. `None`
+    /// while a read is under way or when none was asked for.
+    libraries: Option<Result<Vec<Library>, String>>,
+    libraries_task: Option<Task<()>>,
 }
 
 impl EventEmitter<SessionEvent> for Session {}
@@ -195,6 +199,8 @@ impl Session {
             reconnect: None,
             reconnecting: false,
             attempt: 0,
+            libraries: None,
+            libraries_task: None,
         };
         session.restore_local(cx);
         session
@@ -445,6 +451,88 @@ impl Session {
             self.state,
             SessionState::Restoring | SessionState::Authorizing(_)
         )
+    }
+
+    /// Tears the live session down and opens the stored sign-in again, after a change to what
+    /// the stored account reads — the Subsonic library it is scoped to. The library, search,
+    /// genres and home all reload on the sign-in that follows, and nothing the old client
+    /// answered can arrive afterwards. A restore still under way is dropped and started over, so
+    /// it cannot install a client built for the previous choice.
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.state, SessionState::Authorizing(_)) || self.active.is_none() {
+            return;
+        }
+        self.release(cx);
+        self.restore(cx);
+    }
+
+    /// The provider whose stored account can be limited to one library of its server. A guest
+    /// session has no account to limit.
+    fn library_provider(&self) -> Option<&Arc<dyn MusicProvider>> {
+        self.providers.iter().find(|provider| {
+            provider.has_libraries() && provider.stored() && !provider.stored_guest()
+        })
+    }
+
+    /// Whether a stored account can be limited to one library of its server.
+    pub fn offers_libraries(&self) -> bool {
+        self.library_provider().is_some()
+    }
+
+    /// The library the stored account reads, or `None` for the whole server. It reads what is
+    /// stored and asks the server nothing.
+    pub fn library(&self) -> Option<Library> {
+        self.library_provider()?.library()
+    }
+
+    /// The libraries the last read found, or why it failed. `None` while the read is under way.
+    pub fn libraries(&self) -> Option<&Result<Vec<Library>, String>> {
+        self.libraries.as_ref()
+    }
+
+    /// Asks the stored account's server for its libraries, dropping any answer already held.
+    pub fn load_libraries(&mut self, cx: &mut Context<Self>) {
+        self.libraries = None;
+        self.libraries_task = None;
+        let Some(provider) = self.library_provider().cloned() else {
+            cx.notify();
+            return;
+        };
+        let io = self.io.clone();
+        self.libraries_task = Some(cx.spawn(async move |this, cx| {
+            let read = join(io.spawn(async move { provider.libraries().await })).await;
+            this.update(cx, |this, cx| {
+                this.libraries = Some(read.map_err(|error| format!("{error:#}")));
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    /// Drops the libraries read for the picker and stops a read under way.
+    pub fn forget_libraries(&mut self, cx: &mut Context<Self>) {
+        self.libraries = None;
+        self.libraries_task = None;
+        cx.notify();
+    }
+
+    /// Keeps the stored account's library choice, or the whole server with `None`, and rebuilds
+    /// the session around it when that account is the one in use. A stored account that is not
+    /// in use picks the choice up when it next signs in. Fails when the choice cannot be kept.
+    pub fn choose_library(
+        &mut self,
+        library: Option<Library>,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let Some(provider) = self.library_provider().cloned() else {
+            anyhow::bail!("no stored account can be limited to a library");
+        };
+        provider.choose_library(library)?;
+        if self.provider_slug() == Some(provider.slug()) {
+            self.reload(cx);
+        }
+        Ok(())
     }
 
     /// Opens the active provider's stored sign-in. One that cannot be opened hands over to the
