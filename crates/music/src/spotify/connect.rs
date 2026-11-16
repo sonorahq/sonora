@@ -1596,7 +1596,7 @@ impl Worker {
                 let unshuffled = options.shuffling_context == Some(false);
                 if let Some(on) = mode
                     .map(|on| on && !unshuffled)
-                    .or(unshuffled.then_some(false))
+                    .or_else(|| unshuffled.then_some(false))
                 {
                     self.switch_smart(on);
                 }
