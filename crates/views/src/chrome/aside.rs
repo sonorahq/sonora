@@ -1008,6 +1008,17 @@ impl Aside {
         Some(self.raised(perch, cx))
     }
 
+    /// The floating follow and return buttons of a fullscreen aside, which leaves them out of
+    /// its own render. The fullscreen player draws them over the panel itself, so they stay
+    /// above the visualizer it lays over the panel's text.
+    pub(crate) fn perches(&self, window: &Window, cx: &mut Context<Self>) -> Vec<Div> {
+        let sections = self.playback.read(cx).shown_queue(cx).sections;
+        self.follow(cx)
+            .into_iter()
+            .chain(self.recall(&sections, window, cx))
+            .collect()
+    }
+
     /// Keeps floating controls above the workspace player bar and the strip over it, or above
     /// the fullscreen transport.
     fn raised(&self, perch: Div, cx: &App) -> Div {
@@ -2167,8 +2178,10 @@ impl Render for Aside {
                             ),
                         )
                     })
-                    .children(self.follow(cx))
-                    .children(self.recall(&sections, window, cx)),
+                    .when(self.titled, |this| {
+                        this.children(self.follow(cx))
+                            .children(self.recall(&sections, window, cx))
+                    }),
             )
             .children(self.menu(cx))
     }
