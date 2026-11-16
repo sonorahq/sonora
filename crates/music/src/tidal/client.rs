@@ -195,6 +195,8 @@ pub struct Playback {
     pub quality: String,
     pub duration: Option<Duration>,
     pub loudness: Option<Loudness>,
+    /// How the granted stream is encoded, when Tidal said enough to tell.
+    pub encoding: Option<Encoding>,
 }
 
 impl std::fmt::Display for Stale {
@@ -800,6 +802,23 @@ impl TidalClient {
         wire::text(&bio, "text").map(wire::plain_bio)
     }
 
+    /// How many accounts follow the artist, which the web player shows as fans. The v1 artist
+    /// detail leaves it out, so it comes from the openapi artist. A failed read or a zero is no count.
+    async fn followers(&self, artist_id: &str) -> Option<u64> {
+        let artist = self
+            .read(
+                OPENAPI,
+                &format!("/artists/{}", escape::component(artist_id)),
+                &[],
+            )
+            .await
+            .ok()?;
+        artist
+            .pointer("/data/attributes/numberOfFollowers")
+            .and_then(Value::as_u64)
+            .filter(|count| *count > 0)
+    }
+
     /// Up to `SUGGESTIONS` artists Tidal lists as similar.
     async fn similar_artists(&self, artist_id: &str) -> Result<Vec<SavedArtist>> {
         let page = self
@@ -1043,11 +1062,13 @@ impl TidalClient {
             .and_then(|track| wire::number(&track, "duration"))
             .filter(|seconds| *seconds > 0)
             .map(Duration::from_secs);
+        let encoding = encoding(&answer, manifest.codec());
         Ok(Playback {
             manifest,
             quality,
             duration,
             loudness,
+            encoding,
         })
     }
 }
@@ -1116,19 +1137,21 @@ impl MusicApi for TidalClient {
     async fn artist(&self, artist_id: &str) -> Result<Artist> {
         let detail_path = format!("/artists/{}", escape::component(artist_id));
         let top_path = format!("{detail_path}/toptracks");
-        let (detail, top, albums, biography) = tokio::join!(
+        let (detail, top, albums, biography, followers) = tokio::join!(
             self.get(&detail_path, &[]),
             self.get(&top_path, &[("limit", "20")]),
             self.releases(artist_id, None, 50),
             self.biography(artist_id),
+            self.followers(artist_id),
         );
         let detail = detail.context("cannot load the artist")?;
         Ok(Artist {
             name: wire::text(&detail, "name").unwrap_or_default().to_owned(),
-            cover_large: wire::image(wire::text(&detail, "picture"), wire::PORTRAIT_LARGE),
+            cover_large: wire::portrait(&detail, wire::PORTRAIT_LARGE),
             banner: None,
             biography,
             monthly_listeners: None,
+            followers,
             top_tracks: top.map(|page| wire::track_list(&page)).unwrap_or_default(),
             albums: wire::distinct(albums.unwrap_or_default()),
         })
@@ -1167,7 +1190,7 @@ impl MusicApi for TidalClient {
         let detail = detail.context("cannot load the artist")?;
         Ok(ArtistProfile {
             name: wire::text(&detail, "name").unwrap_or_default().to_owned(),
-            cover_large: wire::image(wire::text(&detail, "picture"), wire::PORTRAIT_LARGE),
+            cover_large: wire::portrait(&detail, wire::PORTRAIT_LARGE),
             biography,
         })
     }
@@ -1194,7 +1217,7 @@ impl MusicApi for TidalClient {
                     .get(&format!("/artists/{}", escape::component(&id)), &[])
                     .await
                     .ok()?;
-                let cover = wire::image(wire::text(&detail, "picture"), wire::PORTRAIT)?;
+                let cover = wire::portrait(&detail, wire::PORTRAIT)?;
                 Some((id, cover))
             })
             .buffer_unordered(LOOKUPS)
@@ -1628,20 +1651,31 @@ impl MusicApi for TidalClient {
             .context("cannot load the tidal home feed")
     }
 
+    /// The `/genres` entries, then the page links of Explore such as moods and decades. A failure
+    /// to read Explore leaves Browse with the genres alone.
     async fn genres(&self) -> Result<Vec<Genre>> {
-        let answer = self
-            .get("/genres", &[])
-            .await
-            .context("cannot load the tidal genres")?;
-        Ok(answer
+        let (answer, explore) = tokio::join!(
+            self.get("/genres", &[]),
+            self.get("/pages/explore", &[("deviceType", "BROWSER")]),
+        );
+        let answer = answer.context("cannot load the tidal genres")?;
+        let listed: Vec<Genre> = answer
             .as_array()
             .map(|genres| genres.iter().filter_map(wire::genre).collect())
-            .unwrap_or_default())
+            .unwrap_or_default();
+        let links = explore
+            .map(|page| wire::explore_links(&page))
+            .inspect_err(|error| log::debug!("tidal: explore links: {error:#}"))
+            .unwrap_or_default();
+        Ok(wire::with_explore(listed, links))
     }
 
-    /// A genre's playlists, albums and tracks, one shelf each, leaving out a shelf Tidal has
-    /// nothing on. The shelves are titled with Fluent keys, which the page translates.
+    /// A genre's shelves. A `pages/` id opens one of Tidal's own pages, and any other id is a
+    /// `/genres` entry with its playlists, albums and tracks, one shelf each.
     async fn genre(&self, genre_id: &str) -> Result<GenreDetail> {
+        if genre_id.starts_with(wire::PAGE) {
+            return self.explore_page(genre_id).await;
+        }
         let base = format!("/genres/{}", escape::component(genre_id));
         let shelf = [("limit", GENRE_SHELF)];
         let (playlists_path, albums_path, tracks_path) = (
@@ -1657,55 +1691,98 @@ impl MusicApi for TidalClient {
         );
         let about = about.with_context(|| format!("cannot load the tidal genre {genre_id}"))?;
         let user_id = self.user_id().await;
-        let shelves = [
-            (
-                "nav-playlists",
-                playlists.map(|page| {
-                    wire::items(&page)
-                        .iter()
-                        .filter_map(|row| wire::playlist(row, &user_id))
-                        .map(GenreItem::Playlist)
-                        .collect::<Vec<_>>()
-                }),
-            ),
-            (
-                "nav-albums",
-                albums.map(|page| {
-                    wire::distinct(wire::release_list(&page))
-                        .into_iter()
-                        .map(GenreItem::Album)
-                        .collect()
-                }),
-            ),
-            (
-                "nav-songs",
-                tracks.map(|page| {
-                    wire::track_list(&page)
-                        .into_iter()
-                        .filter(|track| track.playable)
-                        .map(GenreItem::Track)
-                        .collect()
-                }),
-            ),
-        ];
-        let sections = shelves
-            .into_iter()
-            .filter_map(|(title, items)| {
-                // A genre lists only some kinds, and a missing shelf is no reason to fail the page.
-                let items = items
-                    .inspect_err(|error| log::debug!("tidal: genre {genre_id}: {error:#}"))
-                    .ok()?;
-                (!items.is_empty()).then(|| GenreSection {
-                    title: title.to_owned(),
-                    items,
-                })
-            })
-            .collect();
         Ok(GenreDetail {
             name: wire::text(&about, "name").unwrap_or(genre_id).to_owned(),
-            sections,
+            sections: genre_sections(genre_id, playlists, albums, tracks, &user_id),
         })
     }
+
+    /// The picture of an Explore page, which its links leave without one: its first album cover,
+    /// else its first playlist's. A `/genres` entry has its own, so it is not looked up here.
+    async fn genre_cover(&self, genre_id: &str) -> Result<Option<String>> {
+        if !genre_id.starts_with(wire::PAGE) {
+            return Ok(None);
+        }
+        Ok(self.explore_page(genre_id).await?.cover())
+    }
+}
+
+impl TidalClient {
+    /// A Tidal page such as a mood or a decade from Explore, as the shelves Tidal lays it out in.
+    /// Its cards that link to another page are genres, which open the same way.
+    async fn explore_page(&self, page_id: &str) -> Result<GenreDetail> {
+        if page_id.split('/').any(|segment| segment == "..") {
+            bail!("{page_id} is not a tidal page");
+        }
+        let path = page_id
+            .split('/')
+            .map(escape::component)
+            .collect::<Vec<_>>()
+            .join("/");
+        let page = self
+            .get(&format!("/{path}"), &[("deviceType", "BROWSER")])
+            .await
+            .with_context(|| format!("cannot load the tidal page {page_id}"))?;
+        let user_id = self.user_id().await;
+        Ok(GenreDetail {
+            name: wire::text(&page, "title").unwrap_or(page_id).to_owned(),
+            sections: wire::page_sections(&page, &user_id),
+        })
+    }
+}
+
+/// The three shelves of a `/genres` entry, each left out when Tidal has nothing on it. A shelf
+/// that failed to load is dropped, since one missing kind is no reason to fail the whole genre.
+fn genre_sections(
+    genre_id: &str,
+    playlists: Result<Value>,
+    albums: Result<Value>,
+    tracks: Result<Value>,
+    user_id: &str,
+) -> Vec<GenreSection> {
+    let shelves = [
+        (
+            "nav-playlists",
+            playlists.map(|page| {
+                wire::items(&page)
+                    .iter()
+                    .filter_map(|row| wire::playlist(row, user_id))
+                    .map(GenreItem::Playlist)
+                    .collect::<Vec<_>>()
+            }),
+        ),
+        (
+            "nav-albums",
+            albums.map(|page| {
+                wire::distinct(wire::release_list(&page))
+                    .into_iter()
+                    .map(GenreItem::Album)
+                    .collect::<Vec<_>>()
+            }),
+        ),
+        (
+            "nav-songs",
+            tracks.map(|page| {
+                wire::track_list(&page)
+                    .into_iter()
+                    .filter(|track| track.playable)
+                    .map(GenreItem::Track)
+                    .collect::<Vec<_>>()
+            }),
+        ),
+    ];
+    shelves
+        .into_iter()
+        .filter_map(|(title, items)| {
+            let items = items
+                .inspect_err(|error| log::debug!("tidal: genre {genre_id}: {error:#}"))
+                .ok()?;
+            (!items.is_empty()).then(|| GenreSection {
+                title: title.to_owned(),
+                items,
+            })
+        })
+        .collect()
 }
 
 /// One card of the home feed, by the kind the feed says it is. Videos are left out.
@@ -1768,4 +1845,94 @@ pub(crate) fn http() -> Result<reqwest::Client> {
         .read_timeout(STALL)
         .build()
         .context("cannot build the tidal http client")
+}
+
+/// How a stream Tidal granted is encoded, from its codec and what the playback answer says of
+/// it: FLAC at the bit depth and rate it names, AAC at the bit rate of its quality level.
+fn encoding(answer: &Value, codec: &str) -> Option<Encoding> {
+    let codec = codec.to_ascii_lowercase();
+    if codec.starts_with("flac") {
+        return Some(Encoding::Flac {
+            depth: wire::count(answer, "bitDepth")?,
+            rate: wire::count(answer, "sampleRate")?,
+        });
+    }
+    if codec.starts_with("mp4a") {
+        let kbps = match wire::text(answer, "audioQuality")? {
+            "HIGH" => 320,
+            "LOW" => 96,
+            _ => return None,
+        };
+        return Some(Encoding::Aac { kbps });
+    }
+    Some(Encoding::Other)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{Encoding, encoding, genre_sections};
+
+    #[test]
+    fn a_genre_from_genres_keeps_its_three_shelves_in_order() {
+        let playlists = Ok(json!({"items": [
+            {"uuid": "p1", "title": "Rock Mix", "numberOfTracks": 3, "creator": {"id": 1, "name": "x"}}
+        ]}));
+        let albums = Ok(json!({"items": [
+            {"id": 3, "title": "Al", "artists": [{"id": 1, "name": "A"}], "cover": "aa-bb", "releaseDate": "2026-01-02"}
+        ]}));
+        let tracks = Ok(json!({"items": [
+            {"id": 9, "title": "Hush", "duration": 200, "allowStreaming": true, "streamReady": true,
+             "artists": [{"id": 1, "name": "A"}], "album": {"id": 3, "title": "Al", "cover": "aa-bb"}}
+        ]}));
+        let sections = genre_sections("rock", playlists, albums, tracks, "1");
+        let titles: Vec<&str> = sections
+            .iter()
+            .map(|section| section.title.as_str())
+            .collect();
+        assert_eq!(titles, ["nav-playlists", "nav-albums", "nav-songs"]);
+    }
+
+    #[test]
+    fn a_genre_shelf_that_failed_or_is_empty_is_left_out() {
+        let playlists = Ok(json!({"items": []}));
+        let albums = Ok(json!({"items": [
+            {"id": 3, "title": "Al", "artists": [{"id": 1, "name": "A"}], "cover": "aa-bb", "releaseDate": "2026-01-02"}
+        ]}));
+        let tracks = Err(anyhow::anyhow!("tidal refused the tracks"));
+        let sections = genre_sections("rock", playlists, albums, tracks, "1");
+        let titles: Vec<&str> = sections
+            .iter()
+            .map(|section| section.title.as_str())
+            .collect();
+        assert_eq!(titles, ["nav-albums"]);
+    }
+
+    #[test]
+    fn flac_reports_the_depth_and_rate_tidal_names() {
+        let answer =
+            json!({"audioQuality": "HI_RES_LOSSLESS", "bitDepth": 24, "sampleRate": 96_000});
+        assert_eq!(
+            encoding(&answer, "flac"),
+            Some(Encoding::Flac {
+                depth: 24,
+                rate: 96_000
+            })
+        );
+        assert_eq!(encoding(&json!({"bitDepth": 16}), "FLAC"), None);
+    }
+
+    #[test]
+    fn aac_reports_the_bit_rate_of_its_level() {
+        let at = |level: &str| encoding(&json!({"audioQuality": level}), "mp4a.40.2");
+        assert_eq!(at("HIGH"), Some(Encoding::Aac { kbps: 320 }));
+        assert_eq!(at("LOW"), Some(Encoding::Aac { kbps: 96 }));
+        assert_eq!(at("LOSSLESS"), None);
+    }
+
+    #[test]
+    fn a_codec_with_no_name_here_is_other() {
+        assert_eq!(encoding(&json!({}), "eac3"), Some(Encoding::Other));
+    }
 }

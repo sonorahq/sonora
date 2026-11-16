@@ -11,7 +11,8 @@ use storage::Database;
 use crate::playback::PlaybackEvent;
 use crate::{Io, Outcome, Playback, Session, SessionEvent, SessionState, Toast, Toasts, join};
 
-const LOCAL_LIMIT: usize = 500;
+/// How many plays of one account the history keeps, on disk and in the list.
+const LOCAL_LIMIT: usize = 5000;
 /// Every column of `plays`, in the order a [`Row`] holds them.
 const COLUMNS: &str = "scope, provider, track_id, played_at, name, playable, artists, \
                        artist_refs, album, album_id, cover, duration_ms, explicit";
@@ -86,7 +87,7 @@ impl Store {
                        ORDER BY played_at DESC
                        LIMIT ?2
                    )",
-                params![scope, LOCAL_LIMIT],
+                params![scope, LOCAL_LIMIT as i64],
             )
             .context("cannot trim listening history")?;
         Ok(())
@@ -183,7 +184,7 @@ impl Store {
             )
             .context("cannot prepare listening history read")?;
         let rows = query
-            .query_map(params![scope, LOCAL_LIMIT], |row| {
+            .query_map(params![scope, LOCAL_LIMIT as i64], |row| {
                 let refs = row.get_ref(5)?.as_str()?;
                 let artist_refs: Vec<ArtistRef> = serde_json::from_str(refs).unwrap_or_default();
                 let played_at: i64 = row.get(1)?;

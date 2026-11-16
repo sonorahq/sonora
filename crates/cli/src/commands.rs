@@ -46,6 +46,11 @@ pub enum Request {
     Watch(Watch),
     /// Commands serving Sonora Session, listening together with other Sonora apps
     Session(SessionCommand),
+    /// The lyrics of the current track, as already held, without looking any up. Stands for
+    /// `sonora lyrics`
+    Lyrics,
+    /// Reads or changes whether the current track is a favorite. Stands for `sonora like`
+    Like(Option<Switch>),
 }
 
 impl Request {
@@ -105,6 +110,8 @@ pub enum PlaybackCommand {
     CurrentTrack,
     /// Returns or sets volume in order to `Switch`. Stands for `sonora volume < +/-N|N >`
     Volume(Option<Level>),
+    /// Returns or sets playback mute. Stands for `sonora mute [on|off|toggle]`
+    Mute(Option<Switch>),
     /// Returns or sets playback shuffle in order to `Switch`. Stands for `sonora shuffle <on|off|toggle>`
     Shuffle(Option<Switch>),
     /// Returns or sets playback repeat in order to `Repeat`. Stands for `sonora repeat <off|all|one>`
@@ -142,6 +149,9 @@ pub enum SessionCommand {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum QueueCommand {
+    /// Returns a read-only snapshot of the queue, without changing playback. Stands for
+    /// `sonora queue`
+    Snapshot,
     /// Queues items after the ones queued by hand. Stands for `sonora add <items>`
     Add(Vec<Item>),
     /// Queues items right after the current track. Stands for `sonora play-next <items>`
@@ -161,6 +171,12 @@ pub enum Item {
     /// The best hit of this kind for a search on the current provider, the one `sonora search`
     /// lists first. It is queued alone. Stands for `sonora add -s <query>`
     Search {
+        text: String,
+        kind: Kind,
+    },
+    /// The best match of this kind in the local library, ranked as the search page ranks it,
+    /// with no provider asked. It is queued alone. Stands for `sonora add -s <query> --local`
+    Local {
         text: String,
         kind: Kind,
     },

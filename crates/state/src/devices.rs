@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 use futures::{StreamExt as _, stream};
@@ -28,7 +28,16 @@ const REMOTE_TRACKS: usize = 25;
 /// How often the views are told that another device's playback moved on while it plays.
 const TICK: Duration = Duration::from_millis(500);
 /// The actual history and upcoming order supplied by another device.
-type RemoteWindow = (Vec<(Track, bool)>, bool, Vec<(Track, bool)>);
+type RemoteWindow = (Vec<(Track, QueueKind)>, QueueKind, Vec<(Track, QueueKind)>);
+
+/// A seek another device asked for while a song was loading, kept until that song plays.
+struct LateSeek {
+    /// The id of the song it was asked for.
+    track: Option<String>,
+    at: Duration,
+    /// When it was asked, since a song that plays has moved on by the time it loads.
+    asked: Instant,
+}
 
 /// The provider's device network as the app sees it: this app listed as a device, playback
 /// reported to the account's other apps, their commands carried out, and the account's other
@@ -77,9 +86,13 @@ pub struct Devices {
     events: Option<Task<()>>,
     /// The latest transfer or queue edit; a newer request cancels its predecessor.
     changing: Option<Task<()>>,
+    /// A seek another device asked for while the song was loading here. It is made once the
+    /// song plays, unless another song has taken its place by then.
+    seek_due: Option<LateSeek>,
     queuing: HashMap<String, Task<()>>,
     liking: HashMap<String, Task<()>>,
-    /// Notifies twice a second while another device plays, so its progress is redrawn.
+    /// Notifies `Playback::ticks` twice a second while another device plays, so its progress is
+    /// redrawn.
     ticking: Option<Task<()>>,
 }
 
@@ -101,8 +114,14 @@ impl Devices {
             | SessionEvent::WentOffline => this.relink(cx),
         })
         .detach();
-        cx.observe(&playback, |this, _, cx| this.publish(cx))
-            .detach();
+        cx.observe(&playback, |this, _, cx| {
+            this.seek_late(cx);
+            this.publish(cx);
+        })
+        .detach();
+        // the report to the other devices also follows the position as it moves
+        let ticks = playback.read(cx).ticks().clone();
+        cx.observe(&ticks, |this, _, cx| this.publish(cx)).detach();
         cx.observe(&queue, |this, _, cx| this.publish(cx)).detach();
         cx.observe(&settings, |this, _, cx| this.apply(cx)).detach();
 
@@ -134,6 +153,7 @@ impl Devices {
             sent: None,
             events: None,
             changing: None,
+            seek_due: None,
             queuing: HashMap::new(),
             liking: HashMap::new(),
             ticking: None,
@@ -150,6 +170,11 @@ impl Devices {
     /// Whether the signed-in provider has a device network and the listener wants it.
     pub fn available(&self) -> bool {
         self.link.is_some() && self.shown
+    }
+
+    /// Whether the device network has group sessions to start and join.
+    pub fn jams(&self) -> bool {
+        self.link.as_ref().is_some_and(|link| link.jams())
     }
 
     /// Whether this app's playback is what the account's other devices are being told about.
@@ -318,10 +343,7 @@ impl Devices {
                 .upcoming
                 .iter()
                 .take_while(|row| self.readable(&row.id))
-                .map(|row| match row.queued {
-                    true => QueueKind::Queued,
-                    false => QueueKind::Context,
-                }),
+                .map(kind_of),
         )
     }
 
@@ -402,6 +424,55 @@ impl Devices {
         cx.notify();
     }
 
+    /// Seeks here as another device asked. A seek into a song that is still loading leaves
+    /// playback showing it as loading for good, so that one waits for the song to play.
+    fn seek(&mut self, at: Duration, cx: &mut Context<Self>) {
+        match self.playback.read(cx).is_loading() {
+            true => {
+                self.seek_due = Some(LateSeek {
+                    track: self.current_id(cx),
+                    at,
+                    asked: Instant::now(),
+                })
+            }
+            false => self.here(cx, |playback, cx| playback.seek(at, cx)),
+        }
+    }
+
+    /// The id of the song that plays or loads here.
+    fn current_id(&self, cx: &App) -> Option<String> {
+        self.queue
+            .read(cx)
+            .current()
+            .and_then(|track| track.id.clone())
+    }
+
+    /// Makes the seek that waited for the song to load, from as far on as the song it follows
+    /// has got since.
+    fn seek_late(&mut self, cx: &mut Context<Self>) {
+        let Some(due) = &self.seek_due else {
+            return;
+        };
+        // the seek was meant for the song that was loading, not for one that came after it
+        if due.track != self.current_id(cx) {
+            self.seek_due = None;
+            return;
+        }
+        let playback = self.playback.read(cx);
+        if playback.is_loading() {
+            return;
+        }
+        let playing = playback.wants_playing();
+        let Some(due) = self.seek_due.take() else {
+            return;
+        };
+        let at = match playing {
+            true => due.at + due.asked.elapsed(),
+            false => due.at,
+        };
+        self.here(cx, |playback, cx| playback.seek(at, cx));
+    }
+
     /// Has playback act on this app's own engine, as another device asked, rather than steer
     /// whichever device has playback.
     fn here(
@@ -468,13 +539,15 @@ impl Devices {
         self.ticking = None;
     }
 
-    /// Lists the app on the device network, or takes it off, as the setting says.
-    fn apply(&mut self, cx: &mut Context<Self>) {
+    /// Lists the app on the device network, or takes it off, as the setting says. It stays off
+    /// while Soloist plays: Soloist is a device of its own on that network, and the two would
+    /// keep taking playback from each other.
+    pub(crate) fn apply(&mut self, cx: &mut Context<Self>) {
         let Some(link) = self.link.clone() else {
             return;
         };
         let settings = self.settings.read(cx);
-        let wanted = settings.spotify_connect();
+        let wanted = settings.spotify_connect() && !music::soloist::ready();
         let naming = match settings.spotify_connect_name() {
             ConnectName::Sonora => Naming::App,
             ConnectName::Both => Naming::AppOnComputer,
@@ -592,6 +665,15 @@ impl Devices {
     }
 
     fn set_roster(&mut self, roster: Roster, cx: &mut Context<Self>) {
+        let reported_volume = match (self.roster.elsewhere.as_ref(), roster.elsewhere.as_ref()) {
+            (Some(had), Some(wanted))
+                if had.device.id == wanted.device.id
+                    && had.device.volume != wanted.device.volume =>
+            {
+                Some((wanted.device.id.clone(), wanted.device.volume))
+            }
+            _ => None,
+        };
         let wanted = roster
             .elsewhere
             .as_ref()
@@ -611,6 +693,11 @@ impl Devices {
                 .as_ref()
                 .is_some_and(|e| e.state.playing);
         self.roster = roster;
+        if let Some((device, level)) = reported_volume {
+            self.playback.update(cx, |playback, _| {
+                playback.reported_steered_volume(&device, level)
+            });
+        }
         // playback taken for a local file is never reported, so the network never releases it,
         // and another device starting to play is what takes it back
         if started && self.claimed && self.sent.is_none() {
@@ -637,6 +724,36 @@ impl Devices {
         self.list(cx);
         self.tick(cx);
         self.redraw(cx);
+    }
+
+    /// The album, playlist or other collection the other device is playing from. `None` when
+    /// nothing plays or the song was queued by hand. The name comes from the song for an album and
+    /// from the library for a playlist, so it can be missing.
+    pub(crate) fn origin(&self, cx: &App) -> Option<Origin> {
+        let state = &self.elsewhere()?.state;
+        let playing = state.track.as_ref().filter(|row| !row.queued)?;
+        let (origin, name) = match state.context.as_ref()? {
+            Collection::Album(id) => (
+                Origin::album(id),
+                self.listed
+                    .get(&playing.id)
+                    .filter(|track| track.album_id.as_ref() == Some(id))
+                    .map(|track| track.album.as_str()),
+            ),
+            Collection::Playlist(id) => (
+                Origin::playlist(id),
+                self.library
+                    .read(cx)
+                    .playlist(id)
+                    .map(|playlist| playlist.name.as_str()),
+            ),
+            Collection::Saved => (Origin::saved(), None),
+            Collection::Radio(id) => (Origin::radio(id), None),
+        };
+        Some(match name {
+            Some(name) => origin.named(name),
+            None => origin,
+        })
     }
 
     /// Resolves the active song, history and upcoming tracks through one cache and task.
@@ -723,7 +840,8 @@ impl Devices {
         self.available() && self.elsewhere().is_some_and(|e| e.state.playing)
     }
 
-    /// Redraws a remote device's advancing clock until playback stops or moves here.
+    /// Redraws a remote device's advancing clock until playback stops or moves here. Only the
+    /// observers of `Playback::ticks` hear each tick.
     fn tick(&mut self, cx: &mut Context<Self>) {
         if !self.moving() {
             self.ticking = None;
@@ -732,7 +850,8 @@ impl Devices {
                 while this
                     .update(cx, |this, cx| {
                         if this.moving() {
-                            this.redraw(cx);
+                            let ticks = this.playback.read(cx).ticks().clone();
+                            ticks.update(cx, |_, cx| cx.notify());
                         } else {
                             this.ticking = None;
                         }
@@ -753,13 +872,13 @@ impl Devices {
             Command::Pause => self.here(cx, |playback, cx| playback.pause(cx)),
             Command::Next => self.here(cx, |playback, cx| playback.next(cx)),
             Command::Previous => self.here(cx, |playback, cx| playback.previous(cx)),
-            Command::Seek(at) => self.here(cx, |playback, cx| playback.seek(at, cx)),
+            Command::Seek(at) => self.seek(at, cx),
             Command::Volume(level) => self.here(cx, |playback, cx| playback.set_volume(level, cx)),
             Command::Shuffle(on) => self.queue.update(cx, |queue, cx| queue.set_shuffle(on, cx)),
             Command::Repeat(mode) => self.here(cx, |playback, cx| playback.set_repeat(mode, cx)),
             Command::Enqueue { id, added_by } => self.enqueue(id, added_by, cx),
             Command::Start(start) => self.start(start, cx),
-            Command::SetQueue { previous, upcoming } => self.set_queue(previous, upcoming, cx),
+            Command::SetQueue { upcoming } => self.set_queue(upcoming, cx),
             Command::Released => {
                 // another device took over, so this one stops without calling playback back
                 self.changing = None;
@@ -833,12 +952,8 @@ impl Devices {
     }
 
     /// Accepts queue edits made in another Spotify client without resetting the current song.
-    fn set_queue(
-        &mut self,
-        previous: Vec<QueuedTrack>,
-        upcoming: Vec<QueuedTrack>,
-        cx: &mut Context<Self>,
-    ) {
+    /// The history stays as it is here, since an edit only ever changes what is still to play.
+    fn set_queue(&mut self, upcoming: Vec<QueuedTrack>, cx: &mut Context<Self>) {
         let Some(state) = self.snapshot(cx) else {
             return;
         };
@@ -856,11 +971,7 @@ impl Devices {
         }
         self.start(
             Start {
-                state: Arc::new(Snapshot {
-                    previous,
-                    upcoming,
-                    ..state
-                }),
+                state: Arc::new(Snapshot { upcoming, ..state }),
                 preserve_queue: true,
                 restart: false,
             },
@@ -1196,7 +1307,7 @@ async fn load(
             .by_ref()
             .take(start.previous.len())
             .zip(&start.previous)
-            .filter_map(|(track, listed)| Some((track?, listed.queued)))
+            .filter_map(|(track, listed)| Some((track?, kind_of(listed))))
             .collect();
         // The current song has its own slot in the resolver, outside history and upcoming.
         if start.track.is_some() {
@@ -1204,11 +1315,11 @@ async fn load(
         }
         let next = resolved
             .zip(&start.upcoming)
-            .filter_map(|(track, listed)| Some((track?, listed.queued)))
+            .filter_map(|(track, listed)| Some((track?, kind_of(listed))))
             .collect();
         (
             past,
-            start.track.as_ref().is_some_and(|track| track.queued),
+            start.track.as_ref().map_or(QueueKind::Context, kind_of),
             next,
         )
     });
@@ -1241,6 +1352,16 @@ async fn resolve_queue(
         }
     }
     ids.iter().map(|id| known.get(id).cloned()).collect()
+}
+
+/// Why a track another device lists is in its play order: queued by hand, picked by the
+/// provider to follow the collection, or part of the collection itself.
+fn kind_of(row: &QueuedTrack) -> QueueKind {
+    match (row.queued, row.suggested) {
+        (true, _) => QueueKind::Queued,
+        (false, true) => QueueKind::Suggested,
+        (false, false) => QueueKind::Context,
+    }
 }
 
 /// Whether two reports show the same queue around the same song, whatever their clocks say.

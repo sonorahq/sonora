@@ -15,8 +15,9 @@ use async_trait::async_trait;
 
 use crate::deezer::playback::Factory;
 use crate::{
-    Capabilities, InputSource, MusicApi as _, MusicProvider, PlaybackFactory, PromptSink,
-    ProviderSession, Shape, SignIn, SignInPrompt, WebSignIn,
+    AccountChoice, AccountChoices, AccountKind, Capabilities, InputSource, MusicApi as _,
+    MusicProvider, PlaybackFactory, PromptSink, ProviderSession, Shape, SignIn, SignInPrompt,
+    WebSignIn,
 };
 
 pub use auth::arl;
@@ -42,21 +43,40 @@ impl DeezerProvider {
         Self
     }
 
-    async fn connect(arl: &str) -> Result<ProviderSession> {
+    /// Signs in with pasted or captured cookies. An account on a family plan asks which of
+    /// its profiles to go on as, and the pick is stored with the arl.
+    async fn connect(
+        arl: &str,
+        prompt: &PromptSink,
+        input: &mut InputSource,
+    ) -> Result<ProviderSession> {
         let arl = auth::arl(arl)?;
-        let client = DeezerClient::connect(&arl)
+        let client = DeezerClient::connect(&arl, None)
             .await
             .context("cannot reach deezer with that session")?;
-        let profile = client.profile().await?;
-        auth::store(&auth::Credentials { arl })?;
-        Ok(session(client, profile))
+        let signed_in = client.profile().await?.id;
+        let profiles = client.profiles().await?;
+        let picked = match profiles.len() {
+            0 | 1 => None,
+            _ => Some(pick(profiles, prompt, input).await?),
+        };
+        let profile = picked.filter(|id| *id != signed_in);
+        if let Some(id) = &profile {
+            client.switch(id).await?;
+        }
+        let user = client.profile().await?;
+        auth::store(&auth::Credentials {
+            arl: client.arl().await,
+            profile,
+        })?;
+        Ok(session(client, user))
     }
 
     async fn restore_stored() -> Result<Option<ProviderSession>> {
         let Some(remembered) = auth::load() else {
             return Ok(None);
         };
-        match DeezerClient::connect(&remembered.arl).await {
+        match DeezerClient::connect(&remembered.arl, remembered.profile.as_deref()).await {
             Ok(client) => {
                 let profile = client.profile().await?;
                 Ok(Some(session(client, profile)))
@@ -84,6 +104,25 @@ fn session(client: DeezerClient, profile: crate::UserProfile) -> ProviderSession
             ..Capabilities::ALL
         },
     }
+}
+
+/// Asks which family profile to go on as and answers the picked user id.
+async fn pick(
+    profiles: Vec<AccountChoice>,
+    prompt: &PromptSink,
+    input: &mut InputSource,
+) -> Result<String> {
+    prompt(SignInPrompt::Accounts(AccountChoices {
+        kind: AccountKind::Profile,
+        accounts: profiles.clone(),
+    }));
+    let picked = input.recv().await.context("sign-in was cancelled")?;
+    let picked = picked.trim();
+    profiles
+        .into_iter()
+        .map(|profile| profile.id)
+        .find(|id| id == picked)
+        .context("that deezer profile is no longer in the family")
 }
 
 impl Default for DeezerProvider {
@@ -145,7 +184,7 @@ impl MusicProvider for DeezerProvider {
             SignIn::Secret | SignIn::Default => {
                 prompt(SignInPrompt::Secret);
                 let cookies = input.recv().await.context("sign-in was cancelled")?;
-                Self::connect(&cookies).await
+                Self::connect(&cookies, &prompt, &mut input).await
             }
             SignIn::Anonymous => Err(anyhow::anyhow!("deezer has no anonymous sign-in")),
             SignIn::Path(_) => Err(anyhow::anyhow!(

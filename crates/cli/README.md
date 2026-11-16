@@ -21,13 +21,18 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora next` / `prev` | Skip to the next track, or go back to the previous one |
 | `sonora seek <0-100\|TIME\|±STEP>` | Jump to a percent of the current track, a time such as `1:30`, or a step such as `+10` |
 | `sonora current` | Print what plays now as JSON, or `null` when nothing is loaded |
+| `sonora queue` | Print the queue: what played, what plays and what follows, without changing it |
+| `sonora lyrics` | Print the lyrics of the current track, without looking any up |
+| `sonora like [on\|off\|toggle]` | Print or change whether the current track is a favorite |
 | `sonora watch [--position]` | Print what plays again on every change, one line of JSON each, until stopped |
 | `sonora volume [N\|+N\|-N]` | Print the volume, set it from 0 to 100, or step it |
+| `sonora mute [on\|off\|toggle]` | Print or change whether playback is muted |
 | `sonora shuffle [on\|off\|toggle]` | Print shuffle, or switch it |
 | `sonora repeat [off\|all\|one]` | Print repeat, or set it |
 | `sonora add <file\|link>...` | Queue after the tracks queued by hand |
 | `sonora play-next <file\|link>...` | Queue right after the current track |
 | `sonora add -s <query> [-t TYPE]` | Queue the best hit of a search, the one `search` lists first |
+| `sonora play -s <query> --local` | Search the local library instead of the current provider; `add` and `play-next` take `--local` too |
 | `sonora search <query> [-t TYPE] [-n N]` | Search the current provider |
 | `sonora providers` | List the providers and which one is current |
 | `sonora provider [slug]` | Print the current provider, or switch to one that has an account |
@@ -35,6 +40,15 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora -v` | Print the version |
 
 `TYPE` is `song`, `album`, `artist` or `playlist`; `-s` takes a song unless told otherwise. `sonora <command> --help` describes each one.
+
+`--local` (`-l`) finds the best match in the local library with the same ranking the search page uses, and asks no provider. An album, artist or playlist queues all of its local songs. With no match, the command prints `nothing found for '<query>'`, exits with 1 and leaves playback as it is.
+
+`like` prints `on` or `off`; `--json` prints the state as a boolean. `on` and `off` are
+idempotent, and `toggle` flips the current track's favorite state. The same state appears in
+`sonora current` as `liked`.
+
+`mute` prints `on` or `off`; `--json` prints a boolean. Muting remembers the current volume for
+unmute, and a volume change while muted clears that remembered level.
 
 Playback commands go to the device that has playback, so while Sonora steers another device over
 Spotify Connect, that device is the one that pauses or skips.
@@ -120,6 +134,26 @@ sonora search daft punk --json | jq -r '.[0].link'
 }
 ```
 
+`queue` answers a read-only snapshot in play order, without mutating playback or fetching
+anything from a provider. Each track carries `id`, `title`, `artists`, `album`, `cover` and
+`duration`, and a `kind`: `context` for the collection being played, `queued` for a track added
+by hand, or `suggested` for a recommendation, when that is known. While another device is
+steered over Spotify Connect, only the tracks whose metadata Sonora has already read are
+listed. At most 100 previous and 100 upcoming tracks are listed (`wire::QUEUE_LIMIT`), most
+recent previous and next upcoming first in play order, with `truncated` set when either was cut:
+
+```sh
+sonora queue
+sonora queue --json | jq '.upcoming[].track.title'
+```
+
+```json
+{"previous":[],"current":{"track":{"id":"…","title":"One More Time","artists":["Daft Punk"],"album":"Discovery","cover":"https://…","duration":320},"kind":"context"},"upcoming":[],"truncated":false}
+```
+
+An empty queue prints `Queue is empty.` as text, and the same shape with empty lists and a
+`null` current as JSON.
+
 `state` is `playing`, `paused`, `loading` or `idle`. Times are whole seconds, the volume a percent.
 `provider` is the slug `sonora providers` lists, `local` for a file. `origin` is what the track was
 queued from, `null` when it was queued on its own; its `kind` is `album`, `playlist`, `artist`,
@@ -196,6 +230,7 @@ comes again on every change, on the same connection, until the command line hang
 ```
 → {"v":1,"body":{"playback":"next"}}
 → {"v":1,"body":{"playback":{"volume":{"by":5}}}}
+→ {"v":1,"body":{"queue":"snapshot"}}
 → {"v":1,"body":{"queue":{"add":[{"search":{"text":"one more time","kind":"song"}}]}}}
 → {"v":1,"body":{"watch":{"position":false}}}
 ← {"v":1,"body":"done"}
@@ -244,3 +279,23 @@ The crate knows nothing of GPUI or of the app's state, so it can be built and re
 - **Messages through Fluent.** Errors, table headers, statuses and `--help` are in English in
   the code for now. They move to `assets/i18n/en-US/main.ftl`, in the language the running
   Sonora uses or, for `--help` with none running, the system's.
+
+`lyrics` answers what Sonora already holds for the track shown, on the steered device while
+another is steered over Spotify Connect, and never looks anything up. Its `state` is `ready`,
+`loading`, `missing`, `instrumental`, `failed`, `disabled` when lyrics are off in the settings, or
+`idle` when nothing is loaded; only `ready` has `lines`. A synced text gives each line the time it
+starts at in milliseconds (`start_ms`, `null` for plain lyrics), and `current` and `next` are the
+line sung now and the one after it, picked from the playback position when the command runs.
+Before the first line `current` is `null`, and after the last `next` is. A line carries its
+`romanized` form when its script has one. At most 500 lines are listed (`wire::LYRICS_LIMIT`),
+with `truncated` set when there were more; `current` and `next` are picked before the cut. The
+text form prints one line each, with its time when synced and its romanization under it:
+
+```sh
+sonora lyrics
+sonora lyrics --json | jq -r .current.text
+```
+
+```json
+{"state":"ready","source":"lrclib","instrumental":false,"synced":true,"current":{"start_ms":62500,"text":"…","romanized":null},"next":{"start_ms":65000,"text":"…","romanized":null},"lines":[{"start_ms":62500,"text":"…","romanized":null}],"truncated":false}
+```

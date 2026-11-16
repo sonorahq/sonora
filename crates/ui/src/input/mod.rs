@@ -256,6 +256,9 @@ pub struct Input {
     compact: bool,
     tucked: bool,
     blurred: bool,
+    /// Whether the field draws no fill or border of its own, for one that is the whole surface
+    /// it sits on.
+    bare: bool,
     clearable: bool,
     masked: bool,
     /// Whether the text keeps to the field's end rather than its start, as a column of numbers.
@@ -291,6 +294,7 @@ impl Input {
             compact: false,
             tucked: false,
             blurred: false,
+            bare: false,
             clearable: false,
             masked: false,
             end: false,
@@ -331,6 +335,13 @@ impl Input {
     /// `blurring` itself at render.
     pub fn blurred(mut self) -> Self {
         self.blurred = true;
+        self
+    }
+
+    /// Drops the field's fill and border and gives it a list row's height and a larger icon,
+    /// for a field that fills the surface around it, such as the line atop the quick search.
+    pub fn bare(mut self) -> Self {
+        self.bare = true;
         self
     }
 
@@ -377,6 +388,15 @@ impl Input {
     pub fn shortcut(mut self, keystroke: impl Into<SharedString>) -> Self {
         self.shortcut = Some(keystroke.into());
         self
+    }
+
+    /// Changes the keystroke drawn at the field's end, for a shortcut the user rebinds. `None`
+    /// draws none.
+    pub fn set_shortcut(&mut self, keystroke: Option<SharedString>, cx: &mut Context<Self>) {
+        if self.shortcut != keystroke {
+            self.shortcut = keystroke;
+            cx.notify();
+        }
     }
 
     pub fn text(&self) -> &str {

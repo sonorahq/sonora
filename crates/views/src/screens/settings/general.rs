@@ -7,9 +7,11 @@ use ui::{MenuItem, OptionCard, Pace, Picker, Rounding, Saver, Stillness, Switch}
 use super::appearance::corner;
 use super::rows::{Announced as _, grid, segmented};
 use super::{Group, LANGUAGES, SettingsView, Slot};
+use crate::shared::nav::{entry_shown, set_entry_shown};
 use crate::shared::popups::matches_query;
 
 const STARTUP: &str = "startup";
+const PROVIDER: &str = "provider";
 const ENTRIES: &str = "entries";
 
 impl SettingsView {
@@ -17,11 +19,12 @@ impl SettingsView {
         vec![
             Group::new("settings-group-startup", "icons/house.svg").rows([
                 Slot::Startup,
+                Slot::Provider,
                 Slot::Entries,
                 Slot::Language,
             ]),
             Group::new("settings-group-window", "icons/panel-left-open.svg")
-                .rows([Slot::Tray, Slot::TrayIcon])
+                .rows([Slot::Tray, Slot::TrayIcon, Slot::NowPlayingOnFileOpen])
                 .rows(self.decoration_slots(cx)),
             Group::new("settings-group-motion", "icons/loader-circle.svg").rows([
                 Slot::Motion,
@@ -61,21 +64,17 @@ impl SettingsView {
     pub(super) fn startup_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let chosen = Screen::from_id(self.settings.read(cx).startup()).unwrap_or(Screen::Home);
         let current = i18n::lookup(chosen.key(), None);
-        let guest = !self.session.read(cx).authenticated();
 
         let picker = Picker::new(STARTUP, &self.popovers, current)
             .width(Picker::NARROW)
             .items(Screen::ALL.map(|screen| {
-                let item = MenuItem::new(screen.id(), i18n::lookup(screen.key(), None))
-                    .selected(screen == chosen);
-                match guest && screen.needs_account() {
-                    true => item.disabled().tooltip("settings-startup-no-guest"),
-                    false => item.on_click(cx.listener(move |this, _, _, cx| {
+                MenuItem::new(screen.id(), i18n::lookup(screen.key(), None))
+                    .selected(screen == chosen)
+                    .on_click(cx.listener(move |this, _, _, cx| {
                         this.settings
                             .update(cx, |settings, cx| settings.set_startup(screen.id(), cx));
                         cx.notify();
-                    })),
-                }
+                    }))
             }));
 
         self.row(
@@ -84,18 +83,70 @@ impl SettingsView {
         )
     }
 
+    pub(super) fn provider_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let configured = self.settings.read(cx).startup_provider().map(str::to_owned);
+        let providers: Vec<_> = self
+            .session
+            .read(cx)
+            .providers()
+            .map(|provider| (provider.slug, provider.name))
+            .collect();
+        let current = match configured.as_deref() {
+            None => t!("settings-provider-last-used"),
+            Some(slug) => providers
+                .iter()
+                .find(|(provider, _)| *provider == slug)
+                .map(|(_, name)| SharedString::from(*name))
+                .unwrap_or_else(|| t!("settings-provider-unavailable", name = slug)),
+        };
+
+        let mut picker = Picker::new(PROVIDER, &self.popovers, current)
+            .width(Picker::REGULAR)
+            .items([
+                MenuItem::new("provider-last-used", t!("settings-provider-last-used"))
+                    .selected(configured.is_none())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.settings.update(cx, |settings, cx| {
+                            settings.set_startup_provider(None, cx);
+                        });
+                        this.popovers.close();
+                        cx.notify();
+                    })),
+            ]);
+
+        for (slug, name) in providers {
+            let selected = configured.as_deref() == Some(slug);
+            picker = picker.item(
+                MenuItem::new(slug, SharedString::from(name))
+                    .selected(selected)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.settings.update(cx, |settings, cx| {
+                            settings.set_startup_provider(Some(slug), cx);
+                        });
+                        this.popovers.close();
+                        cx.notify();
+                    })),
+            );
+        }
+
+        self.row(
+            t!("settings-provider"),
+            picker.name(t!("settings-provider")).into_any_element(),
+        )
+    }
+
     pub(super) fn entries_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let picker = Picker::new(ENTRIES, &self.popovers, t!("settings-entries-pick"))
             .width(Picker::REGULAR)
             .sticky()
             .items(NavEntry::ALL.map(|entry| {
-                let shown = self.settings.read(cx).nav_shown(entry.id());
+                let shown = entry_shown(entry, self.settings.read(cx));
 
                 MenuItem::new(entry.id(), i18n::lookup(entry.key(), None))
                     .selected(shown)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.settings.update(cx, |settings, cx| {
-                            settings.set_nav_shown(entry.id(), !shown, cx)
+                            set_entry_shown(entry, !shown, settings, cx)
                         });
                         cx.notify();
                     }))
@@ -394,6 +445,22 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_tray_icon(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+
+    pub(super) fn now_playing_on_file_open_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).now_playing_on_file_open();
+
+        self.row(
+            t!("settings-now-playing-on-file-open"),
+            Switch::new("now-playing-on-file-open", on)
+                .name(t!("settings-now-playing-on-file-open"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_now_playing_on_file_open(!on, cx)
+                    });
                 }))
                 .into_any_element(),
         )

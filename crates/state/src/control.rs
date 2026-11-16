@@ -7,17 +7,21 @@ use cli::commands::{
     self, Item, Kind, Level, PlaybackCommand, ProviderCommand, QueueCommand, Request, SearchQuery,
     SessionCommand, Switch, Time, Watch,
 };
-use cli::wire::{self, Current, Failure, Reply, SessionInfo, State, Value};
+use cli::wire::{
+    self, Current, Failure, LyricsStatus, QueueEntry, QueueEntryKind, QueueSnapshot, Reply,
+    SessionInfo, State, Value,
+};
 use futures::future;
 use gpui::{App, Context, Entity, Subscription, Task};
 use music::link::Linked;
-use music::{Album, MediaKind, MusicApi, MusicProvider, Playlist, SavedArtist, Track};
+use music::{Found, Lyrics as Sheet, LyricsHit, MediaKind, MusicApi, MusicProvider, Track};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::search::{self, Catalog};
 use crate::{
-    Hit, Io, Library, Origin, Playback, PlaybackState, QueuePlacement, Repeat, Session,
-    SessionState, Shelf, Sonora, Whence, join, noted,
+    Hit, Io, Library, LibraryPart, LyricsState, Origin, Playback, PlaybackState, QueueKind,
+    QueuePlacement, QueuePosition, Repeat, Session, SessionState, Shelf, Sonora, Whence, join,
+    noted,
 };
 
 /// What `sonora current` calls the provider of a local file, the slug `sonora providers` gives it.
@@ -26,14 +30,6 @@ const LOCAL: &str = "local";
 /// How often a watch looks again on its own, for the position it reports and for a change made
 /// somewhere that does not go through `Playback`, such as the volume of a steered device.
 const WATCH_TICK: Duration = Duration::from_secs(1);
-
-/// What the four searches of a query answered: songs, albums, playlists and artists.
-type Found = (
-    anyhow::Result<Vec<Track>>,
-    anyhow::Result<Vec<Album>>,
-    anyhow::Result<Vec<Playlist>>,
-    anyhow::Result<Vec<SavedArtist>>,
-);
 
 /// Carries out what the command line asks of the running Sonora. Playback goes through
 /// `Playback`, so a device steered over Connect is the one that obeys. A command that fetches
@@ -50,7 +46,7 @@ pub struct Control {
     /// Command lines following what plays, as `sonora watch`.
     watchers: Vec<Watcher>,
     /// What keeps the watchers told, held only while there are any.
-    watching: Option<(Subscription, Task<()>)>,
+    watching: Option<([Subscription; 2], Task<()>)>,
     _session: Subscription,
 }
 
@@ -82,7 +78,10 @@ enum Place {
 /// An item to queue, checked on the main thread and fetched on tokio.
 enum Source {
     Path(PathBuf),
-    /// The link as typed, for the failure that names it, and what it points at.
+    /// A track already read from the local library, which needs no fetch.
+    Track(Box<Track>),
+    /// The link as typed, or a name for a local match, for the failure that names it, and what
+    /// it points at.
     Link(String, Linked),
 }
 
@@ -133,7 +132,11 @@ impl Control {
             told: None,
         });
         if self.watching.is_none() {
-            let observed = cx.observe(&self.playback, |this, _, cx| this.tell(cx));
+            let ticks = self.playback.read(cx).ticks().clone();
+            let observed = [
+                cx.observe(&self.playback, |this, _, cx| this.tell(cx)),
+                cx.observe(&ticks, |this, _, cx| this.tell(cx)),
+            ];
             let ticking = cx.spawn(async move |this, cx| {
                 loop {
                     cx.background_executor().timer(WATCH_TICK).await;
@@ -189,10 +192,72 @@ impl Control {
             Request::Provider(command) => return self.provider(command, reply, cx),
             Request::Search(query) => return self.search(query, reply, cx),
             Request::Session(command) => session(command, cx),
+            Request::Lyrics => Reply::Value(Value::Lyrics(lyrics(self.playback.read(cx), cx))),
+            Request::Like(switch) => return self.like(switch, reply, cx),
             // a watch is answered as a stream, by `watch`, and never reaches here
             Request::Watch(_) => Reply::Failed(Failure::Malformed),
         };
         reply.send(answer).ok();
+    }
+
+    /// Reads or changes the favorite state of the track shown by the active playback device.
+    fn like(
+        &mut self,
+        switch: Option<Switch>,
+        reply: oneshot::Sender<Reply>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(track) = self.playback.read(cx).shown_track(cx) else {
+            reply.send(Reply::Failed(Failure::NoCurrentTrack)).ok();
+            return;
+        };
+        let Some(id) = track.id.as_deref() else {
+            reply.send(Reply::Failed(Failure::MissingTrackId)).ok();
+            return;
+        };
+        let shelf = Shelf::of(id);
+        if self.session.read(cx).client_of(shelf).is_none() {
+            reply.send(Reply::Failed(Failure::Unsupported)).ok();
+            return;
+        }
+        let saved = {
+            let library = self.library.read(cx);
+            if library.loading(shelf, LibraryPart::Tracks) || library.pending(id) {
+                reply.send(Reply::Failed(Failure::Busy)).ok();
+                return;
+            }
+            library.saved(id)
+        };
+        let Some(switch) = switch else {
+            reply.send(Reply::Value(Value::Liked(saved))).ok();
+            return;
+        };
+        let wanted = favorite_target(saved, switch);
+        if wanted == saved {
+            reply.send(Reply::Done).ok();
+            return;
+        }
+        let completed = self
+            .library
+            .update(cx, |library, cx| library.save_track(track, wanted, cx));
+        let key = self.issued;
+        self.issued += 1;
+        let task = cx.spawn(async move |this, cx| {
+            let answer = match completed.await {
+                Ok(true) => Reply::Done,
+                Ok(false) => Reply::Failed(Failure::FavoriteUpdateFailed),
+                Err(error) => {
+                    log::warn!("control: favorite update ended before it completed: {error}");
+                    Reply::Failed(Failure::FavoriteUpdateFailed)
+                }
+            };
+            this.update(cx, |this, _| {
+                reply.send(answer).ok();
+                this.pending.remove(&key);
+            })
+            .ok();
+        });
+        self.pending.insert(key, task);
     }
 
     /// Queues the items of `command`, or the best hit of the search it carries, which first has
@@ -204,10 +269,19 @@ impl Control {
         cx: &mut Context<Self>,
     ) {
         let (items, placement) = match command {
+            QueueCommand::Snapshot => {
+                let snapshot = queue_snapshot(self.playback.read(cx), cx);
+                reply.send(Reply::Value(Value::Queue(snapshot))).ok();
+                return;
+            }
             QueueCommand::Add(items) => (items, Place::Queue(QueuePlacement::End)),
             QueueCommand::PlayNext(items) => (items, Place::Queue(QueuePlacement::Next)),
             QueueCommand::Play(items) => (items, Place::Now),
         };
+        if let [Item::Local { text, kind }] = items.as_slice() {
+            let (text, kind) = (text.clone(), *kind);
+            return self.local(text, kind, placement, reply, cx);
+        }
         if !items.iter().any(|item| matches!(item, Item::Search { .. })) {
             return self.enqueue(items, placement, reply, cx);
         }
@@ -233,6 +307,38 @@ impl Control {
         });
     }
 
+    /// Plays or queues the best match of `text` and `kind` in the local library, ranked as the
+    /// search page ranks it. With nothing found, nothing is fetched or played.
+    fn local(
+        &mut self,
+        text: String,
+        kind: Kind,
+        placement: Place,
+        reply: oneshot::Sender<Reply>,
+        cx: &mut Context<Self>,
+    ) {
+        let sources: Vec<Source> = {
+            let library = self.library.read(cx).state(Shelf::Local);
+            search::matching(
+                library.tracks(),
+                library.albums(),
+                library.playlists(),
+                &text,
+                search_kind(kind),
+                1,
+            )
+            .into_iter()
+            .filter_map(local_source)
+            .collect()
+        };
+        if sources.is_empty() {
+            reply.send(Reply::Failed(Failure::NothingFound(text))).ok();
+            return;
+        }
+        let client = self.session.read(cx).local_client();
+        self.fetch_into(sources, client, placement, reply, cx);
+    }
+
     /// Fetches every item at once and queues them together, in the order they were given. One
     /// that fails refuses the whole command, so nothing is queued half.
     fn enqueue(
@@ -253,10 +359,21 @@ impl Control {
                 return;
             }
         };
+        let client = self.session.read(cx).client();
+        self.fetch_into(sources, client, placement, reply, cx);
+    }
 
-        let session = self.session.read(cx);
-        let local = session.local_provider();
-        let client = session.client();
+    /// Fetches what `sources` stand for, links through `client`, then places the tracks together
+    /// and answers. One that fails refuses the whole command, so nothing is queued half.
+    fn fetch_into(
+        &mut self,
+        sources: Vec<Source>,
+        client: Option<Arc<dyn MusicApi>>,
+        placement: Place,
+        reply: oneshot::Sender<Reply>,
+        cx: &mut Context<Self>,
+    ) {
+        let local = self.session.read(cx).local_provider();
         let fetch = Io::global(cx).spawn(async move {
             let fetches = sources
                 .into_iter()
@@ -322,17 +439,7 @@ impl Control {
         let fetch = {
             let client = client.clone();
             let asked = query.text.clone();
-            Io::global(cx).spawn(async move {
-                anyhow::Ok(
-                    future::join4(
-                        client.search(&asked),
-                        client.search_albums(&asked),
-                        client.search_playlists(&asked),
-                        client.search_artists(&asked),
-                    )
-                    .await,
-                )
-            })
+            Io::global(cx).spawn(async move { anyhow::Ok(client.search_all(&asked).await) })
         };
         let key = self.issued;
         self.issued += 1;
@@ -360,15 +467,23 @@ impl Control {
     fn hits(
         &self,
         query: &SearchQuery,
-        (tracks, albums, playlists, artists): Found,
+        found: Found,
         client: &dyn MusicApi,
         cx: &mut App,
     ) -> Result<Vec<wire::Hit>, Failure> {
-        if let (Err(error), Err(_), Err(_), Err(_)) = (&tracks, &albums, &playlists, &artists) {
+        if found.is_failed()
+            && let Err(error) = &found.tracks
+        {
             log::warn!("control: cannot search: {error:#}");
             noted(error, cx);
             return Err(Failure::Unfetched(query.text.clone()));
         }
+        let Found {
+            tracks,
+            albums,
+            playlists,
+            artists,
+        } = found;
         let catalog = Catalog {
             tracks: tracks.unwrap_or_default(),
             albums: albums.unwrap_or_default(),
@@ -469,8 +584,8 @@ impl Control {
         let link = match item {
             Item::Path(path) => return Ok(Source::Path(path)),
             Item::Link(link) => link,
-            // `queue` finds a search before anything reaches here
-            Item::Search { .. } => return Err(Failure::Malformed),
+            // `queue` finds a search or local matches before anything reaches here
+            Item::Search { .. } | Item::Local { .. } => return Err(Failure::Malformed),
         };
         let session = self.session.read(cx);
         let Some((slug, linked)) = session.read_link(&link) else {
@@ -521,6 +636,15 @@ impl Control {
             }
             Place::Queue(placement) => playback.enqueue_tracks(tracks, origin, placement, cx),
         });
+    }
+}
+
+/// Resolves an explicit or relative favorite command to the state it asks for.
+fn favorite_target(saved: bool, switch: Switch) -> bool {
+    match switch {
+        Switch::On => true,
+        Switch::Off => false,
+        Switch::Toggle => !saved,
     }
 }
 
@@ -584,6 +708,14 @@ fn play(playback: &mut Playback, command: PlaybackCommand, cx: &mut Context<Play
             };
             playback.set_volume(f32::from(target.clamp(0, 100)) / 100., cx);
         }
+        PlaybackCommand::Mute(None) => {
+            return Reply::Value(Value::Muted(playback.muted(cx)));
+        }
+        PlaybackCommand::Mute(Some(switch)) => match switch {
+            Switch::On => playback.set_muted(true, cx),
+            Switch::Off => playback.set_muted(false, cx),
+            Switch::Toggle => playback.toggle_muted(cx),
+        },
         PlaybackCommand::Shuffle(None) => {
             return Reply::Value(Value::Shuffle(playback.shown_shuffle(cx)));
         }
@@ -728,6 +860,125 @@ fn current(playback: &Playback, cx: &App) -> Option<Current> {
     })
 }
 
+/// A read-only snapshot of the queue as `sonora queue` prints it, in play order. It reads
+/// only what the queue already holds: on a steered device that is the metadata already read
+/// in, whose sections stop at the first track not read in yet, so nothing is fetched from a
+/// provider to answer. With nothing queued it is empty in every section.
+fn queue_snapshot(playback: &Playback, cx: &App) -> QueueSnapshot {
+    let view = playback.shown_queue(cx);
+    let entry = |position: QueuePosition| {
+        view.track(position, cx).map(|track| QueueEntry {
+            track: wire_track(&track),
+            kind: wire_kind(view.kind(position, cx)),
+        })
+    };
+    let previous = (0..view.sections.past)
+        .filter_map(|at| entry(QueuePosition::Past(at)))
+        .collect();
+    let current = match view.sections.current {
+        true => entry(QueuePosition::Current),
+        false => None,
+    };
+    let upcoming = (0..view.sections.upcoming)
+        .filter_map(|at| entry(QueuePosition::Upcoming(at)))
+        .collect();
+    QueueSnapshot::bounded(previous, current, upcoming)
+}
+
+/// The lyrics of the current track as `sonora lyrics` prints them. It reads only what `Lyrics`
+/// already holds for the track shown, on the steered device when there is one, and never asks
+/// a source for anything.
+fn lyrics(playback: &Playback, cx: &App) -> wire::LyricsSnapshot {
+    let sonora = Sonora::global(cx);
+    let held = sonora.lyrics.read(cx);
+    let at = match playback.steered(cx) {
+        Some(steered) => steered.state.live_position(),
+        None => playback.live_position(),
+    };
+    lyrics_snapshot(
+        held.state(),
+        sonora.settings.read(cx).lyrics_enabled(),
+        held.current(),
+        at,
+    )
+}
+
+/// What `state` and the lyrics on show say at `at` into the track. Lyrics that are not ready
+/// carry no lines, whatever `hit` still holds, and a synced text has the line sung at `at` and
+/// the one after it.
+fn lyrics_snapshot(
+    state: &LyricsState,
+    enabled: bool,
+    hit: Option<&LyricsHit>,
+    at: Duration,
+) -> wire::LyricsSnapshot {
+    let status = match (enabled, state) {
+        (false, _) => LyricsStatus::Disabled,
+        (true, LyricsState::Idle) => LyricsStatus::Idle,
+        (true, LyricsState::Loading) => LyricsStatus::Loading,
+        (true, LyricsState::Ready) => LyricsStatus::Ready,
+        (true, LyricsState::Instrumental) => LyricsStatus::Instrumental,
+        (true, LyricsState::Missing) => LyricsStatus::Missing,
+        (true, LyricsState::Failed(_)) => LyricsStatus::Failed,
+    };
+    let snapshot = wire::LyricsSnapshot::without(status);
+    let Some(hit) = hit.filter(|_| status == LyricsStatus::Ready) else {
+        return snapshot;
+    };
+    let snapshot = wire::LyricsSnapshot {
+        source: Some(hit.source.to_owned()),
+        instrumental: hit.instrumental,
+        ..snapshot
+    };
+    match &hit.lyrics {
+        Sheet::Plain { text, romanized } => {
+            let romanized: Vec<&str> = romanized
+                .iter()
+                .flat_map(|romanized| romanized.text.lines())
+                .collect();
+            let lines = text
+                .lines()
+                .enumerate()
+                .map(|(at, line)| wire::LyricsLine {
+                    start_ms: None,
+                    text: line.to_owned(),
+                    romanized: romanized.get(at).and_then(|line| romanization(line)),
+                })
+                .collect();
+            snapshot.bounded(false, lines, None)
+        }
+        Sheet::Synced { lines } => {
+            let active = music::lyrics::active(lines, at);
+            let lines = lines
+                .iter()
+                .map(|line| wire::LyricsLine {
+                    start_ms: Some(u64::try_from(line.start.as_millis()).unwrap_or(u64::MAX)),
+                    text: line.text.clone(),
+                    romanized: line
+                        .romanized
+                        .as_ref()
+                        .and_then(|romanized| romanization(&romanized.text)),
+                })
+                .collect();
+            snapshot.bounded(true, lines, active)
+        }
+    }
+}
+
+/// A romanized line, or `None` when it is blank because the line needs none.
+fn romanization(line: &str) -> Option<String> {
+    let line = line.trim();
+    (!line.is_empty()).then(|| line.to_owned())
+}
+
+fn wire_kind(kind: Option<QueueKind>) -> QueueEntryKind {
+    match kind {
+        Some(QueueKind::Queued) => QueueEntryKind::Queued,
+        Some(QueueKind::Suggested) => QueueEntryKind::Suggested,
+        Some(QueueKind::Context) | None => QueueEntryKind::Context,
+    }
+}
+
 fn wire_origin(origin: &Origin) -> wire::Origin {
     let kind = match origin.whence {
         Whence::Album => wire::OriginKind::Album,
@@ -776,6 +1027,27 @@ fn percent(level: f32) -> u8 {
     (level.clamp(0., 1.) * 100.).round() as u8
 }
 
+/// The search kind a command-line kind names.
+fn search_kind(kind: Kind) -> search::Kind {
+    match kind {
+        Kind::Song => search::Kind::Song,
+        Kind::Album => search::Kind::Album,
+        Kind::Artist => search::Kind::Artist,
+        Kind::Playlist => search::Kind::Playlist,
+    }
+}
+
+/// What a local match plays or queues: a song as it is, an album, artist or playlist fetched
+/// from the local provider. An artist without an id has nothing to fetch.
+fn local_source(hit: Hit) -> Option<Source> {
+    match hit {
+        Hit::Song(track) => Some(Source::Track(track)),
+        Hit::Album(album) => Some(Source::Link(album.name, Linked::Album(album.id))),
+        Hit::Artist(artist) => Some(Source::Link(artist.name, Linked::Artist(artist.id?))),
+        Hit::Playlist(playlist) => Some(Source::Link(playlist.name, Linked::Playlist(playlist.id))),
+    }
+}
+
 /// The tracks a checked item stands for. A file is read by the local provider, a link
 /// fetched from the provider it belongs to.
 async fn fetch(
@@ -791,6 +1063,12 @@ async fn fetch(
             })?;
             return Ok(Batch {
                 tracks: vec![track],
+                origin: None,
+            });
+        }
+        Source::Track(track) => {
+            return Ok(Batch {
+                tracks: vec![*track],
                 origin: None,
             });
         }
@@ -850,4 +1128,122 @@ async fn fetch(
             error: Some(error),
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use music::{LyricsLine, RomanizedText};
+
+    use super::*;
+
+    fn hit(lyrics: Sheet) -> LyricsHit {
+        LyricsHit {
+            source: "test",
+            lyrics,
+            ..Default::default()
+        }
+    }
+
+    fn synced(starts: &[u64]) -> LyricsHit {
+        hit(Sheet::Synced {
+            lines: starts
+                .iter()
+                .map(|start| LyricsLine {
+                    start: Duration::from_secs(*start),
+                    text: start.to_string(),
+                    ..Default::default()
+                })
+                .collect(),
+        })
+    }
+
+    fn at(hit: &LyricsHit, seconds: u64) -> wire::LyricsSnapshot {
+        lyrics_snapshot(
+            &LyricsState::Ready,
+            true,
+            Some(hit),
+            Duration::from_secs(seconds),
+        )
+    }
+
+    #[test]
+    fn lyrics_that_are_not_ready_carry_no_lines() {
+        let held = synced(&[0, 5]);
+        for (state, enabled, expected) in [
+            (LyricsState::Missing, true, LyricsStatus::Missing),
+            (LyricsState::Loading, true, LyricsStatus::Loading),
+            (LyricsState::Idle, true, LyricsStatus::Idle),
+            (
+                LyricsState::Failed("x".to_owned()),
+                true,
+                LyricsStatus::Failed,
+            ),
+            (LyricsState::Instrumental, true, LyricsStatus::Instrumental),
+            (LyricsState::Ready, false, LyricsStatus::Disabled),
+        ] {
+            let snapshot = lyrics_snapshot(&state, enabled, Some(&held), Duration::ZERO);
+            assert_eq!(snapshot.state, expected);
+            assert!(snapshot.lines.is_empty() && snapshot.source.is_none());
+            assert!(snapshot.current.is_none() && snapshot.next.is_none());
+        }
+        let snapshot = lyrics_snapshot(&LyricsState::Instrumental, true, None, Duration::ZERO);
+        assert!(snapshot.instrumental);
+    }
+
+    #[test]
+    fn the_active_line_follows_the_position() {
+        let held = synced(&[2, 5, 9]);
+        let text = |line: Option<wire::LyricsLine>| line.map(|line| line.text);
+        let before = at(&held, 1);
+        assert_eq!(
+            (text(before.current), text(before.next)),
+            (None, Some("2".into()))
+        );
+        let during = at(&held, 5);
+        assert_eq!(
+            (text(during.current), text(during.next)),
+            (Some("5".into()), Some("9".into()))
+        );
+        let after = at(&held, 60);
+        assert_eq!(
+            (text(after.current), text(after.next)),
+            (Some("9".into()), None)
+        );
+        assert_eq!(after.source.as_deref(), Some("test"));
+        assert!(after.synced);
+        assert_eq!(after.lines[1].start_ms, Some(5000));
+    }
+
+    #[test]
+    fn plain_lyrics_keep_their_romanization_by_line() {
+        let held = hit(Sheet::Plain {
+            text: "さよなら\n\nbye".to_owned(),
+            romanized: Some(RomanizedText {
+                text: "sayonara\n\n".to_owned(),
+                ..Default::default()
+            }),
+        });
+        let snapshot = at(&held, 3);
+        assert!(!snapshot.synced);
+        assert_eq!((snapshot.current, snapshot.next), (None, None));
+        let lines: Vec<_> = snapshot
+            .lines
+            .iter()
+            .map(|line| (line.text.as_str(), line.romanized.as_deref()))
+            .collect();
+        assert_eq!(
+            lines,
+            [("さよなら", Some("sayonara")), ("", None), ("bye", None)]
+        );
+    }
+
+    #[test]
+    fn explicit_favorite_commands_are_idempotent() {
+        assert!(favorite_target(false, Switch::On));
+        assert!(favorite_target(true, Switch::On));
+        assert!(!favorite_target(false, Switch::Off));
+        assert!(!favorite_target(true, Switch::Off));
+        assert!(favorite_target(false, Switch::Toggle));
+        assert!(!favorite_target(true, Switch::Toggle));
+    }
 }

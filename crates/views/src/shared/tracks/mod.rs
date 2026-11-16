@@ -16,14 +16,17 @@ use gpui::{
     AnyElement, App, Context, Entity, Hsla, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, WeakEntity, div,
 };
-use music::Track;
+use music::{Arrival, Track};
 use router::Destination;
-use state::{Detail, History, Library, Network, Origin, Playback, Progress, Shelf, Sonora};
+use state::{
+    Detail, History, Library, Network, Origin, Playback, Progress, Reorder, Shelf, Sonora,
+};
 use ui::{
-    ArrowRing, Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, Scrollbar, TableSource,
-    TableState,
+    ArrowRing, Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, RowMoves, Scrollbar,
+    TableSource, TableState,
 };
 
+use crate::shared::blend::{Joined, Reach};
 use crate::shared::cells;
 use crate::shared::confirm::{Confirm, Kind};
 use crate::shared::pins::{Pinned as _, origin_tag};
@@ -49,13 +52,19 @@ pub(crate) fn playback_status(playback: &Entity<Playback>, cx: &App) -> Playback
     (track, playback.control(), playback.origin(cx).cloned())
 }
 pub(crate) trait Tracks: 'static {
-    fn tracks<'a>(&self, cx: &'a App) -> &'a [Track];
+    fn tracks<'a>(&self, cx: &'a App) -> Joined<'a, Track>;
     fn is_loading(&self, cx: &App) -> bool;
 
     /// The skeleton rows the table draws before the first tracks arrive. A list that leaves
     /// the default fills the viewport with them while it loads.
     fn pending(&self, cx: &App) -> Option<Pending> {
         self.is_loading(cx).then_some(Pending::Screen)
+    }
+
+    /// The order the rows were added in, for a list with no date on each row. None for a list
+    /// that has dates or comes in some other order.
+    fn arrival(&self, _cx: &App) -> Option<Arrival> {
+        None
     }
 }
 
@@ -97,6 +106,15 @@ pub(crate) fn ordered(table: &Entity<TableState<TrackSource>>, cx: &App) -> Vec<
 }
 
 pub(crate) fn drop_picked(table: &Entity<TableState<TrackSource>>, cx: &mut App) {
+    drop_picked_if(table, |_| true, cx);
+}
+
+/// Asks to drop the picked rows that `keep` holds to, and leaves the rest of the pick alone.
+pub(crate) fn drop_picked_if(
+    table: &Entity<TableState<TrackSource>>,
+    keep: impl Fn(&Track) -> bool,
+    cx: &mut App,
+) {
     let rows = table.read(cx).delegate().picked();
     if rows.is_empty() {
         return;
@@ -104,7 +122,11 @@ pub(crate) fn drop_picked(table: &Entity<TableState<TrackSource>>, cx: &mut App)
     let (tracks, playlist, history) = {
         let state = table.read(cx);
         let source = state.delegate().source();
-        let tracks: Vec<Track> = rows.iter().filter_map(|&row| source.at(row, cx)).collect();
+        let tracks: Vec<Track> = rows
+            .iter()
+            .filter_map(|&row| source.at(row, cx))
+            .filter(|track| keep(track))
+            .collect();
         (tracks, source.playlist.clone(), source.history.clone())
     };
     if tracks.is_empty() {
@@ -166,9 +188,11 @@ pub(crate) struct TrackSource {
     provider: Rc<dyn Tracks>,
     playback: Entity<Playback>,
     is_liked: Option<Entity<Library>>,
-    starrable: Option<Shelf>,
-    /// The library shelf the rows are, which offline mode keeps to its downloads.
-    library_shelf: Option<Shelf>,
+    /// Whether the rows are the library's own, both shelves of it. Offline mode keeps the
+    /// streaming ones to their downloads, and only a catalog shelf's rows carry hearts.
+    shelved: bool,
+    /// The shelf the Local only or Streaming only filter keeps the library rows to.
+    reach: Reach,
     album: Option<Entity<Detail>>,
     playlist: Option<Entity<Detail>>,
     history: Option<Entity<History>>,
@@ -214,8 +238,8 @@ impl TrackSource {
             provider: Rc::new(provider),
             playback,
             is_liked: None,
-            starrable: None,
-            library_shelf: None,
+            shelved: false,
+            reach: Reach::default(),
             album: None,
             playlist: None,
             history: None,
@@ -270,7 +294,7 @@ impl TrackSource {
     /// The origin tag a song dragged from this table carries, for a move. A song its playlist
     /// holds more than once stays a copy, since the provider would take out every copy and the
     /// Undo would bring back one.
-    fn origin_tag(&self, track: &Track, tracks: &[Track], cx: &App) -> Option<String> {
+    fn origin_tag(&self, track: &Track, tracks: Joined<'_, Track>, cx: &App) -> Option<String> {
         let origin = self.whence(cx)?;
         let once = origin.whence != state::Whence::Playlist
             || tracks.iter().filter(|other| other.id == track.id).count() == 1;
@@ -287,30 +311,55 @@ impl TrackSource {
         self
     }
 
-    /// Offers a favorites filter, and hearts on the rows, only when the shelf lists more than the
-    /// favorites. Needs `with_liked`, which supplies the library both ask.
-    pub(crate) fn starrable(mut self, shelf: Shelf) -> Self {
-        self.starrable = Some(shelf);
+    /// Marks the rows as the library's own. Offline mode keeps the streaming ones to what was
+    /// downloaded, a shelf listing more than its favorites gets hearts and a favorites filter,
+    /// and the Local only and Streaming only filters are offered. Needs `with_liked`, which
+    /// supplies the library these ask.
+    pub(crate) fn shelved(mut self) -> Self {
+        self.shelved = true;
         self
     }
 
-    /// Marks the rows as a library shelf, which offline mode keeps to what was downloaded.
-    pub(crate) fn shelved(mut self, shelf: Shelf) -> Self {
-        self.library_shelf = Some(shelf);
-        self
+    /// Whether the table badges its local tracks, which only a library page that mixes both
+    /// shelves does, see `Reach::marks_local`.
+    pub(crate) fn marks_local(&self, cx: &App) -> bool {
+        self.shelved && self.reach.marks_local(self.provider.tracks(cx).mixed())
     }
 
-    /// Whether offline mode keeps these rows to their downloads.
-    fn downloads_only(&self, cx: &App) -> bool {
-        self.library_shelf
-            .is_some_and(|shelf| Network::downloads_only(shelf, cx))
+    /// Whether offline mode keeps a library row of `shelf` to its downloads.
+    fn downloads_only(&self, shelf: Shelf, cx: &App) -> bool {
+        self.shelved && Network::downloads_only(shelf, cx)
     }
 
-    fn catalog(&self, cx: &App) -> bool {
-        match (self.starrable, &self.is_liked) {
-            (Some(shelf), Some(library)) => library.read(cx).shape(shelf).is_catalog(),
+    /// Whether offline mode keeps every library row to its downloads. The local files are never
+    /// kept that way, so this holds only while there are none.
+    fn all_downloads_only(&self, cx: &App) -> bool {
+        self.downloads_only(Shelf::Streaming, cx)
+            && self
+                .is_liked
+                .as_ref()
+                .is_some_and(|library| library.read(cx).state(Shelf::Local).tracks().is_empty())
+    }
+
+    /// Whether a library row of `shelf` sits among more than the favorites, so its heart says
+    /// something.
+    fn catalog(&self, shelf: Shelf, cx: &App) -> bool {
+        match (self.shelved, &self.is_liked) {
+            (true, Some(library)) => library.read(cx).shape(shelf).is_catalog(),
             _ => false,
         }
+    }
+
+    /// Whether any shelf with songs listed here is a catalog, so a favorites filter has
+    /// something to drop.
+    fn starrable(&self, cx: &App) -> bool {
+        let Some(library) = self.is_liked.as_ref().filter(|_| self.shelved) else {
+            return false;
+        };
+        let library = library.read(cx);
+        [Shelf::Streaming, Shelf::Local].into_iter().any(|shelf| {
+            library.shape(shelf).is_catalog() && !library.state(shelf).tracks().is_empty()
+        })
     }
 
     /// How the rows of this table are numbered. A catalog shelf holds only the files it was
@@ -455,18 +504,23 @@ impl TrackSource {
             color,
             track.explicit.then(|| t!("song-explicit")),
             None,
-            download_mark(cell, track, cx),
+            match self.marks_local(cx)
+                && track.id.as_deref().is_some_and(|id| Shelf::of(id).local())
+            {
+                true => Some(cells::local_badge(cell.row)),
+                false => download_mark(cell, track, cx),
+            },
             self.liked_button(cell, track, cx),
         )
     }
 
     fn liked_button(&self, cell: &Cell<TrackField>, track: &Track, cx: &App) -> Option<AnyElement> {
         let library = self.is_liked.as_ref()?;
+        let id = track.id.clone()?;
         // on a saved shelf every listed track is a favorite, so the heart would say nothing
-        if self.starrable.is_some() && !self.catalog(cx) {
+        if self.shelved && !self.catalog(Shelf::of(&id), cx) {
             return None;
         }
-        let id = track.id.clone()?;
         let theme = *cx.theme();
         let state = library.read(cx);
         let saved = state.saved(&id);
@@ -547,7 +601,12 @@ impl TableSource for TrackSource {
         self.provider.tracks(cx).len()
     }
 
+    /// A list that comes in the order it was added shows no Date added column, even once a
+    /// song added here has been stamped with today's date.
     fn populated(&self, field: TrackField, cx: &App) -> bool {
+        if field == TrackField::AddedAt && self.provider.arrival(cx).is_some() {
+            return false;
+        }
         let tracks = self.provider.tracks(cx);
         if tracks.is_empty() {
             return true;
@@ -556,12 +615,21 @@ impl TableSource for TrackSource {
         match field {
             TrackField::Artists => tracks.iter().any(|track| !track.artists.is_empty()),
             TrackField::Album => tracks.iter().any(|track| !track.album.is_empty()),
+            TrackField::Genre => tracks.iter().any(|track| !track.tags.is_empty()),
             TrackField::AddedAt | TrackField::PlayedAt => {
                 tracks.iter().any(|track| track.added_at.is_some())
             }
             TrackField::AddedBy => tracks.iter().any(|track| track.added_by.is_some()),
             TrackField::Plays => tracks.iter().any(|track| track.playcount.is_some()),
             _ => true,
+        }
+    }
+
+    /// A list that comes in the order it was added sorts by Date added through that order.
+    fn sorts_by(&self, field: TrackField, cx: &App) -> bool {
+        match field {
+            TrackField::AddedAt if self.provider.arrival(cx).is_some() => true,
+            _ => self.populated(field, cx),
         }
     }
 
@@ -573,12 +641,14 @@ impl TableSource for TrackSource {
             if self.sieve.favorites && !self.starred(track, cx) {
                 return false;
             }
-            if (self.sieve.downloaded || self.downloads_only(cx))
-                && !track
-                    .id
-                    .as_deref()
-                    .is_some_and(|id| state::downloaded(id, cx))
+            let id = track.id.as_deref();
+            let shelf = id.map_or(Shelf::Streaming, Shelf::of);
+            if (self.sieve.downloaded || self.downloads_only(shelf, cx))
+                && !id.is_some_and(|id| state::downloaded(id, cx))
             {
+                return false;
+            }
+            if self.reach.active() && !id.is_some_and(|id| self.reach.keeps(id)) {
                 return false;
             }
             hits(track, query)
@@ -601,19 +671,12 @@ impl TableSource for TrackSource {
         });
 
         let mut axes: Vec<Filter> = duration.into_iter().collect();
-        axes.extend([
-            Filter::Flag(FlagAxis {
-                key: "filter-hide-explicit",
-                label: t!("filter-hide-explicit"),
-                on: self.sieve.hide_explicit,
-            }),
-            Filter::Flag(FlagAxis {
-                key: "filter-playable",
-                label: t!("filter-playable"),
-                on: self.sieve.playable,
-            }),
-        ]);
-        if self.catalog(cx) {
+        axes.push(Filter::Flag(FlagAxis {
+            key: "filter-hide-explicit",
+            label: t!("filter-hide-explicit"),
+            on: self.sieve.hide_explicit,
+        }));
+        if self.starrable(cx) {
             axes.push(Filter::Flag(FlagAxis {
                 key: "filter-favorites",
                 label: t!("filter-favorites"),
@@ -622,17 +685,23 @@ impl TableSource for TrackSource {
         }
         // Offline mode already keeps a shelf to its downloads, so the filter would do nothing.
         let offered = self.sieve.downloaded || !Sonora::global(cx).downloads.read(cx).is_empty();
-        if offered && !self.downloads_only(cx) {
+        if offered && !self.all_downloads_only(cx) {
             axes.push(Filter::Flag(FlagAxis {
                 key: "filter-downloaded",
                 label: t!("filter-downloaded"),
                 on: self.sieve.downloaded,
             }));
         }
+        if self.shelved {
+            axes.extend(self.reach.axes(self.provider.tracks(cx).mixed()));
+        }
         axes
     }
 
     fn filter(&mut self, change: FilterChange, _cx: &App) -> bool {
+        if self.reach.filter(&change) {
+            return true;
+        }
         match change {
             FilterChange::Range("filter-duration", value) => {
                 self.sieve.duration = Some(value);
@@ -640,10 +709,6 @@ impl TableSource for TrackSource {
             }
             FilterChange::Flag("filter-hide-explicit", value) => {
                 self.sieve.hide_explicit = value;
-                true
-            }
-            FilterChange::Flag("filter-playable", value) => {
-                self.sieve.playable = value;
                 true
             }
             FilterChange::Flag("filter-favorites", value) => {
@@ -656,6 +721,7 @@ impl TableSource for TrackSource {
             }
             FilterChange::Reset => {
                 self.sieve = Default::default();
+                self.reach = Reach::default();
                 true
             }
             _ => false,
@@ -663,7 +729,7 @@ impl TableSource for TrackSource {
     }
 
     fn filtered(&self, _cx: &App) -> bool {
-        self.sieve.active()
+        self.sieve.active() || self.reach.active()
     }
 
     fn playing(&self, row: usize, cx: &App) -> bool {
@@ -735,6 +801,7 @@ impl TableSource for TrackSource {
             TrackField::Title => self.title_cell(&cell, track, title, cx),
             TrackField::Artists => self.artist_cell(&cell, track, detail),
             TrackField::Album => self.album_cell(&cell, track, detail),
+            TrackField::Genre => cells::dim(&cell, track.tags.join(", "), detail),
             TrackField::AddedAt => cells::credited(
                 &cell,
                 track.added_by.as_deref(),
@@ -793,12 +860,28 @@ impl TableSource for TrackSource {
         })
     }
 
+    /// A playlist's rows move when its provider keeps the order, and are refused with a
+    /// message when the playlist is the listener's but the provider keeps none.
+    fn row_moves(&self, cx: &App) -> RowMoves {
+        let Some(detail) = &self.playlist else {
+            return RowMoves::Off;
+        };
+        match detail.read(cx).reorder(cx) {
+            Reorder::On => RowMoves::On,
+            Reorder::Unsupported => RowMoves::Refused,
+            Reorder::Off => RowMoves::Off,
+        }
+    }
+
     fn context_menu_will_open(&self, _rows: &[usize], cx: &App) {
         self.menu.reset(cx);
     }
 
     fn compare(&self, field: TrackField, a: usize, b: usize, cx: &App) -> Ordering {
-        sort::compare(self.provider.tracks(cx), field, a, b)
+        match self.provider.arrival(cx) {
+            Some(arrival) if field == TrackField::AddedAt => sort::by_arrival(arrival, a, b),
+            _ => sort::compare(self.provider.tracks(cx), field, a, b),
+        }
     }
 
     fn group(&self, field: TrackField, row: usize, cx: &App) -> Option<SharedString> {

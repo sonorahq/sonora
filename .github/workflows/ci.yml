@@ -1,76 +1,123 @@
 name: ci
 
+# A change that only touches prose, issue templates or bot configuration cannot change what
+# compiles, so it skips the run entirely.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - .github/ISSUE_TEMPLATE/**
+      - .github/triage/**
+      - .github/labeler.yml
+      - .coderabbit.yaml
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - .github/ISSUE_TEMPLATE/**
+      - .github/triage/**
+      - .github/labeler.yml
+      - .coderabbit.yaml
   workflow_dispatch:
 
+# A pull request event handled after the merge resolves github.ref to the base branch, so
+# grouping by ref would let a late PR run and a push to main cancel each other. The PR number
+# keeps the two apart. A new push to a pull request supersedes its last run, but a push to main
+# never cancels one: main merges more often than its builds finish, so cancelling left nearly
+# every commit without its binaries. A run already queued behind still gives way to a newer one.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_PROFILE_RELEASE_STRIP: symbols
   RUST_BACKTRACE: 1
-  RUSTC_WRAPPER: sccache
-  SCCACHE_GHA_ENABLED: "true"
 
 jobs:
   # A release branch only moves the version and the changelog over code main already checked,
   # and release.yml builds its merge for the tag, so neither its pull request nor its merge runs
   # here.
+  # Lint and tests run as two jobs side by side, since they compile the workspace two different
+  # ways and share nothing but the setup.
   check:
-    name: fmt, clippy and tests
+    name: ${{ matrix.name }}
     if: >-
       !startsWith(github.head_ref, 'release/') &&
       !contains(github.event.head_commit.message, 'from sonorahq/release/')
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: fmt and clippy
+            task: lint
+          - name: tests
+            task: test
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
+      # Restores the packages' files instead of running apt, which spends most of its time
+      # refreshing the package index.
       - name: system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config cmake mold \
-            libasound2-dev libfontconfig1-dev libfreetype-dev libsqlite3-dev \
-            libx11-dev libxcb1-dev libxcursor-dev libxi-dev \
-            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: >-
+            build-essential pkg-config cmake mold
+            libasound2-dev libfontconfig1-dev libfreetype-dev
+            libx11-dev libxcb1-dev libxcursor-dev libxi-dev
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev
             libvulkan-dev libdbus-1-dev
+          version: 1
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      # rust-toolchain.toml pins the toolchain cargo runs, along with its components.
+      - name: rust toolchain
+        run: rustup toolchain install
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
-      - uses: Swatinem/rust-cache@v2
+      # The check and lint jobs cache their whole target directory, so sccache would only
+      # duplicate it. Only main saves that cache: a pull request's cache is visible to that pull
+      # request alone, and would only push main's out of the repository's quota.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: ci-check
+          key: ci-${{ matrix.task }}
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: rustfmt
+        if: matrix.task == 'lint'
         run: cargo fmt --all --check
 
       - name: clippy
+        if: matrix.task == 'lint'
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      - name: tests
-        run: cargo test --workspace --locked
+      # nextest runs the tests of every binary in parallel instead of one binary after another,
+      # and skips the rustdoc pass for doctests the workspace does not have.
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        if: matrix.task == 'test'
+        with:
+          tool: cargo-nextest
 
-      - name: sccache stats
-        if: always()
-        run: sccache --show-stats
+      # The dev profile optimises ui, views and music for a usable debug build, which makes
+      # compiling them for the tests take three times as long. The tests do not need it.
+      - name: tests
+        if: matrix.task == 'test'
+        run: >-
+          cargo nextest run --workspace --locked
+          --config 'profile.dev.debug="line-tables-only"'
+          --config 'profile.dev.package.ui.opt-level=0'
+          --config 'profile.dev.package.views.opt-level=0'
+          --config 'profile.dev.package.music.opt-level=0'
 
   # The check job only ever sees the Linux side of a cfg. These two lint the other two
   # platforms' code without paying for codegen, linking or an installer, which is the whole
   # cost of a release build. A tag still builds every target for real through release.yml.
+  # A push to main runs them too, only to save the cache every pull request starts from.
   platforms:
     name: clippy on ${{ matrix.target }}
     if: >-
-      (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
-      !startsWith(github.head_ref, 'release/')
+      !startsWith(github.head_ref, 'release/') &&
+      !contains(github.event.head_commit.message, 'from sonorahq/release/')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -81,25 +128,30 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Cargo on the runner's NTFS drive spends much of its time in the filesystem and Defender,
+      # so Windows lints a copy of the checkout on a ReFS Dev Drive. The cache follows it there.
+      - uses: samypr100/setup-dev-drive@562171fe8df7401fdf582d766cd3b6ab80d5b1a0 # v4.1.0
+        if: runner.os == 'Windows'
         with:
-          targets: ${{ matrix.target }}
-          components: clippy
+          drive-size: 20GB
+          workspace-copy: true
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
-      - uses: Swatinem/rust-cache@v2
+      - name: rust toolchain
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: lint-${{ matrix.target }}
+          workspaces: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: clippy
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         run: cargo clippy --workspace --all-targets --locked --target ${{ matrix.target }} -- -D warnings
-
-      - name: sccache stats
-        if: always()
-        run: sccache --show-stats
 
   build:
     name: ${{ matrix.target }}
@@ -108,7 +160,8 @@ jobs:
       !contains(github.event.head_commit.message, 'from sonorahq/release/')
     runs-on: ${{ matrix.os }}
     env:
-      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
     strategy:
       fail-fast: false
       matrix:
@@ -119,8 +172,9 @@ jobs:
             os: ubuntu-22.04-arm
           - target: aarch64-apple-darwin
             os: macos-15
+          # Apple silicon cross-compiles for Intel faster than GitHub's Intel runners build natively.
           - target: x86_64-apple-darwin
-            os: macos-15-intel
+            os: macos-15
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             arch: x64compatible
@@ -130,7 +184,21 @@ jobs:
             arch: arm64
             setup: Sonora-Setup-arm64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
+
+      # Cargo on the runner's NTFS drive spends much of its time in the filesystem and Defender.
+      # A ReFS Dev Drive takes the target directory instead, through a junction, so every path
+      # below stays the same.
+      - uses: samypr100/setup-dev-drive@562171fe8df7401fdf582d766cd3b6ab80d5b1a0 # v4.1.0
+        if: runner.os == 'Windows'
+        with:
+          drive-size: 40GB
+      - name: put the target directory on the Dev Drive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:DEV_DRIVE/target" | Out-Null
+          New-Item -ItemType Junction -Path target -Target "$env:DEV_DRIVE/target" | Out-Null
 
       - name: system dependencies
         if: runner.os == 'Linux'
@@ -138,41 +206,48 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config cmake mold \
-            libasound2-dev libfontconfig1-dev libfreetype-dev libsqlite3-dev \
+            libasound2-dev libfontconfig1-dev libfreetype-dev \
             libx11-dev libxcb1-dev libxcursor-dev libxi-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libvulkan-dev libdbus-1-dev
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      # rust-toolchain.toml pins the toolchain cargo runs, and it only comes with the host's
+      # standard library, so a cross-compiled target has to be added to it.
+      - name: rust toolchain
+        shell: bash
+        run: rustup toolchain install && rustup target add ${{ matrix.target }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.9
-      - uses: Swatinem/rust-cache@v2
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}
           cache-targets: false
           cache-on-failure: true
 
+      # These binaries are for trying a commit, not for shipping, so they trade a few percent of
+      # speed for a build twice as fast. Without LTO the last step links in seconds instead of
+      # minutes, and the three largest crates compile on every core. The dependencies keep one
+      # codegen unit, since sccache serves them and smaller objects keep its cache inside the
+      # repository's quota. release.yml builds nightlies and releases with the full profile.
       - name: build
-        run: cargo build --release --locked --package sonora --target ${{ matrix.target }}
+        run: >-
+          cargo build --release --locked --package sonora --target ${{ matrix.target }} --timings
+          --config profile.release.lto=false
+          --config profile.release.package.music.codegen-units=16
+          --config profile.release.package.state.codegen-units=16
+          --config profile.release.package.views.codegen-units=16
+
+      # The timing report shows which crates and which link step a build spends its time on.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        continue-on-error: true
+        with:
+          name: timings-${{ matrix.target }}
+          path: target/cargo-timings/cargo-timing.html
 
       - name: sccache stats
         if: always()
         run: sccache --show-stats
-
-      # A manual run checks the SignPath setup with the self-signed test certificate. Pushes skip
-      # it, since a test signature is worth nothing to anyone downloading the build. Like the
-      # upload below, a failure here must not turn the build red.
-      - name: sign the executable
-        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && env.SIGNPATH_API_TOKEN != ''
-        continue-on-error: true
-        uses: ./.github/actions/sign
-        with:
-          file: target/${{ matrix.target }}/release/sonora.exe
-          artifact: unsigned-exe-${{ matrix.target }}
-          policy: test-signing
-          api-token: ${{ env.SIGNPATH_API_TOKEN }}
 
       - name: stage the executable
         shell: bash
@@ -204,19 +279,9 @@ jobs:
           $env:SONORA_DIST = (Resolve-Path "dist").Path
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "scripts/windows/sonora.iss"
 
-      - name: sign the installer
-        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && env.SIGNPATH_API_TOKEN != ''
-        continue-on-error: true
-        uses: ./.github/actions/sign
-        with:
-          file: dist/${{ matrix.setup }}.exe
-          artifact: unsigned-setup-${{ matrix.target }}
-          policy: test-signing
-          api-token: ${{ env.SIGNPATH_API_TOKEN }}
-
       # A convenience binary, not a release artefact: GitHub's artifact service times out often
       # enough that it must not be what turns a green build red.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         continue-on-error: true
         with:
           name: build-${{ matrix.target }}

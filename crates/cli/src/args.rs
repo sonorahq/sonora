@@ -89,14 +89,22 @@ enum Sub {
         #[arg(long)]
         position: bool,
     },
+    /// Print the queue: what played, what plays and what follows, without changing it.
+    Queue,
+    /// Print the lyrics of the current track, without looking any up.
+    Lyrics,
     /// Print the volume, or set it: `50`, `+5`, `-5`.
     Volume {
         /// A level from 0 to 100, or a step from the current one.
         #[arg(allow_negative_numbers = true, value_parser = level)]
         level: Option<Level>,
     },
+    /// Print whether playback is muted, or switch it.
+    Mute { switch: Option<SwitchArg> },
     /// Print shuffle, or switch it.
     Shuffle { switch: Option<SwitchArg> },
+    /// Print the current track's favorite state, or change it.
+    Like { switch: Option<SwitchArg> },
     /// Print repeat, or set it.
     Repeat { repeat: Option<RepeatArg> },
     /// Queue files or links after the tracks queued by hand.
@@ -185,18 +193,22 @@ struct Searched {
         requires = "search"
     )]
     kind: KindArg,
+    /// Search the local library instead of the current provider.
+    #[arg(short = 'l', long = "local", requires = "search")]
+    local: bool,
 }
 
 impl Searched {
     /// The items to play or queue: the search when one was given, else the files and links.
     fn or(self, items: Vec<Item>) -> Vec<Item> {
-        match self.search {
-            Some(words) => vec![Item::Search {
-                text: words.join(" "),
-                kind: self.kind.into(),
-            }],
-            None => items,
-        }
+        let Some(words) = self.search else {
+            return items;
+        };
+        let (text, kind) = (words.join(" "), self.kind.into());
+        vec![match self.local {
+            true => Item::Local { text, kind },
+            false => Item::Search { text, kind },
+        }]
     }
 }
 
@@ -294,9 +306,13 @@ fn into_command(args: Args, line: &mut Command) -> Result<CommandType, clap::Err
         Sub::Prev => play(PlaybackCommand::Previous),
         Sub::Seek { point } => play(point),
         Sub::Current => play(PlaybackCommand::CurrentTrack),
+        Sub::Queue => Request::Queue(QueueCommand::Snapshot),
+        Sub::Lyrics => Request::Lyrics,
         Sub::Watch { position } => Request::Watch(Watch { position }),
         Sub::Volume { level } => play(PlaybackCommand::Volume(level)),
+        Sub::Mute { switch } => play(PlaybackCommand::Mute(switch.map(Switch::from))),
         Sub::Shuffle { switch } => play(PlaybackCommand::Shuffle(switch.map(Switch::from))),
+        Sub::Like { switch } => Request::Like(switch.map(Switch::from)),
         Sub::Repeat { repeat } => play(PlaybackCommand::Repeat(repeat.map(Repeat::from))),
         Sub::Add { items, searched } => Request::Queue(QueueCommand::Add(searched.or(items))),
         Sub::PlayNext { items, searched } => {
@@ -446,4 +462,152 @@ fn queued(text: &str) -> Result<Item, String> {
 /// that names no file here and is no address.
 fn is_typo(item: &str) -> bool {
     !item.contains(['/', '\\', ':', '.']) && !Path::new(item).exists()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parsed(args: &[&str]) -> CommandType {
+        let args: Vec<OsString> = std::iter::once("sonora")
+            .chain(args.iter().copied())
+            .map(OsString::from)
+            .collect();
+        match parse(args, "0.0.0") {
+            Ok(command) => command,
+            Err(_) => panic!("arguments should parse"),
+        }
+    }
+
+    #[test]
+    fn queue_reads_as_a_snapshot_request() {
+        let CommandType::Remote(request, format) = parsed(&["queue"]) else {
+            panic!("`sonora queue` should ask the running Sonora");
+        };
+        assert_eq!(request, Request::Queue(QueueCommand::Snapshot));
+        assert_eq!(format, Format::Text);
+        assert!(!request.streams());
+    }
+
+    #[test]
+    fn queue_json_keeps_the_snapshot_request() {
+        let CommandType::Remote(request, format) = parsed(&["queue", "--json"]) else {
+            panic!("`sonora queue --json` should ask the running Sonora");
+        };
+        assert_eq!(request, Request::Queue(QueueCommand::Snapshot));
+        assert_eq!(format, Format::Json);
+    }
+
+    #[test]
+    fn lyrics_reads_as_a_read_only_request_in_both_formats() {
+        for (args, expected) in [
+            (&["lyrics"][..], Format::Text),
+            (&["lyrics", "--json"], Format::Json),
+        ] {
+            let CommandType::Remote(request, format) = parsed(args) else {
+                panic!("`sonora lyrics` should ask the running Sonora");
+            };
+            assert_eq!(request, Request::Lyrics);
+            assert_eq!(format, expected);
+            assert!(!request.streams());
+        }
+    }
+
+    #[test]
+    fn mute_reads_and_changes_playback_in_both_formats() {
+        for (args, switch, format) in [
+            (&["mute"][..], None, Format::Text),
+            (&["mute", "on"][..], Some(Switch::On), Format::Text),
+            (&["mute", "off"][..], Some(Switch::Off), Format::Text),
+            (&["mute", "toggle"][..], Some(Switch::Toggle), Format::Text),
+            (&["mute", "--json"][..], None, Format::Json),
+        ] {
+            let CommandType::Remote(actual, actual_format) = parsed(args) else {
+                panic!("`sonora mute` should ask the running Sonora");
+            };
+            assert_eq!(actual, Request::Playback(PlaybackCommand::Mute(switch)));
+            assert_eq!(actual_format, format);
+        }
+    }
+
+    #[test]
+    fn like_reads_and_changes_the_current_favorite() {
+        for (args, request, format) in [
+            (&["like"][..], Request::Like(None), Format::Text),
+            (
+                &["like", "on"][..],
+                Request::Like(Some(Switch::On)),
+                Format::Text,
+            ),
+            (
+                &["like", "off"][..],
+                Request::Like(Some(Switch::Off)),
+                Format::Text,
+            ),
+            (
+                &["like", "toggle"][..],
+                Request::Like(Some(Switch::Toggle)),
+                Format::Text,
+            ),
+            (&["like", "--json"][..], Request::Like(None), Format::Json),
+        ] {
+            let CommandType::Remote(actual, actual_format) = parsed(args) else {
+                panic!("`sonora like` should ask the running Sonora");
+            };
+            assert_eq!(actual, request);
+            assert_eq!(actual_format, format);
+        }
+    }
+
+    #[test]
+    fn mute_rejects_an_unknown_switch() {
+        let args = ["sonora", "mute", "perhaps"].map(OsString::from);
+        assert!(parse(args.to_vec(), "0.0.0").is_err());
+    }
+
+    #[test]
+    fn like_rejects_an_unknown_switch() {
+        let args = ["sonora", "like", "perhaps"].map(OsString::from);
+        assert!(parse(args.to_vec(), "0.0.0").is_err());
+    }
+
+    #[test]
+    fn local_search_plays_or_queues_a_local_match() {
+        let local = |text: &str, kind| Item::Local {
+            text: text.to_owned(),
+            kind,
+        };
+        for (args, request) in [
+            (
+                &["play", "-s", "one", "more", "time", "--local"][..],
+                QueueCommand::Play(vec![local("one more time", Kind::Song)]),
+            ),
+            (
+                &["add", "-l", "-t", "album", "-s", "dark", "side"][..],
+                QueueCommand::Add(vec![local("dark side", Kind::Album)]),
+            ),
+            (
+                &["play-next", "--local", "-t", "playlist", "-s", "mix"][..],
+                QueueCommand::PlayNext(vec![local("mix", Kind::Playlist)]),
+            ),
+            (
+                &["play", "-t", "artist", "-s", "queen"][..],
+                QueueCommand::Play(vec![Item::Search {
+                    text: "queen".to_owned(),
+                    kind: Kind::Artist,
+                }]),
+            ),
+        ] {
+            let CommandType::Remote(actual, _) = parsed(args) else {
+                panic!("a search should ask the running Sonora");
+            };
+            assert_eq!(actual, Request::Queue(request));
+        }
+    }
+
+    #[test]
+    fn local_needs_a_search() {
+        let args = ["sonora", "play", "--local"].map(OsString::from);
+        assert!(parse(args.to_vec(), "0.0.0").is_err());
+    }
 }

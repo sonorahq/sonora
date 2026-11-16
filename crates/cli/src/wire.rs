@@ -8,7 +8,7 @@ use serde_json::value::RawValue;
 use crate::commands::{Kind, Repeat, Request};
 
 /// The protocol both ends speak. Bump it on any change an older Sonora would misread.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 /// One line on the socket: the protocol version and the request or reply it carries. The body
 /// is decoded only once the version matches, so a newer request never half-parses into a wrong
@@ -37,6 +37,7 @@ pub enum Reply {
 pub enum Value {
     Current(Option<Current>),
     Volume(u8),
+    Muted(bool),
     Shuffle(bool),
     Repeat(Repeat),
     Providers(Vec<Provider>),
@@ -46,6 +47,167 @@ pub enum Value {
     Hits(Vec<Hit>),
     /// The Sonora Session Sonora is in, `None` while it is in none.
     Session(Option<SessionInfo>),
+    /// A read-only snapshot of the queue, as `sonora queue` prints it.
+    Queue(QueueSnapshot),
+    /// The lyrics of the current track as Sonora holds them, as `sonora lyrics` prints them.
+    Lyrics(LyricsSnapshot),
+    /// Whether the current track is a favorite, as `sonora like` prints it.
+    Liked(bool),
+}
+
+/// At most this many lines of lyrics are reported, from the start, so a very long text never
+/// makes an unbounded reply. `current` and `next` are picked before the cut.
+pub const LYRICS_LIMIT: usize = 500;
+
+/// The lyrics of the current track as `sonora lyrics` prints them. This is a public contract,
+/// so a field is only ever added, never renamed or removed, without bumping `VERSION`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LyricsSnapshot {
+    pub state: LyricsStatus,
+    /// The name of the source the lyrics come from, `None` while there are none.
+    pub source: Option<String>,
+    pub instrumental: bool,
+    /// Whether every line carries the time it starts at.
+    pub synced: bool,
+    /// The line sung now, `None` for plain lyrics and before a synced line has started.
+    pub current: Option<LyricsLine>,
+    /// The line that follows `current`, `None` for plain lyrics and after the last line.
+    pub next: Option<LyricsLine>,
+    /// At most `LYRICS_LIMIT` lines, in order.
+    pub lines: Vec<LyricsLine>,
+    /// Whether the lyrics held more than `LYRICS_LIMIT` lines.
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+/// How far the lyrics of the current track have got.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LyricsStatus {
+    /// Nothing is loaded, or the track has no id to look lyrics up by.
+    Idle,
+    /// Lyrics are turned off in the settings.
+    Disabled,
+    Loading,
+    Ready,
+    Instrumental,
+    /// Every source answered and none had the lyrics.
+    Missing,
+    Failed,
+}
+
+/// One line of lyrics.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LyricsLine {
+    /// Milliseconds into the track the line starts at, `None` for plain lyrics.
+    pub start_ms: Option<u64>,
+    /// Empty for a pause between verses.
+    pub text: String,
+    /// The line written in Latin letters, when its script has a romanization.
+    pub romanized: Option<String>,
+}
+
+impl LyricsSnapshot {
+    /// Lyrics that are not there, for `state` to say why.
+    pub fn without(state: LyricsStatus) -> Self {
+        Self {
+            state,
+            source: None,
+            instrumental: state == LyricsStatus::Instrumental,
+            synced: false,
+            current: None,
+            next: None,
+            lines: Vec::new(),
+            truncated: false,
+        }
+    }
+
+    /// Keeps the first `LYRICS_LIMIT` of `lines`. `active` is the index of the line sung now in
+    /// the whole of them, and only a synced text has `current` and `next`, the latter being the
+    /// first line while none has started.
+    pub fn bounded(
+        mut self,
+        synced: bool,
+        mut lines: Vec<LyricsLine>,
+        active: Option<usize>,
+    ) -> Self {
+        (self.current, self.next) = match synced {
+            true => (
+                active.and_then(|at| lines.get(at)).cloned(),
+                lines.get(active.map_or(0, |at| at + 1)).cloned(),
+            ),
+            false => (None, None),
+        };
+        self.synced = synced;
+        self.truncated = lines.len() > LYRICS_LIMIT;
+        lines.truncate(LYRICS_LIMIT);
+        self.lines = lines;
+        self
+    }
+}
+
+/// At most this many tracks are reported per section of a queue snapshot, so a very long
+/// playlist never makes an unbounded reply. `previous` keeps its most recent tracks and
+/// `upcoming` its next ones, both in play order; `truncated` says when either was cut.
+pub const QUEUE_LIMIT: usize = 100;
+
+/// The queue as `sonora queue` prints it: what played, what plays and what follows, in play
+/// order. This is a public contract, so a field is only ever added, never renamed or
+/// removed, without bumping `VERSION`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct QueueSnapshot {
+    pub previous: Vec<QueueEntry>,
+    pub current: Option<QueueEntry>,
+    pub upcoming: Vec<QueueEntry>,
+    /// Whether `previous` or `upcoming` held more than `QUEUE_LIMIT` tracks.
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+impl QueueSnapshot {
+    /// Bounds a snapshot to `QUEUE_LIMIT` tracks per section, keeping the most recent
+    /// previous tracks and the next upcoming ones, in play order.
+    pub fn bounded(
+        previous: Vec<QueueEntry>,
+        current: Option<QueueEntry>,
+        upcoming: Vec<QueueEntry>,
+    ) -> Self {
+        let truncated = previous.len() > QUEUE_LIMIT || upcoming.len() > QUEUE_LIMIT;
+        let previous = match previous.len() > QUEUE_LIMIT {
+            true => previous[previous.len() - QUEUE_LIMIT..].to_vec(),
+            false => previous,
+        };
+        let upcoming = match upcoming.len() > QUEUE_LIMIT {
+            true => upcoming[..QUEUE_LIMIT].to_vec(),
+            false => upcoming,
+        };
+        Self {
+            previous,
+            current,
+            upcoming,
+            truncated,
+        }
+    }
+}
+
+/// One track in a queue snapshot, with why it is in the queue when that is known.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct QueueEntry {
+    pub track: Track,
+    pub kind: QueueEntryKind,
+}
+
+/// Why a track is in the queue, as far as the snapshot knows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum QueueEntryKind {
+    /// Part of the album, playlist or other collection being played.
+    #[default]
+    Context,
+    /// Added by hand, after the current track or at the end of the queue.
+    Queued,
+    /// A recommendation that follows the queue.
+    Suggested,
 }
 
 /// A Sonora Session as `sonora session` prints it.
@@ -166,6 +328,10 @@ pub enum Failure {
     Unsupported,
     /// No provider is signed in to read a link with.
     SignedOut,
+    /// There is no current track to control.
+    NoCurrentTrack,
+    /// The current track has no provider id that can be favorited.
+    MissingTrackId,
     /// A link belongs to another provider than the current one. Both are named.
     OtherProvider { link: String, current: String },
     /// No provider reads this link, or it points at nothing that can be queued.
@@ -180,8 +346,10 @@ pub enum Failure {
     NoAccount(String),
     /// The provider, by name, did not sign in after the switch.
     SignInFailed(String),
-    /// A sign-in is already on its way, so the provider cannot change now.
+    /// A conflicting operation is still in progress.
     Busy,
+    /// The provider refused a favorite update.
+    FavoriteUpdateFailed,
     /// A search to queue the best hit of found nothing.
     NothingFound(String),
 }
@@ -246,4 +414,211 @@ pub fn exchange<S: Read + Write>(stream: &mut S, request: &Request) -> Result<Re
         Error::Io(error) if error.kind() == ErrorKind::UnexpectedEof => Error::Closed,
         error => error,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(title: &str, kind: QueueEntryKind) -> QueueEntry {
+        QueueEntry {
+            track: Track {
+                id: Some(title.to_owned()),
+                title: title.to_owned(),
+                artists: vec!["artist".to_owned()],
+                album: "album".to_owned(),
+                cover: None,
+                duration: 60,
+            },
+            kind,
+        }
+    }
+
+    #[test]
+    fn an_empty_queue_snapshot_round_trips() {
+        let reply = Reply::Value(Value::Queue(QueueSnapshot::default()));
+        let mut line = Vec::new();
+        send(&mut line, &reply).unwrap();
+        let read: Reply = receive(&mut BufReader::new(line.as_slice())).unwrap();
+        assert_eq!(read, reply);
+        match read {
+            Reply::Value(Value::Queue(queue)) => {
+                assert!(queue.previous.is_empty());
+                assert_eq!(queue.current, None);
+                assert!(queue.upcoming.is_empty());
+                assert!(!queue.truncated);
+            }
+            other => panic!("expected a queue snapshot, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mute_requests_and_answers_keep_the_typed_shape() {
+        let request = Request::Playback(crate::commands::PlaybackCommand::Mute(Some(
+            crate::commands::Switch::Toggle,
+        )));
+        let mut line = Vec::new();
+        send(&mut line, &request).unwrap();
+        let read: Request = receive(&mut BufReader::new(line.as_slice())).unwrap();
+        assert_eq!(read, request);
+
+        let reply = Reply::Value(Value::Muted(true));
+        let mut line = Vec::new();
+        send(&mut line, &reply).unwrap();
+        let read: Reply = receive(&mut BufReader::new(line.as_slice())).unwrap();
+        assert_eq!(read, reply);
+    }
+
+    #[test]
+    fn favorite_requests_and_answers_keep_the_typed_shape() {
+        let request = Request::Like(Some(crate::commands::Switch::On));
+        let mut line = Vec::new();
+        send(&mut line, &request).unwrap();
+        let read: Request = receive(&mut BufReader::new(line.as_slice())).unwrap();
+        assert_eq!(read, request);
+
+        let reply = Reply::Value(Value::Liked(true));
+        let mut line = Vec::new();
+        send(&mut line, &reply).unwrap();
+        let read: Reply = receive(&mut BufReader::new(line.as_slice())).unwrap();
+        assert_eq!(read, reply);
+    }
+
+    #[test]
+    fn a_bounded_snapshot_keeps_order_and_the_ends_that_matter() {
+        let previous: Vec<_> = (0..QUEUE_LIMIT + 5)
+            .map(|at| entry(&at.to_string(), QueueEntryKind::Context))
+            .collect();
+        let upcoming: Vec<_> = (0..QUEUE_LIMIT + 5)
+            .map(|at| entry(&at.to_string(), QueueEntryKind::Queued))
+            .collect();
+        let queue = QueueSnapshot::bounded(
+            previous,
+            Some(entry("now", QueueEntryKind::Context)),
+            upcoming,
+        );
+        assert!(queue.truncated);
+        assert_eq!(queue.previous.len(), QUEUE_LIMIT);
+        assert_eq!(queue.previous.first().unwrap().track.title, "5");
+        assert_eq!(queue.upcoming.len(), QUEUE_LIMIT);
+        assert_eq!(queue.upcoming.last().unwrap().track.title, "99");
+        assert_eq!(queue.current.unwrap().track.title, "now");
+    }
+
+    fn line(start_ms: Option<u64>, text: &str) -> LyricsLine {
+        LyricsLine {
+            start_ms,
+            text: text.to_owned(),
+            romanized: None,
+        }
+    }
+
+    fn synced(count: u64) -> Vec<LyricsLine> {
+        (0..count)
+            .map(|at| line(Some(at * 1000), &at.to_string()))
+            .collect()
+    }
+
+    fn snapshot(lines: Vec<LyricsLine>, active: Option<usize>) -> LyricsSnapshot {
+        LyricsSnapshot::without(LyricsStatus::Ready).bounded(true, lines, active)
+    }
+
+    #[test]
+    fn missing_lyrics_round_trip_empty() {
+        let reply = Reply::Value(Value::Lyrics(LyricsSnapshot::without(
+            LyricsStatus::Missing,
+        )));
+        let mut line = Vec::new();
+        send(&mut line, &reply).unwrap();
+        let read: Reply = receive(&mut BufReader::new(line.as_slice())).unwrap();
+        assert_eq!(read, reply);
+        let Reply::Value(Value::Lyrics(lyrics)) = read else {
+            panic!("expected lyrics, got {read:?}");
+        };
+        assert_eq!(lyrics.state, LyricsStatus::Missing);
+        assert!(lyrics.lines.is_empty() && lyrics.current.is_none() && lyrics.next.is_none());
+    }
+
+    #[test]
+    fn lyrics_serialize_by_name_with_times_and_romanization() {
+        let mut lines = synced(1);
+        lines[0].romanized = Some("konnichiwa".to_owned());
+        let printed = serde_json::to_string(&snapshot(lines, Some(0))).unwrap();
+        assert!(printed.contains("\"state\":\"ready\""), "{printed}");
+        assert!(printed.contains("\"start_ms\":0"), "{printed}");
+        assert!(
+            printed.contains("\"romanized\":\"konnichiwa\""),
+            "{printed}"
+        );
+        let state = serde_json::to_string(&LyricsStatus::Instrumental).unwrap();
+        assert_eq!(state, "\"instrumental\"");
+    }
+
+    #[test]
+    fn the_active_line_has_the_next_one_after_it() {
+        let lyrics = snapshot(synced(3), Some(1));
+        assert_eq!(lyrics.current.unwrap().text, "1");
+        assert_eq!(lyrics.next.unwrap().text, "2");
+    }
+
+    #[test]
+    fn before_the_first_line_only_the_next_one_is_known() {
+        let lyrics = snapshot(synced(3), None);
+        assert_eq!(lyrics.current, None);
+        assert_eq!(lyrics.next.unwrap().text, "0");
+    }
+
+    #[test]
+    fn after_the_last_line_nothing_follows() {
+        let lyrics = snapshot(synced(3), Some(2));
+        assert_eq!(lyrics.current.unwrap().text, "2");
+        assert_eq!(lyrics.next, None);
+    }
+
+    #[test]
+    fn plain_lyrics_have_no_current_or_next_line() {
+        let lines = vec![line(None, "one"), line(None, "two")];
+        let lyrics = LyricsSnapshot::without(LyricsStatus::Ready).bounded(false, lines, None);
+        assert!(!lyrics.synced);
+        assert_eq!((lyrics.current, lyrics.next), (None, None));
+        assert_eq!(lyrics.lines.len(), 2);
+    }
+
+    #[test]
+    fn bounding_plain_lines_clears_a_synced_current_and_next() {
+        let lines = vec![line(None, "one")];
+        let lyrics = snapshot(synced(3), Some(1)).bounded(false, lines, None);
+        assert!(!lyrics.synced);
+        assert_eq!((lyrics.current, lyrics.next), (None, None));
+        assert_eq!(lyrics.lines.len(), 1);
+    }
+
+    #[test]
+    fn long_lyrics_are_cut_after_the_active_line_is_picked() {
+        let total = LYRICS_LIMIT as u64 + 5;
+        let lyrics = snapshot(synced(total), Some(LYRICS_LIMIT + 2));
+        assert!(lyrics.truncated);
+        assert_eq!(lyrics.lines.len(), LYRICS_LIMIT);
+        assert_eq!(
+            lyrics.lines.last().unwrap().text,
+            (LYRICS_LIMIT - 1).to_string()
+        );
+        assert_eq!(lyrics.current.unwrap().text, (LYRICS_LIMIT + 2).to_string());
+        assert_eq!(lyrics.next.unwrap().text, (LYRICS_LIMIT + 3).to_string());
+    }
+
+    #[test]
+    fn queue_kinds_serialize_by_name() {
+        let queue = QueueSnapshot::bounded(
+            Vec::new(),
+            None,
+            vec![
+                entry("by-hand", QueueEntryKind::Queued),
+                entry("similar", QueueEntryKind::Suggested),
+            ],
+        );
+        let printed = serde_json::to_string(&queue).unwrap();
+        assert!(printed.contains("\"kind\":\"queued\""), "{printed}");
+        assert!(printed.contains("\"kind\":\"suggested\""), "{printed}");
+    }
 }

@@ -1,12 +1,22 @@
 {
   description = "A native, familiar music streaming client";
 
+  # CI builds the `stable` and `nightly` branches and every push to main for Linux and pushes the
+  # result here, so the package downloads instead of compiling.
+  nixConfig = {
+    extra-substituters = [ "https://sonora.cachix.org" ];
+    extra-trusted-public-keys = [
+      "sonora.cachix.org-1:qbPeDsvZPbwUWHpQS5Oe0bjz5oHAVscHem+MCzwrc9Q="
+    ];
+  };
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    crane.url = "github:ipetkov/crane";
   };
 
   outputs =
@@ -14,6 +24,7 @@
       self,
       nixpkgs,
       rust-overlay,
+      crane,
       ...
     }:
     let
@@ -32,30 +43,32 @@
           fn pkgs
         );
 
-      release = {
-        version = "0.48.1";
-        assets = {
-          x86_64-linux = {
-            target = "x86_64-unknown-linux-gnu";
-            hash = "sha256-NtES2hlXk5piA+vwnmg3LXiIO9y5wlFkdrMHHQCqFU4=";
-          };
-          aarch64-linux = {
-            target = "aarch64-unknown-linux-gnu";
-            hash = "sha256-fpBU6OlWnxuZYCGn7mafz+vLJTLUX+pzx3obpVLrx5g=";
-          };
-          aarch64-darwin = {
-            target = "macos";
-            hash = "sha256-sKA7pCS5yFBaPSpLeBtv1bpGxrMihJmw5Z6b3Rg8P3A=";
-          };
+      # Copies only what cargo reads out of a source tree. The result depends on file contents
+      # alone, so a commit that touches only docs, CI or this file keeps the cached build.
+      cargoSource =
+        root:
+        builtins.path {
+          name = "source";
+          path = root;
+          filter =
+            path: _:
+            builtins.elem (lib.head (lib.splitString "/" (lib.removePrefix "${toString root}/" path))) [
+              ".cargo"
+              "Cargo.toml"
+              "Cargo.lock"
+              "crates"
+              "assets"
+              "COPYING"
+              "THIRD-PARTY.md"
+            ];
         };
-      };
 
-      # The nightly prerelease, in the same shape as `release` plus its tag. Only the commit the
-      # nightly workflow tags `nightly` carries this file, so `github:sonorahq/sonora/nightly` is
-      # the one flake ref that installs it.
+      # The nightly's version. Only the commit the nightly workflow tags `nightly` carries this
+      # file, and its presence makes the package a nightly build.
       nightly = lib.optionalAttrs (builtins.pathExists ./nix/nightly.json) (
         lib.importJSON ./nix/nightly.json
       );
+      toolchainChannel = (lib.importTOML ./rust-toolchain.toml).toolchain.channel;
     in
     {
       packages = forEachSystem (
@@ -76,7 +89,6 @@
                 freetype
                 alsa-lib
                 dbus
-                sqlite
                 webkitgtk_4_1
                 glib-networking
               ]
@@ -84,6 +96,7 @@
               [ ];
 
           inherit (pkgs.stdenv.hostPlatform) system;
+          rustToolchain = pkgs.rust-bin.stable.${toolchainChannel}.minimal;
 
           # WebKit plays a page's media through GStreamer and aborts its web process when no
           # audio sink element exists. The Nix webkitgtk closure carries only core and base, and
@@ -105,21 +118,24 @@
             ];
           };
 
+          # What Soloist loads besides glibc: libatomic when it starts, and PipeWire or PulseAudio
+          # once it opens a sound device.
+          soloistLibraries = lib.makeLibraryPath (
+            with pkgs;
+            [
+              stdenv.cc.cc.lib
+              pipewire
+              libpulseaudio
+            ]
+          );
+
           # The source build uses the toolchain the devShell and CI pin, not whatever rustc
           # nixpkgs carries that day.
-          rustPlatform =
-            let
-              toolchain =
-                pkgs.rust-bin.stable.${(lib.importTOML ./rust-toolchain.toml).toolchain.channel}.minimal;
-            in
-            pkgs.makeRustPlatform {
-              cargo = toolchain;
-              rustc = toolchain;
-            };
+          craneLib = (crane.mkLib pkgs).overrideToolchain (_: rustToolchain);
 
-          # Points the Linux binary at its runtime libraries and environment. Both packages run
-          # it, since webkitgtk and the GPU and audio stacks are opened with dlopen and never
-          # show up as link-time dependencies.
+          # Points the Linux binary at its runtime libraries and environment, since webkitgtk and
+          # the GPU and audio stacks are opened with dlopen and never show up as link-time
+          # dependencies.
           linuxFixup = lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
             patchelf \
               --set-interpreter "${pkgs.stdenv.cc.bintools.dynamicLinker}" \
@@ -131,21 +147,19 @@
               --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : ${gstPluginPath}
           '';
 
-          sonora-src = rustPlatform.buildRustPackage (final: {
-            pname = "sonora";
-            inherit ((lib.importTOML (final.src + /Cargo.toml)).workspace.package) version;
+          src = cargoSource ./.;
+          cargoVersion = (lib.importTOML "${src}/Cargo.toml").workspace.package.version;
 
-            src = ./.;
-            cargoLock = {
-              lockFile = final.src + /Cargo.lock;
-              allowBuiltinFetchGit = true;
-            };
-            cargoBuildFlags = [
-              "--package"
-              "sonora"
-            ];
+          # What both the dependency build and the app build need to compile. Nothing in here may
+          # depend on the app's own code or version, or every commit would rebuild the
+          # dependencies too.
+          commonArgs = {
+            inherit src;
+            pname = "sonora";
+            version = cargoVersion;
+            strictDeps = true;
             doCheck = false;
-            dontCargoUseSystemLibs = true;
+            cargoExtraArgs = "--locked --package sonora";
 
             nativeBuildInputs =
               with pkgs;
@@ -175,7 +189,6 @@
             buildInputs =
               with pkgs;
               lib.flatten [
-                sqlite
                 (lib.optionals stdenv.hostPlatform.isLinux [
                   dbus
                   fontconfig
@@ -196,59 +209,97 @@
                   (darwinMinVersionHook "10.15")
                 ])
               ];
+          };
 
-            installPhase = ''
-              runHook preInstall
+          # Every dependency, compiled once per Cargo.lock and pushed to the cache on its own, so a
+          # commit that only changes the app compiles just the workspace. Only the build runs: a
+          # `cargo check` pass would be thrown away, since nothing here runs clippy.
+          cargoArtifacts = craneLib.buildDepsOnly (
+            commonArgs
+            // {
+              buildPhaseCargoCommand = "cargoWithProfile build ${commonArgs.cargoExtraArgs}";
+            }
+          );
 
-              install -Dm755 "target/${pkgs.stdenv.hostPlatform.rust.cargoShortTarget}/$cargoBuildType/sonora" "$out/bin/sonora"
-              ${
-                if pkgs.stdenv.hostPlatform.isDarwin then
-                  ''
-                    install -Dm755 "target/${pkgs.stdenv.hostPlatform.rust.cargoShortTarget}/$cargoBuildType/sonora" "$out/Applications/Sonora.app/Contents/MacOS/sonora"
-                    install -Dm444 "$src/assets/macos/sonora.icns" \
-                      "$out/Applications/Sonora.app/Contents/Resources/sonora.icns"
+          # Compiles the checked-out tree. At the `nightly` tag it takes the nightly's version, commit
+          # and update channel, which the app reads at compile time.
+          sonora = craneLib.buildPackage (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              version = nightly.version or cargoVersion;
 
-                    sed \
-                      "s/@VERSION@/$version/g" \
-                      "$src/assets/macos/Info.plist" \
-                      > "$out/Applications/Sonora.app/Contents/Info.plist"
+              # Soloist is Spotify's prebuilt binary and asks for a loader at /lib64, which NixOS
+              # has only with nix-ld. The app starts it through the store's loader with these
+              # instead.
+              env =
+                lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+                  SONORA_SOLOIST_LOADER = pkgs.stdenv.cc.bintools.dynamicLinker;
+                  SONORA_SOLOIST_LIBRARIES = soloistLibraries;
+                }
+                // lib.optionalAttrs (nightly ? version) {
+                  SONORA_VERSION = nightly.version;
+                  SONORA_CHANNEL = "nightly";
+                }
+                // lib.optionalAttrs (nightly ? commit) {
+                  SONORA_COMMIT = nightly.commit;
+                };
 
-                    LICENSE_DIR="$out/Applications/Sonora.app/Contents/Resources"
-                  ''
-                else
-                  ''
-                    install -Dm444 "$src/assets/linux/sonora.desktop" \
-                      "$out/share/applications/sonora.desktop"
-                    install -Dm444 "$src/assets/linux/sonora.svg" \
-                      "$out/share/icons/hicolor/scalable/apps/sonora.svg"
-                    for icon in "$src"/assets/linux/icons/hicolor/*/apps/sonora.png; do
-                      size="$(basename "$(dirname "$(dirname "$icon")")")"
-                      install -Dm444 "$icon" \
-                        "$out/share/icons/hicolor/$size/apps/sonora.png"
-                    done
+              installPhase = ''
+                runHook preInstall
 
-                    LICENSE_DIR="$out/share/licenses/sonora"
-                  ''
-              }
-              install -Dm444 "$src/COPYING" "$LICENSE_DIR/LICENSE"
-              install -Dm444 "$src/THIRD-PARTY.md" "$LICENSE_DIR/THIRD-PARTY.md"
-              install -Dm444 "$src/assets/fonts/LICENSE.txt" \
-                "$LICENSE_DIR/sonora/LICENSE.Inter"
-              for licence in "$src/assets/icons"/*/LICENSE; do
-                pack="$(basename "$(dirname "$licence")")"
-                install -Dm444 "$licence" \
-                  "$LICENSE_DIR/icons/LICENSE.$pack"
-              done
-              install -Dm444 "$src/assets/icons/LICENSE" \
-                "$LICENSE_DIR/icons/LICENSE"
+                install -Dm755 target/release/sonora "$out/bin/sonora"
+                ${
+                  if pkgs.stdenv.hostPlatform.isDarwin then
+                    ''
+                      install -Dm755 target/release/sonora "$out/Applications/Sonora.app/Contents/MacOS/sonora"
+                      install -Dm444 "$src/assets/macos/sonora.icns" \
+                        "$out/Applications/Sonora.app/Contents/Resources/sonora.icns"
+                      install -Dm444 "$src/assets/macos/Assets.car" \
+                        "$out/Applications/Sonora.app/Contents/Resources/Assets.car"
 
-              runHook postInstall
-            '';
+                      sed \
+                        "s/@VERSION@/$version/g" \
+                        "$src/assets/macos/Info.plist" \
+                        > "$out/Applications/Sonora.app/Contents/Info.plist"
 
-            postFixup = linuxFixup;
+                      LICENSE_DIR="$out/Applications/Sonora.app/Contents/Resources"
+                    ''
+                  else
+                    ''
+                      install -Dm444 "$src/assets/linux/sonora.desktop" \
+                        "$out/share/applications/sonora.desktop"
+                      install -Dm444 "$src/assets/linux/sonora.svg" \
+                        "$out/share/icons/hicolor/scalable/apps/sonora.svg"
+                      for icon in "$src"/assets/linux/icons/hicolor/*/apps/sonora.png; do
+                        size="$(basename "$(dirname "$(dirname "$icon")")")"
+                        install -Dm444 "$icon" \
+                          "$out/share/icons/hicolor/$size/apps/sonora.png"
+                      done
 
-            inherit meta;
-          });
+                      LICENSE_DIR="$out/share/licenses/sonora"
+                    ''
+                }
+                install -Dm444 "$src/COPYING" "$LICENSE_DIR/LICENSE"
+                install -Dm444 "$src/THIRD-PARTY.md" "$LICENSE_DIR/THIRD-PARTY.md"
+                install -Dm444 "$src/assets/fonts/LICENSE.txt" \
+                  "$LICENSE_DIR/sonora/LICENSE.Inter"
+                for licence in "$src/assets/icons"/*/LICENSE; do
+                  pack="$(basename "$(dirname "$licence")")"
+                  install -Dm444 "$licence" \
+                    "$LICENSE_DIR/icons/LICENSE.$pack"
+                done
+                install -Dm444 "$src/assets/icons/LICENSE" \
+                  "$LICENSE_DIR/icons/LICENSE"
+
+                runHook postInstall
+              '';
+
+              postFixup = linuxFixup;
+
+              inherit meta;
+            }
+          );
 
           meta = {
             description = "A native, familiar music streaming client";
@@ -261,121 +312,12 @@
             platforms = lib.platforms.linux ++ lib.platforms.darwin;
           };
 
-          # Installs the binaries a GitHub release publishes under `tag`. Every asset is named
-          # `sonora-<tag>-<target>`, and `assets` maps a Nix system to its target and hash.
-          prebuilt =
-            {
-              pname,
-              version,
-              tag,
-              assets,
-            }:
-            let
-              asset = assets.${system};
-            in
-            pkgs.stdenv.mkDerivation {
-              inherit pname version meta;
-
-              src = pkgs.fetchurl {
-                url = "https://github.com/sonorahq/sonora/releases/download/${tag}/sonora-${tag}-${asset.target}${
-                  if pkgs.stdenv.hostPlatform.isDarwin then ".dmg" else ""
-                }";
-                inherit (asset) hash;
-              };
-
-              dontUnpack = true;
-              dontStrip = true;
-
-              nativeBuildInputs =
-                lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.makeWrapper ]
-                ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
-                  pkgs.makeBinaryWrapper
-                  pkgs.undmg
-                ];
-
-              installPhase =
-                if pkgs.stdenv.hostPlatform.isLinux then
-                  ''
-                    runHook preInstall
-                    install -Dm755 "$src" "$out/bin/sonora"
-                    ${lib.optionalString (tag == "nightly") ''
-                      mkdir -p "$out/lib/sonora"
-                      cp ${
-                        pkgs.writeText "sonora-build.json" (
-                          builtins.toJSON {
-                            inherit version;
-                            channel = "nightly";
-                          }
-                        )
-                      } "$out/lib/sonora/build.json"
-                    ''}
-                    install -Dm444 ${./assets/linux/sonora.desktop} \
-                      "$out/share/applications/sonora.desktop"
-                    install -Dm444 ${./assets/linux/sonora.svg} \
-                      "$out/share/icons/hicolor/scalable/apps/sonora.svg"
-                    for icon in ${./assets/linux/icons}/hicolor/*/apps/sonora.png; do
-                      size="$(basename "$(dirname "$(dirname "$icon")")")"
-                      install -Dm444 "$icon" \
-                        "$out/share/icons/hicolor/$size/apps/sonora.png"
-                    done
-                    install -Dm444 ${./COPYING} "$out/share/licenses/sonora/LICENSE"
-                    install -Dm444 ${./THIRD-PARTY.md} "$out/share/licenses/sonora/THIRD-PARTY.md"
-                    install -Dm444 ${./assets/fonts/LICENSE.txt} \
-                      "$out/share/licenses/sonora/LICENSE.Inter"
-                    for licence in ${./assets/icons}/*/LICENSE; do
-                      pack="$(basename "$(dirname "$licence")")"
-                      install -Dm444 "$licence" \
-                        "$out/share/licenses/sonora/icons/LICENSE.$pack"
-                    done
-                    install -Dm444 ${./assets/icons/LICENSE} \
-                      "$out/share/licenses/sonora/icons/LICENSE"
-                    runHook postInstall
-                  ''
-                else
-                  ''
-                    runHook preInstall
-                    mnt="$(mktemp -d)"
-                    /usr/bin/hdiutil attach -readonly -nobrowse -mountpoint "$mnt" "$src"
-                    mkdir -p "$out/Applications" "$out/bin"
-                    cp -R "$mnt/Sonora.app" "$out/Applications/Sonora.app"
-                    /usr/bin/hdiutil detach "$mnt"
-                    makeBinaryWrapper \
-                      "$out/Applications/Sonora.app/Contents/MacOS/sonora" \
-                      "$out/bin/sonora"
-                    runHook postInstall
-                  '';
-
-              postFixup = linuxFixup;
-            };
-
-          sonora-bin = prebuilt {
-            pname = "sonora-bin";
-            inherit (release) version assets;
-            tag = "v${release.version}";
-          };
-
-          sonora-nightly = prebuilt {
-            pname = "sonora-nightly";
-            inherit (nightly) version tag assets;
-          };
         in
-        # `default` and `sonora` resolve to the release binary wherever one is published and to
-        # the source build elsewhere. `sonora-src` and `sonora-bin` always mean one or the other.
-        # At the `nightly` tag both resolve to the nightly binary instead.
+        # The flake ref picks the channel: `github:sonorahq/sonora/stable` is the latest release,
+        # `github:sonorahq/sonora/nightly` the nightly and `github:sonorahq/sonora` main.
         {
-          inherit sonora-src;
-          sonora = sonora-src;
-          default = sonora-src;
-        }
-        // lib.optionalAttrs (builtins.hasAttr system release.assets) {
-          inherit sonora-bin;
-          sonora = sonora-bin;
-          default = sonora-bin;
-        }
-        // lib.optionalAttrs (nightly ? assets && builtins.hasAttr system nightly.assets) {
-          inherit sonora-nightly;
-          sonora = sonora-nightly;
-          default = sonora-nightly;
+          inherit sonora;
+          default = sonora;
         }
       );
 
@@ -398,7 +340,6 @@
                 freetype
                 alsa-lib
                 dbus
-                sqlite
                 openssl
                 webkitgtk_4_1
                 glib-networking
@@ -421,6 +362,7 @@
                 cmake
                 rustToolchain
                 sccache
+                dioxus-cli
               ])
               ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.mold ];
 
@@ -467,7 +409,7 @@
               # installed Xcode. Clang follows DEVELOPER_DIR too and then reads Xcode's C
               # headers beside the Nix libc++, which breaks any C++ a build script compiles,
               # so C++ compiles are pinned to the Nix SDK through CXXFLAGS. Only compiles: the
-              # link still has to see Xcode's SDK, which is where libsqlite3 comes from.
+              # link still goes through Xcode's SDK.
               + lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
                 # xcode-select echoes DEVELOPER_DIR back when it is set, so ask with it unset.
                 if xcode="$(env -u DEVELOPER_DIR /usr/bin/xcode-select -p 2>/dev/null)"; then
@@ -485,10 +427,25 @@
       };
 
       homeManagerModules = {
-        default = import ./nix/modules/hm-module.nix self;
-        sonora = import ./nix/modules/hm-module.nix self;
+        default =
+          { pkgs, lib, ... }:
+          {
+            imports = [ ./nix/home-manager.nix ];
+            programs.sonora.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+          };
+        sonora = self.homeManagerModules.default;
       };
 
       homeModules = self.homeManagerModules;
+
+      nixosModules = {
+        default =
+          { pkgs, lib, ... }:
+          {
+            imports = [ ./nix/nixos.nix ];
+            programs.sonora.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+          };
+        sonora = self.nixosModules.default;
+      };
     };
 }

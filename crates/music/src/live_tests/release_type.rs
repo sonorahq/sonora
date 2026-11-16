@@ -49,6 +49,7 @@ async fn subsonic_labels_an_ep_as_one() -> Result<()> {
         username,
         password,
         &signature,
+        None,
     )?;
     ep_is_labelled("Subsonic", &client).await
 }

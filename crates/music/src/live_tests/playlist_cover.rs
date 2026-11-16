@@ -55,6 +55,7 @@ async fn navidrome_can_change_a_playlist_cover() -> Result<()> {
         username,
         password,
         &signature,
+        None,
     )?;
     if !client.takes_playlist_covers().await {
         bail!("the server is not a Navidrome that takes playlist covers");

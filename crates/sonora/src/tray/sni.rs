@@ -199,12 +199,22 @@ impl ksni::Tray for Item {
 }
 
 fn watched() -> Result<bool> {
-    let bus = zbus::blocking::Connection::session().context("cannot reach the session bus")?;
     let name = zbus::names::BusName::try_from(WATCHER).context("cannot name the watcher")?;
-    zbus::blocking::fdo::DBusProxy::new(&bus)
-        .context("cannot reach the bus daemon")?
-        .name_has_owner(name)
-        .context("cannot ask for the watcher")
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("cannot start the bus runtime")?
+        .block_on(async {
+            let bus = zbus::Connection::session()
+                .await
+                .context("cannot reach the session bus")?;
+            zbus::fdo::DBusProxy::new(&bus)
+                .await
+                .context("cannot reach the bus daemon")?
+                .name_has_owner(name)
+                .await
+                .context("cannot ask for the watcher")
+        })
 }
 
 fn sandboxed() -> bool {
@@ -212,10 +222,11 @@ fn sandboxed() -> bool {
 }
 
 /// The themed icon to ask the host for, or none when the host's theme cannot be counted on to
-/// have it. A Flatpak or AppImage install puts no `sonora` icon where the host looks, and hosts
+/// have it. A Flatpak, AppImage or Snap install puts no `sonora` icon where the host looks, and hosts
 /// such as Quickshell draw a placeholder for a name they cannot find rather than the pixmap.
 fn icon_name(sandboxed: bool) -> String {
-    let packaged = sandboxed || std::env::var_os("APPIMAGE").is_some();
+    let packaged =
+        sandboxed || std::env::var_os("APPIMAGE").is_some() || std::env::var_os("SNAP").is_some();
     match packaged {
         true => String::new(),
         false => ICON_NAME.to_owned(),

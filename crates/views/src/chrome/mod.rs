@@ -11,6 +11,7 @@ mod sidebar_left;
 mod sidebar_right;
 mod swipe_cue;
 mod theme_invite;
+mod timeline;
 mod title_bar;
 mod toasts;
 mod toolbar;
@@ -27,6 +28,7 @@ pub(crate) use sidebar_left::SidebarLeft;
 pub(crate) use sidebar_right::SidebarRight;
 pub(crate) use swipe_cue::SwipeCue;
 pub(crate) use theme_invite::ThemeInvite;
+pub(crate) use timeline::Timeline;
 #[cfg(target_os = "macos")]
 pub use title_bar::traffic_lights;
 pub(crate) use title_bar::{Busy, TitleBar, TitleBarEvent, TitleBarOptions};
@@ -147,6 +149,18 @@ impl Chrome {
 
     pub fn room(window: &Window, cx: &App) -> Room {
         Room::of(Self::content(window, cx))
+    }
+
+    /// The width a page lays itself out in, which is the content area up to `metrics.page`.
+    pub fn page(window: &Window, cx: &App) -> Pixels {
+        Self::content(window, cx).min(cx.theme().metrics.page)
+    }
+
+    /// How much wider than its page the content area is on each side. A page adds it to its
+    /// side padding, so on a wide window it stands centred while its scrollbar and any
+    /// background it bleeds still reach the edges.
+    pub fn margin(window: &Window, cx: &App) -> Pixels {
+        ((Self::content(window, cx) - Self::page(window, cx)) / 2.).max(Pixels::ZERO)
     }
 
     /// Classifies chrome that spans the whole window, including the space under sidebars.

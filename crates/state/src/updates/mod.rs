@@ -17,6 +17,8 @@ const RELEASES: &str = "https://api.github.com/repos/sonorahq/sonora/releases";
 const SUMS: &str = "SHA256SUMS";
 /// What the nightly workflow puts before the version label in the nightly release's title.
 const NIGHTLY_TITLE: &str = "Nightly ";
+/// How many leading hex digits of a commit hash the version row shows, as `git` abbreviates it.
+const SHORT_COMMIT: usize = 7;
 const AGENT: &str = concat!(
     "sonora/",
     env!("CARGO_PKG_VERSION"),
@@ -74,6 +76,17 @@ impl Channel {
 /// The package's displayed version, falling back to the compiled version for portable copies.
 pub fn version() -> &'static str {
     &build::Build::current().version
+}
+
+/// The shortened hash of the commit a nightly was built from, or `None` for a stable release
+/// and for a build that does not know its commit.
+pub fn commit() -> Option<&'static str> {
+    let build = build::Build::current();
+    if build.channel != Channel::Nightly {
+        return None;
+    }
+    let commit = build.commit.as_deref()?;
+    Some(commit.get(..SHORT_COMMIT).unwrap_or(commit))
 }
 
 /// Whether this copy of Sonora installs its own updates, which is when a channel can be chosen.
@@ -341,7 +354,12 @@ async fn download(
     }
     drop(file);
 
-    if format!("{:x}", hasher.finalize()) != expected {
+    let checksum: String = hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    if checksum != expected {
         std::fs::remove_file(&path).ok();
         anyhow::bail!("the update does not match its checksum");
     }
@@ -367,7 +385,7 @@ fn ordered(version: &str) -> Option<(u64, u64, u64, u64)> {
     let (core, rest) = version
         .trim()
         .split_once(['-', '+'])
-        .unwrap_or((version.trim(), ""));
+        .unwrap_or_else(|| (version.trim(), ""));
     let mut parts = core.split('.').map(|part| part.parse::<u64>().ok());
     let date = rest
         .strip_prefix("nightly.")

@@ -16,14 +16,16 @@ impl SettingsView {
         let mut groups = vec![Group::untitled().rows([Slot::Discord])];
         if settings.discord_presence() {
             // the choice only means something while Spotify is signed in and listed as a device
-            let connect =
-                settings.spotify_connect() && Sonora::global(cx).devices.read(cx).supported();
+            let connect = settings.spotify_connect()
+                && Sonora::global(cx).devices.read(cx).supported()
+                && !super::connect::jellyfin(cx);
             groups.push(
                 Group::new("settings-group-status", "icons/radio.svg")
                     .rows([
                         Slot::DiscordName,
                         Slot::DiscordShowPaused,
                         Slot::DiscordBadge,
+                        Slot::DiscordUploadCovers,
                         Slot::DiscordAnonymous,
                     ])
                     .rows(connect.then_some(Slot::DiscordHideOnConnect)),
@@ -120,6 +122,22 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings.update(cx, |settings, cx| {
                         settings.set_artwork_for_local_files(!on, cx)
+                    });
+                }))
+                .into_any_element(),
+        )
+    }
+
+    pub(super) fn discord_upload_covers_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).discord_upload_covers();
+
+        self.row(
+            t!("settings-discord-upload-covers"),
+            Switch::new("discord-upload-covers", on)
+                .name(t!("settings-discord-upload-covers"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_discord_upload_covers(!on, cx)
                     });
                 }))
                 .into_any_element(),

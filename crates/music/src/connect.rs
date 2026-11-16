@@ -47,6 +47,9 @@ pub struct QueuedTrack {
     pub id: String,
     pub uid: String,
     pub queued: bool,
+    /// Whether the provider or the app picked the track itself, to follow what the listener
+    /// chose once that runs out.
+    pub suggested: bool,
     pub added_by: Option<String>,
 }
 
@@ -55,6 +58,7 @@ impl QueuedTrack {
         Self {
             id,
             queued,
+            suggested: false,
             uid: String::new(),
             added_by: None,
         }
@@ -156,9 +160,9 @@ pub enum Command {
     },
     /// Plays a collection or a track list, from this app's side only.
     Start(Start),
-    /// Replaces the remote queue around the current track without restarting playback.
+    /// Replaces what plays after the current track without restarting playback. History is not
+    /// part of an edit.
     SetQueue {
-        previous: Vec<QueuedTrack>,
         upcoming: Vec<QueuedTrack>,
     },
     /// Another device took playback over, so this app has to let go of it.
@@ -280,6 +284,8 @@ pub enum Request {
 /// A provider-independent channel to the device worker. Dropping the last handle ends it.
 pub struct Connect {
     device: String,
+    /// Whether the network has group sessions to start and join.
+    jams: bool,
     requests: UnboundedSender<Request>,
     events: Mutex<Option<UnboundedReceiver<Event>>>,
 }
@@ -292,6 +298,7 @@ impl Connect {
         (
             Self {
                 device,
+                jams: true,
                 requests,
                 events: Mutex::new(Some(events)),
             },
@@ -311,5 +318,15 @@ impl Connect {
 
     pub fn device(&self) -> &str {
         &self.device
+    }
+
+    /// Marks a network that has no group sessions, so the app offers none.
+    pub fn without_jams(mut self) -> Self {
+        self.jams = false;
+        self
+    }
+
+    pub fn jams(&self) -> bool {
+        self.jams
     }
 }

@@ -213,14 +213,16 @@ impl Render for HomeView {
             });
 
         Scroller::new("home-page", &self.scrollbar)
+            .hold()
             .bottom_inset(crate::chrome::Chrome::bottom(cx))
-            .p(theme.metrics.inset)
+            .py(theme.metrics.inset)
+            .px(theme.metrics.inset + crate::chrome::Chrome::margin(window, cx))
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap_8()
-                    .child(picks)
+                    .child(ui::held("home-quick-picks", picks))
                     .children(shelves),
             )
             .when_some(context_menu, |this, menu| this.child(menu))

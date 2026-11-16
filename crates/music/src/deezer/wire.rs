@@ -7,8 +7,8 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::{
-    Album, ArtistRef, Genre, GenreItem, GenreSection, Playlist, ReleaseType, SavedArtist, Track,
-    UserProfile, calendar,
+    AccountChoice, Album, ArtistRef, Genre, GenreItem, GenreSection, Playlist, ReleaseType,
+    SavedArtist, Track, UserProfile, calendar,
 };
 
 /// Sets a smart tracklist's id apart from a playlist's, so a later lookup knows to ask for
@@ -90,6 +90,18 @@ pub fn profile(user: &Value) -> UserProfile {
     }
 }
 
+/// One member of `deezer.getChildAccounts` as a profile to pick, captioned the way the web
+/// player captions it. None for a member without an id.
+pub fn family_profile(member: &Value) -> Option<AccountChoice> {
+    Some(AccountChoice {
+        id: id(&member["USER_ID"])?,
+        name: text(member, &["BLOG_NAME"]).unwrap_or("Deezer").to_owned(),
+        detail: text(&member["EXTRA_FAMILY"], &["CAPTION"])
+            .filter(|caption| !caption.trim().is_empty())
+            .map(str::to_owned),
+    })
+}
+
 /// The `https://cdn-images.dzcdn.net/images/<kind>/<md5>/<size>x<size>-000000-80-0-0.jpg`
 /// cover url Deezer builds from a picture hash. None when the field holds something other
 /// than a hash, which is the caller's cue to fall back to a url field.
@@ -146,12 +158,14 @@ fn artists_of(value: &Value) -> (String, Vec<ArtistRef>) {
             (Some((names, artist_id)), 1) => vec![ArtistRef {
                 name: names[0].clone(),
                 id: Some(artist_id),
+                channel: false,
             }],
             _ => names
                 .iter()
                 .map(|name| ArtistRef {
                     name: name.clone(),
                     id: None,
+                    channel: false,
                 })
                 .collect(),
         };
@@ -165,6 +179,7 @@ fn artists_of(value: &Value) -> (String, Vec<ArtistRef>) {
             vec![ArtistRef {
                 name: name.to_owned(),
                 id: artist.get("id").and_then(id),
+                channel: false,
             }],
         );
     }
@@ -174,12 +189,14 @@ fn artists_of(value: &Value) -> (String, Vec<ArtistRef>) {
         false => vec![ArtistRef {
             name: name.to_owned(),
             id: value.get("ART_ID").and_then(id),
+            channel: false,
         }],
     };
     (name.to_owned(), refs)
 }
 
-fn truthy(value: &Value, keys: &[&str]) -> bool {
+/// Whether the first field under any of `keys` is set, spelled as a bool, a number or a string.
+pub fn truthy(value: &Value, keys: &[&str]) -> bool {
     keys.iter()
         .find_map(|key| value.get(key))
         .map(|field| match field {
@@ -229,6 +246,8 @@ pub fn track(value: &Value) -> Option<Track> {
             .or_else(|| text(value, &["ALB_TITLE"]))
             .unwrap_or_default()
             .to_owned(),
+        // a Deezer track names its own artists, never the album's
+        album_artist: String::new(),
         album_id: album
             .get("id")
             .and_then(id)

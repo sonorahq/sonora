@@ -3,15 +3,15 @@ use std::rc::Rc;
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Div, ElementId, Entity, FontWeight, MouseButton, MouseDownEvent,
-    Pixels, Rems, SharedString, Stateful, Window, div, px, relative, rems,
+    AnyElement, App, ClickEvent, Context, Div, ElementId, Entity, FontWeight, MouseButton,
+    MouseDownEvent, Pixels, Rems, SharedString, Stateful, Window, div, px, relative, rems,
 };
 use i18n::t;
 use music::{Album, Track};
 use state::{Origin, Playback};
 use ui::{
-    ActiveTheme as _, Artwork, Button, ExplicitBadge, LEADING, MenuItem, Perch, Pin, Pinnable as _,
-    Skeleton, TableState, Tails as _, Text, Tipped as _, spoken, upper,
+    ActiveTheme as _, Artwork, Badge, Button, Flight, LEADING, MenuItem, Perch, Pin, Pinnable as _,
+    Skeleton, TableState, Tails as _, Text, Theme, Tipped as _, spoken,
 };
 
 use crate::shared::tracks::{self, TrackSource};
@@ -25,6 +25,8 @@ const ACTION_SKELETON: Pixels = px(96.);
 const COVER_GAP: Rems = rems(1.25);
 /// The space between the buttons in a row of hero actions.
 pub(crate) const ACTION_GAP: Rems = rems(0.5);
+/// The name a clickable hero cover is seen under, for the cover viewer to fly from and back to.
+pub(crate) const COVER_FLIGHT: &str = "hero-cover";
 
 /// One copyright line, with a © in front unless the provider already led it with © or ℗.
 pub(crate) fn copyright_notice(text: &str) -> SharedString {
@@ -37,16 +39,13 @@ pub(crate) fn copyright_notice(text: &str) -> SharedString {
 /// The notices an album page prints under its tracks: the provider's copyright lines, or the
 /// label behind ℗ when the provider names only that. Empty when it names neither.
 pub(crate) fn copyright_notices(album: &Album) -> Vec<SharedString> {
-    if !album.copyrights.is_empty() {
-        return album
-            .copyrights
-            .iter()
-            .map(|line| copyright_notice(line))
-            .collect();
+    let lines = album.copyright_lines();
+    if !lines.is_empty() {
+        return lines.into_iter().map(copyright_notice).collect();
     }
-    match album.label.trim() {
-        "" => Vec::new(),
-        label => vec![t!("album-label", label = label)],
+    match album.label_name() {
+        None => Vec::new(),
+        Some(label) => vec![t!("album-label", label = label)],
     }
 }
 
@@ -349,6 +348,8 @@ impl RenderOnce for HeroPlayButton {
 }
 
 type DragStart = Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>;
+type CoverHandler = dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static;
+type CoverClick = Box<CoverHandler>;
 
 #[derive(IntoElement)]
 pub(crate) struct PageHero {
@@ -363,6 +364,8 @@ pub(crate) struct PageHero {
     circle: bool,
     explicit: bool,
     drag_start: Option<DragStart>,
+    cover_click: Option<CoverClick>,
+    cover_away: bool,
     pin: Option<Pin>,
     pending: bool,
 }
@@ -381,6 +384,8 @@ impl PageHero {
             circle: false,
             explicit: false,
             drag_start: None,
+            cover_click: None,
+            cover_away: false,
             pin: None,
             pending: false,
         }
@@ -407,6 +412,27 @@ impl PageHero {
     pub(crate) fn cover(mut self, cover: Option<String>) -> Self {
         self.cover = cover;
         self
+    }
+
+    /// Makes the cover a button that opens it, named and announced as View cover.
+    pub(crate) fn on_cover_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.cover_click = Some(Box::new(handler));
+        self
+    }
+
+    /// Leaves the clickable cover undrawn while the cover viewer shows it, so the viewer's copy
+    /// reads as this one lifted off the page and set back down.
+    pub(crate) fn cover_away(mut self, away: bool) -> Self {
+        self.cover_away = away;
+        self
+    }
+
+    /// The corner radius of the hero cover, which a cover flying to or from it eases towards.
+    pub(crate) fn cover_radius(theme: &Theme) -> Pixels {
+        theme.radius * 1.5
     }
 
     pub(crate) fn fallback(mut self, icon: impl Into<SharedString>) -> Self {
@@ -459,6 +485,7 @@ impl RenderOnce for PageHero {
         let art = theme.metrics.cover;
         let drag_start = self.drag_start.map(Rc::from);
         let starter = drag_start.clone();
+        let cover_click: Option<Rc<CoverHandler>> = self.cover_click.map(Rc::from);
 
         if self.pending {
             return div()
@@ -513,23 +540,44 @@ impl RenderOnce for PageHero {
             .items_end()
             .gap(COVER_GAP)
             .pb_6()
-            .child(
-                div()
-                    .flex_none()
-                    .when_some(starter, |this, drag_start: Rc<DragStart>| {
-                        this.on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                            drag_start(event, window, cx)
-                        })
-                    })
-                    .child(
-                        Artwork::new(self.cover)
-                            .size(art)
-                            .corner_radius(theme.radius * 1.5)
-                            .when(self.circle, Artwork::circle)
-                            .when_some(self.fallback, Artwork::fallback)
-                            .when(self.accent, Artwork::accent),
-                    ),
-            )
+            .child({
+                let artwork = Artwork::new(self.cover)
+                    .size(art)
+                    .corner_radius(Self::cover_radius(&theme))
+                    .when(self.circle, Artwork::circle)
+                    .when_some(self.fallback, Artwork::fallback)
+                    .when(self.accent, Artwork::accent);
+                let cover =
+                    div()
+                        .flex_none()
+                        .when_some(starter, |this, drag_start: Rc<DragStart>| {
+                            this.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                                drag_start(event, window, cx)
+                            })
+                        });
+                match cover_click {
+                    // The cover viewer flies its copy out of this one and back into it.
+                    Some(on_cover) => cover
+                        .id((self.id.clone(), "cover"))
+                        .role(Role::Button)
+                        .aria_label(t!("cover-view"))
+                        .tip_label(t!("cover-view"), Perch::Above)
+                        .cursor_pointer()
+                        .on_click(move |event, window, cx| on_cover(event, window, cx))
+                        .child(
+                            Flight::new(
+                                (self.id.clone(), "cover-flight"),
+                                div()
+                                    .when(self.cover_away, |this| this.invisible())
+                                    .child(artwork),
+                            )
+                            .follows(false)
+                            .seen_as(COVER_FLIGHT),
+                        )
+                        .into_any_element(),
+                    None => cover.child(artwork).into_any_element(),
+                }
+            })
             .child(
                 div()
                     .flex()
@@ -576,7 +624,7 @@ impl RenderOnce for PageHero {
                                         .role(Role::Image)
                                         .aria_label(t!("song-explicit"))
                                         .flex_none()
-                                        .child(ExplicitBadge::new()),
+                                        .child(Badge::explicit()),
                                 )
                             }),
                     )
@@ -586,8 +634,7 @@ impl RenderOnce for PageHero {
     }
 }
 
-/// The kind of page above the hero title, drawn in capitals. Screen readers get the label as
-/// written, since a reader may spell out text in capitals letter by letter.
+/// The kind of page above the hero title, which screen readers reach as a label.
 fn eyebrow_label(label: SharedString, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
 
@@ -598,7 +645,7 @@ fn eyebrow_label(label: SharedString, cx: &App) -> Stateful<Div> {
         .text_size(theme.text(Text::Small))
         .text_color(theme.muted_foreground)
         .font_weight(FontWeight::SEMIBOLD)
-        .child(upper(label))
+        .child(label)
 }
 
 /// A row as tall as one line of text at `size`, so the skeleton bar inside it takes the room of

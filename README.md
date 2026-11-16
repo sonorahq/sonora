@@ -20,6 +20,7 @@
 \
 [![Discord](https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/a8N8Tx23rV)
 [![Matrix](https://img.shields.io/badge/Matrix-000000?style=for-the-badge&logo=matrix&logoColor=white)](https://matrix.to/#/#sonora:nolight.dev)
+[![Support us](https://img.shields.io/badge/Support_us-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/R5A72AGYNZ)
 
 ### A native, familiar music streaming client
 
@@ -98,6 +99,10 @@ yay -S sonora
 flatpak install --user https://sonorahq.github.io/sonora/sonora.flatpakref
 ```
 
+#### Snap
+
+Install from the [Snap Store](https://snapcraft.io/sonora): `sudo snap install sonora`.
+
 #### AppImage
 
 Download from the [latest release](https://github.com/sonorahq/sonora/releases/latest), make it executable and run
@@ -110,22 +115,42 @@ chmod +x sonora-*.AppImage
 
 ### Nix
 
-Add either of those inputs:
+Pick a channel with the input's ref and install `inputs.sonora.packages.${system}.default`:
 
 ```nix
-inputs.sonora.url = "github:sonorahq/sonora";
+inputs.sonora.url = "github:sonorahq/sonora/stable";   # the latest release
+inputs.sonora.url = "github:sonorahq/sonora/nightly";  # the nightly
+inputs.sonora.url = "github:sonorahq/sonora";          # main
 ```
 
-```text
-inputs.sonora.packages.${system}.default     (prebuilt where available, else from source)
-inputs.sonora.packages.${system}.sonora      (same as default)
-inputs.sonora.packages.${system}.sonora-bin  (prebuilt, x86_64-linux, aarch64-linux, aarch64-darwin)
-inputs.sonora.packages.${system}.sonora-src  (always built from source)
+Every channel is built for x86_64-linux and aarch64-linux and pushed to a binary cache, and `stable` only moves to a
+release once its build is there. Trust the cache and Nix downloads Sonora instead of compiling it:
+
+```nix
+nix.settings = {
+  extra-substituters = [ "https://sonora.cachix.org" ];
+  extra-trusted-public-keys = [ "sonora.cachix.org-1:qbPeDsvZPbwUWHpQS5Oe0bjz5oHAVscHem+MCzwrc9Q=" ];
+};
 ```
 
 Building from source on macOS needs Xcode added to the Nix store, because the shaders compile with Apple's Metal compiler.
 
-Configuration with Home Manager is provided by the module under `programs.sonora`.
+Configuration with NixOS or Home Manager is provided by the module under `programs.sonora`.
+
+```nix
+{ inputs, ... }: {
+  imports = [ inputs.sonora.nixosModules.default ]; # NixOS
+  # imports = [ inputs.sonora.homeModules.default ]; # Home Manager
+  programs.sonora = {
+    enable = true;
+    settings = {
+      provider = "youtube";
+      gapless = true;
+      appearance.theme = "dark";
+    };
+  };
+}
+```
 
 ### Windows
 
@@ -160,21 +185,24 @@ Discord is the primary one, but we do have a Matrix bridge.
 
 | Language | Translated | Coverage |
 | --- | --- | --- |
-| English (`en-US`) | 1220/1220 | 100% |
-| Deutsch (`de`) | 1105/1220 | 91% |
-| Español (`es`) | 1105/1220 | 91% |
-| Français (`fr`) | 1106/1220 | 91% |
-| Italiano (`it`) | 1105/1220 | 91% |
-| Bahasa Indonesia (`id`) | 1105/1220 | 91% |
-| 日本語 (`ja`) | 1105/1220 | 91% |
-| Русский (`ru`) | 1151/1220 | 94% |
-| Українська (`uk`) | 1107/1220 | 91% |
-| Polski (`pl`) | 1107/1220 | 91% |
-| Čeština (`cs`) | 1105/1220 | 91% |
-| Português (Brasil) (`pt-BR`) | 1105/1220 | 91% |
-| 简体中文 (`zh-CN`) | 1105/1220 | 91% |
-| Türkçe (`tr`) | 1105/1220 | 91% |
-| Shqip (`sq`) | 1105/1220 | 91% |
+| English (`en-US`) | 1343/1343 | 100% |
+| Deutsch (`de`) | 1106/1343 | 82% |
+| Español (`es`) | 1104/1343 | 82% |
+| Français (`fr`) | 1105/1343 | 82% |
+| Italiano (`it`) | 1104/1343 | 82% |
+| Bahasa Indonesia (`id`) | 1104/1343 | 82% |
+| 日本語 (`ja`) | 1104/1343 | 82% |
+| 한국어 (`ko`) | 1339/1343 | 100% |
+| Русский (`ru`) | 1214/1343 | 90% |
+| Українська (`uk`) | 1106/1343 | 82% |
+| Polski (`pl`) | 1106/1343 | 82% |
+| Čeština (`cs`) | 1104/1343 | 82% |
+| Português (Brasil) (`pt-BR`) | 1104/1343 | 82% |
+| Português (Portugal) (`pt-PT`) | 1104/1343 | 82% |
+| 简体中文 (`zh-CN`) | 1104/1343 | 82% |
+| Türkçe (`tr`) | 1104/1343 | 82% |
+| Shqip (`sq`) | 1104/1343 | 82% |
+| Tiếng Việt (`vi`) | 1339/1343 | 100% |
 
 <!-- i18n:end -->
 

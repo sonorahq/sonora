@@ -46,7 +46,7 @@ impl Styled for ResponseSketch {
 
 impl RenderOnce for ResponseSketch {
     fn render(mut self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let color = self.color.unwrap_or(cx.theme().muted_foreground);
+        let color = self.color.unwrap_or_else(|| cx.theme().muted_foreground);
         let overrides = std::mem::take(&mut self.style);
         let Self { axes, points, .. } = self;
 

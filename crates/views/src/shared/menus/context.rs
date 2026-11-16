@@ -264,12 +264,11 @@ impl ItemMenu {
                             .when(!album, MenuItem::stays_open);
                     if album {
                         let library = library.clone();
-                        let playlist_id = playlist.id.clone();
                         let addition = addition.clone();
                         return item.on_click(move |_, _, cx| {
                             library.update(cx, |library, cx| {
                                 library.add_tracks_to_playlist(
-                                    playlist_id.clone(),
+                                    playlist.id.clone(),
                                     addition.clone(),
                                     cx,
                                 )
@@ -280,13 +279,12 @@ impl ItemMenu {
                         true => item.disabled(),
                         false => {
                             let library = library.clone();
-                            let playlist_id = playlist.id.clone();
                             let track_ids = ids.clone();
                             item.on_click(move |_, _, cx| {
                                 if held {
                                     library.update(cx, |library, cx| {
                                         library.remove_tracks_from_playlist(
-                                            playlist_id.clone(),
+                                            playlist.id.clone(),
                                             track_ids.clone(),
                                             cx,
                                         )
@@ -296,7 +294,7 @@ impl ItemMenu {
                                 let missing: Vec<String> = track_ids
                                     .iter()
                                     .filter(|id| {
-                                        !library.read(cx).holds(&playlist_id, id).unwrap_or(false)
+                                        !library.read(cx).holds(&playlist.id, id).unwrap_or(false)
                                     })
                                     .cloned()
                                     .collect();
@@ -305,7 +303,7 @@ impl ItemMenu {
                                 }
                                 library.update(cx, |library, cx| {
                                     library.add_tracks_to_playlist(
-                                        playlist_id.clone(),
+                                        playlist.id.clone(),
                                         Addition::Tracks(missing),
                                         cx,
                                     )
@@ -351,12 +349,14 @@ impl ItemMenu {
             .filter(|track| track.playable)
             .cloned()
             .collect();
+        let ordered_queue = Sonora::global(cx).playback.read(cx).can_order_queue();
         let next = queue_item(
             "play-next",
             counted("menu-play-next", "menu-play-tracks-next", count),
             "icons/list-start.svg",
             &queued,
             QueuePlacement::Next,
+            ordered_queue,
         );
         let queue = queue_item(
             "add-to-queue",
@@ -364,6 +364,7 @@ impl ItemMenu {
             "icons/list-plus.svg",
             &queued,
             QueuePlacement::End,
+            true,
         );
         let last = queue_item(
             "play-last",
@@ -371,6 +372,7 @@ impl ItemMenu {
             "icons/list-end.svg",
             &queued,
             QueuePlacement::Last,
+            ordered_queue,
         );
         // A provider that lists no station tracks gets no station item at all, rather than one
         // that plays the seed and stops.
@@ -527,9 +529,10 @@ fn queue_item(
     icon: &'static str,
     queued: &[Track],
     placement: QueuePlacement,
+    enabled: bool,
 ) -> MenuItem {
     let item = MenuItem::new(id, label).icon(icon);
-    if queued.is_empty() {
+    if queued.is_empty() || !enabled {
         return item.disabled();
     }
     let queued = queued.to_vec();
@@ -573,6 +576,21 @@ fn item_shell(id: &'static str, tiles: Vec<Tile>) -> Menu {
         true => menu,
         false => menu.header(Tiles(tiles)),
     }
+}
+
+/// The entry that opens the page of the album or playlist a menu belongs to, named by the
+/// Fluent `key`. It is left out while that page is the one on screen, as an artist's menu
+/// leaves out its own.
+fn open_item(destination: Destination, key: &'static str, cx: &App) -> Vec<MenuItem> {
+    if router::trail(cx).read(cx).current() == destination {
+        return Vec::new();
+    }
+
+    vec![
+        MenuItem::new("open-page", i18n::lookup(key, None))
+            .icon("icons/info.svg")
+            .on_click(move |_, _, cx| navigate(destination.clone(), cx)),
+    ]
 }
 
 /// One toggle of the tile row on top of an item menu. A tile with no click is drawn disabled.
@@ -989,8 +1007,9 @@ fn album_tiles(album: &Album, cx: &App) -> Vec<Tile> {
         .collect()
 }
 
-/// An album's menu, laid out like a track's: the tiles on top, then Add to playlist, the queue
-/// and the link. `menus` holds the playlist submenu's state.
+/// An album's menu, laid out like a track's: the tiles on top, then the album's page unless it
+/// is open already, Add to playlist, the queue and the link. `menus` holds the playlist
+/// submenu's state.
 pub(crate) fn album_menu(
     album: Album,
     playback: Entity<Playback>,
@@ -1014,8 +1033,13 @@ pub(crate) fn album_menu(
     sections(
         item_shell("album-context-menu", album_tiles(&album, cx)),
         vec![
+            open_item(
+                Destination::Album(album_id.clone().into()),
+                "menu-go-to-album",
+                cx,
+            ),
             vec![add_to_playlist],
-            collection_queue_items(from, playback),
+            collection_queue_items(from, playback, cx),
             vec![copy_link_item(
                 "copy-album-link",
                 MediaKind::Album,
@@ -1094,7 +1118,7 @@ pub(crate) fn artist_menu(
                     }),
             ]
             .into_iter()
-            .chain(collection_queue_items(queued_from, playback))
+            .chain(collection_queue_items(queued_from, playback, cx))
             .collect(),
             vec![copy_link_item(
                 "copy-artist-link",
@@ -1145,7 +1169,8 @@ fn playlist_tiles(playlist: &Playlist, cx: &App) -> Vec<Tile> {
         .collect()
 }
 
-/// A playlist's menu: the tiles on top, then the queue, the owner's edits and the link.
+/// A playlist's menu: the tiles on top, then the playlist's page unless it is open already, the
+/// queue, the owner's edits and the link.
 pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: &App) -> Menu {
     let from = Origin::playlist(playlist.id.clone()).named(playlist.name.clone());
     let copied = playlist.id.clone();
@@ -1230,7 +1255,8 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
     sections(
         item_shell("playlist-context-menu", tiles),
         vec![
-            collection_queue_items(from, playback),
+            open_item(Destination::Playlist(id.into()), "menu-go-to-playlist", cx),
+            collection_queue_items(from, playback, cx),
             actions,
             match imported {
                 true => Vec::new(),
@@ -1241,6 +1267,21 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
                     cx,
                 )],
             },
+        ],
+    )
+}
+
+/// The menu of the liked songs: their page unless it is open already, the queue and the pin.
+pub(crate) fn liked_menu(playback: Entity<Playback>, cx: &App) -> Menu {
+    let pin = Pin::liked();
+    let from = Origin::saved().named(pin.label());
+
+    sections(
+        Menu::new("liked-context-menu").min_w(ITEM_MENU_WIDTH),
+        vec![
+            open_item(Destination::from(&pin), "menu-go-to-playlist", cx),
+            collection_queue_items(from, playback, cx),
+            vec![pin_action(&pin, cx)],
         ],
     )
 }
@@ -1274,6 +1315,7 @@ pub(crate) fn item_menu(
             cx,
         )),
         PinKind::Song => saved_track(&pin.id, cx).map(|track| tracks.for_track(&track, cx)),
+        PinKind::Liked => Some(liked_menu(playback.clone(), cx)),
     };
 
     built.unwrap_or_else(|| sparse_menu(pin, playback, cx))
@@ -1292,35 +1334,36 @@ fn sparse_menu(pin: &Pin, playback: Entity<Playback>, cx: &App) -> Menu {
     let destination = Destination::from(pin);
     let copied = pin.id.clone();
     let kind = media_kind(pin.kind);
-    let open = open_key(pin.kind).map(|key| {
-        MenuItem::new("open-pin", i18n::lookup(key, None))
-            .icon("icons/info.svg")
-            .on_click(move |_, _, cx| navigate(destination.clone(), cx))
-    });
+    let open = MenuItem::new("open-pin", i18n::lookup(open_key(pin.kind), None))
+        .icon("icons/info.svg")
+        .on_click(move |_, _, cx| navigate(destination.clone(), cx));
 
     sections(
         Menu::new("pin-context-menu").min_w(ITEM_MENU_WIDTH),
         vec![
-            open.into_iter().collect(),
-            transport_items(pin, playback),
+            vec![open],
+            transport_items(pin, playback, cx),
             vec![copy_link_item("copy-pin-link", kind, Some(&copied), cx)],
             vec![pin_action(pin, cx)],
         ],
     )
 }
 
-/// The entry that opens a pin's page, which only an artist's and a song's menus carry, the
-/// way their full menus do.
-fn open_key(kind: PinKind) -> Option<&'static str> {
+/// The Fluent key of the entry that opens a pin's page, worded the way the kind's full menu
+/// words it.
+fn open_key(kind: PinKind) -> &'static str {
     match kind {
-        PinKind::Album | PinKind::Playlist => None,
-        PinKind::Artist => Some("menu-go-to-artist"),
-        PinKind::Song => Some("menu-view-details"),
+        PinKind::Album => "menu-go-to-album",
+        PinKind::Playlist => "menu-go-to-playlist",
+        PinKind::Artist => "menu-go-to-artist",
+        PinKind::Song => "menu-view-details",
+        PinKind::Liked => "menu-go-to-playlist",
     }
 }
 
 /// The three queue placements share both their labels and their loading path.
-fn collection_queue_items(origin: Origin, playback: Entity<Playback>) -> Vec<MenuItem> {
+fn collection_queue_items(origin: Origin, playback: Entity<Playback>, cx: &App) -> Vec<MenuItem> {
+    let ordered_queue = playback.read(cx).can_order_queue();
     [
         (
             "play-collection-next",
@@ -1345,18 +1388,20 @@ fn collection_queue_items(origin: Origin, playback: Entity<Playback>) -> Vec<Men
     .map(|(id, label, icon, placement)| {
         let origin = origin.clone();
         let playback = playback.clone();
-        MenuItem::new(id, i18n::lookup(label, None))
-            .icon(icon)
-            .on_click(move |_, _, cx| {
-                playback.update(cx, |playback, cx| {
-                    playback.enqueue_collection(origin.clone(), placement, cx)
-                });
-            })
+        let item = MenuItem::new(id, i18n::lookup(label, None)).icon(icon);
+        if placement != QueuePlacement::End && !ordered_queue {
+            return item.disabled();
+        }
+        item.on_click(move |_, _, cx| {
+            playback.update(cx, |playback, cx| {
+                playback.enqueue_collection(origin.clone(), placement, cx)
+            });
+        })
     })
     .collect()
 }
 
-fn transport_items(pin: &Pin, playback: Entity<Playback>) -> Vec<MenuItem> {
+fn transport_items(pin: &Pin, playback: Entity<Playback>, cx: &App) -> Vec<MenuItem> {
     let played = Origin::from(pin);
     let mut items = match pin.kind {
         PinKind::Song | PinKind::Artist => {
@@ -1377,7 +1422,7 @@ fn transport_items(pin: &Pin, playback: Entity<Playback>) -> Vec<MenuItem> {
         _ => Vec::new(),
     };
     if pin.kind != PinKind::Song {
-        items.extend(collection_queue_items(played, playback));
+        items.extend(collection_queue_items(played, playback, cx));
     }
     items
 }
@@ -1410,6 +1455,7 @@ fn media_kind(kind: PinKind) -> MediaKind {
         PinKind::Artist => MediaKind::Artist,
         PinKind::Playlist => MediaKind::Playlist,
         PinKind::Song => MediaKind::Track,
+        PinKind::Liked => MediaKind::Playlist,
     }
 }
 
@@ -1456,8 +1502,8 @@ fn share_link(kind: MediaKind, id: Option<&str>, cx: &App) -> Result<String, &'s
         })
 }
 
-/// The menu behind the playlists of a library page. A local shelf also offers to import an
-/// M3U file.
+/// The menu behind the playlists of the library page, which creates a playlist on `shelf`,
+/// a smart one where its provider takes them, or imports an M3U file into the local shelf.
 pub(crate) fn new_playlist_menu(
     shelf: Shelf,
     on_create: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -1483,11 +1529,11 @@ pub(crate) fn new_playlist_menu(
                     SmartPlaylistEditor::open(SmartEdit::Create { shelf }, window, cx);
                 })
         }))
-        .items(shelf.local().then(|| {
+        .item(
             MenuItem::new("import-playlist", t!("menu-import-playlist"))
                 .icon("icons/file-music.svg")
-                .on_click(|_, _, cx| local::import_playlist(cx))
-        }))
+                .on_click(|_, _, cx| local::import_playlist(cx)),
+        )
 }
 
 /// The whole album or playlist a download tile acts on.

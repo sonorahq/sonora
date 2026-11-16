@@ -246,6 +246,7 @@ impl RenderOnce for Picker {
                 .ghost(),
         };
         let button = button
+            .steady()
             .when(small, Button::small)
             .when(ghost, Button::ghost)
             .when_some(name.clone(), Button::name)

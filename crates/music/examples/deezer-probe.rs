@@ -2,7 +2,8 @@
 //! resolution, and the first decrypted bytes read through the same `Stream` playback uses —
 //! they must open with a known audio magic (`ID3`, an MP3 frame sync, or `fLaC`).
 //!
-//! Run with `DEEZER_ARL=<cookie> cargo run --example deezer-probe --package music`.
+//! Run with `DEEZER_ARL=<cookie> cargo run --example deezer-probe --package music`. Set
+//! `DEEZER_PROFILE=<user id>` to switch to one of the family profiles it lists first.
 use std::io::Read as _;
 
 use anyhow::{Context as _, Result, bail};
@@ -15,10 +16,17 @@ async fn main() -> Result<()> {
         .install_default()
         .ok();
     let input = std::env::var("DEEZER_ARL").context("DEEZER_ARL is not set")?;
-    let client = DeezerClient::connect(&arl(&input)?).await?;
+    let family = std::env::var("DEEZER_PROFILE").ok();
+    let client = DeezerClient::connect(&arl(&input)?, family.as_deref()).await?;
 
     let profile = client.profile().await?;
     println!("profile: {} ({})", profile.display_name, profile.id);
+    for member in client.profiles().await? {
+        println!(
+            "family profile: {} ({}) {:?}",
+            member.name, member.id, member.detail
+        );
+    }
 
     let found = client.search("daft punk").await?;
     let track = found.first().context("the search came back empty")?;

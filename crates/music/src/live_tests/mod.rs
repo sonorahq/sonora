@@ -1,6 +1,7 @@
 mod add_album;
 mod follow_artist;
 mod playlist_cover;
+mod playlist_ownership;
 mod playlist_privacy;
 mod release_type;
 mod smart_playlist;

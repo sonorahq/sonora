@@ -156,8 +156,10 @@ impl Render for GenreView {
             .size_full()
             .child(
                 Scroller::new("genre", &self.scrollbar)
+                    .hold()
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
-                    .p(pad)
+                    .py(pad)
+                    .px(pad + crate::chrome::Chrome::margin(window, cx))
                     .child(
                         div()
                             .flex()

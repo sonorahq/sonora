@@ -35,7 +35,9 @@ mod settings;
 mod sheets;
 mod signal;
 mod snapshot;
+mod soloist;
 mod song;
+mod sponsorblock;
 mod tags;
 mod toast;
 mod updates;
@@ -47,7 +49,7 @@ mod window_shape;
 pub use artist::{ArtistDetail, ArtistDetailEvent};
 pub use control::Control;
 pub use cover::Cover;
-pub use detail::{Collection, Detail, Header};
+pub use detail::{Collection, Detail, DetailEvent, Header, Reorder};
 pub use devices::Devices;
 pub use downloads::{
     Active, Downloads, DownloadsChanged, Pending, Progress, Remaining, Subject, downloaded,
@@ -70,7 +72,9 @@ pub use network::{Network, Reconnected};
 pub use outputs::Outputs;
 pub use overload::OutputLevel;
 pub use pins::{PinSort, Pins};
-pub use playback::{Origin, Playback, PlaybackState, Sleep, Unreachable, Whence};
+pub use playback::{
+    Origin, Playback, PlaybackState, PositionTick, Sleep, Unreachable, VOLUME_STEP, Whence,
+};
 pub use profile::Profile;
 pub use queue::{
     Queue, QueueKind, QueuePlacement, QueuePosition, QueueSections, QueueSlot, QueueView, Resume,
@@ -85,13 +89,15 @@ pub use session::{Failure, ProviderInfo, Session, SessionEvent, SessionState};
 pub use settings::{
     AppSettings, ConnectName, DiscordName, FilterValue, FullscreenControlsAutohide, LYRICS_SOURCES,
     PlayerBarLayout, Reloaded, RomanizationScripts, SYSTEM_FONT, SideTab, ThemeFamily, ThemeOffer,
-    ThemeVariant, equalizer_profile_label, remember_window, window_placement,
+    ThemeVariant, VisualizerScreens, equalizer_profile_label, remember_window, window_placement,
 };
 pub use signal::{Change, Equalizing, FLOAT_BITS, Following, Signal, SignalPath};
+pub use soloist::{Soloist, SoloistProblem, SoloistState, SoloistStep, SoloistSwitched};
 pub use song::SongDetail;
+pub use sponsorblock::SponsorBlock;
 pub use tags::{TagState, Tags};
 pub use toast::{Outcome, Target, Toast, ToastAction, Toasts};
-pub use updates::{Channel, Release, UpdateState, Updates, updates_itself, version};
+pub use updates::{Channel, Release, UpdateState, Updates, commit, updates_itself, version};
 pub use usage::Usage;
 pub use vault::CACHE_GB_RANGE;
 pub use wake::Wake;
@@ -223,6 +229,7 @@ pub struct Sonora {
     pub devices: Entity<Devices>,
     pub downloads: Entity<Downloads>,
     pub drm: Entity<Drm>,
+    pub soloist: Entity<Soloist>,
     pub equalizer: Entity<Equalizer>,
     pub library: Entity<Library>,
     pub links: Entity<Links>,
@@ -233,6 +240,7 @@ pub struct Sonora {
     pub outputs: Entity<Outputs>,
     pub pins: Entity<Pins>,
     pub playback: Entity<Playback>,
+    pub sponsorblock: Entity<SponsorBlock>,
     /// The window that mints YouTube's proof-of-origin token. Nothing reads it; it is held so
     /// that it keeps ticking.
     pub potoken: Entity<potoken::PoToken>,
@@ -311,6 +319,15 @@ pub fn init(
         )
     });
     let outputs = cx.new(|cx| Outputs::new(settings.clone(), playback.clone(), cx));
+    let sponsorblock = cx.new(|cx| {
+        sponsorblock::SponsorBlock::new(
+            playback.clone(),
+            session.clone(),
+            settings.clone(),
+            &network,
+            cx,
+        )
+    });
     let downloads = cx.new(|cx| {
         Downloads::new(
             session.clone(),
@@ -356,6 +373,7 @@ pub fn init(
     });
     let cover = cx.new(|cx| Cover::new(session.clone(), playback.clone(), io.clone(), cx));
     let drm = cx.new(|cx| Drm::new(session.clone(), io.clone(), cx));
+    let soloist = cx.new(|cx| Soloist::new(session.clone(), io.clone(), cx));
     let updates = cx.new(|cx| Updates::new(settings.clone(), io.clone(), cx));
     let requirements = cx.new(|cx| {
         Requirements::new(
@@ -392,6 +410,17 @@ pub fn init(
             cx,
         )
     });
+    // Soloist lists itself on the account's devices, so this app comes off that list before the
+    // engine changes hands and goes back on once librespot plays again.
+    cx.subscribe(&soloist, {
+        let playback = playback.clone();
+        let devices = devices.clone();
+        move |_, _: &SoloistSwitched, cx| {
+            devices.update(cx, |devices, cx| devices.apply(cx));
+            playback.update(cx, |playback, cx| playback.switch_engine(cx));
+        }
+    })
+    .detach();
     let links = cx.new(|cx| Links::new(session.clone(), devices.clone(), settings.clone(), cx));
     let control = cx.new(|cx| Control::new(session.clone(), playback.clone(), library.clone(), cx));
     discord::attach(
@@ -405,12 +434,14 @@ pub fn init(
     );
 
     cx.set_global(Sonora {
+        sponsorblock,
         session,
         control,
         cover,
         devices,
         downloads,
         drm,
+        soloist,
         equalizer,
         library,
         links,

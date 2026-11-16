@@ -276,6 +276,27 @@ impl Store {
         touch(&connection, id)
     }
 
+    /// Writes `track_ids` as the playlist's whole order, in one write. They have to be the
+    /// tracks it already holds, since only their positions change.
+    pub fn reorder(&self, id: &str, track_ids: &[String]) -> Result<()> {
+        let mut connection = self.open()?;
+        let transaction = connection
+            .transaction()
+            .context("cannot reorder a local playlist")?;
+        for (position, track_id) in (0_i64..).zip(track_ids) {
+            transaction
+                .execute(
+                    "UPDATE playlist_tracks SET position = ? WHERE playlist_id = ? AND track_id = ?",
+                    params![position, id, track_id],
+                )
+                .context("cannot reorder a local playlist")?;
+        }
+        touch(&transaction, id)?;
+        transaction
+            .commit()
+            .context("cannot reorder a local playlist")
+    }
+
     pub fn tracks(&self, id: &str) -> Result<Vec<String>> {
         let connection = self.open()?;
         let mut query = connection

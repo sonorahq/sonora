@@ -5,7 +5,6 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-bundled-sqlite = ["rusqlite/bundled", "storage/bundled-sqlite"]
 # The host for the Widevine CDM, which Apple Music playback needs. Off by default: it compiles a
 # C++ shim, so it wants a C++ compiler, and nothing else in the crate wants it.
 widevine = ["widevine/cdm"]
@@ -19,6 +18,7 @@ blowfish.workspace = true
 bytes.workspace = true
 cbc.workspace = true
 fastrand.workspace = true
+sha1.workspace = true
 flate2.workspace = true
 cpal.workspace = true
 futures.workspace = true
@@ -43,21 +43,35 @@ protobuf.workspace = true
 reqwest.workspace = true
 ring.workspace = true
 roxmltree.workspace = true
-rodio = { workspace = true, features = ["symphonia-aac", "symphonia-aiff", "symphonia-alac", "symphonia-isomp4", "symphonia-libopus", "symphonia-mkv", "flac", "mp3", "vorbis", "wav"] }
+rodio = { workspace = true, features = [
+    "symphonia-aac",
+    "symphonia-aiff",
+    "symphonia-alac",
+    "symphonia-isomp4",
+    "symphonia-libopus",
+    "symphonia-mkv",
+    "flac",
+    "mp3",
+    "vorbis",
+    "wav",
+] }
 rtrb.workspace = true
 rusqlite.workspace = true
 rusty_aac.workspace = true
 rustfft.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_norway.workspace = true
+serde-saphyr.workspace = true
 storage.workspace = true
 symphonia.workspace = true
 tempfile.workspace = true
-time.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 widevine.workspace = true
 ytmusic.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 alsa.workspace = true
@@ -80,4 +94,6 @@ windows.workspace = true
 [dev-dependencies]
 env_logger.workspace = true
 rustls.workspace = true
-time = { workspace = true, features = ["macros"] }
+
+[lints]
+workspace = true

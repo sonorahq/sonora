@@ -67,6 +67,9 @@ pub struct Metrics {
     pub list_row: Pixels,
     pub thumb: Pixels,
     pub cover: Pixels,
+    /// The widest a page grows, its side insets included. A wider content area centres the
+    /// page and gives what is left to its side margins.
+    pub page: Pixels,
 }
 
 impl Default for Metrics {
@@ -88,12 +91,13 @@ impl Metrics {
             inset: px(24.),
             control: roomy(32., 2.),
             control_small: roomy(26., 1.7),
-            field: roomy(40., 2.6),
+            field: roomy(36., 2.6),
             title_bar: roomy(36., 2.4),
             player_bar: roomy(76., 5.),
             list_row: roomy(52., 3.2),
             thumb: px(34.),
             cover: px(140.),
+            page: px(1280.),
         }
     }
 }
@@ -104,6 +108,8 @@ pub enum Text {
     Small,
     Label,
     Body,
+    /// A dialog's title.
+    Heading,
     Large,
     Title,
     Display,
@@ -116,6 +122,7 @@ impl Text {
             Self::Small => 0.85,
             Self::Label => 0.92,
             Self::Body => 1.,
+            Self::Heading => 1.15,
             Self::Large => 1.38,
             Self::Title => 1.69,
             Self::Display => 2.15,
