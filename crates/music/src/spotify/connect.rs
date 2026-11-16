@@ -1465,9 +1465,8 @@ impl Worker {
             .filter(|track| track.queued || !smart.recommended.contains(&track.id))
             .cloned()
             .collect();
-        let previous = now.previous.clone();
         self.out
-            .send(Event::Command(Command::SetQueue { previous, upcoming }))
+            .send(Event::Command(Command::SetQueue { upcoming }))
             .ok();
     }
 
