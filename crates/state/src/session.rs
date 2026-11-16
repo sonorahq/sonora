@@ -89,7 +89,6 @@ enum SecretInput {
     Manual,
 }
 
-#[derive(Clone)]
 pub struct ProviderInfo {
     pub slug: &'static str,
     pub name: &'static str,

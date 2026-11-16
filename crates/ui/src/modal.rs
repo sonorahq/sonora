@@ -6,7 +6,8 @@ use std::sync::Arc;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Div, ElementId, Entity, FontWeight, Global, MouseButton, Pixels,
-    Point, ScrollWheelEvent, SharedString, StyleRefinement, Subscription, Window, WindowId, anchored, deferred, div, point, px,
+    Point, ScrollWheelEvent, SharedString, StyleRefinement, Subscription, Window, WindowId,
+    anchored, deferred, div, point, px,
 };
 
 use crate::button::Button;

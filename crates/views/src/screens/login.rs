@@ -6,15 +6,15 @@ use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, BoxShadow, ClipboardItem, Context, Entity, FontWeight, Hsla, IntoElement,
-    Pixels, Point, Render, SharedString, Task, Window, div, hsla, img, point, px, relative,
+    Pixels, Point, Render, SharedString, Task, Window, div, hsla, img, point, px, relative, svg,
 };
 use i18n::t;
 use music::{AccountChoices, SignIn, SignInPrompt};
 use state::{ProviderInfo, Session, SessionState, Sonora, Usage};
 use ui::ActiveTheme as _;
-use ui::{Button, Checkbox, Input, LEADING, Lattice, Modal, Separator, Text, mix};
-
-use super::settings::{Offer, Press, ProviderRow};
+use ui::{
+    Button, Checkbox, Input, LEADING, Lattice, Modal, Scrollbar, Scroller, Separator, Text, mix,
+};
 
 /// How wide the sign-in card stands.
 const CARD: Pixels = px(400.);
@@ -22,8 +22,15 @@ const CARD: Pixels = px(400.);
 const ICON: Pixels = px(64.);
 /// The app icon as this platform shows it, registered by the binary's asset source.
 const APP_ICON: &str = "brand/sonora.svg";
+/// A provider's mark in its row.
+const MARK: Pixels = px(22.);
+/// The space between two provider rows.
+const ROW_GAP: Pixels = px(4.);
 /// How hard the frosted card blurs the lattice behind it.
 const FROST: Pixels = px(28.);
+/// How tall the bands are where the provider list fades out at its ends when the window is
+/// too short to show it whole.
+const FADE: Pixels = px(16.);
 /// How wide a sign-in choice or code dialog stands, as on the settings page.
 const DIALOG: Pixels = px(420.);
 /// How many buttons tall the sign-in choice stands, however few it lists.
@@ -33,7 +40,7 @@ const CHOICES: f32 = 3.;
 const DRIFT_TICKS: u32 = 4;
 const FADE_TICKS: u32 = 2;
 /// How far the glow's strength and colour move toward their targets each frame.
-const EASE: f32 = 0.12;
+const EASE: f32 = 0.3;
 /// How close the glow has to come to its target before it counts as settled.
 const SETTLED: f32 = 0.01;
 /// The pools that light the lattice: indigo, violet and a cool teal, so no provider's brand
@@ -64,6 +71,7 @@ pub struct LoginView {
     lamp: Hsla,
     started: Instant,
     pacing: Option<Task<()>>,
+    scrollbar: Entity<Scrollbar>,
 }
 
 impl LoginView {
@@ -86,6 +94,7 @@ impl LoginView {
             lamp: cx.theme().foreground,
             started: Instant::now(),
             pacing: None,
+            scrollbar: cx.new(|_| Scrollbar::inset()),
         }
     }
 
@@ -303,8 +312,9 @@ impl LoginView {
             )
     }
 
-    /// The providers as the settings page lists them: soft rows that warm to their brand under
-    /// the pointer, the one waiting on a sign-in offering to stop it.
+    /// The providers as plain ghost buttons the width of the card: the mark, muted until the
+    /// pointer brings out its brand, the name, and what a click does. The list scrolls inside
+    /// the card when the window is too short for it and fades at whichever end has more.
     fn rows(
         &self,
         providers: &[ProviderInfo],
@@ -312,50 +322,67 @@ impl LoginView {
         waiting: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let theme = *cx.theme();
         let count = providers.len();
         let rows = providers.iter().enumerate().map(|(index, info)| {
             let slug = info.slug;
-            let offer = match waiting && info.pending {
-                true => Offer::Cancel(
-                    Button::new(SharedString::from(format!("cancel-{slug}")))
-                        .label(t!("common-cancel"))
-                        .small()
-                        .outline()
-                        .on_click(cx.listener(|this, _, _, cx| this.abandon(cx)))
-                        .into_any_element(),
-                ),
-                false => Offer::SignIn,
+            let busy = waiting && info.pending;
+            let group = SharedString::from(format!("login-row-{slug}"));
+            let brand = crate::shared::provider_brand(slug, cx);
+            let mark = svg()
+                .path(icons::path(crate::shared::provider_logo(slug)))
+                .size(MARK)
+                .flex_none()
+                .text_color(theme.muted_foreground)
+                .group_hover(group.clone(), move |style| style.text_color(brand));
+            let detail = match busy {
+                true => t!("common-cancel"),
+                false => t!("settings-provider-sign-in"),
             };
-            let press = (!pending).then(|| -> Press {
-                Box::new(cx.listener(move |this, _, _, cx| this.pick(slug, cx)))
-            });
-            ProviderRow {
-                id: SharedString::from(format!("login-{slug}")),
-                logo: crate::shared::provider_logo(slug),
-                brand: crate::shared::provider_brand(slug, cx),
-                active: false,
-                name: info.name.into(),
-                status: None,
-                offer,
-                press,
-                error: info.error.clone(),
-                place: (index, count),
-                hovered: Some(Box::new(cx.listener(
-                    move |this, inside: &bool, window, cx| this.hover(slug, *inside, window, cx),
-                ))),
-            }
-            .into_any_element()
+            Button::new(SharedString::from(format!("login-{slug}")))
+                .ghost()
+                .group(group)
+                .leading(mark)
+                .label(info.name)
+                .detail(detail)
+                .trailing("icons/chevron-right.svg")
+                .h(theme.metrics.list_row)
+                .mx_neg_3()
+                .px_3()
+                .gap_3()
+                .disabled(pending && !busy)
+                .aria_position_in_set(index + 1)
+                .aria_size_of_set(count)
+                .on_hover(cx.listener(move |this, inside: &bool, window, cx| {
+                    this.hover(slug, *inside, window, cx)
+                }))
+                .on_click(cx.listener(move |this, _, _, cx| match busy {
+                    true => this.abandon(cx),
+                    false => this.pick(slug, cx),
+                }))
+                .into_any_element()
         });
+        // The list stands as tall as its rows, a definite height the scroller can fill, and gives
+        // way from there when the card runs out of room.
+        let tall = theme.metrics.list_row * count as f32 + ROW_GAP * count.saturating_sub(1) as f32;
         div()
             .id("login-providers")
             .role(Role::List)
             .aria_label(t!("login-providers"))
             .flex()
             .flex_col()
-            .gap_1()
-            .w_full()
-            .px_3()
-            .children(rows)
+            .h(tall)
+            .flex_shrink(1.)
+            .min_h_0()
+            .child(
+                Scroller::new("login-providers-scroll", &self.scrollbar)
+                    .fade_ends(FADE)
+                    .flex()
+                    .flex_col()
+                    .gap(ROW_GAP)
+                    .px_3()
+                    .children(rows),
+            )
             .into_any_element()
     }
 
@@ -421,7 +448,9 @@ impl LoginView {
             .unwrap_or_default()
             .into_iter()
             .filter(offered)
-            .flat_map(|method| self.method_buttons(slug, provider, method, web_sign_in, pending, cx))
+            .flat_map(|method| {
+                self.method_buttons(slug, provider, method, web_sign_in, pending, cx)
+            })
             .collect::<Vec<_>>();
 
         Modal::new(
@@ -439,7 +468,11 @@ impl LoginView {
                 .gap_3()
                 .w_full()
                 .min_h(theme.metrics.control * CHOICES)
-                .children(buttons.into_iter().map(|button| div().w_full().child(button))),
+                .children(
+                    buttons
+                        .into_iter()
+                        .map(|button| div().w_full().child(button)),
+                ),
         )
         .on_dismiss(cx.listener(|this, _, _, cx| {
             if this.choice_running {
@@ -610,6 +643,7 @@ impl Render for LoginView {
             || manual_secret.is_some()
             || self.credentials_for.is_some();
         let choosing = self.choosing.filter(|_| !taken);
+        let failure = providers.iter().find_map(|info| info.error.clone());
 
         let theme = *cx.theme();
         let asking = self.usage.read(cx).asking();
@@ -640,6 +674,8 @@ impl Render for LoginView {
             .flex_col()
             .gap_6()
             .w(CARD)
+            .min_h_0()
+            .max_h_full()
             .p_8()
             .rounded(ui::corners(theme.radius))
             .border_1()
@@ -657,15 +693,19 @@ impl Render for LoginView {
                 div()
                     .flex()
                     .flex_col()
+                    .flex_none()
                     .items_center()
                     .gap_3()
                     .child(self.welcome(status, cx))
+                    .when_some(failure, |this, failure| {
+                        this.child(crate::shared::trouble::trouble(failure, true, cx))
+                    })
                     .when_some(url, |this, url| this.child(self.url_prompt(url))),
             )
             .child(self.rows(&providers, pending, waiting, cx))
             .when_some(guest, |this, slug| {
-                this.child(self.divider(cx))
-                    .child(self.guest_mode(slug, pending, cx))
+                this.child(div().flex_none().child(self.divider(cx)))
+                    .child(div().flex_none().child(self.guest_mode(slug, pending, cx)))
             });
 
         let backdrop = Lattice::new(POOLS.map(|(h, s, l, a)| hsla(h, s, l, a)))
@@ -685,26 +725,22 @@ impl Render for LoginView {
             .overflow_hidden()
             .when_some(radius, |this, radius| this.rounded(radius))
             .child(div().absolute().inset_0().child(backdrop))
+            // The card never runs past the window: it shrinks to fit, and its provider list scrolls.
             .child(
                 div()
-                    .id("login-scroll")
                     .relative()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap_4()
                     .size_full()
-                    .overflow_y_scroll()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .justify_center()
-                            .gap_4()
-                            .w_full()
-                            .min_h_full()
-                            .p(theme.metrics.pad)
-                            .pt(theme.metrics.title_bar)
-                            .child(card)
-                            .when(asking, |this| this.child(self.consent(cx))),
-                    ),
+                    .p(theme.metrics.pad)
+                    .pt(theme.metrics.title_bar)
+                    .child(card)
+                    .when(asking, |this| {
+                        this.child(div().flex_none().child(self.consent(cx)))
+                    }),
             )
             .when_some(manual_secret, |this, (slug, provider)| {
                 this.child(self.secret_prompt(slug, provider, cx).into_any_element())
