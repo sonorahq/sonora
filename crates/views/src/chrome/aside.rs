@@ -79,8 +79,9 @@ const LAG_TRAIL: f32 = 0.9;
 const LAG_STAGGER: f32 = 0.35;
 const LAG_LEAST: Pixels = px(0.05);
 const LAG_STALL: f32 = 0.064;
-// Below this a blur is not worth a layer of its own.
-const HAZE_LEAST: Pixels = px(0.05);
+/// Below this a blur is not worth a layer of its own. The smallest `HAZE_STEP` falls under it,
+/// since a quarter of a pixel cannot be seen and every distinct blur costs a whole layer.
+const HAZE_LEAST: Pixels = px(0.3);
 /// The step a row's blur is rounded to. Neighbouring rows that land on the same step share one
 /// offscreen layer in the renderer, where each distinct blur costs a layer of its own.
 const HAZE_STEP: Pixels = px(0.25);
