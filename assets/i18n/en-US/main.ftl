@@ -1297,6 +1297,7 @@ toast-playlist-renamed = Playlist renamed
 toast-playlist-updated = Playlist updated
 toast-playlist-cover-changed = Playlist cover changed
 toast-playlist-cover-removed = Playlist cover removed
+toast-playlist-reorder-unsupported = This service doesn't let Sonora change a playlist's order
 toast-playlist-deleted = Playlist deleted
 toast-local-delete-failed = Some track files could not be deleted
 toast-playlist-added = Playlist added to your library

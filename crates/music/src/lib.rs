@@ -24,6 +24,7 @@ mod models;
 mod mp4;
 pub mod musixmatch;
 pub mod netease;
+pub mod order;
 pub mod output;
 pub mod potoken;
 pub mod progress;
@@ -284,6 +285,20 @@ pub trait MusicApi: Send + Sync {
         Ok(())
     }
     async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()>;
+
+    /// Puts the playlist's tracks in the order `wanted`, the tracks `playlist` answers in a new
+    /// order. `seen` is the id of every track the listener saw before they moved any, in order,
+    /// and a provider whose listing is no longer exactly that refuses, rather than land a track
+    /// somewhere the listener did not drop it. Only a provider whose capabilities list
+    /// `playlist_order` answers.
+    async fn reorder_playlist(
+        &self,
+        _playlist_id: &str,
+        _seen: &[String],
+        _wanted: &[String],
+    ) -> Result<()> {
+        anyhow::bail!("this provider cannot reorder a playlist")
+    }
 
     /// Reads the M3U or M3U8 playlist at `path` into a new playlist named after the file, for a
     /// provider whose tracks are files. Entries naming a file outside the library are left out
@@ -906,6 +921,9 @@ pub struct Capabilities {
     /// The listener can give an owned playlist a cover of their own through
     /// `set_playlist_cover`, and take it off again.
     pub playlist_covers: bool,
+    /// The listener can move tracks within an owned playlist through `reorder_playlist`,
+    /// and the provider keeps the new order.
+    pub playlist_order: bool,
     /// Played tracks can be kept in the [`vault`], so playing one again downloads nothing.
     pub keeps: bool,
     /// Tracks can be downloaded. Whether a download then plays with no network is up to the
@@ -934,7 +952,7 @@ pub struct Capabilities {
 impl Capabilities {
     /// What a full streaming service offers. Pins of the provider's own are not among them,
     /// since only Spotify and Apple Music keep any. Converting on request is not either, since
-    /// only Subsonic does it. Playlist covers are left for each provider to turn on.
+    /// only Subsonic does it. Playlist covers and order are left for each provider to turn on.
     pub const ALL: Self = Self {
         follow_artists: true,
         radio: true,
@@ -942,6 +960,7 @@ impl Capabilities {
         pins: false,
         transcode: false,
         playlist_covers: false,
+        playlist_order: false,
         keeps: true,
         downloads: true,
         plain_downloads: false,
@@ -959,6 +978,7 @@ impl Capabilities {
         pins: false,
         transcode: false,
         playlist_covers: false,
+        playlist_order: false,
         keeps: false,
         downloads: false,
         plain_downloads: false,

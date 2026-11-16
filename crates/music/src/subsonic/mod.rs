@@ -65,6 +65,7 @@ impl SubsonicProvider {
             capabilities: Capabilities {
                 transcode: true,
                 playlist_covers: covers,
+                playlist_order: true,
                 plain_downloads: true,
                 ..Capabilities::ALL
             },
@@ -94,6 +95,7 @@ impl SubsonicProvider {
                 capabilities: Capabilities {
                     transcode: true,
                     playlist_covers: client.takes_playlist_covers().await,
+                    playlist_order: true,
                     plain_downloads: true,
                     ..Capabilities::ALL
                 },

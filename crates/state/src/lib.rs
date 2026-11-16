@@ -49,7 +49,7 @@ mod window_shape;
 pub use artist::{ArtistDetail, ArtistDetailEvent};
 pub use control::Control;
 pub use cover::Cover;
-pub use detail::{Collection, Detail, DetailEvent, Header};
+pub use detail::{Collection, Detail, DetailEvent, Header, Reorder};
 pub use devices::Devices;
 pub use downloads::{
     Active, Downloads, DownloadsChanged, Pending, Progress, Remaining, Subject, downloaded,

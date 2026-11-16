@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use storage::Database;
 
 use crate::cover::{self, CoverLimits};
+use crate::order;
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, GenreItem, GenreSection, HomeFeed,
     ImportedPlaylist, MediaKind, MusicApi, Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist,
@@ -82,6 +83,21 @@ impl LocalClient {
                     .find(|track| track.id.as_deref() == Some(id.as_str()))
                     .cloned()
             })
+            .collect()
+    }
+
+    /// The index of each of `ids` the library holds, which are the ones `listed` keeps.
+    fn held(&self, ids: &[String]) -> Vec<usize> {
+        let scanned = self.scanned.read().unwrap();
+        let known: HashSet<&str> = scanned
+            .tracks
+            .iter()
+            .filter_map(|track| track.id.as_deref())
+            .collect();
+        ids.iter()
+            .enumerate()
+            .filter(|(_, id)| known.contains(id.as_str()))
+            .map(|(index, _)| index)
             .collect()
     }
 
@@ -433,6 +449,28 @@ impl MusicApi for LocalClient {
 
     async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
         self.store.remove(playlist_id, track_id)
+    }
+
+    /// Counts the moves in the tracks the library still holds, so a stored track whose file has
+    /// gone keeps its place among the others.
+    async fn reorder_playlist(
+        &self,
+        playlist_id: &str,
+        seen: &[String],
+        wanted: &[String],
+    ) -> Result<()> {
+        let mut stored = self.store.tracks(playlist_id)?;
+        let held = self.held(&stored);
+        let listed: Vec<Option<&str>> = held
+            .iter()
+            .map(|&index| Some(stored[index].as_str()))
+            .collect();
+        order::confirm(&listed, seen)?;
+        let steps = order::moves(seen, wanted)?;
+        for placement in order::placements(stored.len(), &held, &steps)? {
+            order::move_item(&mut stored, placement.from, placement.to());
+        }
+        self.store.reorder(playlist_id, &stored)
     }
 
     async fn import_playlist(&self, path: &Path) -> Result<ImportedPlaylist> {
@@ -856,6 +894,113 @@ mod tests {
         assert!(ids.contains(&"local:0"));
         assert!(ids.contains(&"local:1"));
         assert!(ids.contains(&"local:2"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn moves_a_playlist_track_down_and_up_and_keeps_the_order() {
+        let dir = std::env::temp_dir().join(format!("sonora-test-{}", fastrand::u64(..)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Database::at(dir.join("state.sqlite"));
+        let index = Index::new(storage::Cache::at(dir.join("cache.sqlite")));
+        let tracks = (0..4)
+            .map(|i| {
+                test_track(
+                    &format!("local:{i}"),
+                    &format!("Track {i}"),
+                    "Artist",
+                    "Album",
+                )
+            })
+            .collect();
+        let scanned = Scanned {
+            tracks,
+            albums: vec![],
+            portraits: HashMap::new(),
+            artists: vec![],
+        };
+        let client = LocalClient::new(scanned, db.clone(), index);
+        let id = client.create_playlist("Mix").await.unwrap();
+        // local:gone names a file the library no longer holds, so the listing leaves it out
+        let stored: Vec<String> = ["local:0", "local:gone", "local:1", "local:2", "local:3"]
+            .map(str::to_owned)
+            .to_vec();
+        client.store.extend(&id, &stored).unwrap();
+        let listed = async |client: &LocalClient| -> Vec<String> {
+            let detail = client.playlist(&id).await.unwrap();
+            detail
+                .tracks
+                .into_iter()
+                .filter_map(|track| track.id)
+                .collect()
+        };
+
+        let moved = |shown: &[String], from: usize, to: usize| {
+            let mut wanted = shown.to_vec();
+            order::move_item(&mut wanted, from, to);
+            wanted
+        };
+        let shown = listed(&client).await;
+        client
+            .reorder_playlist(&id, &shown, &moved(&shown, 0, 2))
+            .await
+            .unwrap();
+        assert_eq!(
+            listed(&client).await,
+            ["local:1", "local:2", "local:0", "local:3"]
+        );
+
+        let shown = listed(&client).await;
+        client
+            .reorder_playlist(&id, &shown, &moved(&shown, 3, 0))
+            .await
+            .unwrap();
+        assert_eq!(
+            listed(&client).await,
+            ["local:3", "local:1", "local:2", "local:0"]
+        );
+        // the missing file stays put, and the moved track goes in front of the next listed row
+        assert_eq!(
+            client.store.tracks(&id).unwrap(),
+            ["local:gone", "local:3", "local:1", "local:2", "local:0"]
+        );
+
+        // a listing that changed since the listener saw it moves nothing
+        let stale = ["local:1", "local:2", "local:0", "local:3"].map(str::to_owned);
+        assert!(
+            client
+                .reorder_playlist(&id, &stale, &moved(&stale, 1, 0))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            listed(&client).await,
+            ["local:3", "local:1", "local:2", "local:0"]
+        );
+
+        // a new client over the same database reads the kept order, as after a restart
+        let index = Index::new(storage::Cache::at(dir.join("cache.sqlite")));
+        let scanned = Scanned {
+            tracks: (0..4)
+                .map(|i| {
+                    test_track(
+                        &format!("local:{i}"),
+                        &format!("Track {i}"),
+                        "Artist",
+                        "Album",
+                    )
+                })
+                .collect(),
+            albums: vec![],
+            portraits: HashMap::new(),
+            artists: vec![],
+        };
+        let reopened = LocalClient::new(scanned, db, index);
+        assert_eq!(
+            listed(&reopened).await,
+            ["local:3", "local:1", "local:2", "local:0"]
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
