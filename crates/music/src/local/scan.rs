@@ -116,7 +116,7 @@ pub fn scan(roots: &[PathBuf], cache_dir: &Path, index: &Index) -> Scanned {
     let opened = readings.iter().filter(|reading| reading.fresh).count();
     scanned.portraits = name_portraits(&looks, &readings);
     let parsed: Vec<Tagged> = readings.into_iter().map(|reading| reading.tagged).collect();
-    scanned.albums = group_albums(&parsed);
+    scanned.albums = group_albums(&parsed, &looks);
     scanned.artists = group_artists(&parsed, &scanned.portraits, &scanned.albums);
     scanned.tracks = parsed.into_iter().map(|tagged| tagged.track).collect();
     index.save(&changes);
@@ -276,10 +276,7 @@ fn look_at_folders(
 /// above a disc folder. This runs on every scan rather than once per file, because adding or
 /// renaming a cover moves the folder's time but not the time of the tracks in it.
 fn hang_folder_art(readings: &mut [Reading], looks: &[Look], cache_dir: &Path) {
-    let art: HashMap<&Path, &String> = looks
-        .iter()
-        .filter_map(|look| Some((look.path.as_path(), look.cover.as_ref()?)))
-        .collect();
+    let art = folder_art(looks);
     for reading in readings {
         let track = &mut reading.tagged.track;
         if track
@@ -297,6 +294,15 @@ fn hang_folder_art(readings: &mut [Reading], looks: &[Look], cache_dir: &Path) {
             .or_else(|| art.get(album))
             .map(|cover| (*cover).clone());
     }
+}
+
+/// Each folder that has album art, keyed by the folder. Built from the looks the scan already has,
+/// so it costs no disk access.
+fn folder_art(looks: &[Look]) -> HashMap<&Path, &String> {
+    looks
+        .iter()
+        .filter_map(|look| Some((look.path.as_path(), look.cover.as_ref()?)))
+        .collect()
 }
 
 /// Files each portrait under the artist its folder is named after, first one in walk order.
@@ -325,8 +331,10 @@ fn name_portraits(looks: &[Look], readings: &[Reading]) -> HashMap<String, Strin
 
 /// Groups tracks into albums by the id each one carries, in scan order. An album is credited to
 /// the first album artist its tags name, or to the artists all of its tracks share, and takes the
-/// first release type and label any of its tracks names.
-fn group_albums(parsed: &[Tagged]) -> Vec<Album> {
+/// first release type and label any of its tracks names. Its art is the album folder's own cover
+/// when there is one, so a single with different art in the first track does not replace it.
+fn group_albums(parsed: &[Tagged], looks: &[Look]) -> Vec<Album> {
+    let art = folder_art(looks);
     let mut order: Vec<String> = Vec::new();
     let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
 
@@ -365,16 +373,23 @@ fn group_albums(parsed: &[Tagged]) -> Vec<Album> {
                 .find(|label| !label.is_empty())
                 .cloned()
                 .unwrap_or_default();
+            // The folder is the one the album's first track plays from, with a disc folder such
+            // as `CD1` standing for the album folder above it.
+            let folder_cover = tracks[0]
+                .id
+                .as_deref()
+                .and_then(wire::path_from_track_id)
+                .and_then(|path| art.get(wire::album_folder(path)))
+                .map(|cover| (*cover).clone());
 
-            Some(wire::album_from_tracks(
-                &id,
-                &name,
-                &album_artists,
-                &tracks,
-                year,
-                release,
-                label,
-            ))
+            let mut album =
+                wire::album_from_tracks(&id, &name, &album_artists, &tracks, year, release, label);
+            // The album folder's own cover replaces the art the first track brought with it.
+            if let Some(cover) = folder_cover {
+                album.cover_large = Some(cover.clone());
+                album.cover = Some(cover);
+            }
+            Some(album)
         })
         .collect()
 }
@@ -671,7 +686,12 @@ fn is_audio_file(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::tags::tests::flac;
     use super::*;
+    use lofty::config::WriteOptions;
+    use lofty::file::{AudioFile, TaggedFileExt};
+    use lofty::picture::{MimeType, Picture, PictureType};
+    use lofty::probe::Probe;
     use std::fs;
     use std::sync::{Mutex, MutexGuard};
 
@@ -825,6 +845,102 @@ mod tests {
             ]
         );
         fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Gives a FLAC written by `flac` a front cover of `art` in its tags.
+    fn with_front_cover(path: &Path, art: &[u8]) {
+        let mut file = Probe::open(path).unwrap().read().unwrap();
+        file.primary_tag_mut().expect("a tag").push_picture(
+            Picture::unchecked(art.to_vec())
+                .pic_type(PictureType::CoverFront)
+                .mime_type(MimeType::Jpeg)
+                .build(),
+        );
+        file.save_to_path(path, WriteOptions::default()).unwrap();
+    }
+
+    /// Scans one album of two tracks in `Artist/Album`. The first track carries embedded front
+    /// art, and the album folder holds a `cover.jpg` when `folder_cover` is set. Returns the scan,
+    /// the album folder and the cache the embedded art went into.
+    fn scan_album(name: &str, folder_cover: bool) -> (Scanned, PathBuf, PathBuf) {
+        let (dir, index) = scratch(name);
+        let cache = std::env::temp_dir().join(format!("{name}-cache"));
+        let _ = fs::remove_dir_all(&cache);
+        let album = dir.join("Artist").join("Album");
+        fs::create_dir_all(&album).unwrap();
+        let first = album.join("01.flac");
+        flac(
+            &first,
+            &[
+                "ALBUM=Album",
+                "ALBUMARTIST=Artist",
+                "TITLE=Single",
+                "TRACKNUMBER=1",
+            ],
+        );
+        with_front_cover(&first, &[0xFF, 0xD8, 1, 2, 3]);
+        flac(
+            &album.join("02.flac"),
+            &[
+                "ALBUM=Album",
+                "ALBUMARTIST=Artist",
+                "TITLE=Two",
+                "TRACKNUMBER=2",
+            ],
+        );
+        if folder_cover {
+            fs::write(album.join("cover.jpg"), [0xFF, 0xD8, 9, 9, 9]).unwrap();
+        }
+
+        let scanned = scan(std::slice::from_ref(&dir), &cache, &index);
+        (scanned, album, cache)
+    }
+
+    /// The track of `scanned` that carries `number` as its track number.
+    fn numbered(scanned: &Scanned, number: u32) -> &Track {
+        scanned
+            .tracks
+            .iter()
+            .find(|track| track.track_number == number)
+            .expect("a track")
+    }
+
+    #[test]
+    fn a_folder_cover_wins_over_the_first_tracks_embedded_art() {
+        let _scanning = alone();
+        let (scanned, album, _) = scan_album("sonora-scan-test-folder-cover-wins", true);
+        let folder = format!("file://{}", album.join("cover.jpg").display());
+
+        assert_eq!(scanned.albums.len(), 1);
+        assert_eq!(scanned.albums[0].cover.as_deref(), Some(folder.as_str()));
+        assert_eq!(
+            scanned.albums[0].cover_large.as_deref(),
+            Some(folder.as_str())
+        );
+    }
+
+    #[test]
+    fn an_album_without_a_folder_cover_takes_the_first_tracks_embedded_art() {
+        let _scanning = alone();
+        let (scanned, _, cache) = scan_album("sonora-scan-test-folder-cover-absent", false);
+        let embedded = numbered(&scanned, 1).cover.clone().expect("embedded art");
+
+        assert!(wire::is_embedded(&embedded, &cache));
+        assert_eq!(scanned.albums[0].cover.as_deref(), Some(embedded.as_str()));
+    }
+
+    #[test]
+    fn a_folder_cover_leaves_each_tracks_own_art_alone() {
+        let _scanning = alone();
+        let (scanned, album, cache) = scan_album("sonora-scan-test-folder-cover-tracks", true);
+        let folder = format!("file://{}", album.join("cover.jpg").display());
+
+        let first = numbered(&scanned, 1).cover.clone().expect("embedded art");
+        assert!(wire::is_embedded(&first, &cache));
+        assert_eq!(
+            numbered(&scanned, 2).cover.as_deref(),
+            Some(folder.as_str())
+        );
     }
 
     #[test]

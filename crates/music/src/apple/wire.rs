@@ -892,8 +892,17 @@ pub fn album(value: &Resource) -> Option<Album> {
 }
 
 /// One library album, which opens through the catalog release it came from or its library id
-/// when not in the catalog.
+/// when not in the catalog. An album Apple says holds no songs and that has no catalog release
+/// is skipped. It is what stays behind after every song of it was removed, with a name and
+/// nothing else.
 pub fn library_album(value: &Resource) -> Option<Album> {
+    let emptied = value
+        .attributes
+        .as_ref()
+        .is_some_and(|attributes| attributes.track_count.as_u64() == Some(0));
+    if emptied && catalog(value).is_none() {
+        return None;
+    }
     let mut album = match catalog(value) {
         Some(found) => {
             let id = found.id.as_str()?;

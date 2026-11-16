@@ -906,7 +906,12 @@ impl MusicApi for SubsonicClient {
         Ok(starred
             .song
             .into_iter()
-            .map(|song| self.song(song))
+            .map(|song| {
+                let liked = iso_8601_to_epoch(song.starred.as_deref());
+                let mut track = self.song(song);
+                track.added_at = liked.or(track.added_at);
+                track
+            })
             .collect())
     }
 
@@ -1249,7 +1254,12 @@ impl MusicApi for SubsonicClient {
         Ok(starred
             .album
             .into_iter()
-            .map(|album| self.convert_album(album))
+            .map(|album| {
+                let liked = iso_8601_to_epoch(album.starred.as_deref());
+                let mut album = self.convert_album(album);
+                album.added_at = liked.or(album.added_at);
+                album
+            })
             .collect())
     }
 
@@ -1298,7 +1308,10 @@ impl MusicApi for SubsonicClient {
                     artist.artist_image_url.as_deref(),
                     &artist.id,
                 );
-                wire::saved_artist(artist, cover)
+                SavedArtist {
+                    added_at: iso_8601_to_epoch(artist.starred.as_deref()),
+                    ..wire::saved_artist(artist, cover)
+                }
             })
             .collect())
     }
