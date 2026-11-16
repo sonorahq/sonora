@@ -934,9 +934,13 @@ impl SmartPlaylistEditor {
     /// The tree lifted into render-ready rows.
     /// The fields Tab visits, in the order they are drawn: the name, each condition's value and
     /// the upper bound of a range, then the sort and the limit. A condition that takes a truth
-    /// value shows a button rather than a field, and Tab passes it by.
+    /// value shows a button rather than a field, and Tab passes it by. While the rules load or
+    /// after they failed to, only the name is drawn, so only the name is visited.
     fn tab_order(&self, cx: &App) -> Vec<FocusHandle> {
         let mut order = vec![self.name.read(cx).focus_handle(cx)];
+        if self.loading || self.failed.is_some() || self.rules.is_none() {
+            return order;
+        }
         for row in self.row_data() {
             let RowData::Condition {
                 key,
