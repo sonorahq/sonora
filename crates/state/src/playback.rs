@@ -356,7 +356,7 @@ pub enum PlaybackEvent {
     EndedPlayback,
     Paused,
     /// The engine landed a seek, playing or paused.
-    Seeked,
+    Seeked(Duration),
 }
 
 /// Remembers the level silenced by a temporary mute, without saving it as a volume preference.
@@ -2785,6 +2785,7 @@ impl Playback {
             self.seeks += 1;
         }
         if self.steer(|_| Command::Seek(position), cx) {
+            cx.emit(PlaybackEvent::Seeked(position));
             return;
         }
         if self.resume_at.is_some() {
@@ -2797,6 +2798,7 @@ impl Playback {
             self.position = position;
             self.clock.reset(position, false);
             self.remember(true, cx);
+            cx.emit(PlaybackEvent::Seeked(position));
             cx.notify();
             return;
         }
@@ -2816,7 +2818,10 @@ impl Playback {
                 self.stale_positions = 0;
                 self.send_seek(position);
             }
-            (false, _) => self.send_seek(position),
+            (false, _) => {
+                self.send_seek(position);
+                cx.emit(PlaybackEvent::Seeked(position));
+            }
         }
         cx.notify();
     }
@@ -2904,6 +2909,14 @@ impl Playback {
             Some(total) if !total.is_zero() => live.min(total),
             _ => live,
         }
+    }
+
+    pub fn is_seeking(&self) -> bool {
+        self.seek_in_flight.is_some() || self.seek_next.is_some()
+    }
+
+    pub fn seek_target(&self) -> Option<Duration> {
+        self.seek_target
     }
 
     pub fn track(&self) -> Option<&Track> {
@@ -3503,6 +3516,7 @@ impl Playback {
         {
             return;
         }
+        let seeking = self.seek_in_flight.is_some();
         match event {
             // A Loading with the current id is the engine restarting the load at a seek
             // target, so a seek queued behind it must survive.
@@ -3562,6 +3576,9 @@ impl Playback {
                 if started {
                     cx.emit(PlaybackEvent::StartedPlayback);
                 }
+                if seeking && self.seek_next.is_none() {
+                    cx.emit(PlaybackEvent::Seeked(at));
+                }
                 self.publish_soloist_collection(cx);
                 self.follow_up_seek(cx);
             }
@@ -3581,7 +3598,9 @@ impl Playback {
                 self.position = at;
                 self.clock.reset(at, self.state == PlaybackState::Playing);
                 self.remember(true, cx);
-                cx.emit(PlaybackEvent::Seeked);
+                if seeking && self.seek_next.is_none() {
+                    cx.emit(PlaybackEvent::Seeked(at));
+                }
                 self.follow_up_seek(cx);
             }
             BackendEvent::Position { at, .. } => {
@@ -3593,6 +3612,9 @@ impl Playback {
                     }
                     log::warn!("playback: the seek did not land, carrying on from {at:?}");
                     self.seek_in_flight = None;
+                    if self.seek_next.is_none() {
+                        self.seek_target = None;
+                    }
                     failed = true;
                 }
                 self.position = at;

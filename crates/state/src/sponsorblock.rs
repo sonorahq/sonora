@@ -51,15 +51,14 @@ impl SponsorBlock {
             }
         })
         .detach();
-        cx.subscribe(&playback, |this, playback, event, cx| match event {
+        cx.subscribe(&playback, |this, _, event, cx| match event {
             PlaybackEvent::EndedPlayback => {
                 this.clear();
                 cx.notify();
             }
-            PlaybackEvent::Seeked => {
-                let at = playback.read(cx).position();
+            PlaybackEvent::Seeked(at) => {
                 if let Some(segment) = this.skipped.and_then(|index| this.segments.get(index))
-                    && (at < segment.start || at >= segment.end)
+                    && (*at < segment.start || *at >= segment.end)
                 {
                     this.skipped = None;
                 }
