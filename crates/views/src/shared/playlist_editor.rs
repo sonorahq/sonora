@@ -1,6 +1,6 @@
 use gpui::prelude::*;
 use gpui::{
-    App, Context, Entity, FocusHandle, Global, PathPromptOptions, Render, SharedString, Task,
+    App, Context, Div, Entity, FocusHandle, Global, PathPromptOptions, Render, SharedString, Task,
     Window, div,
 };
 use i18n::t;
@@ -203,7 +203,7 @@ impl PlaylistEditor {
 
     /// Where a blank new playlist goes, the streaming account or the local files. It shows only
     /// while both are there to take one, since songs already picked decide it for themselves.
-    fn shelves(&self, edit: &Edit, cx: &mut Context<Self>) -> Option<TabBar> {
+    fn shelves(&self, edit: &Edit, cx: &mut Context<Self>) -> Option<Div> {
         let Edit::Create { addition, shelf } = edit else {
             return None;
         };
@@ -227,19 +227,19 @@ impl PlaylistEditor {
                 Shelf::Local,
             ),
         ];
-        Some(
-            TabBar::new("playlist-shelf")
-                .name(t!("playlist-create-shelf"))
-                .flex_none()
-                .items(options.map(|(id, label, option)| {
-                    Button::new(id)
-                        .label(label)
-                        .small()
-                        .ghost()
-                        .selected(option == chosen)
-                        .on_click(cx.listener(move |this, _, _, cx| this.choose_shelf(option, cx)))
-                })),
-        )
+        let bar = TabBar::new("playlist-shelf")
+            .name(t!("playlist-create-shelf"))
+            .flex_none()
+            .items(options.map(|(id, label, option)| {
+                Button::new(id)
+                    .label(label)
+                    .small()
+                    .ghost()
+                    .selected(option == chosen)
+                    .on_click(cx.listener(move |this, _, _, cx| this.choose_shelf(option, cx)))
+            }));
+        // The modal sets each child in a block that would stretch the bar to its full width.
+        Some(div().flex().child(bar))
     }
 
     fn details(&self, playlist: &Playlist, cx: &mut Context<Self>) -> impl IntoElement {
