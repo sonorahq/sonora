@@ -1104,15 +1104,20 @@ impl Session {
             let restored = join(io.spawn(async move { provider.restore().await })).await;
             this.update(cx, |this, cx| {
                 this.reconnecting = false;
+                // A sign-in started meanwhile owns the session now, so a late answer about the
+                // old account must not end it.
+                let owned =
+                    this.active == Some(active) && matches!(this.state, SessionState::SignedIn(_));
                 match restored {
                     Ok(Some(session)) => this.reconnected(session, cx),
-                    Ok(None) => {
+                    Ok(None) if owned && !this.stored_active() => {
                         log::warn!("session: nothing stored to reconnect with, ending the session");
                         this.release(cx);
                     }
+                    Ok(None) => log::warn!("session: cannot reconnect yet, will try again"),
                     Err(error) => {
                         let failure = Failure::new(&error);
-                        match failure.problem == Some(SignInProblem::Credentials) {
+                        match owned && failure.problem == Some(SignInProblem::Credentials) {
                             true => {
                                 log::warn!("session: the account was refused, ending the session");
                                 this.release(cx);
