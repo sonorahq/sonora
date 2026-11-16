@@ -489,6 +489,8 @@ impl Queue {
         let mut suggested = VecDeque::new();
         let mut manual = VecDeque::new();
         self.upcoming.retain(|entry| match entry.kind {
+            // smart shuffle mixes its picks into a shuffled collection only
+            _ if entry.recommended && !shuffle => false,
             QueueKind::Context if shuffle || known.contains(entry.uid.as_str()) => true,
             QueueKind::Queued if shuffle => true,
             QueueKind::Context | QueueKind::Queued => {

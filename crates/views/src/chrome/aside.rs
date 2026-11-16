@@ -754,14 +754,18 @@ impl Aside {
             .added_by
             .as_deref()
             .filter(|added| queued && !added.name.is_empty() && added.name != added.id);
-        let about = match added {
-            Some(added) => SharedString::from(format!(
+        let mut about = match added {
+            Some(added) => format!(
                 "{}, {}",
                 track.artists,
                 t!("queue-added-by", name = added.name.as_str())
-            )),
-            None => SharedString::from(track.artists.clone()),
+            ),
+            None => track.artists.to_string(),
         };
+        if recommended {
+            about = format!("{about}, {}", t!("queue-recommended"));
+        }
+        let about = SharedString::from(about);
 
         let card = Card::new(
             SharedString::from(format!("queue-track-{key}")),

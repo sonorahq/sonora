@@ -29,6 +29,7 @@ use librespot_protocol::connect::{
     PutStateReason, PutStateRequest, SetVolumeCommand,
 };
 use librespot_protocol::context::Context;
+use librespot_protocol::context_page::ContextPage;
 use librespot_protocol::context_track::ContextTrack;
 use librespot_protocol::devices::DeviceType;
 use librespot_protocol::media::AudioQuality;
@@ -831,6 +832,15 @@ impl Worker {
             return;
         };
         let before = std::mem::replace(&mut self.now, now);
+        let moved = match (before.as_deref(), self.now.as_deref()) {
+            (Some(before), Some(now)) => before.context != now.context,
+            _ => false,
+        };
+        // a collection started here while a smart shuffle read waits overrides the command
+        if self.awaiting && moved {
+            self.ticket += 1;
+            self.awaiting = false;
+        }
         self.identify(before.as_deref());
         self.read_uids();
         self.sync(before).await;
@@ -1525,8 +1535,8 @@ impl Worker {
             places: places(&context),
             recommended,
         };
-        if let Some(mut play) = play {
-            play.context.pages = context.pages;
+        if let Some(play) = play {
+            let play = enhanced_play(play, context.pages);
             let start = started_by_play(&play, Some(&enhanced.recommended));
             self.smart = Some(enhanced);
             self.out.send(Event::Command(Command::Start(start))).ok();
@@ -2548,6 +2558,37 @@ fn collection_is_unread(play: &PlayCommand) -> bool {
 }
 
 /// What a play command from another device asks for.
+/// The song a play command names, resolved in the same order librespot resolves a skip in: uri,
+/// then uid, then place in the pages it carries.
+fn chosen(play: &PlayCommand) -> Option<String> {
+    let skip = play.options.skip_to.as_ref();
+    let mut tracks = play.context.pages.iter().flat_map(|page| &page.tracks);
+    skip.and_then(|skip| skip.track_uri.as_deref())
+        .and_then(track_id)
+        .or_else(|| {
+            let uid = skip?.track_uid.as_deref().filter(|uid| !uid.is_empty())?;
+            tracks
+                .clone()
+                .find(|track| track.uid.as_deref() == Some(uid))
+                .and_then(listed_id)
+        })
+        .or_else(|| {
+            let index = skip.and_then(|skip| skip.track_index)? as usize;
+            // the place counts every entry of the page, including ones that name no track
+            tracks.nth(index).and_then(listed_id)
+        })
+}
+
+/// `play` over the smart shuffle collection's `pages`. The song it names is pinned by uri first,
+/// since a place counts in the plain pages, which the smart shuffle ones reorder.
+fn enhanced_play(mut play: PlayCommand, pages: Vec<ContextPage>) -> PlayCommand {
+    if let (Some(id), Some(skip)) = (chosen(&play), play.options.skip_to.as_mut()) {
+        skip.track_uri = Some(format!("{TRACK_PREFIX}{id}"));
+    }
+    play.context.pages = pages;
+    play
+}
+
 /// `enhanced` holds the recommendations when the pages are the smart shuffle collection, which this
 /// app shuffles itself and hands over as the queue.
 fn started_by_play(play: &PlayCommand, enhanced: Option<&HashSet<String>>) -> Start {
@@ -2559,7 +2600,6 @@ fn started_by_play(play: &PlayCommand, enhanced: Option<&HashSet<String>>) -> St
         .collect();
     let listed: Vec<_> = tracks.iter().filter_map(|track| listed_id(track)).collect();
 
-    // the same order librespot resolves a skip in: uri, then uid, then place
     let skip = play.options.skip_to.as_ref();
     log::debug!(
         "connect: play in {:?}, skip to {skip:?}, {} pages with {} tracks",
@@ -2567,21 +2607,7 @@ fn started_by_play(play: &PlayCommand, enhanced: Option<&HashSet<String>>) -> St
         play.context.pages.len(),
         listed.len(),
     );
-    let track = skip
-        .and_then(|skip| skip.track_uri.as_deref())
-        .and_then(track_id)
-        .or_else(|| {
-            let uid = skip?.track_uid.as_deref().filter(|uid| !uid.is_empty())?;
-            tracks
-                .iter()
-                .find(|track| track.uid.as_deref() == Some(uid))
-                .and_then(|track| listed_id(track))
-        })
-        .or_else(|| {
-            let index = skip.and_then(|skip| skip.track_index)? as usize;
-            // the place counts every entry of the page, including ones that name no track
-            tracks.get(index).and_then(|track| listed_id(track))
-        });
+    let track = chosen(play);
     let index = skip
         .and_then(|skip| skip.track_index)
         .map(|index| index as usize);
@@ -2800,4 +2826,42 @@ fn recommended(context: &Context) -> impl Iterator<Item = String> + '_ {
         .flat_map(|page| &page.tracks)
         .filter(|track| track.metadata.get("provider").map(String::as_str) == Some(RECOMMENDED))
         .filter_map(listed_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn page(ids: &[&str]) -> ContextPage {
+        ContextPage {
+            tracks: ids
+                .iter()
+                .map(|id| ContextTrack {
+                    uri: Some(format!("{TRACK_PREFIX}{id}")),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_place_keeps_its_song_over_the_smart_shuffle_pages() {
+        let play = PlayCommand {
+            context: Context {
+                uri: Some("spotify:playlist:p".to_owned()),
+                pages: vec![page(&["a", "b"])],
+                ..Default::default()
+            },
+            play_origin: PlayOrigin::default(),
+            options: serde_json::from_value(serde_json::json!({ "skip_to": { "track_index": 1 } }))
+                .unwrap(),
+            logging_params: serde_json::from_value(serde_json::json!({})).unwrap(),
+        };
+        let recommended = HashSet::from(["r".to_owned()]);
+        let play = enhanced_play(play, vec![page(&["a", "r", "b"])]);
+        let start = started_by_play(&play, Some(&recommended));
+        let track = start.state.track.as_ref().map(|track| track.id.as_str());
+        assert_eq!(track, Some("b"));
+    }
 }

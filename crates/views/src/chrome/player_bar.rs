@@ -297,9 +297,21 @@ impl PlayerBar {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let label = match self.playback.read(cx).shown_track(cx) {
-            Some(track) => SharedString::from(format!("{} — {}", track.name, track.artists)),
-            None => t!("player-nothing-playing"),
+        let playback = self.playback.read(cx);
+        let recommended = playback
+            .shown_queue(cx)
+            .recommended(QueuePosition::Current, cx);
+        let label = match (playback.shown_track(cx), recommended) {
+            (Some(track), false) => {
+                SharedString::from(format!("{} — {}", track.name, track.artists))
+            }
+            (Some(track), true) => SharedString::from(format!(
+                "{} — {}, {}",
+                track.name,
+                track.artists,
+                t!("queue-recommended")
+            )),
+            (None, _) => t!("player-nothing-playing"),
         };
         div()
             .id("now-playing")
