@@ -14,6 +14,7 @@ use crate::input::{
     clamp_range, masked_text, primary_paste, span,
 };
 use crate::menu::{Menu, MenuItem};
+use crate::motion::{Motion, Motioned as _, mix};
 use crate::popup::Popup;
 use crate::theme::ActiveTheme as _;
 
@@ -23,7 +24,7 @@ const FILL: f32 = 0.045;
 const EDGE: f32 = 0.15;
 const RING: f32 = 0.4;
 /// How far that ring reaches past the field.
-const RING_WIDTH: Pixels = px(3.);
+const RING_WIDTH: Pixels = px(2.);
 
 struct Text {
     input: Entity<Input>,
@@ -290,6 +291,13 @@ impl Render for Input {
             (false, true) => Some(theme.muted_foreground.opacity(RING)),
             (false, false) => None,
         };
+        // The focus ring grows out of the edge as the field takes the focus and sinks back into
+        // it as the field lets go. A turned down field keeps its danger ring still.
+        let bordered = !(self.tucked || self.bare);
+        let turning = self.ring.turning(focused) && bordered && !self.invalid;
+        let edge_rest = theme.foreground.opacity(EDGE);
+        let edge_lit = theme.muted_foreground;
+        let lit_ring = theme.muted_foreground;
         let empty = self.selected_range.is_empty();
         let context_menu = self.context_menu.map(|position| {
             let paste = cx
@@ -342,7 +350,7 @@ impl Render for Input {
             .on_close(cx.listener(|this, _, window, cx| this.context_menu_closed(window, cx)))
         });
 
-        div()
+        let field = div()
             // The focus handle doubles as the element id, since every field
             // owns one and it stays stable for the life of the field.
             .id(&self.focus_handle)
@@ -479,6 +487,30 @@ impl Render for Input {
                 self.shortcut.clone().filter(|_| self.content.is_empty()),
                 |this, keystroke| this.child(crate::Kbd::new(keystroke)),
             )
-            .when_some(context_menu, |this, menu| this.child(menu))
+            .when_some(context_menu, |this, menu| this.child(menu));
+        match turning {
+            true => field
+                .motion(
+                    ("input-ring", usize::from(focused)),
+                    Motion::Control,
+                    move |field, t| {
+                        let shown = match focused {
+                            true => t,
+                            false => 1. - t,
+                        };
+                        field
+                            .border_color(mix(edge_rest, edge_lit, shown))
+                            .shadow(vec![BoxShadow {
+                                color: lit_ring.opacity(RING * shown),
+                                offset: point(Pixels::ZERO, Pixels::ZERO),
+                                blur_radius: Pixels::ZERO,
+                                spread_radius: RING_WIDTH * shown,
+                                inset: false,
+                            }])
+                    },
+                )
+                .into_any_element(),
+            false => field.into_any_element(),
+        }
     }
 }

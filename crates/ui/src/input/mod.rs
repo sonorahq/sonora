@@ -285,6 +285,8 @@ pub struct Input {
     /// A press landed outside the field while its context menu was open. If the menu then closes
     /// without an item picked, that press dismissed it and the field lets go of the focus.
     pressed_out: bool,
+    /// When the focus ring last came or went, so the render can fade it between the two.
+    ring: crate::motion::Movement,
 }
 
 impl Input {
@@ -315,6 +317,7 @@ impl Input {
             selected_word: None,
             context_menu: None,
             pressed_out: false,
+            ring: crate::motion::Movement::new(false),
         }
     }
 
