@@ -49,6 +49,9 @@ const PLAYLIST_COVER: CoverLimits = CoverLimits {
 };
 /// The OpenSubsonic extension that takes a playback position and state.
 const PLAYBACK_REPORT: &str = "playbackReport";
+/// The OpenSubsonic extension that takes every parameter as a form body, so a long song list
+/// does not have to fit in the address.
+const FORM_POST: &str = "formPost";
 /// The edge of a list cover, in pixels.
 const COVER: i32 = 300;
 /// The edge of a large cover, wide enough for the fullscreen player on a 2x display. The server
@@ -71,8 +74,9 @@ pub struct SubsonicClient {
     /// every url afresh, which would give one cover a new url on every conversion and defeat
     /// every image cache between here and the screen.
     covers: String,
-    /// Whether the server takes `reportPlayback`, asked the first time a report goes out.
-    playback_report: Arc<OnceCell<bool>>,
+    /// The OpenSubsonic extensions the server lists, asked the first time one matters. A plain
+    /// Subsonic server lists none.
+    extensions: Arc<OnceCell<HashSet<String>>>,
 }
 
 /// What the server records about a track that playback wants before the decoder can tell.
@@ -148,7 +152,7 @@ impl SubsonicClient {
             server,
             http: reqwest::Client::new(),
             covers,
-            playback_report: Arc::default(),
+            extensions: Arc::default(),
         })
     }
 
@@ -194,11 +198,10 @@ impl SubsonicClient {
             .context("navidrome's sign-in answered no token")
     }
 
-    /// Whether the server lists the `playbackReport` extension, asked once per client. A plain
-    /// Subsonic server has no extension list and answers with an error, which counts as no.
-    async fn reports_playback(&self) -> bool {
-        *self
-            .playback_report
+    /// Whether the server lists the OpenSubsonic extension `name`, asked once per client. A
+    /// plain Subsonic server has no extension list and answers with an error, which counts as no.
+    async fn lists(&self, name: &str) -> bool {
+        self.extensions
             .get_or_init(|| async {
                 match self
                     .client
@@ -207,15 +210,67 @@ impl SubsonicClient {
                     .map_err(bare)
                 {
                     Ok(extensions) => extensions
-                        .iter()
-                        .any(|extension| extension.name == PLAYBACK_REPORT),
+                        .into_iter()
+                        .map(|extension| extension.name)
+                        .collect(),
                     Err(error) => {
                         log::info!("subsonic: the server lists no extensions: {error:#}");
-                        false
+                        HashSet::new()
                     }
                 }
             })
             .await
+            .contains(name)
+    }
+
+    /// Replaces the songs of a playlist with `songs` in one `createPlaylist`. A server with the
+    /// `formPost` extension gets them as a form body. Any other server gets the usual address,
+    /// which a long playlist can push past what the server or a proxy in front of it accepts.
+    async fn replace_songs(&self, playlist_id: &str, songs: &[&str]) -> Result<()> {
+        if !self.lists(FORM_POST).await {
+            self.client
+                .create_playlist(Some(playlist_id), None, songs)
+                .await
+                .map_err(bare)
+                .context("cannot reorder the playlist")?;
+            return Ok(());
+        }
+        let mut form = format!(
+            "{}&playlistId={}",
+            self.signed,
+            escape::component(playlist_id)
+        );
+        for song in songs {
+            form.push_str("&songId=");
+            form.push_str(&escape::component(song));
+        }
+        let answer: serde_json::Value = self
+            .http
+            .post(format!("{}/rest/createPlaylist", self.server))
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .body(form)
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .context("cannot reorder the playlist")?
+            .error_for_status()
+            .map_err(reqwest::Error::without_url)
+            .context("the server refused the new order")?
+            .json()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .context("the new order answered no json")?;
+        let response = &answer["subsonic-response"];
+        if response["status"].as_str() != Some("ok") {
+            let message = response["error"]["message"]
+                .as_str()
+                .unwrap_or("an unknown error");
+            bail!("the server refused the new order: {message}");
+        }
+        Ok(())
     }
 
     fn cover_url(&self, id: &str, size: i32) -> Option<String> {
@@ -595,7 +650,7 @@ impl MusicApi for SubsonicClient {
     /// A server without the extension only hears that the track is playing, through the
     /// now-playing form of `scrobble`, since it has nowhere to put a position.
     async fn report(&self, track_id: &str, report: Report, position: Duration) -> Result<()> {
-        if !self.reports_playback().await {
+        if !self.lists(PLAYBACK_REPORT).await {
             return match report {
                 Report::Playing => self
                     .client
@@ -784,12 +839,7 @@ impl MusicApi for SubsonicClient {
             .context("cannot load the playlist")?;
         let held: Vec<&str> = detail.entry.iter().map(|song| song.id.as_str()).collect();
         let songs = reordered(&held, seen, wanted)?;
-        self.client
-            .create_playlist(Some(playlist_id), None, &songs)
-            .await
-            .map_err(bare)
-            .context("cannot reorder the playlist")?;
-        Ok(())
+        self.replace_songs(playlist_id, &songs).await
     }
 
     async fn saved_albums(&self) -> Result<Vec<Album>> {
