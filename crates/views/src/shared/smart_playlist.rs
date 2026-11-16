@@ -671,7 +671,7 @@ impl SmartPlaylistEditor {
         self.rules = Some(built_rules.clone());
         self.saving = true;
 
-        let editor = cx.entity().clone();
+        let editor = cx.entity();
         let library = Sonora::global(cx).library.clone();
         match edit {
             SmartEdit::Create { shelf } => {
@@ -1032,7 +1032,6 @@ impl SmartPlaylistEditor {
                     );
                 }
                 if !root {
-                    let path = path.clone();
                     header = header.child(
                         Button::new(gpui::ElementId::Name(SharedString::from(format!(
                             "smart-remove-group-{key}"

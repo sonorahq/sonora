@@ -2627,7 +2627,6 @@ mod smart_tests {
             let store: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(playlists));
             let thread = {
                 let requests = requests.clone();
-                let store = store.clone();
                 std::thread::spawn(move || {
                     for stream in listener.incoming() {
                         let Ok(mut stream) = stream else { return };
@@ -2688,6 +2687,7 @@ mod smart_tests {
                 "judith".into(),
                 "secret".into(),
                 &signature,
+                None,
             )
             .expect("a client")
         }
@@ -2742,7 +2742,7 @@ mod smart_tests {
                         .as_str()
                         .is_some_and(|owner| owner.eq_ignore_ascii_case("judith")) =>
                 {
-                    let mut updated = playlist.clone();
+                    let mut updated = playlist;
                     let changes: Value = serde_json::from_str(body).unwrap_or_default();
                     if let Some(fields) = changes.as_object() {
                         for (key, value) in fields {
@@ -3041,6 +3041,7 @@ mod smart_tests {
             "judith".into(),
             "wrong".into(),
             &signature,
+            None,
         )
         .expect("a client");
         let error = client
