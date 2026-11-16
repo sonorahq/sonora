@@ -49,9 +49,15 @@ impl Remote {
         })
     }
 
-    /// Sends `value` as the `Authorization` header of every range request.
-    pub(crate) fn authorized(mut self, value: &str) -> Self {
-        self.authorization = reqwest::header::HeaderValue::from_str(value).ok();
+    /// Sends `value` as the `Authorization` header of every range request, as long as the file
+    /// is still served from `server`. A file a redirect moved to another origin gets no
+    /// credentials, as the redirect itself sent none.
+    pub(crate) fn authorized(mut self, server: &str, value: &str) -> Self {
+        let home =
+            reqwest::Url::parse(server).is_ok_and(|server| server.origin() == self.url.origin());
+        self.authorization = home
+            .then(|| reqwest::header::HeaderValue::from_str(value).ok())
+            .flatten();
         self
     }
 

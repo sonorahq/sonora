@@ -20,6 +20,9 @@ use crate::stream::{Plain, Stream};
 use crate::vault::{Recording, Shelf};
 use crate::{Encoding, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Transcode};
 
+/// How long playback lets the server take to say a track's length and loudness.
+const DETAILS_PATIENCE: Duration = Duration::from_secs(5);
+
 /// A track downloading, and what the server says about its length, loudness and encoding.
 #[derive(Clone)]
 pub struct Loaded {
@@ -106,20 +109,32 @@ impl Jellyfin {
             .ok()?;
         let prepared = Prepared::load(&mut stream, None).await.ok()?;
         log::debug!("playback: {id} started from the vault");
-        let details = facts.map_or_else(Details::default, |facts| Details {
-            duration: facts.duration_ms.map(Duration::from_millis),
-            loudness: facts.lufs.map(|lufs| Loudness {
-                lufs,
-                peak: facts.peak,
-            }),
-            encoding: facts.encoding,
-            label: None,
-        });
+        // a copy kept before its facts arrived asks the server for them again
+        let details = match facts {
+            Some(facts) => Details {
+                duration: facts.duration_ms.map(Duration::from_millis),
+                loudness: facts.lufs.map(|lufs| Loudness {
+                    lufs,
+                    peak: facts.peak,
+                }),
+                encoding: facts.encoding,
+                label: None,
+            },
+            None => self.details(id).await,
+        };
         Some(Loaded {
             stream,
             details,
             prepared,
         })
+    }
+
+    /// The track's details from the server, or none once they take longer than
+    /// [`DETAILS_PATIENCE`], since playback never waits on them.
+    async fn details(&self, id: &str) -> Details {
+        tokio::time::timeout(DETAILS_PATIENCE, self.client.details(id))
+            .await
+            .unwrap_or_default()
     }
 
     /// Whether the server sends the file as it is, rather than converting it.
@@ -153,8 +168,8 @@ impl Fetch for Jellyfin {
             async {
                 let response = self.client.open_stream(id, self.transcode).await?;
                 let total = response.content_length();
-                let remote =
-                    Remote::new(&response).map(|remote| remote.authorized(&self.client.header));
+                let remote = Remote::new(&response)
+                    .map(|remote| remote.authorized(self.client.server(), &self.client.header));
                 let body = match &self.shelf {
                     Some(shelf) => {
                         let told = told.clone();
@@ -175,7 +190,7 @@ impl Fetch for Jellyfin {
                 anyhow::Ok((stream, prepared))
             },
             async {
-                let details = self.client.details(id).await;
+                let details = self.details(id).await;
                 told.set(details.clone()).ok();
                 details
             },
