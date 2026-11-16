@@ -329,6 +329,7 @@ fn playlist(hit: PlaylistHit, username: &str) -> Option<Playlist> {
             .and_then(|artwork| cover(&artwork.sources, false)),
         track_count: 0,
         modified_at: None,
+        read_only: false,
     })
 }
 

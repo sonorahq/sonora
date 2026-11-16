@@ -73,6 +73,7 @@ impl LocalProvider {
                 pins: false,
                 transcode: false,
                 playlist_covers: true,
+                smart_playlists: false,
                 playlist_order: true,
                 keeps: false,
                 downloads: false,

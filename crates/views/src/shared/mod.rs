@@ -22,6 +22,7 @@ pub(crate) mod playlist_editor;
 pub(crate) mod popups;
 pub(crate) mod powerbar;
 pub(crate) mod shelves;
+pub(crate) mod smart_playlist;
 pub(crate) mod soloist;
 pub(crate) mod steps;
 pub(crate) mod tag_editor;

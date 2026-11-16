@@ -115,6 +115,16 @@ pub struct Playlist {
     /// report, as for a Tidal mix, so a screen leaves it out rather than showing it.
     pub track_count: u32,
     pub modified_at: Option<i64>,
+    /// The provider chooses the tracks itself, as for a Navidrome smart playlist, so none can
+    /// be added, removed or moved by hand even by its owner.
+    pub read_only: bool,
+}
+
+impl Playlist {
+    /// Whether the listener can add, remove or move this playlist's tracks.
+    pub fn takes_tracks(&self) -> bool {
+        (self.owned || self.collaborative) && !self.read_only
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]

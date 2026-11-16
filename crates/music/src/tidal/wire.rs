@@ -460,6 +460,7 @@ pub fn playlist(wrapper: &Value, user_id: &str) -> Option<Playlist> {
         track_count: count(value, "numberOfTracks").unwrap_or(0),
         modified_at,
         id,
+        read_only: false,
     })
 }
 
@@ -508,6 +509,7 @@ pub fn mix(value: &Value) -> Option<Playlist> {
         // A mix's listing carries no count, and only its page says how many tracks it holds.
         track_count: 0,
         modified_at: None,
+        read_only: false,
     })
 }
 

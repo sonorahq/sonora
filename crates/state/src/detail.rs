@@ -9,8 +9,8 @@ use music::{
 use tokio::task::AbortHandle;
 
 use crate::{
-    Io, Library, LibraryEvent, Network, Session, SessionEvent, SessionState, Shelf, Sonora, join,
-    mosaic,
+    Io, Library, LibraryEvent, Network, Outcome, Session, SessionEvent, SessionState, Shelf,
+    Sonora, Toasts, join, mosaic,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -33,6 +33,9 @@ pub enum Reorder {
     /// The listener's own playlist, on a provider that keeps no order Sonora can change. A
     /// move is turned away with a message rather than kept on this device alone.
     Unsupported,
+    /// The listener's playlist whose provider orders it by its own rules, as a Navidrome smart
+    /// playlist sorts by its rules. A move is turned away with a message naming the rules.
+    Ruled,
     /// The rows can be moved, and the provider keeps the new order.
     On,
 }
@@ -46,6 +49,9 @@ impl Reorder {
         };
         if !playlist.owned && !playlist.collaborative {
             return Self::Off;
+        }
+        if playlist.read_only {
+            return Self::Ruled;
         }
         match (capabilities.playlist_order, whole) {
             (false, _) => Self::Unsupported,
@@ -414,6 +420,14 @@ impl Detail {
             log::warn!("detail: cannot remove a track without a playlist");
             return;
         };
+        if self
+            .playlist
+            .as_ref()
+            .is_some_and(|playlist| playlist.read_only)
+        {
+            Toasts::show(Outcome::Info, "toast-playlist-ruled", cx);
+            return;
+        }
         let named: HashSet<&str> = track_ids.iter().map(String::as_str).collect();
         let mut rows: Vec<String> = self
             .tracks
@@ -856,6 +870,7 @@ mod tests {
             cover: None,
             track_count: 3,
             modified_at: None,
+            read_only: false,
         }
     }
 

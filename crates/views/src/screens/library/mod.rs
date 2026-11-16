@@ -1284,9 +1284,13 @@ impl Render for LibraryView {
                     .menu()
                     .for_track(&track, cx),
                 LibraryMenu::Liked => liked_menu(self.playback.clone(), cx),
-                LibraryMenu::Background => new_playlist_menu(cx.listener(|this, _, window, cx| {
-                    this.create_playlist(window, cx);
-                })),
+                LibraryMenu::Background => new_playlist_menu(
+                    self.lead(cx),
+                    cx.listener(|this, _, window, cx| {
+                        this.create_playlist(window, cx);
+                    }),
+                    cx,
+                ),
             };
             Popup::new(position, menu).on_close(cx.listener(|this, _, _, cx| {
                 this.context_menu = None;
