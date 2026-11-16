@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::drag::Ghost;
 
+/// The id every liked songs pin carries.
+const LIKED_ID: &str = "liked";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PinKind {
@@ -11,6 +14,8 @@ pub enum PinKind {
     Artist,
     Playlist,
     Song,
+    /// The listener's liked songs, which open the library's Songs page.
+    Liked,
 }
 
 impl PinKind {
@@ -26,6 +31,7 @@ impl PinKind {
             Self::Artist => "icons/user.svg",
             Self::Playlist => "icons/list-music.svg",
             Self::Song => "icons/music.svg",
+            Self::Liked => "icons/heart-filled.svg",
         }
     }
 
@@ -35,6 +41,7 @@ impl PinKind {
             Self::Artist => "kind-artist",
             Self::Playlist => "kind-playlist",
             Self::Song => "kind-song",
+            Self::Liked => "kind-playlist",
         }
     }
 }
@@ -62,6 +69,16 @@ impl Pin {
         }
     }
 
+    /// The pin of the liked songs. Every provider shares the id, and the slug each pin is
+    /// stored under keeps them apart.
+    pub fn liked() -> Self {
+        Self::new(
+            PinKind::Liked,
+            LIKED_ID,
+            i18n::lookup("library-liked-songs", None).to_string(),
+        )
+    }
+
     pub fn cover(mut self, cover: Option<String>) -> Self {
         self.cover = cover;
         self
@@ -76,8 +93,13 @@ impl Pin {
         self.kind == other.kind && self.id == other.id
     }
 
+    /// The name to show. The liked songs are named in the current language rather than by the
+    /// title stored when they were pinned.
     pub fn label(&self) -> SharedString {
-        SharedString::from(self.title.clone())
+        match self.kind {
+            PinKind::Liked => i18n::lookup("library-liked-songs", None),
+            _ => SharedString::from(self.title.clone()),
+        }
     }
 }
 

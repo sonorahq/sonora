@@ -1245,6 +1245,21 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
     )
 }
 
+/// The menu of the liked songs: their page unless it is open already, the queue and the pin.
+pub(crate) fn liked_menu(playback: Entity<Playback>, cx: &App) -> Menu {
+    let pin = Pin::liked();
+    let from = Origin::saved().named(pin.label());
+
+    sections(
+        Menu::new("liked-context-menu").min_w(ITEM_MENU_WIDTH),
+        vec![
+            open_item(Destination::from(&pin), "menu-go-to-playlist", cx),
+            collection_queue_items(from, playback, cx),
+            vec![pin_action(&pin, cx)],
+        ],
+    )
+}
+
 pub(crate) fn item_menu(
     pin: &Pin,
     tracks: &ItemMenu,
@@ -1274,6 +1289,7 @@ pub(crate) fn item_menu(
             cx,
         )),
         PinKind::Song => saved_track(&pin.id, cx).map(|track| tracks.for_track(&track, cx)),
+        PinKind::Liked => Some(liked_menu(playback.clone(), cx)),
     };
 
     built.unwrap_or_else(|| sparse_menu(pin, playback, cx))
@@ -1315,6 +1331,7 @@ fn open_key(kind: PinKind) -> &'static str {
         PinKind::Playlist => "menu-go-to-playlist",
         PinKind::Artist => "menu-go-to-artist",
         PinKind::Song => "menu-view-details",
+        PinKind::Liked => "menu-go-to-playlist",
     }
 }
 
@@ -1412,6 +1429,7 @@ fn media_kind(kind: PinKind) -> MediaKind {
         PinKind::Artist => MediaKind::Artist,
         PinKind::Playlist => MediaKind::Playlist,
         PinKind::Song => MediaKind::Track,
+        PinKind::Liked => MediaKind::Playlist,
     }
 }
 
