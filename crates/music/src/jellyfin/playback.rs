@@ -265,9 +265,9 @@ impl Fetch for Jellyfin {
         Some(decoder)
     }
 
-    /// A converted stream arrives with no length, and a decoder opened before it finished can
-    /// only read forward, so every seek starts a fresh one. The original file seeks in place.
+    /// A decoder opened before its track finished arriving may only read forward, so every seek
+    /// starts a fresh one that can seek freely once the download has ended.
     fn reopen_to_seek(&self) -> bool {
-        !self.original()
+        true
     }
 }
