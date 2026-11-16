@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-11-16
+
 ### Added
 
 - Play the music on your own Jellyfin server, signed in with your password or Quick Connect, with favorites, playlists, instant mixes, downloads and word-synced lyrics from the server.
@@ -46,6 +48,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Skip sponsors, self-promotion and non-music sections on YouTube Music with SponsorBlock, with sections marked on the seek bar.
 - Subsonic lyrics provider can now read OpenSubsonic's enhanced cueLine data for karaoke lyrics.
 - Play or queue a local song, album, artist or playlist from the command line with `sonora play -s <name> --local`, or `add` and `play-next` with `--local`.
+- Reorder the songs of a playlist you own by dragging them, with Alt+Up and Alt+Down, or with Move up and Move down in a song's menu.
+- Pick the service Sonora opens with under Settings, General, or keep the one you used last.
+- Set Sonora up on NixOS with the flake's NixOS module, next to the Home Manager one.
 
 ### Fixed
 
@@ -76,6 +81,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A bare `sonora://` or `sonora://open` now brings Sonora to the front instead of showing an error toast.
 - The Spotify Jams submenu no longer comes up already open the next time you open the Sessions menu.
 - Pressing play on a pinned song from your local files now plays it instead of doing nothing.
+- Subsonic genre pages list every album, song and artist of the genre instead of only some of them.
+- YouTube Music playlists made before your account had a channel show up in Add to playlist and can be edited, renamed and deleted.
+- On KDE Plasma the window stays blurred all over after it grows.
+- Connecting an audio device Sonora cannot play to no longer leaks memory with PulseAudio.
+- Menus opened from an album or playlist header keep their usual row height.
 
 ### Changed
 
@@ -101,6 +111,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - History and Settings moved from the sidebar to the account menu at the top right, which also switches between your connected services and opens Manage accounts. Add them back to the sidebar under Settings, General, Sidebar entries.
 - Opening tracks from a file manager now starts the first one with no delay, then queues the rest.
 - Date added sorts Apple Music, YouTube Music and local playlists in the order you added songs.
+- Q and L show the queue and the lyrics by default, and in the fullscreen player they open its own panels instead of the sidebar behind it.
 
 ## [0.49.1] - 2026-11-13
 
@@ -2738,7 +2749,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.49.1...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.50.0...HEAD
+[0.50.0]: https://github.com/sonorahq/sonora/compare/v0.49.1...v0.50.0
 [0.49.1]: https://github.com/sonorahq/sonora/compare/v0.49.0...v0.49.1
 [0.49.0]: https://github.com/sonorahq/sonora/compare/v0.48.1...v0.49.0
 [0.48.1]: https://github.com/sonorahq/sonora/compare/v0.48.0...v0.48.1
