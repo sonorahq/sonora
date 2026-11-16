@@ -236,7 +236,7 @@ impl LibraryView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let width = cells::content_width(window, Pixels::ZERO, cx);
+        let width = page::bleed_width(window, cx);
         let settings = Sonora::global(cx).settings.clone();
         let stored = |section: Section, cx: &App| {
             let settings = settings.read(cx);
@@ -664,11 +664,24 @@ impl LibraryView {
         cx.notify();
     }
 
-    fn viewport(scroll: &ScrollHandle, window: &Window) -> Viewport {
+    /// The viewport of a table that opens the page with no header above it. `lead` is the space
+    /// the page leaves above the table.
+    fn viewport(scroll: &ScrollHandle, lead: Pixels, window: &Window) -> Viewport {
         quantize(scroll, window);
         let visible = scroll.bounds().size.height;
 
-        Viewport::measured(scrolled(scroll), visible, window)
+        Viewport::measured(scrolled(scroll) - lead, visible, window)
+    }
+
+    /// The shown section's table, framed like the artist page's when `framed` is true.
+    fn listed(&self, framed: bool, cx: &App) -> AnyElement {
+        match self.section {
+            Section::Songs => page::bleed(table(&self.songs), framed, cx),
+            Section::Albums => page::bleed(table(&self.albums), framed, cx),
+            Section::Playlists => page::bleed(table(&self.playlists), framed, cx),
+            Section::Artists => page::bleed(table(&self.artists), framed, cx),
+        }
+        .into_any_element()
     }
 
     fn header(&self, cx: &Context<Self>) -> AnyElement {
@@ -887,7 +900,7 @@ impl LibraryView {
     }
 
     fn resize(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let width = cells::content_width(window, Pixels::ZERO, cx);
+        let width = page::bleed_width(window, cx);
         if (width - self.width).abs() < px(0.5) {
             return;
         }
@@ -1233,12 +1246,15 @@ impl Render for LibraryView {
         let theme = *cx.theme();
         let inset = theme.metrics.inset;
         let mode = self.mode();
+        let framed = page::framed(window, cx);
         if mode == Mode::List {
             self.table(self.section).claim(cx);
             let scroll = self.scrollbar.read(cx).scroll().clone();
-            let viewport = match self.section.listing() {
-                true => page::viewport(&scroll, inset, window),
-                false => Self::viewport(&scroll, window),
+            let viewport = match (self.section.listing(), framed) {
+                (true, true) => page::past_border(page::viewport(&scroll, inset, window)),
+                (true, false) => page::viewport(&scroll, inset, window),
+                (false, true) => page::past_border(Self::viewport(&scroll, inset, window)),
+                (false, false) => Self::viewport(&scroll, Pixels::ZERO, window),
             };
             self.table(self.section).set_viewport(viewport, cx);
         }
@@ -1275,15 +1291,16 @@ impl Render for LibraryView {
                     .pt(inset)
                     .pb(inset)
                     .child(div().px(inset).child(self.header(cx)))
-                    .child(table(self.tracks()))
+                    .child(self.listed(framed, cx))
                     .when_some(note, |this, note| this.child(note))
                     .into_any_element()
             }
             (_, Mode::List) => Scroller::new("library-page", &self.scrollbar)
                 .bottom_inset(crate::chrome::Chrome::bottom(cx))
                 .px(crate::chrome::Chrome::margin(window, cx))
+                .when(framed, |this| this.pt(inset))
                 .pb(inset)
-                .child(self.table(self.section).element())
+                .child(self.listed(framed, cx))
                 .when_some(note, |this, note| this.child(note))
                 .into_any_element(),
             (_, Mode::Grid) if note.is_none() && self.waiting(cx) => self.pending_cards(window, cx),

@@ -45,6 +45,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Resizing the window or a sidebar keeps the cards, rails and lyrics you were looking at in view on Home, provider pages, album and playlist pages and search, instead of jumping elsewhere.
 - Signing in to a Deezer Family account asks which profile to use instead of always picking the account owner's, so each member sees their own playlists.
 - `sonora like` waits for the provider to confirm a favorite change and reports if it fails.
 - A song you favorite or unfavorite while the library is refreshing stays that way instead of flipping back.
@@ -72,7 +73,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- On a wide window pages stop growing at 1600 pixels and stay centred, while artist banners still reach the edges.
+- On a wide window pages stop growing at 1280 pixels and stay centred, while artist banners still reach the edges. Song tables then sit in a bordered frame like the one on artist pages.
 - The fullscreen button now swaps in place when the fullscreen player opens or closes, instead of fading and zooming with it.
 - Your accounts now open Settings, General, and the separate Providers tab is gone.
 - Play buttons and menus say «Играть» in Russian and «Spielen» in German.

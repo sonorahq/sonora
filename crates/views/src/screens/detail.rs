@@ -863,14 +863,18 @@ impl Render for DetailView {
 
         self.table.claim(cx);
         let inset = cx.theme().metrics.inset;
-        let width = cells::content_width(window, Pixels::ZERO, cx);
+        let framed = page::framed(window, cx);
+        let width = page::bleed_width(window, cx);
         if (width - self.width).abs() >= px(0.5) {
             self.width = width;
             self.table.set_width(width, cx);
         }
 
         let scroll = self.scrollbar.read(cx).scroll().clone();
-        let viewport = page::viewport(&scroll, inset, window);
+        let viewport = match framed {
+            true => page::past_border(page::viewport(&scroll, inset, window)),
+            false => page::viewport(&scroll, inset, window),
+        };
         self.table
             .update(cx, |table, _| table.set_viewport(viewport));
 
@@ -901,12 +905,13 @@ impl Render for DetailView {
             .size_full()
             .child(
                 Scroller::new("detail-page", &self.scrollbar)
+                    .hold()
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
                     .px(crate::chrome::Chrome::margin(window, cx))
                     .pt(inset)
                     .pb(inset)
                     .child(div().px(inset).child(self.header(window, cx)))
-                    .child(table(&self.table))
+                    .child(page::bleed(table(&self.table), framed, cx))
                     .children(self.notices(cx))
                     .child(div().px(inset).pt_10().children(rails)),
             )

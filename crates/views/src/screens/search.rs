@@ -1064,6 +1064,7 @@ impl SearchView {
             }))
             .child(
                 Scroller::new("search-browse", &self.browsing)
+                    .hold()
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
                     .fade_top(FADE)
                     .px(gutter)
