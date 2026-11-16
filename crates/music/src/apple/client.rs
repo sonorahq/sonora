@@ -72,12 +72,12 @@ const FAN: usize = 12;
 /// The library listings, and the includes each is read with. Named once so the pages and the
 /// favorites drawn over them ask for the same listing and share one fetch.
 ///
-/// A library song carries no date of its own, on any route or with any `extend`. The listing
-/// comes oldest first, which is what a Date added sort follows instead. The songs still ask
-/// for the library album they sit under, so a song with no catalog copy keeps its album, cut
-/// down to one field. The include is scoped to the library rows on purpose: an untyped
-/// `include=catalog` would expand the catalog of every included album too, and a page grows
-/// fivefold.
+/// A library song carries no date of its own, on any route or with any `extend`. Apple lists
+/// songs by name unless told otherwise, so the listing asks to be sorted by date added, oldest
+/// first, and a Date added sort follows that order. The songs still ask for the library album
+/// they sit under, so a song with no catalog copy keeps its album, cut down to one field. The
+/// include is scoped to the library rows on purpose: an untyped `include=catalog` would expand
+/// the catalog of every included album too, and a page grows fivefold.
 const SONGS: &str = "/me/library/songs";
 const ALBUMS: &str = "/me/library/albums";
 const ARTISTS: &str = "/me/library/artists";
@@ -85,6 +85,7 @@ const SONGS_QUERY: &[(&str, &str)] = &[
     ("include[library-songs]", "catalog,albums,artists"),
     ("include[songs]", "artists,albums"),
     ("fields[library-albums]", "dateAdded"),
+    ("sort", "dateAdded"),
 ];
 const CATALOG_QUERY: &[(&str, &str)] = &[("include", "catalog")];
 const ALBUMS_QUERY: &[(&str, &str)] = &[("include", "catalog,artists"), ALBUM_ARTISTS];
