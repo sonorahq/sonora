@@ -20,6 +20,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Moving through a track list with the arrow keys keeps the selected row above the player bar.
 - The cover no longer stutters as it flies into or out of the fullscreen player, most noticeably on Macs.
 - Apple Music no longer lists an album whose songs were all removed from your library as a blank album with no artist or cover.
+- Long Opus and Ogg files from Navidrome, Subsonic or Jellyfin start playing right away instead of after the whole file has downloaded.
 
 ## [0.50.0] - 2026-11-16
 
