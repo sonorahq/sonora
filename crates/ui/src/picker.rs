@@ -38,7 +38,7 @@ pub struct Picker {
     disabled: bool,
     items: Vec<MenuItem>,
     menu: Option<Menu>,
-    /// How tall the menu grows before it scrolls, unbounded when `None`.
+    /// How tall the menu grows before it scrolls, as far as the window allows when `None`.
     scroll_after: Option<Pixels>,
     on_open: Option<Open>,
 }
@@ -187,8 +187,8 @@ impl Picker {
         self
     }
 
-    /// Caps the menu at `height` and scrolls what does not fit. Ignored when a whole `menu` is
-    /// given, which brings its own.
+    /// Caps the menu at `height` even where the window has room for more. The menu scrolls what
+    /// does not fit either way. Ignored when a whole `menu` is given, which brings its own.
     pub fn scroll_after(mut self, height: Pixels) -> Self {
         self.scroll_after = Some(height);
         self
@@ -259,20 +259,18 @@ impl RenderOnce for Picker {
             .when_some(status, Button::status)
             .disabled(disabled);
 
+        // The menu always scrolls, so a long list stops at the window's edge rather than past it.
         let menu = menu.unwrap_or_else(|| {
-            let menu = Menu::new(SharedString::from(format!("{key}-menu"))).w(width);
-            match scroll_after {
-                Some(height) => {
-                    let view = window.current_view();
-                    let scrollbar = window.use_keyed_state(
-                        SharedString::from(format!("{key}-menu-scroll")),
-                        cx,
-                        |_, _| Scrollbar::inset().watching(view),
-                    );
-                    menu.max_h(height).scrollbar(scrollbar)
-                }
-                None => menu,
-            }
+            let view = window.current_view();
+            let scrollbar = window.use_keyed_state(
+                SharedString::from(format!("{key}-menu-scroll")),
+                cx,
+                |_, _| Scrollbar::inset().watching(view),
+            );
+            Menu::new(SharedString::from(format!("{key}-menu")))
+                .w(width)
+                .scrollbar(scrollbar)
+                .when_some(scroll_after, |menu, height| menu.max_h(height))
         });
         let menu = menu
             .items(items)

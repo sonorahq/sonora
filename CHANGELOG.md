@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Create Navidrome smart playlists and edit their rules from the playlists menu.
+
 ### Fixed
 
 - The account menu no longer lists YouTube Music when you are signed in elsewhere and only used guest mode before. Guest mode shows there under its own name while you use it.

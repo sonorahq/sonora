@@ -209,5 +209,6 @@ fn listed(found: &Listed) -> Option<Playlist> {
             .map(str::to_owned),
         track_count: 0,
         modified_at: None,
+        read_only: false,
     })
 }

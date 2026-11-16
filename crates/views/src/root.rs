@@ -29,6 +29,7 @@ use crate::shared::ambient::{self, Ambient};
 use crate::shared::confirm::Confirm;
 use crate::shared::playlist_editor::PlaylistEditor;
 use crate::shared::powerbar::Powerbar;
+use crate::shared::smart_playlist::SmartPlaylistEditor;
 use crate::shared::soloist::SoloistSetup;
 use crate::shared::tag_editor::TagEditor;
 use crate::shared::tracks::{LIBRARY_COLUMNS, album_columns};
@@ -87,6 +88,7 @@ struct Shells {
 /// shell is up, so one raised from the fullscreen player opens there.
 struct Dialogs {
     playlist_editor: Entity<PlaylistEditor>,
+    smart_playlist_editor: Entity<SmartPlaylistEditor>,
     tag_editor: Entity<TagEditor>,
     confirm: Entity<Confirm>,
     widevine: Entity<WidevinePrompt>,
@@ -101,6 +103,7 @@ impl Dialogs {
     fn new(cx: &mut App) -> Self {
         Self {
             playlist_editor: PlaylistEditor::entity(cx),
+            smart_playlist_editor: SmartPlaylistEditor::entity(cx),
             tag_editor: TagEditor::entity(cx),
             confirm: Confirm::entity(cx),
             widevine: cx.new(WidevinePrompt::new),
@@ -112,9 +115,10 @@ impl Dialogs {
         }
     }
 
-    fn views(&self) -> [AnyView; 9] {
+    fn views(&self) -> [AnyView; 10] {
         [
             self.playlist_editor.clone().into(),
+            self.smart_playlist_editor.clone().into(),
             self.tag_editor.clone().into(),
             self.confirm.clone().into(),
             self.widevine.clone().into(),

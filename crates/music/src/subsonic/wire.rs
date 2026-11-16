@@ -139,6 +139,7 @@ pub fn playlist(
         cover,
         track_count,
         modified_at: None,
+        read_only: false,
     }
 }
 

@@ -945,6 +945,7 @@ pub fn playlist(value: &Resource) -> Option<Playlist> {
         cover: artwork(attributes, ART),
         track_count: value.relationships.tracks.rows().len() as u32,
         modified_at: moment(attributes.last_modified_date.as_str()),
+        read_only: false,
     })
 }
 
@@ -965,6 +966,7 @@ pub fn library_playlist(value: &Resource, owner: &str) -> Option<Playlist> {
         track_count: 0,
         modified_at: moment(attributes.last_modified_date.as_str())
             .or_else(|| moment(attributes.date_added.as_str())),
+        read_only: false,
     })
 }
 
