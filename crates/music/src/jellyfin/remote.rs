@@ -75,6 +75,8 @@ struct Shared {
     now: Mutex<Option<Arc<Snapshot>>>,
     /// The other sessions as last read, by session id.
     sessions: Mutex<Vec<Session>>,
+    /// The volume a remote mute took away, which an unmute gives back.
+    muted_from: Mutex<Option<f32>>,
 }
 
 struct Worker {
@@ -128,9 +130,9 @@ impl Worker {
         if on == self.shown {
             return Ok(());
         }
-        self.shown = on;
         self.stop();
         self.capabilities(on).await?;
+        self.shown = on;
         if !on {
             self.out.send(Event::Roster(Roster::default())).ok();
             return Ok(());
@@ -171,13 +173,14 @@ impl Worker {
     /// lets go of it here.
     async fn transfer(&self, device: &str) -> Result<()> {
         if device == self.client.device_id() {
-            let playing = self
-                .shared
-                .sessions
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .iter()
-                .find_map(|session| Some((session.id.clone(), session.snapshot()?)));
+            let playing = playing(
+                &self
+                    .shared
+                    .sessions
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner),
+            )
+            .map(|(session, state)| (session.id.clone(), state));
             let Some((session, state)) = playing else {
                 return Ok(());
             };
@@ -211,6 +214,9 @@ impl Worker {
 #[serde(rename_all = "PascalCase", default)]
 struct Session {
     id: String,
+    /// When the server reported this state, which the position was measured at.
+    #[serde(skip)]
+    seen: Option<SystemTime>,
     device_id: Option<String>,
     device_name: Option<String>,
     client: Option<String>,
@@ -292,7 +298,7 @@ impl Session {
                 .as_deref()
                 .map(|mode| mode == "Shuffle"),
             repeat: self.play_state.repeat_mode.as_deref().map(repeat),
-            stamp: Some(SystemTime::now()),
+            stamp: Some(self.seen.unwrap_or_else(SystemTime::now)),
         })
     }
 }
@@ -433,12 +439,40 @@ fn general(data: &serde_json::Value, shared: &Shared) -> Vec<Command> {
             .map(|level| Command::Volume((level / 100.).clamp(0., 1.))),
         Some("VolumeUp") => Some(Command::Volume((volume + VOLUME_STEP).min(1.))),
         Some("VolumeDown") => Some(Command::Volume((volume - VOLUME_STEP).max(0.))),
-        Some("Mute") => Some(Command::Volume(0.)),
+        Some("Mute") => Some(mute(shared, volume)),
+        Some("Unmute") => Some(unmute(shared)),
+        Some("ToggleMute") => Some(match volume > 0. {
+            true => mute(shared, volume),
+            false => unmute(shared),
+        }),
         Some("SetShuffleQueue") => Some(Command::Shuffle(argument("ShuffleMode") == "Shuffle")),
         Some("SetRepeatMode") => Some(Command::Repeat(repeat(&argument("RepeatMode")))),
         _ => None,
     };
     command.into_iter().collect()
+}
+
+/// Silences playback and keeps `volume`, which an unmute gives back. A second mute keeps the
+/// volume from before the first.
+fn mute(shared: &Shared, volume: f32) -> Command {
+    let mut kept = shared
+        .muted_from
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if volume > 0. {
+        *kept = Some(volume);
+    }
+    Command::Volume(0.)
+}
+
+/// Gives back the volume the last mute took away, or full volume when nothing was kept.
+fn unmute(shared: &Shared) -> Command {
+    let kept = shared
+        .muted_from
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
+    Command::Volume(kept.unwrap_or(1.))
 }
 
 /// A request to play items: now, next or last, or shuffled, or as an instant mix.
@@ -456,12 +490,6 @@ async fn play(client: &JellyfinClient, data: &serde_json::Value) -> Vec<Command>
         .get("PlayCommand")
         .and_then(|how| how.as_str())
         .unwrap_or("PlayNow");
-    if how == "PlayNext" || how == "PlayLast" {
-        return ids
-            .into_iter()
-            .map(|id| Command::Enqueue { id, added_by: None })
-            .collect();
-    }
     // an album, a playlist or an artist is played as the songs in it
     ids = match client.songs_of(&ids).await {
         Ok(songs) if !songs.is_empty() => songs,
@@ -471,6 +499,12 @@ async fn play(client: &JellyfinClient, data: &serde_json::Value) -> Vec<Command>
             ids
         }
     };
+    if how == "PlayNext" || how == "PlayLast" {
+        return ids
+            .into_iter()
+            .map(|id| Command::Enqueue { id, added_by: None })
+            .collect();
+    }
     if how == "PlayInstantMix"
         && let Some(seed) = ids.first()
     {
@@ -503,17 +537,16 @@ async fn play(client: &JellyfinClient, data: &serde_json::Value) -> Vec<Command>
         playing: true,
         position,
         volume: 1.,
+        // shuffle rides with the start, since a separate command would change the queue under
+        // the load the start is waiting on and the start would then give up
+        shuffle: (how == "PlayShuffle").then_some(true),
         ..Snapshot::default()
     };
-    let mut commands = vec![Command::Start(Start {
+    vec![Command::Start(Start {
         state: Arc::new(state),
         preserve_queue: true,
         restart: true,
-    })];
-    if how == "PlayShuffle" {
-        commands.push(Command::Shuffle(true));
-    }
-    commands
+    })]
 }
 
 /// Favorites another app changed. A song's change is a like the app shows at once, and any
@@ -574,9 +607,14 @@ async fn sessions(client: &JellyfinClient) -> Result<Vec<Session>> {
         client.user_id()
     );
     let sessions: Vec<Session> = client.read(&path).await?;
+    let seen = SystemTime::now();
     Ok(sessions
         .into_iter()
         .filter(|session| session.device_id.as_deref() != Some(client.device_id()))
+        .map(|session| Session {
+            seen: Some(seen),
+            ..session
+        })
         .collect())
 }
 
@@ -589,16 +627,21 @@ fn roster(sessions: &[Session]) -> Roster {
         .filter(|session| session.supports_remote_control)
         .map(Session::device)
         .collect();
-    let elsewhere = sessions
+    let elsewhere = playing(sessions).map(|(session, state)| Elsewhere {
+        device: session.device(),
+        state: Arc::new(state),
+    });
+    Roster { devices, elsewhere }
+}
+
+/// The controllable session whose song a transfer takes over, with what it plays. One that
+/// plays wins over one that is paused, so the device list and a transfer pick the same one.
+fn playing(sessions: &[Session]) -> Option<(&Session, Snapshot)> {
+    sessions
         .iter()
         .filter(|session| session.supports_remote_control)
         .filter_map(|session| Some((session, session.snapshot()?)))
         .max_by_key(|(_, state)| state.playing)
-        .map(|(session, state)| Elsewhere {
-            device: session.device(),
-            state: Arc::new(state),
-        });
-    Roster { devices, elsewhere }
 }
 
 /// Asks another session to do `command`.
