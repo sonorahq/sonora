@@ -15,8 +15,8 @@ use state::{
     Shelf, Sonora,
 };
 use ui::{
-    ActiveTheme as _, ArrowRing, Button, InlineLink, InlineLinks, Menu, Picker, Popovers,
-    Popup, SortAxis,
+    ActiveTheme as _, ArrowRing, Button, InlineLink, InlineLinks, Menu, Picker, Popovers, Popup,
+    SortAxis,
 };
 use ui::{
     ColumnSpec, FilterChange, Listing as _, MIN_CONTENT, Pending, Pin, PinKind, Scrollbar,
