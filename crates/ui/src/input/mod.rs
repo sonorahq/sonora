@@ -282,8 +282,9 @@ pub struct Input {
     selecting: bool,
     selected_word: Option<Range<usize>>,
     context_menu: Option<Point<Pixels>>,
-    /// A press landed outside the field while its context menu was open. If the menu then closes
-    /// without an item picked, that press dismissed it and the field lets go of the focus.
+    /// A press landed outside the field while its context menu was open, during this frame. If
+    /// the menu closes on that press without an item picked, the press dismissed it and the field
+    /// lets go of the focus.
     pressed_out: bool,
     /// When the focus ring last came or went, so the render can fade it between the two.
     ring: crate::motion::Movement,
@@ -761,7 +762,8 @@ impl Input {
     /// Lets go of the focus when a press lands outside the field, so a click on the page around
     /// it stops the typing. Whatever focusable thing the press hit still takes the focus, since
     /// this runs first. With the context menu open the press may pick one of its items, so the
-    /// decision waits for `context_menu_closed`.
+    /// decision waits for `context_menu_closed`. A press the menu takes without closing, as on
+    /// its padding, is forgotten by the next frame, so a later Escape keeps the focus.
     fn on_mouse_down_out(
         &mut self,
         _: &MouseDownEvent,
@@ -770,6 +772,7 @@ impl Input {
     ) {
         if self.context_menu.is_some() {
             self.pressed_out = true;
+            cx.on_next_frame(window, |this, _, _| this.pressed_out = false);
             return;
         }
         if !self.focus_handle.is_focused(window) {
