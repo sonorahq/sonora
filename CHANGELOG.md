@@ -11,6 +11,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Create Navidrome smart playlists and edit their rules from the playlists menu.
 - The quick search marks its first result as the one Enter acts on. Press Up off it, or Enter before results arrive, to open the search page for what you typed.
+- Turn off the playback progress shown on the Sonora taskbar button on Windows in Settings, to keep just the app icon.
 
 ### Fixed
 

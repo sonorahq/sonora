@@ -669,10 +669,29 @@ fn shown(cx: &App) -> Shown {
     }
 }
 
+/// What the taskbar progress should show right now: the played part of the track, or nothing
+/// while the listener has the bar turned off. Hiding it returns `Mode::Hidden`, which clears the
+/// bar on the button rather than leaving it on its last value.
+fn progress(cx: &App) -> Progress {
+    let enabled = Sonora::global(cx).settings.read(cx).taskbar_progress();
+    visible(enabled, played(cx))
+}
+
+/// Passes `progress` through when the bar is on, and swaps it for a hidden bar when it is off.
+fn visible(enabled: bool, progress: Progress) -> Progress {
+    match enabled {
+        true => progress,
+        false => Progress {
+            mode: Mode::Hidden,
+            done: 0,
+        },
+    }
+}
+
 /// Reads how far the shown track has played, on the steered device when there
 /// is one. A track that is loading counts as playing, so the bar does not flick
 /// to yellow between tracks.
-fn progress(cx: &App) -> Progress {
+fn played(cx: &App) -> Progress {
     let hidden = Progress {
         mode: Mode::Hidden,
         done: 0,
@@ -734,4 +753,27 @@ fn light_theme() -> bool {
         )
     };
     read.is_ok() && value == 1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn playing() -> Progress {
+        Progress {
+            mode: Mode::Playing,
+            done: 420,
+        }
+    }
+
+    #[test]
+    fn progress_passes_through_while_the_bar_is_on() {
+        assert_eq!(visible(true, playing()), playing());
+    }
+
+    #[test]
+    fn turning_the_bar_off_hides_progress_even_while_a_track_plays() {
+        assert_eq!(visible(false, playing()).mode, Mode::Hidden);
+        assert_eq!(visible(false, playing()).done, 0);
+    }
 }

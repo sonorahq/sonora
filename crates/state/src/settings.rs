@@ -502,6 +502,9 @@ struct Values {
     stay_awake: bool,
     /// Whether a file handed in by the OS goes straight to the now playing view.
     now_playing_on_file_open: bool,
+    /// Whether the Windows taskbar button fills with the track's progress while it plays. Off
+    /// clears the fill, so the button shows only its icon.
+    taskbar_progress: bool,
     language: String,
     #[serde(default = "system_font")]
     font: String,
@@ -729,6 +732,7 @@ impl Default for Values {
             tray_icon: true,
             stay_awake: true,
             now_playing_on_file_open: true,
+            taskbar_progress: true,
             language: i18n::AUTO.to_owned(),
             font: system_font(),
             startup: DEFAULT_STARTUP.to_owned(),
@@ -1302,6 +1306,11 @@ impl AppSettings {
     /// Whether a file opened from a file manager goes straight to the now playing view.
     pub fn now_playing_on_file_open(&self) -> bool {
         self.values.now_playing_on_file_open
+    }
+
+    /// Whether the Windows taskbar button fills with the track's progress while it plays.
+    pub fn taskbar_progress(&self) -> bool {
+        self.values.taskbar_progress
     }
 
     /// Whether plays from the provider with this slug are submitted to the linked scrobbling
@@ -1966,6 +1975,11 @@ impl AppSettings {
 
     pub fn set_now_playing_on_file_open(&mut self, open: bool, cx: &mut Context<Self>) {
         self.values.now_playing_on_file_open = open;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_taskbar_progress(&mut self, taskbar_progress: bool, cx: &mut Context<Self>) {
+        self.values.taskbar_progress = taskbar_progress;
         self.schedule_save(cx);
     }
 
@@ -3328,6 +3342,20 @@ mod tests {
     use super::*;
     use crate::queue::Stub;
     use ui::PinKind;
+
+    #[test]
+    fn taskbar_progress_defaults_on_and_loads_off_from_settings_json_after_a_restart() {
+        let values: Values = serde_json::from_str("{}").unwrap();
+        assert!(values.taskbar_progress);
+
+        let root = scratch("taskbar-progress");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(&path, r#"{"taskbar_progress": false}"#).unwrap();
+        let store = StateStore::new(Database::at(root.join("state.sqlite")));
+        let settings = AppSettings::load_from(path, store);
+        assert!(!settings.taskbar_progress());
+    }
 
     #[test]
     fn lyrics_priority_defaults_and_round_trips_independently_of_enablement() {
