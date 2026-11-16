@@ -177,6 +177,11 @@ impl VolumeHost for FullscreenView {
 }
 
 impl FullscreenView {
+    /// The height the dock along the bottom is given, which the toasts hang above.
+    pub(crate) fn dock_height(cx: &App) -> Pixels {
+        cx.theme().metrics.player_bar * DOCK_FULL
+    }
+
     pub fn new(playback: Entity<Playback>, queue: Entity<Queue>, cx: &mut Context<Self>) -> Self {
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         let sponsorblock = Sonora::global(cx).sponsorblock.clone();
