@@ -16,6 +16,8 @@ use crate::jellyfin::wire;
 
 /// How often the beat repeats the report, well inside the server's five minutes.
 const BEAT: Duration = Duration::from_secs(30);
+/// How many failed beats in a row end the beat, three of them still well inside five minutes.
+const MISSES: u32 = 3;
 
 /// The track this device last said it plays, where it was and since when.
 struct Now {
@@ -130,11 +132,13 @@ impl Session {
         }
     }
 
-    /// Repeats the report every [`BEAT`] until the track stops or a report fails, which is
-    /// also how it ends once the account signs out.
+    /// Repeats the report every [`BEAT`] until the track stops. After [`MISSES`] failed reports
+    /// in a row, as once the account signs out, it forgets the track, so the next report starts
+    /// the session over with a beat of its own.
     fn beat(&self, send: Sender) -> AbortHandle {
         let now = self.now.clone();
         tokio::spawn(async move {
+            let mut missed = 0;
             loop {
                 tokio::time::sleep(BEAT).await;
                 let report = {
@@ -145,9 +149,16 @@ impl Session {
                 let Some(report) = report else {
                     return;
                 };
-                if let Err(error) = send(Method::POST, "/Sessions/Playing/Progress", report).await {
-                    log::info!("jellyfin: the session beat stopped: {error:#}");
-                    return;
+                match send(Method::POST, "/Sessions/Playing/Progress", report).await {
+                    Ok(()) => missed = 0,
+                    Err(error) => {
+                        missed += 1;
+                        log::info!("jellyfin: a session beat failed: {error:#}");
+                        if missed >= MISSES {
+                            now.lock().unwrap_or_else(PoisonError::into_inner).take();
+                            return;
+                        }
+                    }
                 }
             }
         })
