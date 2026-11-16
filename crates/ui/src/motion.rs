@@ -963,6 +963,14 @@ impl Movement {
         }
     }
 
+    /// How far the latest turn has got, from 0 to 1 and eased as `Motion::Control` eases, or
+    /// `None` once it is over or before the first turn.
+    pub(crate) fn progress(&self) -> Option<f32> {
+        let elapsed = self.turned?.elapsed();
+        let span = Motion::Control.span();
+        (elapsed < span).then(|| ease_in_out(elapsed.as_secs_f32() / span.as_secs_f32()))
+    }
+
     pub(crate) fn turning(&mut self, checked: bool) -> bool {
         if self.drawn != checked {
             self.drawn = checked;

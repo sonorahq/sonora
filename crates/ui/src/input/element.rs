@@ -14,7 +14,7 @@ use crate::input::{
     clamp_range, masked_text, primary_paste, span,
 };
 use crate::menu::{Menu, MenuItem};
-use crate::motion::{Motion, Motioned as _, mix};
+use crate::motion::mix;
 use crate::popup::Popup;
 use crate::theme::ActiveTheme as _;
 
@@ -286,18 +286,40 @@ impl Render for Input {
         let focused = self.focus_handle.is_focused(window);
         // a bordered field wears a soft ring outside its edge while it has the focus, and a
         // danger tinted one while it holds something turned down
-        let ring = match (self.invalid, focused) {
-            (true, _) => Some(theme.danger.opacity(RING)),
-            (false, true) => Some(theme.muted_foreground.opacity(RING)),
-            (false, false) => None,
-        };
         // The focus ring grows out of the edge as the field takes the focus and sinks back into
-        // it as the field lets go. A turned down field keeps its danger ring still.
-        let bordered = !(self.tucked || self.bare);
-        let turning = self.ring.turning(focused) && bordered && !self.invalid;
-        let edge_rest = theme.foreground.opacity(EDGE);
-        let edge_lit = theme.muted_foreground;
-        let lit_ring = theme.muted_foreground;
+        // it as the field lets go, drawn frame by frame here rather than through an animation
+        // wrapper, which would hide the field's role from screen readers. A turned down field
+        // keeps its danger ring still.
+        let turned = self.ring.turning(focused);
+        let shown = match (self.invalid, self.ring.progress().filter(|_| turned)) {
+            (true, _) => 1.,
+            (false, Some(t)) => {
+                window.request_animation_frame();
+                match focused {
+                    true => t,
+                    false => 1. - t,
+                }
+            }
+            (false, None) => f32::from(u8::from(focused)),
+        };
+        let edge = match self.invalid {
+            true => theme.danger,
+            false => mix(
+                theme.foreground.opacity(EDGE),
+                theme.muted_foreground,
+                shown,
+            ),
+        };
+        let ring = (shown > 0.).then(|| BoxShadow {
+            color: match self.invalid {
+                true => theme.danger.opacity(RING),
+                false => theme.muted_foreground.opacity(RING * shown),
+            },
+            offset: point(Pixels::ZERO, Pixels::ZERO),
+            blur_radius: Pixels::ZERO,
+            spread_radius: RING_WIDTH * shown,
+            inset: false,
+        });
         let empty = self.selected_range.is_empty();
         let context_menu = self.context_menu.map(|position| {
             let paste = cx
@@ -350,7 +372,7 @@ impl Render for Input {
             .on_close(cx.listener(|this, _, window, cx| this.context_menu_closed(window, cx)))
         });
 
-        let field = div()
+        div()
             // The focus handle doubles as the element id, since every field
             // owns one and it stays stable for the life of the field.
             .id(&self.focus_handle)
@@ -396,20 +418,8 @@ impl Render for Input {
                 |this| this.w_full(),
                 |this| {
                     this.border_1()
-                        .border_color(match (self.invalid, focused) {
-                            (true, _) => theme.danger,
-                            (false, true) => theme.muted_foreground,
-                            (false, false) => theme.foreground.opacity(EDGE),
-                        })
-                        .when_some(ring, |this, ring| {
-                            this.shadow(vec![BoxShadow {
-                                color: ring,
-                                offset: point(Pixels::ZERO, Pixels::ZERO),
-                                blur_radius: Pixels::ZERO,
-                                spread_radius: RING_WIDTH,
-                                inset: false,
-                            }])
-                        })
+                        .border_color(edge)
+                        .when_some(ring, |this, ring| this.shadow(vec![ring]))
                 },
             )
             .overflow_hidden()
@@ -487,30 +497,6 @@ impl Render for Input {
                 self.shortcut.clone().filter(|_| self.content.is_empty()),
                 |this, keystroke| this.child(crate::Kbd::new(keystroke)),
             )
-            .when_some(context_menu, |this, menu| this.child(menu));
-        match turning {
-            true => field
-                .motion(
-                    ("input-ring", usize::from(focused)),
-                    Motion::Control,
-                    move |field, t| {
-                        let shown = match focused {
-                            true => t,
-                            false => 1. - t,
-                        };
-                        field
-                            .border_color(mix(edge_rest, edge_lit, shown))
-                            .shadow(vec![BoxShadow {
-                                color: lit_ring.opacity(RING * shown),
-                                offset: point(Pixels::ZERO, Pixels::ZERO),
-                                blur_radius: Pixels::ZERO,
-                                spread_radius: RING_WIDTH * shown,
-                                inset: false,
-                            }])
-                    },
-                )
-                .into_any_element(),
-            false => field.into_any_element(),
-        }
+            .when_some(context_menu, |this, menu| this.child(menu))
     }
 }
