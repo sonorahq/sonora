@@ -141,14 +141,18 @@ impl RenderOnce for CredentialsPrompt {
             true => (t!("login-jellyfin-title"), t!("login-jellyfin-detail")),
             false => (t!("login-server-title"), t!("login-server-detail")),
         };
-        // the sign-in itself, which needs the password everywhere but on Jellyfin
+        // the sign-in itself, which needs the password everywhere but on Jellyfin. On Jellyfin
+        // empty account fields ask for Quick Connect, which keeps it in reach of Enter.
         let sign_in: Action = {
             let fields = fields.clone();
             let submit = submit.clone();
             Rc::new(move |_, window, cx| {
-                let needed = match jellyfin {
-                    true => vec![&fields.server, &fields.username],
-                    false => vec![&fields.server, &fields.username, &fields.password],
+                let blank = |field: &Entity<Input>| field.read(cx).text().is_empty();
+                let quick = jellyfin && blank(&fields.username) && blank(&fields.password);
+                let needed = match (jellyfin, quick) {
+                    (true, true) => vec![&fields.server],
+                    (true, false) => vec![&fields.server, &fields.username],
+                    (false, _) => vec![&fields.server, &fields.username, &fields.password],
                 };
                 if !fields.check(&needed, window, cx) {
                     return;
