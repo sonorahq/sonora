@@ -1,12 +1,21 @@
 use std::collections::HashMap;
 
-use gpui::{App, Entity, Pixels, ScrollHandle, Window, px};
+use gpui::prelude::*;
+use gpui::{App, Div, Entity, Pixels, ScrollHandle, Window, div, px};
 
 use state::{AppSettings, FilterValue, Playback};
-use ui::{Filter, FilterChange, Listing, TableState, Viewport, quantize, scrolled};
+use ui::ActiveTheme as _;
+use ui::{
+    Filter, FilterChange, Listing, Table, TableSource, TableState, Viewport, quantize, scrolled,
+};
 
+use crate::chrome::Chrome;
 use crate::shared::cells;
 use crate::shared::tracks::{self, TrackSource};
+
+/// The width of the border around a framed table, which starts its rows this much lower than
+/// the box the page measures the scroll from.
+const TABLE_BORDER: Pixels = px(1.);
 
 pub(crate) fn store(
     settings: &Entity<AppSettings>,
@@ -150,6 +159,45 @@ pub(crate) fn resize(
     }
     *width = next;
     table.set_width(next, cx);
+}
+
+/// Whether a table that fills the page stands framed instead, inset with rounded corners and a
+/// border like the artist page's. It does once the content area outgrows `metrics.page` and the
+/// page stands centred.
+pub(crate) fn framed(window: &Window, cx: &App) -> bool {
+    Chrome::margin(window, cx) > Pixels::ZERO
+}
+
+/// The width of a table that fills the page. Once the table is `framed` it leaves room for the
+/// frame's inset and border.
+pub(crate) fn bleed_width(window: &Window, cx: &App) -> Pixels {
+    let reserved = match framed(window, cx) {
+        true => reserved(cx.theme().metrics.inset),
+        false => Pixels::ZERO,
+    };
+    cells::content_width(window, reserved, cx)
+}
+
+/// Wraps a table that fills the page and draws the frame around it when `framed` is true. The
+/// table's width has to come from `bleed_width` so its rows match the frame.
+pub(crate) fn bleed<S: TableSource>(table: Table<S>, framed: bool, cx: &App) -> Div {
+    let theme = cx.theme();
+    div()
+        .when(framed, |this| this.px(theme.metrics.inset))
+        .child(table.when(framed, |table| {
+            table
+                .rounded(theme.radius)
+                .border_1()
+                .border_color(theme.border)
+        }))
+}
+
+/// Moves a viewport measured from a framed table's outer edge onto its rows, past the border.
+pub(crate) fn past_border(viewport: Viewport) -> Viewport {
+    Viewport {
+        top: (viewport.top - TABLE_BORDER).max(Pixels::ZERO),
+        ..viewport
+    }
 }
 
 pub(crate) fn viewport(scroll: &ScrollHandle, inset: Pixels, window: &Window) -> Viewport {

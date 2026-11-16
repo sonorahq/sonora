@@ -13,6 +13,7 @@ mod flight;
 mod form;
 mod glass;
 mod glide;
+mod hold;
 mod info_card;
 mod inline_links;
 mod input;
@@ -88,6 +89,7 @@ pub use glass::{
     GLASS_BLUR, GLASS_FILL, bar_surface, blurring, frost, glass, popover_fill, popover_surface,
 };
 pub use glide::{Glide, ScrollPosition};
+pub use hold::{Held, Hold, held};
 pub use info_card::{Fact, InfoCard};
 pub use inline_links::{InlineLink, InlineLinks};
 pub use input::{
