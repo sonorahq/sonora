@@ -229,6 +229,8 @@ menu-play-artist = Play artist
 # playlist editor
 playlist-name-placeholder = Playlist name
 playlist-create-title = Create playlist
+playlist-create-shelf = Save to
+playlist-create-local = Local files
 playlist-edit-title = Edit playlist
 playlist-cover-choose = Choose picture
 playlist-cover-remove = Remove cover
