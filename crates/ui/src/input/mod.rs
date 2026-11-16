@@ -282,6 +282,12 @@ pub struct Input {
     selecting: bool,
     selected_word: Option<Range<usize>>,
     context_menu: Option<Point<Pixels>>,
+    /// A press landed outside the field while its context menu was open, during this frame. If
+    /// the menu closes on that press without an item picked, the press dismissed it and the field
+    /// lets go of the focus.
+    pressed_out: bool,
+    /// When the focus ring last came or went, so the render can fade it between the two.
+    ring: crate::motion::Movement,
 }
 
 impl Input {
@@ -311,6 +317,8 @@ impl Input {
             selecting: false,
             selected_word: None,
             context_menu: None,
+            pressed_out: false,
+            ring: crate::motion::Movement::new(false),
         }
     }
 
@@ -717,6 +725,7 @@ impl Input {
         cx: &mut Context<Self>,
     ) {
         cx.stop_propagation();
+        self.pressed_out = false;
         self.focus(window, cx);
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         if event.button == MouseButton::Middle {
@@ -748,6 +757,43 @@ impl Input {
                 self.select_all(&SelectAll, window, cx);
             }
         }
+    }
+
+    /// Lets go of the focus when a press lands outside the field, so a click on the page around
+    /// it stops the typing. Whatever focusable thing the press hit still takes the focus, since
+    /// this runs first. With the context menu open the press may pick one of its items, so the
+    /// decision waits for `context_menu_closed`. A press the menu takes without closing, as on
+    /// its padding, is forgotten by the next frame, so a later Escape keeps the focus.
+    fn on_mouse_down_out(
+        &mut self,
+        _: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.context_menu.is_some() {
+            self.pressed_out = true;
+            cx.on_next_frame(window, |this, _, _| this.pressed_out = false);
+            return;
+        }
+        if !self.focus_handle.is_focused(window) {
+            return;
+        }
+        self.selecting = false;
+        window.blur(cx);
+        cx.notify();
+    }
+
+    /// Closes the context menu. A pick clears the menu before this runs, so a menu still open
+    /// here was dismissed, and one dismissed by a press outside takes the focus with it. Escape
+    /// leaves the focus in the field.
+    fn context_menu_closed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let dismissed = self.context_menu.take().is_some();
+        let pressed_out = std::mem::take(&mut self.pressed_out);
+        if dismissed && pressed_out && self.focus_handle.is_focused(window) {
+            self.selecting = false;
+            window.blur(cx);
+        }
+        cx.notify();
     }
 
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {

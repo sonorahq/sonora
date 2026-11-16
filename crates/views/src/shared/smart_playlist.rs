@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use gpui::Focusable as _;
 use gpui::prelude::*;
 use gpui::{
     App, Context, Entity, FocusHandle, Global, Pixels, Render, ScrollHandle, SharedString,
@@ -17,8 +18,8 @@ use music::{
 };
 use state::{LibraryEvent, SessionEvent, Shelf, Sonora};
 use ui::{
-    ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Input, MenuItem, Modal, Notice, Picker,
-    Popovers, Submit,
+    ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Input, MenuItem, Modal, NextField, Notice,
+    Picker, Popovers, PreviousField, Submit, step_focus,
 };
 
 /// What the editor is doing: making a new smart playlist, or changing the rules of one the
@@ -865,6 +866,14 @@ impl Render for SmartPlaylistEditor {
                     this.close(window, cx);
                 }
             }))
+            .on_action(cx.listener(|this, _: &NextField, window, cx| {
+                cx.stop_propagation();
+                step_focus(&this.tab_order(cx), 1, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &PreviousField, window, cx| {
+                cx.stop_propagation();
+                step_focus(&this.tab_order(cx), -1, window, cx);
+            }))
             .on_action(cx.listener(|this, _: &Submit, window, cx| {
                 cx.stop_propagation();
                 this.apply(window, cx);
@@ -923,6 +932,45 @@ fn problem_text(problem: &Problem) -> SharedString {
 
 impl SmartPlaylistEditor {
     /// The tree lifted into render-ready rows.
+    /// The fields Tab visits, in the order they are drawn: the name, each condition's value and
+    /// the upper bound of a range, then the sort and the limit. A condition that takes a truth
+    /// value shows a button rather than a field, and Tab passes it by. While the rules load or
+    /// after they failed to, only the name is drawn, so only the name is visited.
+    fn tab_order(&self, cx: &App) -> Vec<FocusHandle> {
+        let mut order = vec![self.name.read(cx).focus_handle(cx)];
+        if self.loading || self.failed.is_some() || self.rules.is_none() {
+            return order;
+        }
+        for row in self.row_data() {
+            let RowData::Condition {
+                key,
+                field,
+                operator,
+                truth,
+                ..
+            } = row
+            else {
+                continue;
+            };
+            let Some(inputs) = self.values.get(&key) else {
+                continue;
+            };
+            let shape = operator.operand_shape();
+            let boolean = field_kind(&field) == FieldKind::Boolean
+                && matches!(operator, Operator::Is | Operator::IsNot);
+            if truth.is_some() && (shape == OperandShape::Truth || boolean) {
+                continue;
+            }
+            order.push(inputs.low.read(cx).focus_handle(cx));
+            if shape == OperandShape::Range {
+                order.push(inputs.high.read(cx).focus_handle(cx));
+            }
+        }
+        order.push(self.sort.read(cx).focus_handle(cx));
+        order.push(self.limit.read(cx).focus_handle(cx));
+        order
+    }
+
     fn row_data(&self) -> Vec<RowData> {
         let Some(rules) = &self.rules else {
             return Vec::new();
