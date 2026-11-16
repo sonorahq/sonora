@@ -48,6 +48,7 @@ mod themes;
 pub use header::SettingsHeader;
 use layout::section_title;
 pub(crate) use layout::{Layout, frame};
+pub(crate) use accounts::{Offer, Press, ProviderRow};
 pub(crate) use rows::Row;
 
 /// The space between two groups of a page.

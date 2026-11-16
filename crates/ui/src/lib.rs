@@ -63,6 +63,7 @@ mod vacancy;
 mod veil;
 mod view;
 mod visualizer;
+mod lattice;
 mod waves;
 
 pub use arrow_ring::ArrowRing;
@@ -165,4 +166,5 @@ pub use vacancy::Vacancy;
 pub use veil::{VeilEdge, effects, veil};
 pub use view::Mode;
 pub use visualizer::{Levels, Visualizer, VisualizerStyle};
+pub use lattice::Lattice;
 pub use waves::Waves;

@@ -35,7 +35,9 @@ const CHOICES: f32 = 3.;
 const GUEST: &str = "guest";
 
 /// What a row does when it is clicked.
-type Press = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+pub(crate) type Press = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+/// What a row tells its owner when the pointer enters or leaves it.
+pub(crate) type Hovered = Box<dyn Fn(&bool, &mut Window, &mut App)>;
 
 pub(super) struct Account {
     slug: &'static str,
@@ -730,6 +732,7 @@ impl SettingsView {
             press: press.filter(|_| !pending),
             error,
             place,
+            hovered: None,
         }
         .into_any_element()
     }
@@ -776,6 +779,7 @@ impl SettingsView {
             press: press.filter(|_| !pending),
             error: None,
             place,
+            hovered: None,
         }
         .into_any_element()
     }
@@ -1203,7 +1207,7 @@ fn line(theme: &Theme, step: Text) -> Pixels {
 }
 
 /// What a provider row ends with.
-pub(super) enum Offer {
+pub(crate) enum Offer {
     /// The radio saying whether the row is the one in use, with the sign out button before it
     /// when there is an account to leave.
     Choice { leave: Option<AnyElement> },
@@ -1222,18 +1226,19 @@ pub(super) enum Offer {
 /// row as one node named after the provider, a radio button for an account to switch to and a
 /// button for one to sign in to, with the status, hint and error as its description.
 #[derive(IntoElement)]
-pub(super) struct ProviderRow {
-    id: SharedString,
-    logo: &'static str,
-    brand: Hsla,
-    active: bool,
-    name: SharedString,
-    status: Option<SharedString>,
-    offer: Offer,
-    press: Option<Press>,
-    error: Option<Failure>,
+pub(crate) struct ProviderRow {
+    pub(crate) id: SharedString,
+    pub(crate) logo: &'static str,
+    pub(crate) brand: Hsla,
+    pub(crate) active: bool,
+    pub(crate) name: SharedString,
+    pub(crate) status: Option<SharedString>,
+    pub(crate) offer: Offer,
+    pub(crate) press: Option<Press>,
+    pub(crate) error: Option<Failure>,
     /// The row's index in the list and the list's length.
-    place: (usize, usize),
+    pub(crate) place: (usize, usize),
+    pub(crate) hovered: Option<Hovered>,
 }
 
 impl RenderOnce for ProviderRow {
@@ -1249,6 +1254,7 @@ impl RenderOnce for ProviderRow {
             press,
             error,
             place: (position, count),
+            hovered,
         } = self;
         let theme = *cx.theme();
         let role = match offer {
@@ -1325,8 +1331,11 @@ impl RenderOnce for ProviderRow {
             .px_3()
             .rounded(theme.radius)
             .bg(fill)
-            .on_hover(move |hovered, window, cx| {
-                fade.update(cx, |fade, _| fade.set(*hovered));
+            .on_hover(move |inside, window, cx| {
+                fade.update(cx, |fade, _| fade.set(*inside));
+                if let Some(hovered) = &hovered {
+                    hovered(inside, window, cx);
+                }
                 window.refresh();
             })
             .when_some(press, |this, press| {

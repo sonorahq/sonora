@@ -5,7 +5,7 @@
 use std::sync::OnceLock;
 
 use gpui::prelude::*;
-use gpui::{Corners, Pixels, Shader, ShaderInstance, ShaderSource, canvas};
+use gpui::{Bounds, Corners, Pixels, Shader, ShaderInstance, ShaderSource, canvas};
 
 /// One WGSL effect, validated and registered with GPUI the first time it paints. A source that
 /// fails validation is logged by GPUI once and then paints nothing.
@@ -38,11 +38,21 @@ impl Effect {
         instance: ShaderInstance,
         radius: Pixels,
     ) -> impl IntoElement {
+        self.fill_with(radius, move |_| instance)
+    }
+
+    /// Like `fill`, but builds the instance once the bounds are known, for an effect whose
+    /// parameters are measured from the surface it paints, such as a pointer position.
+    pub(crate) fn fill_with(
+        &'static self,
+        radius: Pixels,
+        instance: impl FnOnce(Bounds<Pixels>) -> ShaderInstance + 'static,
+    ) -> impl IntoElement {
         canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
                 if let Some(shader) = self.shader() {
-                    window.paint_shader(bounds, Corners::all(radius), &shader, instance);
+                    window.paint_shader(bounds, Corners::all(radius), &shader, instance(bounds));
                 }
             },
         )

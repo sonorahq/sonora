@@ -89,6 +89,7 @@ enum SecretInput {
     Manual,
 }
 
+#[derive(Clone)]
 pub struct ProviderInfo {
     pub slug: &'static str,
     pub name: &'static str,
@@ -606,6 +607,9 @@ impl Session {
                         .any(|option| matches!(option, SignIn::Anonymous))
             })
             .map(|(_, provider)| provider.slug());
+        // TODO: prototype only. The login redesign lab sets SONORA_LOGIN to land on the sign-in
+        // screen on a first run instead of the guest session.
+        let guest = guest.filter(|_| std::env::var_os("SONORA_LOGIN").is_none());
 
         if next.is_none() && guest.is_none() {
             match error {
