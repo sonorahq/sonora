@@ -123,6 +123,7 @@ pub fn playlist_from(id: &str, content: &RootList, username: &str) -> models::Pl
         cover: playlist_cover(&content.attributes),
         track_count: content.length().max(0) as u32,
         modified_at: seconds(content.timestamp()),
+        read_only: false,
     }
 }
 
@@ -168,6 +169,7 @@ pub fn playlists_from(rootlist: &RootList) -> Vec<models::Playlist> {
                 cover: meta.and_then(|meta| playlist_cover(&meta.attributes)),
                 track_count: meta.map(|meta| meta.length()).unwrap_or_default().max(0) as u32,
                 modified_at: None,
+                read_only: false,
             })
         })
         .collect()

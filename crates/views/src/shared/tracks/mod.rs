@@ -868,7 +868,7 @@ impl TableSource for TrackSource {
         };
         match detail.read(cx).reorder(cx) {
             Reorder::On => RowMoves::On,
-            Reorder::Unsupported => RowMoves::Refused,
+            Reorder::Unsupported | Reorder::Ruled => RowMoves::Refused,
             Reorder::Off => RowMoves::Off,
         }
     }

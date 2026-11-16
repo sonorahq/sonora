@@ -135,6 +135,14 @@ impl ItemMenu {
     ) -> Menu {
         let ids: Vec<String> = tracks.iter().filter_map(|track| track.id.clone()).collect();
         let count = tracks.len();
+        // A playlist that picks its own tracks offers no removal at all.
+        if detail
+            .read(cx)
+            .playlist()
+            .is_some_and(|playlist| playlist.read_only)
+        {
+            return self.build(tracks, None, None, None, columns, cx);
+        }
         let remove = match ids.is_empty() {
             true => MenuItem::new(
                 "remove-from-playlist",
@@ -201,7 +209,7 @@ impl ItemMenu {
             .state(shelf)
             .playlists()
             .iter()
-            .filter(|playlist| playlist.owned || playlist.collaborative)
+            .filter(|playlist| playlist.takes_tracks())
             .cloned()
             .collect();
         let ids = match &addition {

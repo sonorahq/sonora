@@ -364,6 +364,7 @@ pub fn playlist(value: &Value, user_id: &str) -> Option<Playlist> {
             .or_else(|| text(value, &["picture_medium"]).map(str::to_owned)),
         track_count: number(value, &["NB_SONG", "nb_tracks"]).unwrap_or(0) as u32,
         modified_at: when(value, &["DATE_MOD"]),
+        read_only: false,
     })
 }
 
@@ -510,6 +511,7 @@ fn made(id: String, name: &str, cover: Option<String>, track_count: u32) -> Play
         cover,
         track_count,
         modified_at: None,
+        read_only: false,
     }
 }
 

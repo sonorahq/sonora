@@ -342,6 +342,7 @@ fn item(item: Item) -> Option<GenreItem> {
             cover: playlist.images.items.first().and_then(image),
             track_count: 0,
             modified_at: None,
+            read_only: false,
         })),
         Entity::Album(album) => {
             let artists: Vec<ArtistRef> = album

@@ -2150,6 +2150,7 @@ impl Library {
                             owned: created.owned,
                             public: created.public,
                             track_count: created.track_count,
+                            read_only: true,
                             ..Default::default()
                         },
                         cx,
@@ -2203,12 +2204,14 @@ impl Library {
                     let name = saved.name.clone();
                     let public = saved.public;
                     let track_count = saved.track_count;
+                    let read_only = saved.rules.is_some();
                     this.amend_playlist(
                         &changed,
                         |playlist| {
                             playlist.name = name;
                             playlist.public = public;
                             playlist.track_count = track_count;
+                            playlist.read_only = read_only;
                         },
                         cx,
                     );
@@ -2430,6 +2433,13 @@ impl Library {
         cx: &mut Context<Self>,
     ) {
         if addition.is_empty() {
+            return;
+        }
+        if self
+            .playlist(&playlist_id)
+            .is_some_and(|playlist| playlist.read_only)
+        {
+            Toasts::show(Outcome::Info, "toast-playlist-ruled", cx);
             return;
         }
         let added = playlist_id.clone();
@@ -3177,10 +3187,10 @@ impl Library {
             .then_some(playlist.track_count)
     }
 
-    /// Whether the listener may change the playlist `id`: one they own or collaborate on.
+    /// Whether the listener may change the tracks of the playlist `id`: one they own or
+    /// collaborate on whose provider does not choose its tracks itself.
     pub fn is_editable(&self, id: &str) -> bool {
-        self.playlist(id)
-            .is_some_and(|playlist| playlist.owned || playlist.collaborative)
+        self.playlist(id).is_some_and(Playlist::takes_tracks)
     }
 
     fn paint_mosaic(

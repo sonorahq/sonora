@@ -627,15 +627,18 @@ impl SubsonicClient {
             .cover_art
             .as_deref()
             .and_then(|id| self.cover_url(id, COVER));
-        wire::playlist(
-            &source.id,
-            &source.name,
-            source.owner.as_deref(),
-            source.public.unwrap_or(false),
-            source.song_count.unwrap_or(0).max(0) as u32,
-            cover,
-            &self.username,
-        )
+        Playlist {
+            read_only: source.readonly.unwrap_or(false),
+            ..wire::playlist(
+                &source.id,
+                &source.name,
+                source.owner.as_deref(),
+                source.public.unwrap_or(false),
+                source.song_count.unwrap_or(0).max(0) as u32,
+                cover,
+                &self.username,
+            )
+        }
     }
 
     fn artist_cover(
@@ -1425,6 +1428,7 @@ impl MusicApi for SubsonicClient {
             cover,
             &self.username,
         );
+        playlist.read_only = detail.readonly.unwrap_or(false);
         if playlist.track_count == 0 {
             playlist.track_count = tracks.len() as u32;
         }
