@@ -26,6 +26,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Apple Music no longer lists an album whose songs were all removed from your library as a blank album with no artist or cover.
 - Long Opus and Ogg files from Navidrome, Subsonic or Jellyfin start playing right away instead of after the whole file has downloaded.
 - Sorting your Apple Music songs by Date added puts your latest additions first instead of ordering them by title.
+- Create a local playlist again while signed in to a streaming service, by picking Local files in the Create playlist dialog.
+- Creating a playlist on Apple Music no longer fails with an error when Apple leaves the new playlist out of its answer.
 
 ## [0.50.0] - 2026-11-16
 
