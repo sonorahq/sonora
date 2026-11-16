@@ -13,11 +13,13 @@ mod flight;
 mod form;
 mod glass;
 mod glide;
+mod hold;
 mod info_card;
 mod inline_links;
 mod input;
 mod kbd;
 mod label;
+mod lattice;
 mod layout;
 mod lazy;
 mod level_meter;
@@ -88,6 +90,7 @@ pub use glass::{
     GLASS_BLUR, GLASS_FILL, bar_surface, blurring, frost, glass, popover_fill, popover_surface,
 };
 pub use glide::{Glide, ScrollPosition};
+pub use hold::{Held, Hold, held};
 pub use info_card::{Fact, InfoCard};
 pub use inline_links::{InlineLink, InlineLinks};
 pub use input::{
@@ -101,6 +104,7 @@ pub use label::{
     Tails, eyebrow, eyebrow_with, faint, heading, spoken, spoken_eyebrow, spoken_heading,
     spoken_vacant, vacant,
 };
+pub use lattice::Lattice;
 pub use layout::{ALWAYS, MIN_CONTENT, ROOMY, Room, SNUG, VAST, WIDE};
 pub use lazy::Lazy;
 pub use level_meter::LevelMeter;
@@ -143,9 +147,10 @@ pub use spinner::{Spin, Spinner};
 pub use swipe::{hold_swipe, swipe_pull, swiped};
 pub use switch::Switch;
 pub use table::{
-    Activate, Cell, ColumnSpec, Deselect, Layout, Listing, Pending, ROW_GROUP, Remove, SelectNext,
-    SelectPrevious, Sort, Sorting, TABLE_CONTEXT, Table, TableDelegate, TableEvent, TableSource,
-    TableState, Toggle, Viewport, Width, clear_listing, rank, show_listing, shown_listing, table,
+    Activate, Cell, ColumnSpec, Deselect, Layout, Listing, MoveRowDown, MoveRowUp, Pending,
+    ROW_GROUP, Remove, RowMoves, SelectNext, SelectPrevious, Sort, Sorting, TABLE_CONTEXT, Table,
+    TableDelegate, TableEvent, TableSource, TableState, Toggle, Viewport, Width, clear_listing,
+    rank, show_listing, shown_listing, table,
 };
 pub use tabs::{TabBar, Tabs};
 pub use theme::{

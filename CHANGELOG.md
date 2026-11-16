@@ -7,16 +7,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- The account menu no longer lists YouTube Music when you are signed in elsewhere and only used guest mode before. Guest mode shows there under its own name while you use it.
+
+## [0.50.0] - 2026-11-16
+
 ### Added
 
+- Play the music on your own Jellyfin server, signed in with your password or Quick Connect, with favorites, playlists, instant mixes, downloads and word-synced lyrics from the server.
+- Control Sonora from Jellyfin's apps and dashboard, and play on your other Jellyfin apps from the devices menu.
+- Songs, albums and artists uploaded to your Apple Music library through iTunes or the Music app can now be browsed and played.
 - Use Sonora in European Portuguese. A system set to Portuguese from Portugal picks it on its own.
-- Open an album's cover from its page to see the original artwork full size, zoom in with the wheel or the buttons and drag it around.
+- Use Sonora in Vietnamese. A system set to Vietnamese picks it on its own.
+- Pick which Navidrome library a Subsonic account browses from the account's settings.
+- Open the cover of an album or a playlist, or an artist's photo, from its page to see the original artwork full size, zoom in with the wheel or the buttons and drag it around.
 - Press Ctrl+K (⌘K on macOS) anywhere to search. Enter plays a song right away, Ctrl+Enter opens its page, and the artist and album under a result open theirs.
+- Click the tray icon on Windows to show Sonora's window, or to hide it when it is already open.
 - Scrobble to your own ListenBrainz server or to multi-scrobbler by filling in the server address when you connect ListenBrainz.
 - Name your Discord status after the album artist under Settings, Discord, Status name.
 - Hover a cut-off track title in the player bar to read it in full.
 - YouTube Music artist pages list the artist's music videos after their popular songs, and song search finds music videos too.
 - Show a local file's own cover on the Discord status, uploaded for 3 hours to uguu.se like Subsonic covers. Turn it off under Settings, Discord.
+- Pin your liked songs to the sidebar by right-clicking or dragging the cover on their page, and a Liked Songs pin on Spotify shows up there too.
 - Show the time left in the song instead of its length in the player bar, under Settings, Player bar.
 - `sonora queue` prints what played, what plays and what follows, and `sonora queue --json` gives the same queue to a script, without changing playback.
 - `sonora lyrics` prints the lyrics of the current track with their times, and `sonora lyrics --json` also gives a script the line sung now and the next one.
@@ -24,15 +37,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `sonora mute` reads or changes playback mute and restores the previous volume when unmuted.
 - Rebind keyboard shortcuts under Settings, Keybinds, and give shuffle, repeat, the queue and lyrics shortcuts of their own.
 - Move between the fields of a dialog with Tab and Shift+Tab.
+- Up and Down change the volume, and Left and Right skip back or forward 5 seconds, unless a list, menu or text field is using the arrow keys.
 - Use Sonora in Korean.
 - Open a music folder in your file manager from Settings, Music folders.
 - Library pages that list both local and streaming music mark local files with a file icon beside their names.
+- Deezer plays in hi-res, up to 24-bit 192 kHz FLAC, on tracks that have it. Pick Hi-res under Settings, Playback.
 - Tidal artist pages show how many people follow the artist, beside the listener count.
 - See Sonora's similar tracks on your other Spotify devices under their recommended tracks, and Spotify's recommendations from another device apart from what is up next in Sonora.
+- Opening a file from a file manager can now switch to the now playing view automatically, if enabled in Settings > General.
+- Sonora supports drag-and-drop from other programs, like file managers, into the queue. The line shows the place in the queue where the files will land, the same one in-app drops use.
 - See how much of the song is left on Sonora's taskbar button on Windows. The button fills as the song plays and turns yellow while it is paused.
+- Browse Tidal's moods and decades from Explore after the genres, and open each one to see its shelves.
+- Nightly builds show the commit they were built from beside the version under Settings, About.
+- Skip sponsors, self-promotion and non-music sections on YouTube Music with SponsorBlock, with sections marked on the seek bar.
+- Subsonic lyrics provider can now read OpenSubsonic's enhanced cueLine data for karaoke lyrics.
+- Play or queue a local song, album, artist or playlist from the command line with `sonora play -s <name> --local`, or `add` and `play-next` with `--local`.
+- Reorder the songs of a playlist you own by dragging them, with Alt+Up and Alt+Down, or with Move up and Move down in a song's menu.
+- Pick the service Sonora opens with under Settings, General, or keep the one you used last.
+- Set Sonora up on NixOS with the flake's NixOS module, next to the Home Manager one.
 
 ### Fixed
 
+- Tag editing, deleting a track file and other dialogs opened from the fullscreen player now show over it, and so do toasts.
+- The follow and return buttons on fullscreen lyrics and the queue stay sharp above the visualizer instead of under it.
+- Resizing the window or a sidebar keeps the cards, rails and lyrics you were looking at in view on Home, provider pages, album and playlist pages and search, instead of jumping elsewhere.
+- Signing in to a Deezer Family account asks which profile to use instead of always picking the account owner's, so each member sees their own playlists.
 - `sonora like` waits for the provider to confirm a favorite change and reports if it fails.
 - A song you favorite or unfavorite while the library is refreshing stays that way instead of flipping back.
 - Unmuting now respects volume changes made on another device.
@@ -43,22 +72,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A friend editing the queue of your Spotify Jam no longer clears your listening history in Sonora.
 - Seeking from another device while a track is still loading no longer leaves Sonora showing it as loading.
 - The Flatpak shows your Discord status in Vesktop and in Discord installed from Flathub.
+- Tracks queued from another Spotify app now appear in Sonora's queue and play when selected on that app while using Soloist.
 - On Linux with WebKitGTK 2.54 or newer, signing in to Apple Music no longer fills all your memory and crashes Sonora before the sign-in page loads.
 - Tidal artists with no portrait show the album cover Tidal draws them with, instead of an empty picture.
 - Releases tagged with the label `[no label]` no longer show a copyright line crediting it.
 - The fullscreen player's ambient background no longer leaves a light line along the right and bottom edges of the window.
 - The ambient background in fullscreen uses far less GPU, so laptops with integrated graphics stay cooler.
+- Unsynced lyrics in a `.lrc` file beside a song show in the lyrics panel, as embedded lyrics do.
 - The Nix package runs Soloist on NixOS without nix-ld.
 - Apple Music search no longer runs into "Too Many Requests" while you type.
 - A page that cannot load says so in a plain sentence instead of the raw error, and a busy service asks you to wait a minute.
 - A bare `sonora://` or `sonora://open` now brings Sonora to the front instead of showing an error toast.
 - The Spotify Jams submenu no longer comes up already open the next time you open the Sessions menu.
+- Pressing play on a pinned song from your local files now plays it instead of doing nothing.
+- Subsonic genre pages list every album, song and artist of the genre instead of only some of them.
+- YouTube Music playlists made before your account had a channel show up in Add to playlist and can be edited, renamed and deleted.
+- On KDE Plasma the window stays blurred all over after it grows.
+- Connecting an audio device Sonora cannot play to no longer leaks memory with PulseAudio.
+- Menus opened from an album or playlist header keep their usual row height.
 
 ### Changed
 
-- On a wide window pages stop growing at 1600 pixels and stay centred, while artist banners still reach the edges.
+- The sign-in screen lists every music service in one card over a softly lit backdrop, and a service with more than one way to sign in asks which one in a dialog.
+- Dialogs dim the title bar along with the rest of the window, and Escape closes them wherever the keyboard focus is.
+- Pressed buttons shrink alike whatever their width, so a wide button no longer squeezes much harder than a small one.
+- Dialogs have roomier fields and full-height buttons, and the field you type in wears a soft ring.
+- On a wide window pages stop growing at 1280 pixels and stay centred, while artist banners still reach the edges. Song tables then sit in a bordered frame like the one on artist pages.
 - The fullscreen button now swaps in place when the fullscreen player opens or closes, instead of fading and zooming with it.
 - Your accounts now open Settings, General, and the separate Providers tab is gone.
+- Play buttons and menus say «Играть» in Russian and «Spielen» in German.
 - Ctrl+F (⌘F on macOS) now opens search and / filters the page you are on, and shortcuts list Ctrl before Shift.
 - Hovered rows share one fill in tables, cards and the sidebar, the softer one the sidebar used.
 - History is now called Recents and shows in the sidebar right under Search. Hide it again under Settings, General, Sidebar entries. Settings, once added there, sits right under Recents.
@@ -71,6 +113,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Songs, Albums, Artists and Playlists are rows of their own in the sidebar under a Library heading, and the icon-only sidebar shows them as icons too.
 - Import an M3U playlist from the Create playlist dialog, which replaces the import button in the Playlists toolbar.
 - History and Settings moved from the sidebar to the account menu at the top right, which also switches between your connected services and opens Manage accounts. Add them back to the sidebar under Settings, General, Sidebar entries.
+- Opening tracks from a file manager now starts the first one with no delay, then queues the rest.
+- Date added sorts Apple Music, YouTube Music and local playlists in the order you added songs.
+- Q and L show the queue and the lyrics by default, and in the fullscreen player they open its own panels instead of the sidebar behind it.
 
 ## [0.49.1] - 2026-11-13
 
@@ -95,6 +140,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Tidal tracks show their bit depth or bit rate in the signal path.
 - Keep plays from the signed-in provider out of Last.fm and the other linked services with a switch in Scrobbling, for accounts that already scrobble on their own.
 - Sonora's app icon follows the dark, clear and tinted icon styles on macOS 26 and later.
+- Drag songs into a new order in your own playlists on local files, Spotify and Subsonic servers, or move one with Alt+Up and Alt+Down.
 
 ### Changed
 
@@ -160,6 +206,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to hardware, and picking one there keeps every other app off it.
 - Turn on Match sample rate in the sound settings to have a Direct to hardware device follow
   each track's own sample rate on Linux and macOS.
+- Genre pages on Subsonic and Navidrome show all of a genre's albums and songs along with credited
+  artists, not only the first 50 albums.
 - Swipe two fingers sideways on a touchpad to go back or forward a page.
 - A quick flick on a touchpad under Wayland keeps the page scrolling for a moment after your fingers lift.
 - An artist's page links to the songs of theirs you have in your Favorites, so you can see and play them together, and take one out with the X that appears when you point at it.
@@ -2705,7 +2753,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.49.1...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.50.0...HEAD
+[0.50.0]: https://github.com/sonorahq/sonora/compare/v0.49.1...v0.50.0
 [0.49.1]: https://github.com/sonorahq/sonora/compare/v0.49.0...v0.49.1
 [0.49.0]: https://github.com/sonorahq/sonora/compare/v0.48.1...v0.49.0
 [0.48.1]: https://github.com/sonorahq/sonora/compare/v0.48.0...v0.48.1

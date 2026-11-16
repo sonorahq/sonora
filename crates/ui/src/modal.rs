@@ -1,15 +1,18 @@
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Div, ElementId, Entity, FontWeight, Global, MouseButton, Pixels, Point,
-    ScrollWheelEvent, SharedString, StyleRefinement, Window, anchored, deferred, div, point,
+    AnyElement, App, Context, Div, ElementId, Entity, FontWeight, Global, MouseButton, Pixels,
+    Point, ScrollWheelEvent, SharedString, StyleRefinement, Subscription, Window, WindowId,
+    anchored, deferred, div, point, px,
 };
 
 use crate::button::Button;
 use crate::linger::Linger;
+use crate::menu::{ESCAPE_KEY, menu_open};
 use crate::metrics::{Rounding, Text, snapped};
 use crate::motion::Rising as _;
 use crate::scrollbar::Scrollbar;
@@ -17,14 +20,65 @@ use crate::scroller::middle_scroll;
 use crate::shield::Shield;
 use crate::theme::ActiveTheme as _;
 
-const BACKDROP: f32 = 0.8;
-const WIDTH: f32 = 2.4;
+/// How many covers wide a dialog is.
+const WIDTH: f32 = 2.75;
+/// How far the close button sits from the top and the end of the dialog. Its cross then sits
+/// as far in as a small button's padding takes it.
+const CLOSE_INSET: Pixels = px(11.);
+/// How much of the close button shows until the pointer comes to it.
+const CLOSE_FADE: f32 = 0.7;
 /// How many times the theme radius a dialog's corners take. A surface this large reads square at
 /// the radius a button uses, and scaling it keeps a dialog square when corners are set to square.
 /// The scaled radius never passes what Rounded gives, since Round doubled bulges a dialog.
 const ROUNDING: f32 = 2.;
 
 type Dismiss = Rc<dyn Fn(&(), &mut Window, &mut App)>;
+
+thread_local! {
+    /// The mark of the dialog rendered last. Dialogs render in the order they stack, so the one
+    /// holding this mark is the topmost.
+    static LATEST: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Closes a dialog on escape, wherever the key focus is. It lives in the dialog's element state,
+/// so it goes away with the dialog. Only the topmost dialog answers, and an open menu over it
+/// takes the escape first.
+struct EscapeGuard {
+    mark: Rc<Cell<u64>>,
+    dismiss: Rc<RefCell<Option<Dismiss>>>,
+    _keys: Subscription,
+}
+
+impl EscapeGuard {
+    fn new(window: WindowId, cx: &mut Context<Self>) -> Self {
+        let mark = Rc::new(Cell::new(0));
+        let dismiss: Rc<RefCell<Option<Dismiss>>> = Rc::default();
+        let keys = cx.intercept_keystrokes({
+            let (mark, dismiss) = (mark.clone(), dismiss.clone());
+            move |event, target, cx| {
+                let keystroke = &event.keystroke;
+                if keystroke.key != ESCAPE_KEY
+                    || keystroke.modifiers.modified()
+                    || target.window_handle().window_id() != window
+                    || LATEST.with(Cell::get) != mark.get()
+                    || menu_open(cx)
+                {
+                    return;
+                }
+                let Some(dismiss) = dismiss.borrow().clone() else {
+                    return;
+                };
+                cx.stop_propagation();
+                dismiss(&(), target, cx);
+            }
+        });
+        Self {
+            mark,
+            dismiss,
+            _keys: keys,
+        }
+    }
+}
 
 #[derive(Default)]
 struct Bars(HashMap<ElementId, Entity<Scrollbar>>);
@@ -82,8 +136,10 @@ impl Modal {
         self
     }
 
-    pub fn action(mut self, action: impl IntoElement) -> Self {
-        self.actions.push(action.into_any_element());
+    /// Adds an answer to the row along the bottom, which stands as tall as a text field and
+    /// outlines a ghost button.
+    pub fn action(mut self, action: Button) -> Self {
+        self.actions.push(action.answer().into_any_element());
         self
     }
 
@@ -129,8 +185,9 @@ impl Styled for Modal {
 impl RenderOnce for Modal {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = *cx.theme();
-        let pad = theme.metrics.pad;
-        let room = pad * 2.;
+        let room = theme.metrics.inset;
+        let gap = theme.metrics.pad * 2.;
+        let heading = theme.text(Text::Heading);
         let Self {
             mut base,
             id,
@@ -143,11 +200,28 @@ impl RenderOnce for Modal {
             close_button,
         } = self;
         let outside = dismiss.clone();
+        let mark = LATEST.with(|latest| {
+            latest.set(latest.get() + 1);
+            latest.get()
+        });
+        if let Some(dismiss) = dismiss.clone() {
+            let window_id = window.window_handle().window_id();
+            let guard = window.use_keyed_state(
+                ElementId::NamedChild(Arc::new(id.clone()), "escape".into()),
+                cx,
+                |_, cx| EscapeGuard::new(window_id, cx),
+            );
+            let guard = guard.read(cx);
+            guard.mark.set(mark);
+            *guard.dismiss.borrow_mut() = Some(dismiss);
+        }
         // with no action row under it the body carries the bottom padding itself, so the
-        // panel is inset by the same amount all the way round
+        // panel is inset by the same amount all the way round. Above an action row it keeps
+        // enough of it that the focus ring of a field at its foot is not cut off by the
+        // scrolling body, and the row takes the rest.
         let tail = match actions.is_empty() {
             true => room,
-            false => pad,
+            false => theme.metrics.pad,
         };
         let close = dismiss.clone().filter(|_| close_button);
         let overrides = std::mem::take(base.style());
@@ -161,13 +235,15 @@ impl RenderOnce for Modal {
 
         // The window is the modal's frame, not the pane that raised it: anchored to window
         // coordinates and deferred, so a page with chrome floating over it cannot cover the
-        // modal or crop it. The title bar stays reachable, the way a menu leaves it.
+        // modal or crop it. The scrim dims the title bar with the rest of the window, and the
+        // panel centres in the room under the bar.
         let chrome = snapped(theme.metrics.title_bar, window);
         let viewport = window.viewport_size();
         let frame = div()
             .w(viewport.width)
-            .h(viewport.height - chrome)
+            .h(viewport.height)
             .p(theme.metrics.inset)
+            .pt(chrome + theme.metrics.inset)
             .flex()
             .items_center()
             .justify_center()
@@ -179,7 +255,7 @@ impl RenderOnce for Modal {
                     Shield::new(id.clone())
                         .absolute()
                         .inset_0()
-                        .bg(theme.background.opacity(BACKDROP))
+                        .bg(theme.overlay)
                         .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                             cx.stop_propagation();
@@ -208,7 +284,7 @@ impl RenderOnce for Modal {
                     .border_1()
                     .border_color(theme.border)
                     .bg(theme.popover)
-                    .shadow_md()
+                    .shadow_lg()
                     .overflow_hidden()
                     .child(
                         div()
@@ -216,40 +292,55 @@ impl RenderOnce for Modal {
                             .flex_none()
                             .items_start()
                             .gap_2()
-                            .px(room)
+                            .pl(room)
                             .pt(room)
-                            .pb(pad)
+                            // the title keeps clear of the close button in the corner
+                            .pr(match close.is_some() {
+                                true => CLOSE_INSET + theme.metrics.control_small + gap,
+                                false => room,
+                            })
                             .child(
                                 div()
                                     .flex()
                                     .flex_1()
                                     .min_w_0()
                                     .flex_col()
-                                    .gap_1()
+                                    .gap_1p5()
                                     .child(
                                         div()
-                                            .text_size(theme.text(Text::Large))
+                                            .text_size(heading)
+                                            .line_height(heading)
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .child(title),
                                     )
                                     .when_some(detail, |this, detail| {
                                         this.child(
                                             div()
-                                                .text_size(theme.text(Text::Small))
+                                                .text_size(theme.text(Text::Body))
                                                 .text_color(theme.muted_foreground)
                                                 .child(detail),
                                         )
                                     }),
                             )
-                            .children(trailing)
-                            .children(close.map(|close| {
+                            .children(trailing),
+                    )
+                    .children(close.map(|close| {
+                        div()
+                            .absolute()
+                            .top(CLOSE_INSET)
+                            .right(CLOSE_INSET)
+                            .opacity(CLOSE_FADE)
+                            .hover(|this| this.opacity(1.))
+                            .child(
                                 Button::new("modal-close")
                                     .icon("icons/x.svg")
                                     .small()
+                                    .ghost()
+                                    .hoverless()
                                     .tooltip("common-dismiss")
-                                    .on_click(move |_, window, cx| close(&(), window, cx))
-                            })),
-                    )
+                                    .on_click(move |_, window, cx| close(&(), window, cx)),
+                            )
+                    }))
                     .when(!body.is_empty(), |this| {
                         this.child(
                             div()
@@ -268,9 +359,9 @@ impl RenderOnce for Modal {
                                         .w_full()
                                         .min_w_0()
                                         .min_h_0()
-                                        .gap(pad)
+                                        .gap(gap)
                                         .px(room)
-                                        .pt(pad)
+                                        .pt(room)
                                         .pb(tail)
                                         .overflow_y_scroll()
                                         .track_scroll(scroller.read(cx).scroll())
@@ -298,8 +389,9 @@ impl RenderOnce for Modal {
                                 .flex_none()
                                 .justify_end()
                                 .gap_2()
-                                .p(room)
-                                .pt(pad)
+                                .px(room)
+                                .pb(room)
+                                .pt(room - tail)
                                 .children(actions),
                         )
                     });
@@ -309,7 +401,7 @@ impl RenderOnce for Modal {
 
         deferred(
             anchored()
-                .position(point(Pixels::ZERO, chrome))
+                .position(point(Pixels::ZERO, Pixels::ZERO))
                 .child(frame),
         )
     }

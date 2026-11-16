@@ -382,6 +382,7 @@ impl From<&ui::Pin> for Destination {
             ui::PinKind::Artist => Destination::Artist(id),
             ui::PinKind::Playlist => Destination::Playlist(id),
             ui::PinKind::Song => Destination::Song(id),
+            ui::PinKind::Liked => Destination::Library(LibraryTab::Songs),
         }
     }
 }

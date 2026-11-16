@@ -4,7 +4,7 @@ use std::rc::Rc;
 use gpui::accesskit::{Role, Toggled};
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Entity, FontWeight, Pixels, Point, Render, ScrollHandle,
+    AnyElement, App, ClickEvent, Context, Entity, FontWeight, Pixels, Point, Render, ScrollHandle,
     ScrollWheelEvent, SharedString, WeakEntity, Window, div, linear_color_stop, linear_gradient,
     point, px, relative,
 };
@@ -29,6 +29,7 @@ use crate::shared::about::{AboutArtist, about_modal};
 use crate::shared::album_grid::CardGrid;
 use crate::shared::cards::{self, ReleaseFilter};
 use crate::shared::confirm::Confirm;
+use crate::shared::cover_viewer::CoverViewer;
 use crate::shared::hero::{HeroMetaStrip, HeroPlayButton, PageHero};
 use crate::shared::menus::{ItemMenu, artist_menu};
 use crate::shared::page;
@@ -43,9 +44,6 @@ const LISTED: usize = 5;
 const LISTED_MAX: usize = 10;
 /// The favorites dialog gives two song columns enough room for titles and controls.
 const FAVORITES_WIDTH: f32 = 5.;
-/// The width of the `border_1` around the popular table, which pushes its rows and head below
-/// the box the page measures the scroll from.
-const TABLE_BORDER: Pixels = px(1.);
 /// The least and the most room the banner adds above the hero, as shares of the cover's edge.
 /// In between, the banner box keeps `BANNER_BOX` as its aspect, so a narrow page lifts the
 /// hero less.
@@ -154,6 +152,7 @@ pub(crate) struct ArtistView {
     release_tile: Pixels,
     /// The recommendation rails under the releases, in page order: appears-on.
     rails: Vec<Rail>,
+    cover_viewer: Entity<CoverViewer>,
 }
 
 impl ArtistView {
@@ -281,6 +280,9 @@ impl ArtistView {
 
         let me = cx.entity();
         let toolbar = Toolbar::tooled(&me, cx);
+        let cover_viewer = cx.new(CoverViewer::new);
+        // The hero portrait hides while the viewer shows it, until it lands back on it.
+        cx.observe(&cover_viewer, |_, _, cx| cx.notify()).detach();
 
         Self {
             popular: Rc::new(detail.read(cx).tracks().to_vec()),
@@ -312,6 +314,7 @@ impl ArtistView {
             release_columns: 0,
             release_tile: Pixels::ZERO,
             rails: Vec::new(),
+            cover_viewer,
         }
     }
 
@@ -394,10 +397,26 @@ impl ArtistView {
             .id()
             .map(|id| Pin::new(PinKind::Artist, id, title.clone()).cover(cover.clone()));
 
+        let view_cover = cover.clone().map(|cover| {
+            let view = self.me.clone();
+            let title = title.clone();
+            move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                view.update(cx, |this, cx| {
+                    let owner = this.detail.read(cx).id().map(str::to_owned);
+                    this.cover_viewer.update(cx, |viewer, cx| {
+                        viewer.open(owner, title.clone(), cover.clone(), true, cx);
+                    });
+                })
+                .ok();
+            }
+        });
+
         PageHero::new("artist-hero", title)
             .pending(artist.is_none() && self.detail.read(cx).is_loading())
             .pin(pin)
             .cover(cover)
+            .cover_away(self.cover_viewer.read(cx).is_open())
+            .when_some(view_cover, |hero, on_cover| hero.on_cover_click(on_cover))
             .when(listeners.is_some() || followers.is_some(), |hero| {
                 hero.meta(artist_meta(listeners, followers))
             })
@@ -1254,6 +1273,14 @@ impl Tooled for ArtistView {
 
 impl Render for ArtistView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let artist = self.detail.read(cx);
+        let owner = artist.id().map(str::to_owned);
+        let cover = artist
+            .artist()
+            .and_then(|artist| artist.cover_large.clone());
+        self.cover_viewer.update(cx, |viewer, cx| {
+            viewer.close_if_stale(owner.as_deref(), cover.as_deref(), window, cx)
+        });
         if let Some(failure) = self.failure(cx) {
             return div()
                 .id("artist-failure")
@@ -1283,8 +1310,7 @@ impl Render for ArtistView {
         }
         if self.mode == Mode::List {
             self.table.claim(cx);
-            let mut viewport = page::viewport(&scroll, inset, window);
-            viewport.top = (viewport.top - TABLE_BORDER).max(Pixels::ZERO);
+            let viewport = page::past_border(page::viewport(&scroll, inset, window));
             self.table
                 .update(cx, |table, _| table.set_viewport(viewport));
         }
@@ -1388,6 +1414,7 @@ impl Render for ArtistView {
             .when_some(track_menu, |this, menu| this.child(menu))
             .children(self.about_dialog(cx))
             .children(self.favorites_dialog(window, cx))
+            .child(self.cover_viewer.clone())
             .into_any_element()
     }
 }

@@ -1,13 +1,15 @@
+use std::cell::Cell;
 use std::f32::consts::TAU;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::{
     Animation, AnimationElement, AnimationExt as _, App, ElementId, Entity, HoverListenerMode,
-    Hsla, InteractiveElement, IntoElement, MouseButton, Pixels, RenderOnce, Rgba, SharedString,
-    SpringConfig, SpringState, StatefulInteractiveElement, StyleRefinement, Styled, Window,
-    ease_in_out, ease_out_quint, px,
+    Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, RenderOnce, Rgba,
+    SharedString, SpringConfig, SpringState, StatefulInteractiveElement, StyleRefinement, Styled,
+    Window, canvas, ease_in_out, ease_out_quint, px,
 };
 use i18n::t;
 
@@ -22,10 +24,13 @@ pub(crate) const ENTRANCE_ZOOM: f32 = 0.01;
 
 /// How long a hover highlight takes to fade out, before the listener's pace stretches it.
 const DIM: Duration = Duration::from_millis(100);
-/// How far a pressed control shrinks.
+/// How far a pressed control shrinks at most.
 pub const PRESS_SCALE: f32 = 0.96;
-/// How far a pressed card or tile shrinks; larger things move less.
+/// How far a pressed card or tile shrinks at most.
 pub const PRESS_SCALE_CARD: f32 = 0.975;
+/// The length a press is sized on. A control longer than this shrinks by as many pixels as one
+/// this long would, so a wide button moves its edges no further than a short one.
+const PRESS_REACH: Pixels = px(120.);
 /// How far a scale may sit from its target and still count as landed.
 const SCALE_REST: f32 = 1e-4;
 /// How much of the way down a press goes before it may spring back, so a click shorter than
@@ -842,13 +847,17 @@ struct Held {
     /// the scale keeps going down until it has landed and only then springs back.
     landing: bool,
     scale: Sprung,
+    /// The longer side of the element as last laid out, which sizes the press.
+    length: Rc<Cell<Pixels>>,
     _activation: gpui::Subscription,
 }
 
 /// Animates a paint-only press without changing layout or hitboxes, cancelling it on drag,
-/// pointer exit or loss of window activation. Call this after the element's mouse handlers
-/// and keep `id` stable across frames.
-pub fn pressing<E: InteractiveElement + Styled>(
+/// pointer exit or loss of window activation. `depth` is the scale a short element shrinks to.
+/// One longer than `PRESS_REACH` shrinks by the same number of pixels instead, so every press
+/// moves the edges alike. Call this after the element's mouse handlers and keep `id` stable
+/// across frames.
+pub fn pressing<E: InteractiveElement + Styled + ParentElement>(
     element: E,
     id: &ElementId,
     depth: f32,
@@ -868,9 +877,12 @@ pub fn pressing<E: InteractiveElement + Styled>(
             down: false,
             landing: false,
             scale: Sprung::at(1.),
+            length: Rc::default(),
             _activation: activation,
         }
     });
+    let length = held.read(cx).length.clone();
+    let depth = sized_depth(depth, length.get());
     let scale = held.update(cx, |held, cx| {
         if cx.has_active_drag() {
             held.down = false;
@@ -907,6 +919,16 @@ pub fn pressing<E: InteractiveElement + Styled>(
         false => element,
     };
     element
+        .child(
+            canvas(
+                move |bounds, _, _| length.set(bounds.size.width.max(bounds.size.height)),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
+        )
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             down.update(cx, |held, cx| {
                 held.down = true;
@@ -1023,6 +1045,15 @@ mod system {
     )))]
     pub(super) fn settle(cx: &mut App, _generation: u64) {
         cx.set_reduce_motion(false);
+    }
+}
+
+/// The scale a press of `depth` reaches on an element whose longer side is `length`: `depth`
+/// itself up to `PRESS_REACH`, and past it the scale that takes off as many pixels.
+fn sized_depth(depth: f32, length: Pixels) -> f32 {
+    match length > PRESS_REACH {
+        true => 1. - (1. - depth) * (PRESS_REACH / length),
+        false => depth,
     }
 }
 

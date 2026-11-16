@@ -1,15 +1,16 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use gpui::{App, Context, Entity, Task};
+use gpui::{App, Context, Entity, EventEmitter, Task};
 use music::{
-    Album, AlbumCatalogue, AlbumDetail, ArtistRef, Contributor, Playlist, PlaylistDetail,
-    ReleaseType, SavedArtist, Track,
+    Album, AlbumCatalogue, AlbumDetail, ArtistRef, Capabilities, Contributor, Playlist,
+    PlaylistDetail, ReleaseType, SavedArtist, Track,
 };
 use tokio::task::AbortHandle;
 
 use crate::{
-    Io, Library, LibraryEvent, Network, Session, SessionEvent, SessionState, Sonora, join, mosaic,
+    Io, Library, LibraryEvent, Network, Session, SessionEvent, SessionState, Shelf, Sonora, join,
+    mosaic,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -21,6 +22,37 @@ pub enum Collection {
 enum Loaded {
     Album(Arc<AlbumDetail>),
     Playlist(Arc<PlaylistDetail>),
+}
+
+/// Whether the tracks on a page can be dragged into a new order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reorder {
+    /// Not a playlist the listener edits, or one not fully loaded yet, so there is no order of
+    /// theirs to change.
+    Off,
+    /// The listener's own playlist, on a provider that keeps no order Sonora can change. A
+    /// move is turned away with a message rather than kept on this device alone.
+    Unsupported,
+    /// The rows can be moved, and the provider keeps the new order.
+    On,
+}
+
+impl Reorder {
+    /// What a playlist page allows, from the playlist, what its provider can do and whether
+    /// every page of it is loaded, since a move is counted against the whole playlist.
+    pub fn of(playlist: Option<&Playlist>, capabilities: Capabilities, whole: bool) -> Self {
+        let Some(playlist) = playlist else {
+            return Self::Off;
+        };
+        if !playlist.owned && !playlist.collaborative {
+            return Self::Off;
+        }
+        match (capabilities.playlist_order, whole) {
+            (false, _) => Self::Unsupported,
+            (true, true) => Self::On,
+            (true, false) => Self::Off,
+        }
+    }
 }
 
 pub struct Header {
@@ -37,6 +69,12 @@ pub struct Header {
     /// Zero when the provider does not report a count.
     pub track_count: u32,
     pub cover: Option<String>,
+}
+
+/// Signals that a local album no longer has a page after the library changes
+/// or that it never existed because the opened file is not in the library.
+pub enum DetailEvent {
+    AlbumGone(String),
 }
 
 pub struct Detail {
@@ -62,7 +100,12 @@ pub struct Detail {
     fill: Option<Task<()>>,
     filling_request: Option<AbortHandle>,
     mosaic: Option<Task<()>>,
+    /// Whether a load of the playlist was put off while its new order waits to be written, so it
+    /// runs once the order is written.
+    reload_after_order: bool,
 }
+
+impl EventEmitter<DetailEvent> for Detail {}
 
 impl Detail {
     pub fn new(
@@ -117,12 +160,29 @@ impl Detail {
         })
         .detach();
 
-        cx.subscribe(&library, |this, _, event, cx| match event {
+        cx.subscribe(&library, |this, library, event, cx| match event {
             LibraryEvent::PlaylistGone(id) if this.id.as_deref() == Some(id.as_str()) => {
                 this.clear();
                 cx.notify();
             }
             LibraryEvent::TrackAdded { playlist } | LibraryEvent::PlaylistChanged(playlist)
+                if this.id.as_deref() == Some(playlist.as_str()) =>
+            {
+                // a load now would show the order the provider kept over the moves still on
+                // their way, so it waits for them
+                match library.read(cx).reordering(playlist) {
+                    true => this.reload_after_order = true,
+                    false => this.load(Collection::Playlist, playlist.clone(), false, cx),
+                }
+            }
+            LibraryEvent::PlaylistReordered(playlist)
+                if this.id.as_deref() == Some(playlist.as_str())
+                    && this.reload_after_order
+                    && !library.read(cx).reordering(playlist) =>
+            {
+                this.load(Collection::Playlist, playlist.clone(), false, cx);
+            }
+            LibraryEvent::ReorderFailed(playlist)
                 if this.id.as_deref() == Some(playlist.as_str()) =>
             {
                 this.load(Collection::Playlist, playlist.clone(), false, cx);
@@ -188,6 +248,7 @@ impl Detail {
             fill: None,
             filling_request: None,
             mosaic: None,
+            reload_after_order: false,
         }
     }
 
@@ -293,6 +354,55 @@ impl Detail {
         }));
     }
 
+    /// Whether the page's rows can be moved into a new order.
+    pub fn reorder(&self, cx: &App) -> Reorder {
+        let Some(id) = self.id.as_deref() else {
+            return Reorder::Off;
+        };
+        if self.kind != Some(Collection::Playlist) {
+            return Reorder::Off;
+        }
+        let capabilities = self.session.read(cx).capabilities_of(Shelf::of(id));
+        let offline = Network::lost(cx) && !music::is_local_id(id);
+        let whole = self.loaded
+            && !self.loading
+            && !self.loading_more
+            && self.continuation.is_none()
+            && !offline;
+        Reorder::of(self.playlist.as_ref(), capabilities, whole)
+    }
+
+    /// Moves the playlist's row `from` to `to`, counted after the move, at once on the page,
+    /// and answers whether it moved. The library writes the new order once the listener pauses,
+    /// so several moves go to the provider as one change, and the page loads again if the
+    /// provider refuses it. A page with a row that has no id cannot name what it shows, so it
+    /// moves nothing.
+    pub fn move_track(&mut self, from: usize, to: usize, cx: &mut Context<Self>) -> bool {
+        let len = self.tracks.len();
+        if self.reorder(cx) != Reorder::On || from >= len || to >= len || from == to {
+            return false;
+        }
+        let Some(playlist_id) = self.id.clone() else {
+            return false;
+        };
+        let Some(seen) = self
+            .tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Option<Vec<String>>>()
+        else {
+            return false;
+        };
+        let mut wanted = seen.clone();
+        music::order::move_item(&mut wanted, from, to);
+        self.library.update(cx, |library, cx| {
+            library.reorder_playlist(playlist_id, seen, wanted, cx);
+        });
+        music::order::move_item(&mut self.tracks, from, to);
+        cx.notify();
+        true
+    }
+
     pub fn remove_from_playlist(&mut self, track_id: String, cx: &mut Context<Self>) {
         self.remove_tracks_from_playlist(vec![track_id], cx);
     }
@@ -394,6 +504,8 @@ impl Detail {
         self.id = Some(id.to_owned());
         self.kind = Some(kind);
         self.header = known;
+        // a kept or cached copy holds the order from before moves still on their way
+        self.reload_after_order = self.library.read(cx).reordering(id);
 
         // With no network, or none allowed, a downloaded page opens from its kept copy.
         let offline = Network::lost(cx) && !music::is_local_id(id);
@@ -401,6 +513,12 @@ impl Detail {
         let Some(catalog) = catalog else {
             if let Some(kept) = kept(kind, id, cx) {
                 self.adopt(kept, cx);
+            } else if music::is_local_id(id) {
+                // No local library exists at all, so the page can never come.
+                self.clear();
+                cx.emit(DetailEvent::AlbumGone(id.to_owned()));
+                cx.notify();
+                return true;
             }
             // Signing back in reopens the page, so until then it reads as loading.
             let restoring = matches!(self.session.read(cx).state(), SessionState::Restoring);
@@ -429,27 +547,40 @@ impl Detail {
             cx.notify();
             return;
         };
+        self.reload_after_order = self.library.read(cx).reordering(&id);
 
         self.loading = true;
         self.error = None;
         cx.notify();
 
+        let local = music::is_local_id(&id)
+            .then(|| self.session.read(cx).local_client())
+            .flatten();
         let request = self.io.spawn({
             let id = id.clone();
             async move {
                 match kind {
                     Collection::Album => {
+                        if let Some(client) = local
+                            && !client
+                                .all_albums()
+                                .await?
+                                .iter()
+                                .any(|album| album.id == id)
+                        {
+                            return Ok(None);
+                        }
                         if fresh {
                             catalog.invalidate_album(&id).await;
                             catalog.invalidate_album_catalogue(&id).await;
                         }
-                        catalog.album(&id).await.map(Loaded::Album)
+                        catalog.album(&id).await.map(Loaded::Album).map(Some)
                     }
                     Collection::Playlist => {
                         if fresh {
                             catalog.invalidate_playlist(&id).await;
                         }
-                        catalog.playlist(&id).await.map(Loaded::Playlist)
+                        catalog.playlist(&id).await.map(Loaded::Playlist).map(Some)
                     }
                 }
             }
@@ -463,7 +594,11 @@ impl Detail {
                 this.loading = false;
                 this.request = None;
                 match crate::settled(loaded, cx) {
-                    Ok(detail) => this.adopt(detail, cx),
+                    Ok(Some(detail)) => this.adopt(detail, cx),
+                    Ok(None) => {
+                        this.clear();
+                        cx.emit(DetailEvent::AlbumGone(id));
+                    }
                     Err(reason) => match kept(kind, &id, cx) {
                         Some(kept) => this.adopt(kept, cx),
                         None => this.error = Some(reason),
@@ -673,7 +808,7 @@ fn playlist_header(playlist: &Playlist) -> Header {
     };
     let owner_name = match owner.is_some() {
         true => None,
-        false => Some(playlist.owner.clone()),
+        false => Some(playlist.owner.clone()).filter(|name| !name.is_empty()),
     };
 
     Header {
@@ -701,5 +836,74 @@ fn kept(kind: Collection, id: &str, cx: &App) -> Option<Loaded> {
         Collection::Playlist => downloads
             .playlist_detail(id)
             .map(|detail| Loaded::Playlist(Arc::new(detail))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn playlist(owned: bool) -> Playlist {
+        Playlist {
+            id: "p".into(),
+            name: "Mix".into(),
+            owner: String::new(),
+            owner_id: String::new(),
+            owned,
+            collaborative: false,
+            blend: false,
+            public: false,
+            cover: None,
+            track_count: 3,
+            modified_at: None,
+        }
+    }
+
+    fn ordering(playlist_order: bool) -> Capabilities {
+        Capabilities {
+            playlist_order,
+            ..Capabilities::ALL
+        }
+    }
+
+    #[test]
+    fn an_owned_playlist_moves_where_the_provider_keeps_order() {
+        let owned = playlist(true);
+        assert_eq!(Reorder::of(Some(&owned), ordering(true), true), Reorder::On);
+    }
+
+    #[test]
+    fn a_provider_without_playlist_writes_shows_the_read_only_state() {
+        let owned = playlist(true);
+        assert_eq!(
+            Reorder::of(Some(&owned), ordering(false), true),
+            Reorder::Unsupported
+        );
+        assert_eq!(
+            Reorder::of(Some(&owned), Capabilities::NONE, false),
+            Reorder::Unsupported
+        );
+    }
+
+    #[test]
+    fn a_followed_or_half_loaded_playlist_does_not_move() {
+        let followed = playlist(false);
+        assert_eq!(
+            Reorder::of(Some(&followed), ordering(true), true),
+            Reorder::Off
+        );
+        let owned = playlist(true);
+        assert_eq!(
+            Reorder::of(Some(&owned), ordering(true), false),
+            Reorder::Off
+        );
+        assert_eq!(Reorder::of(None, ordering(true), true), Reorder::Off);
+
+        let mut shared = playlist(false);
+        shared.collaborative = true;
+        assert_eq!(
+            Reorder::of(Some(&shared), ordering(true), true),
+            Reorder::On
+        );
     }
 }

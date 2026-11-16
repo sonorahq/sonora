@@ -1,6 +1,6 @@
 use gpui::{AnyView, Context, Entity, MouseButton, NavigationDirection, Render, Task};
 use gpui::{App, Font, FontFallbacks, SharedString, StyleRefinement, font, prelude::*};
-use gpui::{Window, div};
+use gpui::{Window, deferred, div};
 use input::{
     CloseWindow, MinimizeWindow, NavigateBack, NavigateForward, OpenFilter, OpenSearch,
     OpenSettings, Refresh, ShowMembers, ToggleFullscreen, ToggleLyrics, TogglePowerbar,
@@ -20,14 +20,20 @@ use ui::{
 };
 
 use crate::chrome::{
-    Busy, JamInvite, ThemeInvite, TitleBar, TitleBarEvent, TitleBarOptions, Toolbar, Tooled,
+    Busy, JamCode, JamInvite, JamJoin, PlayerBar, SessionCode, SessionJoin, ThemeInvite, TitleBar,
+    TitleBarEvent, TitleBarOptions, ToastStack, Toolbar, Tooled,
 };
 use crate::screens::search::SearchView;
 use crate::screens::settings::SettingsHeader;
 use crate::shared::ambient::{self, Ambient};
+use crate::shared::confirm::Confirm;
+use crate::shared::playlist_editor::PlaylistEditor;
 use crate::shared::powerbar::Powerbar;
+use crate::shared::soloist::SoloistSetup;
+use crate::shared::tag_editor::TagEditor;
 use crate::shared::tracks::{LIBRARY_COLUMNS, album_columns};
 use crate::shared::transport::{CoverAway, CoverFade, ShellSwap};
+use crate::shared::widevine::WidevinePrompt;
 use crate::shells::Shell;
 use crate::shells::workspace::Workspace;
 use crate::{
@@ -40,6 +46,9 @@ use crate::{
 const SHELL_ZOOM: f32 = 0.03;
 /// How close the opening zoom comes to its end before it counts as landed.
 const SHELL_ZOOM_REST: f32 = 1e-3;
+/// The paint layer toasts take. Dialogs paint at 0 and menus at 1, so a toast shows over an
+/// open dialog and a menu opened after it still shows over the toast.
+const TOAST_LAYER: usize = 1;
 
 struct Screens {
     home: Entity<HomeView>,
@@ -72,6 +81,50 @@ struct Screens {
 struct Shells {
     workspace: Entity<Workspace>,
     fullscreen: Entity<FullscreenView>,
+}
+
+/// The dialogs a track, playback or account action raises. The root draws them over whichever
+/// shell is up, so one raised from the fullscreen player opens there.
+struct Dialogs {
+    playlist_editor: Entity<PlaylistEditor>,
+    tag_editor: Entity<TagEditor>,
+    confirm: Entity<Confirm>,
+    widevine: Entity<WidevinePrompt>,
+    soloist: Entity<SoloistSetup>,
+    jam_join: Entity<JamJoin>,
+    jam_code: Entity<JamCode>,
+    session_join: Entity<SessionJoin>,
+    session_code: Entity<SessionCode>,
+}
+
+impl Dialogs {
+    fn new(cx: &mut App) -> Self {
+        Self {
+            playlist_editor: PlaylistEditor::entity(cx),
+            tag_editor: TagEditor::entity(cx),
+            confirm: Confirm::entity(cx),
+            widevine: cx.new(WidevinePrompt::new),
+            soloist: cx.new(SoloistSetup::new),
+            jam_join: cx.new(JamJoin::new),
+            jam_code: cx.new(JamCode::new),
+            session_join: cx.new(SessionJoin::new),
+            session_code: cx.new(SessionCode::new),
+        }
+    }
+
+    fn views(&self) -> [AnyView; 9] {
+        [
+            self.playlist_editor.clone().into(),
+            self.tag_editor.clone().into(),
+            self.confirm.clone().into(),
+            self.widevine.clone().into(),
+            self.soloist.clone().into(),
+            self.jam_join.clone().into(),
+            self.jam_code.clone().into(),
+            self.session_join.clone().into(),
+            self.session_code.clone().into(),
+        ]
+    }
 }
 
 /// Which shell fills the window.
@@ -111,6 +164,9 @@ pub struct Root {
     theme_invite: Entity<ThemeInvite>,
     /// The quick search, drawn over whichever shell is up so it opens in fullscreen too.
     powerbar: Entity<Powerbar>,
+    dialogs: Dialogs,
+    /// The toasts, hung above the player bar or the fullscreen dock, whichever shell is up.
+    toasts: Entity<ToastStack>,
     shells: Shells,
     view: RootView,
     signing_in: bool,
@@ -362,6 +418,8 @@ impl Root {
             jam_invite: cx.new(JamInvite::new),
             theme_invite: cx.new(ThemeInvite::new),
             powerbar,
+            dialogs: Dialogs::new(cx),
+            toasts: cx.new(ToastStack::new),
             background: None,
             font: None,
             #[cfg(target_os = "windows")]
@@ -1088,8 +1146,11 @@ impl Render for Root {
         self.follow_os_fullscreen(window, cx);
 
         let options = match show_sign_in {
+            // The sign-in screen runs under the bar, so the bar keeps only the window controls
+            // and its drag area over it.
             true => TitleBarOptions {
                 border: false,
+                transparent: true,
                 ..TitleBarOptions::default()
             },
             false => self.options(cx),
@@ -1216,6 +1277,11 @@ impl Render for Root {
             RootView::Workspace => self.shells.workspace.clone().into_any_element(),
             RootView::Fullscreen => self.shells.fullscreen.clone().into_any_element(),
         };
+        // How far above the bottom of the window the toasts hang.
+        let floor = match self.view {
+            RootView::Workspace => PlayerBar::height(window, cx),
+            RootView::Fullscreen => FullscreenView::dock_height(cx),
+        };
         // While fullscreen opens, the workspace it leaves fades out under it, and nothing in it
         // answers the pointer.
         let leaving = (zooming > 0. && matches!(self.view, RootView::Fullscreen)).then(|| {
@@ -1268,6 +1334,18 @@ impl Render for Root {
                         .child(self.shells.fullscreen.clone()),
                 )
             })
+            // Deferred above the dialogs, which are deferred too, so a toast raised while one is
+            // open shows over it and its backdrop.
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .h(floor)
+                    .child(deferred(self.toasts.clone()).with_priority(TOAST_LAYER)),
+            )
+            .children(self.dialogs.views())
             .child(self.jam_invite.clone())
             .child(self.theme_invite.clone())
             .child(self.powerbar.clone());
@@ -1347,6 +1425,10 @@ impl Render for Root {
             )
             // The ambient background sits behind everything, title bar included.
             .when(ambient, |this| this.child(self.ambient.clone()))
+            // The sign-in screen fills the whole window, under the bar.
+            .when(show_sign_in, |this| {
+                this.child(div().absolute().inset_0().child(self.login.clone()))
+            })
             // The bar only changes when it is told to, so a frame drawn for the lyrics or the
             // progress bar replays it rather than building it again.
             .child(
@@ -1357,11 +1439,7 @@ impl Render for Root {
                         .flex_none(),
                 ),
             )
-            .when_else(
-                show_sign_in,
-                |this| this.child(div().flex().flex_1().min_h_0().child(self.login.clone())),
-                |this| this.child(shell),
-            );
+            .when(!show_sign_in, |this| this.child(shell));
         // A closed menu or dialog fades out here, over everything else in the window.
         let root = root.child(ui::lingers());
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]

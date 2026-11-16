@@ -22,6 +22,7 @@ const RETRY_DELAY: Duration = Duration::from_secs(3);
 const SWITCH_DEBOUNCE: Duration = Duration::from_secs(1);
 const MAX_START_DRIFT_SECONDS: u64 = 2;
 const MAX_TEXT_UTF16_UNITS: usize = 128;
+const MAX_IMAGE_UTF16_UNITS: usize = 300;
 /// What the status says when it names the music rather than a service.
 const MUSIC: &str = "Music";
 /// Where the Sonora button sends a friend who presses it.
@@ -356,7 +357,8 @@ impl Discord {
     /// self-hosted url would hand over the credentials that fetch it. Without it, the cover is
     /// the provider's own one or the local file's uploaded to a temporary public host when
     /// `upload` allows, since nothing else is sure to be the same picture. Otherwise, or when the
-    /// upload failed, it is one found by name when `lookup` allows. A search or upload not yet
+    /// upload failed, it is one found by name when `lookup` allows, and a url past Discord's length
+    /// limit is skipped in favour of that lookup. A search or upload not yet
     /// made is left in `wanted` for `look_up`.
     fn artwork(
         &mut self,
@@ -374,7 +376,10 @@ impl Discord {
                     .and_then(|album| self.cover.read(cx).large_for(album))
                     .map(str::to_owned)
                     .or_else(|| track.cover.clone())
-                    .filter(|cover| cover.starts_with("https://"))
+                    .filter(|cover| {
+                        cover.starts_with("https://")
+                            && cover.encode_utf16().count() <= MAX_IMAGE_UTF16_UNITS
+                    })
             })
             .flatten();
         if own.is_some() {

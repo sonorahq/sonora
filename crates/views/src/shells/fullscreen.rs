@@ -177,8 +177,15 @@ impl VolumeHost for FullscreenView {
 }
 
 impl FullscreenView {
+    /// The height the dock along the bottom is given, which the toasts hang above.
+    pub(crate) fn dock_height(cx: &App) -> Pixels {
+        cx.theme().metrics.player_bar * DOCK_FULL
+    }
+
     pub fn new(playback: Entity<Playback>, queue: Entity<Queue>, cx: &mut Context<Self>) -> Self {
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
+        let sponsorblock = Sonora::global(cx).sponsorblock.clone();
+        cx.observe(&sponsorblock, |_, _, cx| cx.notify()).detach();
         // the seek bar and the lyrics follow the position as it moves
         let ticks = playback.read(cx).ticks().clone();
         cx.observe(&ticks, |_, _, cx| cx.notify()).detach();
@@ -927,6 +934,10 @@ impl FullscreenView {
                         .name(t!("song-position"))
                         .value(clock(elapsed))
                         .colors(theme.progress_bar, empty, theme.foreground)
+                        .ranges(
+                            Sonora::global(cx).sponsorblock.read(cx).ranges(cx),
+                            theme.foreground.opacity(0.4),
+                        )
                         .enabled(seekable)
                         .when_some(bubble, |this, (at, text)| this.bubble(at, text))
                         .on_move(cx.listener(|this, fraction: &f32, _, cx| {
@@ -1492,6 +1503,10 @@ impl Render for FullscreenView {
             ),
             false => (spectrum, None),
         };
+        let perches = match self.panel.is_some() {
+            true => self.aside.update(cx, |aside, cx| aside.perches(window, cx)),
+            false => Vec::new(),
+        };
 
         div()
             .id("fullscreen")
@@ -1654,6 +1669,22 @@ impl Render for FullscreenView {
                         .opacity(left)
                         .child(self.aside.clone()),
                 )
+            })
+            // The panel's floating buttons stand over it here, above the visualizer and the band
+            // over it, which would otherwise cover and blur them.
+            .when(!perches.is_empty(), |this| {
+                let at = self.panel_bounds.get();
+                let origin = at.origin - self.root_origin.get();
+                this.child(entering(
+                    div()
+                        .absolute()
+                        .left(origin.x)
+                        .top(origin.y)
+                        .w(at.size.width)
+                        .h(at.size.height)
+                        .children(perches),
+                    switching,
+                ))
             })
             .when(!split && self.panel.is_some(), |this| {
                 this.child(self.strip(hide, window, cx))

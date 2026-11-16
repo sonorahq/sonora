@@ -9,7 +9,6 @@ license.workspace = true
 profiler = ["gpui/profiler"]
 # patch running debug builds from `dx serve --hot-patch`, see CONTRIBUTING.md
 hot-reload = ["gpui/hot-reload"]
-bundled-sqlite = ["state/bundled-sqlite"]
 
 [dependencies]
 anyhow.workspace = true
@@ -71,7 +70,6 @@ raw-window-handle.workspace = true
 [target.'cfg(windows)'.dependencies]
 raw-window-handle.workspace = true
 resvg.workspace = true
-state = { workspace = true, features = ["bundled-sqlite"] }
 widestring.workspace = true
 windows.workspace = true
 windows-sys = { workspace = true, features = [

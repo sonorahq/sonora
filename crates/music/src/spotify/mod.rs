@@ -70,6 +70,7 @@ impl SpotifyProvider {
             capabilities: Capabilities {
                 pins: true,
                 playlist_covers: true,
+                playlist_order: true,
                 download_gap: playback::DOWNLOAD_GAP,
                 qualities: playback::QUALITIES,
                 ..Capabilities::ALL

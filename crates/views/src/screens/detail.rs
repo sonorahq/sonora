@@ -8,15 +8,15 @@ use gpui::{
 use std::rc::Rc;
 
 use i18n::t;
-use music::{Album, AlbumDetail, Playlist, ReleaseType, Track, is_local_id};
+use music::{Album, AlbumDetail, Arrival, Playlist, ReleaseType, Track};
 use router::{Destination, navigate};
 use state::{
-    AppSettings, Collection, Detail, DownloadsChanged, LibraryEvent, Origin, Playback, Progress,
-    SessionEvent, Sonora,
+    AppSettings, Collection, Detail, DownloadsChanged, LibraryEvent, Origin, Outcome, Playback,
+    Progress, Shelf, Sonora, Toasts,
 };
 use ui::{
-    ActiveTheme as _, ArrowRing, Button, InlineLink, InlineLinks, Menu, MenuItem, Picker, Popovers,
-    Popup, SortAxis,
+    ActiveTheme as _, ArrowRing, Button, InlineLink, InlineLinks, Menu, Picker, Popovers, Popup,
+    SortAxis,
 };
 use ui::{
     ColumnSpec, FilterChange, Listing as _, MIN_CONTENT, Pending, Pin, PinKind, Scrollbar,
@@ -97,6 +97,21 @@ impl Tracks for DetailTracks {
             },
         )
     }
+
+    /// Your own playlist's songs come in the order its provider says. Anyone else's playlist is
+    /// in its curator's order, and an album's never by when they were added.
+    fn arrival(&self, cx: &App) -> Option<Arrival> {
+        let detail = self.0.read(cx);
+        if detail.kind() != Some(Collection::Playlist) || !detail.playlist()?.owned {
+            return None;
+        }
+        let shelf = Shelf::of(detail.id()?);
+        Sonora::global(cx)
+            .session
+            .read(cx)
+            .capabilities_of(shelf)
+            .playlist_arrival
+    }
 }
 
 pub(crate) struct DetailView {
@@ -109,11 +124,11 @@ pub(crate) struct DetailView {
     settings: Entity<AppSettings>,
     section: &'static str,
     sorted: Option<String>,
+    /// The row the listener last moved and the track on it, kept picked across rebuilds.
+    moved: Option<(usize, String)>,
     shown: Option<String>,
     context_menu: Option<Point<Pixels>>,
     cover_viewer: Entity<CoverViewer>,
-    viewer_for: Option<String>,
-    viewer_cover: Option<String>,
     toolbar: Entity<Toolbar>,
     popovers: Popovers,
     sliders: Sliders,
@@ -188,6 +203,7 @@ impl DetailView {
             let shown = detail.read(cx).id().map(str::to_owned);
             if this.shown != shown {
                 this.shown = shown;
+                this.moved = None;
                 this.rails.clear();
                 this.rail_tab = RailTab::Albums;
                 this.scrollbar
@@ -202,24 +218,6 @@ impl DetailView {
             this.retune(cx);
             this.rebuild(cx);
             cx.notify();
-        })
-        .detach();
-
-        let session = Sonora::global(cx).session.clone();
-        cx.subscribe(&session, |this, _, event, cx| match event {
-            SessionEvent::SignedOut | SessionEvent::SignedIn => {
-                // These sign events clear and reload a provider detail under a new account,
-                // possibly within one frame, so the render guard can miss it: close the
-                // viewer here. A local album's art does not depend on the account.
-                let local = this.detail.read(cx).id().is_some_and(is_local_id);
-                if !local {
-                    this.viewer_for = None;
-                    this.viewer_cover = None;
-                    this.cover_viewer
-                        .update(cx, |viewer, cx| viewer.force_close(None, cx));
-                }
-            }
-            _ => {}
         })
         .detach();
 
@@ -248,6 +246,18 @@ impl DetailView {
                         router::Destination::Library(router::LibraryTab::Playlists),
                         cx,
                     ),
+                }
+            })
+            .detach();
+        }
+
+        if section == "album" {
+            cx.subscribe(&detail, |_, _, event, cx| {
+                let state::DetailEvent::AlbumGone(id) = event;
+                if router::trail(cx).read(cx).current()
+                    == router::Destination::Album(id.clone().into())
+                {
+                    router::replace(router::Destination::Library(router::LibraryTab::Albums), cx);
                 }
             })
             .detach();
@@ -288,6 +298,10 @@ impl DetailView {
                 page::play_or_toggle(&this.table, &this.playback, *display, cx)
             }
             TableEvent::Removed => drop_picked(&this.table, cx),
+            TableEvent::Moved { from, to } => this.move_track(*from, *to, cx),
+            TableEvent::MoveRefused => {
+                Toasts::show(Outcome::Info, "toast-playlist-reorder-unsupported", cx)
+            }
             _ => this.persist(cx),
         })
         .detach();
@@ -309,11 +323,10 @@ impl DetailView {
             settings,
             section,
             sorted: None,
+            moved: None,
             shown: None,
             context_menu: None,
             cover_viewer,
-            viewer_for: None,
-            viewer_cover: None,
             toolbar,
             popovers: Popovers::default(),
             sliders: Sliders::default(),
@@ -342,10 +355,44 @@ impl DetailView {
         });
     }
 
+    /// Rebuilds the rows with nothing picked, except a row the listener just moved, which
+    /// stays picked while the pick and the track are still on it, so the next Alt+arrow moves
+    /// it on.
     fn rebuild(&mut self, cx: &mut Context<Self>) {
+        let tracks = self.detail.read(cx).tracks();
+        let picked = self.table.read(cx).delegate().selected();
+        let moved = self.moved.take().filter(|(row, id)| {
+            picked == Some(*row) && tracks.get(*row).and_then(|track| track.id.as_ref()) == Some(id)
+        });
         self.table.update(cx, |table, cx| {
-            table.delegate_mut().clear_selection();
+            let delegate = table.delegate_mut();
+            delegate.clear_selection();
+            if let Some((row, _)) = &moved {
+                delegate.select(*row);
+            }
             table.rebuild(cx);
+        });
+        self.moved = moved;
+    }
+
+    /// Moves a playlist row, and picks it at its new place once the move has started.
+    fn move_track(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        let started = self
+            .detail
+            .update(cx, |detail, cx| detail.move_track(from, to, cx));
+        if !started {
+            return;
+        }
+        let id = self
+            .detail
+            .read(cx)
+            .tracks()
+            .get(to)
+            .and_then(|track| track.id.clone());
+        self.moved = id.map(|id| (to, id));
+        self.table.update(cx, |table, cx| {
+            table.delegate_mut().select(to);
+            cx.notify();
         });
     }
 
@@ -508,19 +555,16 @@ impl DetailView {
         });
 
         let view = self.me.clone();
-        let view_cover = match kind {
-            Collection::Album => cover.clone().map(|cover| {
-                let view = self.me.clone();
-                let title = title.clone();
-                move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-                    view.update(cx, |this, cx| {
-                        this.open_cover_viewer(title.clone(), cover.clone(), cx);
-                    })
-                    .ok();
-                }
-            }),
-            Collection::Playlist => None,
-        };
+        let view_cover = cover.clone().map(|cover| {
+            let view = self.me.clone();
+            let title = title.clone();
+            move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                view.update(cx, |this, cx| {
+                    this.open_cover_viewer(title.clone(), cover.clone(), cx);
+                })
+                .ok();
+            }
+        });
         PageHero::new("detail-hero", title)
             .pending(header.is_none() && self.detail.read(cx).is_loading())
             .pin(pin)
@@ -541,28 +585,11 @@ impl DetailView {
             .into_any_element()
     }
 
-    /// Opens the album's cover in the viewer: the page's large cover at once, with the
-    /// provider's original over it when the provider can name one for this cover's url. The
-    /// local library's cover already is the original, so it is shown alone.
+    /// Opens the album's or the playlist's `large` cover in the viewer.
     fn open_cover_viewer(&mut self, title: SharedString, large: String, cx: &mut Context<Self>) {
-        let session = Sonora::global(cx).session.clone();
-        let session = session.read(cx);
-        let client = match self.detail.read(cx).id() {
-            Some(id) if is_local_id(id) => session.local_client(),
-            _ => session.client(),
-        };
-        let full = client
-            .and_then(|client| client.cover_original(&large))
-            .filter(|full| full != &large);
-        self.viewer_for = self.detail.read(cx).id().map(str::to_owned);
-        self.viewer_cover = Some(large.clone());
+        let owner = self.detail.read(cx).id().map(str::to_owned);
         self.cover_viewer.update(cx, |viewer, cx| {
-            viewer.open(
-                title,
-                SharedString::from(large),
-                full.map(SharedString::from),
-                cx,
-            );
+            viewer.open(owner, title, large, false, cx);
         });
     }
 
@@ -847,22 +874,7 @@ impl DetailView {
         Some(match header.kind {
             Collection::Album => {
                 let menus = self.table.read(cx).delegate().source().menu();
-                let menu = album_menu(detail.album()?.clone(), self.playback.clone(), menus, cx);
-                match header.cover.clone() {
-                    Some(cover) => {
-                        let view = self.me.clone();
-                        let title = SharedString::from(header.title.clone());
-                        menu.lead([MenuItem::new("view-cover", t!("cover-view"))
-                            .icon("icons/image.svg")
-                            .on_click(move |_, _, cx| {
-                                view.update(cx, |this, cx| {
-                                    this.open_cover_viewer(title.clone(), cover.clone(), cx);
-                                })
-                                .ok();
-                            })])
-                    }
-                    None => menu,
-                }
+                album_menu(detail.album()?.clone(), self.playback.clone(), menus, cx)
             }
             Collection::Playlist => {
                 let saved = Sonora::global(cx).library.read(cx).playlist(&id).cloned();
@@ -875,19 +887,12 @@ impl DetailView {
 
 impl Render for DetailView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // The viewer belongs to the detail and cover it opened on: navigation or a provider
-        // switch (a new signed cover url) replaces them, and stale art must not linger.
-        let stale = {
-            let shown = self.detail.read(cx);
-            self.cover_viewer.read(cx).is_open()
-                && (self.viewer_for.as_deref() != shown.id()
-                    || self.viewer_cover.as_deref()
-                        != shown.header().and_then(|h| h.cover.as_deref()))
-        };
-        if stale {
-            self.cover_viewer
-                .update(cx, |viewer, cx| viewer.force_close(Some(window), cx));
-        }
+        let detail = self.detail.read(cx);
+        let owner = detail.id().map(str::to_owned);
+        let cover = detail.header().and_then(|header| header.cover.clone());
+        self.cover_viewer.update(cx, |viewer, cx| {
+            viewer.close_if_stale(owner.as_deref(), cover.as_deref(), window, cx)
+        });
         if let Some(failure) = self.failure(cx) {
             return div()
                 .id("detail-failure")
@@ -900,14 +905,18 @@ impl Render for DetailView {
 
         self.table.claim(cx);
         let inset = cx.theme().metrics.inset;
-        let width = cells::content_width(window, Pixels::ZERO, cx);
+        let framed = page::framed(window, cx);
+        let width = page::bleed_width(window, cx);
         if (width - self.width).abs() >= px(0.5) {
             self.width = width;
             self.table.set_width(width, cx);
         }
 
         let scroll = self.scrollbar.read(cx).scroll().clone();
-        let viewport = page::viewport(&scroll, inset, window);
+        let viewport = match framed {
+            true => page::past_border(page::viewport(&scroll, inset, window)),
+            false => page::viewport(&scroll, inset, window),
+        };
         self.table
             .update(cx, |table, _| table.set_viewport(viewport));
 
@@ -938,12 +947,13 @@ impl Render for DetailView {
             .size_full()
             .child(
                 Scroller::new("detail-page", &self.scrollbar)
+                    .hold()
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
                     .px(crate::chrome::Chrome::margin(window, cx))
                     .pt(inset)
                     .pb(inset)
                     .child(div().px(inset).child(self.header(window, cx)))
-                    .child(table(&self.table))
+                    .child(page::bleed(table(&self.table), framed, cx))
                     .children(self.notices(cx))
                     .child(div().px(inset).pt_10().children(rails)),
             )

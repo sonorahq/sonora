@@ -7,7 +7,7 @@ use gpui::{
     Anchor, AnyElement, AnyWindowHandle, App, Bounds, ClickEvent, Div, ElementId, Entity,
     FocusHandle, Focusable as _, Global, Interactivity, MouseButton, MouseClickEvent,
     MouseDownEvent, Pixels, Point, ScrollWheelEvent, SharedString, Size, Stateful, StyleRefinement,
-    Window, anchored, deferred, div, point, px, svg,
+    Window, anchored, deferred, div, phi, point, px, svg,
 };
 
 use crate::Artwork;
@@ -28,7 +28,7 @@ use crate::tooltip::{Perch, Tipped as _};
 
 pub const MENU_CONTEXT: &str = "Menu";
 
-const ESCAPE_KEY: &str = "escape";
+pub(crate) const ESCAPE_KEY: &str = "escape";
 
 const SUBMENU_CLOSE_DELAY: Duration = Duration::from_millis(160);
 const SUBMENU_FALLBACK_WIDTH: Pixels = px(236.);
@@ -1242,6 +1242,9 @@ impl RenderOnce for Menu {
             .when_some(name, |this, name| this.aria_label(name))
             .flex()
             .flex_col()
+            // the menu sets its own leading, since one opened from a page header would otherwise
+            // take the header's tighter lines and draw shorter rows than everywhere else
+            .line_height(phi())
             .p_1()
             .rounded(theme.radius)
             .border_1()
@@ -1458,4 +1461,11 @@ fn step(
         scrollbar.read(cx).scroll().scroll_to_item(rows[place]);
     }
     search.input.update(cx, |_, cx| cx.notify());
+}
+
+/// Whether a menu is open and waiting for escape to close it, so a dialog under it leaves that
+/// escape to the menu.
+pub(crate) fn menu_open(cx: &App) -> bool {
+    cx.try_global::<Escape>()
+        .is_some_and(|escape| escape.0.borrow().is_some())
 }

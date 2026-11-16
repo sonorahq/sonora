@@ -1,7 +1,6 @@
 pub(crate) mod auth;
 mod client;
 mod lyrics;
-mod mp4;
 mod playback;
 mod wire;
 
@@ -15,8 +14,8 @@ pub use lyrics::SubsonicLyrics;
 
 use crate::subsonic::playback::Factory;
 use crate::{
-    Capabilities, Catalog, MusicApi as _, MusicProvider, PlaybackFactory, ProviderSession, Shape,
-    SignIn,
+    Capabilities, Catalog, Library, MusicApi as _, MusicProvider, PlaybackFactory, ProviderSession,
+    Shape, SignIn,
 };
 
 /// The name the provider and its lyrics source go by. It is saved in settings and in the lyrics
@@ -42,6 +41,7 @@ impl SubsonicProvider {
             username.clone(),
             password.clone(),
             &signature,
+            None,
         )?;
         let profile = client
             .profile()
@@ -53,6 +53,8 @@ impl SubsonicProvider {
             username,
             password,
             signature: Some(signature),
+            // a fresh sign-in starts on the whole server; a library is chosen afterwards
+            library: None,
         })?;
         Ok(ProviderSession {
             profile,
@@ -63,6 +65,7 @@ impl SubsonicProvider {
             capabilities: Capabilities {
                 transcode: true,
                 playlist_covers: covers,
+                playlist_order: true,
                 plain_downloads: true,
                 ..Capabilities::ALL
             },
@@ -85,12 +88,14 @@ impl SubsonicProvider {
             remembered.username.clone(),
             remembered.password.clone(),
             &signature,
+            remembered.library.as_ref().map(|library| library.id),
         )?;
         match client.profile().await {
             Ok(profile) => Ok(Some(ProviderSession {
                 capabilities: Capabilities {
                     transcode: true,
                     playlist_covers: client.takes_playlist_covers().await,
+                    playlist_order: true,
                     plain_downloads: true,
                     ..Capabilities::ALL
                 },
@@ -109,6 +114,38 @@ impl SubsonicProvider {
     }
 }
 
+/// The library the stored account reads, when it is scoped to one. The picker names the
+/// choice from this before the server is asked anything.
+fn selected_library() -> Option<Library> {
+    auth::load().and_then(|remembered| remembered.library)
+}
+
+/// Every library the stored server offers the account, for the settings picker.
+async fn libraries() -> Result<Vec<Library>> {
+    let remembered = auth::load().context("no subsonic account is stored")?;
+    let signature = remembered
+        .signature
+        .clone()
+        .unwrap_or_else(|| auth::sign(&remembered.username, &remembered.password));
+    let client = SubsonicClient::new(
+        remembered.server,
+        remembered.username,
+        remembered.password,
+        &signature,
+        None,
+    )?;
+    client.music_folders().await
+}
+
+/// Points the stored account at one library, or back at the whole server with `None`. This
+/// only persists the choice: the live session rebuilds itself to apply it, so no request in
+/// flight changes scope under the user.
+fn select_library(library: Option<Library>) -> Result<()> {
+    let mut remembered = auth::load().context("no subsonic account is stored")?;
+    remembered.library = library;
+    auth::store(&remembered)
+}
+
 impl Default for SubsonicProvider {
     fn default() -> Self {
         Self::new()
@@ -123,6 +160,22 @@ impl MusicProvider for SubsonicProvider {
 
     fn slug(&self) -> &'static str {
         "subsonic"
+    }
+
+    fn has_libraries(&self) -> bool {
+        true
+    }
+
+    fn library(&self) -> Option<Library> {
+        selected_library()
+    }
+
+    async fn libraries(&self) -> Result<Vec<Library>> {
+        libraries().await
+    }
+
+    fn choose_library(&self, library: Option<Library>) -> Result<()> {
+        select_library(library)
     }
 
     fn sign_in_options(&self) -> Vec<SignIn> {
@@ -163,6 +216,7 @@ impl MusicProvider for SubsonicProvider {
             remembered.username,
             remembered.password,
             &signature,
+            remembered.library.as_ref().map(|library| library.id),
         )
         .inspect_err(|error| log::warn!("subsonic: cannot build an offline client: {error:#}"))
         .ok()?;

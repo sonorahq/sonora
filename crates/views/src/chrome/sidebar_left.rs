@@ -627,6 +627,7 @@ impl SidebarLeft {
             .cover(pin.cover.clone())
             .fallback(pin.kind.icon())
             .when(pin.kind.round(), Card::circle)
+            .when(pin.kind == PinKind::Liked, Card::accent)
             .when(self.folded(), Card::glance)
             .play(
                 playing,

@@ -9,7 +9,7 @@ use std::time::Duration;
 use crate::chrome::tools::{self, Sliders};
 use crate::chrome::{Chrome, Searchable, Toolbar, Tooled};
 use crate::shared::confirm::{Confirm, Kind};
-use crate::shared::menus::{ItemMenu, new_playlist_menu};
+use crate::shared::menus::{ItemMenu, liked_menu, new_playlist_menu};
 use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 
 use gpui::accesskit::Role;
@@ -19,16 +19,16 @@ use gpui::{
     ScrollHandle, SharedString, WeakEntity, Window, div, point, px, relative,
 };
 use i18n::t;
-use music::{Shape, Track};
+use music::{Arrival, Shape, Track};
 use router::{Destination, LibraryTab, navigate};
 use state::{
     Addition, AppSettings, DownloadsChanged, Library, LibraryPart, LibraryState, Network, Origin,
     Playback, Scan, Shelf, Sonora,
 };
 use ui::{
-    ActiveTheme as _, Button, Card, Deck, FilterChange, LEADING, Mode, Pinnable, Popovers, Popup,
-    Scrollbar, Scroller, Sort, SortAxis, TableDelegate, TableEvent, TableSource, TableState, Text,
-    Vacancy, Viewport, heading, quantize, runtime, scrolled, snapped, table,
+    ActiveTheme as _, Button, Card, Deck, FilterChange, LEADING, Mode, Pin, Pinnable, Popovers,
+    Popup, Scrollbar, Scroller, Sort, SortAxis, TableDelegate, TableEvent, TableSource, TableState,
+    Text, Vacancy, Viewport, heading, quantize, runtime, scrolled, snapped, table,
 };
 
 use crate::shared::album_grid::{AlbumTiles, CardGrid, TileLook};
@@ -71,6 +71,8 @@ const RECENT: Sort = Sort::Descending;
 #[derive(Clone)]
 enum LibraryMenu {
     Background,
+    /// The hero of the songs page while it lists only the liked songs.
+    Liked,
     Track(Box<Track>),
 }
 
@@ -177,6 +179,20 @@ impl Tracks for ShelfTracks {
     fn is_loading(&self, cx: &App) -> bool {
         loading(&self.library, Section::Songs, cx)
     }
+
+    /// The streaming shelf's order, only while no local file shares the page, since a mixed page
+    /// has no one order to follow.
+    fn arrival(&self, cx: &App) -> Option<Arrival> {
+        let library = self.library.read(cx);
+        if !library.state(Shelf::Local).tracks().is_empty() {
+            return None;
+        }
+        Sonora::global(cx)
+            .session
+            .read(cx)
+            .capabilities_of(Shelf::Streaming)
+            .song_arrival
+    }
 }
 
 /// Whether a section is still waiting for rows from either shelf.
@@ -222,7 +238,7 @@ impl LibraryView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let width = cells::content_width(window, Pixels::ZERO, cx);
+        let width = page::bleed_width(window, cx);
         let settings = Sonora::global(cx).settings.clone();
         let stored = |section: Section, cx: &App| {
             let settings = settings.read(cx);
@@ -650,11 +666,24 @@ impl LibraryView {
         cx.notify();
     }
 
-    fn viewport(scroll: &ScrollHandle, window: &Window) -> Viewport {
+    /// The viewport of a table that opens the page with no header above it. `lead` is the space
+    /// the page leaves above the table.
+    fn viewport(scroll: &ScrollHandle, lead: Pixels, window: &Window) -> Viewport {
         quantize(scroll, window);
         let visible = scroll.bounds().size.height;
 
-        Viewport::measured(scrolled(scroll), visible, window)
+        Viewport::measured(scrolled(scroll) - lead, visible, window)
+    }
+
+    /// The shown section's table, framed like the artist page's when `framed` is true.
+    fn listed(&self, framed: bool, cx: &App) -> AnyElement {
+        match self.section {
+            Section::Songs => page::bleed(table(&self.songs), framed, cx),
+            Section::Albums => page::bleed(table(&self.albums), framed, cx),
+            Section::Playlists => page::bleed(table(&self.playlists), framed, cx),
+            Section::Artists => page::bleed(table(&self.artists), framed, cx),
+        }
+        .into_any_element()
     }
 
     fn header(&self, cx: &Context<Self>) -> AnyElement {
@@ -693,7 +722,8 @@ impl LibraryView {
         if !duration.is_zero() {
             strip = strip.text(runtime(duration));
         }
-        let (title, icon, eyebrow) = match self.liked_only(cx) {
+        let liked = self.liked_only(cx);
+        let (title, icon, eyebrow) = match liked {
             true => (
                 t!("library-liked-songs"),
                 "icons/heart-filled.svg",
@@ -723,6 +753,18 @@ impl LibraryView {
                         self.playback.clone(),
                     )),
             )
+            .when(liked, |hero| {
+                let view = cx.entity().downgrade();
+                hero.pin(Some(Pin::liked()))
+                    .drag_start(move |event, window, cx| {
+                        window.prevent_default();
+                        view.update(cx, |this, cx| {
+                            this.context_menu = Some((LibraryMenu::Liked, event.position));
+                            cx.notify();
+                        })
+                        .ok();
+                    })
+            })
             .into_any_element()
     }
 
@@ -873,7 +915,7 @@ impl LibraryView {
     }
 
     fn resize(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let width = cells::content_width(window, Pixels::ZERO, cx);
+        let width = page::bleed_width(window, cx);
         if (width - self.width).abs() < px(0.5) {
             return;
         }
@@ -1219,12 +1261,15 @@ impl Render for LibraryView {
         let theme = *cx.theme();
         let inset = theme.metrics.inset;
         let mode = self.mode();
+        let framed = page::framed(window, cx);
         if mode == Mode::List {
             self.table(self.section).claim(cx);
             let scroll = self.scrollbar.read(cx).scroll().clone();
-            let viewport = match self.section.listing() {
-                true => page::viewport(&scroll, inset, window),
-                false => Self::viewport(&scroll, window),
+            let viewport = match (self.section.listing(), framed) {
+                (true, true) => page::past_border(page::viewport(&scroll, inset, window)),
+                (true, false) => page::viewport(&scroll, inset, window),
+                (false, true) => page::past_border(Self::viewport(&scroll, inset, window)),
+                (false, false) => Self::viewport(&scroll, Pixels::ZERO, window),
             };
             self.table(self.section).set_viewport(viewport, cx);
         }
@@ -1238,6 +1283,7 @@ impl Render for LibraryView {
                     .source()
                     .menu()
                     .for_track(&track, cx),
+                LibraryMenu::Liked => liked_menu(self.playback.clone(), cx),
                 LibraryMenu::Background => new_playlist_menu(cx.listener(|this, _, window, cx| {
                     this.create_playlist(window, cx);
                 })),
@@ -1261,15 +1307,16 @@ impl Render for LibraryView {
                     .pt(inset)
                     .pb(inset)
                     .child(div().px(inset).child(self.header(cx)))
-                    .child(table(self.tracks()))
+                    .child(self.listed(framed, cx))
                     .when_some(note, |this, note| this.child(note))
                     .into_any_element()
             }
             (_, Mode::List) => Scroller::new("library-page", &self.scrollbar)
                 .bottom_inset(crate::chrome::Chrome::bottom(cx))
                 .px(crate::chrome::Chrome::margin(window, cx))
+                .when(framed, |this| this.pt(inset))
                 .pb(inset)
-                .child(self.table(self.section).element())
+                .child(self.listed(framed, cx))
                 .when_some(note, |this, note| this.child(note))
                 .into_any_element(),
             (_, Mode::Grid) if note.is_none() && self.waiting(cx) => self.pending_cards(window, cx),

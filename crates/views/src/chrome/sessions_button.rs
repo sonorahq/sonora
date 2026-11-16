@@ -232,7 +232,7 @@ impl Render for SessionsButton {
         if !items.is_empty() {
             items.push(MenuItem::separator("session-separator"));
         }
-        if connect {
+        if connect && state.jams() {
             items.push(self.jam_item(cx));
         }
         items.extend(self.members_item(window, cx));

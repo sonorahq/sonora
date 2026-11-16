@@ -16,12 +16,14 @@ use gpui::{
     AnyElement, App, Context, Entity, Hsla, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, WeakEntity, div,
 };
-use music::Track;
+use music::{Arrival, Track};
 use router::Destination;
-use state::{Detail, History, Library, Network, Origin, Playback, Progress, Shelf, Sonora};
+use state::{
+    Detail, History, Library, Network, Origin, Playback, Progress, Reorder, Shelf, Sonora,
+};
 use ui::{
-    ArrowRing, Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, Scrollbar, TableSource,
-    TableState,
+    ArrowRing, Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, RowMoves, Scrollbar,
+    TableSource, TableState,
 };
 
 use crate::shared::blend::{Joined, Reach};
@@ -57,6 +59,12 @@ pub(crate) trait Tracks: 'static {
     /// the default fills the viewport with them while it loads.
     fn pending(&self, cx: &App) -> Option<Pending> {
         self.is_loading(cx).then_some(Pending::Screen)
+    }
+
+    /// The order the rows were added in, for a list with no date on each row. None for a list
+    /// that has dates or comes in some other order.
+    fn arrival(&self, _cx: &App) -> Option<Arrival> {
+        None
     }
 }
 
@@ -593,7 +601,12 @@ impl TableSource for TrackSource {
         self.provider.tracks(cx).len()
     }
 
+    /// A list that comes in the order it was added shows no Date added column, even once a
+    /// song added here has been stamped with today's date.
     fn populated(&self, field: TrackField, cx: &App) -> bool {
+        if field == TrackField::AddedAt && self.provider.arrival(cx).is_some() {
+            return false;
+        }
         let tracks = self.provider.tracks(cx);
         if tracks.is_empty() {
             return true;
@@ -609,6 +622,14 @@ impl TableSource for TrackSource {
             TrackField::AddedBy => tracks.iter().any(|track| track.added_by.is_some()),
             TrackField::Plays => tracks.iter().any(|track| track.playcount.is_some()),
             _ => true,
+        }
+    }
+
+    /// A list that comes in the order it was added sorts by Date added through that order.
+    fn sorts_by(&self, field: TrackField, cx: &App) -> bool {
+        match field {
+            TrackField::AddedAt if self.provider.arrival(cx).is_some() => true,
+            _ => self.populated(field, cx),
         }
     }
 
@@ -839,12 +860,28 @@ impl TableSource for TrackSource {
         })
     }
 
+    /// A playlist's rows move when its provider keeps the order, and are refused with a
+    /// message when the playlist is the listener's but the provider keeps none.
+    fn row_moves(&self, cx: &App) -> RowMoves {
+        let Some(detail) = &self.playlist else {
+            return RowMoves::Off;
+        };
+        match detail.read(cx).reorder(cx) {
+            Reorder::On => RowMoves::On,
+            Reorder::Unsupported => RowMoves::Refused,
+            Reorder::Off => RowMoves::Off,
+        }
+    }
+
     fn context_menu_will_open(&self, _rows: &[usize], cx: &App) {
         self.menu.reset(cx);
     }
 
     fn compare(&self, field: TrackField, a: usize, b: usize, cx: &App) -> Ordering {
-        sort::compare(self.provider.tracks(cx), field, a, b)
+        match self.provider.arrival(cx) {
+            Some(arrival) if field == TrackField::AddedAt => sort::by_arrival(arrival, a, b),
+            _ => sort::compare(self.provider.tracks(cx), field, a, b),
+        }
     }
 
     fn group(&self, field: TrackField, row: usize, cx: &App) -> Option<SharedString> {
