@@ -104,6 +104,9 @@ pub(crate) struct SearchView {
     /// Keeps the next focus of the field from reopening the panel, for a focus the page moves
     /// there itself.
     hush: bool,
+    /// Whether `search_for` filled the field, so the focus that comes with opening the page
+    /// leaves the panel put away.
+    handed: bool,
     /// The panel row the arrow keys are on.
     pick: Option<usize>,
     /// The `key` of the row `pick` is on, so the pick stays with it as the suggestions reorder.
@@ -213,6 +216,7 @@ impl SearchView {
             typed: String::new(),
             dismissed: false,
             hush: false,
+            handed: false,
             pick: None,
             picked: None,
             cascade: Cascade::default(),
@@ -236,13 +240,27 @@ impl SearchView {
     }
 
     /// Puts the keyboard in the field when the page opens, with the panel open, so the search
-    /// history shows at once.
+    /// history shows at once. After a search handed over by `search_for` the panel stays away,
+    /// so the results it asked for show.
     pub(crate) fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.hush = false;
-        self.dismissed = false;
+        let handed = std::mem::take(&mut self.handed);
+        self.hush = handed;
+        self.dismissed = handed;
         self.pick = None;
         self.input.update(cx, |input, cx| input.focus(window, cx));
         cx.notify();
+    }
+
+    /// Fills the field with `query` and runs the full search for it, as if it had been typed
+    /// and submitted here. The quick search hands its query over this way.
+    pub(crate) fn search_for(&mut self, query: &str, cx: &mut Context<Self>) {
+        self.typed = query.to_owned();
+        self.handed = true;
+        self.input
+            .update(cx, |input, cx| input.set_text(query.to_owned(), cx));
+        self.suggestions
+            .update(cx, |suggestions, cx| suggestions.ask(query, cx));
+        self.run(query, cx);
     }
 
     /// Moves the keyboard back to the field without opening the panel, for the arrow keys and

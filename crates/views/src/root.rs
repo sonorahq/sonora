@@ -28,7 +28,7 @@ use crate::screens::settings::SettingsHeader;
 use crate::shared::ambient::{self, Ambient};
 use crate::shared::confirm::Confirm;
 use crate::shared::playlist_editor::PlaylistEditor;
-use crate::shared::powerbar::Powerbar;
+use crate::shared::powerbar::{Powerbar, PowerbarEvent};
 use crate::shared::smart_playlist::SmartPlaylistEditor;
 use crate::shared::soloist::SoloistSetup;
 use crate::shared::tag_editor::TagEditor;
@@ -268,6 +268,10 @@ impl Root {
         // The quick search asks on its own, so typing in it leaves the search screen as it was.
         let quick = cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
         let powerbar = Powerbar::entity(quick, playback.clone(), cx);
+        cx.subscribe(&powerbar, |this, _, event, cx| match event {
+            PowerbarEvent::Search(query) => this.search_for(query, cx),
+        })
+        .detach();
         let genres = cx.new(|cx| Genres::new(session.clone(), io.clone(), cx));
         let search = cx.new(|cx| {
             SearchView::new(
@@ -530,6 +534,17 @@ impl Root {
         navigate(Destination::Search, cx);
         self.pending = Some(Focus::Search);
         cx.notify();
+    }
+
+    /// Opens the search page with the full results for `query`. An empty query opens the page as
+    /// it was left.
+    fn search_for(&mut self, query: &str, cx: &mut Context<Self>) {
+        if !query.is_empty() {
+            self.screens
+                .search
+                .update(cx, |search, cx| search.search_for(query, cx));
+        }
+        self.open_search(cx);
     }
 
     /// Focuses the filter of the page on show. In settings that is the settings search.
