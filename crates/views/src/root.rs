@@ -536,7 +536,8 @@ impl Root {
         cx.notify();
     }
 
-    /// Opens the search page with the full results for `query`, or with an empty field.
+    /// Opens the search page with the full results for `query`. An empty query opens the page as
+    /// it was left.
     fn search_for(&mut self, query: &str, cx: &mut Context<Self>) {
         if !query.is_empty() {
             self.screens

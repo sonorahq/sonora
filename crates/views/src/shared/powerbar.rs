@@ -82,7 +82,8 @@ enum Cursor {
 
 /// What the quick search asks of the window around it.
 pub(crate) enum PowerbarEvent {
-    /// Open the search page with the full results for this query, or with an empty field.
+    /// Open the search page with the full results for this query, or as it was left when the
+    /// query is empty.
     Search(String),
 }
 
