@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 use gpui::prelude::*;
 use gpui::{
-    App, Context, Entity, FocusHandle, Global, Render, ScrollHandle, SharedString, Subscription,
-    Window, div, px,
+    App, Context, Entity, FocusHandle, Global, Pixels, Render, ScrollHandle, SharedString,
+    Subscription, Window, div, px,
 };
 use i18n::t;
 use music::{
@@ -93,6 +93,9 @@ struct Installed(Entity<SmartPlaylistEditor>);
 
 impl Global for Installed {}
 
+/// The room the rule list keeps around its rows, so the scroll area does not cut off the ring
+/// a focused field wears outside its edge.
+const RING_ROOM: Pixels = px(4.);
 const FIELD_PICKER: &str = "smart-rules-field";
 const OPERATOR_PICKER: &str = "smart-rules-operator";
 
@@ -815,6 +818,8 @@ impl Render for SmartPlaylistEditor {
                         .flex_col()
                         .gap_2()
                         .max_h(px(420.))
+                        .p(RING_ROOM)
+                        .m(-RING_ROOM)
                         .overflow_y_scroll()
                         .track_scroll(&self.scroll)
                         .child(list);
