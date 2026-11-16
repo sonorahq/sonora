@@ -1558,6 +1558,7 @@ fn queued_tracks(entries: Vec<wire::Queued>) -> Vec<QueuedTrack> {
                 queued,
                 suggested: false,
                 added_by: None,
+                recommended: false,
             })
         })
         .collect()

@@ -51,6 +51,8 @@ pub struct QueuedTrack {
     /// chose once that runs out.
     pub suggested: bool,
     pub added_by: Option<String>,
+    /// Whether the provider mixed this track in as a recommendation, as smart shuffle does.
+    pub recommended: bool,
 }
 
 impl QueuedTrack {
@@ -61,6 +63,7 @@ impl QueuedTrack {
             suggested: false,
             uid: String::new(),
             added_by: None,
+            recommended: false,
         }
     }
 }

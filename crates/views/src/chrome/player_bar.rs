@@ -12,10 +12,10 @@ use gpui::{
 use gpui::{Window, deferred, div, px};
 use i18n::t;
 use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
-use state::{AppSettings, Playback, PlayerBarLayout, Queue, SideTab, Sonora};
+use state::{AppSettings, Playback, PlayerBarLayout, Queue, QueuePosition, SideTab, Sonora};
 use ui::{
     Artwork, Badge, Button, Flight, InlineLink, InlineLinks, Perch, Pinnable, Popup, Room,
-    Scrollbar, Scrubber, ScrubberState,
+    Scrollbar, Scrubber, ScrubberState, Sparkle,
 };
 
 use crate::chrome::sessions_button::SessionsButton;
@@ -297,9 +297,21 @@ impl PlayerBar {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let label = match self.playback.read(cx).shown_track(cx) {
-            Some(track) => SharedString::from(format!("{} — {}", track.name, track.artists)),
-            None => t!("player-nothing-playing"),
+        let playback = self.playback.read(cx);
+        let recommended = playback
+            .shown_queue(cx)
+            .recommended(QueuePosition::Current, cx);
+        let label = match (playback.shown_track(cx), recommended) {
+            (Some(track), false) => {
+                SharedString::from(format!("{} — {}", track.name, track.artists))
+            }
+            (Some(track), true) => SharedString::from(format!(
+                "{} — {}, {}",
+                track.name,
+                track.artists,
+                t!("queue-recommended")
+            )),
+            (None, _) => t!("player-nothing-playing"),
         };
         div()
             .id("now-playing")
@@ -373,6 +385,11 @@ impl PlayerBar {
         let shown = self.playback.read(cx).shown_track(cx);
         let track = shown.as_ref();
         let explicit = track.is_some_and(|track| track.explicit);
+        let recommended = self
+            .playback
+            .read(cx)
+            .shown_queue(cx)
+            .recommended(QueuePosition::Current, cx);
         let title = match track {
             Some(track) => {
                 let name = SharedString::from(track.name.clone());
@@ -434,8 +451,10 @@ impl PlayerBar {
                         .relative()
                         .flex()
                         .items_center()
+                        .gap_1()
                         .min_w_0()
                         .min_h(theme.text(ui::Text::Body) * ui::LEADING)
+                        .when(recommended, |this| this.child(Sparkle::new()))
                         .child(title)
                         .child(
                             actions
@@ -456,6 +475,7 @@ impl PlayerBar {
                 .items_center()
                 .h(theme.text(ui::Text::Body) * ui::LEADING)
                 .gap_1()
+                .when(recommended, |this| this.child(Sparkle::new()))
                 .child(title)
                 .child(actions),
         };

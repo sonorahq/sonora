@@ -292,6 +292,7 @@ queue-added-by = Added by { $name }
 queue-empty = Your queue is empty
 queue-similar = Similar tracks
 queue-radio = Autoplay similar tracks
+queue-recommended = Recommended by smart shuffle
 queue-return-playing = Back to now playing
 
 # player bar
