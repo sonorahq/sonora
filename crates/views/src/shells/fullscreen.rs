@@ -1503,6 +1503,10 @@ impl Render for FullscreenView {
             ),
             false => (spectrum, None),
         };
+        let perches = match self.panel.is_some() {
+            true => self.aside.update(cx, |aside, cx| aside.perches(window, cx)),
+            false => Vec::new(),
+        };
 
         div()
             .id("fullscreen")
@@ -1665,6 +1669,22 @@ impl Render for FullscreenView {
                         .opacity(left)
                         .child(self.aside.clone()),
                 )
+            })
+            // The panel's floating buttons stand over it here, above the visualizer and the band
+            // over it, which would otherwise cover and blur them.
+            .when(!perches.is_empty(), |this| {
+                let at = self.panel_bounds.get();
+                let origin = at.origin - self.root_origin.get();
+                this.child(entering(
+                    div()
+                        .absolute()
+                        .left(origin.x)
+                        .top(origin.y)
+                        .w(at.size.width)
+                        .h(at.size.height)
+                        .children(perches),
+                    switching,
+                ))
             })
             .when(!split && self.panel.is_some(), |this| {
                 this.child(self.strip(hide, window, cx))
