@@ -1123,10 +1123,42 @@ pub struct WebSignIn {
     pub agent: Option<&'static str>,
 }
 
+/// One of the libraries a self-hosted server keeps apart, which a stored account can be limited
+/// to. It is kept beside the account so a launch can name the choice before the server is asked,
+/// and so a library the server no longer lists is still reported by name rather than silently
+/// widened back to everything.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Library {
+    pub id: i64,
+    /// The server's name for it, when it has one.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
 #[async_trait]
 pub trait MusicProvider: Send + Sync {
     fn name(&self) -> &'static str;
     fn slug(&self) -> &'static str;
+
+    /// Whether a stored account can be limited to one library of its server. Only such a
+    /// provider answers the other library calls.
+    fn has_libraries(&self) -> bool {
+        false
+    }
+    /// The library the stored account is limited to, or `None` when it reads the whole server.
+    /// It reads what is stored and asks the server nothing.
+    fn library(&self) -> Option<Library> {
+        None
+    }
+    /// Every library the stored account's server offers.
+    async fn libraries(&self) -> Result<Vec<Library>> {
+        anyhow::bail!("this provider has no libraries")
+    }
+    /// Keeps the library the stored account reads, or the whole server with `None`. It only
+    /// stores the choice, so a live session applies it once it is rebuilt.
+    fn choose_library(&self, _library: Option<Library>) -> Result<()> {
+        anyhow::bail!("this provider has no libraries")
+    }
 
     /// Forgets whatever the provider remembers about its last scan, so the next one reads
     /// everything again. Only a provider that scans files has anything to forget, and only a

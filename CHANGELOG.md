@@ -12,6 +12,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Songs, albums and artists uploaded to your Apple Music library through iTunes or the Music app can now be browsed and played.
 - Use Sonora in European Portuguese. A system set to Portuguese from Portugal picks it on its own.
 - Use Sonora in Vietnamese. A system set to Vietnamese picks it on its own.
+- Pick which Navidrome library a Subsonic account browses from the account's settings.
 - Open the cover of an album or a playlist, or an artist's photo, from its page to see the original artwork full size, zoom in with the wheel or the buttons and drag it around.
 - Press Ctrl+K (⌘K on macOS) anywhere to search. Enter plays a song right away, Ctrl+Enter opens its page, and the artist and album under a result open theirs.
 - Click the tray icon on Windows to show Sonora's window, or to hide it when it is already open.
