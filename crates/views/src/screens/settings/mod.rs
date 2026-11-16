@@ -964,10 +964,16 @@ impl SettingsView {
                 t!("settings-lyrics-for-local-files"),
                 t!("settings-lyrics-for-local-files-detail"),
             ),
-            Slot::SpotifyConnect => (
-                t!("settings-spotify-connect"),
-                t!("settings-spotify-connect-detail"),
-            ),
+            Slot::SpotifyConnect => match connect::jellyfin(cx) {
+                true => (
+                    t!("settings-jellyfin-remote"),
+                    t!("settings-jellyfin-remote-detail"),
+                ),
+                false => (
+                    t!("settings-spotify-connect"),
+                    t!("settings-spotify-connect-detail"),
+                ),
+            },
             Slot::SpotifyConnectName => (
                 t!("settings-spotify-connect-name"),
                 t!("settings-spotify-connect-name-detail"),

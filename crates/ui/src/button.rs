@@ -4,9 +4,10 @@ use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, ClickEvent, Div, ElementId, HoverListenerMode, Hsla, Interactivity,
-    MouseButton, Pixels, SharedString, Stateful, StyleRefinement, Svg, TextStyleRefinement,
-    Transformation, Window, canvas, div, point, px, radians, relative, size, svg,
+    AnyElement, App, ClickEvent, Div, ElementId, FontWeight, HoverListenerMode, Hsla,
+    Interactivity, MouseButton, Pixels, SharedString, Stateful, StyleRefinement, Svg,
+    TextStyleRefinement, Transformation, Window, canvas, div, point, px, radians, relative, size,
+    svg,
 };
 
 use crate::glass::{GLASS_BLUR, blurring, frost};
@@ -30,6 +31,9 @@ pub const SMALL_INSET: Pixels = px(8.);
 /// A regular button's side padding and the space between its icon and its label.
 const INSET: Pixels = px(12.);
 const GAP: Pixels = px(6.);
+/// A large button's side padding and the space between its icon and its label.
+const LARGE_INSET: Pixels = px(16.);
+const LARGE_GAP: Pixels = px(8.);
 const ICON: Pixels = px(16.);
 const BORDER: Pixels = px(1.);
 /// How small a swapped icon starts as it pops in.
@@ -99,6 +103,8 @@ pub struct Button {
     trailing: Option<SharedString>,
     variant: Variant,
     small: bool,
+    /// Whether the button stands as tall as a text field, as the answers of a dialog do.
+    large: bool,
     disabled: bool,
     selected: bool,
     /// Whether the menu or panel the button opens is showing, `None` for a button that opens
@@ -149,6 +155,7 @@ impl Button {
             trailing: None,
             variant: Variant::Ghost,
             small: false,
+            large: false,
             disabled: false,
             selected: false,
             expanded: None,
@@ -267,6 +274,22 @@ impl Button {
     pub fn small(mut self) -> Self {
         self.small = true;
         self
+    }
+
+    /// Makes the button as tall as a text field, with a heavier label, for the answers of a
+    /// dialog and the buttons of a form.
+    pub fn large(mut self) -> Self {
+        self.large = true;
+        self
+    }
+
+    /// Makes the button one of a dialog's answers: as tall as a text field, with a ghost
+    /// answer outlined so it still reads as a button beside the main one.
+    pub(crate) fn answer(mut self) -> Self {
+        if matches!(self.variant, Variant::Ghost) {
+            self.variant = Variant::Outline;
+        }
+        self.large()
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -456,6 +479,7 @@ impl RenderOnce for Button {
             trailing,
             variant,
             small,
+            large,
             disabled,
             selected,
             expanded,
@@ -582,8 +606,9 @@ impl RenderOnce for Button {
         };
         // The reserved slot's width, and how wide the label shown in it sets.
         let reserved = (!reserve.is_empty()).then(|| {
-            let size = small.then(|| TextStyleRefinement {
-                font_size: Some(theme.text(Text::Label).into()),
+            let size = (small || large).then(|| TextStyleRefinement {
+                font_size: small.then(|| theme.text(Text::Label).into()),
+                font_weight: large.then_some(FontWeight::MEDIUM),
                 ..Default::default()
             });
             window.with_text_style(size, |window| {
@@ -600,10 +625,12 @@ impl RenderOnce for Button {
                 (slot, shown)
             })
         });
-        let (height, padding, gap) = match small {
-            true => (theme.metrics.control_small, SMALL_INSET, px(4.)),
-            false => (theme.metrics.control, INSET, GAP),
+        let (height, padding, gap) = match (small, large) {
+            (true, _) => (theme.metrics.control_small, SMALL_INSET, px(4.)),
+            (false, true) => (theme.metrics.field, LARGE_INSET, LARGE_GAP),
+            (false, false) => (theme.metrics.control, INSET, GAP),
         };
+        let weight = large.then_some(FontWeight::MEDIUM);
         let (hover, active) = match interactive {
             true => (palette.hover, palette.active),
             false => (None, None),
@@ -640,6 +667,7 @@ impl RenderOnce for Button {
             if small {
                 text.font_size = Some(theme.text(Text::Label).into());
             }
+            text.font_weight = weight;
             text.refine(&overrides.text);
             let label =
                 window.with_text_style(Some(text), |window| text_width(label.clone(), window));
@@ -785,6 +813,7 @@ impl RenderOnce for Button {
             })
             .text_color(foreground)
             .when(small, |this| this.text_size(theme.text(Text::Label)))
+            .when_some(weight, |this, weight| this.font_weight(weight))
             .when_some(palette.background, |this, background| this.bg(background))
             .when(selected && !backgroundless, |this| {
                 this.bg(selected_background)

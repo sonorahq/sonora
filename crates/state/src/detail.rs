@@ -703,7 +703,7 @@ fn playlist_header(playlist: &Playlist) -> Header {
     };
     let owner_name = match owner.is_some() {
         true => None,
-        false => Some(playlist.owner.clone()),
+        false => Some(playlist.owner.clone()).filter(|name| !name.is_empty()),
     };
 
     Header {

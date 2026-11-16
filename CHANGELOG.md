@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Play the music on your own Jellyfin server, signed in with your password or Quick Connect, with favorites, playlists, instant mixes, downloads and word-synced lyrics from the server.
+- Control Sonora from Jellyfin's apps and dashboard, and play on your other Jellyfin apps from the devices menu.
 - Songs, albums and artists uploaded to your Apple Music library through iTunes or the Music app can now be browsed and played.
 - Use Sonora in European Portuguese. A system set to Portuguese from Portugal picks it on its own.
 - Use Sonora in Vietnamese. A system set to Vietnamese picks it on its own.
@@ -74,6 +76,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Dialogs have roomier fields and full-height buttons, and the field you type in wears a soft ring.
 - On a wide window pages stop growing at 1280 pixels and stay centred, while artist banners still reach the edges. Song tables then sit in a bordered frame like the one on artist pages.
 - The fullscreen button now swaps in place when the fullscreen player opens or closes, instead of fading and zooming with it.
 - Your accounts now open Settings, General, and the separate Providers tab is gone.

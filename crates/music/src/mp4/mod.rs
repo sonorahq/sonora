@@ -17,32 +17,48 @@ const RANGE_PATIENCE: Duration = Duration::from_secs(5);
 const VALIDATOR_AGE: SignedDuration = SignedDuration::from_secs(60);
 
 /// A validated suffix in the original file's byte coordinates.
-pub(super) struct Tail {
+pub(crate) struct Tail {
     start: u64,
     bytes: Vec<u8>,
 }
 
 /// How to open a track without making the audio thread wait for its metadata.
 #[derive(Clone, Default)]
-pub(super) struct Prepared {
+pub(crate) struct Prepared {
     progressive: bool,
     tail: Option<Arc<Tail>>,
 }
 
 /// The original stream response's address and validator, reused for metadata ranges.
-pub(super) struct Remote {
+pub(crate) struct Remote {
     url: reqwest::Url,
+    /// The `Authorization` header the original request carried, for a server whose urls hold no
+    /// credentials of their own.
+    authorization: Option<reqwest::header::HeaderValue>,
     validator: Option<reqwest::header::HeaderValue>,
     total: u64,
 }
 
 impl Remote {
-    pub(super) fn new(response: &reqwest::Response) -> Option<Self> {
+    pub(crate) fn new(response: &reqwest::Response) -> Option<Self> {
         Some(Self {
             url: response.url().clone(),
+            authorization: None,
             validator: range_validator(response.headers()),
             total: response.content_length()?,
         })
+    }
+
+    /// Sends `value` as the `Authorization` header of every range request, as long as the file
+    /// is still served from `server`. A file a redirect moved to another origin gets no
+    /// credentials, as the redirect itself sent none.
+    pub(crate) fn authorized(mut self, server: &str, value: &str) -> Self {
+        let home =
+            reqwest::Url::parse(server).is_ok_and(|server| server.origin() == self.url.origin());
+        self.authorization = home
+            .then(|| reqwest::header::HeaderValue::from_str(value).ok())
+            .flatten();
+        self
     }
 
     /// Accepts only an exact partial response and bounds both its size and its lifetime.
@@ -52,10 +68,13 @@ impl Remote {
         if length == 0 || length > METADATA_LIMIT {
             return None;
         }
-        let request = http
+        let mut request = http
             .get(self.url.clone())
             .header(RANGE, format!("bytes={start}-{}", self.total - 1))
             .header(IF_RANGE, validator);
+        if let Some(authorization) = &self.authorization {
+            request = request.header(reqwest::header::AUTHORIZATION, authorization);
+        }
         tokio::time::timeout(RANGE_PATIENCE, async {
             let mut response = request.send().await.ok()?;
             let expected = format!("bytes {start}-{}/{}", self.total - 1, self.total);
@@ -83,7 +102,7 @@ impl Remote {
 impl Prepared {
     /// Waits for MP4 metadata on the cancellable load task. A server that refuses ranges falls
     /// back to the original sequential download without holding the audio thread.
-    pub(super) async fn load(
+    pub(crate) async fn load(
         stream: &mut Stream,
         remote: Option<(&reqwest::Client, &Remote)>,
     ) -> Result<Self> {
@@ -153,11 +172,11 @@ impl Prepared {
         }
     }
 
-    pub(super) fn seekable(&self, stream: &Stream) -> bool {
+    pub(crate) fn seekable(&self, stream: &Stream) -> bool {
         stream.total().is_some() && (!self.progressive || stream.done())
     }
 
-    pub(super) fn reader(&self, stream: &Stream) -> Input {
+    pub(crate) fn reader(&self, stream: &Stream) -> Input {
         Input {
             reader: stream.reader(),
             tail: self.tail.clone(),
@@ -169,7 +188,7 @@ impl Prepared {
 
 /// Reads fetched metadata at its original offsets while media keeps arriving sequentially.
 /// The vault always receives the unmodified original file.
-pub(super) struct Input {
+pub(crate) struct Input {
     reader: Reader,
     tail: Option<Arc<Tail>>,
     total: Option<u64>,
@@ -355,6 +374,7 @@ mod tests {
         });
         let remote = Remote {
             url,
+            authorization: None,
             total: TAIL.len() as u64,
             validator: Some("\"test-version\"".parse().unwrap()),
         };

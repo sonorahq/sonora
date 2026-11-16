@@ -12,6 +12,7 @@ pub mod drm;
 pub mod engine;
 pub mod equalizer;
 pub mod escape;
+pub mod jellyfin;
 pub mod kugou;
 pub mod link;
 #[cfg(test)]
@@ -20,6 +21,7 @@ pub mod local;
 pub mod lrclib;
 pub mod lyrics;
 mod models;
+mod mp4;
 pub mod musixmatch;
 pub mod netease;
 pub mod output;
@@ -996,6 +998,8 @@ pub enum SignInProblem {
     Subscription,
     Region,
     Credentials,
+    /// The server did not accept the username and password typed for a new sign-in.
+    Password,
     Network,
     Cancelled,
     Refused,
@@ -1024,6 +1028,7 @@ impl std::fmt::Display for SignInFailure {
             SignInProblem::Subscription => "the account has no active Apple Music subscription",
             SignInProblem::Region => "the account is out of its home region",
             SignInProblem::Credentials => "the stored credentials are no longer valid",
+            SignInProblem::Password => "the server did not accept that username and password",
             SignInProblem::Network => "the provider could not be reached",
             SignInProblem::Cancelled => "authorization was cancelled in the browser",
             SignInProblem::Refused => "Spotify refused the session",

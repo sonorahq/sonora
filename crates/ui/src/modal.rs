@@ -5,7 +5,7 @@ use std::sync::Arc;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Div, ElementId, Entity, FontWeight, Global, MouseButton, Pixels, Point,
-    ScrollWheelEvent, SharedString, StyleRefinement, Window, anchored, deferred, div, point,
+    ScrollWheelEvent, SharedString, StyleRefinement, Window, anchored, deferred, div, point, px,
 };
 
 use crate::button::Button;
@@ -17,8 +17,13 @@ use crate::scroller::middle_scroll;
 use crate::shield::Shield;
 use crate::theme::ActiveTheme as _;
 
-const BACKDROP: f32 = 0.8;
-const WIDTH: f32 = 2.4;
+/// How many covers wide a dialog is.
+const WIDTH: f32 = 2.75;
+/// How far the close button sits from the top and the end of the dialog. Its cross then sits
+/// as far in as a small button's padding takes it.
+const CLOSE_INSET: Pixels = px(11.);
+/// How much of the close button shows until the pointer comes to it.
+const CLOSE_FADE: f32 = 0.7;
 /// How many times the theme radius a dialog's corners take. A surface this large reads square at
 /// the radius a button uses, and scaling it keeps a dialog square when corners are set to square.
 /// The scaled radius never passes what Rounded gives, since Round doubled bulges a dialog.
@@ -82,8 +87,10 @@ impl Modal {
         self
     }
 
-    pub fn action(mut self, action: impl IntoElement) -> Self {
-        self.actions.push(action.into_any_element());
+    /// Adds an answer to the row along the bottom, which stands as tall as a text field and
+    /// outlines a ghost button.
+    pub fn action(mut self, action: Button) -> Self {
+        self.actions.push(action.answer().into_any_element());
         self
     }
 
@@ -129,8 +136,9 @@ impl Styled for Modal {
 impl RenderOnce for Modal {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = *cx.theme();
-        let pad = theme.metrics.pad;
-        let room = pad * 2.;
+        let room = theme.metrics.inset;
+        let gap = theme.metrics.pad * 2.;
+        let heading = theme.text(Text::Heading);
         let Self {
             mut base,
             id,
@@ -144,10 +152,12 @@ impl RenderOnce for Modal {
         } = self;
         let outside = dismiss.clone();
         // with no action row under it the body carries the bottom padding itself, so the
-        // panel is inset by the same amount all the way round
+        // panel is inset by the same amount all the way round. Above an action row it keeps
+        // enough of it that the focus ring of a field at its foot is not cut off by the
+        // scrolling body, and the row takes the rest.
         let tail = match actions.is_empty() {
             true => room,
-            false => pad,
+            false => theme.metrics.pad,
         };
         let close = dismiss.clone().filter(|_| close_button);
         let overrides = std::mem::take(base.style());
@@ -179,7 +189,7 @@ impl RenderOnce for Modal {
                     Shield::new(id.clone())
                         .absolute()
                         .inset_0()
-                        .bg(theme.background.opacity(BACKDROP))
+                        .bg(theme.overlay)
                         .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                             cx.stop_propagation();
@@ -208,7 +218,7 @@ impl RenderOnce for Modal {
                     .border_1()
                     .border_color(theme.border)
                     .bg(theme.popover)
-                    .shadow_md()
+                    .shadow_lg()
                     .overflow_hidden()
                     .child(
                         div()
@@ -216,40 +226,55 @@ impl RenderOnce for Modal {
                             .flex_none()
                             .items_start()
                             .gap_2()
-                            .px(room)
+                            .pl(room)
                             .pt(room)
-                            .pb(pad)
+                            // the title keeps clear of the close button in the corner
+                            .pr(match close.is_some() {
+                                true => CLOSE_INSET + theme.metrics.control_small + gap,
+                                false => room,
+                            })
                             .child(
                                 div()
                                     .flex()
                                     .flex_1()
                                     .min_w_0()
                                     .flex_col()
-                                    .gap_1()
+                                    .gap_1p5()
                                     .child(
                                         div()
-                                            .text_size(theme.text(Text::Large))
+                                            .text_size(heading)
+                                            .line_height(heading)
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .child(title),
                                     )
                                     .when_some(detail, |this, detail| {
                                         this.child(
                                             div()
-                                                .text_size(theme.text(Text::Small))
+                                                .text_size(theme.text(Text::Body))
                                                 .text_color(theme.muted_foreground)
                                                 .child(detail),
                                         )
                                     }),
                             )
-                            .children(trailing)
-                            .children(close.map(|close| {
+                            .children(trailing),
+                    )
+                    .children(close.map(|close| {
+                        div()
+                            .absolute()
+                            .top(CLOSE_INSET)
+                            .right(CLOSE_INSET)
+                            .opacity(CLOSE_FADE)
+                            .hover(|this| this.opacity(1.))
+                            .child(
                                 Button::new("modal-close")
                                     .icon("icons/x.svg")
                                     .small()
+                                    .ghost()
+                                    .hoverless()
                                     .tooltip("common-dismiss")
-                                    .on_click(move |_, window, cx| close(&(), window, cx))
-                            })),
-                    )
+                                    .on_click(move |_, window, cx| close(&(), window, cx)),
+                            )
+                    }))
                     .when(!body.is_empty(), |this| {
                         this.child(
                             div()
@@ -268,9 +293,9 @@ impl RenderOnce for Modal {
                                         .w_full()
                                         .min_w_0()
                                         .min_h_0()
-                                        .gap(pad)
+                                        .gap(gap)
                                         .px(room)
-                                        .pt(pad)
+                                        .pt(room)
                                         .pb(tail)
                                         .overflow_y_scroll()
                                         .track_scroll(scroller.read(cx).scroll())
@@ -298,8 +323,9 @@ impl RenderOnce for Modal {
                                 .flex_none()
                                 .justify_end()
                                 .gap_2()
-                                .p(room)
-                                .pt(pad)
+                                .px(room)
+                                .pb(room)
+                                .pt(room - tail)
                                 .children(actions),
                         )
                     });

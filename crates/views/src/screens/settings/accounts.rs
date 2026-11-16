@@ -969,7 +969,7 @@ impl SettingsView {
         let Some(slug) = self.credentials_for else {
             return;
         };
-        let Some((server, username, password)) = self.credentials.filled(cx) else {
+        let Some((server, username, password)) = self.credentials.filled(slug, cx) else {
             return;
         };
         self.clear_credentials(cx);
@@ -988,6 +988,7 @@ impl SettingsView {
 
     pub(super) fn credentials_prompt(&self, cx: &mut Context<Self>) -> impl IntoElement {
         CredentialsPrompt::new(&self.credentials)
+            .provider(self.credentials_for.unwrap_or("subsonic"))
             .on_submit(cx.listener(|this, _, _, cx| this.submit_credentials(cx)))
             .on_cancel(cx.listener(|this, _, _, cx| this.abandon_credentials(cx)))
     }

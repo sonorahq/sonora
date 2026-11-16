@@ -353,9 +353,10 @@ const DEFAULT_STARTUP: &str = "home";
 pub const SYSTEM_FONT: &str = "auto";
 /// Every lyrics source Sonora knows by the name its provider reports, in the order a fresh
 /// install prefers them.
-pub const LYRICS_SOURCES: [&str; 9] = [
+pub const LYRICS_SOURCES: [&str; 10] = [
     LOCAL,
     "Subsonic",
+    "Jellyfin",
     "Spotify",
     "YouTube Music",
     "Apple Music",
@@ -473,6 +474,9 @@ struct Values {
     /// Set once Subsonic has been added to a list saved before it existed, so a user who turns it
     /// off afterwards is not given it back.
     subsonic_lyrics_offered: bool,
+    /// Set once Jellyfin has been added to a list saved before it existed, so a user who turns it
+    /// off afterwards is not given it back.
+    jellyfin_lyrics_offered: bool,
     /// Whether lyrics show anywhere and are looked up at all.
     lyrics_enabled: bool,
     lyrics_providers: Vec<String>,
@@ -703,10 +707,11 @@ impl Default for Values {
             stream_quality: Quality::default().id().to_owned(),
             local_lyrics_offered: false,
             subsonic_lyrics_offered: false,
+            jellyfin_lyrics_offered: false,
             lyrics_enabled: true,
             lyrics_provider_priority: lyrics_priority(&[]),
             // Kugou and NetEase, the last two, start switched off.
-            lyrics_providers: LYRICS_SOURCES[..7]
+            lyrics_providers: LYRICS_SOURCES[..8]
                 .iter()
                 .map(|name| name.to_string())
                 .collect(),
@@ -979,7 +984,7 @@ impl AppSettings {
             }
         };
         let parsed = bytes.map(|bytes| (serde_json::from_slice::<Values>(json(&bytes)), bytes));
-        let parsed = parsed.map(|(values, bytes)| (values.map(offer_subsonic_lyrics), bytes));
+        let parsed = parsed.map(|(values, bytes)| (values.map(offer_new_lyrics), bytes));
         let (values, writable, disk, broken) = match parsed {
             Some((Ok(values), bytes)) => (values.settled(), writable, Some(bytes), None),
             Some((Err(_), bytes)) if empty_settings(&bytes) => {
@@ -989,11 +994,12 @@ impl AppSettings {
                 log::warn!("settings: cannot parse {}: {error}", path.display());
                 (Values::default().settled(), false, None, Some(error.line()))
             }
-            // The default provider list already has Subsonic, so a fresh install marks it offered
-            // and a user who turns it off does not get it back on the next launch.
+            // The default provider list already has Subsonic and Jellyfin, so a fresh install marks
+            // them offered and a user who turns one off does not get it back on the next launch.
             None => {
                 let values = Values {
                     subsonic_lyrics_offered: true,
+                    jellyfin_lyrics_offered: true,
                     ..Values::default()
                 };
                 (values.settled(), writable, None, None)
@@ -2872,7 +2878,7 @@ impl AppSettings {
             return SettingsReload::Unchanged;
         }
         let values = match serde_json::from_slice::<Values>(json(&bytes)) {
-            Ok(values) => offer_subsonic_lyrics(values).settled(),
+            Ok(values) => offer_new_lyrics(values).settled(),
             Err(error) => {
                 log::warn!("settings: cannot parse {}: {error}", self.path.display());
                 let newly_broken = self.broken != Some(error.line());
@@ -2953,16 +2959,19 @@ fn empty_settings(bytes: &[u8]) -> bool {
     json(bytes).iter().all(u8::is_ascii_whitespace)
 }
 
-/// A saved provider list replaces the default one, so Subsonic reaches an existing user once.
-fn offer_subsonic_lyrics(mut values: Values) -> Values {
-    if !values.subsonic_lyrics_offered {
-        values.subsonic_lyrics_offered = true;
-        if !values
-            .lyrics_providers
-            .iter()
-            .any(|name| name == "Subsonic")
-        {
-            values.lyrics_providers.push("Subsonic".to_owned());
+/// A saved provider list replaces the default one, so each server source added since reaches
+/// an existing user once.
+fn offer_new_lyrics(mut values: Values) -> Values {
+    let sources = [
+        (&mut values.subsonic_lyrics_offered, "Subsonic"),
+        (&mut values.jellyfin_lyrics_offered, "Jellyfin"),
+    ];
+    for (offered, name) in sources {
+        if !*offered {
+            *offered = true;
+            if !values.lyrics_providers.iter().any(|held| held == name) {
+                values.lyrics_providers.push(name.to_owned());
+            }
         }
     }
     values
@@ -3254,12 +3263,25 @@ fn read_keybinds<'de, D: serde::Deserializer<'de>>(
         .collect())
 }
 
+/// The saved source order with every source it does not know put in, each right after the nearest
+/// source before it in the default order, or last when the list has none of those. A source added
+/// since a list was saved then ranks where a fresh install has it.
 fn lyrics_priority(saved: &[String]) -> Vec<String> {
     let mut order: Vec<String> = Vec::new();
-    for name in saved.iter().map(String::as_str).chain(LYRICS_SOURCES) {
+    for name in saved.iter().map(String::as_str) {
         if LYRICS_SOURCES.contains(&name) && !order.iter().any(|held| held == name) {
             order.push(name.to_owned());
         }
+    }
+    for (index, name) in LYRICS_SOURCES.iter().enumerate() {
+        if order.iter().any(|held| held == name) {
+            continue;
+        }
+        let after = LYRICS_SOURCES[..index]
+            .iter()
+            .rev()
+            .find_map(|before| order.iter().position(|held| held == before));
+        order.insert(after.map_or(order.len(), |at| at + 1), (*name).to_owned());
     }
     order
 }
@@ -3315,6 +3337,7 @@ mod tests {
             [
                 LOCAL,
                 "Subsonic",
+                "Jellyfin",
                 "Spotify",
                 "YouTube Music",
                 "Apple Music",
@@ -3344,7 +3367,7 @@ mod tests {
     fn lyrics_priority_ignores_unknown_and_duplicate_sources_and_appends_missing_ones() {
         let order = lyrics_priority(&["LrcLib".into(), "unknown".into(), "LrcLib".into()]);
         assert_eq!(order[0], "LrcLib");
-        assert_eq!(order.len(), 9);
+        assert_eq!(order.len(), 10);
         assert!(!order.iter().any(|name| name == "unknown"));
         assert_eq!(order.iter().filter(|name| *name == "LrcLib").count(), 1);
     }
