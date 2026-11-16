@@ -75,6 +75,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - On a wide window pages stop growing at 1600 pixels and stay centred, while artist banners still reach the edges.
 - The fullscreen button now swaps in place when the fullscreen player opens or closes, instead of fading and zooming with it.
 - Your accounts now open Settings, General, and the separate Providers tab is gone.
+- Play buttons and menus say «Играть» in Russian and «Spielen» in German.
 - Ctrl+F (⌘F on macOS) now opens search and / filters the page you are on, and shortcuts list Ctrl before Shift.
 - Hovered rows share one fill in tables, cards and the sidebar, the softer one the sidebar used.
 - History is now called Recents and shows in the sidebar right under Search. Hide it again under Settings, General, Sidebar entries. Settings, once added there, sits right under Recents.
