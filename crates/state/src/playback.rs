@@ -526,6 +526,7 @@ impl From<&Pin> for Origin {
             PinKind::Playlist => Origin::playlist(pin.id.clone()),
             PinKind::Artist => Origin::artist(pin.id.clone()),
             PinKind::Song => Origin::radio(pin.id.clone()),
+            PinKind::Liked => Origin::saved(),
         };
         origin.named(pin.title.clone())
     }

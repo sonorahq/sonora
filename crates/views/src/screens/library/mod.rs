@@ -9,7 +9,7 @@ use std::time::Duration;
 use crate::chrome::tools::{self, Sliders};
 use crate::chrome::{Chrome, Searchable, Toolbar, Tooled};
 use crate::shared::confirm::{Confirm, Kind};
-use crate::shared::menus::{ItemMenu, new_playlist_menu};
+use crate::shared::menus::{ItemMenu, liked_menu, new_playlist_menu};
 use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 
 use gpui::accesskit::Role;
@@ -26,9 +26,9 @@ use state::{
     Playback, Scan, Shelf, Sonora,
 };
 use ui::{
-    ActiveTheme as _, Button, Card, Deck, FilterChange, LEADING, Mode, Pinnable, Popovers, Popup,
-    Scrollbar, Scroller, Sort, SortAxis, TableDelegate, TableEvent, TableSource, TableState, Text,
-    Vacancy, Viewport, heading, quantize, runtime, scrolled, snapped, table,
+    ActiveTheme as _, Button, Card, Deck, FilterChange, LEADING, Mode, Pin, Pinnable, Popovers,
+    Popup, Scrollbar, Scroller, Sort, SortAxis, TableDelegate, TableEvent, TableSource, TableState,
+    Text, Vacancy, Viewport, heading, quantize, runtime, scrolled, snapped, table,
 };
 
 use crate::shared::album_grid::{AlbumTiles, CardGrid, TileLook};
@@ -71,6 +71,8 @@ const RECENT: Sort = Sort::Descending;
 #[derive(Clone)]
 enum LibraryMenu {
     Background,
+    /// The hero of the songs page while it lists only the liked songs.
+    Liked,
     Track(Box<Track>),
 }
 
@@ -720,7 +722,8 @@ impl LibraryView {
         if !duration.is_zero() {
             strip = strip.text(runtime(duration));
         }
-        let (title, icon, eyebrow) = match self.liked_only(cx) {
+        let liked = self.liked_only(cx);
+        let (title, icon, eyebrow) = match liked {
             true => (
                 t!("library-liked-songs"),
                 "icons/heart-filled.svg",
@@ -750,6 +753,18 @@ impl LibraryView {
                         self.playback.clone(),
                     )),
             )
+            .when(liked, |hero| {
+                let view = cx.entity().downgrade();
+                hero.pin(Some(Pin::liked()))
+                    .drag_start(move |event, window, cx| {
+                        window.prevent_default();
+                        view.update(cx, |this, cx| {
+                            this.context_menu = Some((LibraryMenu::Liked, event.position));
+                            cx.notify();
+                        })
+                        .ok();
+                    })
+            })
             .into_any_element()
     }
 
@@ -1268,6 +1283,7 @@ impl Render for LibraryView {
                     .source()
                     .menu()
                     .for_track(&track, cx),
+                LibraryMenu::Liked => liked_menu(self.playback.clone(), cx),
                 LibraryMenu::Background => new_playlist_menu(cx.listener(|this, _, window, cx| {
                     this.create_playlist(window, cx);
                 })),
