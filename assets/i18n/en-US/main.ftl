@@ -108,6 +108,7 @@ column-artist = Artist
 column-album = Album
 column-genre = Genre
 column-date-added = Date added
+column-date-liked = Date liked
 column-added-by = Added by
 column-modified = Modified
 column-length = Length

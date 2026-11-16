@@ -19,7 +19,8 @@ use gpui::{
 use music::{Arrival, Track};
 use router::Destination;
 use state::{
-    Detail, History, Library, Network, Origin, Playback, Progress, Reorder, Shelf, Sonora,
+    Detail, History, Library, LibraryPart, Network, Origin, Playback, Progress, Reorder, Shelf,
+    Sonora,
 };
 use ui::{
     ArrowRing, Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, RowMoves, Scrollbar,
@@ -32,7 +33,8 @@ use crate::shared::confirm::{Confirm, Kind};
 use crate::shared::pins::{Pinned as _, origin_tag};
 
 pub(crate) use columns::{
-    HISTORY_COLUMNS, LIBRARY_COLUMNS, TrackField, album_columns, artist_columns, playlist_columns,
+    HISTORY_COLUMNS, LIBRARY_COLUMNS, SONGS_COLUMNS, TrackField, album_columns, artist_columns,
+    playlist_columns,
 };
 pub(crate) use sieve::TrackSieve;
 pub(crate) use sort::initial;
@@ -406,6 +408,14 @@ impl TrackSource {
         }
     }
 
+    /// The day the listener favorited a track, when a catalog shelf knows it.
+    fn liked_at(&self, track: &Track, cx: &App) -> Option<i64> {
+        let (Some(library), Some(id)) = (&self.is_liked, track.id.as_deref()) else {
+            return None;
+        };
+        library.read(cx).liked_at(LibraryPart::Tracks, id)
+    }
+
     pub(crate) fn with_playlist(mut self, detail: Entity<Detail>) -> Self {
         self.playlist = Some(detail);
         self
@@ -606,6 +616,12 @@ impl TableSource for TrackSource {
     fn populated(&self, field: TrackField, cx: &App) -> bool {
         if field == TrackField::AddedAt && self.provider.arrival(cx).is_some() {
             return false;
+        }
+        if field == TrackField::LikedAt {
+            return self
+                .is_liked
+                .as_ref()
+                .is_some_and(|library| library.read(cx).dates_likes(LibraryPart::Tracks));
         }
         let tracks = self.provider.tracks(cx);
         if tracks.is_empty() {
@@ -808,6 +824,9 @@ impl TableSource for TrackSource {
                 cells::stamp(track.added_at),
                 detail,
             ),
+            TrackField::LikedAt => {
+                cells::dim(&cell, cells::stamp(self.liked_at(track, cx)), detail)
+            }
             TrackField::AddedBy => match track.added_by.as_deref() {
                 Some(added) => cells::added_by(&cell, added, detail),
                 None => cells::blank(&cell),
@@ -878,9 +897,14 @@ impl TableSource for TrackSource {
     }
 
     fn compare(&self, field: TrackField, a: usize, b: usize, cx: &App) -> Ordering {
-        match self.provider.arrival(cx) {
-            Some(arrival) if field == TrackField::AddedAt => sort::by_arrival(arrival, a, b),
-            _ => sort::compare(self.provider.tracks(cx), field, a, b),
+        let tracks = self.provider.tracks(cx);
+        match (field, self.provider.arrival(cx)) {
+            (TrackField::AddedAt, Some(arrival)) => sort::by_arrival(arrival, a, b),
+            (TrackField::LikedAt, _) => {
+                let at = |row| tracks.get(row).and_then(|track| self.liked_at(track, cx));
+                at(a).cmp(&at(b))
+            }
+            _ => sort::compare(tracks, field, a, b),
         }
     }
 
