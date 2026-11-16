@@ -25,7 +25,8 @@ impl SettingsView {
             ]),
             Group::new("settings-group-window", "icons/panel-left-open.svg")
                 .rows([Slot::Tray, Slot::TrayIcon, Slot::NowPlayingOnFileOpen])
-                .rows(self.decoration_slots(cx)),
+                .rows(self.decoration_slots(cx))
+                .rows(taskbar_slots()),
             Group::new("settings-group-motion", "icons/loader-circle.svg").rows([
                 Slot::Motion,
                 Slot::Pace,
@@ -464,5 +465,44 @@ impl SettingsView {
                 }))
                 .into_any_element(),
         )
+    }
+
+    pub(super) fn taskbar_progress_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).taskbar_progress();
+
+        self.row(
+            t!("settings-taskbar-progress"),
+            Switch::new("taskbar-progress", on)
+                .name(t!("settings-taskbar-progress"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.set_taskbar_progress(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+}
+
+/// The rows about the Windows taskbar button. Only Windows has that button, so the list is
+/// empty everywhere else and the row is left off the page.
+fn taskbar_slots() -> Vec<Slot> {
+    match cfg!(target_os = "windows") {
+        true => vec![Slot::TaskbarProgress],
+        false => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn taskbar_progress_row_is_listed_only_on_windows() {
+        let slots = taskbar_slots();
+        assert_eq!(
+            slots.contains(&Slot::TaskbarProgress),
+            cfg!(target_os = "windows")
+        );
+        assert_eq!(slots.is_empty(), !cfg!(target_os = "windows"));
     }
 }
