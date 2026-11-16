@@ -193,6 +193,8 @@ impl FullscreenView {
         cx.observe(&cover, |_, _, cx| cx.notify()).detach();
         let library = Sonora::global(cx).library.clone();
         cx.observe(&library, |_, _, cx| cx.notify()).detach();
+        // The meta drops its text shadows while the player opens or closes.
+        cx.observe_global::<ShellSwap>(|_, cx| cx.notify()).detach();
         let settings = Sonora::global(cx).settings.clone();
         cx.observe(&settings, |this, settings, cx| {
             if this.panel == Some(SideTab::Lyrics) && !settings.read(cx).lyrics_enabled() {
@@ -557,7 +559,6 @@ impl FullscreenView {
                     .top(inset)
                     .left(inset)
                     .size(raster_side + pad * 2.)
-                    .layer_scale(presentation_scale)
                     .child(
                         div().absolute().top(pad).left(pad).child(
                             Artwork::new(small)
@@ -592,8 +593,9 @@ impl FullscreenView {
         // The cover flies in from the player bar as fullscreen opens, and slides and grows to
         // its new place when a panel comes or goes, above everything while it travels.
         // The controls falling asleep move the cover on a spring of their own, so layout only
-        // sends it flying while a panel is coming or going. The layer keeps room for how far
-        // the resting cover grows past its layout.
+        // sends it flying while a panel is coming or going. The raster is drawn at its resting
+        // size through the flight's own layer, which keeps room for how far it reaches past
+        // its layout, so a flying cover takes one layer and not two.
         Flight::new("fullscreen-cover", cover)
             .transfer_spring(Springs::ARTWORK_FLIGHT)
             .lands_from(COVER_FLIGHT)
@@ -602,6 +604,7 @@ impl FullscreenView {
             .reports(self.cover_zoom.clone())
             .follows(self.switch.is_some())
             .reach((raster_side - layout_side) / 2. + pad)
+            .presents_at(presentation_scale)
             .above()
     }
 
@@ -637,8 +640,11 @@ impl FullscreenView {
         let meta_bounds = self.meta_bounds.clone();
         // Both lines carry a shadow in the page colour, so they stay legible where a visualizer
         // peak or bright ambient art passes behind them. The title ellipsizes without
-        // `truncate`, whose `overflow_hidden` would clip the shadow to the line box.
-        let effects = shared::effects();
+        // `truncate`, whose `overflow_hidden` would clip the shadow to the line box. Every shadow
+        // is a blur layer of its own, so they wait out the player opening or closing, while the
+        // meta is still fading and every frame already carries the most layers.
+        let shadowed = shared::effects()
+            && cx.try_global::<ShellSwap>().copied().unwrap_or_default() == ShellSwap::Settled;
         let shadow = TEXT_SHADOW.map(|blur| {
             TextShadow::new(theme.background.opacity(TEXT_SHADOW_STRENGTH)).blur(px(blur))
         });
@@ -728,7 +734,7 @@ impl FullscreenView {
                                     cx.stop_propagation();
                                 }),
                             )
-                            .when(effects, |this| this.text_shadow(shadow))
+                            .when(shadowed, |this| this.text_shadow(shadow))
                             .child(title),
                     )
                     .child(div().flex().flex_1().child(trailing(track, cx))),
@@ -749,7 +755,7 @@ impl FullscreenView {
                         )
                         .text_size(theme.text(Text::Body))
                         .truncate()
-                        .when(effects, |this| this.text_shadow(shadow))
+                        .when(shadowed, |this| this.text_shadow(shadow))
                         .on_click(|id, cx| navigate(Destination::Artist(id), cx)),
                     ),
                 )
