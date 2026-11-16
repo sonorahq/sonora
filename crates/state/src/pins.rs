@@ -318,7 +318,7 @@ impl Pins {
         let pins = cx.weak_entity();
         let back = parted.clone();
         let toast = Toast::new(Outcome::Done, "toast-unpinned")
-            .name(parted.pin.title.clone())
+            .name(parted.pin.label())
             .target(target(&parted.pin))
             .undo(move |cx| {
                 pins.update(cx, |this, cx| this.restore(back.clone(), cx))
@@ -495,6 +495,7 @@ impl Pins {
 fn target(pin: &Pin) -> Option<Target> {
     let id = pin.id.clone().into();
     Some(match pin.kind {
+        PinKind::Liked => return None,
         PinKind::Playlist => Target::Playlist(id),
         PinKind::Album => Target::Album(id),
         PinKind::Artist => Target::Artist(id),
@@ -504,10 +505,11 @@ fn target(pin: &Pin) -> Option<Target> {
 
 fn rank(kind: PinKind) -> u8 {
     match kind {
-        PinKind::Playlist => 0,
-        PinKind::Album => 1,
-        PinKind::Artist => 2,
-        PinKind::Song => 3,
+        PinKind::Liked => 0,
+        PinKind::Playlist => 1,
+        PinKind::Album => 2,
+        PinKind::Artist => 3,
+        PinKind::Song => 4,
     }
 }
 
@@ -515,6 +517,7 @@ fn rank(kind: PinKind) -> u8 {
 /// such as a folder or a podcast.
 fn pin_of(item: &PinTarget) -> Option<Pin> {
     let kind = match item.kind {
+        PinTargetKind::LikedSongs => return Some(Pin::liked().cover(item.cover.clone())),
         PinTargetKind::Playlist => PinKind::Playlist,
         PinTargetKind::Album => PinKind::Album,
         PinTargetKind::Artist => PinKind::Artist,
@@ -531,6 +534,7 @@ fn target_kind(kind: PinKind) -> Option<PinTargetKind> {
         PinKind::Playlist => Some(PinTargetKind::Playlist),
         PinKind::Album => Some(PinTargetKind::Album),
         PinKind::Artist => Some(PinTargetKind::Artist),
+        PinKind::Liked => Some(PinTargetKind::LikedSongs),
         PinKind::Song => None,
     }
 }

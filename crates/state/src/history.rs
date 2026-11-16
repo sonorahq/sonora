@@ -11,7 +11,8 @@ use storage::Database;
 use crate::playback::PlaybackEvent;
 use crate::{Io, Outcome, Playback, Session, SessionEvent, SessionState, Toast, Toasts, join};
 
-const LOCAL_LIMIT: usize = 500;
+/// How many plays of one account the history keeps, on disk and in the list.
+const LOCAL_LIMIT: usize = 5000;
 /// Every column of `plays`, in the order a [`Row`] holds them.
 const COLUMNS: &str = "scope, provider, track_id, played_at, name, playable, artists, \
                        artist_refs, album, album_id, cover, duration_ms, explicit";
@@ -86,7 +87,7 @@ impl Store {
                        ORDER BY played_at DESC
                        LIMIT ?2
                    )",
-                params![scope, LOCAL_LIMIT],
+                params![scope, LOCAL_LIMIT as i64],
             )
             .context("cannot trim listening history")?;
         Ok(())
@@ -183,7 +184,7 @@ impl Store {
             )
             .context("cannot prepare listening history read")?;
         let rows = query
-            .query_map(params![scope, LOCAL_LIMIT], |row| {
+            .query_map(params![scope, LOCAL_LIMIT as i64], |row| {
                 let refs = row.get_ref(5)?.as_str()?;
                 let artist_refs: Vec<ArtistRef> = serde_json::from_str(refs).unwrap_or_default();
                 let played_at: i64 = row.get(1)?;
@@ -199,15 +200,8 @@ impl Store {
                     cover: row.get(8)?,
                     duration: std::time::Duration::from_millis(duration.max(0) as u64),
                     added_at: Some(played_at / 1_000),
-                    added_by: None,
-                    playcount: None,
-                    popularity: 0,
                     explicit: row.get(10)?,
-                    track_number: 0,
-                    disc_number: 0,
-                    tags: Vec::new(),
-                    languages: Vec::new(),
-                    credits: Vec::new(),
+                    ..Default::default()
                 })
             })
             .context("cannot read listening history")?;

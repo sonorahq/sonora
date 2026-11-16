@@ -1,11 +1,12 @@
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Div, ElementId, Entity, Interactivity, MouseButton, MouseMoveEvent, Pixels,
-    ScrollWheelEvent, StyleRefinement, Window, div, px,
+    AnyElement, App, Axis, Div, ElementId, Entity, Interactivity, MouseButton, MouseMoveEvent,
+    Pixels, ScrollWheelEvent, StyleRefinement, Window, div, px,
 };
 
 use crate::button::Button;
 use crate::glass::{blurring, glass};
+use crate::hold::{Hold, held};
 use crate::scrollbar::{Scrollbar, activate_middle_scroll, cancel_middle_scroll};
 use crate::theme::ActiveTheme as _;
 use crate::veil::effects;
@@ -26,6 +27,13 @@ pub struct Scroller {
     bottom_inset: Pixels,
     /// How tall the band along the top is where content fades out as it scrolls away.
     fade_top: Pixels,
+    /// How tall the bands are where content fades at whichever end still has more to scroll to.
+    fade_ends: Pixels,
+    /// Whether the region holds what is at its top when it changes width, and whether that hold
+    /// is active right now.
+    hold: Option<bool>,
+    /// Whether the held content reflowed this frame without the region changing width.
+    reflowed: bool,
 }
 
 impl Scroller {
@@ -40,7 +48,31 @@ impl Scroller {
             owns_scroll: true,
             bottom_inset: Pixels::ZERO,
             fade_top: Pixels::ZERO,
+            fade_ends: Pixels::ZERO,
+            hold: None,
+            reflowed: false,
         }
+    }
+
+    /// Keeps what is at the top of the region in place when the region changes width and its
+    /// content reflows. The direct children are anchors by their position, and so are any
+    /// `held` items or holding `Deck`s inside them.
+    pub fn hold(self) -> Self {
+        self.hold_while(true)
+    }
+
+    /// Like `hold`, but leaves the scroll alone while `active` is false. It still keeps track
+    /// of the top then, so it holds the right place again once active.
+    pub fn hold_while(mut self, active: bool) -> Self {
+        self.hold = Some(active);
+        self
+    }
+
+    /// Tells a held region its content reflowed this frame even though its width stayed, as
+    /// text wrapped to the width measured a frame earlier does.
+    pub fn reflowed(mut self, reflowed: bool) -> Self {
+        self.reflowed = reflowed;
+        self
     }
 
     /// A region whose child scrolls itself, a `uniform_list` above all. The surface still
@@ -76,6 +108,13 @@ impl Scroller {
         self.fade_top = height.max(Pixels::ZERO);
         self
     }
+
+    /// Fades content out across a band of `height` at each end that has more to scroll to, so a
+    /// region too short for what it holds says so. An end with nothing past it stays crisp.
+    pub fn fade_ends(mut self, height: Pixels) -> Self {
+        self.fade_ends = height.max(Pixels::ZERO);
+        self
+    }
 }
 
 impl Styled for Scroller {
@@ -107,10 +146,40 @@ impl RenderOnce for Scroller {
             owns_scroll,
             bottom_inset,
             fade_top,
+            fade_ends,
+            hold,
+            reflowed,
         } = self;
+        let hold = hold.filter(|_| owns_scroll);
+        let children: Vec<AnyElement> = match hold {
+            Some(_) => children
+                .into_iter()
+                .enumerate()
+                .map(|(place, child)| {
+                    held(
+                        ElementId::NamedInteger("scroller-child".into(), place as u64),
+                        child,
+                    )
+                    .into_any_element()
+                })
+                .collect(),
+            None => children,
+        };
+        let held_id = id.clone();
 
         bar.update(cx, |bar, cx| bar.set_track_bottom(bottom_inset, cx));
         let scroll = bar.read(cx).scroll().clone();
+        // The offset runs negative as the content moves up, so it sits between minus the furthest
+        // it can go and zero. Half a pixel of slack keeps a rounded offset from fading an end.
+        let (above, below) = {
+            let (at, end) = (-scroll.offset().y, scroll.max_offset().y);
+            (at > px(0.5), end - at > px(0.5))
+        };
+        let end = |more: bool| match more {
+            true => fade_ends,
+            false => Pixels::ZERO,
+        };
+        let (fade_top_end, fade_bottom_end) = (end(above), end(below));
         let overrides = std::mem::take(base.style());
         bar.read(cx).sync();
         let presentation = bar.read(cx).presentation();
@@ -155,6 +224,13 @@ impl RenderOnce for Scroller {
         if present_surface {
             surface = surface.layer_translate(presentation);
         }
+        let surface = match hold {
+            Some(active) => Hold::new(held_id, Axis::Vertical, &scroll, surface)
+                .active(active)
+                .reflowed(reflowed)
+                .into_any_element(),
+            None => surface.into_any_element(),
+        };
 
         div()
             .relative()
@@ -166,6 +242,11 @@ impl RenderOnce for Scroller {
                     .when(fade_top > Pixels::ZERO && effects(), |this| {
                         this.fade_edges(fade_top, Pixels::ZERO)
                     })
+                    .when(
+                        (fade_top_end > Pixels::ZERO || fade_bottom_end > Pixels::ZERO)
+                            && effects(),
+                        |this| this.fade_edges(fade_top_end, fade_bottom_end),
+                    )
                     .child(surface),
             )
             .child(bar)

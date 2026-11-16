@@ -24,7 +24,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ShowWindow, WINDOW_EX_STYLE, WM_CLOSE, WM_GETMINMAXINFO, WM_NCDESTROY, WM_SIZE, WNDCLASSW,
     WS_OVERLAPPEDWINDOW,
 };
-use windows::core::{Interface as _, PCWSTR, PWSTR, w};
+use windows::core::{GUID, Interface as _, PCWSTR, PWSTR, w};
 
 use crate::native::{Fetch, HEIGHT, MIN_HEIGHT, MIN_WIDTH, Reading, WIDTH};
 use crate::{Cookie, Target};
@@ -236,7 +236,8 @@ fn user_data_folder() -> Result<Vec<u16>> {
     Ok(wide(&folder.to_string_lossy()))
 }
 
-/// Configures an InPrivate profile and starts its controller asynchronously.
+/// Gives each controller its own InPrivate profile so sign-in and background pages never
+/// share cookies, even while their browser processes overlap.
 fn begin_controller(
     environment: webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment,
     hwnd: HWND,
@@ -249,7 +250,9 @@ fn begin_controller(
         .context("the installed WebView2 runtime does not support private profiles")?;
     let options = unsafe { environment.CreateCoreWebView2ControllerOptions() }
         .context("cannot configure the private sign-in profile")?;
-    unsafe { options.SetProfileName(w!("Sonora Sign-In")) }
+    let profile = GUID::new().context("cannot identify the private sign-in profile")?;
+    let profile = wide(&format!("Sonora-{profile:?}"));
+    unsafe { options.SetProfileName(PCWSTR(profile.as_ptr())) }
         .context("cannot name the sign-in profile")?;
     unsafe { options.SetIsInPrivateModeEnabled(true) }
         .context("cannot make the sign-in profile private")?;

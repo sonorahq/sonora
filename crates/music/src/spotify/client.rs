@@ -79,6 +79,10 @@ impl MusicApi for LibrespotClient {
         artists::catalogue(&self.session, artist_id, known.to_vec()).await
     }
 
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        artists::tracks(&self.session, artist_id).await
+    }
+
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
         artists::profile(&self.session, artist_id).await
     }
@@ -186,6 +190,10 @@ impl MusicApi for LibrespotClient {
         pathfinder::search_albums(&self.session, query).await
     }
 
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        pathfinder::search_artists(&self.session, query).await
+    }
+
     async fn search_playlists(&self, query: &str) -> Result<Vec<Playlist>> {
         pathfinder::search_playlists(&self.session, query).await
     }
@@ -256,6 +264,15 @@ impl MusicApi for LibrespotClient {
 
     async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
         playlists::remove_track(&self.session, playlist_id, track_id).await
+    }
+
+    async fn reorder_playlist(
+        &self,
+        playlist_id: &str,
+        seen: &[String],
+        wanted: &[String],
+    ) -> Result<()> {
+        playlists::reorder(&self.session, playlist_id, seen, wanted).await
     }
 
     async fn set_pinned(&self, uri: &str, pinned: bool) -> Result<crate::PinOutcome> {

@@ -52,6 +52,8 @@ enum Status {
 /// One thing that changes the sound, holding only what its short label shows.
 #[derive(Clone, Copy, PartialEq)]
 enum Alter {
+    /// Soloist plays the track past Sonora, so nothing more can be said of the sound.
+    Direct,
     Rounded(u8),
     Normalized,
     Resampled(u32, u32),
@@ -163,7 +165,7 @@ impl OutputMeter {
                         .text_color(color),
                 )
                 .child(div().min_w_0().truncate().child(text))
-                .tip_label(tip, Perch::Pointer)
+                .tip_label(tip, Perch::Below)
                 .into_any_element(),
         )
     }
@@ -236,6 +238,7 @@ impl Render for OutputMeter {
 impl From<Change> for Alter {
     fn from(change: Change) -> Self {
         match change {
+            Change::Direct => Self::Direct,
             Change::Rounded { from } => Self::Rounded(from),
             Change::Normalised(_) | Change::Limited => Self::Normalized,
             Change::Resampled { from, to } => Self::Resampled(from, to),
@@ -263,6 +266,7 @@ fn status(signal: &Signal) -> Status {
 
 fn label(alter: Alter) -> SharedString {
     match alter {
+        Alter::Direct => t!("equalizer-status-direct"),
         Alter::Rounded(from) => t!("equalizer-status-bits", from = from, to = FLOAT_BITS),
         Alter::Normalized => t!("equalizer-status-normalized"),
         Alter::Resampled(from, to) => {

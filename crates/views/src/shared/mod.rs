@@ -2,10 +2,14 @@ pub(crate) mod about;
 pub(crate) mod adaptive;
 pub(crate) mod album_grid;
 pub(crate) mod ambient;
+pub(crate) mod animation;
+pub(crate) mod blend;
 pub(crate) mod cards;
 pub(crate) mod cells;
 pub(crate) mod confirm;
+pub(crate) mod cover_viewer;
 pub(crate) mod device_code;
+pub(crate) mod device_menu;
 pub(crate) mod equalizer;
 pub(crate) mod hero;
 pub(crate) mod local;
@@ -16,7 +20,9 @@ pub(crate) mod picks;
 pub(crate) mod pins;
 pub(crate) mod playlist_editor;
 pub(crate) mod popups;
+pub(crate) mod powerbar;
 pub(crate) mod shelves;
+pub(crate) mod soloist;
 pub(crate) mod steps;
 pub(crate) mod tag_editor;
 pub(crate) mod text;
@@ -26,6 +32,7 @@ pub(crate) mod tracks;
 pub(crate) mod transport;
 pub(crate) mod trouble;
 pub(crate) mod visualizer;
+pub(crate) mod volume;
 pub(crate) mod widevine;
 
 pub(crate) use ui::effects;
@@ -36,6 +43,10 @@ const YOUTUBE: u32 = 0xff0033;
 const DEEZER: u32 = 0xa238ff;
 const APPLE: u32 = 0xfa2d48;
 const SUBSONIC: u32 = 0xffa31a;
+const JELLYFIN: u32 = 0x00a4dc;
+/// How much of the foreground text keeps where the theme would grey it over the ambient field.
+/// The theme's grey is about that share of white over the page colour.
+const QUIET: f32 = 0.56;
 
 pub(crate) fn provider_logo(slug: &str) -> &'static str {
     match slug {
@@ -45,6 +56,7 @@ pub(crate) fn provider_logo(slug: &str) -> &'static str {
         "deezer" => "icons/deezer.svg",
         "apple" => "icons/applemusic.svg",
         "tidal" => "icons/tidal.svg",
+        "jellyfin" => "icons/jellyfin.svg",
         _ => "icons/music.svg",
     }
 }
@@ -58,6 +70,14 @@ pub(crate) fn provider_brand(slug: &str, cx: &gpui::App) -> gpui::Hsla {
         "deezer" => gpui::rgb(DEEZER).into(),
         "apple" => gpui::rgb(APPLE).into(),
         "subsonic" => gpui::rgb(SUBSONIC).into(),
+        "jellyfin" => gpui::rgb(JELLYFIN).into(),
         _ => ui::ActiveTheme::theme(cx).foreground,
     }
+}
+
+/// The foreground at `QUIET`, in place of the theme's grey for text over the ambient field:
+/// unsung lyrics, quieter lanes and the artist line. A flat grey stands apart from the colours
+/// behind it, while translucent light takes them on.
+pub(crate) fn quiet(theme: &ui::Theme) -> gpui::Hsla {
+    theme.foreground.opacity(QUIET)
 }

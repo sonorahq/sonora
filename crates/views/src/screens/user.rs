@@ -101,12 +101,12 @@ impl UserView {
                 .enumerate()
                 .map(|(place, playlist)| {
                     let id = SharedString::from(format!("user-playlist-{}", playlist.id));
-                    cards::playlist_card(id, playlist, &self.playback, cx)
+                    let card = cards::playlist_card(id, playlist, &self.playback, cx)
                         .tile(layout.card)
                         .flat()
                         .aria_position_in_set(place + 1)
-                        .aria_size_of_set(total)
-                        .into_any_element()
+                        .aria_size_of_set(total);
+                    ui::held(("user-playlist-card", place), card).into_any_element()
                 })
                 .collect::<Vec<_>>(),
         };
@@ -202,8 +202,10 @@ impl Render for UserView {
             .size_full()
             .child(
                 Scroller::new("user-page", &self.scrollbar)
+                    .hold()
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
-                    .p(pad)
+                    .py(pad)
+                    .px(pad + crate::chrome::Chrome::margin(window, cx))
                     .child(
                         div()
                             .flex()

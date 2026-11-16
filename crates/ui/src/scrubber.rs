@@ -14,6 +14,8 @@ const TRACK: f32 = 0.5;
 const THUMB: f32 = 1.5;
 const HIT: f32 = 3.;
 const BUBBLE: f32 = 7.;
+/// How far the bubble stands off the track unless `lift` says otherwise.
+const LIFT: Pixels = px(12.);
 /// How far one screen reader step moves the slider, as a share of its length.
 const STEP: f32 = 0.05;
 
@@ -61,10 +63,16 @@ impl ScrubberState {
             .then(|| self.fraction_at(position.x, pad))
     }
 
+    /// How far the thumb of a horizontal scrubber moves from one end to the other, as last
+    /// drawn. It is zero before the first paint.
+    pub fn travel(&self, pad: Pixels) -> Pixels {
+        (self.bounds.get().size.width - thumb(pad)).max(px(0.))
+    }
+
     fn fraction_at(&self, x: Pixels, pad: Pixels) -> f32 {
         let bounds = self.bounds.get();
         let pin = thumb(pad);
-        let travel = bounds.size.width - pin;
+        let travel = self.travel(pad);
         if travel <= px(0.) {
             return 0.;
         }
@@ -98,6 +106,7 @@ pub struct Scrubber {
     /// What a screen reader reads as the position in place of the bare fraction.
     value: Option<SharedString>,
     bubble: Option<(f32, SharedString)>,
+    ranges: Vec<(f32, f32, Hsla)>,
     lift: Pixels,
     on_move: Option<Slide>,
     on_release: Option<Release>,
@@ -118,7 +127,8 @@ impl Scrubber {
             name: None,
             value: None,
             bubble: None,
-            lift: px(12.),
+            ranges: Vec::new(),
+            lift: LIFT,
             on_move: None,
             on_release: None,
         }
@@ -134,10 +144,32 @@ impl Scrubber {
         self
     }
 
+    /// How far a bubble standing `lift` off the track can reach past it, for an owner that
+    /// composites the scrubber inside a layer of its own and has to leave the bubble room in it.
+    pub fn bubble_reach(lift: Pixels, cx: &App) -> Pixels {
+        lift + px((cx.theme().metrics.pad / px(1.) * BUBBLE).round())
+    }
+
     pub fn colors(mut self, filled: Hsla, empty: Hsla, thumb: Hsla) -> Self {
         self.filled = filled;
         self.empty = empty;
         self.thumb = thumb;
+        self
+    }
+
+    /// Marks fractional ranges without changing pointer or drag behavior. Passed sections use
+    /// a blend toward the theme background so they stay visible over the filled track.
+    pub fn ranges(mut self, ranges: impl IntoIterator<Item = (f32, f32)>, color: Hsla) -> Self {
+        self.ranges = ranges
+            .into_iter()
+            .filter_map(|(start, end)| {
+                if !start.is_finite() || !end.is_finite() {
+                    return None;
+                }
+                let (start, end) = (start.clamp(0., 1.), end.clamp(0., 1.));
+                (end > start).then_some((start, end, color))
+            })
+            .collect();
         self
     }
 
@@ -209,6 +241,7 @@ impl RenderOnce for Scrubber {
             name,
             value,
             bubble,
+            ranges,
             lift,
             on_move,
             on_release,
@@ -238,7 +271,6 @@ impl RenderOnce for Scrubber {
         };
 
         let dragged = {
-            let state = state.clone();
             let on_move = on_move.clone();
             let mine = id.clone();
             move |event: &DragMoveEvent<Grab>, window: &mut Window, cx: &mut App| {
@@ -279,6 +311,21 @@ impl RenderOnce for Scrubber {
             false => Pixels::ZERO,
         };
 
+        let ranges: Vec<_> = ranges
+            .into_iter()
+            .flat_map(|(start, end, color)| {
+                [
+                    (
+                        start,
+                        end.min(fraction),
+                        filled.blend(cx.theme().background.opacity(0.45)),
+                    ),
+                    (start.max(fraction), end, color),
+                ]
+            })
+            .filter(|(start, end, _)| end > start)
+            .collect();
+
         let bar = match vertical {
             true => div()
                 .relative()
@@ -303,6 +350,16 @@ impl RenderOnce for Scrubber {
                                 .rounded_full()
                                 .bg(filled),
                         )
+                        .children(ranges.into_iter().map(|(start, end, color)| {
+                            div()
+                                .absolute()
+                                .left_0()
+                                .right_0()
+                                .bottom(relative(start))
+                                .h(relative(end - start))
+                                .rounded_full()
+                                .bg(color)
+                        }))
                         .when(enabled, |this| {
                             this.child(
                                 div()
@@ -369,6 +426,16 @@ impl RenderOnce for Scrubber {
                                 .rounded_full()
                                 .bg(filled),
                         )
+                        .children(ranges.into_iter().map(|(start, end, color)| {
+                            div()
+                                .absolute()
+                                .top_0()
+                                .bottom_0()
+                                .left(relative(start))
+                                .w(relative(end - start))
+                                .rounded_full()
+                                .bg(color)
+                        }))
                         .when(enabled, |this| {
                             this.child(
                                 div()

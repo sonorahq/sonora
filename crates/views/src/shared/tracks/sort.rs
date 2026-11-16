@@ -1,12 +1,18 @@
 use std::cmp::Ordering;
 
 use gpui::SharedString;
-use music::Track;
+use music::{Arrival, Track};
 
 use super::TrackField;
+use crate::shared::blend::Joined;
 use crate::shared::text::{folded, holds};
 
-pub(super) fn compare(tracks: &[Track], field: TrackField, a: usize, b: usize) -> Ordering {
+pub(super) fn compare(
+    tracks: Joined<'_, Track>,
+    field: TrackField,
+    a: usize,
+    b: usize,
+) -> Ordering {
     let text =
         |index: usize, pick: fn(&Track) -> &str| tracks.get(index).map(pick).unwrap_or_default();
     let folded = |pick: fn(&Track) -> &str| folded(text(a, pick), text(b, pick));
@@ -15,6 +21,7 @@ pub(super) fn compare(tracks: &[Track], field: TrackField, a: usize, b: usize) -
         TrackField::Title => folded(|track| &track.name),
         TrackField::Artists => folded(|track| &track.artists),
         TrackField::Album => folded(|track| &track.album),
+        TrackField::Genre => genres(tags(tracks, a), tags(tracks, b)),
         TrackField::AddedAt | TrackField::PlayedAt => tracks
             .get(a)
             .and_then(|track| track.added_at)
@@ -32,16 +39,50 @@ pub(super) fn compare(tracks: &[Track], field: TrackField, a: usize, b: usize) -
     }
 }
 
-pub(super) fn group(tracks: &[Track], field: TrackField, row: usize) -> Option<SharedString> {
+/// Orders two rows of a list that comes in the order it was added, oldest first, so a
+/// descending sort puts the latest addition on top whichever end the provider lists it at.
+pub(super) fn by_arrival(arrival: Arrival, a: usize, b: usize) -> Ordering {
+    match arrival {
+        Arrival::OldestFirst => a.cmp(&b),
+        Arrival::NewestFirst => b.cmp(&a),
+    }
+}
+
+pub(super) fn group(
+    tracks: Joined<'_, Track>,
+    field: TrackField,
+    row: usize,
+) -> Option<SharedString> {
     let track = tracks.get(row)?;
 
     match field {
         TrackField::Title => Some(initial(&track.name)),
         TrackField::Artists => Some(initial(&track.artists)),
         TrackField::Album => Some(initial(&track.album)),
+        TrackField::Genre => Some(match track.tags.first() {
+            Some(genre) => SharedString::from(genre.clone()),
+            None => initial(""),
+        }),
         TrackField::AddedBy => Some(initial(contributor(track))),
         _ => None,
     }
+}
+
+fn tags<'a>(tracks: Joined<'a, Track>, index: usize) -> &'a [String] {
+    tracks
+        .get(index)
+        .map(|track| track.tags.as_slice())
+        .unwrap_or_default()
+}
+
+/// Orders two genre lists by their first genre that differs, ignoring case. A list that runs out
+/// first sorts ahead, so a track with no genre comes before every tagged one.
+fn genres(left: &[String], right: &[String]) -> Ordering {
+    left.iter()
+        .zip(right)
+        .map(|(left, right)| folded(left, right))
+        .find(|order| order.is_ne())
+        .unwrap_or_else(|| left.len().cmp(&right.len()))
 }
 
 fn contributor(track: &Track) -> &str {

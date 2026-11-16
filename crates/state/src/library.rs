@@ -7,10 +7,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{App, Context, Entity, SharedString, Task};
 use music::{
-    Album, Catalog, ImportedPlaylist, MediaKind, MusicApi, Page, Pages, Playlist, SavedArtist,
-    Shape, Track,
+    Album, Arrival, Catalog, ImportedPlaylist, MediaKind, MusicApi, Page, Pages, Playlist,
+    SavedArtist, Shape, Track,
 };
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, oneshot};
 
 use crate::snapshot::{Kind, Remembered, Snapshots};
 use crate::{
@@ -25,6 +25,10 @@ const FATAL: [LibraryPart; 3] = [
 const FATAL_LOCAL: [LibraryPart; 2] = [LibraryPart::Tracks, LibraryPart::Albums];
 /// How often the pins are read again from a provider that does not say when they change.
 const PIN_POLL: Duration = Duration::from_secs(60);
+/// How long the listener can pause between moves in a playlist before its new order is written.
+const REORDER_PAUSE: Duration = Duration::from_millis(1200);
+/// How soon a new order waiting on another playlist change tries again.
+const REORDER_RETRY: Duration = Duration::from_millis(300);
 
 /// Lets a few playlists have their contents or mosaic covers read at a time. A library asks for
 /// all of its playlists at once. Each read holds every track of its playlist until it is cut down,
@@ -81,6 +85,9 @@ impl Shelf {
 /// carries the favorites beside them.
 struct Held {
     shape: Shape,
+    /// Which end of the provider's song list holds the latest addition, when that list has no
+    /// dates. A song added here goes in at that end, so it sits where a reload would put it.
+    arrival: Option<Arrival>,
     state: LibraryState,
     awaited: Vec<LibraryPart>,
     /// How many rows each part will have once it has all arrived, for the parts whose
@@ -90,24 +97,59 @@ struct Held {
     /// provider. The part's real rows replace them once they have all arrived.
     stale: HashSet<LibraryPart>,
     starred: Starred,
+    /// The favorite changes to tracks made while a load could still replace the favorites, in
+    /// the order they were made: the track for a favorite, nothing for one taken back. Each
+    /// track keeps only its latest change. The load puts them back over the rows it reads in
+    /// that order, since the provider may have read its list before the change took effect.
+    edits: Vec<(String, Option<Track>)>,
     tasks: Vec<Task<()>>,
 }
 
 impl Held {
-    fn empty() -> Self {
+    fn empty(shape: Shape) -> Self {
         Self {
-            shape: Shape::Saved,
+            shape,
+            arrival: None,
             state: LibraryState::Empty,
             awaited: Vec::new(),
             expected: HashMap::new(),
             stale: HashSet::new(),
             starred: Starred::default(),
+            edits: Vec::new(),
             tasks: Vec::new(),
         }
     }
 
-    fn clear(&mut self) {
-        *self = Self::empty();
+    /// Lays the recorded favorite changes over the favorite tracks that a load has just
+    /// replaced, then forgets them. The shelf shows the change the listener made rather than
+    /// the provider's list from before it. Nothing happens while the favorites are not there
+    /// to amend, and the changes are dropped all the same, since a load that failed leaves
+    /// the cache as the optimistic change already left it. On a list without dates a song
+    /// favorited again moves to the newest end, even when the load still lists it where it was.
+    fn reapply_edits(&mut self) {
+        let undated = self.arrival;
+        let arrival = undated.unwrap_or(Arrival::OldestFirst);
+        let edits = std::mem::take(&mut self.edits);
+        let Some(favorites) = self.favorites_mut() else {
+            return;
+        };
+        for (id, edit) in edits {
+            let tracks = &mut *favorites.tracks;
+            let held = |track: &Track| track.id.as_deref() == Some(id.as_str());
+            match (edit, tracks.iter().position(held), undated) {
+                (Some(track), None, _) => arrival.admit(tracks, track),
+                (Some(_), Some(at), Some(arrival)) => {
+                    let row = tracks.remove(at);
+                    arrival.admit(tracks, row);
+                }
+                (Some(_), Some(_), None) => {}
+                (None, _, _) => tracks.retain(|track| !held(track)),
+            }
+        }
+    }
+
+    fn clear(&mut self, shape: Shape) {
+        *self = Self::empty(shape);
     }
 
     fn ready(&self) -> Option<&Ready> {
@@ -305,6 +347,14 @@ struct PlaylistMutation {
     /// The playlists whose cached pages the change makes stale. All of them sit on `shelf`.
     invalidated: Vec<String>,
     shelf: Shelf,
+}
+
+/// A new order the listener gave a playlist that is not written yet. The page shows it already.
+struct PendingOrder {
+    /// The order the provider is known to hold, which the write is checked against.
+    base: Vec<String>,
+    /// The order the listener left the page in.
+    wanted: Vec<String>,
 }
 
 /// What the edit dialog does to a playlist's cover.
@@ -596,18 +646,34 @@ fn holds_pin(items: &[music::PinTarget], uri: &str) -> bool {
     items.iter().any(|item| item.uri == uri && item.pinned)
 }
 
+/// Reports whether a provider accepted a favorite update when a caller is waiting for it.
+fn finish_save(completion: Option<oneshot::Sender<bool>>, succeeded: bool) {
+    if let Some(completion) = completion {
+        completion.send(succeeded).ok();
+    }
+}
+
 impl Library {
     /// Favorites `item` or takes it out of the favorites, whichever it is not now. With
     /// `announce`, a removal is reported in a toast with an Undo once the provider agrees,
     /// which a deliberate removal wants and a heart that can simply be clicked again does not.
-    fn toggle_saved<S: Savable>(&mut self, mut item: S, announce: bool, cx: &mut Context<Self>) {
+    fn toggle_saved<S: Savable>(
+        &mut self,
+        mut item: S,
+        announce: bool,
+        completion: Option<oneshot::Sender<bool>>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(id) = item.id().map(str::to_owned) else {
+            finish_save(completion, false);
             return;
         };
         if S::requests(self).contains_key(&id) {
+            finish_save(completion, false);
             return;
         }
         let Some(client) = self.session.read(cx).client_of(Shelf::of(&id)) else {
+            finish_save(completion, false);
             return;
         };
 
@@ -626,6 +692,7 @@ impl Library {
         let task = cx.spawn(async move |this, cx| {
             let result = join(io.spawn(S::ask(client, asked, saved))).await;
             this.update(cx, |this, cx| {
+                let succeeded = result.is_ok();
                 S::requests(this).remove(&answered);
                 let gone = match result {
                     Ok(()) if saved => {
@@ -654,6 +721,7 @@ impl Library {
                 if let Some(sweep) = sweep {
                     this.answer(sweep, gone, cx);
                 }
+                finish_save(completion, succeeded);
                 cx.notify();
             })
             .ok();
@@ -671,7 +739,7 @@ impl Library {
         if S::saved_now(self, id).is_some() || S::requests(self).contains_key(id) {
             return;
         }
-        self.toggle_saved(item, false, cx);
+        self.toggle_saved(item, false, None, cx);
     }
 
     /// The sweep that removals of `family` started during this turn join, opened by the first
@@ -865,7 +933,7 @@ impl Savable for Track {
 
     /// Puts the track onto the shelf's own pages where the library is a set apart from the
     /// favorites. Apple Music, the one such provider, adds a favorited song to the library
-    /// itself, so the Songs page lists it without a reload.
+    /// itself, so the Songs page lists it without a reload, at the end Apple will list it.
     fn admit(library: &mut Library, track: Self, cx: &mut Context<Library>) {
         let Some(id) = track.id.clone() else {
             return;
@@ -874,13 +942,15 @@ impl Savable for Track {
         if !library.session.read(cx).shape_of(shelf).editable() {
             return;
         }
-        let Some(ready) = library.held_mut(shelf).ready_mut() else {
+        let held = library.held_mut(shelf);
+        let arrival = held.arrival.unwrap_or(Arrival::NewestFirst);
+        let Some(ready) = held.ready_mut() else {
             return;
         };
         if ready.tracks.iter().any(|known| known.id == track.id) {
             return;
         }
-        ready.tracks.insert(0, track);
+        arrival.admit(&mut ready.tracks, track);
     }
 
     async fn ask(client: Arc<dyn MusicApi>, id: String, saved: bool) -> anyhow::Result<()> {
@@ -995,6 +1065,11 @@ pub enum LibraryEvent {
     /// A playlist a failed change may have altered in part, or whose cover changed, so a page
     /// showing it loads it again.
     PlaylistChanged(String),
+    /// A playlist's new order was written, so a page that put off loading it again can do it now.
+    PlaylistReordered(String),
+    /// Writing a playlist's new order failed, so a page showing it loads the order the provider
+    /// kept.
+    ReorderFailed(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1151,6 +1226,12 @@ pub struct Library {
     raised: HashMap<Family, Raised>,
     /// The row removals whose toast is up, by playlist id.
     raised_rows: HashMap<String, RowsRaised>,
+    /// The new orders not written yet, by playlist id.
+    reorders: HashMap<String, PendingOrder>,
+    /// Waits out a pause in the listener's moves before the next order is written.
+    reorder_timer: Option<Task<()>>,
+    /// The playlist whose new order is being written now.
+    writing_order: Option<String>,
 }
 
 impl Library {
@@ -1167,12 +1248,13 @@ impl Library {
                 if !session.read(cx).authenticated() {
                     this.pin_targets_task = None;
                     this.pin_targets = None;
-                    this.held_mut(Shelf::Streaming).clear();
+                    this.held_mut(Shelf::Streaming).clear(Shape::Saved);
                     cx.notify();
                     return;
                 }
                 this.playlist_task = None;
                 this.relisting = None;
+                this.forget_reorders(cx);
                 this.pending.clear();
                 this.pending_albums.clear();
                 this.pending_artists.clear();
@@ -1204,11 +1286,12 @@ impl Library {
                 this.mosaics.clear();
                 this.playlist_task = None;
                 this.relisting = None;
+                this.forget_reorders(cx);
                 this.pending.clear();
                 this.pending_albums.clear();
                 this.pending_artists.clear();
                 this.pending_library.clear();
-                this.held_mut(Shelf::Streaming).clear();
+                this.held_mut(Shelf::Streaming).clear(Shape::Saved);
                 cx.notify();
             }
             // What was loaded stays up, read through the downloads filter.
@@ -1220,7 +1303,8 @@ impl Library {
                 match session.read(cx).client_of(Shelf::Local) {
                     Some(_) => this.load(Shelf::Local, cx),
                     None => {
-                        this.held_mut(Shelf::Local).clear();
+                        this.held_mut(Shelf::Local)
+                            .clear(Shape::Catalog(Catalog::Fixed));
                         cx.notify();
                     }
                 }
@@ -1238,7 +1322,10 @@ impl Library {
         .detach();
 
         let mut library = Self {
-            shelves: [Held::empty(), Held::empty()],
+            shelves: [
+                Held::empty(Shape::Saved),
+                Held::empty(Shape::Catalog(Catalog::Fixed)),
+            ],
             session,
             io,
             playlist_task: None,
@@ -1263,9 +1350,11 @@ impl Library {
             next_sweep: 0,
             raised: HashMap::new(),
             raised_rows: HashMap::new(),
+            reorders: HashMap::new(),
+            reorder_timer: None,
+            writing_order: None,
         };
         library.held_mut(Shelf::Streaming).state = LibraryState::Loading;
-        library.held_mut(Shelf::Local).shape = Shape::Catalog(Catalog::Fixed);
         library.prime(Shelf::Streaming, cx);
         match library.session.read(cx).client_of(Shelf::Local).is_some() {
             true => library.load(Shelf::Local, cx),
@@ -1631,6 +1720,22 @@ impl Library {
         }
     }
 
+    /// Favorites credited to this artist, including collaborations, without cloning the library.
+    pub fn favorites_by_artist<'a>(
+        &'a self,
+        artist_id: &'a str,
+    ) -> impl Iterator<Item = &'a Track> {
+        self.favorites(artist_id)
+            .into_iter()
+            .flat_map(|favorites| favorites.tracks)
+            .filter(move |track| {
+                track
+                    .artist_refs
+                    .iter()
+                    .any(|artist| artist.id.as_deref() == Some(artist_id))
+            })
+    }
+
     pub fn saved(&self, track_id: &str) -> bool {
         self.favorites(track_id).is_some_and(|favorites| {
             favorites
@@ -1650,7 +1755,31 @@ impl Library {
 
     /// Flips the heart on a track. Nothing is announced, since the heart is the way back.
     pub fn toggle(&mut self, track: Track, cx: &mut Context<Self>) {
-        self.toggle_saved(track, false, cx);
+        self.toggle_saved(track, false, None, cx);
+    }
+
+    /// Sets one track's favorite state and reports whether the provider accepted the change.
+    pub fn save_track(
+        &mut self,
+        track: Track,
+        saved: bool,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<bool> {
+        let (completion, result) = oneshot::channel();
+        let Some(id) = track.id.as_deref() else {
+            finish_save(Some(completion), false);
+            return result;
+        };
+        if self.pending(id) {
+            finish_save(Some(completion), false);
+            return result;
+        }
+        if self.saved(id) == saved {
+            finish_save(Some(completion), true);
+            return result;
+        }
+        self.toggle_saved(track, false, Some(completion), cx);
+        result
     }
 
     /// Favorites every track not yet a favorite, or takes every favorite out. Taking them out
@@ -1663,7 +1792,7 @@ impl Library {
             if self.saved(id) == saved || self.pending(id) {
                 continue;
             }
-            self.toggle_saved(track, !saved, cx);
+            self.toggle_saved(track, !saved, None, cx);
         }
     }
 
@@ -1690,11 +1819,22 @@ impl Library {
         cx: &mut Context<Self>,
     ) {
         let gone = Gone::LibraryTrack(track.clone());
+        let arrival = track
+            .id
+            .as_deref()
+            .and_then(|id| self.held(Shelf::of(id)).arrival)
+            .unwrap_or(Arrival::NewestFirst);
         track.stamp_added();
-        self.set_in_library(MediaKind::Track, present, gone, cx, move |ready| {
-            ready.tracks.retain(|known| known.id != track.id);
-            if present {
-                ready.tracks.insert(0, track);
+        self.set_in_library(MediaKind::Track, present, gone, cx, move |this, shelf| {
+            if let Some(ready) = this.held_mut(shelf).ready_mut() {
+                ready.tracks.retain(|known| known.id != track.id);
+                if present {
+                    arrival.admit(&mut ready.tracks, track);
+                    return;
+                }
+            }
+            if !present {
+                this.set_saved(track, false);
             }
         });
     }
@@ -1707,25 +1847,33 @@ impl Library {
     ) {
         let gone = Gone::LibraryAlbum(album.clone());
         album.stamp_added();
-        self.set_in_library(MediaKind::Album, present, gone, cx, move |ready| {
-            ready.albums.retain(|known| known.id != album.id);
-            if present {
-                ready.albums.insert(0, album);
+        self.set_in_library(MediaKind::Album, present, gone, cx, move |this, shelf| {
+            if let Some(ready) = this.held_mut(shelf).ready_mut() {
+                ready.albums.retain(|known| known.id != album.id);
+                if present {
+                    ready.albums.insert(0, album);
+                    return;
+                }
+            }
+            if !present {
+                this.set_album_saved(album, false);
             }
         });
     }
 
     /// Asks the provider to put one item into its library or take it out, and applies
-    /// `place` to the shelf's pages once it agrees, so they follow without a reload. A second
-    /// ask about the same item while the first is out is dropped. A removal is reported with
-    /// an Undo that puts `gone` back, and removals in the same turn share one toast.
+    /// `place` once it agrees, so the shelf's pages follow without a reload. A favorite on a
+    /// `Catalog::Editable` provider is a mark on the library item, so `place` also drops the
+    /// favorite of an item that left. A second ask about the same item while the first is out
+    /// is dropped. A removal is reported with an Undo that puts `gone` back, and removals in the
+    /// same turn share one toast.
     fn set_in_library(
         &mut self,
         kind: MediaKind,
         present: bool,
         gone: Gone,
         cx: &mut Context<Self>,
-        place: impl FnOnce(&mut Ready) + 'static,
+        place: impl FnOnce(&mut Self, Shelf) + 'static,
     ) {
         let Some(id) = gone.id().map(str::to_owned) else {
             return;
@@ -1750,9 +1898,7 @@ impl Library {
                 this.pending_library.remove(&answered);
                 match result {
                     Ok(()) => {
-                        if let Some(ready) = this.held_mut(shelf).ready_mut() {
-                            place(ready);
-                        }
+                        place(this, shelf);
                         match sweep {
                             Some(sweep) => this.answer(sweep, Some(gone), cx),
                             None => Toasts::show(Outcome::Done, "toast-library-added", cx),
@@ -1789,12 +1935,12 @@ impl Library {
     /// Favorites an album or takes it out of the favorites. A removal is reported with an Undo,
     /// and removals in the same turn share one toast.
     pub fn toggle_album(&mut self, album: Album, cx: &mut Context<Self>) {
-        self.toggle_saved(album, true, cx);
+        self.toggle_saved(album, true, None, cx);
     }
 
     /// Flips the heart on an album. Nothing is announced, since the heart is the way back.
     pub fn heart_album(&mut self, album: Album, cx: &mut Context<Self>) {
-        self.toggle_saved(album, false, cx);
+        self.toggle_saved(album, false, None, cx);
     }
 
     fn set_album_saved(&mut self, album: Album, saved: bool) {
@@ -1835,12 +1981,12 @@ impl Library {
     /// Follows an artist or unfollows them. An unfollow is reported with an Undo, and
     /// unfollows in the same turn share one toast.
     pub fn toggle_artist(&mut self, artist: SavedArtist, cx: &mut Context<Self>) {
-        self.toggle_saved(artist, true, cx);
+        self.toggle_saved(artist, true, None, cx);
     }
 
     /// Flips the heart on an artist. Nothing is announced, since the heart is the way back.
     pub fn heart_artist(&mut self, artist: SavedArtist, cx: &mut Context<Self>) {
-        self.toggle_saved(artist, false, cx);
+        self.toggle_saved(artist, false, None, cx);
     }
 
     fn set_artist_saved(&mut self, artist: SavedArtist, saved: bool) {
@@ -1882,15 +2028,8 @@ impl Library {
                     Playlist {
                         id,
                         name,
-                        owner: String::new(),
-                        owner_id: String::new(),
                         owned: true,
-                        collaborative: false,
-                        blend: false,
-                        public: false,
-                        cover: None,
-                        track_count: 0,
-                        modified_at: None,
+                        ..Default::default()
                     }
                 }))
             },
@@ -2425,6 +2564,137 @@ impl Library {
         );
     }
 
+    /// Takes the order the listener left a playlist's page in. `seen` is the order the page
+    /// showed before this move, and only the first one taken since the last write counts, since
+    /// the provider has not seen the moves after it. Moves made close together are written as
+    /// one change once the listener pauses. A failure emits `ReorderFailed` and a success
+    /// `PlaylistReordered`.
+    pub fn reorder_playlist(
+        &mut self,
+        playlist_id: String,
+        seen: Vec<String>,
+        wanted: Vec<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.reorders
+            .entry(playlist_id)
+            .and_modify(|pending| pending.wanted.clone_from(&wanted))
+            .or_insert(PendingOrder { base: seen, wanted });
+        self.arm_reorders(REORDER_PAUSE, cx);
+    }
+
+    /// Whether the playlist has a new order that is not written yet, or is being written.
+    pub fn reordering(&self, playlist_id: &str) -> bool {
+        self.reorders.contains_key(playlist_id)
+            || self.writing_order.as_deref() == Some(playlist_id)
+    }
+
+    /// Writes the next pending order after `after`, replacing any write already waiting.
+    fn arm_reorders(&mut self, after: Duration, cx: &mut Context<Self>) {
+        self.reorder_timer = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(after).await;
+            this.update(cx, |this, cx| {
+                this.reorder_timer = None;
+                this.write_reorder(cx);
+            })
+            .ok();
+        }));
+    }
+
+    /// Writes one playlist's pending order, or tries again shortly when another change runs.
+    fn write_reorder(&mut self, cx: &mut Context<Self>) {
+        if self.playlist_task.is_some() {
+            self.arm_reorders(REORDER_RETRY, cx);
+            return;
+        }
+        let Some(id) = self.reorders.keys().next().cloned() else {
+            return;
+        };
+        let Some(PendingOrder { base, wanted }) = self.reorders.remove(&id) else {
+            return;
+        };
+        if base == wanted {
+            self.reordered(id, Ok(wanted), cx);
+            return;
+        }
+        let changed = id.clone();
+        self.writing_order = Some(id.clone());
+        let started = self.mutate_playlist(
+            PlaylistMutation {
+                action: "reorder a playlist",
+                done: None,
+                name: None,
+                target: None,
+                shelf: Shelf::of(&id),
+                invalidated: vec![id.clone()],
+            },
+            move |client| async move {
+                let written = client.reorder_playlist(&id, &base, &wanted).await;
+                Ok(written.map(|()| wanted))
+            },
+            move |this, written, cx| this.reordered(changed, written, cx),
+            cx,
+        );
+        if !started && let Some(id) = self.writing_order.take() {
+            self.reorders.remove(&id);
+            cx.emit(LibraryEvent::ReorderFailed(id));
+            if !self.reorders.is_empty() && self.reorder_timer.is_none() {
+                self.arm_reorders(REORDER_RETRY, cx);
+            }
+        }
+    }
+
+    /// Settles a written order. The next order of the same playlist builds on what was written,
+    /// while a failure drops it too, since it was counted from an order the provider never took.
+    fn reordered(
+        &mut self,
+        id: String,
+        written: anyhow::Result<Vec<String>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.writing_order = None;
+        match written {
+            Ok(order) => {
+                if let Some(next) = self.reorders.get_mut(&id) {
+                    next.base = order;
+                }
+                cx.emit(LibraryEvent::PlaylistReordered(id));
+            }
+            Err(error) => {
+                log::warn!("library: cannot reorder a playlist: {error:#}");
+                Toasts::show(Outcome::Failed, "toast-playlist-failed", cx);
+                self.reorders.remove(&id);
+                cx.emit(LibraryEvent::ReorderFailed(id));
+            }
+        }
+        if !self.reorders.is_empty() && self.reorder_timer.is_none() {
+            self.arm_reorders(REORDER_RETRY, cx);
+        }
+    }
+
+    /// Drops the streaming orders not written yet, as the account they were made under goes
+    /// away, while local ones stay queued. The write in flight goes with the playlist task the
+    /// caller dropped, so its page loads again like the pages of the dropped orders.
+    fn forget_reorders(&mut self, cx: &mut Context<Self>) {
+        let dropped: Vec<String> = self
+            .reorders
+            .keys()
+            .filter(|id| !Shelf::of(id).local())
+            .cloned()
+            .collect();
+        for id in &dropped {
+            self.reorders.remove(id);
+        }
+        let cancelled = self.writing_order.take();
+        self.reorder_timer = None;
+        for id in dropped.into_iter().chain(cancelled) {
+            cx.emit(LibraryEvent::ReorderFailed(id));
+        }
+        if !self.reorders.is_empty() {
+            self.arm_reorders(REORDER_RETRY, cx);
+        }
+    }
+
     pub fn delete_playlist(&mut self, id: String, cx: &mut Context<Self>) {
         let deleted = id.clone();
         self.mutate_playlist(
@@ -2839,13 +3109,17 @@ impl Library {
             .map(|ready| &mut ready.playlists)
     }
 
+    /// Runs one playlist change on the provider, and answers whether it started. Another change
+    /// still running, a new order of the playlist not written yet, or no account to make it with
+    /// turns it away with a toast. A waiting order is then written at once, so a retry works.
     fn mutate_playlist<F, R, T, A>(
         &mut self,
         mutation_info: PlaylistMutation,
         mutation: F,
         on_done: A,
         cx: &mut Context<Self>,
-    ) where
+    ) -> bool
+    where
         F: FnOnce(Arc<dyn MusicApi>) -> R + Send + 'static,
         R: Future<Output = anyhow::Result<T>> + Send + 'static,
         T: Send + 'static,
@@ -2862,12 +3136,18 @@ impl Library {
         if self.playlist_task.is_some() {
             log::warn!("library: cannot {action} while another change is running");
             Toasts::show(Outcome::Failed, "toast-playlist-busy", cx);
-            return;
+            return false;
+        }
+        if invalidated.iter().any(|id| self.reorders.contains_key(id)) {
+            log::warn!("library: cannot {action} before the new order of the playlist is written");
+            Toasts::show(Outcome::Failed, "toast-playlist-busy", cx);
+            self.arm_reorders(Duration::ZERO, cx);
+            return false;
         }
         let Some(client) = self.session.read(cx).client_of(shelf) else {
             log::warn!("library: cannot {action} while signed out");
             Toasts::show(Outcome::Failed, "toast-playlist-signed-out", cx);
-            return;
+            return false;
         };
         let catalog = invalidated
             .first()
@@ -2910,6 +3190,7 @@ impl Library {
             })
             .ok();
         }));
+        true
     }
 
     fn insert_playlist(&mut self, playlist: Playlist, cx: &mut Context<Self>) {
@@ -2990,13 +3271,17 @@ impl Library {
         let Some(id) = track.id.clone() else {
             return;
         };
-        let Some(favorites) = self.held_mut(Shelf::of(&id)).favorites_mut() else {
+        let held = self.held_mut(Shelf::of(&id));
+        let arrival = held.arrival.unwrap_or(Arrival::OldestFirst);
+        held.edits.retain(|(edited, _)| *edited != id);
+        held.edits.push((id.clone(), saved.then(|| track.clone())));
+        let Some(favorites) = held.favorites_mut() else {
             return;
         };
         let tracks = favorites.tracks;
         let same = |held: &Track| held.id.as_deref() == Some(id.as_str());
         match saved {
-            true if !tracks.iter().any(same) => tracks.push(track),
+            true if !tracks.iter().any(same) => arrival.admit(tracks, track),
             false => tracks.retain(|held| !same(held)),
             _ => {}
         }
@@ -3110,9 +3395,15 @@ impl Library {
             return;
         };
         let shape = session.shape_of(shelf);
+        let arrival = session.capabilities_of(shelf).song_arrival;
 
+        // a change whose request is still out may be missed by the read about to start; one
+        // the provider has answered is in what it reads
+        let asked: HashSet<String> = self.pending.keys().cloned().collect();
         let held = self.held_mut(shelf);
         held.shape = shape;
+        held.arrival = arrival;
+        held.edits.retain(|(id, _)| asked.contains(id));
         held.awaited = LibraryPart::ALL.to_vec();
         match held.stale.is_empty() {
             true => {
@@ -3262,6 +3553,9 @@ impl Library {
                 held.expected.remove(&part);
                 shed(&mut held.state, &mut held.stale, part);
                 extend(&mut held.state, wrap(Ok(held_back)));
+                if part == LibraryPart::Tracks && held.shape == Shape::Saved {
+                    held.reapply_edits();
+                }
                 settle(&mut held.state, &mut held.awaited, part, shelf.fatal());
                 this.keep(shelf, Kind::Listed, part, cx);
                 cx.notify();
@@ -3294,6 +3588,9 @@ impl Library {
             shed(&mut held.state, &mut held.stale, part);
         }
         place(&mut held.state, &mut held.awaited, landed, shelf.fatal());
+        if part == LibraryPart::Tracks && held.shape == Shape::Saved {
+            held.reapply_edits();
+        }
         if arrived {
             self.keep(shelf, Kind::Listed, part, cx);
         }
@@ -3317,7 +3614,11 @@ impl Library {
 
     fn land_starred(&mut self, shelf: Shelf, landed: Landed, cx: &mut Context<Self>) {
         let part = landed.part();
-        if star(self.held_mut(shelf), landed) {
+        let held = self.held_mut(shelf);
+        if star(held, landed) {
+            if part == LibraryPart::Tracks && held.shape.is_catalog() {
+                held.reapply_edits();
+            }
             self.keep(shelf, Kind::Starred, part, cx);
         }
         cx.notify();

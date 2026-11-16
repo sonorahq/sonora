@@ -9,11 +9,14 @@ use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIc
 use super::{Art, Event, Shown};
 
 const TOOLTIP: &str = "Sonora";
-const PNG: &[u8] = match cfg!(target_os = "macos") {
-    true => include_bytes!("../../../../assets/tray/template-64.png"),
-    false => include_bytes!("../../../../assets/tray/sonora.png"),
-};
+#[cfg(target_os = "macos")]
+const TEMPLATES: [&[u8]; 2] = [
+    include_bytes!("../../../../assets/tray/template-18.png"),
+    include_bytes!("../../../../assets/tray/template-36.png"),
+];
 const MENU_ON_CLICK: bool = cfg!(target_os = "macos");
+#[cfg(target_os = "macos")]
+const TEMPLATE_POINTS: f64 = 18.;
 
 /// The tray icon and its menu. The status item is built the first time it goes into the tray, so
 /// a Sonora started with the icon off never shows it, not even for a frame.
@@ -36,15 +39,7 @@ pub struct Icon {
 
 impl Icon {
     pub fn new(sender: UnboundedSender<Event>) -> Option<Self> {
-        let image = match image::load_from_memory(PNG) {
-            Ok(image) => image.into_rgba8(),
-            Err(error) => {
-                log::warn!("tray: cannot decode the tray icon: {error:#}");
-                return None;
-            }
-        };
-        let (width, height) = image.dimensions();
-        let logo = match tray_icon::Icon::from_rgba(image.into_raw(), width, height) {
+        let logo = match logo() {
             Ok(logo) => logo,
             Err(error) => {
                 log::warn!("tray: cannot build the tray icon: {error:#}");
@@ -86,15 +81,15 @@ impl Icon {
         }));
         TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
             let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
+                button,
+                button_state,
                 ..
             } = event
             else {
                 return;
             };
-            if !MENU_ON_CLICK {
-                sender.send(Event::Show).ok();
+            if let Some(event) = click(button, button_state) {
+                sender.send(event).ok();
             }
         }));
 
@@ -134,16 +129,22 @@ impl Icon {
 
     /// Builds the status item, which puts it in the tray.
     fn build(&self) -> Result<TrayIcon> {
-        let icon = TrayIconBuilder::new()
-            .with_icon(self.logo.clone())
-            .with_icon_as_template(true)
+        let builder = TrayIconBuilder::new();
+        #[cfg(target_os = "macos")]
+        let builder = builder.with_icon_templated(self.logo.clone());
+        #[cfg(not(target_os = "macos"))]
+        let builder = builder.with_icon(self.logo.clone());
+        let icon = builder
             .with_tooltip(&self.tooltip)
             .with_menu(Box::new(self.menu.clone()))
             .with_menu_on_left_click(MENU_ON_CLICK)
             .build()
             .context("cannot build the status item")?;
         #[cfg(target_os = "macos")]
-        keep_cover(&icon);
+        {
+            set_template(&icon)?;
+            keep_cover(&icon);
+        }
         Ok(icon)
     }
 
@@ -169,6 +170,62 @@ impl Icon {
         self.show.set_text(&shown.show);
         self.quit.set_text(&shown.quit);
     }
+}
+
+/// Loads the Windows artwork from the executable at the system tray's current pixel size.
+#[cfg(windows)]
+fn logo() -> Result<tray_icon::Icon> {
+    use windows::Win32::UI::HiDpi::{GetDpiForSystem, GetSystemMetricsForDpi};
+    use windows::Win32::UI::WindowsAndMessaging::{SM_CXSMICON, SM_CYSMICON};
+
+    let size = unsafe {
+        let dpi = GetDpiForSystem();
+        (
+            GetSystemMetricsForDpi(SM_CXSMICON, dpi) as u32,
+            GetSystemMetricsForDpi(SM_CYSMICON, dpi) as u32,
+        )
+    };
+    tray_icon::Icon::from_resource(1, Some(size)).context("cannot load the tray icon resource")
+}
+
+#[cfg(target_os = "macos")]
+fn logo() -> Result<tray_icon::Icon> {
+    let image = image::load_from_memory(TEMPLATES[1])
+        .context("cannot decode the tray template")?
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    tray_icon::Icon::from_rgba(image.into_raw(), width, height)
+        .context("cannot build the tray template")
+}
+
+/// Installs both pixel densities at 18 points so AppKit can choose without resampling.
+#[cfg(target_os = "macos")]
+fn set_template(icon: &TrayIcon) -> Result<()> {
+    use objc2::AnyThread as _;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSImage;
+    use objc2_foundation::{NSData, NSSize};
+
+    let mtm =
+        MainThreadMarker::new().context("cannot set the tray template off the main thread")?;
+    let button = icon
+        .ns_status_item()
+        .and_then(|item| item.button(mtm))
+        .context("cannot find the status item button")?;
+    let size = NSSize::new(TEMPLATE_POINTS, TEMPLATE_POINTS);
+    let template = NSImage::initWithSize(NSImage::alloc(), size);
+    for png in TEMPLATES {
+        let data = NSData::with_bytes(png);
+        let image = NSImage::initWithData(NSImage::alloc(), &data)
+            .context("cannot decode the tray template representation")?;
+        for representation in image.representations() {
+            representation.setSize(size);
+            template.addRepresentation(&representation);
+        }
+    }
+    template.setTemplate(true);
+    button.setImage(Some(&template));
+    Ok(())
 }
 
 /// The cover as a menu icon. A cover that cannot be built is simply left off the row.
@@ -208,6 +265,15 @@ fn keep_cover(icon: &TrayIcon) {
     unsafe { msg_send![&*caption, setPreferredImageVisibility: VISIBLE] }
 }
 
+/// What a click on the icon asks for. A left button release toggles the window, except where the
+/// icon opens its menu on a left click, and every other click is left to the system.
+fn click(button: MouseButton, state: MouseButtonState) -> Option<Event> {
+    match (button, state, MENU_ON_CLICK) {
+        (MouseButton::Left, MouseButtonState::Up, false) => Some(Event::Window),
+        _ => None,
+    }
+}
+
 fn translate(id: &MenuId) -> Option<Event> {
     Some(match id.0.as_str() {
         "caption" => Event::Song,
@@ -220,4 +286,29 @@ fn translate(id: &MenuId) -> Option<Event> {
         "quit" => Event::Quit,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn left_release_toggles_the_window() {
+        let asked = click(MouseButton::Left, MouseButtonState::Up);
+        assert_eq!(
+            asked,
+            match MENU_ON_CLICK {
+                true => None,
+                false => Some(Event::Window),
+            }
+        );
+    }
+
+    #[test]
+    fn other_clicks_are_left_alone() {
+        assert_eq!(click(MouseButton::Left, MouseButtonState::Down), None);
+        assert_eq!(click(MouseButton::Right, MouseButtonState::Up), None);
+        assert_eq!(click(MouseButton::Right, MouseButtonState::Down), None);
+        assert_eq!(click(MouseButton::Middle, MouseButtonState::Up), None);
+    }
 }

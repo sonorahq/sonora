@@ -7,14 +7,14 @@ use gpui::{Context, Entity, EventEmitter, Task};
 use i18n::t;
 use music::link::Linked;
 use music::{
-    Capabilities, Catalog, MusicApi, MusicProvider, PlaybackFactory, PromptSink, ProviderSession,
-    Shape, SignIn, SignInFailure, SignInProblem, SignInPrompt, UserProfile,
+    Capabilities, Catalog, Library, MusicApi, MusicProvider, PlaybackFactory, PromptSink,
+    ProviderSession, Shape, SignIn, SignInFailure, SignInProblem, SignInPrompt, UserProfile,
 };
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::catalog::CatalogSource;
 use crate::settings::AppSettings;
-use crate::{Io, Network, Outcome, Scan, Shelf, Toast, Toasts, join};
+use crate::{Io, Network, Outcome, Scan, Shelf, Target, Toast, Toasts, join};
 
 const HEARTBEAT: Duration = Duration::from_secs(30);
 /// How often the sign-in window is asked whether the user is through.
@@ -143,6 +143,10 @@ pub struct Session {
     reconnect: Option<Task<()>>,
     reconnecting: bool,
     attempt: usize,
+    /// The server libraries the library picker lists, or why they could not be read. `None`
+    /// while a read is under way or when none was asked for.
+    libraries: Option<Result<Vec<Library>, String>>,
+    libraries_task: Option<Task<()>>,
 }
 
 impl EventEmitter<SessionEvent> for Session {}
@@ -195,6 +199,8 @@ impl Session {
             reconnect: None,
             reconnecting: false,
             attempt: 0,
+            libraries: None,
+            libraries_task: None,
         };
         session.restore_local(cx);
         session
@@ -279,8 +285,10 @@ impl Session {
             })
     }
 
+    /// The providers with an account stored. A stored guest session is not an account, so it is
+    /// left out even while it is the one in use.
     pub fn connected(&self) -> impl Iterator<Item = ProviderInfo> + '_ {
-        self.providers().filter(|info| info.stored)
+        self.providers().filter(|info| info.stored && !info.guest)
     }
 
     /// Whether the current provider's tracks need the Widevine module and it has an account.
@@ -292,6 +300,16 @@ impl Session {
         };
         let provider = &self.providers[index];
         provider.protected() && provider.stored()
+    }
+
+    /// Whether the current provider can play through Soloist on this computer and has an
+    /// account, which is when the app offers its setup.
+    pub fn offers_soloist(&self) -> bool {
+        let Some(index) = self.active else {
+            return false;
+        };
+        let provider = &self.providers[index];
+        provider.soloist() && provider.stored()
     }
 
     /// Whether a browser window matters right now: the current provider signs in through one,
@@ -407,15 +425,25 @@ impl Session {
 
     /// What the live streaming provider can do beyond listing and playing. Nothing is offered
     /// while signed out, which is what the empty set means.
+    /// What the signed-in provider can do. The stream levels are the playback factory's when it
+    /// names any, since a provider with a second engine serves other levels through it.
     pub fn capabilities(&self) -> Capabilities {
-        self.capabilities
+        let qualities = self
+            .playback
+            .as_ref()
+            .and_then(|playback| playback.qualities())
+            .unwrap_or(self.capabilities.qualities);
+        Capabilities {
+            qualities,
+            ..self.capabilities
+        }
     }
 
     /// The same, for whichever shelf a thing belongs to. Anything that routes by id asks this
     /// one, since the two shelves can differ: local files keep favorites but seed no station.
     pub fn capabilities_of(&self, shelf: Shelf) -> Capabilities {
         match shelf {
-            Shelf::Streaming => self.capabilities,
+            Shelf::Streaming => self.capabilities(),
             Shelf::Local => self.local_capabilities,
         }
     }
@@ -425,6 +453,88 @@ impl Session {
             self.state,
             SessionState::Restoring | SessionState::Authorizing(_)
         )
+    }
+
+    /// Tears the live session down and opens the stored sign-in again, after a change to what
+    /// the stored account reads — the Subsonic library it is scoped to. The library, search,
+    /// genres and home all reload on the sign-in that follows, and nothing the old client
+    /// answered can arrive afterwards. A restore still under way is dropped and started over, so
+    /// it cannot install a client built for the previous choice.
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.state, SessionState::Authorizing(_)) || self.active.is_none() {
+            return;
+        }
+        self.release(cx);
+        self.restore(cx);
+    }
+
+    /// The provider whose stored account can be limited to one library of its server. A guest
+    /// session has no account to limit.
+    fn library_provider(&self) -> Option<&Arc<dyn MusicProvider>> {
+        self.providers.iter().find(|provider| {
+            provider.has_libraries() && provider.stored() && !provider.stored_guest()
+        })
+    }
+
+    /// Whether a stored account can be limited to one library of its server.
+    pub fn offers_libraries(&self) -> bool {
+        self.library_provider().is_some()
+    }
+
+    /// The library the stored account reads, or `None` for the whole server. It reads what is
+    /// stored and asks the server nothing.
+    pub fn library(&self) -> Option<Library> {
+        self.library_provider()?.library()
+    }
+
+    /// The libraries the last read found, or why it failed. `None` while the read is under way.
+    pub fn libraries(&self) -> Option<&Result<Vec<Library>, String>> {
+        self.libraries.as_ref()
+    }
+
+    /// Asks the stored account's server for its libraries, dropping any answer already held.
+    pub fn load_libraries(&mut self, cx: &mut Context<Self>) {
+        self.libraries = None;
+        self.libraries_task = None;
+        let Some(provider) = self.library_provider().cloned() else {
+            cx.notify();
+            return;
+        };
+        let io = self.io.clone();
+        self.libraries_task = Some(cx.spawn(async move |this, cx| {
+            let read = join(io.spawn(async move { provider.libraries().await })).await;
+            this.update(cx, |this, cx| {
+                this.libraries = Some(read.map_err(|error| format!("{error:#}")));
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    /// Drops the libraries read for the picker and stops a read under way.
+    pub fn forget_libraries(&mut self, cx: &mut Context<Self>) {
+        self.libraries = None;
+        self.libraries_task = None;
+        cx.notify();
+    }
+
+    /// Keeps the stored account's library choice, or the whole server with `None`, and rebuilds
+    /// the session around it when that account is the one in use. A stored account that is not
+    /// in use picks the choice up when it next signs in. Fails when the choice cannot be kept.
+    pub fn choose_library(
+        &mut self,
+        library: Option<Library>,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let Some(provider) = self.library_provider().cloned() else {
+            anyhow::bail!("no stored account can be limited to a library");
+        };
+        provider.choose_library(library)?;
+        if self.provider_slug() == Some(provider.slug()) {
+            self.reload(cx);
+        }
+        Ok(())
     }
 
     /// Opens the active provider's stored sign-in. One that cannot be opened hands over to the
@@ -474,7 +584,8 @@ impl Session {
 
     /// Moves past a provider whose stored sign-in did not open, to the next provider with an
     /// account stored, or failing that to a guest session. The provider keeps its error for the
-    /// settings page, and a toast says it could not sign back in. With nowhere to go the
+    /// settings page, and a toast says it could not sign back in, or that the provider invalidated
+    /// the session when it refused the stored sign-in outright. With nowhere to go the
     /// session ends the way it always did, on the sign-in page.
     fn fall_back(&mut self, failed: usize, error: Option<&Error>, cx: &mut Context<Self>) {
         let provider = self.providers[failed].clone();
@@ -530,7 +641,11 @@ impl Session {
                     "session: {} refused its stored sign-in, falling back",
                     provider.name()
                 );
-                Toasts::about(Outcome::Failed, "toast-restore-failed", provider.name(), cx);
+                let toast = Toast::new(Outcome::Failed, "toast-session-invalidated")
+                    .name(provider.name())
+                    .open("toast-sign-in", Target::ProviderSettings)
+                    .lasting();
+                Toasts::post(toast, cx);
             }
             None => log::debug!(
                 "session: {} has nothing stored, falling back",

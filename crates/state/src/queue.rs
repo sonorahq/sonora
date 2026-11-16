@@ -8,6 +8,7 @@ use music::connect::QueuedTrack;
 use music::{ArtistRef, Track};
 use serde::{Deserialize, Serialize};
 
+use crate::devices::kind_of;
 use crate::{AppSettings, Origin, Outcome, Session, SessionEvent, Toast, Toasts};
 
 mod view;
@@ -48,6 +49,8 @@ pub struct Stub {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) credited: Vec<ArtistRef>,
     pub(crate) album: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub(crate) album_artist: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) album_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -193,6 +196,7 @@ fn stub(track: &Track) -> Option<Stub> {
         artists: track.artists.clone(),
         credited: track.artist_refs.clone(),
         album: track.album.clone(),
+        album_artist: track.album_artist.clone(),
         album_id: track.album_id.clone(),
         cover: track.cover.clone(),
         seconds: track.duration.as_secs_f32(),
@@ -210,19 +214,12 @@ fn hydrate(stub: Stub) -> Track {
         artists: stub.artists,
         artist_refs: stub.credited,
         album: stub.album,
+        album_artist: stub.album_artist,
         album_id: stub.album_id,
         cover: stub.cover,
         duration: Duration::from_secs_f32(stub.seconds.max(0.)),
-        added_at: None,
-        added_by: None,
-        playcount: None,
-        popularity: 0,
         explicit: stub.explicit,
-        track_number: 0,
-        disc_number: 0,
-        tags: Vec::new(),
-        languages: Vec::new(),
-        credits: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -483,13 +480,22 @@ impl Queue {
     }
 
     /// Rebuilds collection order while keeping additions and recommendations out of the source.
+    /// Shuffling mixes the hand-queued songs in with the collection, so turning shuffle off and
+    /// on again reshuffles the whole queue. Unshuffling queues every song the collection lacks
+    /// by hand again, ahead of the collection.
     fn reorder(&mut self) {
+        let shuffle = self.shuffle;
+        let known: HashSet<&str> = self.source.iter().map(|entry| entry.uid.as_str()).collect();
         let mut suggested = VecDeque::new();
         let mut manual = VecDeque::new();
         self.upcoming.retain(|entry| match entry.kind {
-            QueueKind::Context => true,
-            QueueKind::Queued => {
-                manual.push_back(entry.clone());
+            QueueKind::Context if shuffle || known.contains(entry.uid.as_str()) => true,
+            QueueKind::Queued if shuffle => true,
+            QueueKind::Context | QueueKind::Queued => {
+                manual.push_back(Entry {
+                    kind: QueueKind::Queued,
+                    ..entry.clone()
+                });
                 false
             }
             QueueKind::Suggested => {
@@ -497,8 +503,13 @@ impl Queue {
                 false
             }
         });
-        match self.shuffle {
-            true => scramble(&mut self.upcoming, &self.source, self.current.as_ref()),
+        match shuffle {
+            true => {
+                scramble(&mut self.upcoming, &self.source, self.current.as_ref());
+                for entry in &mut self.upcoming {
+                    entry.kind = QueueKind::Context;
+                }
+            }
             false => restore(&mut self.upcoming, &self.source, self.current.as_ref()),
         }
         manual.append(&mut self.upcoming);
@@ -630,13 +641,10 @@ impl Queue {
         self.past.iter().filter_map(connect_entry)
     }
 
-    /// The upcoming play order reported to other clients. Local files and suggestions stay out,
-    /// since the suggestions are this app's own and change whenever the radio refills.
+    /// The upcoming play order reported to other clients, the suggestions with it, so another
+    /// device shows what plays on here once the collection runs out. Local files stay out.
     pub(crate) fn connect_upcoming(&self) -> impl Iterator<Item = QueuedTrack> + '_ {
-        self.upcoming
-            .iter()
-            .filter(|entry| entry.kind != QueueKind::Suggested)
-            .filter_map(connect_entry)
+        self.upcoming.iter().filter_map(connect_entry)
     }
 
     /// Every track the queue holds, for reading a remote queue without asking the provider
@@ -882,8 +890,9 @@ impl Queue {
     }
 
     /// Applies a remote queue window while keeping the current entry and playback position.
-    /// `reach` says how much of this queue the window stands for, so what lies beyond it stays,
-    /// and so do the suggestions, which are never reported.
+    /// `reach` says how much of this queue the window stands for, so what lies beyond it stays.
+    /// The suggestions are reported like any other song, so one the window no longer names is
+    /// gone like any other too.
     pub(crate) fn replace_remote(
         &mut self,
         past: Vec<(Track, QueuedTrack)>,
@@ -894,10 +903,7 @@ impl Queue {
     ) {
         let origin = self.origin().or_else(|| self.context_origin()).cloned();
         let old_past = std::mem::take(&mut self.past);
-        let (suggested, old_upcoming): (Vec<_>, Vec<_>) = self
-            .upcoming
-            .drain(..)
-            .partition(|entry| entry.kind == QueueKind::Suggested);
+        let old_upcoming: Vec<_> = self.upcoming.drain(..).collect();
         let (earlier, left_past, mut known, left_upcoming, beyond) = match reach {
             Reach::Reported {
                 past: shown_past,
@@ -937,28 +943,33 @@ impl Queue {
                 (earlier, Vec::new(), known, Vec::new(), beyond)
             }
         };
-        let mut identity =
-            |track: &Track| match known.iter().position(|entry| entry.track.id == track.id) {
-                Some(index) => known.remove(index).uid,
-                None => queue_uid(),
-            };
+        // the occurrence a track of the window stands for here, when the queue has one
+        let mut matched = |track: &Track| {
+            let index = known.iter().position(|entry| entry.track.id == track.id)?;
+            Some(known.remove(index))
+        };
         let past_len = past.len();
         let mut entries: Vec<_> = past
             .into_iter()
             .chain(upcoming)
             .map(|(track, listed)| {
-                let kind = match listed.queued {
-                    true => QueueKind::Queued,
-                    false => QueueKind::Context,
+                let kind = kind_of(&listed);
+                let before = matched(&track);
+                let from = match kind {
+                    QueueKind::Queued => None,
+                    QueueKind::Context => origin.clone(),
+                    // a suggestion keeps the radio it came from, which the collection that
+                    // plays is not
+                    QueueKind::Suggested => before
+                        .as_ref()
+                        .filter(|before| before.kind == QueueKind::Suggested)
+                        .and_then(|before| before.origin.clone())
+                        .or_else(|| origin.clone()),
                 };
+                let uid = before.map_or_else(queue_uid, |before| before.uid);
                 Entry {
                     recommended: listed.recommended,
-                    ..Entry::with_uid(
-                        identity(&track),
-                        track,
-                        (!listed.queued).then(|| origin.clone()).flatten(),
-                        kind,
-                    )
+                    ..Entry::with_uid(uid, track, from, kind)
                 }
             })
             .collect();
@@ -972,24 +983,75 @@ impl Queue {
             .into_iter()
             .chain(left_upcoming)
             .chain(beyond)
-            .chain(suggested)
             .collect();
         if let Some(entry) = self.current.as_mut() {
-            entry.kind = match current.as_ref().is_some_and(|listed| listed.queued) {
-                true => QueueKind::Queued,
-                false => QueueKind::Context,
-            };
+            entry.kind = current.as_ref().map_or(QueueKind::Context, kind_of);
             entry.recommended = current.is_some_and(|listed| listed.recommended);
         }
-        let queued: HashSet<_> = self
+        // only the collection's own songs belong in its order, or a shuffle would deal a queued
+        // or a suggested one in a second time
+        let apart: HashSet<_> = self
             .past
             .iter()
             .chain(&self.current)
             .chain(&self.upcoming)
-            .filter(|entry| entry.kind == QueueKind::Queued)
+            .filter(|entry| entry.kind != QueueKind::Context)
             .map(|entry| &entry.uid)
             .collect();
-        self.source.retain(|entry| !queued.contains(&entry.uid));
+        self.source.retain(|entry| !apart.contains(&entry.uid));
+        self.suggested += 1;
+        self.changed(cx);
+    }
+
+    /// Replaces the persisted Spotify queue with Soloist's current remote queue window.
+    pub(crate) fn replace_soloist_remote(
+        &mut self,
+        current: Option<(Track, QueuedTrack)>,
+        previous: Vec<(Track, QueuedTrack)>,
+        upcoming: Vec<(Track, QueuedTrack)>,
+        retained: &[String],
+        cx: &mut Context<Self>,
+    ) {
+        let local_upcoming: Vec<_> = self
+            .upcoming
+            .iter()
+            .filter(|entry| entry.id().is_some_and(music::is_local_id))
+            .cloned()
+            .collect();
+        let mut known: Vec<_> = self
+            .past
+            .iter()
+            .chain(&self.current)
+            .chain(&self.upcoming)
+            .cloned()
+            .collect();
+        let reserved: HashSet<_> = current
+            .iter()
+            .chain(&previous)
+            .chain(&upcoming)
+            .map(|(_, queued)| queued.uid.clone())
+            .filter(|uid| !uid.is_empty())
+            .collect();
+        let mut entry = |(track, queued): (Track, QueuedTrack)| {
+            let kind = match queued.queued {
+                true => QueueKind::Queued,
+                false => QueueKind::Context,
+            };
+            let (uid, origin) =
+                soloist_identity(&mut known, track.id.as_deref(), queued.uid, &reserved);
+            Entry::with_uid(uid, track, origin, kind)
+        };
+        self.past = previous.into_iter().map(&mut entry).collect();
+        self.current = current.map(&mut entry);
+        let remote: Vec<_> = upcoming.into_iter().map(&mut entry).collect();
+        let remote_window: Vec<_> = self.current.iter().chain(&remote).cloned().collect();
+        let retained = retained_soloist_entries(&self.upcoming, &remote_window, retained);
+        self.upcoming = remote
+            .into_iter()
+            .chain(retained)
+            .chain(local_upcoming)
+            .collect();
+        self.source.clear();
         self.suggested += 1;
         self.changed(cx);
     }
@@ -1050,7 +1112,7 @@ impl Queue {
 
     /// The gap right after the hand-queued run, where Add to queue puts a song. Hand-queued
     /// songs only ever sit in that run, which songs replayed from the history may precede.
-    fn manual_end(&self) -> usize {
+    pub(crate) fn manual_end(&self) -> usize {
         self.upcoming
             .iter()
             .rposition(|entry| entry.kind == QueueKind::Queued)
@@ -1250,6 +1312,15 @@ impl Queue {
         self.select(QueuePosition::Past(index), cx)
     }
 
+    /// Selects the first upcoming occurrence of `id`.
+    pub(crate) fn select_id(&mut self, id: &str, cx: &mut Context<Self>) -> Option<Track> {
+        let index = self
+            .upcoming
+            .iter()
+            .position(|entry| entry.id() == Some(id))?;
+        self.select(QueuePosition::Upcoming(index), cx)
+    }
+
     /// Selects a song in play order. Replaying history queues the interrupted songs first;
     /// selecting the collection preserves manual additions, while selecting a suggestion skips them.
     pub fn select(&mut self, position: QueuePosition, cx: &mut Context<Self>) -> Option<Track> {
@@ -1348,6 +1419,57 @@ fn queue_uid() -> String {
     format!("sonora-{:016x}", fastrand::u64(..))
 }
 
+/// Keeps an anonymous Soloist occurrence stable across its next reported queue window.
+fn soloist_identity(
+    known: &mut Vec<Entry>,
+    id: Option<&str>,
+    uid: String,
+    reserved: &HashSet<String>,
+) -> (String, Option<Origin>) {
+    let index = match uid.is_empty() {
+        true => id.and_then(|id| {
+            known
+                .iter()
+                .position(|entry| entry.id() == Some(id) && !reserved.contains(entry.uid.as_str()))
+        }),
+        false => known.iter().position(|entry| entry.uid == uid),
+    };
+    match index {
+        Some(index) => {
+            let entry = known.remove(index);
+            (entry.uid, entry.origin)
+        }
+        None if !uid.is_empty() => (uid, None),
+        None => (queue_uid(), None),
+    }
+}
+
+/// Keeps unpublished collection entries after the latest authoritative remote window.
+fn retained_soloist_entries(
+    upcoming: &VecDeque<Entry>,
+    remote: &[Entry],
+    retained: &[String],
+) -> Vec<Entry> {
+    let mut published = 0;
+    for entry in remote {
+        if entry.id() == retained.get(published).map(String::as_str) {
+            published += 1;
+        }
+    }
+    let mut wanted = retained[published..].iter().map(String::as_str).peekable();
+    upcoming
+        .iter()
+        .filter_map(|entry| {
+            let id = entry.id()?;
+            if wanted.peek().copied() != Some(id) {
+                return None;
+            }
+            wanted.next();
+            Some(entry.clone())
+        })
+        .collect()
+}
+
 /// Excludes local files from the provider's queue report while retaining occurrence identities.
 fn connect_entry(entry: &Entry) -> Option<QueuedTrack> {
     let id = entry.id().filter(|id| !music::is_local_id(id))?;
@@ -1355,6 +1477,7 @@ fn connect_entry(entry: &Entry) -> Option<QueuedTrack> {
         id: id.to_owned(),
         uid: entry.uid.clone(),
         queued: entry.kind == QueueKind::Queued,
+        suggested: entry.kind == QueueKind::Suggested,
         recommended: entry.recommended,
         added_by: entry
             .track
@@ -1366,15 +1489,16 @@ fn connect_entry(entry: &Entry) -> Option<QueuedTrack> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
+    use std::collections::{HashSet, VecDeque};
     use std::rc::Rc;
     use std::time::Duration;
 
     use music::{ArtistRef, Track};
 
     use super::{
-        Entry, gap_target, hydrate, in_order, local, move_item, record, restore, scramble,
-        select_past, select_upcoming, sift, stub, trim,
+        Entry, Origin, gap_target, hydrate, in_order, local, move_item, record, restore,
+        retained_soloist_entries, scramble, select_past, select_upcoming, sift, soloist_identity,
+        stub, trim,
     };
 
     fn track(id: &str) -> Track {
@@ -1382,22 +1506,8 @@ mod tests {
             id: Some(id.to_owned()),
             name: id.to_owned(),
             playable: true,
-            artists: String::new(),
-            artist_refs: Vec::new(),
-            album: String::new(),
-            album_id: None,
-            cover: None,
             duration: Duration::from_secs(180),
-            added_at: None,
-            added_by: None,
-            playcount: None,
-            popularity: 0,
-            explicit: false,
-            track_number: 0,
-            disc_number: 0,
-            tags: Vec::new(),
-            languages: Vec::new(),
-            credits: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -1445,6 +1555,114 @@ mod tests {
         restore(&mut upcoming, &source, None);
 
         assert_eq!(ids(&upcoming), ids(&source.iter().cloned().collect()));
+    }
+
+    #[test]
+    fn anonymous_soloist_occurrences_keep_their_ordered_identities() {
+        let first = Entry::with_uid(
+            "first".into(),
+            track("duplicate"),
+            None,
+            super::QueueKind::Context,
+        );
+        let second = Entry::with_uid(
+            "second".into(),
+            track("duplicate"),
+            None,
+            super::QueueKind::Context,
+        );
+        let mut known = vec![first, second];
+
+        let first = soloist_identity(
+            &mut known,
+            Some("duplicate"),
+            String::new(),
+            &HashSet::new(),
+        );
+        let second = soloist_identity(
+            &mut known,
+            Some("duplicate"),
+            String::new(),
+            &HashSet::new(),
+        );
+
+        assert_eq!([first.0, second.0], ["first", "second"]);
+    }
+
+    #[test]
+    fn anonymous_soloist_occurrence_does_not_consume_an_explicit_uid() {
+        let explicit = Entry::with_uid(
+            "remote".into(),
+            track("duplicate"),
+            None,
+            super::QueueKind::Context,
+        );
+        let anonymous = Entry::with_uid(
+            "local".into(),
+            track("duplicate"),
+            None,
+            super::QueueKind::Context,
+        );
+        let mut known = vec![explicit, anonymous];
+        let reserved = HashSet::from(["remote".to_owned()]);
+
+        let anonymous = soloist_identity(&mut known, Some("duplicate"), String::new(), &reserved);
+        let explicit = soloist_identity(&mut known, Some("duplicate"), "remote".into(), &reserved);
+
+        assert_eq!([anonymous.0, explicit.0], ["local", "remote"]);
+    }
+
+    #[test]
+    fn matched_soloist_occurrence_keeps_its_origin() {
+        let origin = Origin::album("collection");
+        let known = Entry::with_uid(
+            "remote".into(),
+            track("track"),
+            Some(origin.clone()),
+            super::QueueKind::Context,
+        );
+
+        let (_, kept) = soloist_identity(
+            &mut vec![known],
+            Some("track"),
+            "remote".into(),
+            &HashSet::new(),
+        );
+
+        assert_eq!(kept, Some(origin));
+    }
+
+    #[test]
+    fn remote_current_keeps_only_unpublished_collection_entries() {
+        let upcoming = VecDeque::from([entry("b"), entry("c")]);
+        let remote = vec![entry("b")];
+        let retained = retained_soloist_entries(&upcoming, &remote, &["b".into(), "c".into()]);
+
+        assert_eq!(ids(&retained.into()), ["c"]);
+    }
+
+    #[test]
+    fn remote_opener_does_not_consume_a_later_unpublished_duplicate() {
+        let upcoming = VecDeque::from([entry("b"), entry("a"), entry("c")]);
+        let retained = retained_soloist_entries(
+            &upcoming,
+            &[entry("a")],
+            &["b".into(), "a".into(), "c".into()],
+        );
+
+        assert_eq!(ids(&retained.into()), ["b", "a", "c"]);
+    }
+
+    #[test]
+    fn remote_history_does_not_consume_an_unpublished_tail() {
+        let upcoming = VecDeque::from([entry("b"), entry("c")]);
+        let retained = retained_soloist_entries(
+            &upcoming,
+            &[entry("a"), entry("remote")],
+            &["b".into(), "c".into()],
+        );
+
+        assert_eq!(ids(&retained.into()), ["b", "c"]);
     }
 
     #[test]
@@ -1635,10 +1853,12 @@ mod tests {
             ArtistRef {
                 name: "One".to_owned(),
                 id: Some("a1".to_owned()),
+                channel: false,
             },
             ArtistRef {
                 name: "Two".to_owned(),
                 id: None,
+                channel: false,
             },
         ];
         source.album = "Album".to_owned();

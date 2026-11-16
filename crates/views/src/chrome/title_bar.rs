@@ -2,21 +2,25 @@
 use gpui::Decorations;
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Window, div};
+use gpui::{AnyElement, App, SharedString, Window, div, px};
 use gpui::{
     AnyView, Context, Entity, EventEmitter, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Render,
 };
 use ui::TrafficLightControls;
 use ui::WindowControls;
-use ui::{ActiveTheme as _, Button, Spin};
+use ui::{ActiveTheme as _, Button, MenuItem, Picker, Popovers, Spin};
 
 use crate::chrome::SidebarRight;
+use crate::chrome::downloads::DownloadsButton;
+use i18n::t;
 use input::Refresh;
-use router::Navigation;
+use router::{Destination, Navigation, SettingsPage, navigate, open_settings};
 use state::{AppSettings, Sonora};
 
 const SYSTEM_ZOOMS: bool = cfg!(target_os = "windows");
+/// The rule between the current screen's controls and the account and sidebar segment.
+const SEGMENT_RULE: Pixels = px(1.);
 
 /// Tells whether the page a refresh reloaded is still waiting for its data.
 pub(crate) type Busy = Box<dyn Fn(&App) -> bool>;
@@ -43,7 +47,6 @@ pub(crate) struct TitleBarOptions {
     pub navigation: bool,
     pub sidebar_open: bool,
     pub sidebar_right: Option<bool>,
-    pub offset: Pixels,
     pub border: bool,
     pub content: Option<AnyView>,
     /// Lets the fullscreen ambient background show through behind the controls.
@@ -56,7 +59,6 @@ impl Default for TitleBarOptions {
             navigation: false,
             sidebar_open: false,
             sidebar_right: None,
-            offset: Pixels::ZERO,
             border: true,
             content: None,
             transparent: false,
@@ -79,6 +81,9 @@ pub(crate) struct TitleBar {
     busy: Option<Busy>,
     /// The refresh icon's turn, which springs back to rest once `busy` is gone.
     spin: Spin,
+    downloads: Entity<DownloadsButton>,
+    /// The account menu's group, so it closes when another of the bar's menus opens.
+    popovers: Popovers,
 }
 
 impl EventEmitter<TitleBarEvent> for TitleBar {}
@@ -94,6 +99,8 @@ impl TitleBar {
         })
         .detach();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+        cx.observe(&Sonora::global(cx).session.clone(), |_, _, cx| cx.notify())
+            .detach();
         Self {
             navigation,
             settings,
@@ -101,6 +108,8 @@ impl TitleBar {
             grabbed: false,
             busy: None,
             spin: Spin::default(),
+            downloads: cx.new(DownloadsButton::new),
+            popovers: Popovers::default(),
         }
     }
 
@@ -137,7 +146,7 @@ impl TitleBar {
         div()
             .id("titlebar-history")
             .role(Role::Toolbar)
-            .aria_label(i18n::lookup("nav-history", None))
+            .aria_label(i18n::lookup("nav-trail", None))
             .flex()
             .flex_none()
             .items_center()
@@ -217,6 +226,84 @@ impl TitleBar {
             )
     }
 
+    /// The account button and the menu it opens: the connected services to switch between, a
+    /// way to manage them, then History and Settings. A guest session shows as guest mode, and
+    /// only while it is the one in use.
+    fn account(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let session = Sonora::global(cx).session.clone();
+        let guest = session
+            .read(cx)
+            .providers()
+            .any(|info| info.active && info.guest);
+        let mut services: Vec<MenuItem> = session
+            .read(cx)
+            .connected()
+            .map(|info| {
+                let slug = info.slug;
+                let session = session.clone();
+
+                MenuItem::new(SharedString::from(format!("account-{slug}")), info.name)
+                    .icon(crate::shared::provider_logo(slug))
+                    .selected(info.active)
+                    .on_click(move |_, _, cx| {
+                        session.update(cx, |session, cx| session.switch(slug, cx));
+                    })
+            })
+            .collect();
+        if guest {
+            services.push(
+                MenuItem::new("account-guest", t!("login-guest-title"))
+                    .icon("icons/hat-glasses.svg")
+                    .selected(true),
+            );
+        }
+
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .occlude()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                Picker::icon("account", &self.popovers, "icons/circle-user-round.svg")
+                    .tooltip("tool-account")
+                    .width(Picker::REGULAR)
+                    .items(services)
+                    .item(MenuItem::separator("account-services"))
+                    .item(
+                        MenuItem::new("account-manage", t!("account-manage"))
+                            .icon("icons/user-round.svg")
+                            .on_click(|_, _, cx| {
+                                navigate(Destination::Settings(SettingsPage::Providers), cx)
+                            }),
+                    )
+                    .item(MenuItem::separator("account-pages"))
+                    .item(
+                        MenuItem::new("account-history", t!("nav-history"))
+                            .icon("icons/rotate-ccw-clock.svg")
+                            .on_click(|_, _, cx| navigate(Destination::History, cx)),
+                    )
+                    .item(
+                        MenuItem::new("account-settings", t!("nav-settings"))
+                            .icon("icons/settings.svg")
+                            .on_click(|_, _, cx| open_settings(cx)),
+                    ),
+            )
+    }
+
+    /// The thin upright rule that sets the account and sidebar segment apart from the controls
+    /// of the current screen.
+    fn segment_rule(cx: &App) -> impl IntoElement {
+        let theme = cx.theme();
+
+        div()
+            .flex_none()
+            .w(SEGMENT_RULE)
+            .h(theme.metrics.control_small / 2.)
+            .mx_1()
+            .bg(theme.border)
+    }
+
     fn toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let icon = match self.options.sidebar_open {
             true => "icons/panel-left-close.svg",
@@ -247,10 +334,10 @@ impl Render for TitleBar {
         let theme = cx.theme();
         let height = ui::snapped(theme.metrics.title_bar, window);
         let navigation = self.options.navigation;
-        let offset = match navigation {
-            true => self.options.offset,
-            false => Pixels::ZERO,
-        };
+        let sidebar_right = self
+            .options
+            .sidebar_right
+            .filter(|_| SidebarRight::available(window));
         let content = self.options.content.clone();
         let window_fullscreen = window.is_fullscreen();
         let settings = self.settings.read(cx);
@@ -259,7 +346,9 @@ impl Render for TitleBar {
             matches!(window.window_decorations(), Decorations::Client { .. }) && !window_fullscreen;
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let controls = settings.window_controls() && !window_fullscreen;
-        let inset = traffic_lights_inset(settings, height);
+        // Fullscreen hides the traffic lights, so the toggle sits as far from the left edge as
+        // the right sidebar's toggle does from the right.
+        let inset = traffic_lights_inset(settings, height).filter(|_| !window_fullscreen);
         let decorated = cfg!(not(target_os = "macos")) && controls;
         let leading = decorated && settings.controls_on_left();
         #[cfg(not(target_os = "macos"))]
@@ -323,9 +412,13 @@ impl Render for TitleBar {
                         (false, Some(inset)) => this.pl(inset),
                         (false, None) => this.pl_3(),
                     })
-                    .pr_3()
+                    // The sidebar toggle sits as close to the history buttons as they sit to
+                    // each other.
+                    .map(|this| match navigation {
+                        true => this.pr_1(),
+                        false => this.pr_3(),
+                    })
                     .gap_1()
-                    .when(offset > Pixels::ZERO, |this| this.w(offset))
                     .when(leading, |this| {
                         this.child(window_controls(true, traffic_light))
                     })
@@ -339,17 +432,39 @@ impl Render for TitleBar {
                     .gap_1()
                     .items_center()
                     .when(navigation, |this| this.child(self.history(window, cx)))
-                    .children(content)
-                    .pr_3(),
+                    .child(div().flex_1())
+                    .when(navigation, |this| {
+                        this.child(
+                            div()
+                                .flex_none()
+                                .occlude()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .child(self.downloads.clone()),
+                        )
+                    })
+                    .map(|this| match (navigation, content) {
+                        (true, Some(content)) => this.child(content).child(Self::segment_rule(cx)),
+                        (_, content) => this.children(content),
+                    })
+                    .map(|this| match navigation || sidebar_right.is_some() {
+                        true => this.pr_1(),
+                        false => this.pr_3(),
+                    }),
             )
-            .when_some(
-                self.options
-                    .sidebar_right
-                    .filter(|_| SidebarRight::available(window)),
-                |this, open| {
-                    this.child(div().flex_none().pr_3().child(self.lyrics_toggle(open, cx)))
-                },
-            )
+            .when(navigation || sidebar_right.is_some(), |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .gap_1()
+                        .pr_3()
+                        .when(navigation, |this| this.child(self.account(cx)))
+                        .when_some(sidebar_right, |this, open| {
+                            this.child(self.lyrics_toggle(open, cx))
+                        }),
+                )
+            })
             .when(decorated && !leading, |this| {
                 this.child(
                     div()

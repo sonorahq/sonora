@@ -1,5 +1,6 @@
 use std::ops::Range;
 use std::panic::Location;
+use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
@@ -8,6 +9,7 @@ use gpui::{
 };
 
 use crate::artwork::{PREFETCH_REACH, prefetch};
+use crate::hold::{Run, mark_run, register_run};
 use crate::table::Viewport;
 
 type Draw = Box<dyn Fn(usize, &mut Window, &mut App) -> AnyElement>;
@@ -26,6 +28,8 @@ pub struct Deck {
     rows: Vec<Pixels>,
     gap: Pixels,
     across: bool,
+    held: bool,
+    keys: Option<Rc<[usize]>>,
     draw: Option<Draw>,
     measure: Option<Measure>,
 }
@@ -39,6 +43,8 @@ impl Deck {
             rows: Vec::new(),
             gap: Pixels::ZERO,
             across: false,
+            held: false,
+            keys: None,
             draw: None,
             measure: None,
         }
@@ -46,6 +52,21 @@ impl Deck {
 
     pub fn across(mut self) -> Self {
         self.across = true;
+        self
+    }
+
+    /// Makes the rows anchors of the `Hold` the deck scrolls under, so the row at the region's
+    /// edge stays there when the region changes width.
+    pub fn hold(mut self) -> Self {
+        self.held = true;
+        self
+    }
+
+    /// Like `hold`, for a grid whose rows regroup their items as it reflows. `keys` names the
+    /// first item of each row, so the row that comes to hold the item at the edge is the anchor.
+    pub fn hold_items(mut self, keys: impl IntoIterator<Item = usize>) -> Self {
+        self.held = true;
+        self.keys = Some(keys.into_iter().collect());
         self
     }
 
@@ -106,7 +127,7 @@ impl IntoElement for Deck {
 }
 
 impl Element for Deck {
-    type RequestLayoutState = ();
+    type RequestLayoutState = Option<Run>;
     type PrepaintState = Vec<AnyElement>;
 
     fn id(&self) -> Option<ElementId> {
@@ -139,7 +160,16 @@ impl Element for Deck {
         style.flex_shrink = 0.;
         style.refine(&self.style);
 
-        (window.request_layout(style, [], cx), ())
+        let layout = window.request_layout(style, [], cx);
+        let run = self.held.then(|| Run {
+            rows: self.rows.clone(),
+            gap: self.gap,
+            keys: self.keys.clone(),
+        });
+        if let Some(run) = &run {
+            register_run(&self.id, layout, run.clone(), self.across, cx);
+        }
+        (layout, run)
     }
 
     fn prepaint(
@@ -147,7 +177,7 @@ impl Element for Deck {
         id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
+        run: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
@@ -156,6 +186,9 @@ impl Element for Deck {
             true => bounds.origin.x,
             false => bounds.origin.y,
         };
+        if let Some(run) = run {
+            mark_run(&self.id, run, lead, across, cx);
+        }
         if let Some(measure) = &self.measure {
             measure(lead, window, cx);
         }

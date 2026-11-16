@@ -9,6 +9,8 @@ use ui::{ActiveTheme as _, Menu, MenuItem, Picker, Popovers, SubmenuState};
 use crate::chrome::jam;
 use crate::chrome::members::gathered;
 
+/// The key of the button's popover among the popovers it belongs to.
+const KEY: &str = "sessions";
 /// How many faces the Members item shows, and how much of a small control each one fills.
 const MEMBER_FACES: usize = 3;
 const MEMBER_FACE: f32 = 0.7;
@@ -107,10 +109,7 @@ impl SessionsButton {
                         },
                     )
                     .icon("icons/log-out.svg")
-                    .on_click({
-                        let devices = devices.clone();
-                        move |_, _, cx| devices.update(cx, |devices, cx| devices.leave(cx))
-                    }),
+                    .on_click(move |_, _, cx| devices.update(cx, |devices, cx| devices.leave(cx))),
                 );
             }
             None => {
@@ -125,11 +124,8 @@ impl SessionsButton {
                 entries.push(
                     MenuItem::new("jam-join", t!("devices-jam-join"))
                         .icon("icons/link.svg")
-                        .on_click({
-                            let devices = devices.clone();
-                            move |_, _, cx| {
-                                devices.update(cx, |devices, cx| devices.show_join(true, cx))
-                            }
+                        .on_click(move |_, _, cx| {
+                            devices.update(cx, |devices, cx| devices.show_join(true, cx))
                         }),
                 );
             }
@@ -158,7 +154,7 @@ impl SessionsButton {
             theme.metrics.control_small * MEMBER_FACE,
             0.,
             window,
-            theme,
+            &theme,
         );
         Some(
             MenuItem::new("members", t!("members-title"))
@@ -220,6 +216,12 @@ impl Render for SessionsButton {
             return div().into_any_element();
         }
 
+        // An item of the submenu closes the whole menu with the pointer still over it, which
+        // the submenu never hears of, so it would come back open the next time.
+        if !self.popovers.shows(KEY) {
+            self.jams.reset();
+        }
+
         let theme = *cx.theme();
         let elsewhere = state.elsewhere().cloned().filter(|_| connect);
         let together = listening.room().is_some();
@@ -230,7 +232,7 @@ impl Render for SessionsButton {
         if !items.is_empty() {
             items.push(MenuItem::separator("session-separator"));
         }
-        if connect {
+        if connect && state.jams() {
             items.push(self.jam_item(cx));
         }
         items.extend(self.members_item(window, cx));
@@ -245,7 +247,7 @@ impl Render for SessionsButton {
             .map_or("icons/monitor-speaker.svg", |elsewhere| {
                 icon(elsewhere.device.kind)
             });
-        Picker::icon("sessions", &self.popovers, glyph)
+        Picker::icon(KEY, &self.popovers, glyph)
             .tooltip_above("player-sessions")
             .tint(match busy {
                 true => theme.foreground,

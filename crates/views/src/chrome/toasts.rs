@@ -463,10 +463,9 @@ impl ToastStack {
                             .ok();
                     }
                 });
-                let released = stack.clone();
                 window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
                     if phase == DispatchPhase::Capture && event.button == MouseButton::Left {
-                        released.update(cx, |this, cx| this.release(cx)).ok();
+                        stack.update(cx, |this, cx| this.release(cx)).ok();
                     }
                 });
             },
@@ -637,5 +636,6 @@ fn destination(target: Target) -> Destination {
         Target::Artist(id) => Destination::Artist(id),
         Target::Playlist(id) => Destination::Playlist(id),
         Target::PlaybackSettings => Destination::Settings(SettingsPage::Playback),
+        Target::ProviderSettings => Destination::Settings(SettingsPage::Providers),
     }
 }
