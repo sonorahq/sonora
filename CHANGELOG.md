@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.50.1] - 2026-11-17
+
 ### Added
 
 - Create Navidrome smart playlists and edit their rules from the playlists menu.
@@ -28,6 +30,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Sorting your Apple Music songs by Date added puts your latest additions first instead of ordering them by title.
 - Create a local playlist again while signed in to a streaming service, by picking Local files in the Create playlist dialog.
 - Creating a playlist on Apple Music no longer fails with an error when Apple leaves the new playlist out of its answer.
+- The Korean translation is complete, so no screen falls back to English any more.
 
 ## [0.50.0] - 2026-11-16
 
@@ -2771,7 +2774,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.50.0...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.50.1...HEAD
+[0.50.1]: https://github.com/sonorahq/sonora/compare/v0.50.0...v0.50.1
 [0.50.0]: https://github.com/sonorahq/sonora/compare/v0.49.1...v0.50.0
 [0.49.1]: https://github.com/sonorahq/sonora/compare/v0.49.0...v0.49.1
 [0.49.0]: https://github.com/sonorahq/sonora/compare/v0.48.1...v0.49.0
