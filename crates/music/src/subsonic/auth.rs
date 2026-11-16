@@ -4,7 +4,7 @@ use anyhow::{Context as _, Result};
 use opensubsonic::Auth;
 use serde::{Deserialize, Serialize};
 
-use crate::credentials;
+use crate::{Library, credentials};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Credentials {
@@ -19,17 +19,6 @@ pub struct Credentials {
     /// in before a library could be chosen have no field here and keep reading everything.
     #[serde(default)]
     pub library: Option<Library>,
-}
-
-/// One library the server offers, kept beside the account so a launch can name the scope
-/// before the server is asked, and so a library the server no longer lists is still reported
-/// by name rather than silently widened back to everything.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Library {
-    pub id: i64,
-    /// The server's name for it, when it has one.
-    #[serde(default)]
-    pub name: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -10,7 +10,7 @@ use gpui::{
 use i18n::t;
 use music::{AccountChoices, SignIn, SignInPrompt};
 use router::{Destination, SettingsPage, navigate};
-use state::{Failure, Io, Outcome, Scan, SessionState, Sonora, Toast, Toasts};
+use state::{Failure, Outcome, Scan, SessionState, Sonora, Toast, Toasts};
 use ui::{
     ActiveTheme as _, Avatar, Button, HoverFade, Initials, LEADING, Modal, Radio, Skeleton, Text,
     Theme, mix,
@@ -69,13 +69,9 @@ fn offered(method: &SignIn, stored: bool) -> bool {
 
 impl SettingsView {
     pub(super) fn accounts_groups(&self, cx: &App) -> Vec<Group> {
-        // The library picker only exists once a Subsonic account is stored: without one there
-        // is no server to list libraries from.
-        let scoped = self
-            .session
-            .read(cx)
-            .providers()
-            .any(|info| info.slug == "subsonic" && info.stored && !info.guest);
+        // The library picker only exists once an account that can be limited to a library is
+        // stored: without one there is no server to list libraries from.
+        let scoped = self.session.read(cx).offers_libraries();
         vec![
             Group::new("settings-group-services", "icons/music.svg")
                 .cards(Slot::Accounts)
@@ -188,50 +184,35 @@ impl SettingsView {
         .into_any_element()
     }
 
-    /// Opens the library picker and starts reading the server's libraries. The cursor starts
-    /// on the choice already in effect: All libraries when the account is unscoped.
+    /// Opens the library picker and has the session read the server's libraries. The cursor
+    /// starts on the choice already in effect: All libraries when the account is unscoped.
     fn open_library_picker(&mut self, cx: &mut Context<Self>) {
         self.library_picker = true;
-        self.libraries = None;
-        self.libraries_error = None;
-        self.library_cursor = 0;
-        self.selected_library = music::subsonic::selected_library();
-        let io = Io::global(cx);
-        self.library_task = Some(io.load(
-            async { music::subsonic::libraries().await },
-            |this, result, cx| {
-                match result {
-                    Ok(libraries) => {
-                        let rows = library_rows(&libraries, this.selected_library.as_ref());
-                        this.library_cursor = rows.iter().position(|row| row.selected).unwrap_or(0);
-                        this.libraries = Some(libraries);
-                    }
-                    Err(error) => this.libraries_error = Some(format!("{error:#}")),
-                }
-                cx.notify();
-            },
-            cx,
-        ));
+        self.library_cursor = None;
+        self.selected_library = self.session.read(cx).library();
+        self.session
+            .update(cx, |session, cx| session.load_libraries(cx));
         cx.notify()
     }
 
     pub(super) fn close_library_picker(&mut self, cx: &mut Context<Self>) {
         self.library_picker = false;
-        self.libraries = None;
-        self.libraries_error = None;
-        self.library_task = None;
+        self.session
+            .update(cx, |session, cx| session.forget_libraries(cx));
         cx.notify();
     }
 
-    /// Keeps one library choice, or the whole server with `None`, and rebuilds the session
-    /// around it when the Subsonic account is the one in use. A stored account that is not in
-    /// use picks the scope up when it next signs in.
-    fn choose_library(&mut self, choice: Option<music::subsonic::Library>, cx: &mut Context<Self>) {
+    /// Keeps one library choice, or the whole server with `None`. The session rebuilds itself
+    /// around it when that account is the one in use, and a failure to keep it posts a toast.
+    fn choose_library(&mut self, choice: Option<music::Library>, cx: &mut Context<Self>) {
         if self.selected_library == choice {
             self.close_library_picker(cx);
             return;
         }
-        if let Err(error) = music::subsonic::select_library(choice.clone()) {
+        let kept = self
+            .session
+            .update(cx, |session, cx| session.choose_library(choice.clone(), cx));
+        if let Err(error) = kept {
             log::warn!("settings: cannot keep the library choice: {error:#}");
             Toasts::post(
                 Toast::new(Outcome::Failed, "toast-subsonic-library-failed"),
@@ -241,9 +222,19 @@ impl SettingsView {
         }
         self.selected_library = choice;
         self.close_library_picker(cx);
-        if self.session.read(cx).provider_slug() == Some("subsonic") {
-            self.session.update(cx, |session, cx| session.reload(cx));
-        }
+    }
+
+    /// The picker's rows for the libraries the session holds, with the row the keyboard cursor
+    /// is on. `None` while the libraries are still being read or could not be.
+    fn library_choices(&self, cx: &App) -> Option<(Vec<LibraryRow>, usize)> {
+        let Some(Ok(libraries)) = self.session.read(cx).libraries() else {
+            return None;
+        };
+        let rows = library_rows(libraries, self.selected_library.as_ref());
+        let cursor = self
+            .library_cursor
+            .unwrap_or_else(|| rows.iter().position(|row| row.selected).unwrap_or(0));
+        Some((rows, cursor))
     }
 
     /// One library choice in the picker. The row reports the choice itself, so the radio mark
@@ -258,9 +249,13 @@ impl SettingsView {
         cx: &App,
     ) -> AnyElement {
         let theme = *cx.theme();
+        let id = match &row.choice {
+            Some(library) => format!("library-{}", library.id),
+            None => "library-all".to_owned(),
+        };
         let (name, detail, selected) = (row.name, row.detail, row.selected);
         div()
-            .id(("library", position))
+            .id(id)
             .role(Role::RadioButton)
             .aria_label(name.clone())
             .aria_toggled(Toggled::from(selected))
@@ -310,16 +305,15 @@ impl SettingsView {
             cx.propagate();
             return;
         }
-        let Some(libraries) = &self.libraries else {
+        let Some((rows, cursor)) = self.library_choices(cx) else {
             return;
         };
-        let count = library_rows(libraries, self.selected_library.as_ref()).len();
-        if count == 0 {
+        if rows.is_empty() {
             return;
         }
-        let place = self.library_cursor as isize + step;
-        self.library_cursor = place.rem_euclid(count as isize) as usize;
-        self.library_scroll.scroll_to_item(self.library_cursor);
+        let place = (cursor as isize + step).rem_euclid(rows.len() as isize) as usize;
+        self.library_cursor = Some(place);
+        self.library_scroll.scroll_to_item(place);
         cx.notify();
     }
 
@@ -330,22 +324,25 @@ impl SettingsView {
             cx.propagate();
             return;
         }
-        let Some(libraries) = &self.libraries else {
+        let Some((rows, cursor)) = self.library_choices(cx) else {
             return;
         };
-        let rows = library_rows(libraries, self.selected_library.as_ref());
-        let Some(row) = rows.get(self.library_cursor) else {
+        let Some(row) = rows.get(cursor) else {
             return;
         };
         self.choose_library(row.choice.clone(), cx);
     }
 
-    /// The Subsonic library picker: every library the server lists, plus the account's stored
-    /// choice when the server no longer lists it, so a vanished library is reported by name and
+    /// The library picker: every library the server lists, plus the account's stored choice
+    /// when the server no longer lists it, so a vanished library is reported by name and
     /// changed deliberately rather than silently widened back to everything.
     pub(super) fn library_modal(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
-        let body = match (&self.libraries, &self.libraries_error) {
+        let failure = match self.session.read(cx).libraries() {
+            Some(Err(reason)) => Some(reason.clone()),
+            _ => None,
+        };
+        let body = match (self.library_choices(cx), failure) {
             (None, None) => div()
                 .flex()
                 .flex_col()
@@ -372,7 +369,7 @@ impl SettingsView {
                 .w_full()
                 .min_h(theme.metrics.control * 2.)
                 .child(
-                    ui::spoken("library-error", reason.clone())
+                    ui::spoken("library-error", reason)
                         .w_full()
                         .text_color(theme.muted_foreground)
                         .text_size(theme.text(Text::Small)),
@@ -385,12 +382,11 @@ impl SettingsView {
                         .on_click(cx.listener(|this, _, _, cx| this.open_library_picker(cx))),
                 )
                 .into_any_element(),
-            (Some(libraries), _) => {
-                let options = library_rows(libraries, self.selected_library.as_ref());
+            (Some((options, under)), _) => {
                 let count = options.len();
                 let rows = options.into_iter().enumerate().map(|(position, row)| {
                     let choice = row.choice.clone();
-                    let cursor = self.library_cursor == position;
+                    let cursor = under == position;
                     self.library_option(
                         row,
                         position,
@@ -1157,7 +1153,7 @@ impl SettingsView {
 /// One row of the library picker as plain data, so the modal's rows and the keyboard cursor
 /// can never disagree about what is offered or where.
 struct LibraryRow {
-    choice: Option<music::subsonic::Library>,
+    choice: Option<music::Library>,
     name: SharedString,
     detail: Option<SharedString>,
     selected: bool,
@@ -1167,17 +1163,14 @@ struct LibraryRow {
 /// selected, so it is changed deliberately rather than silently widened — then every library
 /// the server lists.
 fn library_rows(
-    libraries: &[music::subsonic::Library],
-    selected: Option<&music::subsonic::Library>,
+    libraries: &[music::Library],
+    selected: Option<&music::Library>,
 ) -> Vec<LibraryRow> {
-    let named = |library: &music::subsonic::Library| match library
-        .name
-        .clone()
-        .filter(|name| !name.is_empty())
-    {
-        Some(name) => SharedString::from(name),
-        None => t!("settings-subsonic-library-unnamed", id = library.id),
-    };
+    let named =
+        |library: &music::Library| match library.name.clone().filter(|name| !name.is_empty()) {
+            Some(name) => SharedString::from(name),
+            None => t!("settings-subsonic-library-unnamed", id = library.id),
+        };
     let mut rows = vec![LibraryRow {
         choice: None,
         name: t!("settings-subsonic-library-all"),

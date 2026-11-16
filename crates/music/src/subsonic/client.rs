@@ -14,10 +14,11 @@ use opensubsonic::{
 use tokio::sync::{Mutex, OnceCell};
 use tokio::task::JoinSet;
 
+use crate::Library;
 use crate::cover::{self, CoverLimits};
 use crate::engine::Loudness;
 use crate::escape;
-use crate::subsonic::auth::{Library, Signature};
+use crate::subsonic::auth::Signature;
 use crate::subsonic::wire;
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, Codec, CoverSize, Genre,
@@ -1153,8 +1154,24 @@ impl MusicApi for SubsonicClient {
             .get_similar_songs2(track_id, Some(RADIO_COUNT))
             .await
             .map_err(bare);
-        if let Ok(songs) = similar {
-            let songs: Vec<Track> = songs.into_iter().map(|song| self.song(song)).collect();
+        // getSimilarSongs2 takes no library, so its answer keeps only the chosen library's songs,
+        // and a membership that cannot be read leaves the answer to the scoped fallback.
+        if let Ok(songs) = similar
+            && !songs.is_empty()
+            && let Ok(held) = self.library_albums().await
+        {
+            let songs: Vec<Track> = songs
+                .into_iter()
+                .map(|song| self.song(song))
+                .filter(|track| {
+                    held.as_ref().is_none_or(|held| {
+                        track
+                            .album_id
+                            .as_deref()
+                            .is_some_and(|album| held.contains(album))
+                    })
+                })
+                .collect();
             if !songs.is_empty() {
                 return Ok((songs, None));
             }

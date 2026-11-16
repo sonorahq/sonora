@@ -10,14 +10,13 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 
-pub use auth::Library;
 pub use client::SubsonicClient;
 pub use lyrics::SubsonicLyrics;
 
 use crate::subsonic::playback::Factory;
 use crate::{
-    Capabilities, Catalog, MusicApi as _, MusicProvider, PlaybackFactory, ProviderSession, Shape,
-    SignIn,
+    Capabilities, Catalog, Library, MusicApi as _, MusicProvider, PlaybackFactory, ProviderSession,
+    Shape, SignIn,
 };
 
 /// The name the provider and its lyrics source go by. It is saved in settings and in the lyrics
@@ -116,12 +115,12 @@ impl SubsonicProvider {
 
 /// The library the stored account reads, when it is scoped to one. The picker names the
 /// choice from this before the server is asked anything.
-pub fn selected_library() -> Option<Library> {
+fn selected_library() -> Option<Library> {
     auth::load().and_then(|remembered| remembered.library)
 }
 
 /// Every library the stored server offers the account, for the settings picker.
-pub async fn libraries() -> Result<Vec<Library>> {
+async fn libraries() -> Result<Vec<Library>> {
     let remembered = auth::load().context("no subsonic account is stored")?;
     let signature = remembered
         .signature
@@ -140,7 +139,7 @@ pub async fn libraries() -> Result<Vec<Library>> {
 /// Points the stored account at one library, or back at the whole server with `None`. This
 /// only persists the choice: the live session rebuilds itself to apply it, so no request in
 /// flight changes scope under the user.
-pub fn select_library(library: Option<Library>) -> Result<()> {
+fn select_library(library: Option<Library>) -> Result<()> {
     let mut remembered = auth::load().context("no subsonic account is stored")?;
     remembered.library = library;
     auth::store(&remembered)
@@ -160,6 +159,22 @@ impl MusicProvider for SubsonicProvider {
 
     fn slug(&self) -> &'static str {
         "subsonic"
+    }
+
+    fn has_libraries(&self) -> bool {
+        true
+    }
+
+    fn library(&self) -> Option<Library> {
+        selected_library()
+    }
+
+    async fn libraries(&self) -> Result<Vec<Library>> {
+        libraries().await
+    }
+
+    fn choose_library(&self, library: Option<Library>) -> Result<()> {
+        select_library(library)
     }
 
     fn sign_in_options(&self) -> Vec<SignIn> {

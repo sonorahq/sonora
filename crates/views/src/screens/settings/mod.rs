@@ -300,20 +300,15 @@ pub struct SettingsView {
     /// session tears the old provider down and brings the new one up, which reports nothing
     /// active in between.
     chosen: Option<&'static str>,
-    /// Whether the Subsonic library picker is up.
+    /// Whether the library picker is up.
     library_picker: bool,
-    /// The libraries the picker lists, once the server has answered.
-    libraries: Option<Vec<music::subsonic::Library>>,
-    /// Why the libraries could not be read, when they could not.
-    libraries_error: Option<String>,
-    /// The read of the server's libraries, dropped when the picker closes.
-    library_task: Option<Task<()>>,
-    /// The row the picker's keyboard cursor is on.
-    library_cursor: usize,
+    /// The row the picker's keyboard cursor is on. `None` puts it on the choice in effect, which
+    /// is where it starts once the libraries arrive.
+    library_cursor: Option<usize>,
     /// The option list's scroll position, moved to follow the cursor.
     library_scroll: ScrollHandle,
-    /// The currently selected Subsonic library, cached to avoid repeated credential reads on the UI thread.
-    selected_library: Option<music::subsonic::Library>,
+    /// The library the stored account reads, held so a render never reads the stored account.
+    selected_library: Option<music::Library>,
     languages: SearchPopup,
     typefaces: SearchPopup,
     typeface_faced: RefCell<HashSet<SharedString>>,
@@ -451,6 +446,7 @@ impl SettingsView {
         let output_picker = cx.new(|cx| OutputPicker::new(outputs.clone(), popovers.clone(), cx));
         let previews = preview::Previews::new(cx);
 
+        let selected_library = session.read(cx).library();
         Self {
             session,
             _storage: storage,
@@ -487,12 +483,9 @@ impl SettingsView {
             sign_in_running: false,
             chosen: None,
             library_picker: false,
-            libraries: None,
-            libraries_error: None,
-            library_task: None,
-            library_cursor: 0,
+            library_cursor: None,
             library_scroll: ScrollHandle::new(),
-            selected_library: music::subsonic::selected_library(),
+            selected_library,
             scrobbling,
             scrobble_first: cx.new(|cx| Input::new("settings-scrobble-key", cx)),
             scrobble_second: cx.new(|cx| Input::new("settings-scrobble-secret", cx)),
@@ -543,7 +536,7 @@ impl SettingsView {
             self.outputs.update(cx, |outputs, cx| outputs.refresh(cx));
         }
         if page.tab() == SettingsPage::Providers.tab() {
-            self.selected_library = music::subsonic::selected_library();
+            self.selected_library = self.session.read(cx).library();
         }
         self.clear_search(cx);
         cx.notify();
