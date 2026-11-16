@@ -10,11 +10,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Create Navidrome smart playlists and edit their rules from the playlists menu.
+- The quick search marks its first result as the one Enter acts on. Press Up off it, or Enter before results arrive, to open the search page for what you typed.
 
 ### Fixed
 
 - The account menu no longer lists YouTube Music when you are signed in elsewhere and only used guest mode before. Guest mode shows there under its own name while you use it.
 - Clicking outside a text field takes the cursor out of it, so typing stops there.
+- The Cut, Copy, Paste and Select all menu of the quick search field is drawn at the usual size.
 
 ## [0.50.0] - 2026-11-16
 
