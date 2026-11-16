@@ -63,6 +63,8 @@ pub struct Stub {
     /// Provenance survives saving and replaying history.
     #[serde(skip_serializing_if = "QueueKind::is_context")]
     pub(crate) kind: QueueKind,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) recommended: bool,
 }
 
 /// One occurrence with identity, collection and provenance independent of position.
@@ -203,6 +205,7 @@ fn stub(track: &Track) -> Option<Stub> {
         explicit: track.explicit,
         from: None,
         kind: QueueKind::Context,
+        recommended: false,
     })
 }
 
@@ -234,6 +237,7 @@ fn record<'a>(
     let mut save = |entry: &Entry| {
         let mut stub = stub(&entry.track)?;
         stub.kind = entry.kind;
+        stub.recommended = entry.recommended;
         stub.from = entry.origin.as_ref().map(|origin| {
             match origins.iter().position(|known| known == origin) {
                 Some(index) => index,
@@ -399,7 +403,7 @@ fn tagged(
 fn source_of(entries: impl IntoIterator<Item = Entry>) -> Vec<Entry> {
     entries
         .into_iter()
-        .filter(|entry| entry.kind == QueueKind::Context)
+        .filter(|entry| entry.kind == QueueKind::Context && !entry.recommended)
         .collect()
 }
 
@@ -559,8 +563,12 @@ impl Queue {
         let origins = resume.origins;
         let entry = |stub: Stub| {
             let kind = stub.kind;
+            let recommended = stub.recommended;
             let origin = stub.from.and_then(|index| origins.get(index).cloned());
-            Entry::new(hydrate(stub), origin, kind)
+            Entry {
+                recommended,
+                ..Entry::new(hydrate(stub), origin, kind)
+            }
         };
         self.past = resume.past.into_iter().map(entry).collect();
         self.current = resume.current.map(entry);

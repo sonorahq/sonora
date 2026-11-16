@@ -66,7 +66,7 @@ const CLAIM_GRACE: Duration = Duration::from_secs(3);
 const WELCOME: Duration = Duration::from_secs(5);
 /// How long a skip made for the Jam while paused may show as playing before its pause lands.
 const ADVANCING: Duration = Duration::from_secs(3);
-/// The most pages of a collection that are read for the uids of its tracks.
+/// The most pages a collection only links to that are read for its songs.
 const UID_PAGES: usize = 40;
 /// How many characters of the digest make the uid Spotify's apps give a track they find listed
 /// without one.
@@ -1593,7 +1593,13 @@ impl Worker {
             Wire::SkipNext(_) => vec![Command::Next],
             Wire::SkipPrev(_) => vec![Command::Previous],
             Wire::SeekTo(seek) => vec![Command::Seek(Duration::from_millis(seek.value.into()))],
-            Wire::SetShufflingContext(set) => vec![Command::Shuffle(set.value)],
+            Wire::SetShufflingContext(set) => {
+                // smart shuffle is a kind of shuffle, so shuffle off switches it off too
+                if !set.value {
+                    self.switch_smart(false);
+                }
+                vec![Command::Shuffle(set.value)]
+            }
             Wire::SetRepeatingContext(set) => {
                 vec![Command::Repeat(self.repeat(Some(set.value), None))]
             }
@@ -2214,53 +2220,90 @@ fn derived_uid(uri: &str) -> String {
     uid
 }
 
-/// The uri and uid of every track `uri` lists that has a uid, in the order it lists them. A long
-/// collection comes in pages, each naming the next, and they are read one after another up to
-/// `UID_PAGES` of them.
+/// The uri and uid of every track `uri` lists that has a uid, in the order it lists them.
 async fn listed_uids(session: &Session, uri: &str) -> Result<Listed, Error> {
-    let context = session.spclient().get_context(uri).await?;
-    let mut tracks = Vec::new();
-    let mut next = None;
-    for page in &context.pages {
-        tracks.extend(
-            page.tracks
-                .iter()
-                .filter_map(|track| Some((track.uri.clone()?, track.uid.clone()?))),
-        );
-        // a page with no tracks of its own only says where they are
-        next = match page.tracks.is_empty() {
-            true => page.page_url.clone().or_else(|| page.next_page_url.clone()),
-            false => page.next_page_url.clone(),
-        };
-    }
-    let mut pages = context.pages.len();
-    while let Some(url) = next
-        .take()
-        .filter(|url| !url.is_empty() && pages < UID_PAGES)
-    {
-        pages += 1;
-        let page = session.spclient().get_next_page(&url).await?;
-        let Ok(page) = serde_json::from_slice::<serde_json::Value>(&page) else {
-            break;
-        };
-        let text = |value: &serde_json::Value, key: &str| {
-            Some(value.get(key)?.as_str()?.to_owned()).filter(|text| !text.is_empty())
-        };
-        let listed = page.get("tracks").and_then(|tracks| tracks.as_array());
-        tracks.extend(
-            listed
-                .into_iter()
-                .flatten()
-                .filter_map(|track| Some((text(track, "uri")?, text(track, "uid")?))),
-        );
-        next = text(&page, "next_page_url").or_else(|| text(&page, "nextPageUrl"));
-    }
+    let mut context = session.spclient().get_context(uri).await?;
+    read_pages(session, &mut context).await?;
+    let mut tracks: Listed = context
+        .pages
+        .iter()
+        .flat_map(|page| &page.tracks)
+        .filter_map(|track| Some((track.uri.clone()?, track.uid.clone()?)))
+        .collect();
     tracks.retain(|(_, uid)| !uid.is_empty());
     log::debug!(
-        "connect: {uri} lists {} uids over {pages} pages",
-        tracks.len()
+        "connect: {uri} lists {} uids over {} pages",
+        tracks.len(),
+        context.pages.len()
     );
     Ok(tracks)
+}
+
+/// Reads the songs of a collection that its pages only link to, up to `UID_PAGES` reads. A page
+/// with no songs of its own says where they are, and a long collection names its next page.
+async fn read_pages(session: &Session, context: &mut Context) -> Result<(), Error> {
+    let mut reads = 0;
+    for page in &mut context.pages {
+        let Some(url) = page
+            .page_url
+            .clone()
+            .filter(|url| !url.is_empty() && page.tracks.is_empty())
+        else {
+            continue;
+        };
+        if reads == UID_PAGES {
+            return Ok(());
+        }
+        reads += 1;
+        let (tracks, next) = linked_page(&session.spclient().get_next_page(&url).await?);
+        page.tracks = tracks;
+        page.next_page_url = page.next_page_url.take().or(next);
+    }
+    let mut next = context
+        .pages
+        .last()
+        .and_then(|page| page.next_page_url.clone());
+    while let Some(url) = next
+        .take()
+        .filter(|url| !url.is_empty() && reads < UID_PAGES)
+    {
+        reads += 1;
+        let (tracks, more) = linked_page(&session.spclient().get_next_page(&url).await?);
+        context.pages.push(ContextPage {
+            tracks,
+            ..Default::default()
+        });
+        next = more;
+    }
+    Ok(())
+}
+
+/// The songs of a page read from its link, and the link to the page after it.
+fn linked_page(body: &[u8]) -> (Vec<ContextTrack>, Option<String>) {
+    let page: serde_json::Value = serde_json::from_slice(body).unwrap_or_default();
+    let text = |value: &serde_json::Value, key: &str| {
+        Some(value.get(key)?.as_str()?.to_owned()).filter(|text| !text.is_empty())
+    };
+    let tracks = page
+        .get("tracks")
+        .and_then(|tracks| tracks.as_array())
+        .into_iter()
+        .flatten()
+        .map(|track| ContextTrack {
+            uri: text(track, "uri"),
+            uid: text(track, "uid"),
+            metadata: track
+                .get("metadata")
+                .and_then(|metadata| metadata.as_object())
+                .into_iter()
+                .flatten()
+                .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+                .collect(),
+            ..Default::default()
+        })
+        .collect();
+    let next = text(&page, "next_page_url").or_else(|| text(&page, "nextPageUrl"));
+    (tracks, next)
 }
 
 /// When the song `told` to the Jam plays out, when its length is known.
@@ -2774,11 +2817,16 @@ fn transferred_smart(state: &TransferState) -> Option<Enhanced> {
 /// Reads a playlist with smart shuffle's recommendations mixed in, and which songs those are.
 async fn enhanced(session: &Session, uri: &str) -> Result<(Context, HashSet<String>), Error> {
     let spclient = session.spclient();
-    let context = spclient.get_context(&format!("{uri}{LENS}")).await?;
+    let mut context = spclient.get_context(&format!("{uri}{LENS}")).await?;
+    read_pages(session, &mut context).await?;
     let mut recommended: HashSet<String> = recommended(&context).collect();
     // without a provider on the songs, the recommendations are what the plain playlist lacks
     let plain = match recommended.is_empty() {
-        true => Some(spclient.get_context(uri).await?),
+        true => {
+            let mut plain = spclient.get_context(uri).await?;
+            read_pages(session, &mut plain).await?;
+            Some(plain)
+        }
         false => None,
     };
     // a page that only links to its songs would make its songs look recommended
@@ -2863,5 +2911,27 @@ mod tests {
         let start = started_by_play(&play, Some(&recommended));
         let track = start.state.track.as_ref().map(|track| track.id.as_str());
         assert_eq!(track, Some("b"));
+    }
+
+    #[test]
+    fn a_linked_page_keeps_who_provided_each_song() {
+        let body = serde_json::json!({
+            "tracks": [
+                { "uri": "spotify:track:a", "uid": "u1" },
+                { "uri": "spotify:track:r", "metadata": { "provider": RECOMMENDED } },
+            ],
+            "next_page_url": "hm://next",
+        });
+        let (tracks, next) = linked_page(body.to_string().as_bytes());
+        let context = Context {
+            pages: vec![ContextPage {
+                tracks,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(ids(&context).collect::<Vec<_>>(), ["a", "r"]);
+        assert_eq!(recommended(&context).collect::<Vec<_>>(), ["r"]);
+        assert_eq!(next.as_deref(), Some("hm://next"));
     }
 }
