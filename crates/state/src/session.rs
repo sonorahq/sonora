@@ -285,8 +285,10 @@ impl Session {
             })
     }
 
+    /// The providers with an account stored. A stored guest session is not an account, so it is
+    /// left out even while it is the one in use.
     pub fn connected(&self) -> impl Iterator<Item = ProviderInfo> + '_ {
-        self.providers().filter(|info| info.stored)
+        self.providers().filter(|info| info.stored && !info.guest)
     }
 
     /// Whether the current provider's tracks need the Widevine module and it has an account.

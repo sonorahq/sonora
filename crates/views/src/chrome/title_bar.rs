@@ -227,10 +227,15 @@ impl TitleBar {
     }
 
     /// The account button and the menu it opens: the connected services to switch between, a
-    /// way to manage them, then History and Settings.
+    /// way to manage them, then History and Settings. A guest session shows as guest mode, and
+    /// only while it is the one in use.
     fn account(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let session = Sonora::global(cx).session.clone();
-        let services: Vec<MenuItem> = session
+        let guest = session
+            .read(cx)
+            .providers()
+            .any(|info| info.active && info.guest);
+        let mut services: Vec<MenuItem> = session
             .read(cx)
             .connected()
             .map(|info| {
@@ -245,6 +250,13 @@ impl TitleBar {
                     })
             })
             .collect();
+        if guest {
+            services.push(
+                MenuItem::new("account-guest", t!("login-guest-title"))
+                    .icon("icons/hat-glasses.svg")
+                    .selected(true),
+            );
+        }
 
         div()
             .flex()
