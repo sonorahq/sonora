@@ -1,98 +1,48 @@
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::shared::device_code::device_code;
 use crate::shared::popups::{AccountPicker, CookiePrompt, Credentials, CredentialsPrompt};
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, BoxShadow, ClipboardItem, Context, ElementId, Entity, FontWeight, Hsla,
-    IntoElement, MouseMoveEvent, Pixels, Point, Render, SharedString, Task, Window, div, hsla,
-    img, point, px, relative, svg,
+    AnyElement, App, BoxShadow, ClipboardItem, Context, Entity, FontWeight, Hsla, IntoElement,
+    Pixels, Point, Render, SharedString, Task, Window, div, hsla, img, point, px, relative,
 };
 use i18n::t;
-use music::{AccountChoices, SignIn, SignInProblem, SignInPrompt};
-use state::{Failure, ProviderInfo, Session, SessionState, Sonora, Usage};
+use music::{AccountChoices, SignIn, SignInPrompt};
+use state::{ProviderInfo, Session, SessionState, Sonora, Usage};
 use ui::ActiveTheme as _;
-use ui::{Button, Checkbox, HoverFade, Input, LEADING, Lattice, Separator, Text, mix};
+use ui::{Button, Checkbox, Input, LEADING, Lattice, Modal, Separator, Text, mix};
 
-use super::settings::{Offer, ProviderRow};
+use super::settings::{Offer, Press, ProviderRow};
 
-/// How wide the sign-in card and the split layout's form stand.
+/// How wide the sign-in card stands.
 const CARD: Pixels = px(400.);
-const FORM: Pixels = px(380.);
-const LOGO: Pixels = px(48.);
-/// The Sonora app icon over the welcome, the larger one the stage opens with, and the split panel's.
-const MARK: Pixels = px(64.);
-const STAGE_MARK: Pixels = px(88.);
-const SPLIT_ICON: Pixels = px(32.);
+/// The app icon over the welcome.
+const ICON: Pixels = px(64.);
 /// The app icon as this platform shows it, registered by the binary's asset source.
 const APP_ICON: &str = "brand/sonora.svg";
 /// How hard the frosted card blurs the lattice behind it.
 const FROST: Pixels = px(28.);
-/// A stage tile's size, its mark and how far its brand glow spreads under the pointer.
-const TILE_W: Pixels = px(150.);
-const TILE_H: Pixels = px(124.);
-const TILE_MARK: Pixels = px(30.);
-const SPLIT_MARK: Pixels = px(22.);
-const GLOW: Pixels = px(36.);
-const TILE_FADE: Duration = Duration::from_millis(180);
-/// How many 120 Hz ticks pass between the lattice's frames, which makes 60 Hz.
-const TICKS: u32 = 2;
-/// How far the spotlight's colour moves toward its target each frame.
-const LAMP_EASE: f32 = 0.14;
+/// How wide a sign-in choice or code dialog stands, as on the settings page.
+const DIALOG: Pixels = px(420.);
+/// How many buttons tall the sign-in choice stands, however few it lists.
+const CHOICES: f32 = 3.;
+/// How many 120 Hz ticks pass between frames while the pools only drift, which makes 30 Hz, and
+/// while a glow fades in or out, which makes 60 Hz.
+const DRIFT_TICKS: u32 = 4;
+const FADE_TICKS: u32 = 2;
+/// How far the glow's strength and colour move toward their targets each frame.
+const EASE: f32 = 0.12;
+/// How close the glow has to come to its target before it counts as settled.
+const SETTLED: f32 = 0.01;
 /// The pools that light the lattice: indigo, violet and a cool teal, so no provider's brand
-/// colour owns the backdrop. The spotlight takes the brand of whatever lies under the pointer.
+/// colour owns the backdrop. The glow behind a hovered provider takes that provider's brand.
 const POOLS: [(f32, f32, f32, f32); 3] = [
     (0.66, 0.75, 0.62, 0.95),
     (0.78, 0.70, 0.64, 0.85),
     (0.50, 0.65, 0.52, 0.7),
 ];
-/// The split layout's art panel stays dark in either theme.
-const PANEL: (f32, f32, f32) = (0.67, 0.12, 0.06);
-
-/// Which of the prototype layouts the sign-in screen draws, picked by `SONORA_LOGIN`.
-#[derive(Clone, Copy, PartialEq)]
-enum Variant {
-    /// A frosted card of provider rows over the lattice.
-    Card,
-    /// Art on the left, a form with a grid of provider tiles on the right.
-    Split,
-    /// Large frosted tiles straight on the lattice, glowing in their brand under the pointer.
-    Stage,
-}
-
-impl Variant {
-    fn from_env() -> Self {
-        match std::env::var("SONORA_LOGIN").as_deref() {
-            Ok("split") => Self::Split,
-            Ok("stage") => Self::Stage,
-            _ => Self::Card,
-        }
-    }
-}
-
-struct Column {
-    slug: &'static str,
-    name: &'static str,
-    options: Vec<SignIn>,
-    web_sign_in: bool,
-    disabled: bool,
-    cancel: bool,
-    failure: Option<Failure>,
-}
-
-enum LoginAction {
-    SignIn(SignIn),
-    Credentials,
-    Cookies(&'static str),
-}
-
-struct LoginOption {
-    id: SharedString,
-    label: SharedString,
-    action: LoginAction,
-    primary: bool,
-}
 
 pub struct LoginView {
     session: Entity<Session>,
@@ -101,12 +51,16 @@ pub struct LoginView {
     credentials: Credentials,
     credentials_for: Option<&'static str>,
     manual_secret: Option<(&'static str, &'static str)>,
-    variant: Variant,
-    /// The provider whose sign-in methods are open, in place of the list of providers.
-    chosen: Option<&'static str>,
-    /// The provider under the pointer, whose brand the spotlight warms to.
+    /// The provider whose sign-in methods are up in a dialog, with its name.
+    choosing: Option<(&'static str, &'static str)>,
+    /// Whether a method picked in that dialog is running, so the dialog closes once it settles.
+    choice_running: bool,
+    /// The provider under the pointer, whose brand the glow behind it takes.
     hovered: Option<&'static str>,
-    pointer: Option<Point<Pixels>>,
+    /// Where the glow sits: behind the middle of the card at the height the pointer entered
+    /// the hovered row. It stays put while the glow fades out.
+    glow_at: Option<Point<Pixels>>,
+    glow: f32,
     lamp: Hsla,
     started: Instant,
     pacing: Option<Task<()>>,
@@ -124,10 +78,11 @@ impl LoginView {
             credentials: Credentials::new(cx),
             credentials_for: None,
             manual_secret: None,
-            variant: Variant::from_env(),
-            chosen: None,
+            choosing: None,
+            choice_running: false,
             hovered: None,
-            pointer: None,
+            glow_at: None,
+            glow: 0.,
             lamp: cx.theme().foreground,
             started: Instant::now(),
             pacing: None,
@@ -138,11 +93,11 @@ impl LoginView {
         self.usage.update(cx, |usage, cx| usage.report(cx));
     }
 
-    fn consent(&self, width: Pixels, cx: &mut Context<Self>) -> impl IntoElement {
+    fn consent(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let checked = self.usage.read(cx).consented();
         Checkbox::new("usage-consent", checked)
             .label(t!("login-usage-consent"))
-            .max_w(width)
+            .max_w(CARD)
             .text_color(cx.theme().muted_foreground)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.usage
@@ -226,9 +181,9 @@ impl LoginView {
             .update(cx, |session, cx| session.submit_input(text, cx));
     }
 
-    /// Opens a provider. One way in goes straight through and shows the provider waiting on
-    /// it, a server asks for its address in a dialog, and a choice of ways puts the choice up
-    /// in place of the list.
+    /// Starts a sign-in the way the provider asks for it, as the settings page does. One method
+    /// goes straight through, a server asks for its address and credentials, and anything with
+    /// a choice to make puts the choice up in a dialog.
     fn pick(&mut self, slug: &'static str, cx: &mut Context<Self>) {
         let Some(info) = self
             .session
@@ -238,13 +193,7 @@ impl LoginView {
         else {
             return;
         };
-        self.acted(cx);
-        let methods: Vec<SignIn> = info
-            .options
-            .iter()
-            .filter(|option| !matches!(option, SignIn::Anonymous))
-            .cloned()
-            .collect();
+        let methods: Vec<SignIn> = info.options.into_iter().filter(offered).collect();
         let buttons: usize = methods
             .iter()
             .map(|method| method_count(method, info.web_sign_in))
@@ -252,42 +201,57 @@ impl LoginView {
         match methods.as_slice() {
             [SignIn::Credentials { .. }] => self.open_credentials(slug, cx),
             [SignIn::Secret] if buttons == 1 => self.start_manual(slug, info.name, cx),
-            [method] if buttons == 1 => {
-                self.chosen = Some(slug);
-                self.start(slug, method.clone(), cx);
-            }
+            [method] if buttons == 1 => self.start(slug, method.clone(), cx),
+            [] => {}
             _ => {
-                self.chosen = Some(slug);
+                self.acted(cx);
+                self.choosing = Some((slug, info.name));
                 cx.notify();
             }
         }
     }
 
-    fn back(&mut self, cx: &mut Context<Self>) {
-        if self.session.read(cx).is_pending() {
-            self.abandon(cx);
-        }
-        self.chosen = None;
+    fn close_choice(&mut self, cx: &mut Context<Self>) {
+        self.choosing = None;
+        self.choice_running = false;
         cx.notify();
     }
 
-    fn hover(&mut self, slug: &'static str, inside: bool, cx: &mut Context<Self>) {
+    /// Lights the glow behind the card at the height the pointer came into the row, in the
+    /// provider's brand, and lets it fade once the pointer leaves.
+    fn hover(&mut self, slug: &'static str, inside: bool, window: &Window, cx: &mut Context<Self>) {
         match inside {
-            true => self.hovered = Some(slug),
+            true => {
+                let entered = window.mouse_position();
+                self.hovered = Some(slug);
+                self.glow_at = Some(point(window.viewport_size().width / 2., entered.y));
+            }
             false if self.hovered == Some(slug) => self.hovered = None,
             false => {}
         }
         cx.notify();
     }
 
-    /// Asks for the lattice's next frame on the shared tick, and eases the spotlight's colour
-    /// one step toward the brand under the pointer.
-    fn pace(&mut self, target: Hsla, window: &mut Window, cx: &mut Context<Self>) {
-        self.lamp = mix(self.lamp, target, LAMP_EASE);
+    /// Eases the glow one step toward its targets and asks for the lattice's next frame on the
+    /// shared tick, faster while the glow is still moving.
+    fn pace(&mut self, lamp: Hsla, window: &mut Window, cx: &mut Context<Self>) {
+        let target = match self.hovered {
+            Some(_) => 1.,
+            None => 0.,
+        };
+        self.glow += (target - self.glow) * EASE;
+        if self.hovered.is_some() {
+            self.lamp = mix(self.lamp, lamp, EASE);
+        }
+        let fading = (target - self.glow).abs() > SETTLED;
         if self.pacing.is_some() {
             return;
         }
-        let timer = crate::shared::animation::next(TICKS, cx);
+        let ticks = match fading {
+            true => FADE_TICKS,
+            false => DRIFT_TICKS,
+        };
+        let timer = crate::shared::animation::next(ticks, cx);
         let handle = window.window_handle();
         self.pacing = Some(cx.spawn(async move |this, cx| {
             timer.await;
@@ -306,221 +270,93 @@ impl LoginView {
         }));
     }
 
-    fn option_buttons(
-        &self,
-        slug: &'static str,
-        provider: &'static str,
-        method: &SignIn,
-        web_sign_in: bool,
-        disabled: bool,
-        cx: &mut Context<Self>,
-    ) -> Vec<Button> {
-        let options = match method {
-            SignIn::Secret => {
-                let mut options = Vec::new();
-                if web_sign_in {
-                    options.push(LoginOption {
-                        id: format!("sign-in-{slug}-cookies").into(),
-                        label: t!("login-sign-in", provider = provider),
-                        action: LoginAction::SignIn(SignIn::Secret),
-                        primary: true,
-                    });
-                }
-                options.push(LoginOption {
-                    id: format!("sign-in-{slug}-cookies-manual").into(),
-                    label: t!("login-connect-cookies"),
-                    action: LoginAction::Cookies(provider),
-                    primary: false,
-                });
-                options
-            }
-            SignIn::Default | SignIn::Anonymous | SignIn::Path(_) | SignIn::Credentials { .. } => {
-                let (suffix, label, action, primary) = match method {
-                    SignIn::Default => (
-                        "",
-                        t!("login-sign-in", provider = provider),
-                        LoginAction::SignIn(method.clone()),
-                        true,
-                    ),
-                    SignIn::Anonymous => (
-                        "-guest",
-                        t!("login-use", provider = provider),
-                        LoginAction::SignIn(method.clone()),
-                        true,
-                    ),
-                    SignIn::Path(_) => (
-                        "-path",
-                        t!("login-sign-in", provider = provider),
-                        LoginAction::SignIn(method.clone()),
-                        false,
-                    ),
-                    SignIn::Credentials { .. } => (
-                        "-server",
-                        t!("login-sign-in", provider = provider),
-                        LoginAction::Credentials,
-                        true,
-                    ),
-                    SignIn::Secret => unreachable!(),
-                };
-                vec![LoginOption {
-                    id: format!("sign-in-{slug}{suffix}").into(),
-                    label,
-                    action,
-                    primary,
-                }]
-            }
-        };
-
-        options
-            .into_iter()
-            .map(|option| self.login_button(slug, option, disabled, cx))
-            .collect()
-    }
-
-    fn login_button(
-        &self,
-        slug: &'static str,
-        option: LoginOption,
-        disabled: bool,
-        cx: &mut Context<Self>,
-    ) -> Button {
-        let button = Button::new(option.id)
-            .label(option.label)
-            .w_full()
-            .disabled(disabled)
-            .on_click(cx.listener(move |this, _, _, cx| match &option.action {
-                LoginAction::SignIn(method) => this.start(slug, method.clone(), cx),
-                LoginAction::Credentials => this.open_credentials(slug, cx),
-                LoginAction::Cookies(provider) => this.start_manual(slug, provider, cx),
-            }));
-        match option.primary {
-            true => button.primary(),
-            false => button.outline(),
-        }
-    }
-
-    /// One provider opened: its mark and name, its error, and a button for every way in, or
-    /// the cancel button while it waits on one.
-    fn column(&self, column: Column, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = *cx.theme();
-        let Column {
-            slug,
-            name,
-            options,
-            web_sign_in,
-            disabled,
-            cancel,
-            failure,
-        } = column;
-        let options = options
-            .iter()
-            .filter(|option| !matches!(option, SignIn::Anonymous));
-
+    /// The Sonora icon, the welcome and the line under it saying what the screen is waiting on.
+    fn welcome(&self, status: SharedString, cx: &App) -> impl IntoElement {
+        let theme = cx.theme();
+        let title = t!("login-welcome-title");
         div()
             .flex()
             .flex_col()
             .items_center()
-            .gap_3()
-            .w_full()
+            .gap_2()
+            .child(img(APP_ICON).size(ICON).mb_2())
             .child(
-                svg()
-                    .path(icons::path(crate::shared::provider_logo(slug)))
-                    .size(LOGO)
-                    .flex_none()
-                    .text_color(crate::shared::provider_brand(slug, cx)),
-            )
-            .child({
-                let name = SharedString::from(name.to_string());
                 div()
-                    .id("login-provider-name")
+                    .id("login-title")
                     .role(Role::Heading)
-                    .aria_level(2)
-                    .aria_label(name.clone())
-                    .text_size(theme.text(Text::Large))
+                    .aria_level(1)
+                    .aria_label(title.clone())
+                    .text_size(theme.text(Text::Title))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(name)
-            })
-            .when_some(failure, |this, failure| {
-                this.child(crate::shared::trouble::trouble(failure, true, cx))
-            })
+                    .child(title),
+            )
             .child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .w_full()
-                    .pt_2()
-                    .when(!cancel, |this| {
-                        this.children(options.into_iter().flat_map(|method| {
-                            self.option_buttons(slug, name, method, web_sign_in, disabled, cx)
-                        }))
-                    })
-                    .when(cancel, |this| {
-                        this.child(
-                            Button::new("cancel-sign-in")
-                                .label(t!("common-cancel"))
-                                .outline()
-                                .w_full()
-                                .on_click(cx.listener(|this, _, _, cx| this.abandon(cx))),
-                        )
-                    }),
+                    .id("login-status")
+                    .role(Role::Status)
+                    .aria_label(status.clone())
+                    .text_center()
+                    .line_height(relative(LEADING))
+                    .text_size(theme.text(Text::Body))
+                    .text_color(theme.muted_foreground)
+                    .child(status),
             )
     }
 
-    /// The opened provider with the way back to the list above it, and whatever its sign-in
-    /// is waiting on under it.
-    fn step(
+    /// The providers as the settings page lists them: soft rows that warm to their brand under
+    /// the pointer, the one waiting on a sign-in offering to stop it.
+    fn rows(
         &self,
-        info: ProviderInfo,
+        providers: &[ProviderInfo],
         pending: bool,
         waiting: bool,
-        prompt: Prompt,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let column = Column {
-            slug: info.slug,
-            name: info.name,
-            options: info.options,
-            web_sign_in: info.web_sign_in,
-            disabled: pending,
-            cancel: waiting && info.pending,
-            failure: info.error,
-        };
+        let count = providers.len();
+        let rows = providers.iter().enumerate().map(|(index, info)| {
+            let slug = info.slug;
+            let offer = match waiting && info.pending {
+                true => Offer::Cancel(
+                    Button::new(SharedString::from(format!("cancel-{slug}")))
+                        .label(t!("common-cancel"))
+                        .small()
+                        .outline()
+                        .on_click(cx.listener(|this, _, _, cx| this.abandon(cx)))
+                        .into_any_element(),
+                ),
+                false => Offer::SignIn,
+            };
+            let press = (!pending).then(|| -> Press {
+                Box::new(cx.listener(move |this, _, _, cx| this.pick(slug, cx)))
+            });
+            ProviderRow {
+                id: SharedString::from(format!("login-{slug}")),
+                logo: crate::shared::provider_logo(slug),
+                brand: crate::shared::provider_brand(slug, cx),
+                active: false,
+                name: info.name.into(),
+                status: None,
+                offer,
+                press,
+                error: info.error.clone(),
+                place: (index, count),
+                hovered: Some(Box::new(cx.listener(
+                    move |this, inside: &bool, window, cx| this.hover(slug, *inside, window, cx),
+                ))),
+            }
+            .into_any_element()
+        });
         div()
-            .relative()
+            .id("login-providers")
+            .role(Role::List)
+            .aria_label(t!("login-providers"))
             .flex()
             .flex_col()
-            .items_center()
-            .gap_4()
+            .gap_1()
             .w_full()
-            .child(
-                div().absolute().top_0().left_0().child(
-                    Button::new("login-back")
-                        .ghost()
-                        .small()
-                        .icon("icons/chevron-left.svg")
-                        .tooltip("common-previous")
-                        .on_click(cx.listener(|this, _, _, cx| this.back(cx))),
-                ),
-            )
-            .child(self.column(column, cx))
-            .when_some(prompt.code, |this, (code, url)| {
-                this.child(self.code_prompt(code, url, cx).into_any_element())
-            })
-            .when_some(prompt.url, |this, url| this.child(self.url_prompt(url)))
+            .px_3()
+            .children(rows)
             .into_any_element()
-    }
-
-    fn guest_mode(&self, slug: &'static str, pending: bool, cx: &mut Context<Self>) -> Button {
-        Button::new("guest-mode")
-            .label(t!("login-guest-use"))
-            .icon("icons/hat-glasses.svg")
-            .outline()
-            .w_full()
-            .disabled(pending)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.start(slug, SignIn::Anonymous, cx);
-            }))
     }
 
     /// A rule with "or" in its middle, between the providers and guest mode.
@@ -541,19 +377,16 @@ impl LoginView {
             .child(div().flex_1().child(Separator::horizontal()))
     }
 
-    fn code_prompt(&self, code: String, url: String, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = *cx.theme();
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap_2()
-            .child(
-                ui::spoken("login-device-code", t!("login-device-code", url = &url))
-                    .text_size(theme.text(Text::Small))
-                    .text_color(theme.muted_foreground),
-            )
-            .child(device_code(code, cx))
+    fn guest_mode(&self, slug: &'static str, pending: bool, cx: &mut Context<Self>) -> Button {
+        Button::new("guest-mode")
+            .label(t!("login-guest-use"))
+            .icon("icons/hat-glasses.svg")
+            .outline()
+            .w_full()
+            .disabled(pending)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.start(slug, SignIn::Anonymous, cx);
+            }))
     }
 
     fn url_prompt(&self, url: String) -> impl IntoElement {
@@ -565,6 +398,121 @@ impl LoginView {
             .on_click(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
             })
+    }
+
+    /// The choice of sign-in methods, for a provider that has more than one, the same dialog
+    /// the settings page puts up.
+    fn choice_prompt(
+        &self,
+        slug: &'static str,
+        provider: &'static str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let theme = *cx.theme();
+        let pending = self.session.read(cx).is_pending();
+        let info = self
+            .session
+            .read(cx)
+            .providers()
+            .find(|info| info.slug == slug);
+        let web_sign_in = info.as_ref().is_some_and(|info| info.web_sign_in);
+        let buttons = info
+            .map(|info| info.options)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(offered)
+            .flat_map(|method| self.method_buttons(slug, provider, method, web_sign_in, pending, cx))
+            .collect::<Vec<_>>();
+
+        Modal::new(
+            "login-sign-in-prompt",
+            t!("login-choose-title", provider = provider),
+        )
+        .w(DIALOG)
+        .close_button()
+        .detail(t!("login-choose-detail", provider = provider))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .gap_3()
+                .w_full()
+                .min_h(theme.metrics.control * CHOICES)
+                .children(buttons.into_iter().map(|button| div().w_full().child(button))),
+        )
+        .on_dismiss(cx.listener(|this, _, _, cx| {
+            if this.choice_running {
+                this.abandon(cx);
+            }
+            this.close_choice(cx);
+        }))
+    }
+
+    /// The buttons that start one sign-in method. A cookie sign-in yields the browser window
+    /// only where a backend can draw one, and always the manual paste beside it.
+    fn method_buttons(
+        &self,
+        slug: &'static str,
+        provider: &'static str,
+        method: SignIn,
+        web_sign_in: bool,
+        pending: bool,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let mut buttons = Vec::new();
+        let manual = matches!(method, SignIn::Secret);
+        if !manual || web_sign_in {
+            let id = match &method {
+                SignIn::Secret => format!("sign-in-{slug}-cookies"),
+                SignIn::Credentials { .. } => format!("sign-in-{slug}-server"),
+                _ => format!("sign-in-{slug}"),
+            };
+            buttons.push(
+                Button::new(SharedString::from(id))
+                    .label(t!("login-sign-in", provider = provider))
+                    .primary()
+                    .disabled(pending)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.choice_running = true;
+                        match &method {
+                            SignIn::Credentials { .. } => this.open_credentials(slug, cx),
+                            method => this.start(slug, method.clone(), cx),
+                        }
+                    }))
+                    .into_any_element(),
+            );
+        }
+        if manual {
+            buttons.push(
+                Button::new(SharedString::from(format!("sign-in-{slug}-cookies-manual")))
+                    .label(t!("login-connect-cookies"))
+                    .secondary()
+                    .disabled(pending)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.choice_running = true;
+                        this.start_manual(slug, provider, cx);
+                    }))
+                    .into_any_element(),
+            );
+        }
+        buttons
+    }
+
+    /// The code a device sign-in is waiting on. Closing the dialog cancels the sign-in.
+    fn code_prompt(&self, code: String, url: String, cx: &mut Context<Self>) -> impl IntoElement {
+        Modal::new("login-code-prompt", t!("login-device-code", url = &url))
+            .w(DIALOG)
+            .close_button()
+            .detail(t!("login-authorizing"))
+            .child(device_code(code, cx))
+            .action(
+                Button::new("login-cancel-code")
+                    .ghost()
+                    .label(t!("common-cancel"))
+                    .on_click(cx.listener(|this, _, _, cx| this.abandon(cx))),
+            )
+            .on_dismiss(cx.listener(|this, _, _, cx| this.abandon(cx)))
     }
 
     fn account_modal(&self, accounts: AccountChoices, cx: &mut Context<Self>) -> impl IntoElement {
@@ -595,220 +543,6 @@ impl LoginView {
             .on_submit(cx.listener(|this, _, _, cx| this.submit_secret(cx)))
             .on_cancel(cx.listener(|this, _, _, cx| this.abandon(cx)))
     }
-
-    /// The Sonora mark, a title and the line under it, centred.
-    fn welcome(
-        &self,
-        mark: Pixels,
-        title: SharedString,
-        size: Text,
-        detail: SharedString,
-        cx: &App,
-    ) -> impl IntoElement {
-        let theme = cx.theme();
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap_2()
-            .child(
-                img(APP_ICON).size(mark).mb_2(),
-            )
-            .child(
-                div()
-                    .id("login-title")
-                    .role(Role::Heading)
-                    .aria_level(1)
-                    .aria_label(title.clone())
-                    .text_size(theme.text(size))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(title),
-            )
-            .child(
-                div()
-                    .id("login-status")
-                    .role(Role::Status)
-                    .aria_label(detail.clone())
-                    .max_w(px(420.))
-                    .text_center()
-                    .line_height(relative(LEADING))
-                    .text_size(theme.text(Text::Body))
-                    .text_color(theme.muted_foreground)
-                    .child(detail),
-            )
-    }
-
-    /// The providers as the settings page lists them: soft rows that warm to their brand under
-    /// the pointer.
-    fn rows(&self, providers: &[ProviderInfo], pending: bool, cx: &mut Context<Self>) -> AnyElement {
-        let count = providers.len();
-        let rows = providers.iter().enumerate().map(|(index, info)| {
-            let slug = info.slug;
-            ProviderRow {
-                id: SharedString::from(format!("login-{slug}")),
-                logo: crate::shared::provider_logo(slug),
-                brand: crate::shared::provider_brand(slug, cx),
-                active: false,
-                name: info.name.into(),
-                status: None,
-                offer: Offer::SignIn,
-                press: (!pending).then(|| -> super::settings::Press {
-                    Box::new(cx.listener(move |this, _, _, cx| this.pick(slug, cx)))
-                }),
-                error: info.error.clone(),
-                place: (index, count),
-                hovered: Some(Box::new(cx.listener(move |this, inside: &bool, _, cx| {
-                    this.hover(slug, *inside, cx)
-                }))),
-            }
-            .into_any_element()
-        });
-        div()
-            .id("login-providers")
-            .role(Role::List)
-            .aria_label(t!("login-providers"))
-            .flex()
-            .flex_col()
-            .gap_1()
-            .w_full()
-            .px_3()
-            .children(rows)
-            .into_any_element()
-    }
-
-    /// One provider as a tile: its mark in its brand colour over its name and what kind of
-    /// service it is. Under the pointer the edge and a soft glow take on the brand.
-    fn tile(
-        &self,
-        info: &ProviderInfo,
-        (index, count): (usize, usize),
-        pending: bool,
-        stage: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let theme = *cx.theme();
-        let slug = info.slug;
-        let id = SharedString::from(format!("login-tile-{slug}"));
-        let brand = crate::shared::provider_brand(slug, cx);
-        let fade = window.use_keyed_state((ElementId::from(id.clone()), "glow"), cx, |_, _| {
-            HoverFade::new(TILE_FADE)
-        });
-        let lit = fade.update(cx, |fade, cx| fade.level(window, cx));
-        let kind = match info
-            .options
-            .iter()
-            .any(|option| matches!(option, SignIn::Credentials { .. }))
-        {
-            true => t!("login-kind-server"),
-            false => t!("login-kind-service"),
-        };
-        let rest = match stage {
-            true => theme.border.opacity(0.5),
-            false => theme.border,
-        };
-        let edge = mix(rest, brand.opacity(0.7), lit);
-        let fill = match stage {
-            true => mix(theme.background.opacity(0.35), brand.opacity(0.12), lit),
-            false => mix(theme.background.opacity(0.), brand.opacity(0.07), lit),
-        };
-        let name = SharedString::from(info.name);
-
-        div()
-            .id(id)
-            .role(Role::Button)
-            .aria_label(name.clone())
-            .aria_description(kind.clone())
-            .aria_position_in_set(index + 1)
-            .aria_size_of_set(count)
-            .flex()
-            .rounded(theme.radius)
-            .border_1()
-            .border_color(edge)
-            .bg(fill)
-            .when(stage, |this| {
-                this.w(TILE_W)
-                    .h(TILE_H)
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap_3()
-                    .backdrop_blur(FROST)
-            })
-            .when(!stage, |this| this.items_center().gap_3().px_3().py_3())
-            .shadow(vec![BoxShadow {
-                color: brand.opacity(0.35 * lit),
-                offset: point(px(0.), px(0.)),
-                blur_radius: GLOW,
-                spread_radius: px(0.),
-                inset: false,
-            }])
-            .when(!pending, |this| {
-                this.cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| this.pick(slug, cx)))
-            })
-            .on_hover(cx.listener(move |this, inside: &bool, window, cx| {
-                fade.update(cx, |fade, _| fade.set(*inside));
-                this.hover(slug, *inside, cx);
-                window.refresh();
-            }))
-            .child(
-                svg()
-                    .path(icons::path(crate::shared::provider_logo(slug)))
-                    .size(match stage {
-                        true => TILE_MARK,
-                        false => SPLIT_MARK,
-                    })
-                    .flex_none()
-                    .text_color(match stage {
-                        true => mix(theme.foreground, brand, lit),
-                        false => brand,
-                    }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .min_w_0()
-                    .when(stage, |this| this.items_center())
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(theme.text(Text::Body))
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(name),
-                    )
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(theme.text(Text::Small))
-                            .text_color(theme.muted_foreground)
-                            .child(kind),
-                    ),
-            )
-            .into_any_element()
-    }
-
-    fn lattice(&self, theme: &ui::Theme, animates: bool) -> Lattice {
-        Lattice::new(POOLS.map(|(h, s, l, a)| hsla(h, s, l, a)))
-            .stage(Hsla {
-                a: 1.,
-                ..theme.background
-            })
-            .lamp(self.lamp)
-            .pointer(self.pointer)
-            .time(match animates {
-                true => self.started.elapsed().as_secs_f32(),
-                false => 0.,
-            })
-    }
-}
-
-/// What a waiting sign-in asks the person to do outside the app.
-#[derive(Default)]
-struct Prompt {
-    code: Option<(String, String)>,
-    url: Option<String>,
 }
 
 impl Render for LoginView {
@@ -837,10 +571,10 @@ impl Render for LoginView {
             }
             _ => false,
         };
-        let failure = providers
-            .iter()
-            .find_map(|info| info.error.clone())
-            .filter(|failure| failure.problem != Some(SignInProblem::Subscription));
+        if self.choice_running && !pending {
+            self.choosing = None;
+            self.choice_running = false;
+        }
 
         let status = match &state {
             SessionState::SignedOut
@@ -853,7 +587,6 @@ impl Render for LoginView {
             SessionState::Authorizing(_) => t!("login-authorizing"),
             SessionState::SignedIn(profile) => t!("login-signed-in", name = &profile.display_name),
         };
-
         let prompt = match &state {
             SessionState::Authorizing(prompt) => prompt.clone(),
             _ => None,
@@ -862,335 +595,88 @@ impl Render for LoginView {
             Some(SignInPrompt::Accounts(accounts)) => Some(accounts.clone()),
             _ => None,
         };
-        let asks = Prompt {
-            code: match prompt {
-                Some(SignInPrompt::Code { code, url }) => Some((code, url)),
-                _ => None,
-            },
-            url: match &state {
-                SessionState::Authorizing(Some(SignInPrompt::Url(url))) => Some(url.clone()),
-                _ => None,
-            },
+        let code = match &prompt {
+            Some(SignInPrompt::Code { code, url }) => Some((code.clone(), url.clone())),
+            _ => None,
         };
+        let url = match prompt {
+            Some(SignInPrompt::Url(url)) => Some(url),
+            _ => None,
+        };
+
+        // only one dialog is ever up: a prompt the sign-in raised hides the choice behind it
+        let taken = accounts.is_some()
+            || code.is_some()
+            || manual_secret.is_some()
+            || self.credentials_for.is_some();
+        let choosing = self.choosing.filter(|_| !taken);
 
         let theme = *cx.theme();
         let asking = self.usage.read(cx).asking();
-        let animates = ui::motion::animates(cx);
-        let target = match self.hovered {
+        let lamp = match self.hovered {
             Some(slug) => crate::shared::provider_brand(slug, cx),
-            None => theme.foreground,
+            None => self.lamp,
         };
+        let animates = ui::motion::animates(cx);
         match animates {
-            true => self.pace(target, window, cx),
-            false => self.lamp = target,
+            true => self.pace(lamp, window, cx),
+            false => {
+                self.glow = f32::from(u8::from(self.hovered.is_some()));
+                self.lamp = lamp;
+            }
         }
+        let time = match animates {
+            true => self.started.elapsed().as_secs_f32(),
+            false => 0.,
+        };
 
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let radius = crate::chrome::window_radius(Sonora::global(cx).settings.read(cx), cx, window);
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<Pixels> = None;
 
-        let opened = self
-            .chosen
-            .and_then(|slug| providers.iter().find(|info| info.slug == slug).cloned());
-        let count = providers.len();
-        let body: AnyElement = match self.variant {
-            Variant::Card => {
-                let inner = match opened {
-                    Some(info) => self.step(info, pending, waiting, asks, cx),
-                    None => div()
-                        .flex()
-                        .flex_col()
-                        .gap_5()
-                        .w_full()
-                        .child(self.rows(&providers, pending, cx))
-                        .when_some(guest, |this, slug| {
-                            this.child(self.divider(cx))
-                                .child(self.guest_mode(slug, pending, cx))
-                        })
-                        .into_any_element(),
-                };
+        let card = div()
+            .flex()
+            .flex_col()
+            .gap_6()
+            .w(CARD)
+            .p_8()
+            .rounded(ui::corners(theme.radius))
+            .border_1()
+            .border_color(theme.border.opacity(0.7))
+            .bg(theme.background.opacity(0.62))
+            .backdrop_blur(FROST)
+            .shadow(vec![BoxShadow {
+                color: hsla(0., 0., 0., 0.35),
+                offset: point(px(0.), px(24.)),
+                blur_radius: px(64.),
+                spread_radius: px(-12.),
+                inset: false,
+            }])
+            .child(
                 div()
                     .flex()
                     .flex_col()
                     .items_center()
-                    .justify_center()
-                    .gap_4()
-                    .w_full()
-                    .min_h_full()
-                    .p(theme.metrics.pad)
-                    .pt(theme.metrics.title_bar)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_6()
-                            .w(CARD)
-                            .p_8()
-                            .rounded(ui::corners(theme.radius))
-                            .border_1()
-                            .border_color(theme.border.opacity(0.7))
-                            .bg(theme.background.opacity(0.62))
-                            .backdrop_blur(FROST)
-                            .shadow(vec![BoxShadow {
-                                color: hsla(0., 0., 0., 0.35),
-                                offset: point(px(0.), px(24.)),
-                                blur_radius: px(64.),
-                                spread_radius: px(-12.),
-                                inset: false,
-                            }])
-                            .child(self.welcome(
-                                MARK,
-                                t!("login-welcome-title"),
-                                Text::Title,
-                                status,
-                                cx,
-                            ))
-                            .child(inner),
-                    )
-                    .when(asking, |this| this.child(self.consent(CARD, cx)))
-                    .into_any_element()
-            }
-            Variant::Split => {
-                let tiles = providers
-                    .iter()
-                    .enumerate()
-                    .map(|(index, info)| self.tile(info, (index, count), pending, false, window, cx))
-                    .collect::<Vec<_>>();
-                let inner = match opened {
-                    Some(info) => self.step(info, pending, waiting, asks, cx),
-                    None => div()
-                        .flex()
-                        .flex_col()
-                        .gap_5()
-                        .w_full()
-                        .child(
-                            div()
-                                .id("login-providers")
-                                .role(Role::List)
-                                .aria_label(t!("login-providers"))
-                                .grid()
-                                .grid_cols(2)
-                                .gap_2()
-                                .w_full()
-                                .children(tiles),
-                        )
-                        .when_some(guest, |this, slug| {
-                            this.child(self.divider(cx))
-                                .child(self.guest_mode(slug, pending, cx))
-                        })
-                        .into_any_element(),
-                };
-                let names = providers
-                    .iter()
-                    .map(|info| info.name)
-                    .collect::<Vec<_>>()
-                    .join(" · ");
-                let (h, s, l) = PANEL;
-                let panel = hsla(h, s, l, 1.);
-                div()
-                    .flex()
-                    .size_full()
-                    .p_2()
-                    .gap_2()
-                    .child(
-                        div()
-                            .relative()
-                            .flex()
-                            .flex_col()
-                            .justify_between()
-                            .w(relative(0.48))
-                            .h_full()
-                            .p_10()
-                            .rounded(ui::corners(theme.radius))
-                            .overflow_hidden()
-                            .bg(panel)
-                            .text_color(gpui::white())
-                            .child(
-                                div().absolute().inset_0().child(
-                                    Lattice::new(POOLS.map(|(h, s, l, a)| hsla(h, s, l, a)))
-                                        .stage(panel)
-                                        .lamp(self.lamp)
-                                        .pointer(self.pointer)
-                                        .corner_radius(ui::corners(theme.radius))
-                                        .time(match animates {
-                                            true => self.started.elapsed().as_secs_f32(),
-                                            false => 0.,
-                                        }),
-                                ),
-                            )
-                            .child(
-                                div()
-                                    .relative()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(
-                                        img(APP_ICON).size(SPLIT_ICON),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(theme.text(Text::Heading))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child("Sonora"),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .relative()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_3()
-                                    .max_w(px(460.))
-                                    .child(
-                                        div()
-                                            .text_size(theme.text(Text::Display))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .line_height(relative(1.1))
-                                            .child(t!("login-tagline")),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(theme.text(Text::Small))
-                                            .text_color(hsla(0., 0., 1., 0.6))
-                                            .child(SharedString::from(names)),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("login-scroll")
-                            .flex_1()
-                            .h_full()
-                            .overflow_y_scroll()
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .items_center()
-                                    .justify_center()
-                                    .min_h_full()
-                                    .p(theme.metrics.pad)
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .gap_6()
-                                            .w(FORM)
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .gap_1()
-                                                    .child(
-                                                        div()
-                                                            .id("login-title")
-                                                            .role(Role::Heading)
-                                                            .aria_level(1)
-                                                            .aria_label(t!("login-sign-in-title"))
-                                                            .text_size(theme.text(Text::Title))
-                                                            .font_weight(FontWeight::SEMIBOLD)
-                                                            .child(t!("login-sign-in-title")),
-                                                    )
-                                                    .child(
-                                                        ui::spoken("login-status", status)
-                                                            .line_height(relative(LEADING))
-                                                            .text_color(theme.muted_foreground),
-                                                    ),
-                                            )
-                                            .when_some(failure.clone().filter(|_| opened_none(self.chosen)), |this, failure| {
-                                                this.child(crate::shared::trouble::trouble(failure, false, cx))
-                                            })
-                                            .child(inner)
-                                            .when(asking, |this| this.child(self.consent(FORM, cx))),
-                                    ),
-                            ),
-                    )
-                    .into_any_element()
-            }
-            Variant::Stage => {
-                let tiles = providers
-                    .iter()
-                    .enumerate()
-                    .map(|(index, info)| self.tile(info, (index, count), pending, true, window, cx))
-                    .collect::<Vec<_>>();
-                let inner = match opened {
-                    Some(info) => div()
-                        .w(CARD)
-                        .p_8()
-                        .rounded(ui::corners(theme.radius))
-                        .border_1()
-                        .border_color(theme.border.opacity(0.6))
-                        .bg(theme.background.opacity(0.55))
-                        .backdrop_blur(FROST)
-                        .child(self.step(info, pending, waiting, asks, cx))
-                        .into_any_element(),
-                    None => div()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap_6()
-                        .child(
-                            div()
-                                .id("login-providers")
-                                .role(Role::List)
-                                .aria_label(t!("login-providers"))
-                                .flex()
-                                .flex_wrap()
-                                .justify_center()
-                                .gap_3()
-                                .max_w(TILE_W * 4. + px(12.) * 3.)
-                                .children(tiles),
-                        )
-                        .when_some(guest, |this, slug| {
-                            this.child(
-                                Button::new("guest-mode")
-                                    .label(t!("login-guest-use"))
-                                    .icon("icons/hat-glasses.svg")
-                                    .ghost()
-                                    .tint(theme.muted_foreground)
-                                    .disabled(pending)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.start(slug, SignIn::Anonymous, cx);
-                                    })),
-                            )
-                        })
-                        .into_any_element(),
-                };
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap_10()
-                    .w_full()
-                    .min_h_full()
-                    .p(theme.metrics.pad)
-                    .pt(theme.metrics.title_bar)
-                    .child(self.welcome(
-                        STAGE_MARK,
-                        t!("login-welcome-title"),
-                        Text::Display,
-                        status,
-                        cx,
-                    ))
-                    .when_some(failure.filter(|_| opened_none(self.chosen)), |this, failure| {
-                        this.child(crate::shared::trouble::trouble(failure, true, cx))
-                    })
-                    .child(inner)
-                    .when(asking, |this| this.child(self.consent(CARD, cx)))
-                    .into_any_element()
-            }
-        };
+                    .gap_3()
+                    .child(self.welcome(status, cx))
+                    .when_some(url, |this, url| this.child(self.url_prompt(url))),
+            )
+            .child(self.rows(&providers, pending, waiting, cx))
+            .when_some(guest, |this, slug| {
+                this.child(self.divider(cx))
+                    .child(self.guest_mode(slug, pending, cx))
+            });
 
-        let backdrop = (self.variant != Variant::Split).then(|| {
-            div()
-                .absolute()
-                .inset_0()
-                .child(self.lattice(&theme, animates).when_some(radius, |this, radius| {
-                    this.corner_radius(radius)
-                }))
-        });
+        let backdrop = Lattice::new(POOLS.map(|(h, s, l, a)| hsla(h, s, l, a)))
+            .stage(Hsla {
+                a: 1.,
+                ..theme.background
+            })
+            .lamp(self.lamp)
+            .glow(self.glow_at, self.glow)
+            .time(time)
+            .when_some(radius, |this, radius| this.corner_radius(radius));
 
         div()
             .id("login")
@@ -1198,22 +684,28 @@ impl Render for LoginView {
             .size_full()
             .overflow_hidden()
             .when_some(radius, |this, radius| this.rounded(radius))
-            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
-                this.pointer = Some(event.position);
-                cx.notify();
-            }))
-            .children(backdrop)
-            .map(|this| match self.variant {
-                Variant::Split => this.child(body),
-                _ => this.child(
-                    div()
-                        .id("login-scroll")
-                        .relative()
-                        .size_full()
-                        .overflow_y_scroll()
-                        .child(body),
-                ),
-            })
+            .child(div().absolute().inset_0().child(backdrop))
+            .child(
+                div()
+                    .id("login-scroll")
+                    .relative()
+                    .size_full()
+                    .overflow_y_scroll()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .gap_4()
+                            .w_full()
+                            .min_h_full()
+                            .p(theme.metrics.pad)
+                            .pt(theme.metrics.title_bar)
+                            .child(card)
+                            .when(asking, |this| this.child(self.consent(cx))),
+                    ),
+            )
             .when_some(manual_secret, |this, (slug, provider)| {
                 this.child(self.secret_prompt(slug, provider, cx).into_any_element())
             })
@@ -1223,16 +715,27 @@ impl Render for LoginView {
             .when_some(accounts, |this, accounts| {
                 this.child(self.account_modal(accounts, cx).into_any_element())
             })
+            .when_some(code, |this, (code, url)| {
+                this.child(self.code_prompt(code, url, cx).into_any_element())
+            })
+            .when_some(choosing, |this, (slug, provider)| {
+                this.child(self.choice_prompt(slug, provider, cx).into_any_element())
+            })
     }
 }
 
+/// Which sign-in methods a provider offers on this screen. Guest mode has a button of its own,
+/// and a local path is not a way to sign in.
+fn offered(method: &SignIn) -> bool {
+    matches!(
+        method,
+        SignIn::Default | SignIn::Secret | SignIn::Credentials { .. }
+    )
+}
+
 /// How many buttons one sign-in method draws: the method itself, and the manual paste beside
-/// a cookie one.
+/// a cookie one. A provider that draws exactly one never opens the choice dialog.
 fn method_count(method: &SignIn, web_sign_in: bool) -> usize {
     let manual = matches!(method, SignIn::Secret);
     usize::from(!manual || web_sign_in) + usize::from(manual)
-}
-
-fn opened_none(chosen: Option<&'static str>) -> bool {
-    chosen.is_none()
 }

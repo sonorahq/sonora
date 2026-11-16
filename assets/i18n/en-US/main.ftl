@@ -409,11 +409,7 @@ login-choose-detail = Choose how to sign in to { $provider }.
 login-providers = Music services
 login-welcome-title = Welcome to Sonora
 login-welcome-detail = You can add more services later in Settings.
-login-sign-in-title = Sign in
 login-or = or
-login-kind-server = Your own server
-login-kind-service = Streaming service
-login-tagline = Every service you listen on, in one native player.
 
 # album and playlist pages
 detail-playlist = Playlist
