@@ -44,9 +44,6 @@ const LISTED: usize = 5;
 const LISTED_MAX: usize = 10;
 /// The favorites dialog gives two song columns enough room for titles and controls.
 const FAVORITES_WIDTH: f32 = 5.;
-/// The width of the `border_1` around the popular table, which pushes its rows and head below
-/// the box the page measures the scroll from.
-const TABLE_BORDER: Pixels = px(1.);
 /// The least and the most room the banner adds above the hero, as shares of the cover's edge.
 /// In between, the banner box keeps `BANNER_BOX` as its aspect, so a narrow page lifts the
 /// hero less.
@@ -1313,8 +1310,7 @@ impl Render for ArtistView {
         }
         if self.mode == Mode::List {
             self.table.claim(cx);
-            let mut viewport = page::viewport(&scroll, inset, window);
-            viewport.top = (viewport.top - TABLE_BORDER).max(Pixels::ZERO);
+            let viewport = page::past_border(page::viewport(&scroll, inset, window));
             self.table
                 .update(cx, |table, _| table.set_viewport(viewport));
         }

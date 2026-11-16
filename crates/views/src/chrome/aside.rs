@@ -1160,10 +1160,18 @@ impl Aside {
         let row_width = scroll.bounds().size.width - sheet_padding * 2.;
         // Both voices and wrapped phrases share the same inset from either panel edge.
         let wrap_width = (row_width - verse_pad * 2.).max(Pixels::ZERO);
-        if self.lyrics_wrap_width != Some(wrap_width) || self.lyrics_wrap_size != Some(wrap_size) {
+        let rewrapped =
+            self.lyrics_wrap_width != Some(wrap_width) || self.lyrics_wrap_size != Some(wrap_size);
+        if rewrapped {
             self.lyrics_wrap_width = Some(wrap_width);
             self.lyrics_wrap_size = Some(wrap_size);
             self.forget_measurements();
+            // A sheet following the sung line puts that line back in its place once the rows
+            // have their new heights. A sheet the listener scrolled is held by its top instead.
+            if self.pinned {
+                self.aiming = true;
+                self.placing = true;
+            }
             window.request_animation_frame();
         }
 
@@ -1713,6 +1721,8 @@ impl Aside {
         };
 
         let sheet = Scroller::new("lyrics", &self.verse_bar)
+            .hold_while(!self.pinned)
+            .reflowed(rewrapped)
             .bottom_inset(self.bottom(cx))
             .when(lines.is_some(), Scroller::manual_presentation)
             .when(lines.is_some(), |this| {
