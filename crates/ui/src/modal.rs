@@ -1,15 +1,18 @@
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Div, ElementId, Entity, FontWeight, Global, MouseButton, Pixels, Point,
-    ScrollWheelEvent, SharedString, StyleRefinement, Window, anchored, deferred, div, point, px,
+    AnyElement, App, Context, Div, ElementId, Entity, FontWeight, Global, MouseButton, Pixels,
+    Point, ScrollWheelEvent, SharedString, StyleRefinement, Subscription, Window, WindowId,
+    anchored, deferred, div, point, px,
 };
 
 use crate::button::Button;
 use crate::linger::Linger;
+use crate::menu::{ESCAPE_KEY, menu_open};
 use crate::metrics::{Rounding, Text, snapped};
 use crate::motion::Rising as _;
 use crate::scrollbar::Scrollbar;
@@ -30,6 +33,52 @@ const CLOSE_FADE: f32 = 0.7;
 const ROUNDING: f32 = 2.;
 
 type Dismiss = Rc<dyn Fn(&(), &mut Window, &mut App)>;
+
+thread_local! {
+    /// The mark of the dialog rendered last. Dialogs render in the order they stack, so the one
+    /// holding this mark is the topmost.
+    static LATEST: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Closes a dialog on escape, wherever the key focus is. It lives in the dialog's element state,
+/// so it goes away with the dialog. Only the topmost dialog answers, and an open menu over it
+/// takes the escape first.
+struct EscapeGuard {
+    mark: Rc<Cell<u64>>,
+    dismiss: Rc<RefCell<Option<Dismiss>>>,
+    _keys: Subscription,
+}
+
+impl EscapeGuard {
+    fn new(window: WindowId, cx: &mut Context<Self>) -> Self {
+        let mark = Rc::new(Cell::new(0));
+        let dismiss: Rc<RefCell<Option<Dismiss>>> = Rc::default();
+        let keys = cx.intercept_keystrokes({
+            let (mark, dismiss) = (mark.clone(), dismiss.clone());
+            move |event, target, cx| {
+                let keystroke = &event.keystroke;
+                if keystroke.key != ESCAPE_KEY
+                    || keystroke.modifiers.modified()
+                    || target.window_handle().window_id() != window
+                    || LATEST.with(Cell::get) != mark.get()
+                    || menu_open(cx)
+                {
+                    return;
+                }
+                let Some(dismiss) = dismiss.borrow().clone() else {
+                    return;
+                };
+                cx.stop_propagation();
+                dismiss(&(), target, cx);
+            }
+        });
+        Self {
+            mark,
+            dismiss,
+            _keys: keys,
+        }
+    }
+}
 
 #[derive(Default)]
 struct Bars(HashMap<ElementId, Entity<Scrollbar>>);
@@ -151,6 +200,21 @@ impl RenderOnce for Modal {
             close_button,
         } = self;
         let outside = dismiss.clone();
+        let mark = LATEST.with(|latest| {
+            latest.set(latest.get() + 1);
+            latest.get()
+        });
+        if let Some(dismiss) = dismiss.clone() {
+            let window_id = window.window_handle().window_id();
+            let guard = window.use_keyed_state(
+                ElementId::NamedChild(Arc::new(id.clone()), "escape".into()),
+                cx,
+                |_, cx| EscapeGuard::new(window_id, cx),
+            );
+            let guard = guard.read(cx);
+            guard.mark.set(mark);
+            *guard.dismiss.borrow_mut() = Some(dismiss);
+        }
         // with no action row under it the body carries the bottom padding itself, so the
         // panel is inset by the same amount all the way round. Above an action row it keeps
         // enough of it that the focus ring of a field at its foot is not cut off by the
@@ -171,13 +235,15 @@ impl RenderOnce for Modal {
 
         // The window is the modal's frame, not the pane that raised it: anchored to window
         // coordinates and deferred, so a page with chrome floating over it cannot cover the
-        // modal or crop it. The title bar stays reachable, the way a menu leaves it.
+        // modal or crop it. The scrim dims the title bar with the rest of the window, and the
+        // panel centres in the room under the bar.
         let chrome = snapped(theme.metrics.title_bar, window);
         let viewport = window.viewport_size();
         let frame = div()
             .w(viewport.width)
-            .h(viewport.height - chrome)
+            .h(viewport.height)
             .p(theme.metrics.inset)
+            .pt(chrome + theme.metrics.inset)
             .flex()
             .items_center()
             .justify_center()
@@ -335,7 +401,7 @@ impl RenderOnce for Modal {
 
         deferred(
             anchored()
-                .position(point(Pixels::ZERO, chrome))
+                .position(point(Pixels::ZERO, Pixels::ZERO))
                 .child(frame),
         )
     }

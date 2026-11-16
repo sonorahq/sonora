@@ -79,6 +79,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The sign-in screen lists every music service in one card over a softly lit backdrop, and a service with more than one way to sign in asks which one in a dialog.
+- Dialogs dim the title bar along with the rest of the window, and Escape closes them wherever the keyboard focus is.
+- Pressed buttons shrink alike whatever their width, so a wide button no longer squeezes much harder than a small one.
 - Dialogs have roomier fields and full-height buttons, and the field you type in wears a soft ring.
 - On a wide window pages stop growing at 1280 pixels and stay centred, while artist banners still reach the edges. Song tables then sit in a bordered frame like the one on artist pages.
 - The fullscreen button now swaps in place when the fullscreen player opens or closes, instead of fading and zooming with it.

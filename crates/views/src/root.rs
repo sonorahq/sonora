@@ -1146,8 +1146,11 @@ impl Render for Root {
         self.follow_os_fullscreen(window, cx);
 
         let options = match show_sign_in {
+            // The sign-in screen runs under the bar, so the bar keeps only the window controls
+            // and its drag area over it.
             true => TitleBarOptions {
                 border: false,
+                transparent: true,
                 ..TitleBarOptions::default()
             },
             false => self.options(cx),
@@ -1422,6 +1425,10 @@ impl Render for Root {
             )
             // The ambient background sits behind everything, title bar included.
             .when(ambient, |this| this.child(self.ambient.clone()))
+            // The sign-in screen fills the whole window, under the bar.
+            .when(show_sign_in, |this| {
+                this.child(div().absolute().inset_0().child(self.login.clone()))
+            })
             // The bar only changes when it is told to, so a frame drawn for the lyrics or the
             // progress bar replays it rather than building it again.
             .child(
@@ -1432,11 +1439,7 @@ impl Render for Root {
                         .flex_none(),
                 ),
             )
-            .when_else(
-                show_sign_in,
-                |this| this.child(div().flex().flex_1().min_h_0().child(self.login.clone())),
-                |this| this.child(shell),
-            );
+            .when(!show_sign_in, |this| this.child(shell));
         // A closed menu or dialog fades out here, over everything else in the window.
         let root = root.child(ui::lingers());
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]

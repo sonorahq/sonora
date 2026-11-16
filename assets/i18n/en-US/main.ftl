@@ -407,6 +407,9 @@ login-profile-detail = This account has more than one profile. Pick the one Sono
 login-choose-title = Sign in to { $provider }
 login-choose-detail = Choose how to sign in to { $provider }.
 login-providers = Music services
+login-welcome-title = Welcome to Sonora
+login-welcome-detail = You can add more services later in Settings.
+login-or = or
 
 # album and playlist pages
 detail-playlist = Playlist
