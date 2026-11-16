@@ -750,6 +750,23 @@ impl Input {
         }
     }
 
+    /// Lets go of the focus when a press lands outside the field, so a click on the page around
+    /// it stops the typing. Whatever focusable thing the press hit still takes the focus, since
+    /// this runs first. A field with its context menu open keeps the focus for the menu's items.
+    fn on_mouse_down_out(
+        &mut self,
+        _: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.context_menu.is_some() || !self.focus_handle.is_focused(window) {
+            return;
+        }
+        self.selecting = false;
+        window.blur(cx);
+        cx.notify();
+    }
+
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         if !self.selecting {
             return;

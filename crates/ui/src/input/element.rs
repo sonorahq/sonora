@@ -440,6 +440,7 @@ impl Render for Input {
             .when(primary_paste(), |this| {
                 this.on_mouse_down(MouseButton::Middle, cx.listener(Self::on_mouse_down))
             })
+            .on_mouse_down_out(cx.listener(Self::on_mouse_down_out))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
