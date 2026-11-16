@@ -36,6 +36,9 @@ const SIMILAR_ARTISTS: &str = "10";
 /// How long an ordinary request waits for the server. A stream has no such limit.
 const TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT: Duration = Duration::from_secs(5);
+/// How long a response may go without a byte before the server counts as gone. It limits the
+/// silence, not the total, so a long download that keeps flowing is never cut short.
+const STALL: Duration = Duration::from_secs(30);
 /// What a stream of lyrics is in Plex's numbering.
 const AUDIO_STREAM: u32 = 2;
 const LYRICS_STREAM: u32 = 4;
@@ -71,6 +74,8 @@ impl PlexClient {
     pub fn new(stored: Credentials, client_id: String) -> Result<Self> {
         let http = reqwest::Client::builder()
             .connect_timeout(CONNECT)
+            .read_timeout(STALL)
+            .https_only(true)
             .build()
             .context("cannot build the plex http client")?;
         Ok(Self {
@@ -166,7 +171,10 @@ impl PlexClient {
             }
             let response = match request.send().await {
                 Ok(response) => response,
-                Err(error) if !rerouted && (error.is_connect() || error.is_timeout()) => {
+                Err(error)
+                    if !rerouted
+                        && (error.is_connect() || (error.is_timeout() && method.is_safe())) =>
+                {
                     rerouted = true;
                     log::info!("plex: the server did not answer for {path}: {error}");
                     self.reroute().await?;
@@ -242,7 +250,7 @@ impl PlexClient {
             let fetched = page.metadata.len();
             let total = page.total_size;
             items.extend(page.metadata);
-            if fetched == 0 || total.is_none_or(|total| items.len() >= total) {
+            if fetched == 0 || total.is_some_and(|total| items.len() >= total) {
                 return Ok(items);
             }
         }
@@ -284,7 +292,7 @@ impl PlexClient {
                     return;
                 }
                 start += fetched;
-                if fetched == 0 || total.is_none_or(|total| start >= total) {
+                if fetched == 0 || total.is_some_and(|total| start >= total) {
                     return;
                 }
             }
@@ -440,7 +448,7 @@ impl PlexClient {
             public: false,
             track_count: item.leaf_count.unwrap_or(0),
             modified_at: item.updated_at,
-            read_only: false,
+            read_only: item.smart,
         }
     }
 
@@ -1207,13 +1215,13 @@ impl MusicApi for PlexClient {
         let mut sections = Vec::new();
         if !newest.is_empty() {
             sections.push(GenreSection {
-                title: "Recently added albums".to_owned(),
+                title: "home-recently-added".to_owned(),
                 items: newest,
             });
         }
         if !played.is_empty() {
             sections.push(GenreSection {
-                title: "Recently played albums".to_owned(),
+                title: "home-recently-played".to_owned(),
                 items: played,
             });
         }

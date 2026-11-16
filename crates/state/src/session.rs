@@ -1106,8 +1106,22 @@ impl Session {
                 this.reconnecting = false;
                 match restored {
                     Ok(Some(session)) => this.reconnected(session, cx),
-                    Ok(None) => log::warn!("session: nothing stored to reconnect with"),
-                    Err(error) => log::warn!("session: cannot reconnect: {error:#}"),
+                    Ok(None) => {
+                        log::warn!("session: nothing stored to reconnect with, ending the session");
+                        this.release(cx);
+                    }
+                    Err(error) => {
+                        let failure = Failure::new(&error);
+                        match failure.problem == Some(SignInProblem::Credentials) {
+                            true => {
+                                log::warn!("session: the account was refused, ending the session");
+                                this.release(cx);
+                                this.state = SessionState::Failed(failure);
+                                cx.notify();
+                            }
+                            false => log::warn!("session: cannot reconnect: {error:#}"),
+                        }
+                    }
                 }
             })
             .ok();
