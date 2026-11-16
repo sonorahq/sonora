@@ -827,7 +827,12 @@ impl Render for SmartPlaylistEditor {
                             .icon("icons/info.svg"),
                         );
                     }
-                    for problem in problems {
+                    // An empty group already says so in place and holds Save back, so the list
+                    // leaves it out.
+                    for problem in problems
+                        .into_iter()
+                        .filter(|problem| !matches!(problem.problem, Problem::EmptyGroup))
+                    {
                         column = column.child(div().text_sm().text_color(theme.danger).child(
                             format!("{}: {}", problem.path, problem_text(&problem.problem)),
                         ));
@@ -836,6 +841,13 @@ impl Render for SmartPlaylistEditor {
                 }
                 _ => body,
             };
+
+        let empty = self.rules.as_ref().is_some_and(|rules| {
+            rules
+                .problems()
+                .iter()
+                .any(|problem| matches!(problem.problem, Problem::EmptyGroup))
+        });
 
         div()
             .absolute()
@@ -877,7 +889,7 @@ impl Render for SmartPlaylistEditor {
                         } else {
                             t!("common-save")
                         })
-                        .disabled(self.loading || self.failed.is_some() || self.saving)
+                        .disabled(self.loading || self.failed.is_some() || self.saving || empty)
                         .on_click(cx.listener(|this, _, window, cx| this.apply(window, cx))),
                 )
                 .on_dismiss(cx.listener(|this, _, window, cx| {
