@@ -15,8 +15,8 @@ use state::{
     Shelf, Sonora,
 };
 use ui::{
-    ActiveTheme as _, ArrowRing, Button, InlineLink, InlineLinks, Menu, MenuItem, Picker, Popovers,
-    Popup, SortAxis,
+    ActiveTheme as _, ArrowRing, Button, InlineLink, InlineLinks, Menu, Picker, Popovers, Popup,
+    SortAxis,
 };
 use ui::{
     ColumnSpec, FilterChange, Listing as _, MIN_CONTENT, Pending, Pin, PinKind, Scrollbar,
@@ -829,7 +829,7 @@ impl DetailView {
         let id = detail.id()?.to_owned();
         let header = detail.header()?;
 
-        let menu = match header.kind {
+        Some(match header.kind {
             Collection::Album => {
                 let menus = self.table.read(cx).delegate().source().menu();
                 album_menu(detail.album()?.clone(), self.playback.clone(), menus, cx)
@@ -839,21 +839,6 @@ impl DetailView {
                 let playlist = saved.or_else(|| detail.playlist().cloned())?;
                 playlist_menu(playlist, self.playback.clone(), cx)
             }
-        };
-        Some(match header.cover.clone() {
-            Some(cover) => {
-                let view = self.me.clone();
-                let title = SharedString::from(header.title.clone());
-                menu.lead([MenuItem::new("view-cover", t!("cover-view"))
-                    .icon("icons/image.svg")
-                    .on_click(move |_, _, cx| {
-                        view.update(cx, |this, cx| {
-                            this.open_cover_viewer(title.clone(), cover.clone(), cx);
-                        })
-                        .ok();
-                    })])
-            }
-            None => menu,
         })
     }
 }
