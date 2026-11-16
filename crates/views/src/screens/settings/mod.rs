@@ -143,6 +143,7 @@ enum Slot {
     Keybind(usize),
     KeybindsReset,
     Startup,
+    Provider,
     Entries,
     Language,
     Tray,
@@ -751,6 +752,7 @@ impl SettingsView {
         let meta = match slot {
             Slot::Folders => return None,
             Slot::Startup => (t!("settings-startup"), t!("settings-startup-detail")),
+            Slot::Provider => (t!("settings-provider"), t!("settings-provider-detail")),
             Slot::Entries => (t!("settings-entries"), t!("settings-entries-detail")),
             Slot::Language => (t!("settings-language"), t!("settings-language-detail")),
             Slot::Tray => (
@@ -1034,6 +1036,7 @@ impl SettingsView {
     fn slot_element(&self, slot: Slot, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         match slot {
             Slot::Startup => self.startup_row(cx),
+            Slot::Provider => self.provider_row(cx),
             Slot::Entries => self.entries_row(cx),
             Slot::Language => self.language_row(cx),
             Slot::Tray => self.tray_row(cx),
