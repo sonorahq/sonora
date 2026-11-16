@@ -1262,8 +1262,10 @@ impl RenderOnce for Menu {
             .when_some(name, |this, name| this.aria_label(name))
             .flex()
             .flex_col()
-            // the menu sets its own leading, since one opened from a page header would otherwise
-            // take the header's tighter lines and draw shorter rows than everywhere else
+            // the menu sets its own type size and leading, since one opened from a large search
+            // field or a page header would otherwise take that text and draw bigger or shorter
+            // rows than everywhere else
+            .text_size(theme.text(crate::Text::Body))
             .line_height(phi())
             .p_1()
             .rounded(theme.radius)
