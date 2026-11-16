@@ -179,8 +179,10 @@ impl Prepared {
         }
     }
 
-    pub(crate) fn seekable(&self, stream: &Stream) -> bool {
-        stream.total().is_some() && (!self.progressive || stream.done())
+    /// Whether a decoder may seek, given the `total` the caller already passed to it as the
+    /// byte length. Symphonia panics seeking an Ogg file it was told is seekable with no length.
+    pub(crate) fn seekable(&self, total: Option<u64>, stream: &Stream) -> bool {
+        total.is_some() && (!self.progressive || stream.done())
     }
 
     pub(crate) fn reader(&self, stream: &Stream) -> Input {

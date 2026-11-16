@@ -245,7 +245,7 @@ impl Fetch for Jellyfin {
             builder = builder.with_byte_len(total);
         }
         let mut decoder = match builder
-            .with_seekable(loaded.prepared.seekable(&loaded.stream))
+            .with_seekable(loaded.prepared.seekable(total, &loaded.stream))
             .build()
         {
             Ok(decoder) => decoder,
