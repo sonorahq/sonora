@@ -684,7 +684,8 @@ pub fn track_from_file(
 }
 
 /// Builds the album `tracks` were grouped under. `id` is the one the tracks carry, since it is
-/// keyed by folder rather than by `artist` when the files name no album artist.
+/// keyed by folder rather than by `artist` when the files name no album artist. Its art is the
+/// first track's, which the scan replaces with the album folder's cover when there is one.
 pub fn album_from_tracks(
     id: &str,
     name: &str,
