@@ -1041,7 +1041,13 @@ impl AppSettings {
         let (values, writable, disk, broken) = match parsed {
             Some((Ok(values), bytes)) => (values.settled(), writable, Some(bytes), None),
             Some((Err(_), bytes)) if empty_settings(&bytes) => {
-                (Values::default().settled(), writable, Some(bytes), None)
+                let values = Values {
+                    subsonic_lyrics_offered: true,
+                    jellyfin_lyrics_offered: true,
+                    plex_lyrics_offered: true,
+                    ..Values::default()
+                };
+                (values.settled(), writable, Some(bytes), None)
             }
             Some((Err(error), _)) => {
                 log::warn!("settings: cannot parse {}: {error}", path.display());
@@ -3518,7 +3524,7 @@ mod tests {
     fn lyrics_priority_ignores_unknown_and_duplicate_sources_and_appends_missing_ones() {
         let order = lyrics_priority(&["LrcLib".into(), "unknown".into(), "LrcLib".into()]);
         assert_eq!(order[0], "LrcLib");
-        assert_eq!(order.len(), 10);
+        assert_eq!(order.len(), LYRICS_SOURCES.len());
         assert!(!order.iter().any(|name| name == "unknown"));
         assert_eq!(order.iter().filter(|name| *name == "LrcLib").count(), 1);
     }

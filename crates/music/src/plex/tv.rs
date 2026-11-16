@@ -124,8 +124,9 @@ pub async fn servers(
         .collect())
 }
 
-/// The first of a server's connections that answers, trying the ones on the local network before
-/// the ones across the internet and the relay last. The address has no trailing slash.
+/// The first of a server's secure connections that answers, trying the ones on the local network
+/// before the ones across the internet and the relay last. A connection that is not HTTPS is never
+/// tried, since the probe carries the server's token. The address has no trailing slash.
 pub async fn reach(
     http: &reqwest::Client,
     client_id: &str,
@@ -134,7 +135,7 @@ pub async fn reach(
 ) -> Result<String> {
     let mut ordered: Vec<&Connection> = connections
         .iter()
-        .filter(|connection| !connection.uri.is_empty())
+        .filter(|connection| connection.uri.starts_with("https://"))
         .collect();
     ordered.sort_by_key(|connection| (connection.relay, !connection.local, connection.ipv6));
     for connection in ordered {

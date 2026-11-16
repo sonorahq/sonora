@@ -62,6 +62,10 @@ pub struct Item {
     pub updated_at: Option<i64>,
     pub last_viewed_at: Option<i64>,
     pub leaf_count: Option<u32>,
+    /// Whether a playlist is a smart one, which the server fills from rules and no track can be
+    /// added to or taken from by hand.
+    #[serde(deserialize_with = "flag")]
+    pub smart: bool,
     #[serde(deserialize_with = "number")]
     pub user_rating: Option<f32>,
     pub view_count: Option<u64>,
@@ -171,5 +175,16 @@ fn number<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<f32>, D::
         Some(serde_json::Value::Number(number)) => number.as_f64().map(|number| number as f32),
         Some(serde_json::Value::String(text)) => text.trim().parse().ok(),
         _ => None,
+    })
+}
+
+/// A flag that Plex writes as a boolean in some answers and as `0` or `1` in others.
+fn flag<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(serde_json::Value::Bool(flag)) => flag,
+        Some(serde_json::Value::Number(number)) => number.as_i64().is_some_and(|n| n != 0),
+        Some(serde_json::Value::String(text)) => matches!(text.trim(), "1" | "true"),
+        _ => false,
     })
 }

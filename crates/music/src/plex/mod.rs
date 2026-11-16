@@ -218,7 +218,10 @@ impl MusicProvider for PlexProvider {
     fn reach(&self) -> Option<String> {
         let uri = auth::load()?.server.uri;
         let host = uri.split_once("://").map_or(uri.as_str(), |(_, rest)| rest);
-        let host = host.split(['/', ':', '?']).next()?;
+        let host = match host.strip_prefix('[') {
+            Some(bracketed) => bracketed.split(']').next()?,
+            None => host.split(['/', ':', '?']).next()?,
+        };
         (!host.is_empty()).then(|| host.to_owned())
     }
 

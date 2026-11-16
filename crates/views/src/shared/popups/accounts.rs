@@ -98,6 +98,9 @@ impl RenderOnce for AccountPicker {
                             .border_1()
                             .border_color(theme.border)
                             .cursor_pointer()
+                            .focusable()
+                            .tab_index(0)
+                            .focus_visible(|style| style.border_color(theme.primary))
                             .child(Initials::new(account.name.clone(), AVATAR))
                             .child(
                                 div()
