@@ -213,10 +213,11 @@ fn blank_condition() -> Rule {
     })
 }
 
-/// An ordinary playlist that had no rules starts from one blank condition. If the user
-/// leaves that placeholder untouched, a name-only save must not overwrite manual tracks.
+/// An ordinary playlist that had no rules starts from one blank condition. While that
+/// condition stays untouched a save keeps the manual tracks, even when only the sort, order
+/// or limit changed, since those alone would turn the playlist into one that matches nothing.
 fn is_untouched_placeholder(rules: &SmartRules) -> bool {
-    *rules == SmartRules::new(RuleGroup::All(vec![blank_condition()]))
+    rules.group == RuleGroup::All(vec![blank_condition()])
 }
 
 /// The operand's spelling for a fresh text field, or its pair for a range.
