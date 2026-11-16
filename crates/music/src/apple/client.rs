@@ -1951,8 +1951,8 @@ impl MusicApi for AppleClient {
     }
 
     /// Apple sometimes answers a create with 201 and a body that names no playlist, though the
-    /// playlist was made. The id is then read from the library, as the newest owned playlist
-    /// with this name changed since just before the request.
+    /// playlist was made. The id is then read from the library as the one owned playlist with
+    /// this name added since just before the request, and more than one such playlist fails.
     async fn create_playlist(&self, name: &str) -> Result<String> {
         let asked = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1976,18 +1976,20 @@ impl MusicApi for AppleClient {
             "apple: a new playlist was answered without an id, looking it up: {:.300}",
             body
         );
-        self.playlists()
-            .await?
-            .into_iter()
-            .filter(|playlist| playlist.owned && playlist.name == name)
-            .filter(|playlist| {
-                playlist
-                    .modified_at
-                    .is_some_and(|at| at >= asked - CLOCK_SKEW)
+        let added: Vec<String> = self
+            .walk("/me/library/playlists", PAGE, &[], |row| {
+                let attributes = row.attributes.as_ref()?;
+                let fresh = wire::moment(attributes.date_added.as_str())? >= asked - CLOCK_SKEW;
+                let ours = attributes.can_edit.as_bool() == Some(true)
+                    && attributes.name.as_str() == Some(name);
+                (fresh && ours).then(|| row.id.as_str().map(str::to_owned))?
             })
-            .max_by_key(|playlist| playlist.modified_at)
-            .map(|playlist| playlist.id)
-            .context("apple music named no new playlist")
+            .await?;
+        match <[String; 1]>::try_from(added) {
+            Ok([id]) => Ok(id),
+            Err(added) if added.is_empty() => bail!("apple music named no new playlist"),
+            Err(_) => bail!("apple music named no new playlist, and several match its name"),
+        }
     }
 
     async fn rename_playlist(&self, playlist_id: &str, name: &str) -> Result<()> {
