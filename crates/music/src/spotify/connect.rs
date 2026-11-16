@@ -1509,7 +1509,10 @@ impl Worker {
         let (context, recommended) = match read {
             Ok(read) => read,
             Err(error) => {
-                log::warn!("connect: cannot read {} enhanced: {error}", redacted(&uri));
+                log::warn!(
+                    "connect: cannot read {} enhanced: {error}",
+                    crate::redact(&uri)
+                );
                 self.smart = None;
                 if let Some(play) = play {
                     self.play_plain(play);
@@ -1647,7 +1650,8 @@ impl Worker {
             Wire::Unknown(value) => {
                 if let Some(state) = jam_transfer(&value) {
                     log::debug!("connect: a jam brings this device back in step");
-                    return Some(self.in_step(self.transferred(state)));
+                    let start = self.transferred(state);
+                    return Some(self.in_step(start));
                 }
                 // the field names only, since a transfer carries the listener's whole state
                 let fields = value
@@ -2761,7 +2765,7 @@ async fn enhanced(session: &Session, uri: &str) -> Result<(Context, HashSet<Stri
     log::debug!(
         "connect: smart shuffle on, {} recommended in {}",
         recommended.len(),
-        redacted(uri)
+        crate::redact(uri)
     );
     Ok((context, recommended))
 }
