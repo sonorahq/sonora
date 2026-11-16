@@ -196,8 +196,8 @@ impl Render for HistoryView {
 
         let scroll = self.scrollbar.read(cx).scroll().clone();
         let viewport = match framed {
-            true => page::past_border(page::viewport(&scroll, inset, window)),
-            false => page::viewport(&scroll, inset, window),
+            true => page::past_border(page::viewport(&scroll, inset, window, cx)),
+            false => page::viewport(&scroll, inset, window, cx),
         };
         self.table
             .update(cx, |table, _| table.set_viewport(viewport));

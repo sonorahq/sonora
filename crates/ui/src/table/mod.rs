@@ -655,6 +655,9 @@ pub struct Toggle {
 pub struct Viewport {
     pub top: Pixels,
     pub height: Pixels,
+    /// The band at the bottom of the viewport that chrome such as a see-through player bar
+    /// covers. Rows under it are still drawn but a keyboard step scrolls them out from under it.
+    pub covered: Pixels,
 }
 
 impl Viewport {
@@ -665,6 +668,15 @@ impl Viewport {
                 true => height,
                 false => window.viewport_size().height,
             },
+            covered: Pixels::ZERO,
+        }
+    }
+
+    /// Marks the bottom `covered` pixels as hidden under overlapping chrome.
+    pub fn covered(self, covered: Pixels) -> Self {
+        Self {
+            covered: covered.max(Pixels::ZERO),
+            ..self
         }
     }
 
@@ -963,7 +975,7 @@ impl<S: TableSource> TableState<S> {
         let head = snapped(metrics.header, window);
         let top = head + row * display as f32;
         let above = self.viewport.top + head;
-        let below = self.viewport.top + self.viewport.height;
+        let below = self.viewport.top + self.viewport.height - self.viewport.covered;
 
         let delta = if top < above {
             top - above

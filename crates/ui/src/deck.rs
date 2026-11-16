@@ -202,10 +202,12 @@ impl Element for Deck {
             true => Viewport {
                 top: view.origin.x - lead,
                 height: view.size.width,
+                ..Viewport::default()
             },
             false => Viewport {
                 top: view.origin.y - lead,
                 height: view.size.height,
+                ..Viewport::default()
             },
         };
         let tops = tops(&self.rows, self.gap);
@@ -217,6 +219,7 @@ impl Element for Deck {
             Viewport {
                 top: viewport.top - reach,
                 height: viewport.height + reach * 2.,
+                ..Viewport::default()
             },
         );
 
@@ -369,6 +372,7 @@ mod tests {
             Viewport {
                 top: px(500.),
                 height: px(200.),
+                ..Viewport::default()
             },
         );
 
@@ -389,6 +393,7 @@ mod tests {
                 Viewport {
                     top: px(0.),
                     height: px(800.),
+                    ..Viewport::default()
                 }
             ),
             0..2
@@ -415,6 +420,7 @@ mod tests {
                 Viewport {
                     top: px(0.),
                     height: px(800.),
+                    ..Viewport::default()
                 }
             ),
             0..0
