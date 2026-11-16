@@ -53,6 +53,10 @@ const CONTAINER_ALBUM: u8 = 3;
 /// How many rows a library or track listing asks for at a time, which is Apple's maximum.
 const PAGE: usize = 100;
 
+/// How many seconds Apple's clock may run behind ours when a new playlist is looked up by the
+/// time it was made.
+const CLOCK_SKEW: i64 = 120;
+
 /// How many search hits to ask for. Apple refuses a search page larger than this outright.
 const HITS: usize = 25;
 
@@ -1946,7 +1950,13 @@ impl MusicApi for AppleClient {
         Ok(crate::distinct_covers(&tracks, wanted))
     }
 
+    /// Apple sometimes answers a create with 201 and a body that names no playlist, though the
+    /// playlist was made. The id is then read from the library, as the newest owned playlist
+    /// with this name changed since just before the request.
     async fn create_playlist(&self, name: &str) -> Result<String> {
+        let asked = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs() as i64);
         let body = self
             .post(
                 "/me/library/playlists",
@@ -1954,11 +1964,29 @@ impl MusicApi for AppleClient {
                 Some(serde_json::json!({ "attributes": { "name": name } })),
             )
             .await?;
-        wire::answer::<IgnoredAny>(&body)
+        let named = wire::answer::<IgnoredAny>(&body)
             .data
             .first()
             .and_then(|row| row.id.as_str())
-            .map(str::to_owned)
+            .map(str::to_owned);
+        if let Some(id) = named {
+            return Ok(id);
+        }
+        log::warn!(
+            "apple: a new playlist was answered without an id, looking it up: {:.300}",
+            body
+        );
+        self.playlists()
+            .await?
+            .into_iter()
+            .filter(|playlist| playlist.owned && playlist.name == name)
+            .filter(|playlist| {
+                playlist
+                    .modified_at
+                    .is_some_and(|at| at >= asked - CLOCK_SKEW)
+            })
+            .max_by_key(|playlist| playlist.modified_at)
+            .map(|playlist| playlist.id)
             .context("apple music named no new playlist")
     }
 
