@@ -19,6 +19,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Skipping songs in a Spotify album or playlist with Soloist plays the next song again, instead of a different one or a greyed-out next button.
 - Play Next and Play Last work again with Soloist.
 - Radio carries on with similar songs again after an album or playlist ends with Soloist.
+- Picking a Deezer Family profile at sign-in switches to it instead of failing and staying on the account owner.
 
 ## [0.50.1] - 2026-11-17
 
