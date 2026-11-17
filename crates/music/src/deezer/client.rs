@@ -1414,10 +1414,19 @@ impl MusicApi for DeezerClient {
             .public(&format!("/album/{}", escape::component(album_id)))
             .await
             .with_context(|| format!("cannot load the album {album_id}"))?;
-        let tracks = detail
+        let mut tracks = detail
             .get("tracks")
             .map(wire::track_list)
             .unwrap_or_default();
+        let genres: Vec<_> = detail["genres"]["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|genre| wire::text(genre, &["name"]).map(str::to_owned))
+            .collect();
+        for track in &mut tracks {
+            track.genres.clone_from(&genres);
+        }
         let album =
             wire::album(&detail).with_context(|| format!("cannot read the album {album_id}"))?;
         Ok(AlbumDetail { album, tracks })

@@ -11,6 +11,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Click the tray icon on Linux to show Sonora's window, or to hide it into the tray when it is open.
 - Choose Wide under Settings, Appearance, Page width to let pages fill a large window again instead of staying centred.
+- Filter tracks by release year, play count, popularity, collaborations and tags, with genre, mood and BPM filters where available.
+
+### Changed
+
+- Place page controls beside their content and show active filters on the filter button.
+- Add Mood, BPM, Genres metadata to tracks
 
 ### Fixed
 

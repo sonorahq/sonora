@@ -104,6 +104,7 @@ struct Held {
     /// that order, since the provider may have read its list before the change took effect.
     edits: Vec<(String, Option<Track>)>,
     tasks: Vec<Task<()>>,
+    metadata: Option<Task<()>>,
 }
 
 impl Held {
@@ -118,6 +119,7 @@ impl Held {
             starred: Starred::default(),
             edits: Vec::new(),
             tasks: Vec::new(),
+            metadata: None,
         }
     }
 
@@ -1374,7 +1376,9 @@ impl Library {
             }
             // What was loaded stays up, read through the downloads filter.
             SessionEvent::WentOffline => {}
-            SessionEvent::Reconnected => this.refresh(Shelf::Streaming, cx),
+            SessionEvent::Reconnected => {
+                this.refresh(Shelf::Streaming, cx);
+            }
             SessionEvent::LocalChanged => {
                 this.epochs[Shelf::Local.slot()] += 1;
                 this.hidden_local_tracks.clear();
@@ -3712,6 +3716,7 @@ impl Library {
         let asked: HashSet<String> = self.pending.keys().cloned().collect();
         let held = self.held_mut(shelf);
         held.shape = shape;
+        held.metadata = None;
         held.arrival = arrival;
         held.edits.retain(|(id, _)| asked.contains(id));
         held.awaited = LibraryPart::ALL.to_vec();
@@ -3868,10 +3873,24 @@ impl Library {
                 }
                 settle(&mut held.state, &mut held.awaited, part, shelf.fatal());
                 this.keep(shelf, Kind::Listed, part, cx);
+                if part == LibraryPart::Tracks {
+                    this.enrich(shelf, cx);
+                }
                 cx.notify();
             })
             .ok();
         })
+    }
+
+    /// Starts metadata loading for the completed track listing.
+    fn enrich(&mut self, shelf: Shelf, cx: &mut Context<Self>) {
+        let task = crate::metadata::load(
+            &self.session,
+            self.state(shelf).tracks(),
+            move |this| Some(this.held_mut(shelf).ready_mut()?.tracks.as_mut_slice()),
+            cx,
+        );
+        self.held_mut(shelf).metadata = task;
     }
 
     fn land(&mut self, shelf: Shelf, landed: Landed, cx: &mut Context<Self>) {

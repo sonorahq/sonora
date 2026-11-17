@@ -6,6 +6,7 @@ mod client;
 mod collection;
 mod collection2;
 mod connect;
+mod descriptors;
 mod links;
 mod lyrics;
 mod offline;
@@ -68,6 +69,7 @@ impl SpotifyProvider {
             shape: Shape::Saved,
             authenticated: true,
             capabilities: Capabilities {
+                track_metadata: true,
                 pins: true,
                 playlist_covers: true,
                 playlist_order: true,

@@ -79,6 +79,7 @@ pub struct Item {
     /// The entry's own id inside a playlist, which removing it from the playlist names.
     pub playlist_item_id: Option<String>,
     pub genres: Vec<String>,
+    pub tags: Vec<String>,
     pub studios: Vec<NameId>,
     pub people: Vec<Person>,
     pub media_streams: Vec<MediaStream>,
@@ -325,15 +326,14 @@ impl Covers {
             cover,
             duration: item.duration(),
             added_at: iso_8601_to_epoch(item.date_created.as_deref()),
-            added_by: None,
             playcount: item.user_data.as_ref().and_then(|data| data.play_count),
-            popularity: 0,
-            explicit: false,
+            release_year: item.production_year.and_then(crate::calendar::release_year),
             track_number: item.index_number.unwrap_or(0),
             disc_number: item.parent_index_number.unwrap_or(1).max(1),
-            tags: item.genres,
-            languages: Vec::new(),
+            genres: item.genres,
+            tags: item.tags,
             credits,
+            ..Track::default()
         }
     }
 

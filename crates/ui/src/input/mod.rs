@@ -271,8 +271,10 @@ pub struct Input {
     /// The Fluent key of what a screen reader calls the field, when that differs from its hint.
     name: Option<SharedString>,
     icon: Option<SharedString>,
+    icon_foreground: bool,
     compact: bool,
     tucked: bool,
+    transparent: bool,
     blurred: bool,
     /// Whether the field draws no fill or border of its own, for one that is the whole surface
     /// it sits on.
@@ -315,8 +317,10 @@ impl Input {
             hint: hint.into(),
             name: None,
             icon: None,
+            icon_foreground: false,
             compact: false,
             tucked: false,
+            transparent: false,
             blurred: false,
             bare: false,
             clearable: false,
@@ -345,6 +349,12 @@ impl Input {
         self
     }
 
+    /// Draws the leading icon in the theme's foreground color.
+    pub fn icon_foreground(mut self) -> Self {
+        self.icon_foreground = true;
+        self
+    }
+
     pub fn compact(mut self) -> Self {
         self.compact = true;
         self
@@ -352,6 +362,12 @@ impl Input {
 
     pub fn tucked(mut self) -> Self {
         self.tucked = true;
+        self
+    }
+
+    /// Lets a containing control provide the field's background.
+    pub fn transparent(mut self) -> Self {
+        self.transparent = true;
         self
     }
 
@@ -449,7 +465,7 @@ impl Input {
         cx.notify();
     }
 
-    fn placeholder(&self) -> SharedString {
+    pub fn placeholder(&self) -> SharedString {
         match self.hint.is_empty() {
             true => SharedString::default(),
             false => i18n::lookup(&self.hint, None),

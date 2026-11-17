@@ -255,16 +255,12 @@ fn track_from(track: PathTrack, album: &Album) -> Result<Track> {
         album_id: Some(album.id.clone()),
         cover: album.cover.clone(),
         duration: Duration::from_millis(track.duration.milliseconds),
-        added_at: None,
-        added_by: None,
+        release_year: crate::calendar::release_year(album.year),
         playcount,
-        popularity: 0,
         explicit: track.content_rating.label == "EXPLICIT",
         track_number: track.track_number,
         disc_number: track.disc_number,
-        tags: Vec::new(),
-        languages: Vec::new(),
-        credits: Vec::new(),
+        ..Track::default()
     })
 }
 

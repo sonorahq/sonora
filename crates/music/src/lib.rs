@@ -122,6 +122,11 @@ pub enum Report {
 
 #[async_trait]
 pub trait MusicApi: Send + Sync {
+    /// Fetches optional track fields by id. Returned rows contain only ids and metadata.
+    async fn track_metadata(&self, _ids: &[String]) -> Result<Vec<Track>> {
+        Ok(Vec::new())
+    }
+
     fn alive(&self) -> bool {
         true
     }
@@ -894,6 +899,8 @@ pub enum Catalog {
 /// when pressed. A provider that gains one flips a flag here and the UI follows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
+    /// Optional track metadata is available separately from the initial listing.
+    pub track_metadata: bool,
     /// The listener can follow and unfollow an artist.
     pub follow_artists: bool,
     /// A track can seed a station, which is what fills the queue behind it.
@@ -946,6 +953,7 @@ impl Capabilities {
     /// only Subsonic does it. Playlist covers, order and smart playlists are left for each
     /// provider to turn on.
     pub const ALL: Self = Self {
+        track_metadata: false,
         follow_artists: true,
         radio: true,
         playcounts: true,
@@ -965,6 +973,7 @@ impl Capabilities {
 
     /// Nothing beyond listing and playing.
     pub const NONE: Self = Self {
+        track_metadata: false,
         follow_artists: false,
         radio: false,
         playcounts: false,

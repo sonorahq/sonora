@@ -254,6 +254,8 @@ fn numbered(stem: &str) -> Option<String> {
 /// again once.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Tagged {
+    /// Tag-reader schema version. Missing or unsupported versions invalidate the cached row.
+    pub metadata_version: u8,
     pub track: Track,
     /// The album artist the tags name, `None` when they name none.
     pub album_artist: Option<String>,
@@ -291,6 +293,9 @@ struct FallbackProbe {
     year: Option<i32>,
     release: Vec<String>,
     genres: Vec<String>,
+    tags: Vec<String>,
+    moods: Vec<String>,
+    bpm: Option<f32>,
     composers: Vec<String>,
     languages: Vec<String>,
     label: Option<String>,
@@ -364,6 +369,9 @@ fn probe_symphonia_at(path: &Path, skip: u64) -> Option<FallbackProbe> {
     let mut year = None;
     let mut release = Vec::new();
     let mut genres = Vec::new();
+    let mut tags = Vec::new();
+    let mut moods = Vec::new();
+    let mut bpm = None;
     let mut composers = Vec::new();
     let mut languages = Vec::new();
     let mut label = None;
@@ -409,6 +417,21 @@ fn probe_symphonia_at(path: &Path, skip: u64) -> Option<FallbackProbe> {
                 }
                 Some(StandardTagKey::Genre) => {
                     genres.extend(clean_val(&tag.value));
+                }
+                Some(StandardTagKey::PodcastKeywords) => {
+                    tags.extend(clean_val(&tag.value));
+                }
+                Some(StandardTagKey::Mood) => {
+                    moods.extend(clean_val(&tag.value));
+                }
+                Some(StandardTagKey::Bpm) if bpm.is_none() => {
+                    bpm = tag
+                        .value
+                        .to_string()
+                        .trim()
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|bpm| bpm.is_finite() && *bpm > 0.);
                 }
                 Some(StandardTagKey::Composer) => {
                     composers.extend(clean_val(&tag.value));
@@ -459,6 +482,9 @@ fn probe_symphonia_at(path: &Path, skip: u64) -> Option<FallbackProbe> {
         year,
         release,
         genres,
+        tags,
+        moods,
+        bpm,
         composers,
         languages,
         label,
@@ -612,11 +638,22 @@ pub fn track_from_file(
             .and_then(|fb| release_type(fb.release.iter().map(String::as_str), fb.compilation)),
     };
 
-    let (genres, composers, languages, label) = match (tag, fallback) {
+    let (genres, tags, moods, bpm, composers, languages, label) = match (tag, fallback) {
         (Some(tag), _) => {
             let listed = |key| clean_multiple(tag.get_strings(key));
             (
                 listed(ItemKey::Genre),
+                listed(ItemKey::PodcastKeywords),
+                listed(ItemKey::Mood),
+                [ItemKey::Bpm, ItemKey::IntegerBpm]
+                    .into_iter()
+                    .find_map(|key| {
+                        tag.get_string(key)?
+                            .trim()
+                            .parse::<f32>()
+                            .ok()
+                            .filter(|bpm| bpm.is_finite() && *bpm > 0.)
+                    }),
                 listed(ItemKey::Composer),
                 listed(ItemKey::Language),
                 listed(ItemKey::Label)
@@ -628,6 +665,9 @@ pub fn track_from_file(
         }
         (None, Some(fb)) => (
             fb.genres,
+            fb.tags,
+            fb.moods,
+            fb.bpm,
             fb.composers,
             fb.languages,
             fb.label.unwrap_or_default(),
@@ -653,6 +693,7 @@ pub fn track_from_file(
     };
 
     Some(Tagged {
+        metadata_version: 1,
         track: Track {
             id: Some(track_id(path)),
             name,
@@ -665,15 +706,16 @@ pub fn track_from_file(
             cover,
             duration,
             added_at: modified_at(path),
-            added_by: None,
-            playcount: None,
-            popularity: 0,
-            explicit: false,
+            release_year: year.and_then(crate::calendar::release_year),
             track_number,
             disc_number,
-            tags: genres,
+            genres,
+            tags,
+            moods,
+            bpm,
             languages: languages.iter().map(|code| language_code(code)).collect(),
             credits,
+            ..Track::default()
         },
         album_artist,
         album_artists,
