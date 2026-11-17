@@ -3,9 +3,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::actions;
 use gpui::{
-    App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ShapedLine, SharedString,
-    UTF16Selection, Window, point, px,
+    App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, Global,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ShapedLine,
+    SharedString, UTF16Selection, Window, point, px,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -60,6 +60,13 @@ static PRIMARY_PASTE: AtomicBool = AtomicBool::new(true);
 
 type Motion = fn(&str, usize) -> usize;
 
+/// Set while a press that `keep_focus` claimed for a field is dispatched, so the field it landed
+/// outside of does not let go of the focus.
+#[derive(Default)]
+struct Kept(bool);
+
+impl Global for Kept {}
+
 /// Re-reads GNOME's middle-click paste switch through the settings portal and repaints every
 /// window when it changed. A desktop that does not expose the switch keeps middle-click paste on.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -86,6 +93,17 @@ pub fn refresh_primary_paste(cx: &mut App) {
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 pub fn refresh_primary_paste(_cx: &mut App) {}
+
+/// Keeps the focused field focused through the press being dispatched now. A panel that hangs
+/// off a field, such as a `Dropdown` under it, calls this from a capture listener.
+pub(crate) fn keep_focus(window: &mut Window, cx: &mut App) {
+    cx.set_global(Kept(true));
+    // The field decides in a call deferred before this one, and the hold outlives it by one more
+    // deferral whichever of the two listeners ran first.
+    window.defer(cx, |window, cx| {
+        window.defer(cx, |_, cx| cx.set_global(Kept(false)))
+    });
+}
 
 /// Whether a middle click in a field pastes the primary selection right now.
 fn primary_paste() -> bool {
@@ -760,8 +778,9 @@ impl Input {
     }
 
     /// Lets go of the focus when a press lands outside the field, so a click on the page around
-    /// it stops the typing. Whatever focusable thing the press hit still takes the focus, since
-    /// this runs first. With the context menu open the press may pick one of its items, so the
+    /// it stops the typing. The decision waits until the press has been dispatched, so whatever
+    /// focusable thing it hit keeps the focus and a panel hanging off the field can hold it with
+    /// `keep_focus`. With the context menu open the press may pick one of its items, so the
     /// decision waits for `context_menu_closed`. A press the menu takes without closing, as on
     /// its padding, is forgotten by the next frame, so a later Escape keeps the focus.
     fn on_mouse_down_out(
@@ -778,9 +797,21 @@ impl Input {
         if !self.focus_handle.is_focused(window) {
             return;
         }
-        self.selecting = false;
-        window.blur(cx);
-        cx.notify();
+        let field = cx.entity().downgrade();
+        let focus = self.focus_handle.clone();
+        window.defer(cx, move |window, cx| {
+            let kept = cx.try_global::<Kept>().is_some_and(|kept| kept.0);
+            if kept || !focus.is_focused(window) {
+                return;
+            }
+            window.blur(cx);
+            field
+                .update(cx, |this, cx| {
+                    this.selecting = false;
+                    cx.notify();
+                })
+                .ok();
+        });
     }
 
     /// Closes the context menu. A pick clears the menu before this runs, so a menu still open
