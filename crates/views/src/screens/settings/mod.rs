@@ -819,7 +819,10 @@ impl SettingsView {
             Slot::Opacity => (t!("settings-opacity"), t!("settings-opacity-detail")),
             Slot::WindowBlur => (
                 t!("settings-blur-window"),
-                t!("settings-blur-window-detail"),
+                match ui::COMPOSITOR_OPACITY {
+                    true => t!("settings-blur-window-compositor-detail"),
+                    false => t!("settings-blur-window-detail"),
+                },
             ),
             Slot::Blur => (t!("settings-blur"), t!("settings-blur-detail")),
             Slot::Corners => (t!("settings-corners"), t!("settings-corners-detail")),

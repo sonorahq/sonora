@@ -21,6 +21,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Play Next and Play Last work again with Soloist.
 - Radio carries on with similar songs again after an album or playlist ends with Soloist.
 - Picking a Deezer Family profile at sign-in switches to it instead of failing and staying on the account owner.
+- Blur window stays available on Linux at 100% opacity, so a compositor that makes Sonora see-through, such as when it is unfocused, blurs the desktop behind it.
 
 ## [0.50.1] - 2026-11-17
 

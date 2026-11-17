@@ -237,11 +237,12 @@ impl SettingsView {
     }
 
     /// Asks the platform to blur the desktop behind a see-through window. It needs something to
-    /// show through, so the switch is off and disabled while the window is opaque.
+    /// show through, so the switch is off and disabled while the window is opaque, unless the
+    /// compositor can make the window see-through on its own.
     pub(super) fn blur_window_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let look = self.look(cx);
         let overrides = self.settings.read(cx).theme_overrides();
-        let opaque = !look.transparent;
+        let opaque = !look.transparent && !ui::COMPOSITOR_OPACITY;
 
         self.row(
             t!("settings-blur-window"),
