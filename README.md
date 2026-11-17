@@ -101,7 +101,11 @@ flatpak install --user https://sonorahq.github.io/sonora/sonora.flatpakref
 
 #### Snap
 
-Install from the [Snap Store](https://snapcraft.io/sonora): `sudo snap install sonora`.
+Install from the [Snap Store](https://snapcraft.io/sonora): 
+
+```sh
+sudo snap install sonora
+```
 
 #### AppImage
 
