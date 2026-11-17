@@ -47,7 +47,10 @@ impl OutputSink {
 }
 
 impl Sink for OutputSink {
+    /// librespot calls this on its player thread, which decodes every packet, so that thread is
+    /// raised here as Sonora's own decoder is.
     fn start(&mut self) -> SinkResult<()> {
+        crate::output::raise_decoder_priority();
         if self.paced.play().is_err() {
             self.reopen();
         }
