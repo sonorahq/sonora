@@ -13,6 +13,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The quick search marks its first result as the one Enter acts on. Press Up off it, or Enter before results arrive, to open the search page for what you typed.
 - Turn off the playback progress shown on the Sonora taskbar button on Windows in Settings, to keep just the app icon.
 - Sort songs, albums and artists from Navidrome, Subsonic or your local files by the day you liked them, from the sort menu or the new Date liked column.
+- Choose Wide under Settings, Appearance, Page width to let pages fill a large window again instead of staying centred.
 
 ### Fixed
 
