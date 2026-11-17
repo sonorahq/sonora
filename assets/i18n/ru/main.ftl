@@ -170,6 +170,8 @@ menu-play-artist = Играть исполнителя
 # playlist editor
 playlist-name-placeholder = Название плейлиста
 playlist-create-title = Создать плейлист
+playlist-create-shelf = Сохранить в
+playlist-create-local = Локальные файлы
 playlist-edit-title = Редактировать плейлист
 playlist-cover-choose = Выбрать картинку
 playlist-cover-remove = Убрать обложку
