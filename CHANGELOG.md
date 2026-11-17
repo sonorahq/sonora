@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Choose Wide under Settings, Appearance, Page width to let pages fill a large window again instead of staying centred.
+
 ## [0.50.1] - 2026-11-17
 
 ### Added
@@ -16,7 +20,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - On Windows, the taskbar hover preview and Alt+Tab show the song and artist that are playing.
 - Turn off the playback progress shown on the Sonora taskbar button on Windows in Settings, to keep just the app icon.
 - Sort songs, albums and artists from Navidrome, Subsonic or your local files by the day you liked them, from the sort menu or the new Date liked column.
-- Choose Wide under Settings, Appearance, Page width to let pages fill a large window again instead of staying centred.
 
 ### Fixed
 
