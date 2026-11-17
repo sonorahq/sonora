@@ -1,12 +1,12 @@
 use gpui::prelude::*;
 use gpui::{
-    App, Context, Entity, FocusHandle, Global, PathPromptOptions, Render, SharedString, Task,
+    App, Context, Div, Entity, FocusHandle, Global, PathPromptOptions, Render, SharedString, Task,
     Window, div,
 };
 use i18n::t;
 use music::Playlist;
 use state::{Addition, CoverEdit, Leaving, Outcome, Shelf, Sonora, Toasts, cover_problem};
-use ui::{ActiveTheme as _, Artwork, Button, Modal, PinKind};
+use ui::{ActiveTheme as _, Artwork, Button, Modal, PinKind, TabBar};
 use ui::{Dismiss, FORM_CONTEXT, Field, Form, Input, Submit};
 
 #[derive(Clone)]
@@ -120,6 +120,13 @@ impl PlaylistEditor {
         }));
     }
 
+    fn choose_shelf(&mut self, chosen: Shelf, cx: &mut Context<Self>) {
+        if let Some(Edit::Create { shelf, .. }) = &mut self.edit {
+            *shelf = chosen;
+            cx.notify();
+        }
+    }
+
     fn remove_cover(&mut self, cx: &mut Context<Self>) {
         self.cover = CoverEdit::Remove;
         cx.notify();
@@ -192,6 +199,47 @@ impl PlaylistEditor {
     /// The playlist's name as a form of one field. Enter and Escape go on to the dialog around it.
     fn name_form(&self, cx: &App) -> Form {
         Form::new("playlist-name-form").field(Field::new(&self.name, cx))
+    }
+
+    /// Where a blank new playlist goes, the streaming account or the local files. It shows only
+    /// while both are there to take one, since songs already picked decide it for themselves.
+    fn shelves(&self, edit: &Edit, cx: &mut Context<Self>) -> Option<Div> {
+        let Edit::Create { addition, shelf } = edit else {
+            return None;
+        };
+        let session = Sonora::global(cx).session.read(cx);
+        let provider = session
+            .provider_name()
+            .filter(|_| session.authenticated())?;
+        if !addition.is_empty() || session.local_paths().is_empty() {
+            return None;
+        }
+        let chosen = *shelf;
+        let options = [
+            (
+                "playlist-shelf-streaming",
+                SharedString::from(provider),
+                Shelf::Streaming,
+            ),
+            (
+                "playlist-shelf-local",
+                t!("playlist-create-local"),
+                Shelf::Local,
+            ),
+        ];
+        let bar = TabBar::new("playlist-shelf")
+            .name(t!("playlist-create-shelf"))
+            .flex_none()
+            .items(options.map(|(id, label, option)| {
+                Button::new(id)
+                    .label(label)
+                    .small()
+                    .ghost()
+                    .selected(option == chosen)
+                    .on_click(cx.listener(move |this, _, _, cx| this.choose_shelf(option, cx)))
+            }));
+        // The modal sets each child in a block that would stretch the bar to its full width.
+        Some(div().flex().child(bar))
     }
 
     fn details(&self, playlist: &Playlist, cx: &mut Context<Self>) -> impl IntoElement {
@@ -282,6 +330,7 @@ impl Render for PlaylistEditor {
                         crate::shared::local::import_playlist(cx);
                     }))
             });
+        let shelves = self.shelves(&edit, cx);
         let detail = match &edit {
             Edit::Delete(playlist) => Some(t!("playlist-delete-confirm", name = &playlist.name)),
             Edit::Again { playlist, .. } => {
@@ -308,6 +357,7 @@ impl Render for PlaylistEditor {
                     .w(theme.metrics.cover * 2.8)
                     .when_some(detail, Modal::detail)
                     .when_some(import, Modal::trailing)
+                    .when_some(shelves, Modal::child)
                     .map(|modal| match &edit {
                         Edit::Details(playlist) => modal.child(self.details(playlist, cx)),
                         _ if asking => modal,

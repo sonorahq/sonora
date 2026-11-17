@@ -127,7 +127,8 @@ fn session(client: AppleClient, profile: crate::UserProfile) -> ProviderSession 
         // player's autoplay uses. An artist can be favorited like anything else, and pins live
         // behind `me/library/pins`. A download only saves the fetch, since every play still
         // needs a license. A library song or one in your own playlist carries no date, but both
-        // are listed in the order they were added, oldest first.
+        // are listed in the order they were added. The library comes newest first because its
+        // listing asks Apple to sort that way, and your own playlists come oldest first.
         capabilities: Capabilities {
             radio: true,
             follow_artists: true,
@@ -135,7 +136,7 @@ fn session(client: AppleClient, profile: crate::UserProfile) -> ProviderSession 
             keeps: true,
             downloads: true,
             qualities: stream::QUALITIES,
-            song_arrival: Some(Arrival::OldestFirst),
+            song_arrival: Some(Arrival::NewestFirst),
             playlist_arrival: Some(Arrival::OldestFirst),
             ..Capabilities::NONE
         },
