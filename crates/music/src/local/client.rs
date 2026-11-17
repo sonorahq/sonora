@@ -832,16 +832,10 @@ mod tests {
             album_id: None,
             cover: None,
             duration: Duration::from_secs(180),
-            added_at: None,
-            added_by: None,
-            playcount: None,
             popularity: 50,
-            explicit: false,
             track_number: 1,
             disc_number: 1,
-            tags: Vec::new(),
-            languages: Vec::new(),
-            credits: Vec::new(),
+            ..Track::default()
         }
     }
 

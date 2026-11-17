@@ -106,6 +106,7 @@ pub struct Detail {
     fill: Option<Task<()>>,
     filling_request: Option<AbortHandle>,
     mosaic: Option<Task<()>>,
+    metadata: Option<Task<()>>,
     /// Whether a load of the playlist was put off while its new order waits to be written, so it
     /// runs once the order is written.
     reload_after_order: bool,
@@ -254,6 +255,7 @@ impl Detail {
             fill: None,
             filling_request: None,
             mosaic: None,
+            metadata: None,
             reload_after_order: false,
         }
     }
@@ -351,6 +353,9 @@ impl Detail {
                             this.header = Some(playlist_header(playlist));
                         }
                         this.load_more(cx);
+                        if this.continuation.is_none() {
+                            this.enrich(cx);
+                        }
                     }
                     Err(error) => log::warn!("detail: cannot load more playlist tracks: {error:#}"),
                 }
@@ -557,6 +562,7 @@ impl Detail {
     /// Fetches the page from the catalog. A `fresh` load drops the cached page first, and an
     /// album's rails with it, so the provider is asked again.
     fn load(&mut self, kind: Collection, id: String, fresh: bool, cx: &mut Context<Self>) {
+        self.metadata = None;
         let Some(catalog) = self.session.read(cx).catalog(&id) else {
             cx.notify();
             return;
@@ -702,6 +708,19 @@ impl Detail {
         }
         self.loaded = true;
         self.load_more(cx);
+        if self.continuation.is_none() {
+            self.enrich(cx);
+        }
+    }
+
+    /// Starts metadata loading for the current rows.
+    fn enrich(&mut self, cx: &mut Context<Self>) {
+        self.metadata = crate::metadata::load(
+            &self.session,
+            &self.tracks,
+            |this| Some(&mut this.tracks),
+            cx,
+        );
     }
 
     fn clear(&mut self) {
@@ -714,6 +733,7 @@ impl Detail {
             request.abort();
         }
         self.mosaic = None;
+        self.metadata = None;
         self.id = None;
         self.header = None;
         self.kind = None;

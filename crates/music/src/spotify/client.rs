@@ -10,7 +10,8 @@ use librespot_protocol::playlist4_external::SelectedListContent as RootList;
 use protobuf::Message as _;
 
 use crate::spotify::{
-    albums, artists, collection, collection2, pathfinder, playlists, profiles, radio, search, wire,
+    albums, artists, collection, collection2, descriptors, pathfinder, playlists, profiles, radio,
+    search, wire,
 };
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, CoverSize, Genre,
@@ -95,6 +96,10 @@ impl MusicApi for LibrespotClient {
         collection::saved_tracks(&self.session).await
     }
 
+    async fn saved_tracks_paged(&self) -> Result<crate::Pages<Track>> {
+        collection::saved_tracks_paged(&self.session).await
+    }
+
     async fn set_track_saved(&self, track_id: &str, saved: bool) -> Result<()> {
         collection2::set_track_saved(&self.session, track_id, saved).await
     }
@@ -125,6 +130,10 @@ impl MusicApi for LibrespotClient {
 
     async fn album(&self, album_id: &str) -> Result<AlbumDetail> {
         albums::album(&self.session, album_id).await
+    }
+
+    async fn track_metadata(&self, ids: &[String]) -> Result<Vec<Track>> {
+        Ok(descriptors::load(&self.session, ids).await)
     }
 
     async fn album_tracks(&self, album_id: &str) -> Result<Vec<Track>> {

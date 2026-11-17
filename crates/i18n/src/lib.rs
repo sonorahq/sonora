@@ -121,6 +121,24 @@ fn warn_missing(language: Language, key: &str) {
     log::warn!("i18n: {key} is missing from {}", language.id());
 }
 
+/// Groups a signed integer using the active locale, unless it is below `threshold`.
+pub fn grouped_number(value: i128, threshold: u128) -> SharedString {
+    if value.unsigned_abs() < threshold {
+        return value.to_string().into();
+    }
+    let digits = value.to_string();
+    let separator = t!("number-group");
+    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3 * separator.len());
+    let sign = usize::from(value < 0);
+    for (index, digit) in digits.char_indices() {
+        if index > sign && (digits.len() - index).is_multiple_of(3) {
+            grouped.push_str(&separator);
+        }
+        grouped.push(digit);
+    }
+    grouped.into()
+}
+
 fn format(language: Language, key: &str, args: Option<&FluentArgs>) -> Option<SharedString> {
     let bundle = BUNDLES
         .get(language as usize)?

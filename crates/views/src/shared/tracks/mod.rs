@@ -5,8 +5,9 @@ mod sort;
 use i18n::t;
 use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::rc::Rc;
-use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis, RangeAxis, Unit};
+use ui::{ActiveTheme as _, Choice, ChoiceAxis, Filter, FilterChange, RangeAxis, Unit};
 
 use crate::shared::menus::{ItemMenu, TrackColumns};
 use gpui::accesskit::Role;
@@ -39,7 +40,13 @@ pub(crate) use columns::{
 pub(crate) use sieve::TrackSieve;
 pub(crate) use sort::initial;
 
+use sieve::{BPM, DURATION, FACETS, RANGES};
 use sort::hits;
+
+/// Choice filter keys used to initialize their submenus.
+pub(crate) fn choice_filters() -> impl Iterator<Item = &'static str> {
+    FACETS.iter().map(|(key, _)| *key)
+}
 
 /// How strongly an unsaved track's heart shows on its row.
 const SETTLED: f32 = 0.5;
@@ -201,12 +208,60 @@ pub(crate) struct TrackSource {
     menu: ItemMenu,
     table: Option<WeakEntity<TableState<TrackSource>>>,
     sieve: TrackSieve,
-    spread: RefCell<Option<Spread>>,
+    /// Retains active slider bounds when their source values disappear.
+    active_ranges: HashMap<&'static str, RangeAxis>,
+    axes: RefCell<Option<(i18n::Language, Vec<Filter>)>>,
 }
 
-struct Spread {
-    stamp: usize,
-    extent: Option<(f32, f32)>,
+/// Builds a range axis, collecting stops only for snapped sliders.
+fn range_axis(
+    key: &'static str,
+    mut values: impl Iterator<Item = f32>,
+    unit: Unit,
+) -> Option<Filter> {
+    let first = values.next()?;
+    let mut stops = (key != DURATION && key != BPM).then(|| vec![first]);
+    let bounds = values.fold((first, first), |(low, high), value| {
+        if let Some(stops) = &mut stops {
+            stops.push(value);
+        }
+        (low.min(value), high.max(value))
+    });
+    if let Some(stops) = &mut stops {
+        stops.sort_by(f32::total_cmp);
+        stops.dedup();
+    }
+    (bounds.1 - bounds.0 > f32::EPSILON).then(|| {
+        Filter::Range(RangeAxis {
+            key,
+            label: i18n::lookup(key, None),
+            bounds,
+            value: bounds,
+            unit,
+            values: stops.map(Into::into),
+        })
+    })
+}
+
+/// Ranks options by frequency, then by id.
+fn choices<'a>(words: impl Iterator<Item = &'a String>) -> Vec<Choice> {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for word in words {
+        *counts.entry(word).or_default() += 1;
+    }
+    let mut ranked: Vec<_> = counts.into_iter().collect();
+    ranked.sort_by(|(a, x), (b, y)| y.cmp(x).then(a.cmp(b)));
+    ranked
+        .into_iter()
+        .map(|(id, _)| choice(id, false))
+        .collect()
+}
+
+/// Builds an option, translating inferred mood labels.
+fn choice(id: &str, on: bool) -> Choice {
+    let id: SharedString = id.to_owned().into();
+    let label = sort::mood_label(&id);
+    Choice { id, label, on }
 }
 
 /// What the number at the head of a row counts.
@@ -248,7 +303,8 @@ impl TrackSource {
             menu: ItemMenu::new(playlist_scrollbar, cx),
             table: None,
             sieve: TrackSieve::default(),
-            spread: RefCell::new(None),
+            active_ranges: HashMap::new(),
+            axes: RefCell::new(None),
         }
     }
 
@@ -258,29 +314,36 @@ impl TrackSource {
         changed
     }
 
-    /// The shortest and longest track in the whole list, `None` only when the list is empty.
-    /// The span deliberately ignores the sieve and the search, so narrowing the table can never
-    /// shrink the slider that did the narrowing and leave the user with no way back.
-    pub(crate) fn extent(&self, cx: &App) -> Option<(f32, f32)> {
-        let tracks = self.provider.tracks(cx);
-        let stamp = tracks.len();
-        if let Some(spread) = self.spread.borrow().as_ref()
-            && spread.stamp == stamp
+    /// Caches unfiltered options until the source changes. Filtering must not hide its own controls.
+    fn axes(&self, cx: &App) -> Vec<Filter> {
+        let language = i18n::language();
+        let mut cache = self.axes.borrow_mut();
+        if cache
+            .as_ref()
+            .is_some_and(|(cached, _)| *cached != language)
         {
-            return spread.extent;
+            *cache = None;
         }
-
-        let mut low = f32::MAX;
-        let mut high = f32::MIN;
-        for track in tracks {
-            let seconds = track.duration.as_secs_f32();
-            low = low.min(seconds);
-            high = high.max(seconds);
-        }
-        let extent = (low <= high).then_some((low, high));
-        *self.spread.borrow_mut() = Some(Spread { stamp, extent });
-
-        extent
+        cache
+            .get_or_insert_with(|| {
+                let tracks = self.provider.tracks(cx);
+                let mut axes: Vec<_> = RANGES
+                    .iter()
+                    .filter_map(|(key, read, unit)| {
+                        range_axis(key, tracks.iter().filter_map(read), *unit)
+                    })
+                    .collect();
+                axes.extend(FACETS.iter().map(|(key, words)| {
+                    Filter::Choice(ChoiceAxis {
+                        key,
+                        label: i18n::lookup(key, None),
+                        options: choices(tracks.iter().flat_map(words)),
+                    })
+                }));
+                (language, axes)
+            })
+            .1
+            .clone()
     }
 
     // resolved when play starts
@@ -603,6 +666,10 @@ impl TrackSource {
 impl TableSource for TrackSource {
     type Field = TrackField;
 
+    fn invalidate(&mut self) {
+        *self.axes.get_mut() = None;
+    }
+
     fn columns(&self) -> &'static [ColumnSpec<TrackField>] {
         self.columns
     }
@@ -631,7 +698,10 @@ impl TableSource for TrackSource {
         match field {
             TrackField::Artists => tracks.iter().any(|track| !track.artists.is_empty()),
             TrackField::Album => tracks.iter().any(|track| !track.album.is_empty()),
-            TrackField::Genre => tracks.iter().any(|track| !track.tags.is_empty()),
+            TrackField::Genre | TrackField::Mood | TrackField::Tags => tracks
+                .iter()
+                .any(|track| !sort::words(track, field).is_empty()),
+            TrackField::Bpm => tracks.iter().any(|track| track.bpm.is_some()),
             TrackField::AddedAt | TrackField::PlayedAt => {
                 tracks.iter().any(|track| track.added_at.is_some())
             }
@@ -672,75 +742,131 @@ impl TableSource for TrackSource {
     }
 
     fn filter_axes(&self, cx: &App) -> Vec<Filter> {
-        let duration = self.extent(cx).map(|bounds| {
-            Filter::Range(
-                RangeAxis {
-                    key: "filter-duration",
-                    label: t!("filter-duration"),
-                    bounds,
-                    value: self.sieve.duration.unwrap_or(bounds),
-                    unit: Unit::Clock,
-                    values: None,
+        if self.provider.tracks(cx).len() <= 1 && !self.sieve.active() {
+            return Vec::new();
+        }
+        let mut axes = self.axes(cx);
+        for saved in self.active_ranges.values() {
+            let mut kept = saved.clone();
+            kept.label = i18n::lookup(saved.key, None);
+            if let Some(Filter::Range(current)) = axes
+                .iter_mut()
+                .find(|axis| matches!(axis, Filter::Range(axis) if axis.key == saved.key))
+            {
+                // Widen for new data without losing the selected range's original ends.
+                kept.bounds = (
+                    kept.bounds.0.min(current.bounds.0),
+                    kept.bounds.1.max(current.bounds.1),
+                );
+                if let (Some(values), Some(fresh)) = (&kept.values, &current.values)
+                    && values != fresh
+                {
+                    let mut merged = values.to_vec();
+                    merged.extend(fresh.iter().copied());
+                    merged.sort_by(f32::total_cmp);
+                    merged.dedup();
+                    kept.values = Some(merged.into());
                 }
-                .clamped(),
-            )
+                *current = kept;
+            } else {
+                axes.push(Filter::Range(kept));
+            }
+        }
+        axes.sort_by_key(|axis| match axis {
+            Filter::Range(axis) => RANGES.iter().position(|(key, _, _)| *key == axis.key),
+            _ => Some(RANGES.len()),
         });
-
-        let mut axes: Vec<Filter> = duration.into_iter().collect();
-        axes.push(Filter::Flag(FlagAxis {
-            key: "filter-hide-explicit",
-            label: t!("filter-hide-explicit"),
-            on: self.sieve.hide_explicit,
-        }));
-        if self.starrable(cx) {
-            axes.push(Filter::Flag(FlagAxis {
-                key: "filter-favorites",
-                label: t!("filter-favorites"),
-                on: self.sieve.favorites,
-            }));
+        for axis in &mut axes {
+            match axis {
+                Filter::Range(axis) => {
+                    axis.value = self
+                        .sieve
+                        .ranges
+                        .get(axis.key)
+                        .copied()
+                        .unwrap_or(axis.bounds);
+                    axis.value = (
+                        axis.value.0.clamp(axis.bounds.0, axis.bounds.1),
+                        axis.value.1.clamp(axis.bounds.0, axis.bounds.1),
+                    );
+                }
+                Filter::Choice(axis) => {
+                    let picked = self.sieve.picks.get(axis.key);
+                    for option in &mut axis.options {
+                        option.on =
+                            picked.is_some_and(|picked| picked.contains(option.id.as_ref()));
+                    }
+                    // Keep stale picks visible so they can still be cleared.
+                    for id in picked.into_iter().flatten() {
+                        if !axis.options.iter().any(|option| option.id == id.as_str()) {
+                            axis.options.push(choice(id, true));
+                        }
+                    }
+                }
+                Filter::Flag(_) => {}
+            }
         }
-        // Offline mode already keeps a shelf to its downloads, so the filter would do nothing.
+        axes.retain(|axis| !matches!(axis, Filter::Choice(axis) if axis.options.is_empty()));
+        // Offline mode already keeps a shelf to its downloads, so that filter would do nothing.
         let offered = self.sieve.downloaded || !Sonora::global(cx).downloads.read(cx).is_empty();
-        if offered && !self.all_downloads_only(cx) {
-            axes.push(Filter::Flag(FlagAxis {
-                key: "filter-downloaded",
-                label: t!("filter-downloaded"),
-                on: self.sieve.downloaded,
-            }));
-        }
+        axes.extend(
+            self.sieve
+                .flags(self.starrable(cx), offered && !self.all_downloads_only(cx)),
+        );
         if self.shelved {
             axes.extend(self.reach.axes(self.provider.tracks(cx).mixed()));
         }
         axes
     }
 
-    fn filter(&mut self, change: FilterChange, _cx: &App) -> bool {
+    fn filter(&mut self, change: FilterChange, cx: &App) -> bool {
         if self.reach.filter(&change) {
             return true;
         }
         match change {
-            FilterChange::Range("filter-duration", value) => {
-                self.sieve.duration = Some(value);
+            FilterChange::Range(key, value) => {
+                let known = RANGES.iter().any(|(known, ..)| *known == key);
+                if !known || self.sieve.ranges.get(key).copied() == value {
+                    return false;
+                }
+                match value {
+                    Some(value) => {
+                        if let Some(Filter::Range(axis)) = self
+                            .filter_axes(cx)
+                            .into_iter()
+                            .find(|axis| matches!(axis, Filter::Range(axis) if axis.key == key))
+                        {
+                            self.active_ranges.insert(key, axis);
+                        }
+                        self.sieve.ranges.insert(key, value)
+                    }
+                    None => {
+                        self.active_ranges.remove(key);
+                        self.sieve.ranges.remove(key)
+                    }
+                };
                 true
             }
-            FilterChange::Flag("filter-hide-explicit", value) => {
-                self.sieve.hide_explicit = value;
+            FilterChange::Choice(key, id, on) => {
+                self.sieve.pick(key, &id, on);
                 true
             }
-            FilterChange::Flag("filter-favorites", value) => {
-                self.sieve.favorites = value;
-                true
-            }
-            FilterChange::Flag("filter-downloaded", value) => {
-                self.sieve.downloaded = value;
+            FilterChange::Flag(key, value) => {
+                match key {
+                    "filter-hide-explicit" => self.sieve.hide_explicit = value,
+                    "filter-collaborations" => self.sieve.collaborations = value,
+                    "filter-favorites" => self.sieve.favorites = value,
+                    "filter-downloaded" => self.sieve.downloaded = value,
+                    _ => return false,
+                }
                 true
             }
             FilterChange::Reset => {
                 self.sieve = Default::default();
+                self.active_ranges.clear();
                 self.reach = Reach::default();
                 true
             }
-            _ => false,
         }
     }
 
@@ -817,7 +943,24 @@ impl TableSource for TrackSource {
             TrackField::Title => self.title_cell(&cell, track, title, cx),
             TrackField::Artists => self.artist_cell(&cell, track, detail),
             TrackField::Album => self.album_cell(&cell, track, detail),
-            TrackField::Genre => cells::dim(&cell, track.tags.join(", "), detail),
+            TrackField::Genre | TrackField::Tags => {
+                cells::dim(&cell, sort::words(track, cell.field).join(", "), detail)
+            }
+            TrackField::Mood => cells::dim(
+                &cell,
+                track
+                    .moods
+                    .iter()
+                    .map(|mood| sort::mood_label(mood).to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                detail,
+            ),
+            TrackField::Bpm => cells::dim(
+                &cell,
+                track.bpm.map(|bpm| format!("{bpm:.1}")).unwrap_or_default(),
+                detail,
+            ),
             TrackField::AddedAt => cells::credited(
                 &cell,
                 track.added_by.as_deref(),
