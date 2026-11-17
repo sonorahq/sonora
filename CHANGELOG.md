@@ -13,6 +13,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The fullscreen player counts down the time left when Show time left is on, as the player bar does.
 - Clicking a song or other suggestion under the search page field opens it again instead of just closing the list.
 - Your own YouTube Music playlists keep your name as their creator on the playlist page, as they do in your library.
 
